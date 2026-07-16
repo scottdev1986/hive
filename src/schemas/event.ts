@@ -3,9 +3,8 @@ import { z } from "zod";
 const HookEventBaseSchema = z.strictObject({
   agentName: z.string().min(1),
   timestamp: z.iso.datetime({ offset: true }),
-  // Claude pipes a trusted session_id to its hooks. Codex hook claims are
-  // untrusted and ignored for binding; Codex binds only from independently
-  // validated provider session_meta for the exact process launch.
+  // Claude pipes session_id to every hook; Codex notify carries thread-id.
+  // Either one is the handle a crash recovery needs for a native resume.
   toolSessionId: z.string().min(1).optional(),
 });
 
@@ -72,21 +71,3 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
 ]);
 
 export type HookEvent = z.infer<typeof HookEventSchema>;
-
-/** Provider-native evidence for one exact app-server turn: the rollout path
- * the app-server itself reported for the thread (null when thread/read gave
- * none) and the exact started turn id. */
-export interface AppServerTurnEvidence {
-  rolloutPath: string | null;
-  turnId: string;
-}
-
-/** The daemon-internal event shape. `appServerTurn` is PRIVILEGED evidence
- * constructed exclusively in-process by the Codex app-server manager — it is
- * deliberately NOT part of `HookEventSchema`, so the public authenticated
- * POST /event boundary (strict schema, unknown keys rejected) can never carry
- * it: an agent holding its own capability token must not be able to forge a
- * writer-grade `codex-app-server` identity source. */
-export type DaemonHookEvent = HookEvent & {
-  appServerTurn?: AppServerTurnEvidence;
-};

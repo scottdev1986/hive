@@ -1,6 +1,3 @@
-import { appendFile } from "node:fs/promises";
-import { homedir } from "node:os";
-import { join } from "node:path";
 import {
   HookEventSchema,
   type HookEvent,
@@ -69,19 +66,12 @@ export async function postHookEvent(
   port: number,
   fetcher: EventFetcher = fetch,
 ): Promise<void> {
-  const response = await fetcher(`http://127.0.0.1:${port}/event`, {
+  await fetcher(`http://127.0.0.1:${port}/event`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(event),
     signal: AbortSignal.timeout(1_000),
   });
-  // An HTTP rejection is a lost boundary, not a delivered one: swallowing it
-  // here left agent status stale while every hook invocation exited 0.
-  if (!response.ok) {
-    throw new Error(
-      `hook event rejected: HTTP ${response.status} for ${event.kind}`,
-    );
-  }
 }
 
 // Claude Code pipes a JSON payload with the current session_id into every
@@ -157,40 +147,6 @@ export async function readHookStdin(
   return parseHookStdin(text);
 }
 
-/** Where lost hook boundaries leave their durable trace. Failures here mean
- * an agent's status went stale until the telemetry sweep healed it; a file
- * that says so beats a silence that says nothing. */
-export function hookFailureTracePath(): string {
-  return join(
-    Bun.env.HIVE_HOME ?? join(homedir(), ".hive"),
-    "hook-event-failures.jsonl",
-  );
-}
-
-const MAX_TRACE_BYTES = 512_000;
-
-/** Append one bounded trace line for a hook event that could not be
- * delivered. Best-effort and size-capped: the trace must never become its own
- * failure mode. */
-async function traceHookFailure(
-  kind: string,
-  agent: string | undefined,
-  error: unknown,
-): Promise<void> {
-  const path = hookFailureTracePath();
-  const file = Bun.file(path);
-  if (await file.exists() && file.size > MAX_TRACE_BYTES) return;
-  await appendFile(
-    path,
-    JSON.stringify({
-      at: new Date().toISOString(),
-      kind,
-      agent: agent ?? null,
-      error: error instanceof Error ? error.message : String(error),
-    }) + "\n",
-  );
-}
-
 export async function runHiveEvent(
   kind: string,
   port: number,
@@ -202,24 +158,9 @@ export async function runHiveEvent(
     // A hook speaks only for the agent it was installed for, and presents that
     // agent's capability. The credential is read from its 0600 file, never
     // from this process's environment.
-    const send = () =>
-      postHookEvent(event, port, fetcher ?? agentFetch(event.agentName));
-    try {
-      await send();
-    } catch {
-      // One bounded retry covers a transient daemon blip; a second failure is
-      // a LOST turn boundary — the agent's status is stale until the sweep
-      // heals it — and that must leave a durable trace, never a silence.
-      await Bun.sleep(100);
-      try {
-        await send();
-      } catch (error) {
-        await traceHookFailure(kind, options.agent, error);
-      }
-    }
+    await postHookEvent(event, port, fetcher ?? agentFetch(event.agentName));
   } catch {
-    // Hooks run at every turn boundary and must never disrupt an agent CLI —
-    // even when the failure is the trace file itself.
+    // Hooks run at every turn boundary and must never disrupt an agent CLI.
   }
   return 0;
 }

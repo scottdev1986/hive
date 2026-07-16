@@ -38,27 +38,6 @@ test("active status reports observed ownership overlap", () => {
   expect(status[1]?.overlaps).toEqual(["maya"]);
 });
 
-test("active status separates launch and observed identity, never guessing observed", () => {
-  // Unobserved: liveModel stays null, not the launch model. Attestation reads
-  // the fail-closed unattested.
-  const unobserved = compactActiveTeam([agent({ model: "gpt-5.6-sol" })])[0]!;
-  expect(unobserved.model).toEqual("gpt-5.6-sol");
-  expect(unobserved.liveModel).toBeNull();
-  expect(unobserved.identityState).toEqual("unattested");
-
-  // Drift: launch and observed differ and the verdict is explicit.
-  const drifted = compactActiveTeam([agent({
-    model: "gpt-5.6-sol",
-    liveModel: "gpt-5.6-luna",
-    liveEffort: "low",
-    identityState: "drift",
-  })])[0]!;
-  expect(drifted.model).toEqual("gpt-5.6-sol");
-  expect(drifted.liveModel).toEqual("gpt-5.6-luna");
-  expect(drifted.liveEffort).toEqual("low");
-  expect(drifted.identityState).toEqual("drift");
-});
-
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: "agent-maya",
@@ -138,9 +117,7 @@ describe("event-driven orchestrator lifecycle", () => {
       spawner: unusedSpawner,
       tmuxSender: sender,
     });
-    // Claude writer: Codex legacy turn-start containment (missing executionIdentity
-    // pause → queen notify) is out of scope for this idle-wake invariant.
-    db.insertAgent(agent({ tool: "claude" }));
+    db.insertAgent(agent());
     try {
       await daemon.processEvent({
         kind: "turn-start",

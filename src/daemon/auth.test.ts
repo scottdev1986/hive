@@ -15,12 +15,11 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
-import { agentStateCas, HiveDatabase } from "./db";
+import { HiveDatabase } from "./db";
 import type { LandReadiness } from "./landing";
 import { deleteAgentRow, listAuditEntries } from "./testing";
 import { readCredential, writeCredential, credentialPath } from "./credentials";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "./server";
-import { CapabilityStore } from "./capabilities";
 import type { SpawnRequest, Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-auth-test-"));
@@ -32,8 +31,8 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: `agent-${overrides.name ?? "maya"}`,
     name: "maya",
-    tool: "claude",
-    model: "sonnet",
+    tool: "codex",
+    model: "gpt-5-codex",
     category: "simple_coding",
     status: "working",
     taskDescription: "Phase 0",
@@ -47,12 +46,6 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     capabilityEpoch: 0,
     readOnly: false,
     writeRevoked: false,
-    toolSessionId: "session-auth-land",
-    executionIdentity: {
-      tool: "claude",
-      model: "sonnet",
-    },
-    identityState: "matching",
     ...overrides,
   };
 }
@@ -107,16 +100,6 @@ function harness(
     },
     readLandReadiness: async () => readiness,
     resourceRunners: { orphans: null },
-    telemetryReaders: {
-      codexIdentity: async () => ({
-        status: "observed",
-        model: "gpt-5-codex",
-        effort: "medium",
-        turnId: "t-auth-land",
-        sessionId: "session-auth-land",
-        observedAt: "2026-07-15T18:00:00.000Z",
-      }),
-    },
   });
   return { daemon, db, spawner, landed, landFailures };
 }
@@ -344,146 +327,6 @@ describe("a revoked epoch invalidates a capability", () => {
     const { token } = daemon.capabilities.mint("maya", "writer", { ttlMs: -1 });
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(false);
     expect(denials(daemon)).toContain("capability.expired");
-    await daemon.stop();
-  });
-});
-
-describe("an agent capability is bound to the exact process holder", () => {
-  test("same-name UUID reuse cannot inherit a predecessor token at the same epoch", () => {
-    const db = new HiveDatabase(":memory:");
-    let authority = {
-      id: "agent-maya-old",
-      processIncarnation: 4,
-      capabilityEpoch: 2,
-      writeRevoked: false,
-    };
-    const store = new CapabilityStore(db, () => authority);
-    const { token } = store.mint("maya", "writer", {
-      epoch: 2,
-      holder: { agentId: "agent-maya-old", processIncarnation: 4 },
-    });
-    const authenticated = store.authenticate(token);
-    expect(authenticated.ok).toBe(true);
-    if (!authenticated.ok) throw new Error(authenticated.message);
-    expect(store.authorize(authenticated.capability, {
-      action: "memory:write",
-      subject: "maya",
-      route: "/mcp:hive_memory_write",
-    }).ok).toBe(true);
-
-    authority = {
-      id: "agent-maya-successor",
-      processIncarnation: 4,
-      capabilityEpoch: 2,
-      writeRevoked: false,
-    };
-    expect(store.authorize(authenticated.capability, {
-      action: "memory:write",
-      subject: "maya",
-      route: "/mcp:hive_memory_write",
-    })).toMatchObject({ ok: false, reason: "capability.stale-epoch" });
-    db.close();
-  });
-
-  test("production credential rotation revokes the predecessor without touching the replacement", async () => {
-    const { daemon, db } = harness();
-    const predecessor = db.upsertAgent(agentRecord({ processIncarnation: 1 }));
-    const first = daemon.issueAgentCredential(predecessor, "writer");
-    expect(first).not.toBeNull();
-    if (first === null) throw new Error("predecessor credential was not issued");
-    expect(readCredential("maya")).toBe(first.token);
-
-    const replacement = db.beginAgentProcess(
-      agentStateCas(predecessor),
-      "2026-07-10T12:01:00.000Z",
-      "session-replacement",
-      0,
-      { status: "spawning" },
-    );
-    expect(replacement).not.toBeNull();
-    if (replacement === null) throw new Error("replacement process was not allocated");
-    first.rollback();
-    const second = daemon.issueAgentCredential(replacement, "writer");
-    expect(second).not.toBeNull();
-    if (second === null) throw new Error("replacement credential was not issued");
-
-    expect(second.token).not.toBe(first.token);
-    expect(readCredential("maya")).toBe(second.token);
-    expect(daemon.capabilities.authenticate(first.token)).toMatchObject({
-      ok: false,
-      reason: "capability.revoked",
-    });
-    expect(daemon.capabilities.authenticate(second.token).ok).toBe(true);
-
-    // A repeated/delayed predecessor rollback is exact-object cleanup: it
-    // cannot remove or revoke the replacement credential under the same name.
-    first.rollback();
-    expect(readCredential("maya")).toBe(second.token);
-    expect(daemon.capabilities.authenticate(second.token).ok).toBe(true);
-    await daemon.stop();
-  });
-});
-
-describe("a native app-server reader can use its scoped Hive bearer", () => {
-  test("fresh reader status and replacement control acknowledgement authenticate", async () => {
-    const { daemon, db } = harness();
-    const fresh = db.upsertAgent(agentRecord({
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5.6-sol",
-        effort: "high",
-      },
-      readOnly: true,
-      processIncarnation: 3,
-      toolSessionId: undefined,
-      identityState: "unknown",
-    }));
-    const freshToken = daemon.capabilities.mint("maya", "reader", {
-      epoch: 0,
-      holder: { agentId: fresh.id, processIncarnation: 3 },
-    }).token;
-    expect((await callTool(daemon, freshToken, "hive_status")).ok).toBe(true);
-
-    const replacement = db.upsertAgent({
-      ...fresh,
-      status: "control-paused",
-      capabilityEpoch: 1,
-      processIncarnation: 4,
-      writeRevoked: true,
-      controlMessageId: "native-control",
-    });
-    db.insertMessage({
-      id: "native-control",
-      from: "orchestrator",
-      to: "maya",
-      body: "Stop and acknowledge.",
-      createdAt: timestamp,
-      deliveredAt: timestamp,
-      priority: "critical",
-      intent: "stop",
-      state: "injected",
-      injectedAt: timestamp,
-      acknowledgedAt: null,
-      appliedAt: null,
-      deadlineAt: "2026-07-10T12:01:00.000Z",
-      alertAt: null,
-      sequence: 1,
-      idempotencyKey: null,
-      capabilityEpoch: 1,
-    });
-    const replacementToken = daemon.capabilities.mint("maya", "reader", {
-      epoch: 1,
-      holder: { agentId: replacement.id, processIncarnation: 4 },
-    }).token;
-    expect((await callTool(daemon, replacementToken, "hive_ack_message", {
-      agent: "maya",
-      messageId: "native-control",
-      capabilityEpoch: 1,
-      applied: true,
-    })).ok).toBe(true);
-    expect(db.getMessage("native-control")).toMatchObject({ state: "applied" });
     await daemon.stop();
   });
 });
@@ -734,51 +577,6 @@ describe("a descendant process inherits no reusable credential", () => {
 });
 
 describe("legitimate workflows keep working", () => {
-  test("read-only agents cannot queue or approve mutation requests", async () => {
-    const { daemon, db } = harness();
-    db.upsertAgent(agentRecord({ readOnly: true, branch: null }));
-    const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
-
-    await expect(
-      daemon.queueCodexApproval({
-        agentName: "maya",
-        description: "Run rm -rf build",
-        agentId: "agent-maya",
-        processIncarnation: 0,
-        capabilityEpoch: 0,
-      }),
-    ).rejects.toThrow(/approval for maya.*denied mechanically/);
-    expect(db.listApprovals()).toEqual([]);
-    expect(db.getAgentByName("maya")?.status).toBe("working");
-
-    await daemon.processEvent({
-      kind: "approval-request",
-      agentName: "maya",
-      timestamp: "2026-07-10T12:01:00.000Z",
-      description: "Apply a patch",
-    });
-    expect(db.listApprovals()).toEqual([]);
-    expect(db.getAgentByName("maya")?.status).toBe("working");
-
-    db.insertApproval({
-      id: "legacy-reader-mutation",
-      agentName: "maya",
-      kind: "tool-permission",
-      description: "Request workspace-write permissions",
-      status: "pending",
-      createdAt: "2026-07-10T12:02:00.000Z",
-      resolvedAt: null,
-    });
-    db.upsertAgent({ ...db.getAgentByName("maya")!, status: "awaiting-approval" });
-    expect((await callTool(daemon, token, "hive_approve", {
-      id: "legacy-reader-mutation",
-      decision: "approve",
-    })).ok).toBe(true);
-    expect(db.getApproval("legacy-reader-mutation")?.status).toBe("denied");
-    expect(db.getAgentByName("maya")?.status).toBe("idle");
-    await daemon.stop();
-  });
-
   test("the orchestrator spawns, approves, kills, and reads the global inbox", async () => {
     const { daemon, db, spawner } = harness();
     db.upsertAgent(agentRecord());
@@ -787,13 +585,7 @@ describe("legitimate workflows keep working", () => {
     expect((await callTool(daemon, token, "hive_spawn", { task: "do a thing", category: "simple_coding" })).ok).toBe(true);
     expect(spawner.requests).toHaveLength(1);
 
-    const approvalId = await daemon.queueCodexApproval({
-      agentName: "maya",
-      description: "run a command",
-      agentId: "agent-maya",
-      processIncarnation: 0,
-      capabilityEpoch: 0,
-    });
+    const approvalId = await daemon.queueCodexApproval("maya", "run a command");
     expect((await callTool(daemon, token, "hive_approvals")).ok).toBe(true);
     expect((await callTool(daemon, token, "hive_approve", { id: approvalId, decision: "approve" })).ok).toBe(true);
     expect(db.getApproval(approvalId)?.status).toBe("approved");
@@ -829,23 +621,8 @@ describe("legitimate workflows keep working", () => {
 
   test("a writer reports, talks, reads its own inbox, and lands its own branch", async () => {
     const { daemon, db, landed } = harness();
-    // This is the generic writer workflow. Codex writers are contained before
-    // launch, so use a launchable Claude writer rather than a legacy Codex row
-    // that the turn-boundary sweep must revoke.
-    const agent = db.upsertAgent(agentRecord({
-      tool: "claude",
-      model: "claude-sonnet",
-      toolSessionId: "claude-session",
-      executionIdentity: { tool: "claude", model: "claude-sonnet" },
-      identityState: undefined,
-    }));
-    const { token } = daemon.capabilities.mint("maya", "writer", {
-      epoch: 0,
-      holder: {
-        agentId: agent.id,
-        processIncarnation: agent.processIncarnation ?? 0,
-      },
-    });
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
 
     const event = await authorized(daemon, token)("http://hive/event", {
       method: "POST",

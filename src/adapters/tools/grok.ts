@@ -110,14 +110,7 @@ function grokPermissionArgs(readOnly: boolean): string[] {
 }
 
 function grokLaunchArgs(options: GrokSpawnOptions): string[] {
-  const argv = [
-    options.executable ?? "grok",
-    "--cwd",
-    resolve(options.worktreePath),
-    "--trust",
-    "-m",
-    options.model,
-  ];
+  const argv = [options.executable ?? "grok", "-m", options.model];
   if (options.effort !== undefined) {
     argv.push("--reasoning-effort", options.effort);
   }

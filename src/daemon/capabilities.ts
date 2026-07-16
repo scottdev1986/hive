@@ -35,8 +35,6 @@ export type Action =
   | "agent:recover"
   | "approval:read"
   | "approval:decide"
-  | "assignment:report"
-  | "assignment:accept"
   | "message:send"
   | "message:ack"
   | "message:read"
@@ -46,7 +44,6 @@ export type Action =
   | "memory:write"
   | "event:report"
   | "telemetry:report"
-  | "pane:input"
   | "root-token:mint"
   | "autonomy:read"
   | "autonomy:write"
@@ -68,14 +65,12 @@ const AGENT_DIRECTED: readonly Action[] = [
   "agent:mark-dead",
   "agent:recover",
   "approval:decide",
-  "assignment:accept",
 ];
 
 const OPERATOR_ACTIONS: readonly Action[] = [
   "status:read", "quota:read", "quota:write", "token-usage:read",
   "token-usage:write", "agent:spawn", "agent:kill",
   "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
-  "assignment:accept",
   "message:send", "message:ack", "message:read", "inbox:read",
   "branch:land", "memory:read", "memory:write", "event:report",
   "telemetry:report",
@@ -115,7 +110,6 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "status:read", "quota:read", "quota:write", "token-usage:read",
       "agent:spawn", "agent:kill",
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
-      "assignment:accept",
       "message:send", "message:ack", "message:read", "inbox:read",
       "memory:read", "memory:write", "event:report", "telemetry:report",
       "autonomy:read",
@@ -126,14 +120,8 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   writer: {
     actions: [
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
-      "assignment:report",
       "branch:land", "memory:read", "memory:write", "event:report",
       "telemetry:report",
-      // The agent's own app-server pane host forwards human typing with the
-      // same credential. Self-subject only, conversation-grade only — and
-      // deliberately NOT in WRITE_ACTIONS: revocation removes authority,
-      // never the human's ability to type, steer, and interrupt.
-      "pane:input",
     ],
     anySubject: [],
     oneShot: ["branch:land"],
@@ -141,10 +129,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   reader: {
     actions: [
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
-      "assignment:report",
       "memory:read", "event:report", "telemetry:report",
-      // App-server reader panes need typing exactly like writers do.
-      "pane:input",
     ],
     anySubject: [],
     oneShot: [],
@@ -174,8 +159,6 @@ export interface Capability {
   readonly issuedAt: string;
   readonly expiresAt: string;
   readonly revokedAt: string | null;
-  readonly agentId?: string | null;
-  readonly processIncarnation?: number | null;
 }
 
 export interface AuditEntry {
@@ -202,8 +185,7 @@ export type DenialReason =
   | "capability.forbidden-action"
   | "capability.foreign-subject"
   | "capability.replayed"
-  | "capability.write-revoked"
-  | "capability.no-exact-holder";
+  | "capability.write-revoked";
 
 export interface Denial {
   readonly ok: false;
@@ -265,12 +247,7 @@ export interface AuthorizeRequest {
  * is not a spawned agent (the operator and the orchestrator have no row). */
 export type AgentAuthorityLookup = (
   name: string,
-) => {
-  id?: string;
-  processIncarnation?: number;
-  capabilityEpoch: number;
-  writeRevoked: boolean;
-} | null;
+) => { capabilityEpoch: number; writeRevoked: boolean } | null;
 
 export class CapabilityStore {
   constructor(
@@ -282,11 +259,7 @@ export class CapabilityStore {
   mint(
     subject: string,
     role: Role,
-    options: {
-      epoch?: number;
-      ttlMs?: number;
-      holder?: { agentId: string; processIncarnation: number };
-    } = {},
+    options: { epoch?: number; ttlMs?: number } = {},
   ): { token: string; capability: Capability } {
     const issued = this.now();
     const id = crypto.randomUUID();
@@ -301,10 +274,6 @@ export class CapabilityStore {
         issued.getTime() + (options.ttlMs ?? DEFAULT_TTL_MS),
       ).toISOString(),
       revokedAt: null,
-      ...(options.holder === undefined ? {} : {
-        agentId: options.holder.agentId,
-        processIncarnation: options.holder.processIncarnation,
-      }),
     };
     this.db.insertCapability(capability, hashSecret(secret));
     return { token: `${TOKEN_PREFIX}.${id}.${secret}`, capability };
@@ -372,21 +341,6 @@ export class CapabilityStore {
     // a self-bound action is the caller and for an operator is someone else.
     const authorityOf = subject ?? capability.subject;
     const authority = this.agentAuthority(authorityOf);
-
-    if (
-      capability.agentId !== undefined && capability.agentId !== null &&
-      capability.processIncarnation !== undefined &&
-      capability.processIncarnation !== null &&
-      (authority === null || authority.id !== capability.agentId ||
-        authority.processIncarnation !== capability.processIncarnation ||
-        authority.capabilityEpoch !== capability.epoch)
-    ) {
-      return deny(
-        "capability.stale-epoch",
-        403,
-        `Capability belongs to a replaced agent holder for ${authorityOf}`,
-      );
-    }
 
     if (
       authority === null &&
@@ -468,18 +422,6 @@ export class CapabilityStore {
     );
   }
 
-  revoke(id: string): boolean {
-    return this.db.revokeCapability(id, this.now().toISOString());
-  }
-
-  revokeAgentHolder(agentId: string, processIncarnation: number): number {
-    return this.db.revokeCapabilitiesForAgentHolder(
-      agentId,
-      processIncarnation,
-      this.now().toISOString(),
-    );
-  }
-
   audit(entry: Omit<AuditEntry, "at">): void {
     this.db.insertAuditEntry({ ...entry, at: this.now().toISOString() });
   }
@@ -492,78 +434,6 @@ export class CapabilityStore {
       this.audit({
         route,
         action: null,
-        callerSubject: null,
-        callerRole: null,
-        capabilityId: null,
-        requestedSubject: null,
-        epoch: null,
-        decision: "deny",
-        reason: decision.reason,
-      });
-    }
-    return decision;
-  }
-
-  /**
-   * Pane-conversation authentication, for `/pane-input` and nothing else.
-   *
-   * It verifies the ORIGINAL token — id + secret — and a pane-capable role,
-   * but deliberately does NOT treat revokedAt, expiry, or epoch as reasons to
-   * refuse: those are authority facts, and pane input is conversation. A
-   * pause/resume reissue or a critical-control epoch advance rotates the
-   * holder's credential while the same rendered host keeps its launch token —
-   * a normal authentication would cut off typing exactly when the human most
-   * needs to steer or interrupt. What never relaxes is the holder itself: the
-   * token must be exact-holder bound, and the route re-proves the durable row
-   * against agentId + processIncarnation + name + driver, so a replacement
-   * incarnation's pane still refuses. Conversation ceiling only — a token
-   * accepted here has exactly the power to type into its own pane.
-   *
-   * This depends on revoked capability rows being RETAINED (revocation is an
-   * `UPDATE ... SET revokedAt`, never a delete); if rows are ever deleted,
-   * this mechanism must be revisited.
-   */
-  authenticatePaneConversation(token: string | null, route: string): Decision {
-    const decision = ((): Decision => {
-      if (token === null) {
-        return deny("capability.absent", 401, "No capability was presented");
-      }
-      const parsed = parseToken(token);
-      if (parsed === null) {
-        return deny("capability.malformed", 401, "Malformed capability token");
-      }
-      const found = this.db.getCapability(parsed.id);
-      if (found === null) {
-        return deny("capability.unknown", 401, "Unknown capability");
-      }
-      if (!secretMatches(parsed.secret, found.secretHash)) {
-        return deny("capability.unknown", 401, "Unknown capability");
-      }
-      const capability = found.capability;
-      if (capability.role !== "reader" && capability.role !== "writer") {
-        return deny(
-          "capability.forbidden-action",
-          403,
-          `Role ${capability.role} has no pane conversation`,
-        );
-      }
-      if (
-        capability.agentId === undefined || capability.agentId === null ||
-        capability.processIncarnation === undefined ||
-        capability.processIncarnation === null
-      ) {
-        return deny(
-          "capability.no-exact-holder",
-          403,
-          "The credential carries no exact holder, so Hive cannot prove which pane is typing",
-        );
-      }
-      return { ok: true, capability };
-    })();
-    if (!decision.ok) {
-      this.audit({
-        route,
-        action: "pane:input",
         callerSubject: null,
         callerRole: null,
         capabilityId: null,

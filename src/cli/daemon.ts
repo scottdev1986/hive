@@ -3,7 +3,7 @@ import { join } from "node:path";
 import { TmuxAdapter } from "../adapters/tmux";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
-import { agentStateCas, HiveDatabase } from "../daemon/db";
+import { HiveDatabase } from "../daemon/db";
 import {
   policyModelEnablement,
   retireLegacyRoutingToml,
@@ -127,21 +127,9 @@ export async function runDaemon(): Promise<void> {
   const port = readConfiguredPort();
   let daemon: HiveDaemon;
   const codexAppServer = new CodexAppServerManager({
-    onEvent: (event, holder) => daemon.processEvent(event, {
-      agentId: holder.id,
-      processIncarnation: agentStateCas(holder).processIncarnation,
-      capabilityEpoch: holder.capabilityEpoch,
-    }).then(() => undefined),
-    queueApproval: (request) => daemon.queueCodexApproval(request),
-    denyApproval: async (id) => daemon.denyCodexApproval(id),
-    // The human's dial, read live from the daemon at both the queue decision
-    // and the final allow boundary — never sampled once, never an agent claim.
-    autonomy: () => daemon.autonomyMode(),
-    // The writer mutation gate. It is deliberately keyed on the exact agent id
-    // and holder snapshot rather than the agent name: a name is reusable, and a
-    // replacement answering to the same name must never inherit the authority
-    // of the session that asked.
-    authorizeMutation: (request) => daemon.authorizeCodexMutation(request),
+    onEvent: (event) => daemon.processEvent(event),
+    queueApproval: ({ agentName, description }) =>
+      daemon.queueCodexApproval(agentName, description),
     observeRateLimits: (model, response, observedAt) =>
       quota.observeCodexRateLimits(model, response, observedAt),
   });
@@ -162,11 +150,11 @@ export async function runDaemon(): Promise<void> {
     // The layer-1 digest, built against the primary checkout's graph — that
     // is where builds land — and hard-bounded inside.
     graphifyBrief: (task) => buildGraphBrief(repoRoot, task),
-    // Only the daemon mints. The grant is bound to the exact durable process
-    // holder; provider launchers read its 0600 file into a scoped environment,
-    // so the bearer is never an argv value but is visible to that process tree.
-    issueCredential: (agent, role) =>
-      daemon.issueAgentCredential(agent, role),
+    // Only the daemon mints. The spawner asks for a credential, it never
+    // creates one, and the token is written to a 0600 file rather than handed
+    // to the agent process through its environment.
+    issueCredential: (name, role, epoch) =>
+      daemon.issueCredential(name, role, epoch),
     config,
     // Every live spawn is governed by the user's routing policy: the spawn's
     // category resolves to the user-authored chain, every link passes the

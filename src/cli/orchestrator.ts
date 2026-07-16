@@ -31,17 +31,9 @@ import {
   buildCodexMcpExclusionArgs,
   listInheritedCodexMcpServers,
 } from "../adapters/tools/mcp-scope";
-import {
-  CODEX_CAPABILITY_TOKEN_ENV,
-  codexCompatibilityRefusal,
-  probeCodexCliVersion,
-} from "../adapters/tools/codex";
+import { CODEX_CAPABILITY_TOKEN_ENV } from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
-import {
-  promptArgument,
-  writeCodexSessionBootstrap,
-} from "../daemon/launch-prompt";
 
 export type OrchestratorTool = CapabilityProvider;
 
@@ -70,12 +62,7 @@ export function buildCodexRootAuthorityCommand(
   socketPath = codexRootSocketPath(),
   codexArguments: readonly string[] = [],
   capabilityTokenFile = "",
-  developerPath = "",
-  userPath = "",
 ): string[] {
-  if (developerPath === "") {
-    throw new Error("Codex root launch requires a developer-instruction artifact");
-  }
   const shellQuote = (value: string): string =>
     `'${value.replaceAll("'", `'"'"'`)}'`;
   const remoteCommand = [
@@ -104,8 +91,6 @@ export function buildCodexRootAuthorityCommand(
   const authorityConfig = authorityConfigArguments.length === 0
     ? ""
     : ` ${authorityConfigArguments.map(shellQuote).join(" ")}`;
-  const developerOverride = ` -c ${promptArgument(developerPath)}`;
-  const initialPrompt = userPath === "" ? "" : ` ${promptArgument(userPath)}`;
   const quotedSocket = shellQuote(socketPath);
   const capabilityEnvironment = capabilityTokenFile === ""
     ? ""
@@ -115,12 +100,12 @@ export function buildCodexRootAuthorityCommand(
   return [
     "sh",
     "-lc",
-    `${capabilityEnvironment}codex app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig}${developerOverride} & authority=$!; ` +
+    `${capabilityEnvironment}codex app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
       `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
       `for attempt in $(seq 1 50); do ` +
       `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
       `test -S ${quotedSocket} || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
-      `exec ${remoteCommand}${developerOverride}${initialPrompt}`,
+      `exec ${remoteCommand}`,
   ];
 }
 
@@ -249,16 +234,6 @@ export async function buildOrchestratorDocGuidance(cwd: string): Promise<string>
   });
 }
 
-export function buildOrchestratorBrief(
-  memoryIndex = "",
-  docGuidance = "",
-  recoveryBrief = "",
-): string {
-  return [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
-    .filter((part) => part !== "")
-    .join("\n\n");
-}
-
 export function buildOrchestratorCommand(
   tool: OrchestratorTool,
   port: number,
@@ -269,7 +244,9 @@ export function buildOrchestratorCommand(
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
-  const brief = buildOrchestratorBrief(memoryIndex, docGuidance, recoveryBrief);
+  const brief = [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
+    .filter((part) => part !== "")
+    .join("\n\n");
   switch (tool) {
     case "claude": {
       const configRoot = orchestratorConfigRoot();
@@ -295,11 +272,6 @@ export function buildOrchestratorCommand(
         // `codex_apps`. Hive orchestration needs only Hive's own MCP server.
         "-c",
         "features.apps=false",
-        // Codex 0.144.4 enables internal subagents by default. A root child is
-        // outside Hive's identity, quota, and lifecycle tracking while still
-        // inheriting the root capability, so the coordinator must disable it.
-        "-c",
-        "features.multi_agent=false",
         // The root is a Hive coordinator, not a general-purpose Codex
         // session. Detach addressable MCP servers inherited from the user's
         // global config for this process only, exactly as Codex agents do.
@@ -321,6 +293,7 @@ export function buildOrchestratorCommand(
         ]),
         "--sandbox",
         "read-only",
+        brief,
       ];
     case "grok": {
       const model = probeGrokDefaultModel();
@@ -351,8 +324,6 @@ export function buildOrchestratorLaunchCommand(
   codexTokenFile = "",
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
-  codexDeveloperPath = "",
-  codexUserPath = "",
 ): string[] {
   switch (tool) {
     case "codex": {
@@ -374,8 +345,6 @@ export function buildOrchestratorLaunchCommand(
           undefined,
           codexCommand.slice(1),
           codexTokenFile,
-          codexDeveloperPath,
-          codexUserPath,
         ),
         ";", "set-option", "-g", "mouse", "on"];
     }
@@ -468,12 +437,11 @@ export async function launchOrchestrator(
       }
       break;
     }
-    case "codex": {
-      const version = await (detectVersion ?? probeCodexCliVersion)();
-      const refusal = codexCompatibilityRefusal(version);
-      if (refusal !== null) throw new Error(refusal);
+    case "codex":
+      // No version gate today: a future vendor must state its own minimum here
+      // rather than inherit Codex's silence — an ungated launch of a CLI too
+      // old for the Hive MCP server stalls instead of failing.
       break;
-    }
     case "grok":
       if (probeGrokCliVersion() === null) {
         throw new Error("the Grok orchestrator needs a working grok CLI");
@@ -516,25 +484,6 @@ export async function launchOrchestrator(
     buildMemoryIndex(cwd).catch(() => ""),
     buildOrchestratorDocGuidance(cwd).catch(() => ""),
   ]);
-  let codexDeveloperPath = "";
-  let codexUserPath = "";
-  if (tool === "codex") {
-    const artifacts = await writeCodexSessionBootstrap(
-      orchestratorTmuxSession(),
-      {
-        developerInstructions: buildOrchestratorBrief(
-          memoryIndex,
-          docGuidance,
-          recoveryBrief,
-        ),
-        ...(recoveryBrief === ""
-          ? {}
-          : { initialUserPrompt: "Resume Hive orchestration." }),
-      },
-    );
-    codexDeveloperPath = artifacts.developerPath;
-    codexUserPath = artifacts.userPath ?? "";
-  }
   const child = spawn(
     buildOrchestratorLaunchCommand(
       tool,
@@ -546,8 +495,6 @@ export async function launchOrchestrator(
       codexTokenFile,
       recoveryBrief,
       codexMcpExclusionArgs,
-      codexDeveloperPath,
-      codexUserPath,
     ),
     {
       cwd,

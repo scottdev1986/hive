@@ -1,5 +1,4 @@
 export * from "./agent";
-export * from "./assignment";
 export * from "./capability";
 export * from "./config";
 export * from "./event";

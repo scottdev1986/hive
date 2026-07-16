@@ -1312,33 +1312,6 @@ describe("pools gate the models they actually meter", () => {
     ]);
     expect(active.every((row) => row.model === "claude-fable-5")).toBe(true);
   });
-
-  test("an old statusline cannot re-key a same-name successor's reservation", async () => {
-    const { quota, db } = await service([claudeProbe(exhaustedFable)]);
-    await quota.refreshFromProviders(now, { force: true });
-    const decision = await quota.routeAndReserve({
-      agentName: "reused-name",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: await authorizeForQuotaTest([
-        { tool: "claude", model: "claude-opus-4-8" },
-      ]),
-    });
-    await quota.reconcileAgentModel(
-      "reused-name",
-      "claude-fable-5",
-      now.toISOString(),
-      "predecessor-reservation",
-    );
-    const active = db.database.query(
-      "SELECT id, model FROM quota_reservations WHERE agentName = ? AND status = 'active'",
-    ).all("reused-name") as { id: string; model: string }[];
-    expect(active).toEqual([{
-      id: decision.reservation.id,
-      model: "claude-opus-4-8",
-    }]);
-  });
 });
 
 /**

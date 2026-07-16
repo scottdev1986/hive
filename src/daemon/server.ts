@@ -28,12 +28,8 @@ import {
   readLandReadiness,
   type ReadLandReadiness,
 } from "./landing";
+import { checkBuildFreshness, type BuildFreshness } from "./build-freshness";
 import { readLiveClaudeModel } from "./live-model";
-import {
-  reconcileCodexIdentity,
-  sameObservedIdentity,
-} from "./identity-attestation";
-import { codexWriterContainment } from "./codex-containment";
 import {
   assessStrandedWork,
   listUnmergedHiveBranches,
@@ -45,10 +41,7 @@ import {
   type UnmergedBranch,
 } from "../adapters/worktrees";
 import {
-  AgentMessageSchema,
   HookEventSchema,
-  AssignmentReportStateSchema,
-  AssignmentSummarySchema,
   ControlIntentSchema,
   compactMemoryWriteResult,
   HandoffSchema,
@@ -56,21 +49,14 @@ import {
   MemoryWriteInputSchema,
   MessagePrioritySchema,
   ORCHESTRATOR_NAME,
-  attestationStateOf,
   canonicalOrchestratorName,
   isOrchestratorName,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
-  isTerminalAgentStatus,
   unknownVendor,
-  type AgentMessage,
   type AgentRecord,
-  type AssignmentRecord,
-  type DaemonHookEvent,
-  type ExecutionIdentity,
   type HookEvent,
-  type IdentityState,
   type MemoryFact,
   type MemoryScope,
   type MemoryWriteInput,
@@ -86,18 +72,8 @@ import {
   type Denial,
   type Role,
 } from "./capabilities";
-import {
-  OPERATOR_SUBJECT,
-  readCredential,
-  removeCredentialIfMatches,
-  writeCredential,
-} from "./credentials";
-import {
-  agentStateCas,
-  HiveDatabase,
-  type AgentStateCas,
-  type Approval,
-} from "./db";
+import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
+import { HiveDatabase, type Approval } from "./db";
 import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
@@ -113,17 +89,13 @@ import {
 } from "./delivery";
 import { OrchestratorRootDelivery } from "./orchestrator-root-delivery";
 import { readLiveGrokModel } from "../adapters/tools/grok";
-import { findCodexRolloutForProcess } from "../adapters/tools/codex";
 import {
   clampPct,
   type ClaudeTelemetryReader,
   type GraphifyCallCursor,
-  type CodexIdentityObservation,
   type GrokTelemetry,
   type GrokTelemetryReader,
   readClaudeTelemetry,
-  readCodexAppServerTurnIdentity,
-  readCodexObservedIdentity,
   readCodexTelemetry,
   readGraphifyCalls,
   readGrokTelemetry,
@@ -154,29 +126,17 @@ import type { QuotaService } from "./quota";
 import {
   reapOrphanCodexHosts,
   type CodexAppServerManager,
-  type CodexApprovalRequest,
-  type CodexMutationAuthorizationRequest,
-  type CodexMutationDecision,
   type ReapOrphanDependencies,
 } from "../adapters/tools/codex-app-server";
 import {
   defaultReapDependencies,
   reapCapturedTree,
-  ResumeRollbackError,
-  resumeAgentFromPauseCapture,
-  resumeTmuxSession,
   stopAgentSession,
   stopTmuxSession,
-  suspendAgentForPause,
-  suspendCapturedTree,
-  suspendTmuxSession,
-  readCodexHostPid,
   type ReapDependencies,
   type ReapOutcome,
   type SessionStopAdapter,
-  type SuspendOutcome,
 } from "./teardown";
-import type { PauseCapture } from "../schemas";
 import {
   assessResources,
   paneProcessState,
@@ -267,42 +227,6 @@ function defaultOrphanDependencies(): ReapOrphanDependencies {
   };
 }
 
-/**
- * Cross-vendor provenance verdict for the vendors whose only observation
- * surface is the live model — Claude transcripts and Grok session logs. The
- * launch and observed ids share one concrete domain (verified against real
- * rows: `executionIdentity.model` and the transcript id are both e.g.
- * `claude-fable-5`), so the comparison is exact, on MODEL ONLY: neither
- * vendor exposes an applied-effort surface, and comparing an unobservable
- * field would read as permanent drift. A failed read is `unknown` — never a
- * silently preserved stale verdict — and nothing-observed-yet is
- * `unattested`. Display-grade truth for status surfaces; never authority.
- */
-function liveModelVerdict(
-  launch: ExecutionIdentity | undefined,
-  live: string | null,
-  readFailed: boolean,
-): IdentityState {
-  if (readFailed) return "unknown";
-  if (live === null) return "unattested";
-  if (launch === undefined) return "unknown";
-  return live === launch.model ? "matching" : "drift";
-}
-
-/** The host's pane-input wire shape: one typed line or one Ctrl-C. Strict, so
- * this route can never grow approval/attestation fields by accident. */
-const PaneInputRequestSchema = z.discriminatedUnion("kind", [
-  z.strictObject({
-    agentName: z.string().min(1),
-    kind: z.literal("text"),
-    text: z.string().min(1),
-  }),
-  z.strictObject({
-    agentName: z.string().min(1),
-    kind: z.literal("interrupt"),
-  }),
-]);
-
 const SendRequestSchema = z.object({
   from: z.string().min(1),
   to: z.string().min(1),
@@ -318,16 +242,6 @@ const MessageAcknowledgementSchema = z.object({
   messageId: z.string().min(1),
   capabilityEpoch: z.number().int().nonnegative().optional(),
   applied: z.boolean().optional().default(false),
-});
-
-const AssignmentReportRequestSchema = z.strictObject({
-  agent: z.string().min(1),
-  status: AssignmentReportStateSchema,
-  summary: AssignmentSummarySchema,
-});
-
-const AssignmentAcceptanceRequestSchema = z.strictObject({
-  assignmentId: z.string().min(1),
 });
 
 /**
@@ -535,11 +449,10 @@ export interface HiveDaemonOptions {
    * lifecycle: up on start, down on stop, rebuilt-and-reloaded after each
    * landing — all fire-and-forget, never in a caller's latency. */
   graphify?: GraphifyService;
+  /** Is the binary this daemon runs older than main? Injectable so a test can
+   * exercise a stale release without building one (see build-freshness.ts). */
+  buildFreshness?: () => Promise<BuildFreshness>;
   repoRoot?: string;
-  // Non-destructive process-tree suspend/resume for a critical pause; injectable
-  // so tests can drive pause/resume without real SIGSTOP.
-  suspendProcesses?: (session: string) => Promise<SuspendOutcome>;
-  resumeProcesses?: (session: string) => Promise<void>;
   removeWorktree?: (
     repoRoot: string,
     worktreePath: string,
@@ -583,18 +496,6 @@ export interface HiveDaemonOptions {
       worktreePath: string,
       toolSessionId: string | undefined,
     ) => Promise<string | null>;
-    codexIdentity?: (
-      worktreePath: string,
-      toolSessionId: string | undefined,
-    ) => Promise<CodexIdentityObservation>;
-    codexSession?: (
-      worktreePath: string,
-      processStartedAt: string,
-    ) => Promise<string | null>;
-    /** The app-server exact-turn identity read inside the mutation gate.
-     * Injectable so CAS tests can suspend the read and mutate the holder row
-     * while it is in flight — the exact window the gate must re-prove. */
-    codexAppServerTurnIdentity?: typeof readCodexAppServerTurnIdentity;
   };
   codexControl?: Pick<
     CodexAppServerManager,
@@ -603,12 +504,8 @@ export interface HiveDaemonOptions {
     | "deliver"
     | "interrupt"
     | "denyAgentApprovals"
-    | "denyPendingMutationApprovals"
     | "disconnect"
     | "resolveApproval"
-    | "activeTurnBinding"
-    | "sessionTurnSnapshot"
-    | "paneInput"
     | "close"
   >;
   /** Memory watchdog limits; the sweep stays off when omitted so embedded
@@ -650,17 +547,6 @@ function toolResult(value: unknown, key: string, note?: string | null) {
   };
 }
 
-function assignmentStatusView(assignment: AssignmentRecord) {
-  return {
-    id: assignment.id,
-    state: assignment.state,
-    generation: assignment.generation,
-    processIncarnation: assignment.processIncarnation,
-    summary: assignment.summary,
-    updatedAt: assignment.updatedAt,
-  };
-}
-
 export class HiveDaemon {
   readonly db: HiveDatabase;
   readonly delivery: MessageDelivery;
@@ -693,16 +579,8 @@ export class HiveDaemon {
     worktreePath: string,
     toolSessionId: string | undefined,
   ) => Promise<string | null>;
-  private readonly readCodexIdentity: (
-    worktreePath: string,
-    toolSessionId: string | undefined,
-  ) => Promise<CodexIdentityObservation>;
-  private readonly readCodexProcessSession: (
-    worktreePath: string,
-    processStartedAt: string,
-  ) => Promise<string | null>;
-  private readonly readAppServerTurnIdentity: typeof readCodexAppServerTurnIdentity;
   private readonly handshake: () => ReturnType<typeof expectedDaemonHandshake>;
+  private readonly buildFreshness: () => Promise<BuildFreshness>;
   private readonly cleanupWorktree: typeof removeWorktree;
   private readonly assessStranded: NonNullable<
     HiveDaemonOptions["assessStrandedWork"]
@@ -752,19 +630,6 @@ export class HiveDaemon {
   private readonly stopTmuxProcesses: (
     session: string,
   ) => Promise<ReapOutcome>;
-  // Non-destructive halt/resume of an agent's process tree — the mechanism a
-  // pause uses to freeze a writer without terminating it. Injectable for tests.
-  private readonly suspendAgentProcesses: (
-    session: string,
-    agent?: AgentRecord,
-  ) => Promise<SuspendOutcome>;
-  private readonly resumeAgentProcesses: (
-    session: string,
-    agent?: AgentRecord,
-  ) => Promise<void>;
-  private readonly usesInjectedSuspend: boolean;
-  private readonly usesInjectedResume: boolean;
-  private readonly teardownTmux: SessionStopAdapter;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -774,15 +639,9 @@ export class HiveDaemon {
     this.spawner = options.spawner;
     this.capabilities = new CapabilityStore(this.db, (name) => {
       const record = this.db.getAgentByName(name);
-      if (record === null) return null;
-      // Terminal is independently authority-revoking: even a legacy dead row
-      // that never had writeRevoked flipped cannot authorize write/land.
-      const terminal = isTerminalAgentStatus(record.status);
-      return {
-        id: record.id,
-        processIncarnation: record.processIncarnation ?? 0,
+      return record === null ? null : {
         capabilityEpoch: record.capabilityEpoch,
-        writeRevoked: record.writeRevoked || terminal,
+        writeRevoked: record.writeRevoked,
       };
     });
     this.port = options.port ?? readConfiguredPort();
@@ -826,16 +685,6 @@ export class HiveDaemon {
             // message. Reuse the surviving process and reservation exactly.
             return;
           }
-          // A critical `pause` is non-destructive: it must NOT kill the agent or
-          // replace it with a fresh read-only process (that destroyed live
-          // context in the field). Freeze the SAME process instead — capability
-          // is already revoked by delivery — and preserve the session for an
-          // authorized reattesting resume. stop/cancel/restrict-writes keep the
-          // existing revoke-and-replace path below.
-          if (message.intent === "pause") {
-            await this.pauseAgentForControl(agent, message);
-            return;
-          }
           if (!sameControlAttempt) {
             if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
               await this.codexControl.denyAgentApprovals(agent.name);
@@ -876,11 +725,13 @@ export class HiveDaemon {
             const reason = error instanceof Error
               ? error.message
               : "control acknowledgement process failed to launch";
-            const failedAt = new Date().toISOString();
-            this.db.markAgentTerminal(current.id, failedAt, "failed", {
-              failureReason:
-                `Critical control ${message.id} restart failed: ${reason}`,
-              failedAt,
+            this.db.insertAgent({
+              ...current,
+              status: "failed",
+              writeRevoked: true,
+              failureReason: `Critical control ${message.id} restart failed: ${reason}`,
+              failedAt: new Date().toISOString(),
+              lastEventAt: new Date().toISOString(),
             });
             throw error;
           }
@@ -946,29 +797,6 @@ export class HiveDaemon {
         tmux: teardownTmux,
         reap: this.reapDependencies,
       });
-    this.usesInjectedSuspend = options.suspendProcesses !== undefined;
-    this.usesInjectedResume = options.resumeProcesses !== undefined;
-    this.teardownTmux = teardownTmux;
-    this.suspendAgentProcesses = options.suspendProcesses ??
-      (async (session, agent) => {
-        const hostPid = agent === undefined
-          ? null
-          : await readCodexHostPid(agent);
-        return suspendTmuxSession(session, {
-          tmux: teardownTmux,
-          reap: this.reapDependencies,
-        }, hostPid === null ? [] : [hostPid]);
-      });
-    this.resumeAgentProcesses = options.resumeProcesses ??
-      (async (session, agent) => {
-        const hostPid = agent === undefined
-          ? null
-          : await readCodexHostPid(agent);
-        return resumeTmuxSession(session, {
-          tmux: teardownTmux,
-          reap: this.reapDependencies,
-        }, hostPid === null ? [] : [hostPid]);
-      });
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??
       readClaudeTelemetry;
@@ -985,17 +813,9 @@ export class HiveDaemon {
         toolSessionId === undefined
           ? Promise.resolve(null)
           : readLiveGrokModel(worktreePath, toolSessionId));
-    this.readCodexIdentity = options.telemetryReaders?.codexIdentity ??
-      ((worktreePath, toolSessionId) =>
-        readCodexObservedIdentity(worktreePath, toolSessionId));
-    this.readCodexProcessSession = options.telemetryReaders?.codexSession ??
-      (async (worktreePath, processStartedAt) =>
-        (await findCodexRolloutForProcess(worktreePath, processStartedAt))
-          ?.sessionId ?? null);
-    this.readAppServerTurnIdentity =
-      options.telemetryReaders?.codexAppServerTurnIdentity ??
-        readCodexAppServerTurnIdentity;
     this.handshake = () => expectedDaemonHandshake(this.repoRoot);
+    this.buildFreshness = options.buildFreshness ??
+      (() => checkBuildFreshness(this.repoRoot));
     this.cleanupWorktree = options.removeWorktree ?? removeWorktree;
     this.assessStranded = options.assessStrandedWork ?? assessStrandedWork;
     this.listUnmergedBranches = options.listUnmergedHiveBranches ??
@@ -1010,16 +830,14 @@ export class HiveDaemon {
       db: this.db,
       tmux: this.tmux,
       port: () => this.listeningPort ?? this.port,
-      revokeCapabilities: (agent) => this.revokeExactAgentAuthority(agent),
-      reauthorizeAgent: (agent) => {
-        return this.issueAgentCredential(
-          agent,
-          agent.readOnly ? "reader" : "writer",
-        );
+      revokeCapabilities: (agentName) => {
+        this.capabilities.revokeSubject(agentName);
+        removeCredential(agentName);
       },
       stopSession: (agent) =>
         this.stopAgentProcesses(agent, () => {
-          this.revokeExactAgentAuthority(agent);
+          this.capabilities.revokeSubject(agent.name);
+          removeCredential(agent.name);
         }),
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
@@ -1074,42 +892,6 @@ export class HiveDaemon {
     }
   }
 
-  private async failClosedUnsafeResume(
-    agent: AgentRecord,
-    detail: string,
-  ): Promise<void> {
-    const now = new Date().toISOString();
-    const current = this.db.getAgentById(agent.id);
-    if (current !== null && !isTerminalAgentStatus(current.status)) {
-      this.db.updateAgentIfCurrent(agentStateCas(current), {
-        status: "stuck",
-        writeRevoked: true,
-        capabilityEpoch: current.writeRevoked
-          ? current.capabilityEpoch
-          : current.capabilityEpoch + 1,
-        failureReason:
-          `Resume rollback could not prove the process stopped: ${detail}`,
-        lastEventAt: now,
-      });
-    }
-    this.capabilities.revokeAgentHolder(
-      agent.id,
-      agent.processIncarnation ?? 0,
-    );
-    await this.delivery.send(
-      "hive-resume-guard",
-      ORCHESTRATOR_NAME,
-      `${agent.name} resume FAILED CLOSED: Hive could not prove the continued ` +
-        `process tree was stopped again (${detail}). Write/landing authority ` +
-        `is revoked and the row is stuck, not paused. Treat the process as ` +
-        `potentially running until it is killed or physically verified stopped.`,
-      {
-        idempotencyKey:
-          `unsafe-resume:${agent.id}:${agent.processIncarnation ?? 0}`,
-      },
-    ).catch(logAlertDeliveryFailure);
-  }
-
   /** Mints a credential for one subject and writes it to its 0600 file,
    * revoking whatever that subject held before. Tokens come into existence
    * only from the daemon: here at spawn, and through the single sanctioned
@@ -1128,64 +910,6 @@ export class HiveDaemon {
     });
     writeCredential(subject, token);
     return token;
-  }
-
-  /** Mint for one exact durable process holder. Rollback revokes only this
-   * capability id and removes only this token object, never a same-name
-   * successor's capability or replacement credential. */
-  issueAgentCredential(
-    agent: AgentRecord,
-    role: "reader" | "writer",
-    epoch = agent.capabilityEpoch,
-  ): { token: string; rollback: () => void } | null {
-    const expected = agentStateCas(agent);
-    if (this.db.updateAgentIfCurrent(expected, {}) === null) return null;
-    this.capabilities.revokeAgentHolder(
-      agent.id,
-      agent.processIncarnation ?? 0,
-    );
-    const { token, capability } = this.capabilities.mint(agent.name, role, {
-      epoch,
-      holder: {
-        agentId: agent.id,
-        processIncarnation: agent.processIncarnation ?? 0,
-      },
-    });
-    const rollback = () => {
-      this.capabilities.revoke(capability.id);
-      removeCredentialIfMatches(agent.name, token);
-    };
-    try {
-      writeCredential(agent.name, token);
-    } catch (error) {
-      this.capabilities.revoke(capability.id);
-      throw error;
-    }
-    if (this.db.updateAgentIfCurrent(expected, {}) === null) {
-      rollback();
-      return null;
-    }
-    return { token, rollback };
-  }
-
-  /** Revoke/remove only authority proven to belong to this exact holder. */
-  private revokeExactAgentAuthority(agent: AgentRecord): void {
-    const token = readCredential(agent.name);
-    if (token !== null) {
-      const authenticated = this.capabilities.authenticate(token);
-      if (
-        authenticated.ok && authenticated.capability.agentId === agent.id &&
-        authenticated.capability.processIncarnation ===
-          (agent.processIncarnation ?? 0)
-      ) {
-        this.capabilities.revoke(authenticated.capability.id);
-        removeCredentialIfMatches(agent.name, token);
-      }
-    }
-    this.capabilities.revokeAgentHolder(
-      agent.id,
-      agent.processIncarnation ?? 0,
-    );
   }
 
   private denied(decision: Denial): Response {
@@ -1215,29 +939,6 @@ export class HiveDaemon {
     );
   }
 
-  /** Resolve a worker capability to the exact durable holder it authenticated. */
-  private exactAgentForCapability(
-    capability: Capability,
-    name: string,
-  ): AgentRecord | null {
-    if (
-      capability.agentId === undefined || capability.agentId === null ||
-      capability.processIncarnation === undefined ||
-      capability.processIncarnation === null
-    ) {
-      return null;
-    }
-    const row = this.db.getAgentById(capability.agentId);
-    if (
-      row === null || row.name !== name ||
-      (row.processIncarnation ?? 0) !== capability.processIncarnation ||
-      row.capabilityEpoch !== capability.epoch
-    ) {
-      return null;
-    }
-    return this.db.updateAgentIfCurrent(agentStateCas(row), {});
-  }
-
   /** The MCP transport has no place for an HTTP status, so a denial becomes a
    * tool error. The message names the rule that refused, never the token. */
   private authorizeTool(
@@ -1255,78 +956,6 @@ export class HiveDaemon {
       auditAllow,
     );
     if (!decision.ok) throw new Error(decision.message);
-  }
-
-  /**
-   * The second half of Codex writer containment, for daemon-side tools that
-   * write the filesystem.
-   *
-   * The sandbox + broker gate covers what Codex runs INSIDE its sandbox. It
-   * does not cover this: an MCP tool call leaves the sandbox entirely and
-   * arrives here as an authorized HTTP request, and Hive's own MCP server is
-   * always attached to every Codex session. `memory:write` is in the writer
-   * role's action set and mutates real files under `<repo>/.hive/memory` and
-   * `~/.hive/memory` — so without this, admitting Codex writers would open a
-   * mutation path with no identity gate at all, straight past the broker.
-   *
-   * A capability answers "who is speaking"; for a Codex writer we still need
-   * "what is running", so these calls pass the same exact-holder + fresh
-   * exact-turn attestation as a brokered mutation. Non-Codex writers are
-   * untouched: their containment story is not this one.
-   */
-  private async assertCodexWriterMayMutate(
-    capability: Capability,
-    tool: string,
-  ): Promise<void> {
-    // Operator and orchestrator credentials are not agent-held; this gate is
-    // about an agent's own process, and has nothing to say about them.
-    if (capability.role !== "writer") return;
-    const refuse = (reason: string): never => {
-      throw new Error(
-        `${capability.subject} may not call ${tool}: ${reason}\n` +
-          "A writer credential must name its exact durable holder, because a Codex writer's filesystem mutations are gated against that holder's live, attested identity.",
-      );
-    };
-    // A writer credential MUST name its exact holder, and there is no name
-    // fallback. A subject name is reusable: resolving by it lets a still-valid
-    // legacy token — minted before holder binding existed, and never revoked
-    // because replacement issuance revokes by exact holder rather than by
-    // subject — land on whatever row now answers to that name. The gate below
-    // would then run perfectly correctly against the WRONG holder and borrow a
-    // same-name replacement session's attestation. `revokeAgentHolder` and the
-    // stale-epoch check are both skipped for such a token precisely because its
-    // exact fields are null, so nothing upstream catches it either.
-    //
-    // Nor can the "not Codex, nothing to do" exit come first: that is a claim
-    // about the holder, and without the exact holder we cannot establish it.
-    // Unknown is not "probably fine".
-    if (capability.agentId == null || capability.processIncarnation == null) {
-      refuse(
-        "the credential carries no exact holder (agentId/processIncarnation), so Hive cannot prove which process is calling",
-      );
-    }
-    const holder = this.db.getAgentById(capability.agentId!);
-    if (holder === null) {
-      refuse(`no holder row exists for agent id ${capability.agentId}`);
-    }
-    if ((holder!.processIncarnation ?? 0) !== capability.processIncarnation) {
-      refuse(
-        `the credential was minted for process incarnation ${capability.processIncarnation}, but ${holder!.name} is now at ${holder!.processIncarnation ?? 0}`,
-      );
-    }
-    // Proven, by exact id, to be someone this gate has nothing to say about.
-    if (holder!.tool !== "codex" || holder!.readOnly) return;
-    const decision = await this.authorizeCodexMutationForHolder(
-      holder!.name,
-      holder!.id,
-      `/mcp:${tool}`,
-    );
-    if (!decision.allowed) {
-      throw new Error(
-        `Codex writer ${holder!.name} may not call ${tool}: ${decision.reason}\n` +
-          "A Codex writer's filesystem mutations are gated per-mutation against its live, attested identity — including the ones that arrive through Hive's own MCP server rather than its sandbox.",
-      );
-    }
   }
 
   get server(): Server<undefined> | null {
@@ -1655,414 +1284,6 @@ export class HiveDaemon {
    * stuck "spawning" row to working, which is exactly the row the field
    * test saw frozen while the agent had long since landed.
    */
-  /**
-   * Fail-closed, NON-DESTRUCTIVE response to a Codex writer whose observed
-   * identity has drifted from its authorized launch identity. Order matters and
-   * is load-bearing:
-   *   1. Revoke write/landing capability FIRST, durably and atomically — a
-   *      revoked-but-still-running writer can still mutate through local shell,
-   *      so revocation alone is not enough, but it must land before the freeze
-   *      so no window exists where a stale token could land.
-   *   2. Freeze the process non-destructively: a native turn interrupt for an
-   *      app-server session, then SIGSTOP the whole process tree. The process,
-   *      rollout, thread, tmux holder, and toolSession are all preserved.
-   *   3. Wake queen with a durable report. Control success is measured by the
-   *      daemon/process state, never by an acknowledgement — a suspended
-   *      process cannot ack.
-   * The drift is durable on the row (identityState + observedIdentity + the
-   * revocation), so a daemon restart still sees a paused, revoked agent and
-   * crash recovery never resumes it into mutation.
-   */
-  /**
-   * Non-destructively freeze an agent's process tree: a provider-native turn
-   * interrupt for an app-server session, then a SIGSTOP of the whole tree. The
-   * process, rollout/thread, tmux holder, and toolSession are preserved. Shared
-   * by every pause path (identity drift and operator control). Returns the
-   * suspend outcome, or null when the suspension itself failed — either of which
-   * a caller must treat as unsafe if any process was left running.
-   */
-  /**
-   * Capture the exact pause-bound tree (tmux roots + app-server host, with
-   * stable birth identities), SIGSTOP it, and return the durable capture.
-   * Callers must persist `capture` on the agent row so resume never re-samples
-   * current PIDs.
-   */
-  private async freezeAgentProcessTree(
-    agent: AgentRecord,
-  ): Promise<{ outcome: SuspendOutcome; capture: PauseCapture } | null> {
-    if (agent.tool === "codex" && this.codexControl?.hasAgent(agent.name)) {
-      await this.codexControl.interrupt(agent).catch(() => undefined);
-    }
-    try {
-      // Prefer the injected test hook when present; production uses the
-      // birth-bound suspendAgentForPause path exclusively.
-      if (this.usesInjectedSuspend) {
-        const outcome = await this.suspendAgentProcesses(
-          agent.tmuxSession,
-          agent,
-        );
-        if (outcome.suspended.length === 0 && outcome.unstopped.length === 0) {
-          throw new Error(
-            `pause capture for ${agent.name} was empty (session missing, incomplete, or vanished)`,
-          );
-        }
-        // Tests inject suspend without a real tree; synthesize a capture from
-        // the suspended list so resume still goes through capture validation.
-        const capture: PauseCapture = {
-          agentId: agent.id,
-          agentName: agent.name,
-          tmuxSession: agent.tmuxSession,
-          toolSessionId: agent.toolSessionId ?? null,
-          processIncarnation: agent.processIncarnation ?? 0,
-          hostPid: null,
-          tree: outcome.suspended.map((entry) => ({
-            pid: entry.pid,
-            command: entry.command,
-            birth: `test-birth-${entry.pid}`,
-            role: "tmux-root" as const,
-          })),
-          capturedAt: new Date().toISOString(),
-        };
-        if (capture.tree.length === 0) {
-          throw new Error(`pause capture for ${agent.name} was empty`);
-        }
-        return { outcome, capture };
-      }
-      const requireHost = agent.tool === "codex" &&
-        this.codexControl?.hasAgent(agent.name) === true;
-      const { capture, outcome } = await suspendAgentForPause(agent, {
-        tmux: this.teardownTmux,
-        reap: this.reapDependencies,
-        readHostPid: readCodexHostPid,
-        requireAppServerHost: requireHost,
-      });
-      if (outcome.unstopped.length > 0) {
-        return { outcome, capture };
-      }
-      if (outcome.suspended.length === 0) {
-        throw new Error(
-          `pause capture for ${agent.name} was empty (session missing, incomplete, or vanished)`,
-        );
-      }
-      return { outcome, capture };
-    } catch (error) {
-      console.error(
-        `Hive could not suspend ${agent.name}'s process tree: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-      return null;
-    }
-  }
-
-  /**
-   * Non-destructive handler for a critical control whose intent is `pause`. The
-   * revoke-first is already durable when this runs: delivery's
-   * `revokeAgentCapabilities` advanced the epoch, set writeRevoked, moved the
-   * row to control-paused, and denied pending approvals in one transaction
-   * BEFORE the process is touched. This then freezes the SAME process
-   * non-destructively and binds the control to the row. It never kills the
-   * process, never spawns a replacement, and reserves no control quota — a
-   * paused agent runs no turn. A suspension that leaves any process running
-   * throws, so the control is not falsely recorded as applied.
-   */
-  private async pauseAgentForControl(
-    agent: AgentRecord,
-    message: AgentMessage,
-  ): Promise<void> {
-    const expected = agentStateCas(agent);
-    const frozen = await this.freezeAgentProcessTree(agent);
-    const unsafe = frozen === null || frozen.outcome.unstopped.length > 0;
-    const current = this.db.updateAgentIfCurrent(expected, {
-      status: unsafe ? "stuck" : "control-paused",
-      writeRevoked: true,
-      controlMessageId: message.id,
-      failureReason: unsafe
-        ? frozen === null
-          ? `Pause suspension failed for ${agent.name}; process state is unknown`
-          : `${frozen.outcome.unstopped.length} process(es) survived pause suspension`
-        : undefined,
-      ...(frozen === null ? {} : { pauseCapture: frozen.capture }),
-    });
-    if (current === null) {
-      throw new Error(
-        `Pause aborted for ${agent.name}: exact session/incarnation/authority tuple changed during freeze`,
-      );
-    }
-    if (unsafe) {
-      throw new Error(
-        frozen === null
-          ? `Pause suspension failed for ${agent.name}; the process may still be running`
-          : `${frozen.outcome.unstopped.length} process(es) survived pause suspension for ${agent.name}`,
-      );
-    }
-  }
-
-  private async pauseWriterForIdentityDrift(
-    agent: AgentRecord,
-    detail: string,
-  ): Promise<void> {
-    const nextEpoch = agent.capabilityEpoch + 1;
-    const paused = this.db.updateAgentIfCurrent(agentStateCas(agent), {
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: nextEpoch,
-      identityState: agent.identityState,
-      observedIdentity: agent.observedIdentity,
-      liveModel: agent.liveModel,
-      liveEffort: agent.liveEffort,
-    });
-    if (paused === null) {
-      return; // concurrent kill/terminal wins
-    }
-    this.revokeExactAgentAuthority(paused);
-    const frozen = await this.freezeAgentProcessTree(paused);
-    const current = this.db.updateAgentIfCurrent(agentStateCas(paused), {
-      status: frozen === null || frozen.outcome.unstopped.length > 0
-        ? "stuck"
-        : "control-paused",
-      failureReason: frozen === null
-        ? "identity guard could not verify process suspension"
-        : frozen.outcome.unstopped.length > 0
-        ? `identity guard left ${frozen.outcome.unstopped.length} process(es) running`
-        : undefined,
-      ...(frozen === null ? {} : { pauseCapture: frozen.capture }),
-    });
-    if (current === null) {
-      return; // concurrent kill won after freeze
-    }
-    const halt = frozen === null
-      ? "process suspension FAILED (see daemon log) — treat as unsafe"
-      : frozen.outcome.unstopped.length > 0
-      ? `process suspension left ${frozen.outcome.unstopped.length} process(es) still running`
-      : "process tree suspended";
-    await this.delivery.send(
-      "hive-identity-guard",
-      ORCHESTRATOR_NAME,
-      `Codex writer ${agent.name} ${current.status === "control-paused" ? "PAUSED" : "STUCK"} ` +
-        `for execution-identity drift: ${detail}. Write/landing capability ` +
-        `revoked (epoch ${nextEpoch}); ${halt}. Durable status is ${current.status}; ` +
-        (current.status === "control-paused"
-          ? "session/process/tmux/toolSession are preserved for an authorized reattesting resume."
-          : "do not call this paused: process suspension was not proven; kill or verify it physically."),
-    );
-  }
-
-  /**
-   * Remove a BROKERED app-server writer's authority without touching its
-   * conversation. `writeRevoked` flips durably; the capability epoch and
-   * credential stay current — pane input, status, messages, and reads keep
-   * authenticating — and the process is never suspended: the human must still
-   * be able to type, steer, interrupt, inspect, and recover. Landing and
-   * `memory:write` are blocked by WRITE_ACTIONS on `writeRevoked`, and every
-   * broker/MCP mutation re-proves against the row and denies, so nothing this
-   * process can do mutates the repo. Pending sandbox approvals settle as
-   * denied WITHOUT closing the session; status is deliberately untouched —
-   * turn state stays truthful and independent of authority. Physical freeze
-   * (`pauseWriterForIdentityDrift`) remains only for legacy/unbrokered writer
-   * surfaces, where a running process could mutate outside the broker.
-   */
-  private async revokeBrokeredWriterAuthority(
-    agent: AgentRecord,
-    detail: string,
-  ): Promise<void> {
-    const revoked = this.db.updateAgentIfCurrent(agentStateCas(agent), {
-      writeRevoked: true,
-      identityState: agent.identityState,
-      observedIdentity: agent.observedIdentity,
-      liveModel: agent.liveModel,
-      liveEffort: agent.liveEffort,
-    });
-    if (revoked === null) {
-      return; // concurrent kill/terminal/incarnation change wins
-    }
-    await this.codexControl?.denyPendingMutationApprovals(agent.name);
-    await this.delivery.send(
-      "hive-identity-guard",
-      ORCHESTRATOR_NAME,
-      `Codex writer ${agent.name} write authority REVOKED for app-server identity drift: ${detail}. ` +
-        `The capability epoch is unchanged and the session was NOT paused — typing, steer, and interrupt stay live — ` +
-        `while every mutation and landing denies until an authorized reattestation.`,
-    );
-  }
-
-  /**
-   * Authorized, reattesting resume of a non-destructively paused agent. It
-   * reattests the running identity and only if it now MATCHES the launch
-   * identity does it reissue a fresh capability epoch + credential, clear the
-   * revocation, SIGCONT the exact same process, and return the agent to idle. A
-   * still-drifted or unreadable identity keeps it paused — resume never returns
-   * write authority to an unattested writer. Nothing is relaunched: because the
-   * agent CLI reads its credential from a file at write time, reissuing to the
-   * same subject restores authority to the surviving process.
-   */
-  async resumeAgentAfterPause(
-    name: string,
-  ): Promise<{ resumed: boolean; identityState: IdentityState; reason: string }> {
-    const agent = this.db.getAgentByName(name);
-    if (agent === null) throw new Error(`Hive agent not found: ${name}`);
-    if (agent.status !== "control-paused") {
-      return {
-        resumed: false,
-        identityState: attestationStateOf(agent),
-        reason: `${name} is not paused (status ${agent.status})`,
-      };
-    }
-    // Codex writer authoring is contained on resume: reissuing write authority
-    // to a paused Codex writer would reattach it to no brokered session —
-    // 0.144.4 has no durable app-server resume — so the driver is unknown and
-    // the reissue is refused. The work is preserved, not discarded.
-    const containment = codexWriterContainment(agent.tool, agent.readOnly, null);
-    if (containment !== null) {
-      return {
-        resumed: false,
-        identityState: attestationStateOf(agent),
-        reason: containment,
-      };
-    }
-    let identityState: IdentityState = attestationStateOf(agent);
-    let observed = agent.observedIdentity;
-    let liveModel = agent.liveModel;
-    let liveEffort = agent.liveEffort;
-    // Reattest a Codex agent from its own rollout; a non-Codex paused agent has
-    // no identity attestation and resumes on its existing row.
-    if (agent.tool === "codex" && agent.worktreePath !== null) {
-      const launch = agent.executionIdentity;
-      if (launch === undefined) {
-        return {
-          resumed: false,
-          identityState: "unknown",
-          reason: `${name} has no immutable launch identity; resume refused`,
-        };
-      }
-      const attestation = reconcileCodexIdentity(
-        launch,
-        await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
-      );
-      identityState = attestation.identityState;
-      if (attestation.observedIdentity !== null) {
-        observed = attestation.observedIdentity;
-      }
-      if (attestation.liveModel !== null) liveModel = attestation.liveModel;
-      if (attestation.liveEffort !== null) liveEffort = attestation.liveEffort;
-      if (identityState !== "matching") {
-        this.db.updateAgentIfCurrent(agentStateCas(agent), {
-          identityState,
-          ...(observed === undefined ? {} : { observedIdentity: observed }),
-          ...(liveModel === undefined ? {} : { liveModel }),
-          ...(liveEffort === undefined ? {} : { liveEffort }),
-        });
-        return {
-          resumed: false,
-          identityState,
-          reason:
-            `reattestation is ${identityState}, not matching; write authority withheld`,
-        };
-      }
-    }
-    // Resume the EXACT pause-time capture — never re-sample current PIDs.
-    // Missing/vanished/reused/stale/replaced roots or host fail closed and
-    // leave the agent paused/revoked.
-    const capture = agent.pauseCapture;
-    if (capture === undefined) {
-      return {
-        resumed: false,
-        identityState,
-        reason:
-          "no pause capture is bound to this agent; resume refused (cannot prove same process tree)",
-      };
-    }
-    try {
-      if (this.usesInjectedResume) {
-        await this.resumeAgentProcesses(agent.tmuxSession, agent);
-      } else {
-        await resumeAgentFromPauseCapture(agent, capture, {
-          tmux: this.teardownTmux,
-          reap: this.reapDependencies,
-          readHostPid: readCodexHostPid,
-        });
-      }
-    } catch (error) {
-      if (
-        error instanceof ResumeRollbackError && !error.rollbackVerified
-      ) {
-        await this.failClosedUnsafeResume(agent, error.message);
-      }
-      return {
-        resumed: false,
-        identityState,
-        reason:
-          `exact-tree resume failed; write authority withheld: ${
-            error instanceof Error ? error.message : "unknown error"
-          }`,
-      };
-    }
-    // Final exact CAS after identity/tree/SIGCONT. Mint for this UUID/process
-    // holder at the next epoch while the row is still revoked; a failed CAS
-    // rolls back only that exact grant.
-    const nextEpoch = agent.capabilityEpoch + 1;
-    const grant = this.issueAgentCredential(
-      agent,
-      agent.readOnly ? "reader" : "writer",
-      nextEpoch,
-    );
-    const resumed = grant === null
-      ? null
-      : this.db.updateAgentIfCurrent(agentStateCas(agent), {
-      status: "idle",
-      writeRevoked: false,
-      capabilityEpoch: nextEpoch,
-      identityState,
-      controlMessageId: undefined,
-      pauseCapture: undefined,
-      ...(observed === undefined ? {} : { observedIdentity: observed }),
-      ...(liveModel === undefined ? {} : { liveModel }),
-      ...(liveEffort === undefined ? {} : { liveEffort }),
-      });
-    if (resumed === null) {
-      grant?.rollback();
-      let rollbackVerified = false;
-      let rollbackDetail = "no production process readback was available";
-      if (!this.usesInjectedResume) {
-        try {
-          const rollback = await suspendCapturedTree(
-            capture.tree.map((entry) => ({
-              pid: entry.pid,
-              command: entry.command,
-            })),
-            this.reapDependencies,
-          );
-          rollbackVerified = rollback.unstopped.length === 0;
-          rollbackDetail = rollbackVerified
-            ? "continued tree was re-stopped and read back"
-            : `${rollback.unstopped.length} process(es) remained running`;
-        } catch (error) {
-          rollbackDetail = error instanceof Error
-            ? error.message
-            : "rollback readback failed";
-        }
-      }
-      if (!rollbackVerified) {
-        await this.failClosedUnsafeResume(agent, rollbackDetail);
-      }
-      const fresh = this.db.getAgentById(agent.id);
-      return {
-        resumed: false,
-        identityState,
-        reason:
-          `resume refused after SIGCONT: row is no longer the paused incarnation ` +
-          `(status=${fresh?.status ?? "missing"}, epoch=${fresh?.capabilityEpoch ?? "?"}); ` +
-          rollbackDetail,
-      };
-    }
-    return {
-      resumed: true,
-      identityState,
-      reason:
-        "reattested matching; exact pause capture SIGCONT'd; capability reissued at a fresh epoch",
-    };
-  }
-
   async refreshToolTelemetry(): Promise<void> {
     for (const agent of this.db.listAgents()) {
       if (
@@ -2074,62 +1295,27 @@ export class HiveDaemon {
       let telemetry: ToolTelemetry | null = null;
       let claudeContext: number | null = null;
       let grokTelemetry: GrokTelemetry | null = null;
-      let codexIdentity: CodexIdentityObservation | null = null;
-      let codexSession: string | null = null;
-      let codexSessionTrusted = false;
       // The vendor switch sits outside the read's catch: a failed read is
-      // routine — the reads stay null and the update arms record what that
-      // MEANS (unknown is a finding) — but a vendor with no reader is a bug
-      // that must be heard. A failed read must never `continue` past the
-      // update arms: skipping the whole agent left every stale field standing
-      // as if it were current.
+      // routine and skips the agent, but a vendor with no reader is a bug that
+      // must be heard — swallowing it would report this agent's context off
+      // Codex's rollout parser and call the wrong number telemetry.
       switch (agent.tool) {
         case "claude":
           try {
             claudeContext = (await this
               .readClaudeTelemetry(worktree, agent.toolSessionId)).contextTokens;
           } catch {
-            claudeContext = null;
+            continue;
           }
           break;
         case "codex":
-          // The process-time rollout scan is observation for the TUI driver
-          // only, and driver — never readOnly, which is permission — decides
-          // the dispatch: an app-server session in either permission mode is
-          // invisible to the chronology scan (its session_meta.source is the
-          // editor client, not "cli"), so scanning it would overwrite an
-          // exact app-server observation with "unknown". Writers are only
-          // admissible on app-server; a legacy row without a persisted driver
-          // is guarded by its permission bit and any app-server-sourced
-          // observation it already holds.
-          if (
-            agent.codexDriver === "app-server" || !agent.readOnly ||
-            agent.observedIdentity?.source === "codex-app-server"
-          ) break;
           try {
-            codexSession = agent.processStartedAt === undefined
-              ? null
-              : await this.readCodexProcessSession(
-                worktree,
-                agent.processStartedAt,
-              );
-            codexSessionTrusted = codexSession !== null &&
-              (agent.toolSessionId === undefined ||
-                agent.toolSessionId === codexSession);
-            if (codexSessionTrusted) {
-              telemetry = await this.readCodexTelemetry(worktree, codexSession!);
-              // The running identity is a different fact from occupancy: the
-              // process-time rollout candidate records which model+effort is
-              // observed running — display grade, never write admission.
-              // Hook payloads never choose this session.
-              codexIdentity = await this.readCodexIdentity(
-                worktree,
-                codexSession!,
-              );
-            }
+            telemetry = await this.readCodexTelemetry(
+              worktree,
+              agent.toolSessionId,
+            );
           } catch {
-            codexSession = null;
-            codexSessionTrusted = false;
+            continue;
           }
           break;
         case "grok":
@@ -2139,7 +1325,7 @@ export class HiveDaemon {
               agent.toolSessionId,
             );
           } catch {
-            grokTelemetry = null;
+            continue;
           }
           break;
         default:
@@ -2196,46 +1382,18 @@ export class HiveDaemon {
           // this too, but only for agents whose statusline reports actually
           // arrive — which is a subscriber-only path — so the sweep is what
           // makes it true for everyone. A row nobody corrects is a row
-          // `hive status` lies from. The verdict comparing it to the launch
-          // identity is recorded alongside: Claude rows carry a provenance
-          // verdict exactly like Codex rows do, and a failed read writes
-          // `unknown` instead of letting a stale verdict stand.
+          // `hive status` lies from.
           if (current.worktreePath !== null) {
-            let live: string | null = null;
-            let liveReadFailed = false;
-            try {
-              live = await this.readLiveModel(
-                current.worktreePath,
-                current.toolSessionId,
-              );
-            } catch {
-              liveReadFailed = true;
-            }
+            const live = await this
+              .readLiveModel(current.worktreePath, current.toolSessionId)
+              .catch(() => null);
             if (live !== null && live !== current.liveModel) {
               updates.liveModel = live;
-            }
-            const verdict = liveModelVerdict(
-              current.executionIdentity,
-              live,
-              liveReadFailed,
-            );
-            if (verdict !== attestationStateOf(current)) {
-              updates.identityState = verdict;
             }
           }
           break;
         }
         case "codex": {
-          // Bind the discovered session for READERS only: a writer must never
-          // acquire a scan-discovered toolSessionId, because downstream
-          // reattestation paths treat a bound session as identity evidence and
-          // the scan is observation, not proof (see findCodexRolloutForProcess).
-          if (
-            codexSessionTrusted && current.toolSessionId === undefined &&
-            codexSession !== null && current.readOnly
-          ) {
-            updates.toolSessionId = codexSession;
-          }
           // The sweep writes what it *observed*, including "nothing" — a null
           // used to be skipped as "no new information", which quietly meant the
           // last number stood forever, and for an agent whose telemetry can
@@ -2254,60 +1412,6 @@ export class HiveDaemon {
           ) {
             updates.lastEventAt = telemetry.lastActivityAt;
             if (current.status === "spawning") updates.status = "working";
-          }
-          // Execution-identity attestation. The launch identity is an intention;
-          // this records what the process is *observed* running and the verdict
-          // comparing them. The observation is never synthesized from the launch
-          // request — an absent/unknown reading leaves observedIdentity alone and
-          // only marks the verdict, which fails closed for a writer.
-          // TUI readers only: an app-server row's identity (either permission
-          // mode) is the manager's exact thread+turn observation, which this
-          // TUI-scan verdict must never overwrite with "unknown".
-          if (
-            current.codexDriver !== "app-server" && current.readOnly &&
-            current.observedIdentity?.source !== "codex-app-server"
-          ) {
-            const launch = current.executionIdentity;
-            const attestation = !codexSessionTrusted
-              ? {
-                identityState: "unknown" as const,
-                observedIdentity: null,
-                liveModel: null,
-                liveEffort: null,
-              }
-              : launch === undefined
-              ? {
-                identityState: (codexIdentity?.status === "absent"
-                  ? "unattested"
-                  : "unknown") as IdentityState,
-                observedIdentity: null,
-                liveModel: null,
-                liveEffort: null,
-              }
-              : reconcileCodexIdentity(
-                launch,
-                codexIdentity ?? { status: "absent" },
-              );
-            if (attestation.identityState !== attestationStateOf(current)) {
-              updates.identityState = attestation.identityState;
-            }
-            if (
-              attestation.observedIdentity !== null &&
-              !sameObservedIdentity(
-                current.observedIdentity,
-                attestation.observedIdentity,
-              )
-            ) {
-              updates.observedIdentity = attestation.observedIdentity;
-            }
-            if (
-              attestation.liveModel !== null &&
-              attestation.liveModel !== current.liveModel
-            ) updates.liveModel = attestation.liveModel;
-            if (
-              attestation.liveEffort !== null &&
-              attestation.liveEffort !== current.liveEffort
-            ) updates.liveEffort = attestation.liveEffort;
           }
           break;
         }
@@ -2342,30 +1446,11 @@ export class HiveDaemon {
             }
           }
           if (current.worktreePath !== null) {
-            let live: string | null = null;
-            let liveReadFailed = false;
-            try {
-              live = await this.readGrokLiveModel(
-                current.worktreePath,
-                current.toolSessionId,
-              );
-            } catch {
-              liveReadFailed = true;
-            }
+            const live = await this
+              .readGrokLiveModel(current.worktreePath, current.toolSessionId)
+              .catch(() => null);
             if (live !== null && live !== current.liveModel) {
               updates.liveModel = live;
-            }
-            // Grok rows carry the same live-model provenance verdict as
-            // Claude rows. The id-domain equivalence for Grok is unverified
-            // live (no grok fixture until the discovery fix activates) — the
-            // activation checklist re-proves it.
-            const verdict = liveModelVerdict(
-              current.executionIdentity,
-              live,
-              liveReadFailed,
-            );
-            if (verdict !== attestationStateOf(current)) {
-              updates.identityState = verdict;
             }
           }
           break;
@@ -2373,35 +1458,8 @@ export class HiveDaemon {
         default:
           unknownVendor(current.tool, "refreshToolTelemetry");
       }
-      let persisted = current;
       if (Object.keys(updates).length > 0) {
-        const updated = this.db.updateAgentIfCurrent(
-          agentStateCas(current),
-          updates,
-        );
-        if (updated === null) continue;
-        persisted = updated;
-      }
-      // Fail-closed enforcement (maintenance backstop) for UNBROKERED Codex
-      // writers only: a legacy/TUI writer process could mutate outside the
-      // broker, and a scan-observed "matching" could never stand in for the
-      // process-bound attestation writers are contained on, so it freezes.
-      // App-server writers are governed structurally instead — a read-only
-      // sandbox whose every mutation is brokered per-request against the
-      // exact holder, with drift revoking authority (never the conversation)
-      // at the turn boundary.
-      if (
-        current.tool === "codex" && !current.readOnly &&
-        !current.writeRevoked && current.codexDriver !== "app-server"
-      ) {
-        const observed = updates.observedIdentity ?? persisted.observedIdentity;
-        const launch = persisted.executionIdentity;
-        const state = attestationStateOf(persisted);
-        const detail = observed === undefined
-          ? `process-bound provider session/identity is ${state}`
-          : `authorized ${launch?.model ?? current.model}/${launch?.effort ?? "?"}` +
-            `, observed ${observed.model}/${observed.effort ?? "?"}`;
-        await this.pauseWriterForIdentityDrift(persisted, detail);
+        this.db.upsertAgent({ ...current, ...updates });
       }
     }
   }
@@ -2621,33 +1679,8 @@ export class HiveDaemon {
     agent: AgentRecord,
     at?: string,
   ): Promise<void> {
-    // Reservation ids are durable ownership evidence; a name is not. Teardown
-    // may await process stop after terminalizing this row, during which a new
-    // UUID can legitimately reuse the name and reserve its own quota.
-    const owned = new Set([
-      agent.quotaReservationId,
-      agent.controlQuotaReservationId,
-    ].filter((id): id is string => id !== undefined));
-    for (const reservationId of owned) {
-      await this.quota?.cancel(reservationId, at);
-    }
-    // A control restart can reserve before it durably writes the pointer. The
-    // name lookup is safe only while this exact holder is still nonterminal:
-    // the partial unique index then makes same-name reuse impossible. Once a
-    // row is terminal, captured ids above are the only ownership evidence.
-    const current = this.db.getAgentByName(agent.name);
-    if (
-      owned.size === 0 && current?.id === agent.id &&
-      (current.processIncarnation ?? 0) === (agent.processIncarnation ?? 0) &&
-      current.capabilityEpoch === agent.capabilityEpoch &&
-      !isTerminalAgentStatus(current.status)
-    ) {
-      while (true) {
-        const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
-        if (held === null || held === undefined) break;
-        await this.quota?.cancel(held.id, at);
-      }
-    }
+    const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
+    if (held !== null && held !== undefined) await this.quota?.cancel(held.id, at);
   }
 
   /**
@@ -2681,7 +1714,6 @@ export class HiveDaemon {
       discardWork?: boolean;
       failureReason?: string;
       at?: string;
-      expected?: AgentStateCas;
     } = {},
   ): Promise<{
     agent: AgentRecord;
@@ -2700,43 +1732,18 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
-    // Make the terminal reap intent durable BEFORE the process teardown is
-    // observable. A recovery sweep that races the teardown must read a closed
-    // row and refuse to resurrect a deliberately reaped agent — the incident
-    // where a finished, clean agent killed with removeWorktree was relaunched
-    // as a crash recovery. The recovery sweep additionally re-proves this row
-    // is not closed immediately before any relaunch.
+    const reaped = await this.stopAgentProcesses(agent, () => {
+      this.capabilities.revokeSubject(agent.name);
+      removeCredential(agent.name);
+    });
     const timestamp = options.at ?? new Date().toISOString();
-    const killed = options.expected === undefined
-      ? this.db.markAgentDead(agent.id, timestamp, options.failureReason)
-      : isTerminalAgentStatus(options.expected.status)
-      ? this.db.updateTerminalAgentIfCurrent(options.expected, {})
-      : this.db.markAgentTerminalIfCurrent(
-        options.expected,
-        timestamp,
-        "dead",
-        { failureReason: options.failureReason },
-      );
+    const killed = this.db.markAgentDead(
+      agent.id,
+      timestamp,
+      options.failureReason,
+    );
     if (killed === null) {
-      throw new Error(
-        options.expected === undefined
-          ? `Hive agent not found: ${agent.name}`
-          : `Exact agent state changed before automatic terminalization of ${agent.name}; teardown refused`,
-      );
-    }
-    // Revoke in-memory capability and on-disk credential immediately after the
-    // durable terminal mark (which already bumped epoch + writeRevoked). Do not
-    // wait for process-tree capture — that window is the durable crash hole.
-    this.revokeExactAgentAuthority(killed);
-    let reaped: ReapOutcome;
-    try {
-      reaped = await this.stopAgentProcesses(killed);
-    } catch (error) {
-      // Teardown could not be verified. Terminal truth and revoked authority
-      // stay: never restore the pre-kill live row or re-issue credentials. A
-      // still-running process is credential-less; recovery will not relaunch a
-      // deliberately closed agent.
-      throw error;
+      throw new Error(`Hive agent not found: ${agent.name}`);
     }
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
@@ -2841,10 +1848,11 @@ export class HiveDaemon {
       }
       cleaned.worktreePath = agent.worktreePath;
       cleaned.branch = agent.branch;
-      updated = this.db.updateTerminalAgentIfCurrent(agentStateCas(updated), {
+      updated = this.db.upsertAgent({
+        ...updated,
         worktreePath: null,
         branch: null,
-      }) ?? updated;
+      });
     }
 
     // Reported last, so it reports what happened: a discard deletes the branch
@@ -3063,10 +2071,7 @@ export class HiveDaemon {
         continue;
       }
       try {
-        await this.killAgentTeardown(record, {
-          removeWorktree: true,
-          expected: agentStateCas(record),
-        });
+        await this.killAgentTeardown(record, { removeWorktree: true });
         await this.delivery.send(
           "hive-lifecycle",
           ORCHESTRATOR_NAME,
@@ -3173,25 +2178,6 @@ export class HiveDaemon {
         `Cannot land ${name}: it was launched read-only and has no landing authority.`,
       );
     }
-    // A Codex writer may land only from the brokered app-server driver, and
-    // only while its own identity still attests for the exact turn that is
-    // asking. A Codex writer with no live brokered session — a TUI writer, a
-    // recovered or resumed one, a finished session — has no landing authority:
-    // there is nothing to attest against, and unknown is not permission.
-    if (agent.tool === "codex") {
-      const decision = await this.authorizeCodexLanding(agent);
-      if (!decision.allowed) {
-        throw new Error(
-          `Cannot land ${name}: ${decision.reason}\n` +
-            `Fix: have a non-Codex integrator revalidate and land this preserved branch.`,
-        );
-      }
-    }
-    if (isTerminalAgentStatus(agent.status)) {
-      throw new Error(
-        `Cannot land ${name}: its status is ${agent.status} (terminal). A terminal agent has no landing authority.`,
-      );
-    }
     if (agent.writeRevoked) {
       throw new Error(
         `Cannot land ${name}: its write authority was revoked by a critical control message, so it may not merge.\n` +
@@ -3204,63 +2190,12 @@ export class HiveDaemon {
           `Fix: call hive_land again with capabilityEpoch ${agent.capabilityEpoch}.`,
       );
     }
-    // Final CAS immediately before Git. Codex writers were refused above;
-    // Claude/Grok still require the exact row to remain current through every
-    // later lease and process boundary.
-    const authorityRow = agent;
-    const finalRow = this.db.updateAgentIfCurrent(
-      agentStateCas(authorityRow),
-      {},
-    );
-    if (finalRow === null || finalRow.branch === null) {
-      const current = this.db.getAgentById(agent.id);
-      throw new Error(
-        `Cannot land ${name}: final pre-Git authority check failed ` +
-          `(status=${current?.status ?? "missing"}, epoch=${current?.capabilityEpoch ?? "?"}, ` +
-          `revoked=${current?.writeRevoked ?? "?"}, ` +
-          `processIncarnation=${current?.processIncarnation ?? "?"}).`,
-      );
-    }
     const operation = await this.machineMutations?.beginOperation("landing");
-    const authoritySnapshot = agentStateCas(finalRow);
-    const branch = finalRow.branch;
-    const assertLandAuthority = () => {
-      const row = this.db.updateAgentIfCurrent(
-        authoritySnapshot,
-        {},
-      );
-      if (row === null) {
-        const current = this.db.getAgentById(authoritySnapshot.id);
-        throw new Error(
-          `Cannot land ${name}: authority/incarnation check failed at the Git boundary ` +
-            `(status=${current?.status ?? "missing"}, epoch=${current?.capabilityEpoch ?? "?"}, ` +
-            `processIncarnation=${current?.processIncarnation ?? "?"}, ` +
-            `session=${current?.toolSessionId ?? "?"}).`,
-        );
-      }
-    };
-    // The Git boundary. `assertLandAuthority` re-CASes the holder row, but a
-    // row CAS cannot see an identity that drifted: for a Codex writer the
-    // provider's applied model/effort must be re-read HERE, at the merge, not
-    // before the landing lease (which waits up to 30s) and not before the
-    // diagnosis and collision cleanup that follow it. Everything checked
-    // earlier describes a repo and a process that WERE.
-    const attestCodexAtMergeBoundary = async (): Promise<void> => {
-      if (finalRow.tool !== "codex") return;
-      const reattested = await this.authorizeCodexLanding(finalRow);
-      if (!reattested.allowed) {
-        throw new Error(
-          `Cannot land ${name}: Codex reattestation failed at the Git boundary — ${reattested.reason}`,
-        );
-      }
-    };
     try {
-      assertLandAuthority();
-      await attestCodexAtMergeBoundary();
-      const landed = await this.land(this.repoRoot, branch, {
-        preMergeAttest: attestCodexAtMergeBoundary,
-        preMergeCheck: assertLandAuthority,
-      });
+      const landed = await this.land(this.repoRoot, agent.branch);
+      // The graph tracks main, and this is the one choke point every landing
+      // passes through. Fire-and-forget: the merge result is already decided
+      // and a graph rebuild must never appear in landing latency.
       this.graphify?.scheduleRebuild();
       return landed;
     } finally {
@@ -3291,225 +2226,36 @@ export class HiveDaemon {
     return message;
   }
 
-  /**
-   * Authorize ONE Codex writer mutation. This is the authority the whole Codex
-   * writer feature rests on, so every answer that is not a proven yes is no.
-   *
-   * It re-reads the durable holder row by id (never by name — a same-name
-   * replacement is a different holder), requires the session's snapshot to
-   * still be the current one, requires live write authority, and requires the
-   * provider's own APPLIED identity for this exact thread and turn to match the
-   * immutable launch identity. `unattested`/`unknown`/`drift` are all denials:
-   * an identity we could not read is not an identity that matched.
-   *
-   * Called once before the approval is queued and again immediately before the
-   * allow response — the second call is what closes the TOCTOU window.
-   */
-  async authorizeCodexMutation(
-    request: CodexMutationAuthorizationRequest,
-  ): Promise<CodexMutationDecision> {
-    const deny = (reason: string): CodexMutationDecision => ({
-      allowed: false,
-      reason: `Codex mutation denied for ${request.agentName} (${request.method}): ${reason}`,
-    });
-    const staleHolder = (agent: AgentRecord | null): string | null => {
-      if (agent === null) return "no holder row for that agent id";
-      if (agent.name !== request.agentName) {
-        return "the holder for that id no longer answers to this name";
-      }
-      if ((agent.processIncarnation ?? 0) !== request.processIncarnation) {
-        return "process incarnation changed since this session started";
-      }
-      if (agent.capabilityEpoch !== request.capabilityEpoch) {
-        return "capability epoch changed since this session started";
-      }
-      if (agent.tool !== "codex") return "holder is not a Codex agent";
-      // The durable row must say the CURRENT incarnation launched on the
-      // brokered driver — never inferred from a name-keyed session existing.
-      if (agent.codexDriver !== "app-server") {
-        return "holder's current incarnation is not on the app-server driver";
-      }
-      if (agent.readOnly) return "holder is read-only";
-      if (agent.writeRevoked) return "holder's write authority is revoked";
-      if (isTerminalAgentStatus(agent.status)) {
-        return `holder status is ${agent.status} (terminal)`;
-      }
-      if (agent.worktreePath === null) return "holder has no worktree";
-      if (agent.executionIdentity === undefined) {
-        return "holder has no immutable launch identity to compare against";
-      }
-      return null;
-    };
-    const agent = this.db.getAgentById(request.agentId);
-    const stale = staleHolder(agent);
-    if (stale !== null) return deny(stale);
-    // The provider's applied identity for THIS thread's turn, read from the
-    // rollout the app-server itself named. Absent/unknown never becomes a pass.
-    const observation = await this.readAppServerTurnIdentity(
-      request.rolloutPath,
-      agent!.worktreePath!,
-      request.turnId,
-    );
-    // The identity read awaited: revocation, replacement, a driver flip,
-    // terminalization, or an epoch advance during that await must not be
-    // authorized from the stale pre-await row. Re-fetch the holder and
-    // re-prove the same facts synchronously before any allow.
-    const current = this.db.getAgentById(request.agentId);
-    const drifted = staleHolder(current);
-    if (drifted !== null) {
-      return deny(
-        `${drifted} — the holder changed while the identity read was in flight`,
-      );
-    }
-    const attestation = reconcileCodexIdentity(
-      current!.executionIdentity!,
-      observation,
-      "codex-app-server",
-    );
-    if (attestation.identityState !== "matching") {
-      return deny(
-        `applied identity for turn ${request.turnId} is ${attestation.identityState}, not a match for the launch identity`,
-      );
-    }
-    return { allowed: true };
-  }
-
-  /**
-   * Landing authority for a Codex writer: the same gate its mutations pass,
-   * bound to the live turn that is asking to land.
-   *
-   * The session is looked up by name, so it must prove it belongs to `holderId`
-   * rather than being handed that id and echoing it back — a name is reusable,
-   * and a stale same-name session must not be able to answer for a replacement
-   * row.
-   */
-  private async authorizeCodexMutationForHolder(
+  async queueCodexApproval(
     agentName: string,
-    holderId: string,
-    method: string,
-  ): Promise<CodexMutationDecision> {
-    const binding = await this.codexControl?.activeTurnBinding(agentName) ??
-      null;
-    if (binding === null) {
-      return {
-        allowed: false,
-        reason:
-          `${agentName} has no live brokered Codex app-server turn to attest against, so Hive cannot prove which identity is asking.`,
-      };
-    }
-    // The session's own claim about whose it is, checked against the holder we
-    // actually mean to authorize.
-    if (binding.agentId !== holderId) {
-      return {
-        allowed: false,
-        reason:
-          `the live Codex session answering to ${agentName} belongs to holder ${binding.agentId}, not ${holderId} — a replacement cannot inherit its predecessor's session.`,
-      };
-    }
-    const decision = await this.authorizeCodexMutation({ ...binding, method });
-    if (!decision.allowed) return decision;
-    // The authorization awaited; the turn can have completed or the session
-    // been replaced meanwhile. Re-prove the exact same live binding
-    // synchronously — no transport round trip — before this answer stands.
-    const now = this.codexControl?.sessionTurnSnapshot(agentName) ?? null;
-    if (
-      now === null || now.closed || now.agentId !== binding.agentId ||
-      now.processIncarnation !== binding.processIncarnation ||
-      now.threadId !== binding.threadId || now.turnId !== binding.turnId
-    ) {
-      return {
-        allowed: false,
-        reason:
-          `the live Codex turn for ${agentName} ended or changed while authorization was in flight — the decision no longer binds to the turn that asked.`,
-      };
-    }
-    return decision;
-  }
-
-  /** Landing authority for a Codex writer, bound to the live turn asking. */
-  private async authorizeCodexLanding(
-    agent: AgentRecord,
-  ): Promise<CodexMutationDecision> {
-    return await this.authorizeCodexMutationForHolder(
-      agent.name,
-      agent.id,
-      "branch:land",
-    );
-  }
-
-  /** The live daemon-owned autonomy dial, for the mutation broker. Absent
-   * control (embedded daemons, tests) reads as sandboxed — fail-closed: no
-   * dial is never a license to auto-allow. */
-  autonomyMode(): "sandboxed" | "dangerous" {
-    return this.autonomy?.get() ?? "sandboxed";
-  }
-
-  /** Mark a queued Codex approval denied because it can no longer be
-   * delivered. Without this the row sits pending in `hive_approvals` and a
-   * human can still "approve" it into a decision nobody receives. The agent's
-   * status is un-parked too: an interrupt or turn completion that settles the
-   * approval must not leave the row reading `awaiting-approval` forever. */
-  denyCodexApproval(id: string): void {
-    const approval = this.db.resolveApproval(
-      id,
-      "denied",
-      new Date().toISOString(),
-    );
-    if (approval === null) return;
-    const agent = this.db.getAgentByName(approval.agentName);
-    if (
-      agent?.status === "awaiting-approval" &&
-      !this.db.listApprovals().some((row) =>
-        row.agentName === approval.agentName && row.status === "pending"
-      )
-    ) {
-      this.db.upsertAgent({
-        ...agent,
-        status: this.codexControl?.isTurnActive(approval.agentName)
-          ? "working"
-          : "idle",
-      });
-    }
-  }
-
-  async queueCodexApproval(request: CodexApprovalRequest): Promise<string> {
+    description: string,
+  ): Promise<string> {
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     this.db.transaction(() => {
-      // Validated INSIDE the transaction, atomically with the insert: a
-      // pending human approval must never appear for a holder that is no
-      // longer exactly the one whose session asked, nor after write
-      // revocation — a ghost row would sit in `hive_approvals` waiting for a
-      // human to approve an authority that is already gone.
-      const agent = this.db.getAgentById(request.agentId);
-      if (
-        agent === null || agent.name !== request.agentName ||
-        (agent.processIncarnation ?? 0) !== request.processIncarnation ||
-        agent.capabilityEpoch !== request.capabilityEpoch ||
-        agent.readOnly || agent.writeRevoked ||
-        isTerminalAgentStatus(agent.status)
-      ) {
-        throw new Error(
-          `Cannot queue a mutation approval for ${request.agentName}: the exact holder is gone, changed, revoked, or read-only; the request is denied mechanically.`,
-        );
-      }
       this.db.insertApproval({
         id,
-        agentName: request.agentName,
+        agentName,
         // The description is the command Codex wants to run (`describeApproval`,
         // src/adapters/tools/codex-app-server.ts) — the thing being decided.
         // Never trimmed.
         kind: "tool-permission",
-        description: request.description,
+        description,
         status: "pending",
         createdAt,
         resolvedAt: null,
       });
-      this.db.upsertAgent({
-        ...agent,
-        status: "awaiting-approval",
-        lastEventAt: createdAt,
-      });
+      const agent = this.db.getAgentByName(agentName);
+      if (
+        agent !== null && agent.status !== "dead" && agent.status !== "done" &&
+        agent.status !== "failed"
+      ) {
+        this.db.upsertAgent({
+          ...agent,
+          status: agent.writeRevoked ? "control-paused" : "awaiting-approval",
+          lastEventAt: createdAt,
+        });
+      }
     });
     return id;
   }
@@ -3554,9 +2300,6 @@ export class HiveDaemon {
     // one of them authenticates first. See the capability rights matrix.
     if (url.pathname === "/event" && request.method === "POST") {
       return this.receiveEvent(request);
-    }
-    if (url.pathname === "/pane-input" && request.method === "POST") {
-      return this.receivePaneInput(request);
     }
     if (url.pathname === "/statusline" && request.method === "POST") {
       return this.receiveStatusline(request);
@@ -3669,26 +2412,18 @@ export class HiveDaemon {
       false,
     );
     if (!decision.ok) return this.denied(decision);
-    let agent = this.exactAgentForCapability(
-      authenticated.capability,
-      parsed.data.agent,
-    );
+    const agent = this.db.getAgentByName(parsed.data.agent);
     if (agent === null) {
       return json(
-        { error: `Statusline holder changed or is not exactly bound: ${parsed.data.agent}` },
-        { status: 409 },
+        { error: `Hive agent not found: ${parsed.data.agent}` },
+        { status: 404 },
       );
     }
     if (
       parsed.data.effort !== undefined &&
       (agent.tool === "claude" || agent.tool === "grok")
     ) {
-      agent = await this.reconcileClaudeEffort(agent, parsed.data.effort);
-      if (agent === null) {
-        return json({ error: "Statusline holder changed during effort reconciliation" }, {
-          status: 409,
-        });
-      }
+      await this.reconcileClaudeEffort(agent, parsed.data.effort);
     }
     // Claude's own occupancy figure, landed on the row exactly as measured —
     // and the window it was measured against. The window is the fact the
@@ -3700,30 +2435,17 @@ export class HiveDaemon {
       parsed.data.contextUsedPct !== undefined ||
       parsed.data.contextWindow !== undefined
     ) {
-      agent = this.reconcileContext(
-        agent,
+      this.reconcileContext(
+        agent.name,
         parsed.data.contextUsedPct,
         parsed.data.contextWindow,
       );
-      if (agent === null) {
-        return json({ error: "Statusline holder changed during context reconciliation" }, {
-          status: 409,
-        });
-      }
     }
     // Bind this observation to the model the agent is *running*, not the one it
     // was spawned with. `agent.model` is a spawn-time intention that a `/model`
     // inside the session silently invalidates, and quota charged to a model
     // nobody is running is quota charged to nobody.
-    const modelResult = await this.reconcileModel(agent);
-    if (modelResult === null) {
-      return json(
-        { error: `Statusline agent/session changed while telemetry was being read for ${agent.name}.` },
-        { status: 409 },
-      );
-    }
-    agent = modelResult.agent;
-    const model = modelResult.model;
+    const model = await this.reconcileModel(agent);
     const observation = await this.quota?.observeStatusline(
       { tool: agent.tool, model },
       {
@@ -3743,17 +2465,9 @@ export class HiveDaemon {
         // disagree.
         agent: agent.name,
         model,
-        reservationId: agent.quotaReservationId ?? null,
-        acceptReservationRekey: (reservations) => {
-          const replacement = reservations[0];
-          if (replacement === undefined) return false;
-          const updates = replacement.purpose === "control"
-            ? { controlQuotaReservationId: replacement.id }
-            : { quotaReservationId: replacement.id };
-          return this.db.updateAgentIfCurrent(agentStateCas(agent), updates) !== null;
-        },
       },
     ) ?? null;
+    this.followReservationRekey(agent.name);
     return json({ observation });
   }
 
@@ -3765,33 +2479,40 @@ export class HiveDaemon {
   private async reconcileClaudeEffort(
     agent: AgentRecord,
     observedEffort: string,
-  ): Promise<AgentRecord | null> {
-    const current = agent;
-    if (current.tool !== "claude" && current.tool !== "grok") return current;
+  ): Promise<void> {
+    const current = this.db.getAgentByName(agent.name);
+    if (
+      current === null ||
+      (current.tool !== "claude" && current.tool !== "grok")
+    ) return;
     const identity = current.executionIdentity;
     if (identity === undefined) {
       if (current.tool === "grok") {
         console.error(
           `Cannot reconcile Grok effort for ${current.name}: execution identity is absent`,
         );
-        return current;
+        return;
       }
-      if (current.model === "default") return current;
-      return this.db.updateAgentIfCurrent(agentStateCas(current), {
+      if (current.model === "default") return;
+      this.db.upsertAgent({
+        ...current,
         executionIdentity: {
           tool: "claude",
           model: current.model,
           effort: observedEffort,
         },
       });
+      return;
     }
-    if (identity.tool !== current.tool) return current;
+    if (identity.tool !== current.tool) return;
     if (identity.effort === undefined) {
-      return this.db.updateAgentIfCurrent(agentStateCas(current), {
+      this.db.upsertAgent({
+        ...current,
         executionIdentity: { ...identity, effort: observedEffort },
       });
+      return;
     }
-    if (identity.effort === observedEffort) return current;
+    if (identity.effort === observedEffort) return;
 
     const description =
       `Execution effort drifted from immutable launch value ${identity.effort} ` +
@@ -3799,7 +2520,7 @@ export class HiveDaemon {
     const alreadyRecorded = this.db.listEvents(current.name).some((event) =>
       event.kind === "effort-drift" && event.description === description
     );
-    if (alreadyRecorded) return current;
+    if (alreadyRecorded) return;
     const timestamp = new Date().toISOString();
     this.db.insertEvent({
       kind: "effort-drift",
@@ -3817,7 +2538,6 @@ export class HiveDaemon {
           `effort-drift:${current.id}:${identity.effort}:${observedEffort}`,
       },
     ).catch(() => undefined);
-    return this.db.updateAgentIfCurrent(agentStateCas(current), {});
   }
 
   /**
@@ -3836,28 +2556,42 @@ export class HiveDaemon {
    * Land Claude Code's own occupancy figure and its measured context window
    * onto the agent row.
    *
-   * Every write uses the exact process/authority tuple captured when the
-   * statusline request was authorized. A replacement process wins the CAS.
+   * Re-reads before writing for the same reason `followReservationRekey`
+   * does: the sweep and this handler both land on this row, and a stale
+   * `agent` captured earlier in the request would clobber a concurrent
+   * update instead of merging with it.
    */
   private reconcileContext(
-    agent: AgentRecord,
+    name: string,
     contextUsedPct: number | undefined,
     contextWindow: number | undefined,
-  ): AgentRecord | null {
-    const updates: {
-      contextPct?: number | null;
-      contextWindow?: number;
-    } = {};
-    if (contextUsedPct !== undefined && agent.contextPct !== contextUsedPct) {
+  ): void {
+    const current = this.db.getAgentByName(name);
+    if (current === null) return;
+    const updates: Partial<AgentRecord> = {};
+    if (contextUsedPct !== undefined && current.contextPct !== contextUsedPct) {
       updates.contextPct = contextUsedPct;
     }
-    if (contextWindow !== undefined && agent.contextWindow !== contextWindow) {
+    if (contextWindow !== undefined && current.contextWindow !== contextWindow) {
       updates.contextWindow = contextWindow;
     }
     if (Object.keys(updates).length > 0) {
-      return this.db.updateAgentIfCurrent(agentStateCas(agent), updates);
+      this.db.upsertAgent({ ...current, ...updates });
     }
-    return this.db.updateAgentIfCurrent(agentStateCas(agent), {});
+  }
+
+  private followReservationRekey(name: string): void {
+    const held = this.quota?.ledger.getActiveReservationForAgent(name);
+    if (held === undefined || held === null) return;
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) return;
+    if (held.purpose === "control") {
+      if (agent.controlQuotaReservationId === held.id) return;
+      this.db.upsertAgent({ ...agent, controlQuotaReservationId: held.id });
+      return;
+    }
+    if (agent.quotaReservationId === held.id) return;
+    this.db.upsertAgent({ ...agent, quotaReservationId: held.id });
   }
 
   /**
@@ -3877,22 +2611,13 @@ export class HiveDaemon {
    * born of conflating an intention with an observation; the fix does not repeat
    * it in the other direction.
    *
-   * For Claude and Grok, no observation — a session that has not answered yet —
-   * leaves `liveModel` untouched and the launch model stands. An unknown model
-   * is unknown, never a guess. Codex statusline-shaped requests never infer a
-   * model; provider rollout identity is handled by the separate fail-closed
-   * attestation sweep.
+   * No observation — a Codex rollout, which records no model name, or a Claude
+   * session that has not answered yet — leaves `liveModel` untouched, and the
+   * launch model stands. An unknown model is unknown, never a guess.
    */
-  private async reconcileModel(
-    agent: AgentRecord,
-  ): Promise<{ model: string; agent: AgentRecord } | null> {
+  private async reconcileModel(agent: AgentRecord): Promise<string> {
     const known = agent.liveModel ?? agent.model;
-    const stillCurrent = (): AgentRecord | null =>
-      this.db.updateAgentIfCurrent(agentStateCas(agent), {});
-    if (agent.worktreePath === null) {
-      const current = stillCurrent();
-      return current === null ? null : { model: known, agent: current };
-    }
+    if (agent.worktreePath === null) return known;
 
     let live: string | null;
     switch (agent.tool) {
@@ -3907,30 +2632,20 @@ export class HiveDaemon {
           .catch(() => null);
         break;
       case "codex":
-        // Attested by refreshToolTelemetry from the newest turn_context, not
-        // from this statusline-shaped path.
-        {
-          const current = stillCurrent();
-          return current === null ? null : { model: known, agent: current };
-        }
+        return known;
       default:
         return unknownVendor(agent.tool, "live model reconciliation");
     }
-    if (live === null) {
-      const current = stillCurrent();
-      return current === null ? null : { model: known, agent: current };
-    }
+    if (live === null) return known;
     if (live !== agent.liveModel) {
-      const updated = this.db.updateAgentIfCurrent(agentStateCas(agent), {
-        liveModel: live,
-      });
-      if (updated === null) return null;
-      return { model: live, agent: updated };
-    } else {
-      const current = stillCurrent();
-      if (current === null) return null;
-      return { model: live, agent: current };
+      // Re-read before writing: the sweep and this handler both land here, and a
+      // hook event may have advanced the row under us.
+      const current = this.db.getAgentById(agent.id);
+      if (current !== null) {
+        this.db.upsertAgent({ ...current, liveModel: live });
+      }
     }
+    return live;
   }
 
   /**
@@ -4338,63 +3053,8 @@ export class HiveDaemon {
     }
   }
 
-  private enqueueAssignmentRootMessage(
-    assignment: AssignmentRecord,
-    kind: "unfinished-idle" | "blocked" | "reported-complete",
-    createdAt: string,
-  ): AgentMessage {
-    const idempotencyKey =
-      `assignment:${kind}:${assignment.id}:${assignment.generation}`;
-    const existing = this.db.findMessageByIdempotency(
-      "hive-assignment",
-      idempotencyKey,
-    );
-    if (existing !== null) return existing;
-    const body = kind === "unfinished-idle"
-      ? `ASSIGNMENT UNFINISHED-IDLE: agent=${assignment.agentName} ` +
-        `assignment=${assignment.id} generation=${assignment.generation} ` +
-        `state=${assignment.state}. Its turn ended while assigned work remained open. ` +
-        "Send a follow-up to this same live agent; Git, landing, and worktree cleanliness do not close assignments."
-      : kind === "blocked"
-      ? `ASSIGNMENT BLOCKED: agent=${assignment.agentName} ` +
-        `assignment=${assignment.id} generation=${assignment.generation}. ` +
-        "Inspect its bounded structured summary with hive_status, then send a follow-up to this same live agent when the blocker is resolved."
-      : `ASSIGNMENT REPORTED COMPLETE: agent=${assignment.agentName} ` +
-        `assignment=${assignment.id} generation=${assignment.generation}. ` +
-        `Inspect its bounded structured summary with hive_status. The assignment remains open until queen/operator accepts it with ` +
-        `hive_accept_assignment assignmentId=${assignment.id}; a follow-up instead keeps it active.`;
-    return this.db.insertMessage(AgentMessageSchema.parse({
-      id: crypto.randomUUID(),
-      from: "hive-assignment",
-      to: ORCHESTRATOR_NAME,
-      body,
-      createdAt,
-      deliveredAt: null,
-      priority: "normal",
-      intent: "instruction",
-      state: "queued",
-      deadlineAt: null,
-      sequence: this.db.nextMessageSequence(ORCHESTRATOR_NAME),
-      idempotencyKey,
-      capabilityEpoch: null,
-    }));
-  }
-
-  async processEvent(
-    event: DaemonHookEvent,
-    holder?: {
-      agentId: string;
-      processIncarnation: number;
-      capabilityEpoch: number;
-    },
-  ): Promise<AgentRecord | null> {
-    // `appServerTurn` is privileged in-process evidence from the app-server
-    // manager. It is split off BEFORE the public-schema parse: the schema does
-    // not carry it, so the authenticated POST /event boundary already rejects
-    // any attempt to forge it (strict parse, 400), and this destructure keeps
-    // the internal call path type-honest rather than schema-smuggled.
-    const { appServerTurn, ...publicEvent } = event;
-    const parsed = HookEventSchema.parse(publicEvent);
+  async processEvent(event: HookEvent): Promise<void> {
+    const parsed = HookEventSchema.parse(event);
     // One root identity at ingress: legacy/case-varied orchestrator events
     // register and store as queen so status, token usage, and consumers agree.
     const value = {
@@ -4410,33 +3070,18 @@ export class HiveDaemon {
         this.repoRoot,
       );
     }
-    let eventAgent: AgentRecord | null = null;
-    if (value.agentName !== ORCHESTRATOR_NAME) {
-      eventAgent = holder === undefined
-        ? this.db.getAgentByName(value.agentName)
-        : this.db.getAgentById(holder.agentId);
-      if (
-        eventAgent === null || eventAgent.name !== value.agentName ||
-        (holder !== undefined &&
-          ((eventAgent.processIncarnation ?? 0) !== holder.processIncarnation ||
-            eventAgent.capabilityEpoch !== holder.capabilityEpoch))
-      ) {
-        throw new Error(
-          `Event holder changed before ${value.kind} for ${value.agentName}`,
-        );
-      }
-    }
     if (value.kind === "tool-boundary") {
       // A deep agent fires this on every tool call — hundreds per turn — so
       // it deliberately skips the events table and the quota machinery. It
       // proves the process is alive mid-turn and marks the one safe moment
       // to inject urgent traffic into a busy session.
-      const agent = eventAgent;
+      const agent = this.db.getAgentByName(value.agentName);
       if (
         agent !== null && agent.status !== "dead" &&
         agent.status !== "done" && agent.status !== "failed"
       ) {
-        const updated = this.db.updateAgentIfCurrent(agentStateCas(agent), {
+        this.db.upsertAgent({
+          ...agent,
           lastEventAt: new Date(value.timestamp).toISOString(),
           // A tool ran to completion, so any native permission dialog that was
           // holding this agent has been answered. This is the only honest way
@@ -4447,43 +3092,35 @@ export class HiveDaemon {
           ...(agent.status === "awaiting-approval" ? { status: "working" } : {}),
           ...(value.toolSessionId === undefined
             ? {}
-            : agent.tool !== "codex"
-            ? { toolSessionId: value.toolSessionId }
-            : {}),
+            : { toolSessionId: value.toolSessionId }),
         });
-        if (updated === null) {
-          throw new Error(
-            `Event holder changed during tool-boundary for ${value.agentName}`,
-          );
-        }
         this.delivery.confirmSteerAtToolBoundary(value.agentName, value.timestamp);
         await this.delivery.flushUrgent(value.agentName);
         await this.delivery.flushSteer(value.agentName);
       }
-      return agent === null ? null : this.db.getAgentById(agent.id);
+      return;
     }
-    let processedAgent: AgentRecord | null = eventAgent;
-    let assignmentWake: AgentMessage | null = null;
     this.db.transaction(() => {
       this.db.insertEvent(value);
 
-      const agent = eventAgent;
+      const agent = this.db.getAgentByName(value.agentName);
       if (
         agent !== null &&
         agent.status !== "dead" &&
         agent.status !== "done" &&
         agent.status !== "failed"
       ) {
-        const updates = {
+        const updated: AgentRecord = {
+          ...agent,
           status: agent.writeRevoked && agent.controlMessageId !== undefined &&
               value.kind !== "dead"
             ? "control-paused"
             : value.kind === "dead"
-            ? agent.status  // terminalization is markAgentDead in killAgentTeardown only
+            ? "dead"
             : value.kind === "turn-start"
               ? "working"
               : value.kind === "approval-request"
-                ? (agent.readOnly ? agent.status : "awaiting-approval")
+                ? "awaiting-approval"
                 : value.kind === "notification"
                   // The vendor's own dialog. Claude raises this hook when it is
                   // BLOCKED asking for permission, and Hive used to hold the
@@ -4505,49 +3142,22 @@ export class HiveDaemon {
             ? value.contextPct
             : agent.contextPct,
           lastEventAt: new Date(value.timestamp).toISOString(),
-          // Codex hook traffic is authenticated to the agent name, not to a
-          // provider process/session, so it never binds toolSessionId. The
-          // telemetry sweep binds only validated rollout session_meta.
-          // Claude/Grok may rebind on resume through their native contracts.
+          // The tool-level session identity rides on hook traffic (Claude's
+          // stdin payload, Codex's notify thread-id); a resume forks Claude
+          // to a fresh id, so the newest observation always wins.
           ...(value.toolSessionId === undefined
             ? {}
-            : agent.tool !== "codex"
-            ? { toolSessionId: value.toolSessionId }
-            : {}),
+            : { toolSessionId: value.toolSessionId }),
           // A completed turn proves the process is genuinely healthy, so the
           // crash-resume budget rearms.
           ...(value.kind === "turn-end" && agent.recoveryAttempts > 0
             ? { recoveryAttempts: 0 }
             : {}),
         };
-        processedAgent = this.db.updateAgentIfCurrent(
-          agentStateCas(agent),
-          updates,
-        );
-        if (processedAgent === null) {
-          throw new Error(
-            `Event holder changed during ${value.kind} for ${value.agentName}`,
-          );
-        }
+        this.db.upsertAgent(updated);
       }
 
-      if (value.kind === "turn-end" && processedAgent !== null) {
-        const assignment = this.db.getOpenAssignmentForAgent(processedAgent.id);
-        if (
-          assignment !== null &&
-          assignment.processIncarnation ===
-            (processedAgent.processIncarnation ?? 0) &&
-          (assignment.state === "active" || assignment.state === "in_progress")
-        ) {
-          assignmentWake = this.enqueueAssignmentRootMessage(
-            assignment,
-            "unfinished-idle",
-            value.timestamp,
-          );
-        }
-      }
-
-      if (value.kind === "approval-request" && agent?.readOnly !== true) {
+      if (value.kind === "approval-request") {
         this.db.insertApproval({
           id: crypto.randomUUID(),
           agentName: value.agentName,
@@ -4562,22 +3172,16 @@ export class HiveDaemon {
       }
     });
 
-    if (assignmentWake !== null) {
-      await this.delivery.wakeOrchestrator();
-    }
-
     if (value.kind === "dead") {
-      if (processedAgent !== null) {
-        await this.killAgentTeardown(processedAgent, {
-          at: value.timestamp,
-          expected: agentStateCas(processedAgent),
-        });
+      const dead = this.db.getAgentByName(value.agentName);
+      if (dead !== null) {
+        await this.killAgentTeardown(dead, { at: value.timestamp });
       }
     }
 
-    const agent = processedAgent;
-    const eventReservationId = eventAgent?.controlQuotaReservationId ??
-      eventAgent?.quotaReservationId;
+    const agent = this.db.getAgentByName(value.agentName);
+    const eventReservationId = agent?.controlQuotaReservationId ??
+      agent?.quotaReservationId;
     if (eventReservationId !== undefined) {
       if (value.kind === "session-start" || value.kind === "turn-start") {
         this.quota?.markStarted(eventReservationId, value.timestamp);
@@ -4590,169 +3194,6 @@ export class HiveDaemon {
         );
       } else if (value.kind === "dead") {
         await this.quota?.cancel(eventReservationId, value.timestamp);
-      }
-    }
-
-    // An app-server turn-start carries the provider's own evidence (the
-    // rollout the app-server named plus the exact turn id): attest and
-    // persist it for readers AND writers — this is the exact-source
-    // observation the writer containment gates key on, and the only way an
-    // app-server row's identity is ever known. The evidence is honored only
-    // for a row whose CURRENT incarnation launched on the app-server driver.
-    if (
-      value.kind === "turn-start" && appServerTurn !== undefined &&
-      agent !== null && agent !== undefined && agent.tool === "codex" &&
-      agent.codexDriver === "app-server" &&
-      agent.worktreePath !== null && agent.executionIdentity !== undefined
-    ) {
-      let attestation;
-      try {
-        attestation = reconcileCodexIdentity(
-          agent.executionIdentity,
-          await readCodexAppServerTurnIdentity(
-            appServerTurn.rolloutPath,
-            agent.worktreePath,
-            appServerTurn.turnId,
-          ),
-          "codex-app-server",
-        );
-      } catch {
-        attestation = {
-          identityState: "unknown" as const,
-          observedIdentity: null,
-          liveModel: null,
-          liveEffort: null,
-        };
-      }
-      const mid = this.db.updateAgentIfCurrent(agentStateCas(agent), {
-        identityState: attestation.identityState,
-        ...(attestation.observedIdentity === null
-          ? {}
-          : { observedIdentity: attestation.observedIdentity }),
-        ...(attestation.liveModel === null
-          ? {}
-          : { liveModel: attestation.liveModel }),
-        ...(attestation.liveEffort === null
-          ? {}
-          : { liveEffort: attestation.liveEffort }),
-      });
-      if (
-        mid !== null && !isTerminalAgentStatus(mid.status) &&
-        !agent.readOnly && !agent.writeRevoked &&
-        attestation.identityState !== "matching"
-      ) {
-        // A brokered writer whose turn-boundary attestation is not a match
-        // loses authority, not its conversation: writeRevoked flips (epoch
-        // and credential stay current), every mutation/landing denies, and
-        // the session keeps running — never SIGSTOPped, never relabeled.
-        await this.revokeBrokeredWriterAuthority(
-          mid,
-          `turn-start app-server reattestation is ${attestation.identityState}, not matching`,
-        );
-      }
-    } // Fail-closed at the turn boundary for legacy Codex writers: any non-matching
-    // reattestation (or missing launch identity/path) immediately persists
-    // unknown/unattested, revokes, and pauses. Concurrent kill during the awaited
-    // read wins via pauseWriterForIdentityDrift CAS.
-    else if (
-      value.kind === "turn-start" && agent !== null && agent !== undefined &&
-      agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked
-    ) {
-      if (
-        agent.executionIdentity === undefined || agent.worktreePath === null ||
-        agent.toolSessionId === undefined || agent.processStartedAt === undefined
-      ) {
-        await this.pauseWriterForIdentityDrift({
-          ...agent,
-          identityState: "unknown",
-        }, "turn-start: no immutable launch identity or worktree (legacy/migrated writer)");
-      } else {
-        const launch = agent.executionIdentity;
-        let attestation;
-        try {
-          attestation = reconcileCodexIdentity(
-            launch,
-            await this.readCodexIdentity(agent.worktreePath, agent.toolSessionId),
-          );
-        } catch {
-          attestation = {
-            identityState: "unknown" as const,
-            observedIdentity: null,
-            liveModel: null,
-            liveEffort: null,
-          };
-        }
-        // Post-await CAS snapshot before pause mutation.
-        const mid = this.db.updateAgentIfCurrent(agentStateCas(agent), {});
-        if (mid === null || isTerminalAgentStatus(mid.status)) {
-          // concurrent kill/terminal/incarnation change wins
-        } else if (
-          attestation.identityState !== "matching" ||
-          // This hook path reattests from the TUI rollout scan
-          // (source "codex-rollout"), and a scan-matching verdict is display
-          // grade: it must never let a writer keep authority past the turn
-          // boundary. Only the app-server's exact thread+turn observation is
-          // writer-grade, and it never arrives through this path.
-          attestation.observedIdentity?.source !== "codex-app-server"
-        ) {
-          const observed = attestation.observedIdentity;
-          const state = attestation.identityState === "unattested"
-            ? "unknown" as const
-            : attestation.identityState;
-          await this.pauseWriterForIdentityDrift({
-            ...mid,
-            identityState: state,
-            ...(observed === null ? {} : { observedIdentity: observed }),
-            ...(attestation.liveModel === null
-              ? {}
-              : { liveModel: attestation.liveModel }),
-            ...(attestation.liveEffort === null
-              ? {}
-              : { liveEffort: attestation.liveEffort }),
-          }, state === "matching"
-            ? "turn-start reattestation is rollout-scan matching (display grade), not app-server-attested"
-            : `turn-start reattestation is ${state}, not matching`);
-        }
-      }
-    } // Boundary-triggered observation for TUI READERS: the sweep's cadence
-    // left a fresh reader identity-unknown for its first ~30 seconds, and the
-    // first turn boundary is the earliest moment its rollout can answer. Same
-    // display-grade scan the sweep runs — never authority — so a failure here
-    // simply leaves the sweep in charge.
-    else if (
-      value.kind === "turn-start" && agent !== null && agent !== undefined &&
-      agent.tool === "codex" && agent.readOnly &&
-      agent.codexDriver !== "app-server" &&
-      agent.observedIdentity?.source !== "codex-app-server" &&
-      agent.worktreePath !== null && agent.executionIdentity !== undefined
-    ) {
-      try {
-        const sessionId = agent.toolSessionId ??
-          (agent.processStartedAt === undefined ? null : await this
-            .readCodexProcessSession(agent.worktreePath, agent.processStartedAt));
-        if (sessionId !== null) {
-          const attestation = reconcileCodexIdentity(
-            agent.executionIdentity,
-            await this.readCodexIdentity(agent.worktreePath, sessionId),
-          );
-          this.db.updateAgentIfCurrent(agentStateCas(agent), {
-            identityState: attestation.identityState,
-            ...(agent.toolSessionId === undefined
-              ? { toolSessionId: sessionId }
-              : {}),
-            ...(attestation.observedIdentity === null
-              ? {}
-              : { observedIdentity: attestation.observedIdentity }),
-            ...(attestation.liveModel === null
-              ? {}
-              : { liveModel: attestation.liveModel }),
-            ...(attestation.liveEffort === null
-              ? {}
-              : { liveEffort: attestation.liveEffort }),
-          });
-        }
-      } catch {
-        // The sweep remains the retry; its verdict semantics stay in charge.
       }
     }
 
@@ -4784,15 +3225,8 @@ export class HiveDaemon {
       await this.delivery.recoverCriticalControls();
     }
     if (value.kind === "session-start" || value.kind === "turn-end") {
-      const current = agent === null ? null : this.db.getAgentById(agent.id);
-      if (
-        agent !== null && current !== null && current.name === agent.name &&
-        (current.processIncarnation ?? 0) === (agent.processIncarnation ?? 0)
-      ) {
-        await this.delivery.flushQueued(value.agentName);
-      }
+      await this.delivery.flushQueued(value.agentName);
     }
-    return agent === null ? null : this.db.getAgentById(agent.id);
   }
 
   private async receiveEvent(request: Request): Promise<Response> {
@@ -4827,119 +3261,12 @@ export class HiveDaemon {
       false,
     );
     if (!decision.ok) return this.denied(decision);
-    const exact = normalized.agentName === ORCHESTRATOR_NAME
-      ? null
-      : this.exactAgentForCapability(
-        authenticated.capability,
-        normalized.agentName,
-      );
-    if (normalized.agentName !== ORCHESTRATOR_NAME && exact === null) {
-      return json(
-        { error: `Event holder changed or is not exactly bound: ${normalized.agentName}` },
-        { status: 409 },
-      );
-    }
     try {
-      await this.processEvent(normalized, exact === null
-        ? undefined
-        : {
-          agentId: exact.id,
-          processIncarnation: exact.processIncarnation ?? 0,
-          capabilityEpoch: exact.capabilityEpoch,
-        });
+      await this.processEvent(normalized);
       return json({ ok: true });
     } catch (error) {
       return json(
         { error: error instanceof Error ? error.message : "Event failed" },
-        { status: 500 },
-      );
-    }
-  }
-
-  /**
-   * Human pane input for an app-server pane: the host forwards typed lines and
-   * Ctrl-C here, and the manager maps them onto start/steer/interrupt.
-   *
-   * This route is conversation, not authority. It binds to the EXACT self
-   * holder — agent id, process incarnation, unchanged capability epoch, and
-   * the current incarnation's persisted app-server driver for routing — and it
-   * deliberately ignores identityState, live status, and writeRevoked: a
-   * revoked or identity-drifted writer's human must still be able to type,
-   * steer, interrupt, and recover. Nothing on this path can approve, attest,
-   * or authorize; the ceiling of a forged POST is steering a conversation the
-   * same credential could already message.
-   */
-  private async receivePaneInput(request: Request): Promise<Response> {
-    // Conversation-grade authentication (`authenticatePaneConversation`): the
-    // host's ORIGINAL launch token keeps typing alive across authority
-    // rotation — a pause/resume reissue or a critical epoch advance rotates
-    // the credential while the same rendered host keeps its env — because
-    // revocation/expiry/epoch are authority facts and this route carries no
-    // authority. The exact-holder binding below is what still refuses a
-    // replacement incarnation's pane.
-    const authenticated = this.capabilities.authenticatePaneConversation(
-      bearerToken(request),
-      "/pane-input",
-    );
-    if (!authenticated.ok) return this.denied(authenticated);
-    const capability = authenticated.capability;
-    let body: unknown;
-    try {
-      body = await request.json();
-    } catch {
-      return json({ error: "Invalid pane input" }, { status: 400 });
-    }
-    const parsed = PaneInputRequestSchema.safeParse(body);
-    if (!parsed.success) {
-      return json(
-        { error: "Invalid pane input", issues: parsed.error.issues },
-        { status: 400 },
-      );
-    }
-    const input = parsed.data;
-    // Self-subject only: a pane token types into its own pane, nothing else.
-    if (capability.subject !== input.agentName) {
-      return json(
-        { error: `${capability.subject} may not type into ${input.agentName}'s pane` },
-        { status: 403 },
-      );
-    }
-    // The exact process binding: id + incarnation + name must all still
-    // describe the current durable row. Identity state, live status, and
-    // writeRevoked are deliberately NOT consulted.
-    const row = this.db.getAgentById(capability.agentId!);
-    if (
-      row === null || row.name !== input.agentName ||
-      (row.processIncarnation ?? 0) !== capability.processIncarnation
-    ) {
-      return json(
-        {
-          error:
-            `Pane input holder changed or is not exactly bound: ${input.agentName}`,
-        },
-        { status: 409 },
-      );
-    }
-    if (
-      row.tool !== "codex" || row.codexDriver !== "app-server" ||
-      this.codexControl === undefined
-    ) {
-      return json(
-        { error: `${input.agentName} has no app-server pane to route input for` },
-        { status: 409 },
-      );
-    }
-    try {
-      const outcome = await this.codexControl.paneInput(
-        row,
-        input.kind === "text"
-          ? { kind: "text", text: input.text }
-          : { kind: "interrupt" },
-      );
-      return json({ ok: true, outcome });
-    } catch (error) {
-      return json(
-        { error: error instanceof Error ? error.message : "Pane input failed" },
         { status: 500 },
       );
     }
@@ -4954,7 +3281,7 @@ export class HiveDaemon {
     server.registerTool("hive_status", {
       title: "Hive agent status",
       description:
-        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, overlaps, and each durable open assignment/outcome. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed.',
+        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed.',
       inputSchema: StatusRequestSchema,
     }, async ({ detail, history, fields }) => {
       this.authorizeTool(capability, "hive_status", "status:read", undefined, false);
@@ -4991,30 +3318,25 @@ export class HiveDaemon {
           ).catch(() => []),
         });
       }));
+      // Landed is not live: the daemon runs a compiled binary, so main can be
+      // ahead of the code answering this call. Status says so unasked — the
+      // failure mode is precisely that nobody thinks to ask.
+      const build = await this.buildFreshness();
       let result = (detail === "full"
-        ? agents.map((agent) => {
-          const assignment = this.db.getOpenAssignmentForAgent(agent.id);
-          return assignment === null
-            ? agent
-            : { ...agent, assignment: assignmentStatusView(assignment) };
-        })
-        : compactActiveTeam(agents, evidence).map((summary) => {
-          const agent = agents.find((value) => value.name === summary.name);
-          const assignment = agent === undefined
-            ? null
-            : this.db.getOpenAssignmentForAgent(agent.id);
-          return assignment === null
-            ? summary
-            : { ...summary, assignment: assignmentStatusView(assignment) };
-        })) as unknown as Array<
-        Record<string, unknown>
-      >;
+        ? agents
+        : compactActiveTeam(agents, evidence)) as unknown as Array<
+          Record<string, unknown>
+        >;
       if (fields !== undefined) {
         result = result.map((record) => Object.fromEntries(fields
           .filter((field) => field in record)
           .map((field) => [field, record[field]])));
       }
-      return toolResult(result, "agents");
+      return toolResult(
+        result,
+        "agents",
+        build.message,
+      );
     });
 
     server.registerTool("hive_preserve_branch", {
@@ -5102,16 +3424,6 @@ export class HiveDaemon {
       return toolResult(await this.recoverCrashedAgents(agent), "outcomes");
     });
 
-    server.registerTool("hive_resume", {
-      title: "Resume a paused Hive agent",
-      description:
-        "Resume a non-destructively paused agent (e.g. one paused for execution-identity drift). Reattests the running model+effort against the authorized launch identity; only on a match does it reissue capability at a fresh epoch and SIGCONT the SAME preserved process. A still-drifted or unreadable identity keeps the agent paused with write authority withheld. Nothing is relaunched.",
-      inputSchema: z.object({ agent: z.string().min(1) }),
-    }, async ({ agent }) => {
-      this.authorizeTool(capability, "hive_resume", "agent:recover", agent);
-      return toolResult(await this.resumeAgentAfterPause(agent), "resume");
-    });
-
     server.registerTool("hive_mark_dead", {
       title: "Mark Hive agent dead",
       description:
@@ -5123,13 +3435,12 @@ export class HiveDaemon {
       if (agent === null) {
         throw new Error(`Hive agent not found: ${agentName}`);
       }
-      const expected = agentStateCas(agent);
       if (await this.tmux.hasSession(agent.tmuxSession)) {
         throw new Error(
           `Cannot mark ${agentName} dead: tmux session ${agent.tmuxSession} is still running. Use hive_kill to stop a live agent.`,
         );
       }
-      return toolResult((await this.killAgentTeardown(agent, { expected })).agent, "agent");
+      return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
     });
 
     server.registerTool("hive_kill", {
@@ -5150,91 +3461,6 @@ export class HiveDaemon {
         }),
         "result",
       );
-    });
-
-    server.registerTool("hive_assignment_report", {
-      title: "Report assignment outcome",
-      description:
-        "Report this exact agent holder's current assignment as in_progress, blocked, or complete with a bounded structured summary. Complete is only a report: it wakes queen and remains open until queen/operator accepts it. Git, landing, and worktree state never imply completion.",
-      inputSchema: AssignmentReportRequestSchema,
-    }, async ({ agent: agentName, status, summary }) => {
-      this.authorizeTool(
-        capability,
-        "hive_assignment_report",
-        "assignment:report",
-        agentName,
-      );
-      const exact = this.exactAgentForCapability(capability, agentName);
-      if (exact === null) {
-        throw new Error(
-          `Assignment report denied: ${agentName} is not the exact authenticated agent holder`,
-        );
-      }
-      const current = this.db.getOpenAssignmentForAgent(exact.id);
-      if (
-        current === null || current.processIncarnation !==
-          (exact.processIncarnation ?? 0)
-      ) {
-        throw new Error(
-          `Assignment report denied: no open assignment is bound to ${agentName}'s current incarnation`,
-        );
-      }
-      const reportedAt = new Date().toISOString();
-      let wake: AgentMessage | null = null;
-      const assignment = this.db.transaction(() => {
-        const updated = this.db.reportAssignment(
-          current.id,
-          exact.id,
-          exact.processIncarnation ?? 0,
-          status,
-          summary,
-          reportedAt,
-        );
-        if (updated === null) {
-          throw new Error(
-            `Assignment report lost an exact holder/state race for ${agentName}`,
-          );
-        }
-        if (status === "blocked" || status === "complete") {
-          wake = this.enqueueAssignmentRootMessage(
-            updated,
-            status === "blocked" ? "blocked" : "reported-complete",
-            reportedAt,
-          );
-        }
-        return updated;
-      });
-      if (wake !== null) await this.delivery.wakeOrchestrator();
-      return toolResult(assignment, "assignment");
-    });
-
-    server.registerTool("hive_accept_assignment", {
-      title: "Accept reported assignment completion",
-      description:
-        "Close one exact assignment after queen/operator verifies its reported completion. Refuses active, in-progress, or blocked work; acceptance is the second phase after reported_complete.",
-      inputSchema: AssignmentAcceptanceRequestSchema,
-    }, async ({ assignmentId }) => {
-      const current = this.db.getAssignmentById(assignmentId);
-      if (current === null) {
-        throw new Error(`Assignment not found: ${assignmentId}`);
-      }
-      this.authorizeTool(
-        capability,
-        "hive_accept_assignment",
-        "assignment:accept",
-        current.agentName,
-      );
-      const accepted = this.db.acceptAssignment(
-        assignmentId,
-        capability.subject,
-        new Date().toISOString(),
-      );
-      if (accepted === null) {
-        throw new Error(
-          `Assignment ${assignmentId} is ${current.state}, not reported_complete`,
-        );
-      }
-      return toolResult(accepted, "assignment");
     });
 
     server.registerTool("hive_send", {
@@ -5433,8 +3659,15 @@ export class HiveDaemon {
             }`,
           );
         }
-        this.db.createAssignmentForAgent(persisted);
-        return toolResult(compactSpawnResult(persisted), "agent");
+        // An agent spawned to test a fix that is not in the running binary is
+        // wasted money, so a spawn that Hive cannot vouch for carries the reason
+        // with it. Warn, never block: the caller stays in control.
+        const build = await this.buildFreshness();
+        return toolResult(
+          compactSpawnResult(persisted),
+          "agent",
+          build.state === "current" ? null : build.message,
+        );
       } finally {
         operation?.release();
       }
@@ -5472,29 +3705,23 @@ export class HiveDaemon {
         "approval:decide",
         pending?.agentName,
       );
-      const target = pending === null
-        ? null
-        : this.db.getAgentByName(pending.agentName);
-      const readerMutationApproval = decision === "approve" &&
-        pending?.kind === "tool-permission" && target?.readOnly === true;
-      const approved = decision === "approve" && !readerMutationApproval;
       const approval = this.db.resolveApproval(
         id,
-        approved ? "approved" : "denied",
+        decision === "approve" ? "approved" : "denied",
         new Date().toISOString(),
       );
       if (approval === null) {
         throw new Error(`Pending approval not found: ${id}`);
       }
       if (
-        approved &&
+        decision === "approve" &&
         approval.description.startsWith(LAND_REARM_PREFIX)
       ) {
         this.capabilities.rearmOneShot(approval.agentName, "branch:land");
       }
       await this.codexControl?.resolveApproval(
         approval.id,
-        approved,
+        decision === "approve",
       );
       const agent = this.db.getAgentByName(approval.agentName);
       if (agent?.status === "awaiting-approval") {
@@ -5513,7 +3740,7 @@ export class HiveDaemon {
       // approve or deny — gets an explicit envelope naming the approval and
       // the outcome, independent of whatever status-flush path
       // above already applies.
-      const resolutionBody = approved
+      const resolutionBody = decision === "approve"
         ? approval.description.startsWith(LAND_REARM_PREFIX)
           ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
           : `Your approval request "${approval.description}" was approved.`
@@ -5611,7 +3838,6 @@ export class HiveDaemon {
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
-      await this.assertCodexWriterMayMutate(capability, "memory_write");
       const written = await this.writeMemoryFact(input);
       return toolResult(
         compactMemoryWriteResult(written, written.rawPath),
@@ -5640,7 +3866,6 @@ export class HiveDaemon {
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
       this.authorizeTool(capability, "memory_delete", "memory:write");
-      await this.assertCodexWriterMayMutate(capability, "memory_delete");
       return toolResult({ deleted: await this.deleteMemoryFact(scope, id) }, "result");
     });
 
@@ -5651,7 +3876,6 @@ export class HiveDaemon {
       inputSchema: z.object({}),
     }, async () => {
       this.authorizeTool(capability, "memory_reindex", "memory:write");
-      await this.assertCodexWriterMayMutate(capability, "memory_reindex");
       return toolResult(await this.rebuildMemoryIndex(), "result");
     });
 

@@ -4,24 +4,19 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   discoverCodexRecoverySessionId,
-  findCodexRolloutBySessionId,
-  findCodexRolloutForProcess,
   findLatestCodexSessionId,
   codexCapabilityTokenPath,
   codexSessionsDirectory,
   buildCodexResumeCommand,
-  buildCodexResumeOptions,
   buildCodexSpawnCommand,
   buildCodexTrustArgs,
   CODEX_CAPABILITY_TOKEN_ENV,
   CODEX_NOTIFY_SCRIPT,
-  codexCompatibilityRefusal,
-  parseCodexCliVersion,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "./codex";
 import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
-import { CODEX_WRITER_CONTAINMENT_REASON } from "../../daemon/codex-containment";
+import { RecoverySessionDiscoveryError } from "./recovery-session";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -53,7 +48,7 @@ describe("Codex spawn-scoped MCP surface", () => {
     effort: "medium" as const,
     worktreePath: "/tmp/worktree",
     daemonPort: 4317,
-    readOnly: true,
+    readOnly: false,
   };
 
   test("detaches each inherited server for this process only", () => {
@@ -71,11 +66,6 @@ describe("Codex spawn-scoped MCP surface", () => {
   test("disables Codex Apps for the process without touching user config", () => {
     const command = buildCodexSpawnCommand(base);
     expect(command).toContain("features.apps=false");
-  });
-
-  test("disables Codex-internal subagents so children get no implicit authority", () => {
-    const command = buildCodexSpawnCommand(base);
-    expect(command).toContain("features.multi_agent=false");
   });
 
   test("changes nothing when the user has no servers of their own", () => {
@@ -152,12 +142,11 @@ describe("Codex spawn-scoped MCP surface", () => {
   });
 
   test("a resumed session keeps the same scoped surface", () => {
-    const options = { ...base, excludeMcpServers: ["idea"] };
-    const resumeOptions = buildCodexResumeOptions(options);
-    const command = buildCodexResumeCommand(options, "session-7");
+    const command = buildCodexResumeCommand(
+      { ...base, excludeMcpServers: ["idea"] },
+      "session-7",
+    );
     expect(command).toContain("mcp_servers.idea.enabled=false");
-    expect(resumeOptions).toEqual(command.slice(0, -1));
-    expect(resumeOptions).not.toContain("session-7");
     expect(command.at(-1)).toBe("session-7");
   });
 });
@@ -166,10 +155,7 @@ describe("Codex spawn-scoped MCP surface", () => {
 // project-local `.codex/config.toml` when the directory's trust is persisted
 // in the user's own config file, and Hive passes trust as a `-c` override
 // precisely so it never edits that file (verified against codex 0.144.1).
-const expectedHookOverrides = (
-  worktreePath: string,
-  _options: { readOnly?: boolean } = {},
-): string[] =>
+const expectedHookOverrides = (worktreePath: string): string[] =>
   [
     ["SessionStart", "session-start"],
     ["UserPromptSubmit", "turn-start"],
@@ -179,37 +165,9 @@ const expectedHookOverrides = (
     "-c",
     `hooks.${event}=[{hooks=[{type="command",command="${worktreePath}/.codex/${CODEX_NOTIFY_SCRIPT} ${kind}",timeout=5}]}]`,
   ]);
-  // No PreToolUse identity guard: Codex 0.144.4 hooks fail open / are
-  // writer-tamperable, so writers are refused at launch instead.
 
 describe("Codex adapter", () => {
-  test.each([
-    ["codex-cli 0.144.4", true],
-    ["codex-cli 0.144.5", true],
-    ["codex-cli 0.145.0", true],
-    ["codex-cli 1.0.0", true],
-    ["codex-cli 0.144.10", true],
-    ["codex-cli 0.144.3", false],
-    ["codex-cli 0.143.99", false],
-    ["codex-cli 0.144.4-alpha.1", false],
-    ["codex-cli 0.144.4+build.7", true],
-  ])("gates installed version output %s", (output, accepted) => {
-    const parsed = parseCodexCliVersion(output);
-    expect(parsed).not.toBeNull();
-    expect(codexCompatibilityRefusal(parsed!.version) === null).toBe(accepted);
-  });
-
-  test.each(["unknown", "", "codex-cli nope", "0.144.4"])(
-    "fails closed on unreadable version output %j",
-    (output) => {
-      expect(parseCodexCliVersion(output)).toBeNull();
-      expect(codexCompatibilityRefusal(null)).toContain(
-        "could not determine the Codex CLI version",
-      );
-    },
-  );
-
-  test("builds only read-only spawn argv", () => {
+  test("builds writer and read-only spawn argv", () => {
     const base = {
       name: "agent-4",
       model: "gpt-5-codex",
@@ -218,12 +176,31 @@ describe("Codex adapter", () => {
       daemonPort: 4317,
     };
 
-    expect(buildCodexSpawnCommand({ ...base, readOnly: true })).toEqual([
+    expect(buildCodexSpawnCommand({ ...base, readOnly: false })).toEqual([
       "codex",
       "-c",
       "features.apps=false",
       "-c",
-      "features.multi_agent=false",
+      "model=gpt-5-codex",
+      "-c",
+      "model_reasoning_effort=high",
+      "-c",
+      'sandbox_mode="workspace-write"',
+      "-c",
+      'approval_policy="on-request"',
+      "-c",
+      'projects."/tmp/worktree".trust_level="trusted"',
+      "--dangerously-bypass-hook-trust",
+      "-c",
+      "features.hooks=true",
+      ...expectedHookOverrides("/tmp/worktree"),
+      "-c",
+      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
+    ]);
+    expect(buildCodexSpawnCommand({ ...base, readOnly: true })).toEqual([
+      "codex",
+      "-c",
+      "features.apps=false",
       "-c",
       "model=gpt-5-codex",
       "-c",
@@ -235,33 +212,10 @@ describe("Codex adapter", () => {
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
-      ...expectedHookOverrides("/tmp/worktree", { readOnly: true }),
+      ...expectedHookOverrides("/tmp/worktree"),
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
     ]);
-  });
-
-  test("refuses writer argv and config at the adapter boundary", async () => {
-    const writer = {
-      name: "agent-4",
-      model: "gpt-5-codex",
-      effort: "high" as const,
-      worktreePath: "/tmp/worktree",
-      daemonPort: 4317,
-      readOnly: false,
-    };
-    expect(() => buildCodexSpawnCommand(writer)).toThrow(
-      CODEX_WRITER_CONTAINMENT_REASON,
-    );
-    expect(() => buildCodexResumeCommand(writer, "legacy-session")).toThrow(
-      CODEX_WRITER_CONTAINMENT_REASON,
-    );
-    await expect(writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
-      name: writer.name,
-      daemonPort: writer.daemonPort,
-      readOnly: false,
-    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
   });
 
   test("full autonomy removes prompts without weakening a read-only sandbox", () => {
@@ -273,6 +227,22 @@ describe("Codex adapter", () => {
       daemonPort: 4317,
     };
 
+    const dangerous = buildCodexSpawnCommand({
+      ...base,
+      readOnly: false,
+      dangerous: true,
+    });
+    expect(dangerous).toContain('sandbox_mode="danger-full-access"');
+    expect(dangerous).toContain('approval_policy="never"');
+    expect(dangerous).not.toContain('approval_policy="on-request"');
+    // The resume path replays the same posture, so a crash-recovered agent
+    // does not silently stall on a prompt nobody is watching.
+    expect(
+      buildCodexResumeCommand({ ...base, readOnly: false, dangerous: true }, "s1"),
+    ).toContain('approval_policy="never"');
+
+    // Full autonomy governs prompts for readers too, while read-only remains
+    // the stronger filesystem restriction.
     const readOnly = buildCodexSpawnCommand({
       ...base,
       readOnly: true,
@@ -304,7 +274,7 @@ describe("Codex adapter", () => {
       effort: "high",
       worktreePath: "/tmp/work tree",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
     });
     expect(command).toContain("--dangerously-bypass-hook-trust");
     expect(command).toContain("features.hooks=true");
@@ -340,33 +310,33 @@ describe("Codex adapter", () => {
     });
   });
 
-  test("builds a reader resume argv that replays the spawn overrides", () => {
+  test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
     expect(buildCodexResumeCommand({
       name: "agent-4",
       model: "gpt-5-codex",
       effort: "high" as const,
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
     }, "019f-thread")).toEqual([
       "codex",
       "resume",
       "-c",
       "features.apps=false",
       "-c",
-      "features.multi_agent=false",
-      "-c",
       "model=gpt-5-codex",
       "-c",
       "model_reasoning_effort=high",
       "-c",
-      'sandbox_mode="read-only"',
+      'sandbox_mode="workspace-write"',
+      "-c",
+      'approval_policy="on-request"',
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
-      ...expectedHookOverrides("/tmp/worktree", { readOnly: true }),
+      ...expectedHookOverrides("/tmp/worktree"),
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "019f-thread",
@@ -394,7 +364,7 @@ describe("Codex adapter", () => {
       `${JSON.stringify({
         timestamp: "2026-07-10T09:00:00.000Z",
         type: "session_meta",
-        payload: { session_id: sessionId, id: sessionId, cwd, source: "cli" },
+        payload: { session_id: sessionId, id: sessionId, cwd },
       })}\n`;
     await writeFile(
       join(dayDir, "rollout-2026-07-10T08-00-00-other.jsonl"),
@@ -429,7 +399,6 @@ describe("Codex adapter", () => {
       payload: {
         id: "large-meta-session",
         cwd: worktreePath,
-        source: "cli",
         base_instructions: "x".repeat(17_000),
       },
     });
@@ -443,85 +412,6 @@ describe("Codex adapter", () => {
       .toEqual("large-meta-session");
   });
 
-  test("process binding excludes predecessors; earliest-after-start is a DISPLAY-GRADE pick that a same-cwd child can win", async () => {
-    const fakeHome = join(tempRoot, "process-bound-codex-home");
-    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
-    await mkdir(dayDir, { recursive: true });
-    const meta = (id: string, timestamp: string) => `${JSON.stringify({
-      timestamp,
-      type: "session_meta",
-      payload: {
-        id,
-        cwd: worktreePath,
-        source: "cli",
-        agent_nickname: "maya",
-      },
-    })}\n`;
-    // A dead predecessor in the reused worktree: created BEFORE this process
-    // started, so it can never be observed as this process's session.
-    await writeFile(
-      join(dayDir, "rollout-predecessor.jsonl"),
-      meta("predecessor", "2026-07-15T17:59:59.000Z"),
-    );
-    // KNOWN AMBIGUITY, encoded on purpose: a same-cwd child session created
-    // just before the parent's rollout wins the earliest-after-start pick.
-    // 0.144.4 metadata has no PID/nonce to tell them apart, which is exactly
-    // why this result is display-grade observation and never authority.
-    await writeFile(
-      join(dayDir, "rollout-child.jsonl"),
-      meta("child", "2026-07-15T18:00:00.100Z"),
-    );
-    await writeFile(
-      join(dayDir, "rollout-parent.jsonl"),
-      meta("parent", "2026-07-15T18:00:00.200Z"),
-    );
-
-    expect((await findCodexRolloutForProcess(
-      worktreePath,
-      "2026-07-15T18:00:00.000Z",
-      fakeHome,
-    ))?.sessionId).toBe("child");
-
-    // A process started after every rollout observes nothing rather than
-    // inheriting a predecessor.
-    expect(await findCodexRolloutForProcess(
-      worktreePath,
-      "2026-07-15T19:00:00.000Z",
-      fakeHome,
-    )).toBeNull();
-  });
-
-  test("exact session-id lookup survives 100+ newer rollouts (filename index, meta verified)", async () => {
-    const fakeHome = join(tempRoot, "indexed-lookup-codex-home");
-    const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
-    await mkdir(dayDir, { recursive: true });
-    const meta = (id: string, cwd: string) => `${JSON.stringify({
-      timestamp: "2026-07-15T18:00:00.000Z",
-      type: "session_meta",
-      payload: { id, cwd, source: "cli" },
-    })}\n`;
-    const wanted = "019f0000-0000-0000-0000-00000000aaaa";
-    await writeFile(
-      join(dayDir, `rollout-2026-07-15T18-00-00-${wanted}.jsonl`),
-      meta(wanted, worktreePath),
-    );
-    // 110 newer sessions from other work push the wanted one far out of any
-    // newest-N window; a live-but-idle agent must not go absent for it.
-    for (let index = 0; index < 110; index++) {
-      const id = `019f0000-0000-0000-0000-${String(index).padStart(12, "0")}`;
-      await writeFile(
-        join(dayDir, `rollout-2026-07-15T19-00-00-${id}.jsonl`),
-        meta(id, "/somewhere/else"),
-      );
-    }
-
-    expect((await findCodexRolloutBySessionId(
-      worktreePath,
-      wanted,
-      fakeHome,
-    ))?.sessionId).toBe(wanted);
-  });
-
   test("refuses a session_meta record whose session id key is unknown", async () => {
     const fakeHome = join(tempRoot, "drifted-meta-codex-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "11");
@@ -529,9 +419,8 @@ describe("Codex adapter", () => {
     await writeFile(
       join(dayDir, "rollout-2026-07-11T10-00-00-drifted.jsonl"),
       `${JSON.stringify({
-        timestamp: "2026-07-11T10:00:00.000Z",
         type: "session_meta",
-        payload: { sessionID: "drifted-session", cwd: worktreePath, source: "cli" },
+        payload: { sessionID: "drifted-session", cwd: worktreePath },
       })}\n`,
     );
 
@@ -540,32 +429,19 @@ describe("Codex adapter", () => {
     );
   });
 
-  test("recovery discovery stays unknown without process-bound provider evidence", async () => {
+  test("recovery discovery uses session_meta creation evidence and refuses ambiguity", async () => {
     const fakeHome = join(tempRoot, "codex-recovery-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "13");
     await mkdir(dayDir, { recursive: true });
-    const meta = (sessionId: string, timestamp: string) =>
+    const meta = (sessionId: string, timestampKey: string, timestamp: string) =>
       `${JSON.stringify({
-        timestamp,
         type: "session_meta",
-        payload: {
-          id: sessionId,
-          cwd: worktreePath,
-          source: "cli",
-          agent_nickname: "maya",
-        },
+        [timestampKey]: timestamp,
+        payload: { id: sessionId, cwd: worktreePath },
       })}\n`;
     await writeFile(
       join(dayDir, "rollout-predecessor.jsonl"),
-      meta("predecessor", "2026-07-13T11:59:59.000Z"),
-    );
-    await writeFile(
-      join(dayDir, "rollout-child.jsonl"),
-      meta("child", "2026-07-13T12:00:01.000Z"),
-    );
-    await writeFile(
-      join(dayDir, "rollout-parent.jsonl"),
-      meta("parent", "2026-07-13T12:00:02.000Z"),
+      meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
     );
 
     expect(await discoverCodexRecoverySessionId(
@@ -573,6 +449,44 @@ describe("Codex adapter", () => {
       "2026-07-13T12:00:00.000Z",
       fakeHome,
     )).toBeNull();
+    await writeFile(
+      join(dayDir, "rollout-current.jsonl"),
+      meta("current", "timestamp", "2026-07-13T12:00:01.000Z"),
+    );
+    await writeFile(
+      join(dayDir, "rollout-predecessor.jsonl"),
+      meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
+    );
+
+    expect(await discoverCodexRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).toBe("current");
+
+    await writeFile(
+      join(dayDir, "rollout-second-current.jsonl"),
+      meta("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
+    );
+    expect(discoverCodexRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
+    await rm(join(dayDir, "rollout-second-current.jsonl"));
+
+    await writeFile(
+      join(dayDir, "rollout-unknown-evidence.jsonl"),
+      meta("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
+    );
+    expect(discoverCodexRecoverySessionId(
+      worktreePath,
+      "2026-07-13T12:00:00.000Z",
+      fakeHome,
+    )).rejects.toMatchObject({
+      name: "RecoverySessionDiscoveryError",
+      reason: "invalid-evidence",
+    });
   });
 
   test("omits the model override for the account default", () => {
@@ -582,7 +496,7 @@ describe("Codex adapter", () => {
       effort: "low",
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
     });
 
     expect(command).not.toContain("model=default");
@@ -591,10 +505,9 @@ describe("Codex adapter", () => {
 
   test("writes the notify script and MCP config, but no hook tables", async () => {
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
     });
 
     const configSource = await readFile(
@@ -622,22 +535,13 @@ describe("Codex adapter", () => {
         'exec hive event "$1" --agent agent-4 --port 4317',
       ),
     ).toEqual(true);
-
-    // Residual identity-guard scripts from older launches are removed.
-    expect(
-      await stat(join(worktreePath, ".codex", "hive-tool-guard.sh")).then(
-        () => true,
-        () => false,
-      ),
-    ).toEqual(false);
   });
 
   test("pins lifecycle hooks to the exact release binary", async () => {
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
       hiveCommand: ["/tmp/Hive Versions/0.0.999/hive"],
     });
 
@@ -654,19 +558,17 @@ describe("Codex adapter", () => {
   test("writes and removes the worktree-local graphify hook with server health", async () => {
     const hookPath = join(worktreePath, ".codex", GRAPHIFY_HOOK_SCRIPT);
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
     expect(await readFile(hookPath, "utf8")).toContain("127.0.0.1:7799/mcp");
 
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
     });
     expect(readFile(hookPath, "utf8")).rejects.toThrow();
   });
@@ -676,10 +578,9 @@ describe("Codex adapter", () => {
     // 0600 file; the launch shell exports it for bearer_token_env_var. It
     // must never land in the config file or any argv.
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       daemonPort: 4317,
       name: "maya",
-      readOnly: true,
+      readOnly: false,
       capabilityToken: "hv1.abc.secret-token",
     });
     const configPath = join(worktreePath, ".codex", "config.toml");
@@ -694,17 +595,15 @@ describe("Codex adapter", () => {
 
   test("removes a stale token file when no capability was issued", async () => {
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       daemonPort: 4317,
       name: "maya",
-      readOnly: true,
+      readOnly: false,
       capabilityToken: "hv1.abc.stale-token",
     });
     await writeCodexAgentConfig(worktreePath, {
-      driver: "tui",
       daemonPort: 4317,
       name: "maya",
-      readOnly: true,
+      readOnly: false,
     });
     const config = await readFile(
       join(worktreePath, ".codex", "config.toml"),
@@ -722,7 +621,7 @@ describe("Codex adapter", () => {
       effort: "high" as const,
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: true,
+      readOnly: false,
     };
     const withToken = buildCodexSpawnCommand({
       ...base,

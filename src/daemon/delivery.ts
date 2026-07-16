@@ -293,16 +293,6 @@ export class MessageDelivery {
           );
           capabilityEpoch = currentRecipient?.capabilityEpoch ?? capabilityEpoch;
         }
-        if (
-          currentRecipient !== null && isOrchestratorName(from) &&
-          intent === "instruction"
-        ) {
-          this.db.advanceAssignmentForFollowup(
-            currentRecipient.id,
-            currentRecipient.processIncarnation ?? 0,
-            now.toISOString(),
-          );
-        }
         const value = AgentMessageSchema.parse({
           id: crypto.randomUUID(),
           from,
@@ -712,32 +702,17 @@ export class MessageDelivery {
     } catch (error) {
       const alertedAt = new Date().toISOString();
       this.db.markMessageAlerted(message.id, alertedAt);
-      const reason = error instanceof Error ? error.message : "unknown error";
-      const detail = message.intent === "pause"
-        ? `process pause failed: ${reason}. The agent's capability remains revoked but its process may not be fully suspended, so it must be treated as unsafe; the session/worktree are preserved and operator attention is required.`
-        : `process restart failed: ${reason}. The agent was stopped in a terminal failed state, its quota hold was released, and automatic recovery will not retry this control. Worktree was preserved; operator attention is required.`;
       await this.send(
         "hive-control",
         ORCHESTRATOR_NAME,
-        `Critical control ${message.id} revoked ${message.to}'s capability epoch but ${detail}`,
+        `Critical control ${message.id} revoked ${message.to}'s capability epoch but process restart failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }. The agent was stopped in a terminal failed state, its quota hold was released, and automatic recovery will not retry this control. Worktree was preserved; operator attention is required.`,
         { idempotencyKey: `control-restart-failed:${message.id}` },
       ).catch(() => undefined);
       return this.getStoredMessage(message.id);
     }
-    const injected = this.markInjected(message);
-    // A non-destructive pause is applied the moment the process is suspended.
-    // The suspended process cannot acknowledge, so the daemon records the
-    // applied state — measured by process/daemon state, never an agent ACK — so
-    // the acknowledgement-deadline sweep does not alert on a control that is in
-    // fact complete.
-    if (message.intent === "pause") {
-      return this.db.transitionMessage(
-        message.id,
-        "applied",
-        new Date().toISOString(),
-      ) ?? injected;
-    }
-    return injected;
+    return this.markInjected(message);
   }
 
   private async deliver(
@@ -926,23 +901,6 @@ export class MessageDelivery {
     for (const message of this.db.listInjectedUnapplied()) {
       const injectedAt = message.injectedAt;
       if (injectedAt === null) continue;
-
-      // Successful non-destructive pause is daemon-measured applied: the agent
-      // row is control-paused with this controlMessageId. A suspended process
-      // never ACKs and never takes a turn boundary, so without this path a
-      // recovered pause would sit injected forever and trip ACK deadlines.
-      if (message.intent === "pause" && message.priority === "critical") {
-        const recipient = this.db.getAgentByName(message.to);
-        if (
-          recipient !== null &&
-          recipient.status === "control-paused" &&
-          recipient.controlMessageId === message.id
-        ) {
-          this.db.transitionMessage(message.id, "applied", now);
-          confirmed += 1;
-          continue;
-        }
-      }
 
       // The recipient took a turn boundary after we injected. That boundary is
       // where the TUI submits whatever it had queued, so the message reached the

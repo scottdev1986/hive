@@ -1,12 +1,10 @@
 import { describe, expect, test } from "bun:test";
-import { chmodSync, writeFileSync } from "node:fs";
-import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   diagnoseLand,
   landBranch,
-  type LandBranchOptions,
   readLandReadiness,
   runGit,
 } from "./landing";
@@ -54,18 +52,6 @@ async function repo(): Promise<string> {
 const landFails = async (root: string, branch = "hive/writer"): Promise<string> => {
   try {
     await landBranch(root, branch);
-  } catch (error) {
-    return (error as Error).message;
-  }
-  throw new Error("expected the land to fail, but it succeeded");
-};
-
-const landFailsWithOptions = async (
-  root: string,
-  options: LandBranchOptions,
-): Promise<string> => {
-  try {
-    await landBranch(root, "hive/writer", options);
   } catch (error) {
     return (error as Error).message;
   }
@@ -200,161 +186,6 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
       expect(await Bun.file(join(root, "assets", "logo.png")).text()).toBe("logo-bytes-v1\n");
       expect(await Bun.file(join(root, "feature.ts")).text()).toBe("export const f = 1;\n");
       // Not just present: tracked, exactly as the branch committed them.
-      expect(git(root, ["status", "--porcelain"])).toBe("");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("the real adapter runs the synchronous authority callback immediately before merge spawn", async () => {
-    const root = await repo();
-    const order: string[] = [];
-    let queuedControlRan = false;
-    try {
-      const { commit } = await landBranch(root, "hive/writer", {
-        preMergeCheck: () => {
-          order.push("authority");
-          queueMicrotask(() => {
-            queuedControlRan = true;
-          });
-        },
-        spawnMerge: (repoRoot, branch) => {
-          expect(queuedControlRan).toBe(false);
-          order.push("spawn");
-          return runGit(repoRoot, ["merge", "--ff-only", branch]);
-        },
-      });
-      expect(commit).toHaveLength(40);
-      expect(order).toEqual(["authority", "spawn"]);
-      expect(queuedControlRan).toBe(true);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("authority refusal after identical cleanup restores the user's file", async () => {
-    const root = await repo();
-    try {
-      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
-      await chmod(join(root, "feature.ts"), 0o640);
-      await expect(landBranch(root, "hive/writer", {
-        preMergeCheck: () => {
-          throw new Error("authority revoked at boundary");
-        },
-      })).rejects.toThrow("authority revoked at boundary");
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
-        "export const f = 1;\n",
-      );
-      expect(git(root, ["status", "--porcelain", "-uall"]))
-        .toContain("?? feature.ts");
-      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o640);
-      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("merge process spawn failure restores every cleaned collision", async () => {
-    const root = await repo();
-    try {
-      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
-      await chmod(join(root, "feature.ts"), 0o604);
-      await expect(landBranch(root, "hive/writer", {
-        preMergeCheck: () => undefined,
-        spawnMerge: () => {
-          throw new Error("Bun.spawn failed");
-        },
-      })).rejects.toThrow("Bun.spawn failed");
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
-        "export const f = 1;\n",
-      );
-      expect(git(root, ["status", "--porcelain", "-uall"]))
-        .toContain("?? feature.ts");
-      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o604);
-      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("mutation after proof but before cleanup quarantines, inspects, and restores the mutated object", async () => {
-    const root = await repo();
-    try {
-      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
-      await chmod(join(root, "feature.ts"), 0o640);
-      await expect(landBranch(root, "hive/writer", {
-        beforeCollisionQuarantine: (path) => {
-          if (path !== "feature.ts") return;
-          writeFileSync(join(root, path), "mutated in proof-cleanup window\n");
-          chmodSync(join(root, path), 0o604);
-        },
-      })).rejects.toThrow(/changed before its atomic quarantine could prove identity/);
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
-        "mutated in proof-cleanup window\n",
-      );
-      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o604);
-      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("a replacement appearing after quarantine is preserved beside the exact removed object", async () => {
-    const root = await repo();
-    let quarantinedPath = "";
-    try {
-      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
-      await chmod(join(root, "feature.ts"), 0o640);
-      const message = await landFailsWithOptions(root, {
-        afterCollisionQuarantine: (path, quarantine) => {
-          if (path !== "feature.ts") return;
-          quarantinedPath = quarantine;
-          writeFileSync(join(root, path), "external replacement\n");
-          chmodSync(join(root, path), 0o600);
-        },
-      });
-      expect(message).toContain("quarantined original was preserved");
-      expect(message).toContain(quarantinedPath);
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe("external replacement\n");
-      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o600);
-      expect(await Bun.file(quarantinedPath).text()).toBe("export const f = 1;\n");
-      expect((await stat(quarantinedPath)).mode & 0o777).toBe(0o640);
-      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("a branch ref advancing after collision proof cannot change the object merged", async () => {
-    const root = await repo();
-    try {
-      const pinned = git(root, ["rev-parse", "hive/writer"]);
-      git(root, ["checkout", "hive/writer"]);
-      await writeFile(join(root, "feature.ts"), "replacement branch bytes\n");
-      git(root, ["add", "feature.ts"]);
-      git(root, ["commit", "-m", "writer advances", "--no-gpg-sign"]);
-      const replacement = git(root, ["rev-parse", "HEAD"]);
-      git(root, ["checkout", "main"]);
-      git(root, ["update-ref", "refs/heads/hive/writer", pinned, replacement]);
-      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
-
-      const { commit } = await landBranch(root, "hive/writer", {
-        preMergeCheck: () => {
-          git(root, [
-            "update-ref",
-            "refs/heads/hive/writer",
-            replacement,
-            pinned,
-          ]);
-        },
-      });
-
-      expect(commit).toBe(pinned);
-      expect(git(root, ["rev-parse", "HEAD"])).toBe(pinned);
-      expect(git(root, ["rev-parse", "hive/writer"])).toBe(replacement);
-      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
-        "export const f = 1;\n",
-      );
       expect(git(root, ["status", "--porcelain"])).toBe("");
     } finally {
       await rm(root, { recursive: true, force: true });

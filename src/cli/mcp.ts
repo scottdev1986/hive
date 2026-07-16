@@ -4,9 +4,7 @@ import { z } from "zod";
 import { operatorFetch } from "./credential";
 import { HIVE_VERSION } from "../version";
 import {
-  AgentRecordObjectSchema,
   AgentRecordSchema,
-  AssignmentStatusViewSchema,
   MemoryFactSchema,
   MemoryScopeSchema,
   MemorySearchResultSchema,
@@ -14,7 +12,6 @@ import {
   ORCHESTRATOR_NAME,
   QuotaObservationSchema,
   type AgentRecord,
-  type AssignmentStatusView,
   type MemoryFact,
   type MemoryScope,
   type MemorySearchResult,
@@ -24,14 +21,6 @@ import {
   type QuotaObservationInput,
   type QuotaStatus,
 } from "../schemas";
-
-const AgentStatusRecordSchema = AgentRecordObjectSchema.extend({
-  assignment: AssignmentStatusViewSchema.optional(),
-}).strict();
-
-type AgentStatusRecord = AgentRecord & {
-  assignment?: AssignmentStatusView;
-};
 
 export type McpFetcher = (
   input: string | URL,
@@ -80,8 +69,8 @@ async function callHiveTool(
 export async function fetchAgentStatus(
   port: number,
   fetcher?: McpFetcher,
-): Promise<AgentStatusRecord[]> {
-  return AgentStatusRecordSchema.array().parse(
+): Promise<AgentRecord[]> {
+  return AgentRecordSchema.array().parse(
     await callHiveTool(port, "hive_status", { detail: "full" }, "agents", fetcher),
   );
 }

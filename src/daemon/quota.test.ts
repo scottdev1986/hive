@@ -622,37 +622,6 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
-  test("reserveControlRun records the complete identity including effort", async () => {
-    const { db } = await fileDatabase("control-effort");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("codex", 100, { pool: "general", models: ["*"] })]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    // A control restart reserves against the exact launch identity. Effort must
-    // travel with model, or the run is charged to a route (model, null) that was
-    // never launched.
-    const withEffort = await service.reserveControlRun({
-      agentName: "maya",
-      category: "complex_coding",
-      tool: "codex",
-      model: "codex-model",
-      effort: "xhigh",
-      controlMessageId: "control-effort",
-    });
-    expect(withEffort.effort).toEqual("xhigh");
-    // Omitting effort stores null, never a guess.
-    const withoutEffort = await service.reserveControlRun({
-      agentName: "sam",
-      category: "complex_coding",
-      tool: "codex",
-      model: "codex-model",
-      controlMessageId: "control-no-effort",
-    });
-    expect(withoutEffort.effort).toBeNull();
-    db.close();
-  });
-
   test("atomically prevents concurrent control restarts from overcommitting headroom", async () => {
     const { path, db } = await fileDatabase("control-concurrency");
     const secondDb = new HiveDatabase(path);
@@ -976,40 +945,6 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
-  test("reports a same-provider review candidate as excluded for independence, not absent", async () => {
-    const { db } = await fileDatabase("review-independence");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("codex")]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    // The chain offers a Codex route, but this is an independent review of a
-    // Codex tool, so the same-provider candidate is filtered for independence.
-    const codexOnly = await authorizeForQuotaTest([
-      { tool: "codex" as const, model: "codex-model" },
-    ]);
-    let error: unknown;
-    try {
-      await service.routeAndReserve({
-        agentName: "maya",
-        category: "code_review",
-        selection: "strict",
-        reviewOfTool: "codex",
-        candidates: codexOnly,
-      });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(QuotaExhaustedError);
-    const message = (error as Error).message;
-    // The truthful diagnostic: the candidate passed policy and was excluded for
-    // independence — never "Codex has no route".
-    expect(message).toContain("passed policy");
-    expect(message).toContain("reviewOfTool requires a provider other than");
-    expect(message).not.toContain("has no route for");
-    db.close();
-  });
-
   test("keeps legacy routing with explicit missing-confidence diagnostics when no limits are configured", async () => {
     const { db } = await fileDatabase("missing");
     const alerts: string[] = [];
@@ -1042,41 +977,6 @@ describe("quota-aware routing", () => {
 });
 
 describe("quota telemetry and alerts", () => {
-  test("rolls back every replacement reservation when the exact-row handoff loses CAS", async () => {
-    const { db } = await fileDatabase("rekey-handoff-cas-loss");
-    const ledger = new QuotaLedger(db);
-    const service = new QuotaService(
-      ledger,
-      config([limit("claude", 100, { models: ["*"] })]),
-      () => new Date("2026-07-10T12:00:00.000Z"),
-    );
-    const decision = await service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    service.markStarted(decision.reservation.id);
-
-    const replacements = await service.reconcileAgentModel(
-      "maya",
-      "claude-sonnet-5",
-      "2026-07-10T12:01:00.000Z",
-      decision.reservation.id,
-      () => false,
-    );
-
-    expect(replacements).toBeNull();
-    expect(ledger.activeReservations().filter((entry) =>
-      entry.agentName === "maya"
-    )).toEqual([]);
-    expect(ledger.getReservation(decision.reservation.id)?.status).toBe(
-      "released",
-    );
-    db.close();
-  });
-
   test("records Codex app-server windows as authoritative configured-pool observations", async () => {
     const { db } = await fileDatabase("codex-app-server");
     const ledger = new QuotaLedger(db);

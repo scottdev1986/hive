@@ -31,8 +31,7 @@ describe("status table", () => {
     const [header, row] = table.split("\n");
     expect(header).toContain("NAME");
     expect(header).toContain("TOOL");
-    expect(header).toContain("LAUNCH");
-    expect(header).toContain("OBSERVED");
+    expect(header).toContain("MODEL");
     expect(header).toContain("STATUS");
     expect(header).toContain("CONTEXT");
     expect(header).toContain("TASK");

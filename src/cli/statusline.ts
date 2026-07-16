@@ -177,17 +177,12 @@ export async function postStatuslineReport(
   port: number,
   fetcher: StatuslineFetcher = fetch,
 ): Promise<void> {
-  const response = await fetcher(`http://127.0.0.1:${port}/statusline`, {
+  await fetcher(`http://127.0.0.1:${port}/statusline`, {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(report),
     signal: AbortSignal.timeout(1_000),
   });
-  // A 401/500 is a lost observation and must reach the failure diagnostic
-  // (recordStatuslineFailure) instead of presenting as delivered.
-  if (!response.ok) {
-    throw new Error(`statusline report rejected: HTTP ${response.status}`);
-  }
 }
 
 /**

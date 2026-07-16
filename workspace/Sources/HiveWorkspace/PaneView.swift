@@ -23,16 +23,13 @@ final class PaneView: NSView {
     private var currentStatus: PaneStatus = .unknown
     private var pulsing = false
     private var focusIndicator: PaneFocusIndicator = .none
-    let attachmentIdentity: PaneAttachmentIdentity?
 
     init(paneID: PaneID, title: String, tmuxSession: String? = nil,
          tmuxSocket: String? = nil,
-         attachmentIdentity: PaneAttachmentIdentity? = nil,
          allowsMouseReporting: Bool = true,
          dispatch: @escaping (WorkspaceCommand) -> Void) {
         self.paneID = paneID
         self.dispatch = dispatch
-        self.attachmentIdentity = attachmentIdentity
         self.contentView = TerminalPaneView(
             tmuxSession: tmuxSession,
             tmuxSocket: tmuxSocket,

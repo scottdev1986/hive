@@ -7,7 +7,7 @@ import {
   writeFile,
 } from "node:fs/promises";
 import { createReadStream } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
 import { buildCodexMcpExclusionArgs, HIVE_MCP_SERVERS } from "./mcp-scope";
@@ -18,94 +18,12 @@ import {
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import {
-  assertCodexWriterContained,
-  type CodexDriver,
-} from "../../daemon/codex-containment";
-
-export const MINIMUM_CODEX_CLI_VERSION = "0.144.4";
-
-export interface ParsedCodexVersion {
-  major: number;
-  minor: number;
-  patch: number;
-  prerelease: string | null;
-  version: string;
-}
-
-const CODEX_VERSION_OUTPUT =
-  /^\s*codex-cli (\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?\s*$/;
-const BARE_CODEX_VERSION =
-  /^(\d+)\.(\d+)\.(\d+)(?:-([0-9A-Za-z.-]+))?(?:\+([0-9A-Za-z.-]+))?$/;
-
-function parsedCodexVersion(match: RegExpExecArray): ParsedCodexVersion | null {
-  const major = Number(match[1]);
-  const minor = Number(match[2]);
-  const patch = Number(match[3]);
-  if (![major, minor, patch].every(Number.isSafeInteger)) return null;
-  const prerelease = match[4] ?? null;
-  return {
-    major,
-    minor,
-    patch,
-    prerelease,
-    version: `${major}.${minor}.${patch}${
-      prerelease === null ? "" : `-${prerelease}`
-    }${match[5] === undefined ? "" : `+${match[5]}`}`,
-  };
-}
-
-/** Parse only the installed `codex --version` shape. Unknown is not permission. */
-export function parseCodexCliVersion(output: string): ParsedCodexVersion | null {
-  const match = CODEX_VERSION_OUTPUT.exec(output);
-  return match === null ? null : parsedCodexVersion(match);
-}
-
-function parseBareCodexVersion(version: string): ParsedCodexVersion | null {
-  const match = BARE_CODEX_VERSION.exec(version);
-  return match === null ? null : parsedCodexVersion(match);
-}
-
-export function codexCompatibilityRefusal(version: string | null): string | null {
-  const parsed = version === null ? null : parseBareCodexVersion(version);
-  if (parsed === null) {
-    return "Hive could not determine the Codex CLI version from `codex --version` and " +
-      "refuses to start an under-instructed Codex session.\n" +
-      "Fix: repair or update Codex, then reopen Hive.";
-  }
-  const minimum = parseBareCodexVersion(MINIMUM_CODEX_CLI_VERSION)!;
-  const coreComparison = parsed.major !== minimum.major
-    ? parsed.major - minimum.major
-    : parsed.minor !== minimum.minor
-    ? parsed.minor - minimum.minor
-    : parsed.patch - minimum.patch;
-  if (
-    coreComparison > 0 ||
-    (coreComparison === 0 && parsed.prerelease === null)
-  ) {
-    return null;
-  }
-  return `Codex CLI ${parsed.version} is unsupported. Hive requires Codex CLI >= ${MINIMUM_CODEX_CLI_VERSION} because\n` +
-    "Codex session bootstrap uses developer instructions instead of a visible user prompt.\n" +
-    "Fix: update Codex, then reopen Hive.";
-}
-
-/** Free provider identity probe: opens no session and starts no model turn. */
-export async function probeCodexCliVersion(
-  argv: readonly string[] = ["codex"],
-): Promise<string | null> {
-  try {
-    const child = Bun.spawn([...argv, "--version"], {
-      cwd: tmpdir(),
-      stdout: "pipe",
-      stderr: "ignore",
-    });
-    const output = await new Response(child.stdout).text();
-    if (await child.exited !== 0) return null;
-    return parseCodexCliVersion(output)?.version ?? null;
-  } catch {
-    return null;
-  }
-}
+  invalidRecoveryArtifactEvidence,
+  isMissingRecoveryArtifact,
+  recoveryArtifactTimestamp,
+  selectRecoverySessionId,
+  type RecoverySessionArtifact,
+} from "./recovery-session";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */
@@ -118,8 +36,9 @@ export interface CodexSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** No-prompt autonomy for readers through config overrides shared by spawn
-   * and resume. The filesystem sandbox always remains read-only. */
+  /** No-prompt autonomy through config overrides shared by spawn and resume.
+   * Read-only sessions keep their filesystem sandbox, but still inherit the
+   * user's no-prompt choice. */
   dangerous?: boolean;
   /** Names of MCP servers this spawn inherits from the user's global
    * `~/.codex/config.toml` and does not need. Each is detached for this
@@ -146,11 +65,6 @@ export type CodexAgentConfigOptions = Pick<
   /** Stored only in Hive's 0600 token file and exported by the launch shell;
    * never written to argv or project config. */
   capabilityToken?: string;
-  /** The driver this config is being written for. This file is a TUI writer's
-   * own tamperable `.codex/` directory, so a writer is refused here — but an
-   * app-server session is brokered by the daemon and does not draw any
-   * authority from these bytes, so it is admissible. */
-  driver: CodexDriver;
 };
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
@@ -158,11 +72,6 @@ export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
 /** The env var codex reads the agent's bearer from (bearer_token_env_var).
  * Populated only inside the agent's tmux launch shell, never in any argv. */
 export const CODEX_CAPABILITY_TOKEN_ENV = "HIVE_CAPABILITY_TOKEN";
-
-export interface CodexSessionBootstrap {
-  developerInstructions: string;
-  initialUserPrompt?: string;
-}
 
 export function codexCapabilityTokenPath(worktreePath: string): string {
   return join(worktreePath, ".codex", "capability-token");
@@ -204,41 +113,40 @@ function buildCodexConfigArgs(
   options: CodexSpawnOptions,
   sandbox: { asConfigOverride: boolean },
 ): string[] {
-  // These argv/config paths build a TUI launch, which can never host a writer.
-  assertCodexWriterContained("codex", options.readOnly, "tui");
   // Apps/connectors do not appear in mcp_servers, so inherited-server
   // exclusions cannot detach them. Hive agents have a deliberately scoped
   // tool surface; disable Apps for this process without changing user config.
-  //
-  // Disable Codex-internal subagents too. `codex features list` (0.144.4)
-  // reports `multi_agent` as a stable feature that is on by default; a worker
-  // that spawns its own children gives them execution identities Hive never
-  // authorized, reserved quota for, or attested — the /root/review and
-  // /root/review_grok rollouts of the incident. `features.multi_agent=false`
-  // (equivalently `--disable multi_agent`) is the verified disable surface;
-  // `multi_agent_v2` and `enable_fanout` are already off by default. A Hive
-  // worker is a single agent, so nothing legitimate is lost.
-  const args: string[] = [
-    "-c",
-    "features.apps=false",
-    "-c",
-    "features.multi_agent=false",
-  ];
+  const args: string[] = ["-c", "features.apps=false"];
   if (options.model !== "default") {
     args.push("-c", `model=${options.model}`);
   }
   args.push("-c", `model_reasoning_effort=${options.effort}`);
 
-  // Codex writers are contained before the adapter can construct argv.
-  // `codex resume` documents no --sandbox flag, so that path carries the same
-  // reader restriction as a config override instead.
-  if (sandbox.asConfigOverride) {
-    args.push("-c", 'sandbox_mode="read-only"');
+  if (options.readOnly) {
+    // `codex resume` documents no --sandbox flag, so the resume path passes
+    // the same restriction as a config override instead.
+    if (sandbox.asConfigOverride) {
+      args.push("-c", 'sandbox_mode="read-only"');
+    } else {
+      args.push("--sandbox", "read-only");
+    }
+    if (options.dangerous ?? false) {
+      args.push("-c", 'approval_policy="never"');
+    }
+  } else if (options.dangerous ?? false) {
+    args.push(
+      "-c",
+      'sandbox_mode="danger-full-access"',
+      "-c",
+      'approval_policy="never"',
+    );
   } else {
-    args.push("--sandbox", "read-only");
-  }
-  if (options.dangerous ?? false) {
-    args.push("-c", 'approval_policy="never"');
+    args.push(
+      "-c",
+      'sandbox_mode="workspace-write"',
+      "-c",
+      'approval_policy="on-request"',
+    );
   }
 
   // The lifecycle hooks ride the command line, not the worktree's
@@ -253,28 +161,16 @@ function buildCodexConfigArgs(
     ".codex",
     CODEX_NOTIFY_SCRIPT,
   );
-  const hookEntry = (command: string, matcher?: string): string =>
-    `{${
-      matcher === undefined ? "" : `matcher=${tomlString(matcher)},`
-    }hooks=[{type="command",command=${tomlString(command)},timeout=5}]}`;
   const hookOverride = (
     event: string,
     command: string,
     matcher?: string,
-  ): string => `hooks.${event}=[${hookEntry(command, matcher)}]`;
-  // PreToolUse carries at most one Hive entry (graphify). The fail-open
-  // writer identity PreToolUse guard was removed: Codex 0.144.4 hooks fail
-  // open on error/timeout and are writer-tamperable, so they cannot authorize
-  // mutation. Codex writers are refused at launch instead.
-  const preToolUseEntries: string[] = [];
-  if (options.graphifyUrl !== undefined) {
-    preToolUseEntries.push(hookEntry(
-      `${shellToken(graphifyHookPath(options.worktreePath, ".codex"))} ${
-        CODEX_GRAPHIFY_HOOK_KIND
-      }`,
-      "Bash",
-    ));
-  }
+  ): string =>
+    `hooks.${event}=[{${
+      matcher === undefined ? "" : `matcher=${tomlString(matcher)},`
+    }hooks=[{type="command",command=${
+      tomlString(command)
+    },timeout=5}]}]`;
   args.push(
     ...buildCodexTrustArgs(options.worktreePath),
     "--dangerously-bypass-hook-trust",
@@ -288,10 +184,18 @@ function buildCodexConfigArgs(
     hookOverride("PostToolUse", `${notifyPath} tool-boundary`),
     "-c",
     hookOverride("Stop", `${notifyPath} turn-end`),
-    ...(preToolUseEntries.length === 0 ? [] : [
-      "-c",
-      `hooks.PreToolUse=[${preToolUseEntries.join(",")}]`,
-    ]),
+    ...(options.graphifyUrl === undefined
+      ? []
+      : [
+          "-c",
+          hookOverride(
+            "PreToolUse",
+            `${shellToken(graphifyHookPath(options.worktreePath, ".codex"))} ${
+              CODEX_GRAPHIFY_HOOK_KIND
+            }`,
+            "Bash",
+          ),
+        ]),
     "-c",
     `mcp_servers.hive.url=${tomlString(`http://127.0.0.1:${options.daemonPort}/mcp`)}`,
     ...((options.dangerous ?? false)
@@ -336,14 +240,6 @@ export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
   return ["codex", ...buildCodexConfigArgs(options, { asConfigOverride: false })];
 }
 
-export function buildCodexResumeOptions(options: CodexSpawnOptions): string[] {
-  return [
-    "codex",
-    "resume",
-    ...buildCodexConfigArgs(options, { asConfigOverride: true }),
-  ];
-}
-
 // Relaunches a crashed agent's recorded rollout (`codex resume [OPTIONS]
 // [SESSION_ID]`, verified against codex CLI help) with the same config
 // overrides the original spawn used.
@@ -352,7 +248,9 @@ export function buildCodexResumeCommand(
   sessionId: string,
 ): string[] {
   return [
-    ...buildCodexResumeOptions(options),
+    "codex",
+    "resume",
+    ...buildCodexConfigArgs(options, { asConfigOverride: true }),
     sessionId,
   ];
 }
@@ -362,15 +260,14 @@ export function codexSessionsDirectory(home = homedir()): string {
 }
 
 // Codex records every conversation as a rollout file whose first line is a
-// session_meta entry carrying the session id, cwd, source, and creation time.
-// Hook-claimed ids are not trusted, and 0.144.4 exposes no independent datum
-// that binds one of these rollout records to a Hive process incarnation.
+// session_meta entry carrying the session id and cwd. When a crashed agent's
+// thread id was never captured from a notify payload, the newest rollout
+// whose cwd is the agent's worktree is the session to resume.
 const ROLLOUT_SCAN_LIMIT = 100;
 
 export interface CodexRolloutLocation {
   path: string;
   sessionId: string;
-  createdAt: string;
   mtimeMs: number;
 }
 
@@ -381,26 +278,6 @@ async function findCodexRollout(
 ): Promise<CodexRolloutLocation | null> {
   const target = resolve(worktreePath);
   const rollouts = await listCodexRollouts(home);
-  // An exact session id is indexed by the vendor's own filename convention
-  // (rollout-<timestamp>-<session id>.jsonl), so the lookup never falls out
-  // of a newest-N window when other sessions accumulate — a live-but-idle
-  // agent's identity must not go absent because an editor wrote 100 newer
-  // rollouts. The session_meta line stays authoritative: a filename hit that
-  // fails meta verification falls through to the bounded scan below.
-  if (sessionId !== undefined) {
-    for (const rollout of rollouts) {
-      if (!rollout.path.endsWith(`-${sessionId}.jsonl`)) continue;
-      const meta = await readRolloutSessionMeta(rollout.path);
-      if (meta !== null && meta.cwd === target && meta.sessionId === sessionId) {
-        return {
-          path: rollout.path,
-          sessionId: meta.sessionId,
-          createdAt: meta.createdAt,
-          mtimeMs: rollout.mtimeMs,
-        };
-      }
-    }
-  }
   rollouts.sort((a, b) => b.mtimeMs - a.mtimeMs);
   for (const rollout of rollouts.slice(0, ROLLOUT_SCAN_LIMIT)) {
     const meta = await readRolloutSessionMeta(rollout.path);
@@ -411,7 +288,6 @@ async function findCodexRollout(
       return {
         path: rollout.path,
         sessionId: meta.sessionId,
-        createdAt: meta.createdAt,
         mtimeMs: rollout.mtimeMs,
       };
     }
@@ -421,6 +297,7 @@ async function findCodexRollout(
 
 async function listCodexRollouts(
   home: string,
+  strictEvidence = false,
 ): Promise<{ path: string; mtimeMs: number }[]> {
   const rollouts: { path: string; mtimeMs: number }[] = [];
   const pending = [codexSessionsDirectory(home)];
@@ -429,7 +306,14 @@ async function listCodexRollouts(
     let entries;
     try {
       entries = await readdir(directory, { withFileTypes: true });
-    } catch {
+    } catch (error) {
+      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+        invalidRecoveryArtifactEvidence(
+          "Codex",
+          directory,
+          "directory cannot be read",
+        );
+      }
       continue;
     }
     for (const entry of entries) {
@@ -439,7 +323,14 @@ async function listCodexRollouts(
       } else if (/^rollout-.*\.jsonl$/.test(entry.name)) {
         try {
           rollouts.push({ path, mtimeMs: (await stat(path)).mtimeMs });
-        } catch {
+        } catch (error) {
+          if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+            invalidRecoveryArtifactEvidence(
+              "Codex",
+              path,
+              "cannot be inspected",
+            );
+          }
           // A rollout deleted mid-scan is simply not a candidate.
         }
       }
@@ -448,8 +339,8 @@ async function listCodexRollouts(
   return rollouts;
 }
 
-// Raw newest-rollout lookup for telemetry. This cwd-only result is never
-// sufficient to bind an active process.
+// The newest rollout recorded for a worktree — used only when no durable
+// session id has been captured yet (crash-recovery discovery).
 export async function findLatestCodexRollout(
   worktreePath: string,
   home = homedir(),
@@ -465,49 +356,6 @@ export async function findCodexRolloutBySessionId(
   return findCodexRollout(worktreePath, home, sessionId);
 }
 
-/** A DISPLAY-GRADE candidate for the rollout this agent's process wrote,
- * found by cwd plus creation time: only rollouts created in this worktree AT
- * OR AFTER this process started qualify, so a reused worktree's
- * dead-predecessor rollout (created before this process existed) is never
- * selected. The earliest qualifying rollout is usually the launch
- * conversation — but a same-cwd child session created in the same window can
- * win instead, and Codex 0.144.4 rollout metadata has no PID or launch nonce
- * to tell them apart. This binding is OBSERVATION for status/telemetry
- * display only — never proof of execution identity, and never mutation or
- * landing authority (the app-server driver's thread-named rollout is the
- * only attestation surface). */
-export async function findCodexRolloutForProcess(
-  worktreePath: string,
-  processStartedAt: string,
-  home = homedir(),
-): Promise<CodexRolloutLocation | null> {
-  const launchedAt = Date.parse(processStartedAt);
-  if (!Number.isFinite(launchedAt)) return null;
-  const target = resolve(worktreePath);
-  const candidates: CodexRolloutLocation[] = [];
-  for (const rollout of await listCodexRollouts(home)) {
-    // mtime never precedes creation, so anything last written before this
-    // process started cannot qualify — the whole session history is never
-    // opened file-by-file on every sweep.
-    if (rollout.mtimeMs < launchedAt) continue;
-    const meta = await readRolloutSessionMeta(rollout.path);
-    if (meta === null || meta.cwd !== target) continue;
-    const createdAt = Date.parse(meta.createdAt);
-    if (!Number.isFinite(createdAt) || createdAt < launchedAt) continue;
-    candidates.push({
-      path: rollout.path,
-      sessionId: meta.sessionId,
-      createdAt: meta.createdAt,
-      mtimeMs: rollout.mtimeMs,
-    });
-  }
-  candidates.sort((left, right) =>
-    Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
-    left.mtimeMs - right.mtimeMs
-  );
-  return candidates[0] ?? null;
-}
-
 export async function findLatestCodexSessionId(
   worktreePath: string,
   home = homedir(),
@@ -515,20 +363,33 @@ export async function findLatestCodexSessionId(
   return (await findLatestCodexRollout(worktreePath, home))?.sessionId ?? null;
 }
 
-export function discoverCodexRecoverySessionId(
+export async function discoverCodexRecoverySessionId(
   worktreePath: string,
   agentCreatedAt: string,
   home = homedir(),
 ): Promise<string | null> {
-  void worktreePath;
-  void agentCreatedAt;
-  void home;
-  return Promise.resolve(null);
+  const target = resolve(worktreePath);
+  const artifacts: RecoverySessionArtifact[] = [];
+  for (const rollout of await listCodexRollouts(home, true)) {
+    const meta = await readRolloutSessionMeta(rollout.path, true);
+    if (meta === null || meta.cwd !== target) continue;
+    artifacts.push({
+      sessionId: meta.sessionId,
+      createdAtMs: recoveryArtifactTimestamp(
+        "Codex",
+        rollout.path,
+        meta.createdAt,
+      ),
+      path: rollout.path,
+    });
+  }
+  return selectRecoverySessionId("Codex", agentCreatedAt, artifacts);
 }
 
 async function readRolloutSessionMeta(
   path: string,
-): Promise<{ sessionId: string; cwd: string; createdAt: string } | null> {
+  strictEvidence = false,
+): Promise<{ sessionId: string; cwd: string; createdAt: unknown } | null> {
   let firstLine: string;
   try {
     const input = createReadStream(path);
@@ -540,19 +401,32 @@ async function readRolloutSessionMeta(
       lines.close();
       input.destroy();
     }
-  } catch {
+  } catch (error) {
+    if (strictEvidence && !isMissingRecoveryArtifact(error)) {
+      invalidRecoveryArtifactEvidence("Codex", path, "cannot be read");
+    }
     return null;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(firstLine);
   } catch {
+    if (strictEvidence) {
+      invalidRecoveryArtifactEvidence("Codex", path, "is not valid JSONL");
+    }
     return null;
   }
   if (
     typeof parsed !== "object" || parsed === null ||
     !("type" in parsed) || parsed.type !== "session_meta"
   ) {
+    if (strictEvidence) {
+      invalidRecoveryArtifactEvidence(
+        "Codex",
+        path,
+        "has no session_meta first record",
+      );
+    }
     return null;
   }
   if (
@@ -560,23 +434,14 @@ async function readRolloutSessionMeta(
     parsed.payload === null
   ) throw new Error(`Invalid Codex session_meta in ${path}`);
   const payload = parsed.payload as Record<string, unknown>;
-  // A well-formed session_meta from another client (vscode, exec, app-server)
-  // is not a candidate, not an error: the user's editor sessions share
-  // ~/.codex/sessions with Hive's, and one of them must never poison a scan.
-  if (payload.source !== "cli") return null;
   const sessionId = payload.id ?? payload.session_id;
-  const createdAt = (parsed as Record<string, unknown>).timestamp;
-  if (
-    typeof sessionId !== "string" || typeof payload.cwd !== "string" ||
-    typeof createdAt !== "string" ||
-    !Number.isFinite(Date.parse(createdAt))
-  ) {
+  if (typeof sessionId !== "string" || typeof payload.cwd !== "string") {
     throw new Error(`Invalid Codex session_meta in ${path}`);
   }
   return {
     sessionId,
     cwd: payload.cwd,
-    createdAt,
+    createdAt: (parsed as Record<string, unknown>).timestamp,
   };
 }
 
@@ -584,7 +449,6 @@ export async function writeCodexAgentConfig(
   worktreePath: string,
   options: CodexAgentConfigOptions,
 ): Promise<void> {
-  assertCodexWriterContained("codex", options.readOnly, options.driver);
   const codexDirectory = join(worktreePath, ".codex");
   const notifyPath = join(codexDirectory, CODEX_NOTIFY_SCRIPT);
   const graphifyPath = graphifyHookPath(worktreePath, ".codex");
@@ -608,8 +472,6 @@ export async function writeCodexAgentConfig(
     ].join(" "),
     "",
   ].join("\n");
-  // No PreToolUse identity guard script: the fail-open/tamperable hook path
-  // was removed; Codex writers are refused at launch instead.
   // No hook tables and no Authorization header here: this project-local file
   // only loads for directories whose trust is persisted in the user's config,
   // which Hive never edits. The lifecycle hooks ride the spawn command's `-c`
@@ -627,8 +489,6 @@ export async function writeCodexAgentConfig(
   await Promise.all([
     writeFile(configPath, config, { mode: 0o600 }),
     writeFile(notifyPath, notifyScript, { mode: 0o755 }),
-    // Remove any leftover identity-guard script from older launches.
-    rm(join(codexDirectory, "hive-tool-guard.sh"), { force: true }),
     writeGraphifyHook(graphifyPath, options.graphifyUrl),
     options.capabilityToken === undefined
       // A leftover token from an earlier process must not outlive the spawn

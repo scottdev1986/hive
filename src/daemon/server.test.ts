@@ -9,14 +9,12 @@ import { join } from "node:path";
 import { createWorktree } from "../adapters/worktrees";
 import {
   AgentMessageSchema,
-  HookEventSchema,
   QuotaConfigSchema,
   type AgentRecord,
   type HookEvent,
   type QuotaPoolStatus,
 } from "../schemas";
-import { agentStateCas, HiveDatabase } from "./db";
-import { CODEX_WRITER_CONTAINMENT_REASON } from "./codex-containment";
+import { HiveDatabase } from "./db";
 import { RoutingPolicyStore } from "./routing-policy-store";
 import type { TmuxSender } from "./delivery";
 import {
@@ -27,13 +25,8 @@ import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
-import {
-  actingAs,
-  deleteAgentRow,
-  listAuditEntries,
-  submitPaste,
-} from "./testing";
-import { readCredential } from "./credentials";
+import { actingAs, listAuditEntries, submitPaste } from "./testing";
+import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { agentTmuxSession, orchestratorTmuxSession } from "./tmux-sessions";
 import {
@@ -75,8 +68,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-server",
     tmuxSession: "hive-maya",
-    processIncarnation: 1,
-    processStartedAt: timestamp,
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -87,49 +78,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     ...overrides,
   };
 }
-
-/** Legacy pre-containment Codex writer fixture for landing defense-in-depth. */
-function landableLegacyCodex(overrides: Partial<AgentRecord> = {}): AgentRecord {
-  return agent({
-    toolSessionId: "session-land",
-    executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
-    identityState: "matching",
-    ...overrides,
-  });
-}
-
-
-function testPauseCapture(
-  agent: AgentRecord,
-  overrides: Partial<import("../schemas").PauseCapture> = {},
-): import("../schemas").PauseCapture {
-  return {
-    agentId: agent.id,
-    agentName: agent.name,
-    tmuxSession: agent.tmuxSession,
-    toolSessionId: agent.toolSessionId ?? null,
-    processIncarnation: agent.processIncarnation ?? 0,
-    hostPid: null,
-    tree: [{
-      pid: 100,
-      command: "codex",
-      birth: "test-birth-100",
-      role: "tmux-root",
-    }],
-    capturedAt: "2026-07-15T18:00:00.000Z",
-    ...overrides,
-  };
-}
-
-const matchingCodexIdentity = async () => ({
-  status: "observed" as const,
-  model: "gpt-5-codex",
-  effort: "medium",
-  turnId: "t-land",
-  sessionId: "session-land",
-  observedAt: "2026-07-15T18:00:00.000Z",
-});
-
 
 class SilentTmuxSender implements TmuxSender {
   readonly calls: Array<[string, string]> = [];
@@ -307,13 +255,12 @@ test("agent kill refuses when a live session's process roots are unreadable", as
       error: "tmux pane probe failed",
     });
     expect(tmux.killed).toEqual([]);
-    // Durable kill intent + authority revoke stick; unverified teardown does not restore live.
     expect(db.getAgentByName("maya")).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
+      status: "working",
+      writeRevoked: false,
     });
     expect((await agentFetch("http://hive/orchestrator-status")).status).toEqual(
-      403,
+      200,
     );
   } finally {
     await daemon.stop();
@@ -357,10 +304,9 @@ test("agent kill refuses when tmux reports success but leaves the session", asyn
       owned.exited,
       Bun.sleep(1_000).then(() => null),
     ])).not.toBeNull();
-    // Teardown unverified: terminal + revoked authority stay (never restore live).
     expect(db.getAgentByName("maya")).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
+      status: "working",
+      writeRevoked: false,
     });
     expect((await agentFetch("http://hive/orchestrator-status")).status).toEqual(
       403,
@@ -395,9 +341,7 @@ test("managed shutdown refuses to exit after an agent teardown probe fails", asy
   try {
     await expect(daemon.stop()).rejects.toThrow("refused shutdown");
     expect(tmux.killed).toEqual([]);
-    // Durable kill intent is not rolled back when the probe fails.
-    expect(db.getAgentByName("maya")?.status).toEqual("dead");
-    expect(db.getAgentByName("maya")?.writeRevoked).toBe(true);
+    expect(db.getAgentByName("maya")?.status).toEqual("working");
   } finally {
     tmux.sessions.clear();
     await daemon.stop();
@@ -501,15 +445,7 @@ async function postEvent(
   daemon: HiveDaemon,
   event: Record<string, unknown>,
 ): Promise<Response> {
-  const agentName = typeof event.agentName === "string"
-    ? event.agentName
-    : null;
-  const agent = agentName === null ? null : daemon.db.getAgentByName(agentName);
-  return actingAs(
-    daemon,
-    agent?.name ?? "operator",
-    agent?.readOnly ? "reader" : agent === null ? "operator" : "writer",
-  )("http://hive/event", {
+  return actingAs(daemon, "operator")("http://hive/event", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(event),
@@ -756,9 +692,9 @@ describe("HiveDaemon HTTP server", () => {
         controlMessageId: "original-run",
       });
       expect(ledger.getReservation(positiveControl.id)?.status).toEqual("active");
-      await daemon.delivery.send("orchestrator", "maya", "Stop.", {
+      await daemon.delivery.send("orchestrator", "maya", "Pause.", {
         priority: "critical",
-        intent: "stop",
+        intent: "pause",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
         status: "failed",
@@ -803,8 +739,8 @@ describe("HiveDaemon HTTP server", () => {
       const message = await daemon.delivery.send(
         "orchestrator",
         "maya",
-        "Stop.",
-        { priority: "critical", intent: "stop" },
+        "Pause.",
+        { priority: "critical", intent: "pause" },
       );
 
       expect(message.state).toEqual("queued");
@@ -815,243 +751,6 @@ describe("HiveDaemon HTTP server", () => {
       });
     } finally {
       await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("a critical pause is non-destructive: same process suspended, no restart, daemon-applied", async () => {
-    const db = new HiveDatabase(join(home, "control-pause-nondestructive.db"));
-    const suspended: string[] = [];
-    class NoRestartSpawner extends StubSpawner {
-      restartCalls = 0;
-      async restartForControl(): Promise<AgentRecord> {
-        this.restartCalls += 1;
-        throw new Error("restartForControl must not run for a non-destructive pause");
-      }
-    }
-    const spawner = new NoRestartSpawner();
-    const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
-    const daemon = new HiveDaemon({
-      db,
-      spawner,
-      tmux,
-      tmuxSender: new SilentTmuxSender(db),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-    });
-    db.insertAgent(agent());
-    try {
-      const control = await daemon.delivery.send(
-        "orchestrator",
-        "maya",
-        "Pause here.",
-        { priority: "critical", intent: "pause" },
-      );
-      // Non-destructive: the SAME process is suspended; no replacement launched,
-      // no session killed.
-      expect(suspended).toEqual(["hive-maya"]);
-      expect(spawner.restartCalls).toEqual(0);
-      expect(tmux.killed).toHaveLength(0);
-      const row = db.getAgentByName("maya")!;
-      expect(row.status).toBe("control-paused");
-      expect(row.writeRevoked).toBe(true);
-      expect(row.capabilityEpoch).toBe(1);
-      expect(row.controlMessageId).toBe(control.id);
-      // Exact tree binding is durable on the row for a later same-process resume.
-      expect(row.pauseCapture).toBeDefined();
-      expect(row.pauseCapture?.tree.length).toBeGreaterThan(0);
-      expect(row.pauseCapture?.agentName).toBe("maya");
-      // A suspended process cannot ACK; the daemon records the control applied,
-      // so the acknowledgement-deadline sweep does not alert on it.
-      expect(control.state).toBe("applied");
-    } finally {
-      db.close();
-    }
-  });
-
-  test.each([
-    ["tool session", (rival: HiveDatabase) => {
-      rival.database.query(
-        "UPDATE agents SET toolSessionId = ? WHERE id = ?",
-      ).run("replacement-session", "agent-maya");
-      return { toolSessionId: "replacement-session", processIncarnation: 1 };
-    }],
-    ["process incarnation", (rival: HiveDatabase) => {
-      rival.database.query(
-        "UPDATE agents SET processIncarnation = processIncarnation + 1 WHERE id = ?",
-      ).run("agent-maya");
-      return { toolSessionId: "session-1", processIncarnation: 2 };
-    }],
-  ] as const)("a replacement %s during awaited freeze cannot receive stale pause capture", async (
-    _label,
-    replace,
-  ) => {
-    const path = join(home, `control-pause-freeze-${crypto.randomUUID()}.db`);
-    const db = new HiveDatabase(path);
-    const rival = new HiveDatabase(path);
-    let enteredFreeze!: () => void;
-    let releaseFreeze!: () => void;
-    const entered = new Promise<void>((resolve) => {
-      enteredFreeze = resolve;
-    });
-    const gate = new Promise<void>((resolve) => {
-      releaseFreeze = resolve;
-    });
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      tmuxSender: new SilentTmuxSender(db),
-      suspendProcesses: async () => {
-        enteredFreeze();
-        await gate;
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-    });
-    db.insertAgent(agent({ toolSessionId: "session-1" }));
-    try {
-      const sending = daemon.delivery.send(
-        "orchestrator",
-        "maya",
-        "Pause.",
-        { priority: "critical", intent: "pause" },
-      );
-      await entered;
-      const successor = replace(rival);
-      releaseFreeze();
-      const control = await sending;
-
-      expect(control.state).toBe("queued");
-      expect(control.alertAt).not.toBeNull();
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        ...successor,
-        status: "control-paused",
-        writeRevoked: true,
-        pauseCapture: undefined,
-      });
-    } finally {
-      releaseFreeze();
-      await daemon.stop();
-      rival.close();
-      db.close();
-    }
-  });
-
-  test("resume reattests and SIGCONTs a control-paused agent, clearing the control binding", async () => {
-    const db = new HiveDatabase(join(home, "control-pause-resume.db"));
-    const suspended: string[] = [];
-    const resumed: string[] = [];
-    const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      tmuxSender: new SilentTmuxSender(db),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-      resumeProcesses: async (session) => {
-        resumed.push(session);
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        // The paused agent did not drift; reattestation matches its launch.
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "t",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    db.insertAgent(agent({
-      tool: "codex",
-      readOnly: true,
-      toolSessionId: "session-1",
-      executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-    }));
-    try {
-      const control = await daemon.delivery.send(
-        "orchestrator",
-        "maya",
-        "Pause.",
-        { priority: "critical", intent: "pause" },
-      );
-      expect(db.getAgentByName("maya")?.controlMessageId).toBe(control.id);
-
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(true);
-      expect(outcome.identityState).toBe("matching");
-      const row = db.getAgentByName("maya")!;
-      expect(row.status).toBe("idle");
-      expect(row.writeRevoked).toBe(false);
-      // The control binding is cleared; the SAME process was SIGCONT'd.
-      expect(row.controlMessageId).toBeUndefined();
-      expect(resumed).toEqual(["hive-maya"]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("same-name reuse after pause resume cannot remove the successor credential", async () => {
-    const db = new HiveDatabase(join(home, "pause-resume-name-reuse.db"));
-    let daemon!: HiveDaemon;
-    let successorToken = "";
-    daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(db),
-      resumeProcesses: async () => {
-        const current = db.getAgentById("agent-maya")!;
-        expect(db.markAgentTerminalIfCurrent(
-          agentStateCas(current),
-          "2026-07-15T20:10:00.000Z",
-          "dead",
-        )).not.toBeNull();
-        const successor = db.insertAgent(agent({
-          id: "agent-maya-successor",
-          name: "maya",
-          tool: "claude",
-          model: "sonnet",
-          readOnly: true,
-          processIncarnation: 9,
-          tmuxSession: "hive-maya-successor",
-        }));
-        successorToken = daemon.issueAgentCredential(successor, "reader")!
-          .token;
-      },
-    });
-    const paused = agent({
-      tool: "claude",
-      model: "sonnet",
-      readOnly: true,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      controlMessageId: "pause-control",
-    });
-    paused.pauseCapture = testPauseCapture(paused);
-    db.insertAgent(paused);
-    try {
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(false);
-      expect(outcome.reason).toContain("no longer the paused incarnation");
-      expect(db.getAgentById("agent-maya-successor")).toMatchObject({
-        status: "working",
-        processIncarnation: 9,
-      });
-      expect(readCredential("maya")).toBe(successorToken);
-      const capabilityId = successorToken.split(".")[1]!;
-      expect(db.getCapability(capabilityId)?.capability.revokedAt).toBeNull();
-    } finally {
       db.close();
     }
   });
@@ -1166,9 +865,6 @@ describe("HiveDaemon HTTP server", () => {
       expect(tmux.killed).toHaveLength(0);
       expect(db.getMessage("recover-control")?.state).toEqual("injected");
       expect(ledger.getReservation(reservation.id)?.status).toEqual("active");
-      await quota.cancel(reservation.id);
-      await daemon.runMaintenance();
-      expect(db.getMessage("recover-control")?.state).toEqual("applied");
     } finally {
       db.close();
     }
@@ -1223,11 +919,11 @@ describe("HiveDaemon HTTP server", () => {
         id: "recover-stuck-control",
         from: "orchestrator",
         to: "maya",
-        body: "Stop.",
+        body: "Pause.",
         createdAt: timestamp,
         deliveredAt: null,
         priority: "critical",
-        intent: "stop",
+        intent: "pause",
         state: "queued",
         injectedAt: null,
         acknowledgedAt: null,
@@ -1401,132 +1097,6 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("teardown awaiting process stop cannot cancel a same-name successor reservation", async () => {
-    const db = new HiveDatabase(join(home, "kill-name-reuse-quota.db"));
-    const ledger = new QuotaLedger(db);
-    const quota = new QuotaService(
-      ledger,
-      QuotaConfigSchema.parse({ enabled: false }),
-      () => new Date(timestamp),
-    );
-    let enterStop!: () => void;
-    let releaseStop!: () => void;
-    const stopEntered = new Promise<void>((resolve) => {
-      enterStop = resolve;
-    });
-    const stopMayFinish = new Promise<void>((resolve) => {
-      releaseStop = resolve;
-    });
-    const tmux = new class extends FakeDaemonTmux {
-      override async killSession(session: string): Promise<void> {
-        enterStop();
-        await stopMayFinish;
-        await super.killSession(session);
-      }
-    }();
-    tmux.sessions.add("hive-maya");
-    const oldReservation = ledger.insertUnboundedReservation({
-      id: "old-holder-reservation",
-      agentName: "maya",
-      provider: "claude",
-      account: "default",
-      pool: "unbounded",
-      model: "sonnet",
-      category: "simple_coding",
-      estimatedUnits: 10,
-      now: timestamp,
-      expiresAt: "2026-07-10T12:00:00.000Z",
-    });
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      tmuxSender: new SilentTmuxSender(db),
-      quota,
-      resourceRunners: {
-        panePids: async () => [100],
-        reap: {
-          ps: async () => `100 1 10 claude\n${process.pid} 1 10 bun\n`,
-          psState: async () => `${process.pid} 1 S\n`,
-          kill: () => undefined,
-          wait: async () => undefined,
-        },
-      },
-      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
-    });
-    db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      quotaReservationId: oldReservation.id,
-      worktreePath: null,
-      branch: null,
-    }));
-    const transport = new StreamableHTTPClientTransport(
-      new URL("http://hive/mcp"),
-      { fetch: actingAs(daemon, "operator") },
-    );
-    const client = new Client({ name: "kill-name-reuse", version: "1.0.0" });
-    await client.connect(transport);
-    try {
-      const killing = client.callTool({
-        name: "hive_kill",
-        arguments: { name: "maya" },
-      });
-      const boundary = await Promise.race([
-        stopEntered.then(() => null),
-        killing,
-        Bun.sleep(1_000).then(() => {
-          throw new Error("kill teardown did not enter process stop");
-        }),
-      ]);
-      if (boundary !== null) {
-        throw new Error(`kill returned before process stop: ${JSON.stringify(boundary)}`);
-      }
-      const successorReservation = ledger.insertUnboundedReservation({
-        id: "successor-reservation",
-        agentName: "maya",
-        provider: "claude",
-        account: "default",
-        pool: "unbounded",
-        model: "sonnet",
-        category: "simple_coding",
-        estimatedUnits: 10,
-        now: "2026-07-09T12:01:00.000Z",
-        expiresAt: "2026-07-10T12:00:00.000Z",
-      });
-      db.insertAgent(agent({
-        id: "agent-maya-successor",
-        name: "maya",
-        tool: "claude",
-        model: "sonnet",
-        readOnly: true,
-        processIncarnation: 9,
-        tmuxSession: "hive-maya-successor",
-        quotaReservationId: successorReservation.id,
-        worktreePath: null,
-        branch: null,
-      }));
-      releaseStop();
-      await Promise.race([
-        killing,
-        Bun.sleep(1_000).then(() => {
-          throw new Error("kill teardown did not finish after process stop");
-        }),
-      ]);
-
-      expect(ledger.getReservation(oldReservation.id)?.status).toBe("released");
-      expect(ledger.getReservation(successorReservation.id)?.status).toBe("active");
-      expect(db.getAgentById("agent-maya-successor")).toMatchObject({
-        status: "working",
-        processIncarnation: 9,
-      });
-    } finally {
-      releaseStop();
-      await client.close();
-      db.close();
-    }
-  });
-
   test("an expired control reservation settles, stops its process, and preserves work", async () => {
     const db = new HiveDatabase(join(home, "control-timeout.db"));
     const ledger = new QuotaLedger(db);
@@ -1651,10 +1221,8 @@ describe("HiveDaemon HTTP server", () => {
       expect(ledger.getReservation(reservation.id)).toMatchObject({
         status: "active",
       });
-      // Unverified teardown does not restore live authority; terminal/revoked sticks.
       expect(db.getAgentByName("maya")).toMatchObject({
-        status: "dead",
-        writeRevoked: true,
+        status: "control-paused",
         controlQuotaReservationId: reservation.id,
       });
       expect(tmux.killed).toEqual([]);
@@ -1688,8 +1256,8 @@ describe("HiveDaemon HTTP server", () => {
       const control = await daemon.delivery.send(
         "orchestrator",
         "maya",
-        "Stop before coding.",
-        { priority: "critical", intent: "stop" },
+        "Pause before coding.",
+        { priority: "critical", intent: "pause" },
       );
       expect(control.state).toEqual("queued");
       expect(db.getAgentByName("maya")).toMatchObject({
@@ -1723,12 +1291,9 @@ describe("HiveDaemon HTTP server", () => {
         landed.push(branch);
         return { commit: "abc123" };
       },
-          telemetryReaders: {
-        codexIdentity: matchingCodexIdentity,
-      },
-});
+    });
     try {
-      db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
+      db.insertAgent(agent());
       await daemon.landAgent("maya", 0);
       expect(landed).toEqual(["hive/maya-server"]);
 
@@ -1755,108 +1320,6 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("landing boundary CAS rejects queued control and a recovered predecessor", async () => {
-    const db = new HiveDatabase(join(home, "land-boundary-cas.db"));
-    const mergeSpawns: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      repoRoot: "/repo",
-      landBranch: async (_root, branch, options) => {
-        const current = branch.includes("maya")
-          ? db.getAgentById("agent-maya")!
-          : db.getAgentById("agent-cara")!;
-        if (branch.includes("maya")) {
-          db.updateAgentIfCurrent(agentStateCas(current), {
-            status: "control-paused",
-            writeRevoked: true,
-            capabilityEpoch: current.capabilityEpoch + 1,
-            controlMessageId: "queued-control",
-          });
-        } else {
-          db.upsertAgent({
-            ...current,
-            processIncarnation: (current.processIncarnation ?? 0) + 1,
-            processStartedAt: "2026-07-15T20:02:00.000Z",
-          });
-        }
-        options?.preMergeCheck?.();
-        mergeSpawns.push(branch);
-        return { commit: "unreachable" };
-      },
-    });
-    db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
-    db.insertAgent(agent({
-      id: "agent-cara",
-      name: "cara",
-      tool: "claude",
-      model: "sonnet",
-      branch: "hive/cara-server",
-      tmuxSession: "hive-cara",
-    }));
-    try {
-      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /authority\/incarnation check failed/,
-      );
-      await expect(daemon.landAgent("cara", 0)).rejects.toThrow(
-        /authority\/incarnation check failed/,
-      );
-      expect(mergeSpawns).toEqual([]);
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        status: "control-paused",
-        writeRevoked: true,
-      });
-      expect(db.getAgentById("agent-cara")).toMatchObject({
-        processIncarnation: 2,
-      });
-    } finally {
-      await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("a migrated Codex writer is refused before identity reads or Git without maintenance", async () => {
-    const db = new HiveDatabase(join(home, "legacy-codex-land-refusal.db"));
-    let identityReads = 0;
-    let mergeSpawned = false;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      repoRoot: "/repo",
-      telemetryReaders: {
-        codexIdentity: async () => {
-          identityReads += 1;
-          return matchingCodexIdentity();
-        },
-      },
-      landBranch: async () => {
-        mergeSpawned = true;
-        return { commit: "unreachable" };
-      },
-    });
-    db.insertAgent(landableLegacyCodex({
-      toolSessionId: "migrated-hook-or-child-session",
-      identityState: "matching",
-    }));
-    try {
-      // A migrated/legacy Codex writer has no live brokered app-server turn, so
-      // there is no identity to attest and nothing that could authorize it.
-      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
-        /no live brokered Codex app-server turn to attest against/,
-      );
-      expect(identityReads).toBe(0);
-      expect(mergeSpawned).toBe(false);
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        status: "working",
-        writeRevoked: false,
-        identityState: "matching",
-      });
-    } finally {
-      await daemon.stop();
-      db.close();
-    }
-  });
-
   test("an intentionally read-only agent cannot land through operator authority", async () => {
     const db = new HiveDatabase(join(home, "read-only-land.db"));
     const landed: string[] = [];
@@ -1869,10 +1332,7 @@ describe("HiveDaemon HTTP server", () => {
         landed.push(branch);
         return { commit: "unreachable" };
       },
-          telemetryReaders: {
-        codexIdentity: matchingCodexIdentity,
-      },
-});
+    });
     db.insertAgent(agent({ readOnly: true }));
     try {
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
@@ -1940,11 +1400,8 @@ describe("HiveDaemon HTTP server", () => {
         await landingMayFinish;
         return { commit: "abc123" };
       },
-          telemetryReaders: {
-        codexIdentity: matchingCodexIdentity,
-      },
-});
-    db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
+    });
+    db.insertAgent(agent());
     const landing = daemon.landAgent("maya", 0);
     try {
       await landingStarted;
@@ -1972,15 +1429,11 @@ describe("HiveDaemon HTTP server", () => {
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
     });
-    // Claude writer: Codex legacy turn-start containment is out of scope here.
-    db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      tmuxSession: agentTmuxSession("maya", home),
-    }));
+    db.insertAgent(agent({ tmuxSession: agentTmuxSession("maya", home) }));
     try {
       const events = [
-        { kind: "session-start", agentName: "maya", timestamp },        {
+        { kind: "session-start", agentName: "maya", timestamp },
+        {
           kind: "turn-start",
           agentName: "maya",
           timestamp: "2026-07-09T12:00:30.000Z",
@@ -2026,10 +1479,9 @@ describe("HiveDaemon HTTP server", () => {
       }
       expect(db.getAgentByName("maya")?.contextPct).toEqual(47);
       expect(db.listEvents()).toEqual(events);
-      // Terminal markAgentDead denies pending approvals in the same transaction.
-      expect(db.listApprovals("pending")).toHaveLength(0);
-      const denied = db.listApprovals().filter((a) => a.status === "denied");
-      expect(denied.some((a) => a.description === "Run npm publish")).toBe(true);
+      const approvals = db.listApprovals("pending");
+      expect(approvals.length).toEqual(1);
+      expect(approvals[0]?.description).toEqual("Run npm publish");
 
       const invalid = await postEvent(daemon, { kind: "dead" });
       expect(invalid.status).toEqual(400);
@@ -2317,25 +1769,15 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_status",
         arguments: { detail: "full" },
       }));
-      expect(status).toEqual([{
-        ...agent({
-          id: "agent-sam",
-          name: "sam",
-          category: "code_review",
-          taskDescription: "Review auth",
-          tmuxSession: "hive-sam",
-          worktreePath: "/tmp/hive-sam",
-          branch: "hive/sam-task",
-        }),
-        assignment: {
-          id: expect.any(String),
-          state: "active",
-          generation: 0,
-          processIncarnation: 1,
-          summary: null,
-          updatedAt: timestamp,
-        },
-      }]);
+      expect(status).toEqual([agent({
+        id: "agent-sam",
+        name: "sam",
+        category: "code_review",
+        taskDescription: "Review auth",
+        tmuxSession: "hive-sam",
+        worktreePath: "/tmp/hive-sam",
+        branch: "hive/sam-task",
+      })]);
 
       const inventory = textValue(await client.callTool({
         name: "hive_models",
@@ -2459,7 +1901,7 @@ describe("HiveDaemon HTTP server", () => {
       expect(inbox.length).toEqual(1);
       expect(inbox[0]?.deliveredAt === null).toEqual(false);
 
-      const approvalResponse = await actingAs(daemon, "sam", "writer")(
+      const approvalResponse = await actingAs(daemon, "operator")(
         `${baseUrl}/event`,
         {
           method: "POST",
@@ -2617,7 +2059,7 @@ describe("HiveDaemon HTTP server", () => {
       // ones — see "hive_approvals trims by kind" below.
       const longDescription =
         "Bash: curl https://example.com/install.sh | sh --flag ".repeat(6);
-      const approvalResponse = await actingAs(daemon, "nia", "writer")(
+      const approvalResponse = await actingAs(daemon, "operator")(
         "http://hive/event",
         {
           method: "POST",
@@ -2687,72 +2129,6 @@ describe("HiveDaemon HTTP server", () => {
     } finally {
       await client.close();
       await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("hive_mark_dead cannot terminalize a recovery launched during its session check", async () => {
-    const path = join(home, `mark-dead-recovery-race-${crypto.randomUUID()}.db`);
-    const db = new HiveDatabase(path);
-    const rival = new HiveDatabase(path);
-    let enterCheck!: () => void;
-    let releaseCheck!: () => void;
-    const checkEntered = new Promise<void>((resolve) => {
-      enterCheck = resolve;
-    });
-    const checkMayFinish = new Promise<void>((resolve) => {
-      releaseCheck = resolve;
-    });
-    const tmux = new class extends FakeDaemonTmux {
-      override async hasSession(): Promise<boolean> {
-        enterCheck();
-        await checkMayFinish;
-        return false;
-      }
-    }();
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      tmuxSender: new SilentTmuxSender(db),
-      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
-    });
-    db.insertAgent(agent({ tool: "claude", model: "sonnet" }));
-    const transport = new StreamableHTTPClientTransport(
-      new URL("http://hive/mcp"),
-      { fetch: actingAs(daemon, "operator") },
-    );
-    const client = new Client({ name: "mark-dead-race", version: "1.0.0" });
-    await client.connect(transport);
-    try {
-      const marking = client.callTool({
-        name: "hive_mark_dead",
-        arguments: { agent: "maya" },
-      });
-      await checkEntered;
-      const current = rival.getAgentById("agent-maya")!;
-      expect(rival.updateAgentIfCurrent(agentStateCas(current), {
-        status: "spawning",
-        processIncarnation: (current.processIncarnation ?? 0) + 1,
-        processStartedAt: "2026-07-16T03:01:00.000Z",
-        lastEventAt: "2026-07-16T03:01:00.000Z",
-      })).not.toBeNull();
-      releaseCheck();
-
-      const result = await marking;
-      expect(result.isError).toBe(true);
-      expect(JSON.stringify(result.content)).toContain(
-        "Exact agent state changed before automatic terminalization",
-      );
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        status: "spawning",
-        processIncarnation: 2,
-      });
-      expect(tmux.killed).toEqual([]);
-    } finally {
-      releaseCheck();
-      await client.close();
-      rival.close();
       db.close();
     }
   });
@@ -2839,16 +2215,7 @@ describe("HiveDaemon HTTP server", () => {
         "-print0 | xargs -0 grep -ln \"insertApproval\" | sort -u | head -50 " +
         "&& rm -rf ./build/cache && npm publish --access public --tag latest'";
       expect(longCommand.length).toBeGreaterThan(200);
-      // Approval insertion validates the exact holder atomically, so the row
-      // being decided on must exist.
-      db.upsertAgent(agent({ id: "agent-nia", name: "nia" }));
-      const permissionId = await daemon.queueCodexApproval({
-        agentName: "nia",
-        description: longCommand,
-        agentId: "agent-nia",
-        processIncarnation: 1,
-        capabilityEpoch: 0,
-      });
+      const permissionId = await daemon.queueCodexApproval("nia", longCommand);
 
       const boilerplate =
         "SPEND REAL MONEY on some-model? Approve to let Hive run it and bill "
@@ -3101,55 +2468,28 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("child-first Codex hooks cannot bind session; provider rollout binds the parent", async () => {
+  test("hook events capture the tool session id and a completed turn rearms the resume budget", async () => {
     const db = new HiveDatabase(join(home, "session-capture.db"));
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
       tmux: new FakeDaemonTmux(),
-      telemetryReaders: {
-        codexSession: async () => "provider-parent",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "parent-turn",
-          sessionId: "provider-parent",
-          observedAt: "2026-07-10T10:00:00.000Z",
-        }),
-      },
     });
-    db.insertAgent(agent({
-      status: "working",
-      recoveryAttempts: 2,
-      readOnly: true,
-      model: "gpt-5.6-sol",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-      },
-    }));
+    db.insertAgent(agent({ status: "working", recoveryAttempts: 2 }));
     try {
-      // A child in the same named agent/cwd can inherit the hook credential
-      // and arrive first. Its claimed id is never a session binding.
       await daemon.processEvent({
         kind: "session-start",
         agentName: "maya",
         timestamp: "2026-07-10T10:00:00.000Z",
-        toolSessionId: "child-first",
+        toolSessionId: "0189-first",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
+        toolSessionId: "0189-first",
         recoveryAttempts: 2,
       });
-      expect(db.getAgentByName("maya")?.toolSessionId).toBeUndefined();
 
-      await daemon.refreshToolTelemetry();
-      expect(db.getAgentByName("maya")?.toolSessionId).toBe("provider-parent");
-
-      // A later child/fork hook cannot overwrite the provider-bound parent.
+      // A resume forks Claude to a fresh session id; the newest wins.
       await daemon.processEvent({
         kind: "turn-end",
         agentName: "maya",
@@ -3157,7 +2497,7 @@ describe("HiveDaemon HTTP server", () => {
         toolSessionId: "0189-forked",
       });
       expect(db.getAgentByName("maya")).toMatchObject({
-        toolSessionId: "provider-parent",
+        toolSessionId: "0189-forked",
         recoveryAttempts: 0,
       });
 
@@ -3167,7 +2507,7 @@ describe("HiveDaemon HTTP server", () => {
         agentName: "maya",
         timestamp: "2026-07-10T10:06:00.000Z",
       });
-      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("provider-parent");
+      expect(db.getAgentByName("maya")?.toolSessionId).toEqual("0189-forked");
     } finally {
       await daemon.stop();
       db.close();
@@ -3187,14 +2527,6 @@ describe("HiveDaemon HTTP server", () => {
       writeRevoked: false,
     }));
     try {
-      // Hooks drive lifecycle visibility, but their claimed session is not a
-      // provider identity and remains unbound until the rollout sweep.
-      await daemon.processEvent({
-        kind: "session-start",
-        agentName: "maya",
-        timestamp: "2026-07-10T09:59:00.000Z",
-        toolSessionId: "reader-session",
-      });
       await daemon.processEvent({
         kind: "turn-start",
         agentName: "maya",
@@ -3206,8 +2538,8 @@ describe("HiveDaemon HTTP server", () => {
         status: "working",
         readOnly: true,
         writeRevoked: false,
+        toolSessionId: "reader-session",
       });
-      expect(db.getAgentByName("maya")?.toolSessionId).toBeUndefined();
     } finally {
       await daemon.stop();
       db.close();
@@ -3267,7 +2599,6 @@ describe("HiveDaemon HTTP server", () => {
       tmuxSender: new SilentTmuxSender(db),
       tmux,
       recovery: {
-        resolveCodexSessionId: async () => "0189-session",
         worktreeExists: () => true,
         sleep: async () => {},
         seedClaudeTrust: async () => {},
@@ -3281,7 +2612,6 @@ describe("HiveDaemon HTTP server", () => {
     });
     db.insertAgent(agent({
       status: "dead",
-      readOnly: true,
       toolSessionId: "0189-session",
       executionIdentity: {
         tool: "codex",
@@ -3353,7 +2683,7 @@ describe("HiveDaemon HTTP server", () => {
       tmux,
       recovery: { worktreeExists: () => false },
     });
-    db.insertAgent(agent({ status: "idle", readOnly: true }));
+    db.insertAgent(agent({ status: "idle" }));
     try {
       await daemon.reconcileAgents();
 
@@ -3434,7 +2764,6 @@ describe("HiveDaemon HTTP server", () => {
           contextTokens: 420_000,
           lastActivityAt: "2026-07-09T12:05:00.000Z",
         }),
-        codexSession: async () => "session-1",
         codex: async () => ({
           contextPct: 17,
           lastActivityAt: "2026-07-09T12:06:00.000Z",
@@ -3446,7 +2775,6 @@ describe("HiveDaemon HTTP server", () => {
       id: "agent-priya",
       name: "priya",
       tool: "codex",
-      readOnly: true,
       // The field failure: notify never landed a single event, so the row
       // froze at "spawning" while the agent worked, landed, and reported.
       status: "spawning",
@@ -3484,7 +2812,7 @@ describe("HiveDaemon HTTP server", () => {
       tmux,
       recovery: { worktreeExists: () => false },
     });
-    db.insertAgent(agent({ status: "stuck", readOnly: true }));
+    db.insertAgent(agent({ status: "stuck" }));
     try {
       await daemon.reconcileAgents();
 
@@ -3547,7 +2875,6 @@ describe("HiveDaemon HTTP server", () => {
     });
     db.insertAgent(agent({
       status: "working",
-      readOnly: true,
       quotaReservationId: decision.reservation.id,
     }));
     try {
@@ -3674,126 +3001,6 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.getAgentByName("maya")?.status).toEqual("working");
       expect(db.listApprovals()).toEqual([]);
     } finally {
-      db.close();
-    }
-  });
-
-  test("a predecessor tool-boundary event cannot overwrite a same-name replacement", async () => {
-    const db = new HiveDatabase(join(home, "event-holder-replacement.db"));
-    const daemon = new HiveDaemon({ db, spawner: new StubSpawner() });
-    const predecessor = db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      lastEventAt: "2026-07-09T12:00:00.000Z",
-    }));
-    const eventAt = "2026-07-09T12:01:00.000Z";
-    const update = db.updateAgentIfCurrent.bind(db);
-    let replacementInserted = false;
-    db.updateAgentIfCurrent = ((...args: Parameters<typeof update>) => {
-      const [expected, updates] = args;
-      if (
-        !replacementInserted && expected.id === predecessor.id &&
-        updates.lastEventAt === eventAt
-      ) {
-        replacementInserted = true;
-        expect(deleteAgentRow(db, predecessor.id)).toBe(true);
-        db.insertAgent(agent({
-          id: "agent-maya-replacement",
-          tool: "claude",
-          model: "sonnet",
-          processIncarnation: 9,
-          processStartedAt: "2026-07-09T12:00:30.000Z",
-          lastEventAt: "2026-07-09T12:00:30.000Z",
-        }));
-      }
-      return update(...args);
-    }) as typeof update;
-
-    try {
-      await expect(daemon.processEvent({
-        kind: "tool-boundary",
-        agentName: "maya",
-        timestamp: eventAt,
-      }, {
-        agentId: predecessor.id,
-        processIncarnation: predecessor.processIncarnation ?? 0,
-        capabilityEpoch: predecessor.capabilityEpoch,
-      })).rejects.toThrow("Event holder changed during tool-boundary");
-      expect(db.getAgentById("agent-maya-replacement")).toMatchObject({
-        processIncarnation: 9,
-        lastEventAt: "2026-07-09T12:00:30.000Z",
-        status: "working",
-      });
-    } finally {
-      await daemon.stop();
-      db.close();
-    }
-  });
-
-  test("turn-end usage reconciles the predecessor reservation, never a same-name replacement", async () => {
-    const db = new HiveDatabase(join(home, "turn-end-holder-replacement.db"));
-    const reconciled: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      quota: {
-        setAlertSink: () => {},
-        ledger: new QuotaLedger(db),
-        reconcile: async (reservationId: string) => {
-          reconciled.push(reservationId);
-        },
-      } as unknown as QuotaService,
-    });
-    const predecessor = db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      quotaReservationId: "predecessor-reservation",
-    }));
-    const eventAt = "2026-07-09T12:02:00.000Z";
-    const update = db.updateAgentIfCurrent.bind(db);
-    let replacementInserted = false;
-    db.updateAgentIfCurrent = ((...args: Parameters<typeof update>) => {
-      const [expected, updates] = args;
-      const updated = update(...args);
-      if (
-        !replacementInserted && updated !== null &&
-        expected.id === predecessor.id && updates.lastEventAt === eventAt
-      ) {
-        replacementInserted = true;
-        expect(deleteAgentRow(db, predecessor.id)).toBe(true);
-        db.insertAgent(agent({
-          id: "agent-maya-turn-replacement",
-          tool: "claude",
-          model: "sonnet",
-          processIncarnation: 10,
-          processStartedAt: "2026-07-09T12:01:30.000Z",
-          lastEventAt: "2026-07-09T12:01:30.000Z",
-          quotaReservationId: "replacement-reservation",
-        }));
-      }
-      return updated;
-    }) as typeof update;
-
-    try {
-      await daemon.processEvent({
-        kind: "turn-end",
-        agentName: "maya",
-        timestamp: eventAt,
-        usageUnits: 7,
-        usageSource: "provider",
-      }, {
-        agentId: predecessor.id,
-        processIncarnation: predecessor.processIncarnation ?? 0,
-        capabilityEpoch: predecessor.capabilityEpoch,
-      });
-      expect(reconciled).toEqual(["predecessor-reservation"]);
-      expect(db.getAgentById("agent-maya-turn-replacement")).toMatchObject({
-        quotaReservationId: "replacement-reservation",
-        processIncarnation: 10,
-        lastEventAt: "2026-07-09T12:01:30.000Z",
-      });
-    } finally {
-      await daemon.stop();
       db.close();
     }
   });
@@ -4054,160 +3261,6 @@ describe("the model an agent is actually running", () => {
     }
   });
 
-  test("an awaited old-session model read cannot update or route a replacement process", async () => {
-    const path = join(home, "statusline-old-session-race.db");
-    const db = new HiveDatabase(path);
-    const other = new HiveDatabase(path);
-    let releaseRead!: () => void;
-    let markReadStarted!: () => void;
-    const readStarted = new Promise<void>((resolve) => {
-      markReadStarted = resolve;
-    });
-    const mayReturn = new Promise<void>((resolve) => {
-      releaseRead = resolve;
-    });
-    const observed: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      telemetryReaders: {
-        liveModel: async () => {
-          markReadStarted();
-          await mayReturn;
-          return "claude-opus-old-session";
-        },
-      },
-      quota: {
-        setAlertSink: () => {},
-        ledger: new QuotaLedger(db),
-        observeStatusline: async (binding: { model: string }) => {
-          observed.push(binding.model);
-          return null;
-        },
-      } as unknown as QuotaService,
-    });
-    db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      worktreePath: "/tmp/hive-old-statusline",
-      toolSessionId: "old-session",
-      processIncarnation: 1,
-      quotaReservationId: "old-reservation",
-    }));
-    try {
-      const response = actingAs(daemon, "maya", "writer")(
-        "http://hive/statusline",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            agent: "maya",
-            fiveHour: { usedPct: 25, resetsAt: null },
-          }),
-        },
-      );
-      await readStarted;
-      const old = other.getAgentById("agent-maya")!;
-      expect(other.updateAgentIfCurrent(agentStateCas(old), {
-        processIncarnation: 2,
-        processStartedAt: "2026-07-15T20:04:00.000Z",
-        toolSessionId: "replacement-session",
-        capabilityEpoch: 1,
-        status: "control-paused",
-        writeRevoked: true,
-        controlMessageId: "replacement-control",
-        quotaReservationId: "replacement-reservation",
-      })).not.toBeNull();
-      releaseRead();
-
-      expect((await response).status).toBe(409);
-      expect(observed).toEqual([]);
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        processIncarnation: 2,
-        toolSessionId: "replacement-session",
-        capabilityEpoch: 1,
-        status: "control-paused",
-        writeRevoked: true,
-        controlMessageId: "replacement-control",
-        quotaReservationId: "replacement-reservation",
-      });
-      expect(db.getAgentById("agent-maya")?.liveModel).toBeUndefined();
-    } finally {
-      releaseRead();
-      await daemon.stop();
-      other.close();
-      db.close();
-    }
-  });
-
-  test("a multi-instance replacement during quota observation wins the reservation follow-up CAS", async () => {
-    const path = join(home, "statusline-rekey-multi-instance.db");
-    const db = new HiveDatabase(path);
-    const other = new HiveDatabase(path);
-    let replacementApplied = false;
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      quota: {
-        setAlertSink: () => {},
-        ledger: {
-          getActiveReservationForAgent: () => ({
-            id: "rekeyed-old-reservation",
-            purpose: "agent",
-          }),
-        },
-        observeStatusline: async () => {
-          const old = other.getAgentById("agent-maya")!;
-          replacementApplied = other.updateAgentIfCurrent(agentStateCas(old), {
-            processIncarnation: 2,
-            processStartedAt: "2026-07-15T20:05:00.000Z",
-            toolSessionId: "successor-session",
-            capabilityEpoch: 1,
-            status: "control-paused",
-            writeRevoked: true,
-            quotaReservationId: "successor-reservation",
-          }) !== null;
-          return null;
-        },
-      } as unknown as QuotaService,
-    });
-    db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      worktreePath: null,
-      toolSessionId: "old-session",
-      processIncarnation: 1,
-      quotaReservationId: "old-reservation",
-    }));
-    try {
-      const response = await actingAs(daemon, "maya", "writer")(
-        "http://hive/statusline",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            agent: "maya",
-            fiveHour: { usedPct: 25, resetsAt: null },
-          }),
-        },
-      );
-      expect(response.status).toBe(200);
-      expect(replacementApplied).toBe(true);
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        processIncarnation: 2,
-        toolSessionId: "successor-session",
-        capabilityEpoch: 1,
-        status: "control-paused",
-        writeRevoked: true,
-        quotaReservationId: "successor-reservation",
-      });
-    } finally {
-      await daemon.stop();
-      other.close();
-      db.close();
-    }
-  });
-
   test("a statusline report lands Claude's own occupancy figure on the agent row", async () => {
     const db = new HiveDatabase(join(home, "statusline-context-pct.db"));
     const daemon = new HiveDaemon({
@@ -4327,95 +3380,6 @@ describe("the model an agent is actually running", () => {
   // left the row naming the released id, and every terminal path settles by
   // that id. So the assertion here is not "cancel was called": it is the number
   // `hive_quota_status` serves, read from the same surface, before and after.
-  test("a turn-end during the re-key alert cannot orphan the replacement reservation", async () => {
-    const db = new HiveDatabase(join(home, "rekey-turn-end-race.db"));
-    const worktreePath = mkdtempSync(join(tmpdir(), "hive-rekey-race-"));
-    const ledger = new QuotaLedger(db);
-    const quota = new QuotaService(
-      ledger,
-      QuotaConfigSchema.parse({
-        limits: [{
-          provider: "claude",
-          pool: "subscription",
-          models: ["*"],
-          fiveHourAllowance: 100,
-          weeklyAllowance: 100,
-        }],
-      }),
-    );
-    let enterAlert!: () => void;
-    let releaseAlert!: () => void;
-    const alertEntered = new Promise<void>((resolve) => {
-      enterAlert = resolve;
-    });
-    const alertMayFinish = new Promise<void>((resolve) => {
-      releaseAlert = resolve;
-    });
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      quota,
-      telemetryReaders: {
-        liveModel: (path, toolSessionId) =>
-          readLiveClaudeModel(path, toolSessionId, home),
-      },
-    });
-    let alerts = 0;
-    quota.setAlertSink(async () => {
-      alerts += 1;
-      if (alerts !== 1) return;
-      enterAlert();
-      await alertMayFinish;
-    });
-    const decision = await quota.routeAndReserve({
-      agentName: "probe",
-      category: "simple_coding",
-      selection: "strict",
-      candidates: await authorizeForQuotaTest([{ tool: "claude", model: "sonnet" }]),
-    });
-    quota.markStarted(decision.reservation.id);
-    db.insertAgent(agent({
-      id: "agent-probe",
-      name: "probe",
-      tool: "claude",
-      model: "sonnet",
-      worktreePath,
-      toolSessionId: "session",
-      quotaReservationId: decision.reservation.id,
-    }));
-    try {
-      await transcript(worktreePath, ["claude-sonnet-5"]);
-      const response = actingAs(daemon, "probe", "writer")(
-        "http://hive/statusline",
-        {
-          method: "POST",
-          headers: { "content-type": "application/json" },
-          body: JSON.stringify({
-            agent: "probe",
-            fiveHour: { usedPct: 99, resetsAt: null },
-          }),
-        },
-      );
-      await alertEntered;
-      await daemon.processEvent({
-        kind: "turn-end",
-        agentName: "probe",
-        timestamp: "2026-07-16T02:00:00.000Z",
-        usageUnits: 3,
-        usageSource: "gateway",
-      });
-      releaseAlert();
-      expect((await response).status).toBe(200);
-      expect(ledger.activeReservations().filter((entry) =>
-        entry.agentName === "probe"
-      )).toEqual([]);
-    } finally {
-      releaseAlert();
-      await daemon.stop();
-      db.close();
-    }
-  });
-
   test("a re-keyed reservation is released on kill, and reserved returns to its prior value", async () => {
     const db = new HiveDatabase(join(home, "rekey-leak.db"));
     const worktreePath = mkdtempSync(join(tmpdir(), "hive-probe-"));
@@ -4517,810 +3481,6 @@ describe("the model an agent is actually running", () => {
   });
 });
 
-describe("Codex execution-identity attestation sweep", () => {
-  const codexAgent = (overrides: Partial<AgentRecord> = {}): AgentRecord =>
-    agent({
-      tool: "codex",
-      status: "working",
-      contextPct: null,
-      toolSessionId: "session-1",
-      executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-      ...overrides,
-    });
-
-  test("records observed identity and marks drift the launch model cannot", async () => {
-    const db = new HiveDatabase(join(home, "attest-drift.db"));
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        // The productive parent drifted to Luna/low after launching Sol/xhigh.
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-luna",
-          effort: "low",
-          turnId: "turn-2",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    // The rollout scan is the READER observation surface; writers are never
-    // scanned (their identity is the app-server manager's exact observation).
-    db.insertAgent(codexAgent({ readOnly: true }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      // The immutable launch model is untouched; the observation is separate.
-      expect(row.model).toBe("gpt-5-codex");
-      expect(row.identityState).toBe("drift");
-      expect(row.liveModel).toBe("gpt-5.6-luna");
-      expect(row.liveEffort).toBe("low");
-      expect(row.observedIdentity).toMatchObject({
-        model: "gpt-5.6-luna",
-        effort: "low",
-        source: "codex-rollout",
-      });
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a reader born without a session binds the discovered one and observes matching identity", async () => {
-    const db = new HiveDatabase(join(home, "attest-match.db"));
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: 37, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "turn-1",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    // The Codex TUI path never hook-binds a session id: identity and telemetry
-    // must still land from the process-time rollout discovery.
-    db.insertAgent(codexAgent({ readOnly: true, toolSessionId: undefined }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      expect(row.toolSessionId).toBe("session-1");
-      expect(row.identityState).toBe("matching");
-      expect(row.liveModel).toBe("gpt-5.6-sol");
-      expect(row.liveEffort).toBe("xhigh");
-      expect(row.contextPct).toBe(37);
-      expect(row.status).toBe("working");
-      expect(row.writeRevoked).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a writer never acquires a scan-discovered session, and rollout-matching cannot hold write authority", async () => {
-    const db = new HiveDatabase(join(home, "attest-writer-scan.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "turn-1",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    db.insertAgent(codexAgent({ toolSessionId: undefined }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      // The scan is observation, never identity evidence for a writer.
-      expect(row.toolSessionId).toBeUndefined();
-      // A rollout-sourced "matching" is not the app-server attestation writers
-      // are contained on: the backstop pauses exactly as it would on unknown.
-      expect(row.status).toBe("control-paused");
-      expect(row.writeRevoked).toBe(true);
-      expect(suspended).toEqual(["hive-maya"]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("terminalization during an awaited telemetry read cannot revive the row", async () => {
-    const db = new HiveDatabase(join(home, "telemetry-terminal-race.db"));
-    let releaseModel!: () => void;
-    let enteredModel!: () => void;
-    const modelGate = new Promise<void>((resolve) => {
-      releaseModel = resolve;
-    });
-    const entered = new Promise<void>((resolve) => {
-      enteredModel = resolve;
-    });
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      telemetryReaders: {
-        claude: async () => ({ contextTokens: 40_000, lastActivityAt: null }),
-        liveModel: async () => {
-          enteredModel();
-          await modelGate;
-          return "claude-sonnet-5";
-        },
-      },
-    });
-    db.insertAgent(agent({
-      tool: "claude",
-      model: "sonnet",
-      executionIdentity: {
-        tool: "claude",
-        model: "claude-sonnet-5",
-        effort: "high",
-      },
-      contextWindow: 200_000,
-    }));
-    try {
-      const sweep = daemon.refreshToolTelemetry();
-      await entered;
-      const killed = db.markAgentDead(
-        "agent-maya",
-        "2026-07-15T18:00:00.000Z",
-        "killed during telemetry",
-      );
-      releaseModel();
-      await sweep;
-
-      const row = db.getAgentById("agent-maya")!;
-      expect(killed).not.toBeNull();
-      expect(row.status).toBe("dead");
-      expect(row.capabilityEpoch).toBe(killed!.capabilityEpoch);
-      expect(row.writeRevoked).toBe(true);
-      expect(row.closedAt).toBe("2026-07-15T18:00:00.000Z");
-      expect(row.liveModel).toBeUndefined();
-    } finally {
-      db.close();
-    }
-  });
-
-  test("pauses a writer whose only matching claim is rollout-sourced, non-destructively, and wakes queen", async () => {
-    const db = new HiveDatabase(join(home, "attest-pause.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      // Observe the non-destructive halt without real SIGSTOP.
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-      telemetryReaders: {
-        codexSession: async () => {
-          throw new Error("a writer row must never be rollout-scanned");
-        },
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => {
-          throw new Error("a writer row must never be rollout-scanned");
-        },
-      },
-    });
-    // A scan-derived "matching" somehow persisted on a writer is display
-    // grade, not the app-server attestation writers are contained on.
-    db.insertAgent(codexAgent({
-      identityState: "matching",
-      observedIdentity: {
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-        source: "codex-rollout",
-        observedAt: "2026-07-15T18:00:00.000Z",
-      },
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      // Revoked-first and paused, capability epoch advanced.
-      expect(row.status).toBe("control-paused");
-      expect(row.writeRevoked).toBe(true);
-      expect(row.capabilityEpoch).toBe(1);
-      // Non-destructive: the tree was SUSPENDED, not killed or restarted.
-      expect(suspended).toEqual(["hive-maya"]);
-      // queen was woken durably; success is measured by daemon/process state.
-      const toQueen = db.listMessages().filter((message) =>
-        message.to === "queen" && message.from === "hive-identity-guard"
-      );
-      expect(toQueen).toHaveLength(1);
-      expect(toQueen[0]?.body).toContain("PAUSED for execution-identity drift");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("an app-server-attested matching writer keeps identity AND authority: the sweep neither rescans nor pauses it", async () => {
-    const db = new HiveDatabase(join(home, "attest-appserver-writer.db"));
-    const suspendedSessions: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspendedSessions.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-      telemetryReaders: {
-        // The TUI finder cannot even see an app-server rollout (its
-        // session_meta.source is the editor client, not "cli").
-        codexSession: async () => null,
-        codex: async () => {
-          throw new Error("a writer row must never be rollout-scanned");
-        },
-        codexIdentity: async () => {
-          throw new Error("a writer row must never be rollout-scanned");
-        },
-      },
-    });
-    const observed = {
-      model: "gpt-5.6-sol",
-      effort: "xhigh",
-      source: "codex-app-server" as const,
-      turnId: "turn-7",
-      observedAt: "2026-07-15T18:00:00.000Z",
-    };
-    db.insertAgent(codexAgent({
-      codexDriver: "app-server",
-      identityState: "matching",
-      observedIdentity: observed,
-      liveModel: "gpt-5.6-sol",
-      liveEffort: "xhigh",
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      // The exact app-server observation stands — the sweep never rewrites it
-      // with a scan verdict — and a brokered writer is governed structurally
-      // (read-only sandbox, per-mutation exact-holder attestation), so the
-      // maintenance backstop must not touch it: no pause, no revocation, no
-      // suspension. The fail-closed freeze belongs to UNBROKERED writers only.
-      expect(row.status).toBe("working");
-      expect(row.writeRevoked).toBe(false);
-      expect(row.capabilityEpoch).toBe(0);
-      expect(row.identityState).toBe("matching");
-      expect(row.observedIdentity).toMatchObject(observed);
-      expect(row.liveModel).toBe("gpt-5.6-sol");
-      expect(suspendedSessions).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a READ-ONLY app-server row is never TUI-scanned: driver, not permission, decides", async () => {
-    const db = new HiveDatabase(join(home, "attest-appserver-reader.db"));
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      telemetryReaders: {
-        // The scan cannot see an app-server rollout; running it at all for
-        // this row is the bug (it would overwrite matching with unknown).
-        codexSession: async () => {
-          throw new Error("an app-server row must never be rollout-scanned");
-        },
-        codex: async () => {
-          throw new Error("an app-server row must never be rollout-scanned");
-        },
-        codexIdentity: async () => {
-          throw new Error("an app-server row must never be rollout-scanned");
-        },
-      },
-    });
-    const observed = {
-      model: "gpt-5.6-sol",
-      effort: "xhigh",
-      source: "codex-app-server" as const,
-      turnId: "turn-3",
-      observedAt: "2026-07-15T18:00:00.000Z",
-    };
-    db.insertAgent(codexAgent({
-      readOnly: true,
-      codexDriver: "app-server",
-      identityState: "matching",
-      observedIdentity: observed,
-      liveModel: "gpt-5.6-sol",
-      liveEffort: "xhigh",
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      expect(row.status).toBe("working");
-      expect(row.identityState).toBe("matching");
-      expect(row.observedIdentity).toMatchObject(observed);
-      expect(row.liveModel).toBe("gpt-5.6-sol");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("resume reattests: still-drifted stays paused; now-matching resumes the same process", async () => {
-    const db = new HiveDatabase(join(home, "attest-resume.db"));
-    const resumed: string[] = [];
-    let observedModel = "gpt-5.6-luna";
-    let observedEffort = "low";
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async () => ({ suspended: [], unstopped: [] }),
-      resumeProcesses: async (session) => {
-        resumed.push(session);
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: observedModel,
-          effort: observedEffort,
-          turnId: "t",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    // Contained writers cannot be reauthorized. Start a paused Codex reader
-    // so reattest + SIGCONT of the same process remains covered.
-    const paused = codexAgent({
-      readOnly: true,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      identityState: "drift",
-    });
-    db.insertAgent({
-      ...paused,
-      pauseCapture: testPauseCapture(paused),
-    });
-    try {
-      // Reattest while still drifted: authority stays withheld.
-      const stillDrifted = await daemon.resumeAgentAfterPause("maya");
-      expect(stillDrifted.resumed).toBe(false);
-      expect(stillDrifted.identityState).toBe("drift");
-      expect(db.getAgentByName("maya")?.status).toBe("control-paused");
-      expect(resumed).toEqual([]);
-
-      // The drift is corrected — the agent is back to its authorized identity.
-      observedModel = "gpt-5.6-sol";
-      observedEffort = "xhigh";
-      const ok = await daemon.resumeAgentAfterPause("maya");
-      expect(ok.resumed).toBe(true);
-      expect(ok.identityState).toBe("matching");
-      const row = db.getAgentByName("maya")!;
-      expect(row.status).toBe("idle");
-      expect(row.writeRevoked).toBe(false);
-      // paused at epoch 1; resume reissues at 2.
-      expect(row.capabilityEpoch).toBe(2);
-      // The SAME process was SIGCONT'd, never relaunched.
-      expect(resumed).toEqual(["hive-maya"]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("turn-boundary reattest pauses a legacy Codex writer that drifted before its turn", async () => {
-    const db = new HiveDatabase(join(home, "attest-turn-boundary.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [], unstopped: [] };
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-luna",
-          effort: "low",
-          turnId: "t",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    db.insertAgent(codexAgent());
-    try {
-      // The hook event is only a boundary signal; identity comes from the
-      // independently bound provider rollout read during reattestation.
-      await daemon.processEvent({
-        kind: "turn-start",
-        agentName: "maya",
-        timestamp: "2026-07-15T18:00:00.000Z",
-      });
-      const row = db.getAgentByName("maya")!;
-      expect(row.identityState).toBe("drift");
-      expect(row.status).toBe("stuck");
-      expect(row.writeRevoked).toBe(true);
-      expect(suspended).toEqual(["hive-maya"]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("an app-server turn-start attests and persists the exact turn identity for a reader", async () => {
-    const db = new HiveDatabase(join(home, "attest-appserver-turnstart.db"));
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async () => {
-        throw new Error("a matching app-server reader must not be paused");
-      },
-    });
-    const rolloutPath = join(home, "appserver-rollout.jsonl");
-    await Bun.write(
-      rolloutPath,
-      JSON.stringify({
-        timestamp: "2026-07-15T18:00:01.000Z",
-        type: "turn_context",
-        payload: {
-          turn_id: "turn-9",
-          cwd: "/tmp/hive-maya",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-        },
-      }) + "\n",
-    );
-    db.insertAgent(codexAgent({
-      readOnly: true,
-      codexDriver: "app-server",
-      toolSessionId: undefined,
-    }));
-    try {
-      await daemon.processEvent({
-        kind: "turn-start",
-        agentName: "maya",
-        timestamp: "2026-07-15T18:00:01.000Z",
-        appServerTurn: { rolloutPath, turnId: "turn-9" },
-      });
-      const row = db.getAgentByName("maya")!;
-      expect(row.identityState).toBe("matching");
-      expect(row.observedIdentity).toMatchObject({
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-        source: "codex-app-server",
-      });
-      expect(row.liveModel).toBe("gpt-5.6-sol");
-      // A reader's matching attestation is recorded and it keeps running.
-      expect(row.status).toBe("working");
-      expect(row.writeRevoked).toBe(false);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("appServerTurn is unforgeable: the public event schema rejects it and a TUI row never honors it", async () => {
-    // Boundary: the authenticated POST /event surface parses this exact
-    // schema, so a capability-holding agent cannot smuggle writer-grade
-    // provenance — the whole event is rejected, never silently stripped.
-    expect(HookEventSchema.safeParse({
-      kind: "turn-start",
-      agentName: "maya",
-      timestamp: "2026-07-15T18:00:01.000Z",
-      appServerTurn: { rolloutPath: "/tmp/forged.jsonl", turnId: "turn-9" },
-    }).success).toBe(false);
-
-    // Processing: even on the internal path, evidence is honored only for a
-    // row whose CURRENT incarnation launched on the app-server driver.
-    const db = new HiveDatabase(join(home, "attest-forged-driver.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "t",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    const rolloutPath = join(home, "forged-rollout.jsonl");
-    await Bun.write(
-      rolloutPath,
-      JSON.stringify({
-        timestamp: "2026-07-15T18:00:01.000Z",
-        type: "turn_context",
-        payload: {
-          turn_id: "turn-9",
-          cwd: "/tmp/hive-maya",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-        },
-      }) + "\n",
-    );
-    db.insertAgent(codexAgent({ codexDriver: "tui" }));
-    try {
-      await daemon.processEvent({
-        kind: "turn-start",
-        agentName: "maya",
-        timestamp: "2026-07-15T18:00:01.000Z",
-        appServerTurn: { rolloutPath, turnId: "turn-9" },
-      });
-      const row = db.getAgentByName("maya")!;
-      // The TUI writer gate ran instead: no app-server source, still paused.
-      expect(row.observedIdentity?.source).not.toBe("codex-app-server");
-      expect(row.writeRevoked).toBe(true);
-      expect(suspended).toEqual(["hive-maya"]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("an app-server turn-start with MATCHING identity keeps the writer live: identity persists, authority intact, never suspended", async () => {
-    const db = new HiveDatabase(join(home, "attest-appserver-matching-writer.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-    });
-    const rolloutPath = join(home, "appserver-matching-writer-rollout.jsonl");
-    await Bun.write(
-      rolloutPath,
-      JSON.stringify({
-        timestamp: "2026-07-15T18:00:01.000Z",
-        type: "turn_context",
-        payload: {
-          turn_id: "turn-9",
-          cwd: "/tmp/hive-maya",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-        },
-      }) + "\n",
-    );
-    db.insertAgent(codexAgent({
-      codexDriver: "app-server",
-      toolSessionId: undefined,
-    }));
-    try {
-      await daemon.processEvent({
-        kind: "turn-start",
-        agentName: "maya",
-        timestamp: "2026-07-15T18:00:01.000Z",
-        appServerTurn: { rolloutPath, turnId: "turn-9" },
-      });
-      const row = db.getAgentByName("maya")!;
-      // The exact attestation is recorded honestly on the held row.
-      expect(row.identityState).toBe("matching");
-      expect(row.observedIdentity).toMatchObject({
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-        source: "codex-app-server",
-      });
-      // ...and a matching brokered writer KEEPS its authority: no pause, no
-      // revocation, no epoch advance, no suspension, no guard alert. The
-      // pane-input bridge made a rendered app-server pane a typable pane, so
-      // the temporary hold is gone.
-      expect(row.status).toBe("working");
-      expect(row.writeRevoked).toBe(false);
-      expect(row.capabilityEpoch).toBe(0);
-      expect(suspended).toEqual([]);
-      const toQueen = db.listMessages().filter((message) =>
-        message.to === "queen" && message.from === "hive-identity-guard"
-      );
-      expect(toQueen).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("an app-server turn-start that reads drift revokes authority WITHOUT touching the conversation", async () => {
-    const db = new HiveDatabase(join(home, "attest-appserver-drift.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-    });
-    const rolloutPath = join(home, "appserver-drift-rollout.jsonl");
-    await Bun.write(
-      rolloutPath,
-      JSON.stringify({
-        timestamp: "2026-07-15T18:00:01.000Z",
-        type: "turn_context",
-        payload: {
-          turn_id: "turn-9",
-          cwd: "/tmp/hive-maya",
-          model: "gpt-5.6-luna",
-          effort: "low",
-        },
-      }) + "\n",
-    );
-    db.insertAgent(codexAgent({
-      codexDriver: "app-server",
-      toolSessionId: undefined,
-    }));
-    try {
-      await daemon.processEvent({
-        kind: "turn-start",
-        agentName: "maya",
-        timestamp: "2026-07-15T18:00:01.000Z",
-        appServerTurn: { rolloutPath, turnId: "turn-9" },
-      });
-      const row = db.getAgentByName("maya")!;
-      expect(row.identityState).toBe("drift");
-      // Brokered revocation: writeRevoked flips, but the capability epoch and
-      // credential stay CURRENT (pane input keeps authenticating), the process
-      // is never SIGSTOPped, and status keeps describing the turn — never
-      // relabeled control-paused. Every mutation/landing still denies via
-      // WRITE_ACTIONS and the broker's writeRevoked check.
-      expect(row.writeRevoked).toBe(true);
-      expect(row.capabilityEpoch).toBe(0);
-      expect(row.status).toBe("working");
-      expect(suspended).toEqual([]);
-      const guard = db.listMessages().filter((message) =>
-        message.to === "queen" && message.from === "hive-identity-guard"
-      );
-      expect(guard[0]?.body).toContain("REVOKED");
-      expect(guard[0]?.body).toContain("NOT paused");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("turn-start pauses a writer even when the rollout scan reads matching (display grade is not admission)", async () => {
-    const db = new HiveDatabase(join(home, "attest-turn-scan-matching.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [], unstopped: [] };
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        // The rollout agrees with the launch identity — but it is still the
-        // chronology-picked TUI scan, not the app-server attestation.
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "t",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    db.insertAgent(codexAgent());
-    try {
-      await daemon.processEvent({
-        kind: "turn-start",
-        agentName: "maya",
-        timestamp: "2026-07-15T18:00:00.000Z",
-      });
-      const row = db.getAgentByName("maya")!;
-      expect(row.writeRevoked).toBe(true);
-      expect(["control-paused", "stuck"]).toContain(row.status);
-      const toQueen = db.listMessages().filter((message) =>
-        message.to === "queen" && message.from === "hive-identity-guard"
-      );
-      expect(toQueen[0]?.body).toContain("display grade");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a live rollout with no readable identity is unknown, never synthesized", async () => {
-    const db = new HiveDatabase(join(home, "attest-unknown.db"));
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({ status: "unknown" }),
-      },
-    });
-    db.insertAgent(codexAgent({ readOnly: true }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      expect(row.identityState).toBe("unknown");
-      // Never guessed from the launch model.
-      expect(row.liveModel).toBeUndefined();
-      expect(row.observedIdentity).toBeUndefined();
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a migrated Codex writer with no execution identity is revoked during sweep without a turn", async () => {
-    const db = new HiveDatabase(join(home, "attest-migrated-no-turn.db"));
-    const suspended: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      suspendProcesses: async (session) => {
-        suspended.push(session);
-        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
-      },
-      telemetryReaders: {
-        codexSession: async () => null,
-        codex: async () => {
-          throw new Error("unbound session must not be read");
-        },
-        codexIdentity: async () => {
-          throw new Error("unbound identity must not be read");
-        },
-      },
-    });
-    db.insertAgent(codexAgent({
-      executionIdentity: undefined,
-      toolSessionId: undefined,
-      processStartedAt: undefined,
-      identityState: undefined,
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      // The sweep never scans a writer, so no verdict is written — but the
-      // backstop still pauses on the absent attestation (hive_status renders
-      // the absent verdict as unknown via attestationStateOf).
-      expect(db.getAgentById("agent-maya")).toMatchObject({
-        status: "control-paused",
-        writeRevoked: true,
-        capabilityEpoch: 1,
-      });
-      expect(suspended).toEqual(["hive-maya"]);
-    } finally {
-      db.close();
-    }
-  });
-});
-
 describe("an unobservable agent reads unknown, never 0", () => {
   test("telemetry that returns null clears a stale number instead of leaving it standing", async () => {
     const db = new HiveDatabase(join(home, "unknown-context.db"));
@@ -5336,7 +3496,6 @@ describe("an unobservable agent reads unknown, never 0", () => {
         claude: async () => ({ contextTokens: 44_000, lastActivityAt: null }),
         // lucas, live: a Codex agent whose rollout carries no usable token count.
         // This is the real one — he did real work and Hive reported 0%.
-        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         liveModel: async () => null,
       },
@@ -5348,8 +3507,6 @@ describe("an unobservable agent reads unknown, never 0", () => {
       status: "working",
       tmuxSession: "hive-lucas",
       worktreePath: "/tmp/hive-lucas",
-      // Rollout telemetry is the READER surface; a writer row is not swept.
-      readOnly: true,
       // The 0 he was born with, which nothing ever corrected because a null
       // observation used to be skipped as "no new information".
       contextPct: 0,
@@ -5399,7 +3556,6 @@ describe("an unobservable agent reads unknown, never 0", () => {
           contextTokens: residentTokens,
           lastActivityAt: null,
         }),
-        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         liveModel: async () => null,
       },
@@ -5666,7 +3822,6 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
         claude: async () => ({ contextTokens: null, lastActivityAt: null }),
-        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         grok: async () => ({
           contextPct: 6,
@@ -5709,7 +3864,6 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
       tmux: new FakeDaemonTmux(),
       telemetryReaders: {
         claude: async () => ({ contextTokens: null, lastActivityAt: null }),
-        codexSession: async () => "session-1",
         codex: async () => ({ contextPct: null, lastActivityAt: null }),
         grok: async (worktreePath) =>
           worktreePath === "/tmp/hive-bridget"
@@ -5756,11 +3910,13 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
 });
 
 describe("landed is not live", () => {
-  // Generic project status has no Hive-source probe. These roots deliberately
-  // cover an arbitrary project, a renamed Hive checkout, and another developer's
-  // machine; none is evidence that the selected project is Hive's source.
+  // The daemon executes a compiled binary, so main can be ahead of the code
+  // answering a tool call. These assert the two surfaces an orchestrator sees
+  // without thinking to ask: every hive_status, and any hive_spawn Hive cannot
+  // vouch for. The warning rides as a second content block, so the payload the
+  // callers parse is untouched.
   async function withClient(
-    repoRoot: string,
+    freshness: BuildFreshness,
     dbName: string,
     body: (client: Client) => Promise<void>,
   ): Promise<void> {
@@ -5770,9 +3926,9 @@ describe("landed is not live", () => {
       spawner: new StubSpawner(),
       tmuxSender: new RootUnavailableTmuxSender(db),
       tmux: new FakeDaemonTmux(),
-      repoRoot,
+      repoRoot: "/tmp/repo",
+      buildFreshness: async () => freshness,
     });
-    db.insertAgent(agent());
     const client = new Client({ name: "hive-test", version: "1.0.0" });
     try {
       await client.connect(new StreamableHTTPClientTransport(
@@ -5792,825 +3948,69 @@ describe("landed is not live", () => {
       .slice(1)
       .map((block) => block.text ?? "");
 
-  test.each([
-    ["arbitrary repo", join(tmpdir(), "unrelated-project"), "status-arbitrary.db"],
-    ["renamed or cloned path", join(tmpdir(), "renamed-tool-clone"), "status-renamed.db"],
-    ["machine without Hive source", join(tmpdir(), "other-machine-project"), "status-other-user.db"],
-  ])("generic status for %s stays project-neutral", async (_case, repoRoot, dbName) => {
-    await withClient(repoRoot, dbName, async (client) => {
+  const stale: BuildFreshness = {
+    state: "stale",
+    version: "0.0.7",
+    buildCommit: "abc1234",
+    mainCommit: "f00dcafe",
+    commitsBehind: 3,
+    message: "STALE BINARY: this daemon runs 0.0.7, built from abc1234, which is 3 commits behind main (f00dcaf).",
+  };
+
+  test("a stale binary warns on hive_status and on every spawn, and never blocks", async () => {
+    await withClient(stale, "stale-binary.db", async (client) => {
       const status = await client.callTool({ name: "hive_status", arguments: {} });
-      expect(notes(status)).toEqual([]);
-      // Removing the diagnostic must not remove the active-agent status payload.
-      expect(textValue(status)).toMatchObject([{ name: "maya", status: "working" }]);
+      expect(notes(status)).toEqual([stale.message]);
+      // The payload the parsers read is unchanged: still the bare agent array.
+      expect(textValue(status)).toEqual([]);
 
       const spawned = await client.callTool({
         name: "hive_spawn",
         arguments: { task: "Test the fix that is not in this binary", category: "code_review", name: "sam", tool: "claude" },
       });
       expect(spawned.isError).toBeUndefined();
-      expect(notes(spawned)).toEqual([]);
+      expect(notes(spawned)).toEqual([stale.message]);
       expect(textValue(spawned)).toMatchObject({ name: "sam", status: "working" });
     });
   });
-});
 
-
-describe("legacy Codex writer containment on resume", () => {
-  test("refuses to reissue write authority to a paused legacy Codex writer", async () => {
-    const db = new HiveDatabase(join(home, "contain-resume-writer.db"));
-    const resumed: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      resumeProcesses: async (session) => {
-        resumed.push(session);
-      },
-      telemetryReaders: {
-        codexSession: async () => "session-1",
-        codex: async () => ({ contextPct: null, lastActivityAt: null }),
-        codexIdentity: async () => ({
-          status: "observed",
-          model: "gpt-5.6-sol",
-          effort: "xhigh",
-          turnId: "t",
-          sessionId: "session-1",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        }),
-      },
-    });
-    const writer = agent({
-      tool: "codex",
-      readOnly: false,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      toolSessionId: "session-1",
-      identityState: "matching",
-      executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-    });
-    db.insertAgent({
-      ...writer,
-      pauseCapture: testPauseCapture(writer),
-    });
-    try {
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(false);
-      expect(outcome.reason).toBe(CODEX_WRITER_CONTAINMENT_REASON);
-      expect(resumed).toEqual([]);
-      const row = db.getAgentByName("maya")!;
-      expect(row.status).toBe("control-paused");
-      expect(row.writeRevoked).toBe(true);
-      expect(row.capabilityEpoch).toBe(1);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-
-describe("exact pause capture resume (N5)", () => {
-  test("resume without a bound pauseCapture stays paused/revoked", async () => {
-    const db = new HiveDatabase(join(home, "n5-no-capture.db"));
-    const resumed: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      resumeProcesses: async (session) => {
-        resumed.push(session);
-      },
-      telemetryReaders: {
-        codexIdentity: matchingCodexIdentity,
-      },
-    });
-    db.insertAgent(agent({
-      tool: "codex",
-      readOnly: true,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      toolSessionId: "session-1",
-      executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
-      identityState: "matching",
-      // deliberately no pauseCapture
-    }));
-    try {
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(false);
-      expect(outcome.reason).toContain("no pause capture");
-      expect(resumed).toEqual([]);
-      expect(db.getAgentByName("maya")).toMatchObject({
-        status: "control-paused",
-        writeRevoked: true,
-      });
-    } finally {
-      db.close();
-    }
-  });
-
-  test("pauseCapture survives a daemon restart (DB round-trip) and resumes the same tree", async () => {
-    const path = join(home, "n5-restart.db");
-    const capture = {
-      agentId: "agent-maya",
-      agentName: "maya",
-      tmuxSession: "hive-maya",
-      toolSessionId: "session-1",
-      processIncarnation: 1,
-      hostPid: 900 as number | null,
-      tree: [
-        { pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" as const },
-        { pid: 900, command: "codex app-server", birth: "birth-900", role: "app-server-host" as const },
-      ],
-      capturedAt: "2026-07-15T18:00:00.000Z",
+  test("a binary Hive cannot vouch for reports unknown, never fresh", async () => {
+    const unknown: BuildFreshness = {
+      state: "unknown",
+      version: "0.0.0-dev",
+      buildCommit: null,
+      mainCommit: null,
+      commitsBehind: null,
+      message: "Hive cannot tell whether the running binary is up to date with main: this build carries no commit provenance (a dev build or a source checkout).",
     };
-    {
-      const db = new HiveDatabase(path);
-      db.insertAgent(agent({
-        tool: "codex",
-        readOnly: true,
-        status: "control-paused",
-        writeRevoked: true,
-        capabilityEpoch: 1,
-        toolSessionId: "session-1",
-        executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
-        identityState: "matching",
-        pauseCapture: capture,
-      }));
-      db.close();
-    }
-    // "Restart": new connection, new daemon, same durable row.
-    const db = new HiveDatabase(path);
-    const resumed: string[] = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      resumeProcesses: async (session) => {
-        resumed.push(session);
-      },
-      telemetryReaders: {
-        codexIdentity: matchingCodexIdentity,
-      },
+    await withClient(unknown, "unknown-binary.db", async (client) => {
+      const status = await client.callTool({ name: "hive_status", arguments: {} });
+      expect(notes(status)[0]).toContain("cannot tell");
+      const spawned = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
+      });
+      expect(notes(spawned)[0]).toContain("cannot tell");
     });
-    try {
-      const row = db.getAgentByName("maya")!;
-      expect(row.pauseCapture).toEqual(capture);
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(true);
-      expect(resumed).toEqual(["hive-maya"]);
-      expect(db.getAgentByName("maya")?.pauseCapture).toBeUndefined();
-      expect(db.getAgentByName("maya")?.status).toBe("idle");
-    } finally {
-      db.close();
-    }
   });
 
-  test("replacement toolSession on the row fails resume and stays revoked", async () => {
-    const db = new HiveDatabase(join(home, "n5-toolsession.db"));
-    const resumed: string[] = [];
-    // No injected resume — use production validation path with a fake reap table.
-    const reap = {
-      ps: async () => "100 1 1024 codex\n",
-      psState: async () => "1 0 S\n100 1 T\n",
-      psBirth: async () => "100 birth-100\n",
-      kill: () => undefined,
-      wait: async () => undefined,
+  test("a current binary confirms on status and stays silent on spawn", async () => {
+    const current: BuildFreshness = {
+      state: "current",
+      version: "0.0.7",
+      buildCommit: "abc1234",
+      mainCommit: "abc1234",
+      commitsBehind: 0,
+      message: "Running binary 0.0.7 was built from abc1234 and contains everything on main.",
     };
-    const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      resourceRunners: { reap: reap as never, orphans: null },
-      telemetryReaders: {
-        codexIdentity: matchingCodexIdentity,
-      },
-    });
-    const paused = agent({
-      tool: "codex",
-      readOnly: true,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      toolSessionId: "session-NEW",
-      executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
-      identityState: "matching",
-      pauseCapture: {
-        agentId: "agent-maya",
-        agentName: "maya",
-        tmuxSession: "hive-maya",
-        toolSessionId: "session-OLD",
-        hostPid: null,
-        tree: [{ pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" }],
-        capturedAt: "2026-07-15T18:00:00.000Z",
-      },
-    });
-    db.insertAgent(paused);
-    try {
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(false);
-      expect(outcome.reason).toMatch(/toolSession|exact-tree resume failed/);
-      expect(db.getAgentByName("maya")).toMatchObject({
-        status: "control-paused",
-        writeRevoked: true,
+    await withClient(current, "current-binary.db", async (client) => {
+      expect(notes(await client.callTool({ name: "hive_status", arguments: {} })))
+        .toEqual([current.message]);
+      const spawned = await client.callTool({
+        name: "hive_spawn",
+        arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
       });
-    } finally {
-      db.close();
-    }
-  });
-
-  test("failed SIGCONT rollback becomes stuck and wakes queen", async () => {
-    const db = new HiveDatabase(join(home, "n5-rollback-unverified.db"));
-    const states = new Map([[100, "T"], [200, "T"]]);
-    const reap = {
-      ps: async () => "100 1 1024 codex\n200 100 1024 child\n",
-      psState: async () =>
-        `${process.pid} 1 S\n100 1 ${states.get(100)}\n200 100 ${states.get(200)}\n`,
-      psBirth: async () => "100 birth-100\n200 birth-200\n",
-      kill: (pid: number, signal: NodeJS.Signals) => {
-        if (pid === 200 && signal === "SIGCONT") throw new Error("ESRCH");
-        if (pid === 100 && signal === "SIGSTOP") throw new Error("EPERM");
-        states.set(pid, signal === "SIGSTOP" ? "T" : "S");
-      },
-      wait: async () => undefined,
-    };
-    const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      resourceRunners: {
-        panePids: async () => [100],
-        reap: reap as never,
-        orphans: null,
-      },
-      telemetryReaders: { codexIdentity: matchingCodexIdentity },
+      expect(notes(spawned)).toEqual([]);
     });
-    const paused = landableLegacyCodex({
-      readOnly: true,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      pauseCapture: {
-        agentId: "agent-maya",
-        agentName: "maya",
-        tmuxSession: "hive-maya",
-        toolSessionId: "session-land",
-        processIncarnation: 1,
-        hostPid: null,
-        tree: [
-          { pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" },
-          { pid: 200, command: "child", birth: "birth-200", role: "descendant" },
-        ],
-        capturedAt: "2026-07-15T18:00:00.000Z",
-      },
-    });
-    db.insertAgent(paused);
-    try {
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(false);
-      expect(outcome.reason).toContain("rollback UNVERIFIED");
-      expect(db.getAgentById(paused.id)).toMatchObject({
-        status: "stuck",
-        writeRevoked: true,
-      });
-      const alerts = db.listMessages().filter((message) =>
-        message.from === "hive-resume-guard" && message.to === "queen"
-      );
-      expect(alerts).toHaveLength(1);
-      expect(alerts[0]?.body).toContain("potentially running");
-    } finally {
-      db.close();
-    }
   });
-
-  test("final resume CAS loses to a new incarnation and verifies rollback stopped", async () => {
-    const db = new HiveDatabase(join(home, "n5-final-cas.db"));
-    let state = "T";
-    let waits = 0;
-    const reap = {
-      ps: async () => "100 1 1024 codex\n",
-      psState: async () => `${process.pid} 1 S\n100 1 ${state}\n`,
-      psBirth: async () => "100 birth-100\n",
-      kill: (_pid: number, signal: NodeJS.Signals) => {
-        state = signal === "SIGSTOP" ? "T" : "S";
-      },
-      wait: async () => {
-        waits += 1;
-        if (waits === 1) {
-          const current = db.getAgentById("agent-maya")!;
-          db.upsertAgent({
-            ...current,
-            processIncarnation: 2,
-            processStartedAt: "2026-07-15T18:01:00.000Z",
-          });
-        }
-      },
-    };
-    const tmux = new FakeDaemonTmux();
-    tmux.sessions.add("hive-maya");
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux,
-      resourceRunners: {
-        panePids: async () => [100],
-        reap: reap as never,
-        orphans: null,
-      },
-      telemetryReaders: { codexIdentity: matchingCodexIdentity },
-    });
-    const paused = landableLegacyCodex({
-      readOnly: true,
-      status: "control-paused",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      pauseCapture: {
-        agentId: "agent-maya",
-        agentName: "maya",
-        tmuxSession: "hive-maya",
-        toolSessionId: "session-land",
-        processIncarnation: 1,
-        hostPid: null,
-        tree: [{
-          pid: 100,
-          command: "codex",
-          birth: "birth-100",
-          role: "tmux-root",
-        }],
-        capturedAt: "2026-07-15T18:00:00.000Z",
-      },
-    });
-    db.insertAgent(paused);
-    try {
-      const outcome = await daemon.resumeAgentAfterPause("maya");
-      expect(outcome.resumed).toBe(false);
-      expect(outcome.reason).toContain("re-stopped and read back");
-      expect(state).toBe("T");
-      expect(db.getAgentById(paused.id)).toMatchObject({
-        status: "control-paused",
-        writeRevoked: true,
-        processIncarnation: 2,
-      });
-      expect(db.listMessages().filter((message) =>
-        message.from === "hive-resume-guard"
-      )).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-// ————— the pane-input route: conversation, not authority —————
-//
-// The host forwards typed lines and Ctrl-C here with the agent's own bearer.
-// The route binds to the EXACT self holder and the persisted app-server
-// driver for ROUTING — and deliberately ignores identityState, status, and
-// writeRevoked, because revocation removes authority, never the human's
-// conversation. Nothing on this path approves, attests, or authorizes.
-describe("POST /pane-input", () => {
-  function paneHarness(row: Partial<AgentRecord> = {}) {
-    const db = new HiveDatabase(join(home, `pane-input-${crypto.randomUUID()}.db`));
-    const paneCalls: Array<{ agentId: string; incarnation: number | undefined; input: unknown }> = [];
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      codexControl: {
-        paneInput: async (holder: AgentRecord, input: unknown) => {
-          paneCalls.push({
-            agentId: holder.id,
-            incarnation: holder.processIncarnation,
-            input,
-          });
-          return "delivered";
-        },
-      } as never,
-    });
-    const record = agent({
-      tool: "codex",
-      codexDriver: "app-server",
-      readOnly: false,
-      ...row,
-    });
-    db.insertAgent(record);
-    const token = daemon.issueAgentCredential(record, "writer")!.token;
-    const post = (body: unknown, bearer: string | null = token) =>
-      daemon.fetch(
-        new Request("http://hive/pane-input", {
-          method: "POST",
-          headers: {
-            "content-type": "application/json",
-            ...(bearer === null ? {} : { authorization: `Bearer ${bearer}` }),
-          },
-          body: JSON.stringify(body),
-        }),
-      );
-    return { db, daemon, record, token, post, paneCalls };
-  }
-
-  const LINE = { agentName: "maya", kind: "text", text: "hello agent" };
-
-  test("routes a typed line to the exact holder's manager session", async () => {
-    const { db, post, paneCalls, record } = paneHarness();
-    try {
-      const response = await post(LINE);
-      expect(response.status).toBe(200);
-      expect(await response.json()).toMatchObject({ ok: true, outcome: "delivered" });
-      expect(paneCalls).toEqual([{
-        agentId: record.id,
-        incarnation: record.processIncarnation,
-        input: { kind: "text", text: "hello agent" },
-      }]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("REVOKED and identity-drifted writers still receive input: authority gates never touch conversation", async () => {
-    const { db, post, paneCalls } = paneHarness({
-      writeRevoked: true,
-      identityState: "drift",
-    });
-    try {
-      const interrupt = await post({ agentName: "maya", kind: "interrupt" });
-      expect(interrupt.status).toBe(200);
-      expect(paneCalls).toEqual([{
-        agentId: "agent-maya",
-        incarnation: 1,
-        input: { kind: "interrupt" },
-      }]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("no bearer is refused; an operator credential has no pane:input grant", async () => {
-    const { db, daemon, post, paneCalls } = paneHarness();
-    try {
-      expect((await post(LINE, null)).status).toBeGreaterThanOrEqual(400);
-      const operator = daemon.capabilities.mint("operator", "operator").token;
-      expect((await post(LINE, operator)).status).toBeGreaterThanOrEqual(400);
-      expect(paneCalls).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("conversation SURVIVES authority rotation: the launch token still types after an epoch advance and an exact-holder revoke", async () => {
-    // A pause/resume reissue or a critical epoch advance rotates the holder's
-    // credential while the same rendered host keeps its launch env token.
-    // That token must keep typing for the SAME id/incarnation — a resumed
-    // reader with a deaf pane is the hard failure — while carrying no
-    // authority whatsoever (this route cannot approve, attest, or mutate).
-    const { db, daemon, post, paneCalls, record } = paneHarness();
-    try {
-      // Authority rotation 1: the durable epoch advances (reissue).
-      db.upsertAgent({ ...record, capabilityEpoch: record.capabilityEpoch + 1 });
-      expect((await post(LINE)).status).toBe(200);
-      // Authority rotation 2: the exact holder's capabilities are revoked
-      // outright (rows are retained, so the original token still resolves).
-      daemon.capabilities.revokeAgentHolder(
-        record.id,
-        record.processIncarnation ?? 0,
-      );
-      expect((await post(LINE)).status).toBe(200);
-      expect(paneCalls).toHaveLength(2);
-      expect(paneCalls.every((call) =>
-        call.agentId === record.id &&
-        call.incarnation === record.processIncarnation
-      )).toBe(true);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a REPLACEMENT incarnation still refuses: rotation-proof is not replacement-proof", async () => {
-    const { db, post, paneCalls, record } = paneHarness();
-    try {
-      db.upsertAgent({ ...record, processIncarnation: 9 });
-      expect((await post(LINE)).status).toBe(409);
-      expect(paneCalls).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a token with no exact holder cannot type: name-grade credentials prove no pane", async () => {
-    const { db, daemon, post, paneCalls } = paneHarness();
-    try {
-      // A legacy-shaped writer token, valid but unbound to any process.
-      const unbound = daemon.capabilities.mint("maya", "writer").token;
-      expect((await post(LINE, unbound)).status).toBe(403);
-      expect(paneCalls).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a non-app-server row is 409: there is no pane to route input for", async () => {
-    const { db, post, paneCalls } = paneHarness({ codexDriver: "tui" });
-    try {
-      const response = await post(LINE);
-      expect(response.status).toBe(409);
-      expect((await response.json() as { error: string }).error)
-        .toContain("no app-server pane");
-      expect(paneCalls).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("the wire shape is strict: unknown fields and empty text are 400, never smuggled through", async () => {
-    const { db, post, paneCalls } = paneHarness();
-    try {
-      expect((await post({ ...LINE, approve: true })).status).toBe(400);
-      expect((await post({ agentName: "maya", kind: "text", text: "" })).status)
-        .toBe(400);
-      expect((await post({ agentName: "maya", kind: "steer" })).status).toBe(400);
-      expect(paneCalls).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-});
-
-// ————— approval insertion is atomic with holder validation —————
-describe("queueCodexApproval exact-holder validation", () => {
-  function approvalHarness(row: Partial<AgentRecord> = {}) {
-    const db = new HiveDatabase(join(home, `queue-approval-${crypto.randomUUID()}.db`));
-    const daemon = new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-    });
-    const record = agent({ tool: "codex", codexDriver: "app-server", ...row });
-    db.insertAgent(record);
-    const queue = () =>
-      daemon.queueCodexApproval({
-        agentName: record.name,
-        description: "Codex wants to run touch x",
-        agentId: record.id,
-        processIncarnation: record.processIncarnation ?? 0,
-        capabilityEpoch: record.capabilityEpoch,
-      });
-    return { db, record, queue };
-  }
-
-  test("a revoked holder can never grow a pending approval row — no ghost for a human to approve", async () => {
-    const { db, record, queue } = approvalHarness({ writeRevoked: true });
-    try {
-      await expect(queue()).rejects.toThrow(/denied mechanically/);
-      expect(db.listApprovals()).toEqual([]);
-      // The status was not rewritten either: no control-paused ghost.
-      expect(db.getAgentByName(record.name)?.status).toBe(record.status);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("revocation BETWEEN authorize and queue is caught at insertion: the row validates atomically", async () => {
-    const { db, record, queue } = approvalHarness();
-    try {
-      // The first authorization passed against a live holder; revocation lands
-      // just before the insert. The transaction re-reads and refuses.
-      db.upsertAgent({ ...record, writeRevoked: true });
-      await expect(queue()).rejects.toThrow(/denied mechanically/);
-      expect(db.listApprovals()).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("an epoch advance, replacement, or terminal holder refuses insertion", async () => {
-    for (const mutation of [
-      { capabilityEpoch: 7 },
-      { processIncarnation: 9 },
-      { status: "dead" as const },
-    ]) {
-      const { db, record, queue } = approvalHarness();
-      try {
-        // The session's snapshot no longer describes the durable row by the
-        // time the insert runs.
-        db.upsertAgent({ ...record, ...mutation });
-        await expect(queue()).rejects.toThrow(/denied mechanically/);
-        expect(db.listApprovals()).toEqual([]);
-      } finally {
-        db.close();
-      }
-    }
-  });
-
-  test("a live exact holder queues one pending row and parks awaiting-approval", async () => {
-    const { db, record, queue } = approvalHarness({ status: "working" });
-    try {
-      const id = await queue();
-      expect(db.getApproval(id)?.status).toBe("pending");
-      expect(db.getAgentByName(record.name)?.status).toBe("awaiting-approval");
-    } finally {
-      db.close();
-    }
-  });
-});
-
-test("an auto-denied approval un-parks the agent: awaiting-approval recovers to idle", async () => {
-  // Interrupt/turn-completion settles approvals through denyCodexApproval;
-  // the row must not read awaiting-approval forever afterwards.
-  const db = new HiveDatabase(join(home, `deny-status-${crypto.randomUUID()}.db`));
-  const daemon = new HiveDaemon({
-    db,
-    spawner: new StubSpawner(),
-    tmux: new FakeDaemonTmux(),
-  });
-  db.insertAgent(agent({ status: "awaiting-approval" }));
-  db.insertApproval({
-    id: "settled-by-interrupt",
-    agentName: "maya",
-    kind: "tool-permission",
-    description: "Codex wants to run touch x",
-    status: "pending",
-    createdAt: new Date().toISOString(),
-    resolvedAt: null,
-  });
-  try {
-    daemon.denyCodexApproval("settled-by-interrupt");
-    expect(db.getApproval("settled-by-interrupt")?.status).toBe("denied");
-    expect(db.getAgentByName("maya")?.status).toBe("idle");
-  } finally {
-    db.close();
-  }
-});
-
-// ————— cross-vendor sweep honesty: verdicts for every vendor, unknown on failure —————
-describe("cross-vendor identity provenance", () => {
-  function vendorDaemon(
-    db: HiveDatabase,
-    readers: NonNullable<ConstructorParameters<typeof HiveDaemon>[0]["telemetryReaders"]>,
-  ) {
-    return new HiveDaemon({
-      db,
-      spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
-      telemetryReaders: readers,
-    });
-  }
-
-  test("a Claude read failure writes unknown and never skips the row", async () => {
-    const db = new HiveDatabase(join(home, `claude-unknown-${crypto.randomUUID()}.db`));
-    const daemon = vendorDaemon(db, {
-      claude: async () => {
-        throw new Error("transcript unreadable");
-      },
-      liveModel: async () => {
-        throw new Error("transcript unreadable");
-      },
-    });
-    db.insertAgent(agent({
-      tool: "claude",
-      status: "working",
-      liveModel: "claude-fable-5",
-      identityState: "matching",
-      executionIdentity: { tool: "claude", model: "claude-fable-5" },
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      const row = db.getAgentByName("maya")!;
-      // The verdict is honest — unknown, not a preserved stale "matching" —
-      // while the last observed model stays as history, never as proof.
-      expect(row.identityState).toBe("unknown");
-      expect(row.liveModel).toBe("claude-fable-5");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a healthy Claude row reads matching; a moved model reads drift", async () => {
-    const db = new HiveDatabase(join(home, `claude-verdicts-${crypto.randomUUID()}.db`));
-    let live = "claude-fable-5";
-    const daemon = vendorDaemon(db, {
-      claude: async () => ({ contextTokens: 10_000, lastActivityAt: null }),
-      liveModel: async () => live,
-    });
-    db.insertAgent(agent({
-      tool: "claude",
-      status: "working",
-      executionIdentity: { tool: "claude", model: "claude-fable-5" },
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      expect(db.getAgentByName("maya")?.identityState).toBe("matching");
-      expect(db.getAgentByName("maya")?.liveModel).toBe("claude-fable-5");
-      live = "claude-opus-4-8";
-      await daemon.refreshToolTelemetry();
-      expect(db.getAgentByName("maya")?.identityState).toBe("drift");
-      expect(db.getAgentByName("maya")?.liveModel).toBe("claude-opus-4-8");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a Grok read failure writes unknown and never skips the row", async () => {
-    const db = new HiveDatabase(join(home, `grok-unknown-${crypto.randomUUID()}.db`));
-    const daemon = vendorDaemon(db, {
-      grok: async () => {
-        throw new Error("updates.jsonl unreadable");
-      },
-      grokLiveModel: async () => {
-        throw new Error("updates.jsonl unreadable");
-      },
-    });
-    db.insertAgent(agent({
-      tool: "grok",
-      status: "working",
-      identityState: "matching",
-      executionIdentity: {
-        tool: "grok",
-        model: "grok-4-1-fast",
-        cliVersion: "1.0.0",
-        cliBuildHash: "abc123",
-      },
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      expect(db.getAgentByName("maya")?.identityState).toBe("unknown");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("a Grok row that has produced nothing yet reads unattested, not stale", async () => {
-    const db = new HiveDatabase(join(home, `grok-unattested-${crypto.randomUUID()}.db`));
-    const daemon = vendorDaemon(db, {
-      grok: async () => ({
-        contextPct: null,
-        lastActivityAt: null,
-        turnCompleted: null,
-      }),
-      grokLiveModel: async () => null,
-    });
-    db.insertAgent(agent({
-      tool: "grok",
-      status: "working",
-      executionIdentity: {
-        tool: "grok",
-        model: "grok-4-1-fast",
-        cliVersion: "1.0.0",
-        cliBuildHash: "abc123",
-      },
-    }));
-    try {
-      await daemon.refreshToolTelemetry();
-      // The verdict equals the fail-closed default, so no write happens; the
-      // canonical reader (attestationStateOf) reports it either way.
-      expect(db.getAgentByName("maya")?.identityState ?? "unattested")
-        .toBe("unattested");
-    } finally {
-      db.close();
-    }
-  });
-});
-
-// ————— the first-30s window: TUI reader identity observes at the turn boundary —————
-test("a TUI reader's FIRST turn-start observes identity immediately — no sweep wait", async () => {
-  const db = new HiveDatabase(join(home, `reader-boundary-${crypto.randomUUID()}.db`));
-  const daemon = new HiveDaemon({
-    db,
-    spawner: new StubSpawner(),
-    tmux: new FakeDaemonTmux(),
-    telemetryReaders: {
-      codexIdentity: async () => ({
-        status: "observed",
-        model: "gpt-5.6-sol",
-        effort: "xhigh",
-        turnId: "turn-1",
-        sessionId: "session-1",
-        observedAt: "2026-07-16T18:00:00.000Z",
-      }),
-    },
-  });
-  db.insertAgent(agent({
-    tool: "codex",
-    status: "working",
-    readOnly: true,
-    codexDriver: "tui",
-    toolSessionId: "session-1",
-    executionIdentity: { tool: "codex", model: "gpt-5.6-sol", effort: "xhigh" },
-  }));
-  try {
-    // The very first boundary — no telemetry sweep has run.
-    await daemon.processEvent({
-      kind: "turn-start",
-      agentName: "maya",
-      timestamp: "2026-07-16T18:00:01.000Z",
-    });
-    const row = db.getAgentByName("maya")!;
-    expect(row.identityState).toBe("matching");
-    expect(row.liveModel).toBe("gpt-5.6-sol");
-    expect(row.liveEffort).toBe("xhigh");
-  } finally {
-    db.close();
-  }
 });

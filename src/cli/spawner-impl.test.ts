@@ -14,25 +14,16 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
-import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   accountBillingFromCodexRateLimits,
   type AccountBilling,
 } from "../daemon/usage-credits";
-import {
-  agentStateCas,
-  type AgentStateCas,
-  type Approval,
-  type ConditionalAgentUpdate,
-  type RouteAudit,
-} from "../daemon/db";
-import { CODEX_WRITER_CONTAINMENT_REASON } from "../daemon/codex-containment";
+import type { Approval } from "../daemon/db";
 import {
   QuotaConfigSchema,
   isLiveAgent,
-  isTerminalAgentStatus,
   known,
   unknown,
 } from "../schemas";
@@ -48,13 +39,10 @@ import type {
 } from "../schemas";
 import {
   buildAgentPrompt,
-  buildAgentPromptParts,
   buildLandingProtocol,
   CODING_GUIDELINES,
-  GROK_SAFETY_DIRECTIVE,
   HIVE_PROTOCOL_RULES,
   HiveSpawner,
-  type AgentPromptOptions,
   type HiveSpawnerDependencies,
   LANDING_MAX_ATTEMPTS,
   SEARCH_HYGIENE,
@@ -72,12 +60,6 @@ import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
 import type { StopAgentSession } from "../daemon/teardown";
-import {
-  codexDeveloperPromptPath,
-  readCodexDeveloperInstructions,
-  writeCodexSessionBootstrap,
-} from "../daemon/launch-prompt";
-import type { CodexSessionBootstrap } from "../adapters/tools/codex";
 
 const positivelyVerifiedStop: StopAgentSession = async () => ({
   killed: [],
@@ -90,11 +72,6 @@ function newTestSpawner(
   },
 ): HiveSpawner {
   return new HiveSpawner({
-    // A default credential issuer so read-only Codex spawns (the allowed
-    // surface after the Codex-writer containment) work without every test
-    // wiring one; the two tests that assert credential behavior pass their own.
-    issueCredential: () => ({ token: "test-capability", rollback: () => {} }),
-    codexVersion: dependencies.codexVersion ?? (async () => "0.144.4"),
     ...dependencies,
     stopSession: dependencies.stopSession ?? positivelyVerifiedStop,
   });
@@ -231,56 +208,6 @@ const discovery = (record: CapabilityRecord): CapabilityDiscoveryResult => ({
   },
 });
 
-const routeAuditCatalog = async (
-  provider: "claude" | "codex" | "grok",
-): Promise<CapabilityDiscoveryResult> =>
-  discovery(
-    provider === "claude"
-      ? capabilityRecord("claude", "claude-opus-4-8", ["low", "high"])
-      : provider === "codex"
-        ? capabilityRecord("codex", "gpt-5.6-sol", ["medium", "high"])
-        : capabilityRecord("grok", "grok-4.5", ["high"]),
-  );
-
-function routeAuditTestSpawner(
-  store: FakeStore,
-  overrides: Partial<HiveSpawnerDependencies> = {},
-): HiveSpawner {
-  return newTestSpawner({
-    isModelEnabled: async () => true,
-    repoRoot: "/tmp/hive-route-audit-matrix",
-    port: 4317,
-    config: {},
-    readRoutingPolicy: () => policyFromRoute(CLAUDE_ROUTE),
-    discoverCapabilities: routeAuditCatalog,
-    tmux: new FakeTmux(),
-    createWorktree: async () => {
-      throw new Error("stop after routing");
-    },
-    sleep: async () => {},
-    ...overrides,
-    db: store,
-  });
-}
-
-async function captureRouteAudit(
-  request: Parameters<HiveSpawner["spawn"]>[0],
-  overrides: Partial<HiveSpawnerDependencies> = {},
-): Promise<{ audit: RouteAudit; error: Error }> {
-  const store = new FakeStore();
-  let caught: unknown;
-  try {
-    await routeAuditTestSpawner(store, overrides).spawn(request);
-  } catch (error) {
-    caught = error;
-  }
-  expect(caught).toBeInstanceOf(Error);
-  expect(store.routeAudits).toHaveLength(1);
-  const audit = store.routeAudits[0]!;
-  expect(JSON.stringify(audit)).not.toContain(request.task);
-  return { audit, error: caught as Error };
-}
-
 /** A holder that has closed, and whose name is therefore legal to reissue. */
 function closedAgent(name: string, closedAt: string): AgentRecord {
   return { ...agent(name, "done"), closedAt, lastEventAt: closedAt };
@@ -407,7 +334,6 @@ class FakeStore {
   readonly reservations = new Set<string>();
   /** The real approvals queue, in memory: the spend guard asks through it. */
   readonly approvals = new Map<string, Approval>();
-  readonly routeAudits: RouteAudit[] = [];
 
   constructor(agents: AgentRecord[] = []) {
     this.agents = [...agents];
@@ -420,11 +346,6 @@ class FakeStore {
   insertApproval(approval: Approval): Approval {
     this.approvals.set(approval.id, approval);
     return approval;
-  }
-
-  insertRouteAudit(audit: RouteAudit): RouteAudit {
-    this.routeAudits.push(audit);
-    return audit;
   }
 
   listAgents(): AgentRecord[] {
@@ -465,85 +386,6 @@ class FakeStore {
     return record;
   }
 
-  updateAgentIfCurrent(
-    expected: AgentStateCas,
-    updates: ConditionalAgentUpdate,
-  ): AgentRecord | null {
-    const current = this.getAgentById(expected.id);
-    if (
-      current === null ||
-      JSON.stringify(agentStateCas(current)) !== JSON.stringify(expected)
-    ) {
-      return null;
-    }
-    return this.insertAgent({ ...current, ...updates });
-  }
-
-  beginAgentProcess(
-    expected: AgentStateCas,
-    startedAt: string,
-    sessionId: string | null,
-    recoveryAttempts: number,
-    options: {
-      status: Exclude<AgentRecord["status"], "done" | "dead" | "failed">;
-      codexDriver?: AgentRecord["codexDriver"];
-    },
-  ): AgentRecord | null {
-    return this.updateAgentIfCurrent(expected, {
-      status: options.status,
-      toolSessionId: sessionId ?? undefined,
-      processIncarnation: expected.processIncarnation + 1,
-      processStartedAt: startedAt,
-      recoveryAttempts,
-      lastEventAt: startedAt,
-      identityState: undefined,
-      observedIdentity: undefined,
-      liveModel: undefined,
-      liveEffort: undefined,
-      ...("codexDriver" in options ? { codexDriver: options.codexDriver } : {}),
-    });
-  }
-
-  markAgentTerminal(
-    agentId: string,
-    timestamp: string,
-    status: "dead" | "failed" | "done",
-    options: { failureReason?: string; failedAt?: string } = {},
-  ): AgentRecord | null {
-    const current = this.getAgentById(agentId);
-    if (current === null) return null;
-    return this.insertAgent({
-      ...current,
-      status,
-      writeRevoked: true,
-      capabilityEpoch: current.capabilityEpoch + 1,
-      failureReason: options.failureReason ?? current.failureReason,
-      failedAt: options.failedAt ??
-        (status === "failed" ? timestamp : current.failedAt),
-      lastEventAt: timestamp,
-      closedAt: current.closedAt ?? timestamp,
-      pauseCapture: undefined,
-      controlMessageId: undefined,
-    });
-  }
-
-  markAgentTerminalIfCurrent(
-    expected: AgentStateCas,
-    timestamp: string,
-    status: "dead" | "failed" | "done",
-    options: { failureReason?: string; failedAt?: string } = {},
-  ): AgentRecord | null {
-    if (isTerminalAgentStatus(expected.status)) return null;
-    const current = this.getAgentById(expected.id);
-    if (
-      current === null ||
-      JSON.stringify(agentStateCas(current)) !== JSON.stringify(expected)
-    ) {
-      return null;
-    }
-    return this.markAgentTerminal(current.id, timestamp, status, options);
-  }
-
 }
 
 /** The hardened readiness monitor treats poll exhaustion with no positive
@@ -563,28 +405,6 @@ async function deliveredPrompt(command: string): Promise<string> {
     throw new Error(`launch command carries no prompt file: ${command}`);
   }
   return await readFile(path, "utf8");
-}
-
-async function codexDeveloperPrompt(command: string): Promise<string> {
-  const path = /\$\(cat '([^']+\.developer\.toml)'\)/.exec(command)?.[1];
-  if (path === undefined) {
-    throw new Error(`launch command carries no Codex developer artifact: ${command}`);
-  }
-  return await readCodexDeveloperInstructions(path);
-}
-
-async function codexUserPrompt(command: string): Promise<string> {
-  const path = /\$\(cat '([^']+\.user\.txt)'\)/.exec(command)?.[1];
-  if (path === undefined) {
-    throw new Error(`launch command carries no Codex user artifact: ${command}`);
-  }
-  return await readFile(path, "utf8");
-}
-
-async function seedCodexDeveloperArtifact(agent: AgentRecord): Promise<void> {
-  await writeCodexSessionBootstrap(agent.tmuxSession, {
-    developerInstructions: `Durable Hive rules for ${agent.name}`,
-  });
 }
 
 function signalReadiness(store: FakeStore): () => Promise<void> {
@@ -750,13 +570,10 @@ describe("HiveSpawner name pool", () => {
         idempotencyKey: null,
         capabilityEpoch: 1,
       } satisfies AgentMessage;
-      if (tool === "codex") await seedCodexDeveloperArtifact(controlled);
       await spawner.restartForControl(controlled, message);
       const command = tmux.sessions[0]?.[2] ?? "";
       // The order itself travels in the prompt file; the flags stay on the argv.
-      const order = tool === "codex"
-        ? await codexUserPrompt(command)
-        : await deliveredPrompt(command);
+      const order = await deliveredPrompt(command);
       expect(order).toContain("CRITICAL HIVE CONTROL");
       expect(order).toContain("This process is read-only");
       expect(command).toContain(tool === "claude"
@@ -766,10 +583,6 @@ describe("HiveSpawner name pool", () => {
       expect(command).toContain(model);
       expect(command).toContain("high");
       const restarted = store.getAgentById(controlled.id)!;
-      expect(restarted.processIncarnation).toBe(
-        (controlled.processIncarnation ?? 0) + 1,
-      );
-      expect(restarted.processStartedAt).toBeString();
       expect(restarted.controlQuotaReservationId).toBeString();
       expect(
         controlQuota.quota.ledger.getReservation(
@@ -782,127 +595,6 @@ describe("HiveSpawner name pool", () => {
       });
       controlQuota.db.close();
     }
-  });
-
-  test("a native Codex control restart exports its replacement reader credential", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-control-codex-app-server-"));
-    tempRoots.push(root);
-    const controlled = {
-      ...agent("maya", "control-paused"),
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      worktreePath: root,
-      capabilityEpoch: 1,
-      writeRevoked: true,
-      // The prior incarnation ran the TUI; the config has since selected
-      // app-server. The restart must record the driver IT launches with.
-      codexDriver: "tui",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5.6-sol",
-        effort: "high",
-      },
-    } satisfies AgentRecord;
-    const controlQuota = makeControlQuota(root);
-    const store = new FakeStore([controlled]);
-    const tmux = new FakeTmux();
-    const starts: Array<{
-      bootstrap: CodexSessionBootstrap;
-      readOnly: boolean;
-    }> = [];
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: { codex: { driver: "app-server" } },
-      readRoutingPolicy: () => {
-        throw new Error("control restart must use its recorded identity");
-      },
-      tmux,
-      sleep: signalControlReadiness(store),
-      quota: controlQuota.quota,
-      issueCredential: () => ({
-        token: "control-reader-secret",
-        rollback: () => {},
-      }),
-      codexAppServer: {
-        isAvailable: async () => true,
-        buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async (record, bootstrap) => {
-          starts.push({ bootstrap, readOnly: record.readOnly });
-        },
-        disconnect: () => undefined,
-      },
-    });
-    const message = controlMessage("app-server-control");
-
-    await seedCodexDeveloperArtifact(controlled);
-    await spawner.restartForControl(controlled, message);
-
-    const command = tmux.sessions[0]?.[2] ?? "";
-    expect(command).toContain("'codex-app-server-host'");
-    expect(command).toContain(
-      `HIVE_CAPABILITY_TOKEN="$(cat ${root}/.codex/capability-token)"`,
-    );
-    expect(command).not.toContain("control-reader-secret");
-    expect(await readFile(join(root, ".codex", "capability-token"), "utf8"))
-      .toEqual("control-reader-secret");
-    expect(starts).toEqual([{
-      bootstrap: {
-        developerInstructions: "Durable Hive rules for maya",
-        initialUserPrompt: expect.stringContaining("hive_ack_message"),
-      },
-      readOnly: true,
-    }]);
-    // The driver is per-incarnation: the replacement launched on app-server
-    // and the row must say so, not repeat the prior incarnation's TUI.
-    expect(store.listAgents()[0]?.codexDriver).toBe("app-server");
-    controlQuota.db.close();
-  });
-
-  test("a Codex critical restart fails closed without its developer artifact", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-control-codex-missing-"));
-    tempRoots.push(root);
-    const controlled = {
-      ...agent("maya", "control-paused"),
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      worktreePath: root,
-      capabilityEpoch: 1,
-      writeRevoked: true,
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5.6-sol",
-        effort: "high",
-      },
-    } satisfies AgentRecord;
-    await rm(codexDeveloperPromptPath(controlled.tmuxSession), { force: true });
-    const controlQuota = makeControlQuota(root);
-    const store = new FakeStore([controlled]);
-    const tmux = new FakeTmux();
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: {},
-      tmux,
-      quota: controlQuota.quota,
-    });
-
-    await expect(spawner.restartForControl(
-      controlled,
-      controlMessage("missing-developer-artifact"),
-    )).rejects.toThrow("developer-instruction artifact is missing or invalid");
-    expect(tmux.sessions).toEqual([]);
-    expect(store.getAgentById(controlled.id)).toMatchObject({
-      status: "control-paused",
-      writeRevoked: true,
-      controlMessageId: "missing-developer-artifact",
-    });
-    expect(controlQuota.quota.ledger.activeReservations()).toEqual([]);
-    controlQuota.db.close();
   });
 
   test("fails closed when the recorded model cannot launch", async () => {
@@ -935,7 +627,6 @@ describe("HiveSpawner name pool", () => {
       quota: controlQuota.quota,
     });
 
-    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("unavailable"),
@@ -990,7 +681,6 @@ describe("HiveSpawner name pool", () => {
       quota: controlQuota.quota,
     });
 
-    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("unverified-stop"),
@@ -1037,7 +727,6 @@ describe("HiveSpawner name pool", () => {
       tmux: new FakeTmux(),
     });
 
-    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("legacy"),
@@ -1099,7 +788,6 @@ describe("HiveSpawner name pool", () => {
       quota,
     });
 
-    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("exhausted"),
@@ -1219,547 +907,6 @@ describe("HiveSpawner name pool", () => {
     expect(resolveAgentName("maya", [agent("maya", "dead")])).toEqual("maya");
   });
 
-  test("a routing decision is recorded as a structured route audit", async () => {
-    const store = new FakeStore();
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: "/tmp/hive-route-audit",
-      port: 4317,
-      config: {},
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      discoverCapabilities: async () =>
-        discovery(capabilityRecord("codex", "gpt-5.6-sol", ["medium"])),
-      tmux: new FakeTmux(),
-      // Stop just after routing: the audit is persisted before the worktree is
-      // created, so this isolates the decision and its structured record.
-      createWorktree: async () => {
-        throw new Error("stop after routing");
-      },
-      sleep: async () => {},
-    });
-    await expect(
-      spawner.spawn({
-        task: "Do the thing",
-        category: "simple_coding",
-        readOnly: true,
-      }),
-    ).rejects.toThrow("stop after routing");
-
-    expect(store.routeAudits).toHaveLength(1);
-    const audit = store.routeAudits[0]!;
-    expect(audit.category).toEqual("simple_coding");
-    expect(audit.selectedTool).toEqual("codex");
-    expect(audit.selectedModel).toEqual("gpt-5.6-sol");
-    expect(audit.selectedEffort).toEqual("medium");
-    expect(typeof audit.policyRevision).toEqual("number");
-    expect(Array.isArray(audit.attempts)).toBe(true);
-  });
-
-  test("vendor resolution refusals each write one prompt-free audit", async () => {
-    const unclaimed = await captureRouteAudit({
-      task: "SECRET unclaimed prompt",
-      category: "simple_coding",
-      model: "model-no-provider-publishes",
-    });
-    expect(unclaimed.error.message).toContain("no vendor's catalog lists model");
-    expect(unclaimed.audit.attempts.join("\n")).toContain("no vendor's catalog lists model");
-    expect(unclaimed.audit.selectedTool).toBeNull();
-
-    const unreadable = await captureRouteAudit({
-      task: "SECRET unreadable prompt",
-      category: "simple_coding",
-      model: "model-with-unknown-vendor",
-    }, {
-      discoverCapabilities: async () => {
-        throw new Error("catalog offline");
-      },
-    });
-    expect(unreadable.error.message).toContain("no vendor's catalog could be read");
-    expect(unreadable.audit.attempts.join("\n")).toContain("no vendor's catalog could be read");
-    expect(unreadable.audit.selectedTool).toBeNull();
-
-    const mismatch = await captureRouteAudit({
-      task: "SECRET mismatch prompt",
-      category: "simple_coding",
-      tool: "codex",
-      model: "claude-opus-4-8",
-    });
-    expect(mismatch.error.message).toMatch(/claude model.*tool="codex"/s);
-    expect(mismatch.audit.attempts.join("\n")).toContain("tool=\"codex\"");
-    expect(mismatch.audit.selectedTool).toBeNull();
-  });
-
-  test("early vendor resolution exceptions write one audit and preserve the error", async () => {
-    const vendorError = new Error("vendor resolution exploded");
-    const failure = await captureRouteAudit({
-      task: "SECRET vendor exception prompt",
-      category: "simple_coding",
-      model: "vendor-resolution-test",
-    }, {
-      discoverCapabilities: async () => ({
-        status: "ok",
-        get records(): CapabilityRecord[] {
-          throw vendorError;
-        },
-      } as unknown as CapabilityDiscoveryResult),
-    });
-
-    expect(failure.error).toBe(vendorError);
-    expect(failure.audit.attempts).toEqual(["refused: vendor resolution exploded"]);
-    expect(failure.audit.selectedTool).toBeNull();
-  });
-
-  test("thrown billing and capability-catalog guards each write one audit", async () => {
-    const billingError = new Error("billing guard exploded");
-    const billing = await captureRouteAudit({
-      task: "SECRET billing exception prompt",
-      category: "simple_coding",
-      model: "claude-opus-4-8",
-    }, {
-      readBilling: async () => {
-        throw billingError;
-      },
-    });
-    expect(billing.error).toBe(billingError);
-    expect(billing.audit.attempts).toEqual(["refused: billing guard exploded"]);
-    expect(billing.audit.selectedTool).toBeNull();
-
-    const catalogError = new Error("capability catalog replacement exploded");
-    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-catalog-error-"));
-    tempRoots.push(root);
-    const quotaDb = new HiveDatabase(join(root, "quota.db"));
-    const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
-      QuotaConfigSchema.parse({ enabled: false }),
-      () => new Date(timestamp),
-    );
-    quota.replaceCapabilityCatalog = () => {
-      throw catalogError;
-    };
-    const catalog = await captureRouteAudit({
-      task: "SECRET capability catalog prompt",
-      category: "simple_coding",
-      model: "claude-opus-4-8",
-    }, { quota });
-    expect(catalog.error).toBe(catalogError);
-    expect(catalog.audit.attempts).toEqual([
-      "refused: capability catalog replacement exploded",
-    ]);
-    expect(catalog.audit.selectedTool).toBeNull();
-    quotaDb.close();
-  });
-
-  test("a later thrown catalog dependency preserves every earlier link attempt", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-late-catalog-error-"));
-    tempRoots.push(root);
-    const quotaDb = new HiveDatabase(join(root, "quota.db"));
-    const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
-      QuotaConfigSchema.parse({ enabled: false }),
-      () => new Date(timestamp),
-    );
-    const replaceCatalog = quota.replaceCapabilityCatalog.bind(quota);
-    const catalogError = new Error("second-link catalog replacement exploded");
-    quota.replaceCapabilityCatalog = (provider, records) => {
-      if (provider === "codex") throw catalogError;
-      replaceCatalog(provider, records);
-    };
-    const chain = [
-      {
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      },
-      {
-        provider: "codex",
-        model: "gpt-5.6-sol",
-        effort: { mode: "provider-controlled" },
-      },
-    ] satisfies ChainEntry[];
-
-    try {
-      const failure = await captureRouteAudit({
-        task: "SECRET later dependency prompt",
-        category: "simple_coding",
-        readOnly: true,
-      }, {
-        quota,
-        readRoutingPolicy: () => policyWithChain(chain),
-        isModelEnabled: async (provider) => provider !== "claude",
-      });
-      expect(failure.error).toBe(catalogError);
-      expect(failure.audit.attempts.some((attempt) =>
-        attempt.includes("claude/claude-opus-4-8") &&
-        attempt.includes("not enabled")
-      )).toBeTrue();
-      expect(failure.audit.attempts.at(-1)).toEqual(
-        "refused: second-link catalog replacement exploded",
-      );
-      expect(failure.audit.selectedTool).toBeNull();
-    } finally {
-      quotaDb.close();
-    }
-  });
-
-  test("audit insertion failure never masks or retries the routing error", async () => {
-    const store = new FakeStore();
-    const routingError = new Error("original routing failure");
-    let insertions = 0;
-    store.insertRouteAudit = () => {
-      insertions += 1;
-      throw new Error("route audit store unavailable");
-    };
-
-    let caught: unknown;
-    try {
-      await routeAuditTestSpawner(store, {
-        readBilling: async () => {
-          throw routingError;
-        },
-      }).spawn({
-        task: "SECRET failed audit prompt",
-        category: "simple_coding",
-        model: "claude-opus-4-8",
-      });
-    } catch (error) {
-      caught = error;
-    }
-
-    expect(caught).toBe(routingError);
-    expect(insertions).toEqual(1);
-    expect(store.routeAudits).toHaveLength(0);
-  });
-
-  test("gate, independence, and quota refusals each write one truthful audit", async () => {
-    const gate = await captureRouteAudit({
-      task: "SECRET gate prompt",
-      category: "simple_coding",
-      model: "claude-opus-4-8",
-    }, {
-      isModelEnabled: async () => false,
-    });
-    expect(gate.error.message).toContain("not enabled");
-    expect(gate.audit.attempts).toEqual([
-      expect.stringContaining("refused claude/claude-opus-4-8 — enablement"),
-    ]);
-
-    const sameProvider = await captureRouteAudit({
-      task: "SECRET same-provider prompt",
-      category: "code_review",
-      model: "claude-opus-4-8",
-      reviewOfTool: "claude",
-    });
-    expect(sameProvider.error.message).toContain("refuses same-provider candidate");
-    expect(sameProvider.audit.reviewOfTool).toEqual("claude");
-    expect(sameProvider.audit.attempts).toEqual([
-      expect.stringContaining("eligible claude/claude-opus-4-8"),
-      expect.stringContaining("excluded same-provider"),
-      expect.stringContaining("no independent route"),
-    ]);
-
-    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-quota-"));
-    tempRoots.push(root);
-    const quotaDb = new HiveDatabase(join(root, "quota.db"));
-    const quota = new QuotaService(
-      new QuotaLedger(quotaDb),
-      QuotaConfigSchema.parse({
-        reserveFiveHourPct: 0,
-        reserveWeeklyPct: 0,
-        limits: [{
-          provider: "claude",
-          account: "default",
-          pool: "claude-opus",
-          models: ["claude-opus-4-8"],
-          fiveHourAllowance: 1,
-          weeklyAllowance: 1,
-        }],
-      }),
-      () => new Date(timestamp),
-    );
-    const quotaRefusal = await captureRouteAudit({
-      task: "SECRET quota prompt",
-      category: "complex_coding",
-      model: "claude-opus-4-8",
-    }, { quota });
-    expect(quotaRefusal.audit.attempts).toEqual([
-      expect.stringContaining("eligible claude/claude-opus-4-8"),
-      expect.stringContaining("quota refused"),
-    ]);
-    expect(quotaRefusal.audit.selectedTool).toBeNull();
-    quotaDb.close();
-  });
-
-  test("an explicit Codex request fails closed on compatibility without substitution", async () => {
-    const failure = await captureRouteAudit({
-      task: "SECRET incompatible explicit Codex prompt",
-      category: "simple_coding",
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      readOnly: true,
-    }, {
-      codexVersion: async () => "0.144.3",
-    });
-
-    expect(failure.error.message).toContain("compatibility refused");
-    expect(failure.error.message).toContain("Codex CLI 0.144.3 is unsupported");
-    expect(failure.audit.attempts).toEqual([
-      expect.stringContaining("explicit: refused codex/gpt-5.6-sol — compatibility"),
-    ]);
-    expect(failure.audit.selectedTool).toBeNull();
-  });
-
-  test("a routed incompatible Codex link leaves the next provider eligible", async () => {
-    const entries = [
-      {
-        provider: "codex",
-        model: "gpt-5.6-sol",
-        effort: { mode: "provider-controlled" },
-      },
-      {
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      },
-    ] satisfies ChainEntry[];
-    const selected = await captureRouteAudit({
-      task: "SECRET routed compatibility prompt",
-      category: "simple_coding",
-      readOnly: true,
-    }, {
-      readRoutingPolicy: () => policyWithChain(entries),
-      codexVersion: async () => "0.144.3",
-    });
-
-    expect(selected.error.message).toEqual("stop after routing");
-    expect(selected.audit.attempts).toEqual([
-      expect.stringContaining("default: codex/gpt-5.6-sol — compatibility"),
-      "default: claude/claude-opus-4-8 — eligible",
-      "selected claude/claude-opus-4-8 (quota disabled/absent)",
-    ]);
-    expect(selected.audit.selectedTool).toEqual("claude");
-  });
-
-  test("one route decision probes Codex once across several Codex links", async () => {
-    let probes = 0;
-    const entries = [
-      {
-        provider: "codex",
-        model: "gpt-first",
-        effort: { mode: "provider-controlled" },
-      },
-      {
-        provider: "codex",
-        model: "gpt-second",
-        effort: { mode: "provider-controlled" },
-      },
-      {
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      },
-    ] satisfies ChainEntry[];
-    const selected = await captureRouteAudit({
-      task: "SECRET memoized compatibility prompt",
-      category: "simple_coding",
-      readOnly: true,
-    }, {
-      readRoutingPolicy: () => policyWithChain(entries),
-      codexVersion: async () => (probes += 1, "0.144.3"),
-    });
-
-    expect(selected.error.message).toEqual("stop after routing");
-    expect(probes).toEqual(1);
-    expect(selected.audit.attempts.filter((attempt) =>
-      attempt.includes("— compatibility")
-    )).toHaveLength(2);
-  });
-
-  test("Claude-only authorization never probes Codex", async () => {
-    const selected = await captureRouteAudit({
-      task: "SECRET Claude-only compatibility prompt",
-      category: "simple_coding",
-      readOnly: true,
-    }, {
-      readRoutingPolicy: () => policyWithChain([{
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      }]),
-      codexVersion: async () => { throw new Error("must not probe Codex"); },
-    });
-
-    expect(selected.error.message).toEqual("stop after routing");
-    expect(selected.audit.selectedTool).toEqual("claude");
-  });
-
-  test("adapter revalidation includes the Codex compatibility guard", async () => {
-    const spawner = newTestSpawner({
-      db: new FakeStore(),
-      repoRoot: "/tmp/hive-compatibility-revalidation",
-      port: 4317,
-      config: {},
-      tmux: new FakeTmux(),
-      isModelEnabled: async () => true,
-      codexVersion: async () => "0.144.3",
-      discoverCapabilities: async () => {
-        throw new Error("resolution must not run before compatibility");
-      },
-    });
-
-    await expect(spawner.authorizeLaunch({
-      tool: "codex",
-      model: "gpt-5.6-sol",
-      effort: "medium",
-    })).rejects.toThrow("compatibility refused");
-  });
-
-  test("never-configured, empty, and total exhaustion each write one refusal audit", async () => {
-    const base = policyFromRoute(CLAUDE_ROUTE);
-    const never = await captureRouteAudit({
-      task: "SECRET never prompt",
-      category: "simple_coding",
-    }, {
-      readRoutingPolicy: () => ({
-        ...base,
-        selection: { global: "never-configured", categories: {} },
-      }),
-    });
-    expect(never.audit.attempts).toEqual([
-      "refused: preference for simple_coding is never-configured",
-    ]);
-
-    const empty = await captureRouteAudit({
-      task: "SECRET empty prompt",
-      category: "simple_coding",
-    }, {
-      readRoutingPolicy: () => ({
-        ...base,
-        models: [],
-        chains: { default: [] },
-        selection: { global: "choice", categories: {} },
-      }),
-    });
-    expect(empty.audit.attempts).toEqual([
-      "refused: category simple_coding has no chain and global default is empty",
-    ]);
-
-    const total = await captureRouteAudit({
-      task: "SECRET total prompt",
-      category: "simple_coding",
-    }, {
-      readRoutingPolicy: () => policyWithChain([{
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      }]),
-      isModelEnabled: async () => false,
-    });
-    expect(total.audit.attempts).toEqual([
-      expect.stringContaining("default: claude/claude-opus-4-8 — enablement"),
-      "refused: total chain exhaustion",
-    ]);
-    expect(total.audit.selectedTool).toBeNull();
-  });
-
-  test("audits every link and selects only after containment", async () => {
-    const first = capabilityRecord("claude", "claude-first", ["high"]);
-    const second = capabilityRecord("claude", "claude-second", ["high"]);
-    const entries: ChainEntry[] = [
-      { provider: "claude", model: first.canonicalId, effort: { mode: "provider-controlled" } },
-      { provider: "claude", model: second.canonicalId, effort: { mode: "provider-controlled" } },
-    ];
-    const perLink = await captureRouteAudit({
-      task: "SECRET per-link prompt",
-      category: "simple_coding",
-    }, {
-      readRoutingPolicy: () => policyWithChain(entries),
-      discoverCapabilities: async (provider) => ({
-        ...await routeAuditCatalog(provider),
-        ...(provider === "claude" ? { records: [first, second] } : {}),
-      }),
-      isModelEnabled: async (_provider, model) => model === second.canonicalId,
-    });
-    expect(perLink.error.message).toEqual("stop after routing");
-    expect(perLink.audit.attempts).toEqual([
-      expect.stringContaining("default: claude/claude-first — enablement"),
-      "default: claude/claude-second — eligible",
-      "selected claude/claude-second (quota disabled/absent)",
-    ]);
-    expect(perLink.audit.selectedTool).toEqual("claude");
-    expect(perLink.audit.selectedModel).toEqual("claude-second");
-
-    const containment = await captureRouteAudit({
-      task: "SECRET containment prompt",
-      category: "simple_coding",
-      tool: "codex",
-      model: "gpt-5.6-sol",
-    });
-    expect(containment.error.message).toContain(CODEX_WRITER_CONTAINMENT_REASON);
-    expect(containment.audit.attempts.at(-1)).toContain("containment: refused codex writer");
-    expect(containment.audit.selectedTool).toBeNull();
-    expect(containment.audit.selectedModel).toBeNull();
-  });
-
-  test("absent and disabled quota both audit the rank-order selection", async () => {
-    const absent = await captureRouteAudit({
-      task: "SECRET absent-quota prompt",
-      category: "simple_coding",
-    }, {
-      readRoutingPolicy: () => policyWithChain([{
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      }]),
-    });
-    expect(absent.error.message).toEqual("stop after routing");
-    expect(absent.audit.attempts.at(-1)).toContain("quota disabled/absent");
-    expect(absent.audit.selectedTool).toEqual("claude");
-
-    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-disabled-quota-"));
-    tempRoots.push(root);
-    const quotaDb = new HiveDatabase(join(root, "quota.db"));
-    const disabledQuota = new QuotaService(
-      new QuotaLedger(quotaDb),
-      QuotaConfigSchema.parse({ enabled: false }),
-      () => new Date(timestamp),
-    );
-    const disabled = await captureRouteAudit({
-      task: "SECRET disabled-quota prompt",
-      category: "simple_coding",
-    }, {
-      readRoutingPolicy: () => policyWithChain([{
-        provider: "claude",
-        model: "claude-opus-4-8",
-        effort: { mode: "provider-controlled" },
-      }]),
-      quota: disabledQuota,
-    });
-    expect(disabled.error.message).toEqual("stop after routing");
-    expect(disabled.audit.attempts.at(-1)).toContain("quota disabled/absent");
-    expect(disabled.audit.selectedTool).toEqual("claude");
-    quotaDb.close();
-  });
-
-  test("unreadable audit metadata never masks an explicit routing result", async () => {
-    const selected = await captureRouteAudit({
-      task: "SECRET metadata prompt",
-      category: "simple_coding",
-      model: "claude-opus-4-8",
-    }, {
-      readRoutingPolicy: () => {
-        throw new Error("policy revision store unavailable");
-      },
-    });
-    expect(selected.error.message).toEqual("stop after routing");
-    expect(selected.audit.policyRevision).toEqual(0);
-    expect(selected.audit.attempts).toContain(
-      "audit metadata: policy revision unavailable — policy revision store unavailable",
-    );
-    expect(selected.audit.selectedTool).toEqual("claude");
-    expect(selected.audit.selectedModel).toEqual("claude-opus-4-8");
-  });
-
   test("concurrent spawns never receive the same name", async () => {
     const store = new FakeStore();
     let releaseRouting!: () => void;
@@ -1828,14 +975,12 @@ describe("HiveSpawner name pool", () => {
       task: "First task",
       category: "simple_coding",
       name: "cara",
-      readOnly: true,
     });
     expect(store.reservations.has("cara")).toEqual(true);
     await expect(spawner.spawn({
       task: "Conflicting task",
       category: "simple_coding",
       name: "cara",
-      readOnly: true,
     })).rejects.toThrow('"cara" is already being assigned');
 
     continueRouting();
@@ -1980,70 +1125,16 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    await spawner.spawn({ task: "Visible interactive task", category: "simple_coding", readOnly: true });
+    await spawner.spawn({ task: "Visible interactive task", category: "simple_coding" });
     expect(probedAppServer).toEqual(false);
     expect(tmux.sessions).toHaveLength(1);
     expect(tmux.sessions[0]?.[2]).toContain("'codex'");
     expect(tmux.sessions[0]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[0]?.[2]).toContain("features.hooks=true");
-    expect(await codexUserPrompt(tmux.sessions[0]?.[2] ?? "")).toEqual(
+    expect(await deliveredPrompt(tmux.sessions[0]?.[2] ?? "")).toContain(
       "Visible interactive task",
     );
-    expect(await codexDeveloperPrompt(tmux.sessions[0]?.[2] ?? ""))
-      .toContain("You are maya");
     expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
-  });
-
-  test("a WRITER auto-engages the app-server even when config says TUI: the brokered driver is the only writer surface", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-spawner-writer-autoengage-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    const tmux = new FakeTmux();
-    let probedAppServer = false;
-    const starts: string[] = [];
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      // Deliberately NOT opted into app-server: readers keep the TUI here,
-      // but a writer must engage the broker whenever it is available.
-      config: {},
-      readRoutingPolicy: () => policyFromRoute({
-        ...CODEX_ROUTE,
-        tool: "codex",
-        codex: { model: "gpt-test", effort: "high" },
-      }),
-      tmux,
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: async () => {},
-      codexAppServer: {
-        isAvailable: async () => {
-          probedAppServer = true;
-          return true;
-        },
-        buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async (value) => {
-          starts.push(value.name);
-          store.insertAgent({ ...value, status: "working" });
-        },
-        disconnect: () => undefined,
-      },
-    });
-
-    const spawned = await spawner.spawn({
-      task: "Write the feature",
-      category: "simple_coding",
-      readOnly: false,
-    });
-    expect(probedAppServer).toBe(true);
-    expect(spawned.codexDriver).toBe("app-server");
-    expect(tmux.sessions[0]?.[2] ?? "").toContain("'codex-app-server-host'");
-    expect(starts).toEqual([spawned.name]);
   });
 
   test("launches Codex through the app-server host and delivers the assignment with turn/start", async () => {
@@ -2051,11 +1142,7 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const starts: Array<{
-      name: string;
-      bootstrap: CodexSessionBootstrap;
-      effort: string;
-    }> = [];
+    const starts: Array<{ name: string; prompt: string; effort: string }> = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -2084,8 +1171,8 @@ describe("HiveSpawner wiring", () => {
           "--agent",
           value.name,
         ],
-        startAgent: async (value, bootstrap, effort) => {
-          starts.push({ name: value.name, bootstrap, effort });
+        startAgent: async (value, prompt, _readOnly, effort) => {
+          starts.push({ name: value.name, prompt, effort });
           store.insertAgent({ ...value, status: "working" });
         },
         disconnect: () => undefined,
@@ -2095,28 +1182,12 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Implement native control",
       category: "simple_coding",
-      readOnly: true,
     });
-    const hostCommand = tmux.sessions[0]?.[2] ?? "";
-    expect(hostCommand).toContain("'codex-app-server-host'");
-    expect(hostCommand).toContain(
-      `HIVE_CAPABILITY_TOKEN="$(cat ${spawned.worktreePath}/.codex/capability-token)"`,
-    );
-    expect(hostCommand).not.toContain("test-capability");
-    expect(hostCommand).not.toContain("Implement native control");
-    expect(await readFile(
-      join(spawned.worktreePath!, ".codex", "capability-token"),
-      "utf8",
-    )).toEqual("test-capability");
+    expect(tmux.sessions[0]?.[2]).toContain("'codex-app-server-host'");
+    expect(tmux.sessions[0]?.[2]).not.toContain("Implement native control");
     expect(starts).toHaveLength(1);
     expect(starts[0]).toMatchObject({ name: "maya", effort: "high" });
-    expect(starts[0]?.bootstrap.initialUserPrompt).toEqual(
-      "Implement native control",
-    );
-    expect(starts[0]?.bootstrap.developerInstructions).toContain("You are maya");
-    expect(starts[0]?.bootstrap.developerInstructions).not.toContain(
-      "Implement native control",
-    );
+    expect(starts[0]?.prompt).toContain("Implement native control");
     expect(spawned.status).toEqual("working");
   });
 
@@ -2127,8 +1198,6 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const disconnected: string[] = [];
     const stopped: string[] = [];
-    const issued: Array<{ token: string; processIncarnation: number }> = [];
-    const rolledBack: string[] = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -2142,19 +1211,6 @@ describe("HiveSpawner wiring", () => {
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
-      issueCredential: (record) => {
-        const token = `holder-${record.processIncarnation ?? 0}`;
-        issued.push({
-          token,
-          processIncarnation: record.processIncarnation ?? 0,
-        });
-        return {
-          token,
-          rollback: () => {
-            rolledBack.push(token);
-          },
-        };
-      },
       tmux,
       stopSession: async (agent) => {
         stopped.push(agent.tmuxSession);
@@ -2179,39 +1235,16 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    const spawned = await spawner.spawn({
-      task: "Fallback task",
-      category: "simple_coding",
-      readOnly: true,
-    });
+    await spawner.spawn({ task: "Fallback task", category: "simple_coding" });
     expect(disconnected).toEqual(["maya"]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(await codexUserPrompt(tmux.sessions[1]?.[2] ?? "")).toEqual(
+    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
       "Fallback task",
     );
-    expect(await codexDeveloperPrompt(tmux.sessions[1]?.[2] ?? ""))
-      .toContain("You are maya");
-    expect(store.listAgents()[0]).toMatchObject({
-      processIncarnation: 2,
-      status: "working",
-      // The driver is a per-incarnation launch fact: the replacement process
-      // runs the TUI, and a row still claiming app-server would be skipped by
-      // telemetry/identity maintenance forever.
-      codexDriver: "tui",
-    });
-    expect(issued).toEqual([
-      { token: "holder-1", processIncarnation: 1 },
-      { token: "holder-2", processIncarnation: 2 },
-    ]);
-    expect(rolledBack).toEqual(["holder-1"]);
-    expect(await readFile(
-      join(spawned.worktreePath!, ".codex", "capability-token"),
-      "utf8",
-    )).toEqual("holder-2");
   });
 
   test("does not launch a TUI fallback when the app-server stop is unverified", async () => {
@@ -2258,7 +1291,6 @@ describe("HiveSpawner wiring", () => {
     const stuck = await spawner.spawn({
       task: "Do not fallback over an unverified stop",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(stopAttempts).toBeGreaterThanOrEqual(1);
@@ -2320,7 +1352,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    const spawned = await spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true });
+    const spawned = await spawner.spawn({ task: "Deep task", category: "complex_coding" });
     expect(spawned.tool).toEqual("codex");
     expect(spawned.model).toEqual("gpt-5.6-sol");
     expect(spawned.quotaReservationId).toBeString();
@@ -2418,7 +1450,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true });
+    await spawner.spawn({ task: "Deep task", category: "complex_coding" });
     expect(reservedOnCodex(quota)).toBeGreaterThan(0);
     expect(quota.ledger.activeReservations()).toHaveLength(1);
     quotaDb.close();
@@ -2449,7 +1481,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true })).rejects
+    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
       .toThrow();
     expect(store.listAgents()).toEqual([]);
     expect(reservedOnCodex(quota)).toEqual(0);
@@ -2489,7 +1521,7 @@ describe("HiveSpawner wiring", () => {
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding", readOnly: true })).rejects
+    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
       .toThrow("agents table write failed");
     expect(store.listAgents()).toEqual([]);
     expect(reservedOnCodex(quota)).toEqual(0);
@@ -2617,7 +1649,6 @@ describe("HiveSpawner wiring", () => {
       task: "Route only among effort-eligible candidates",
       category: "complex_coding",
       effort: "ultra",
-      readOnly: true,
     });
     expect(probes.sort()).toEqual(["claude", "codex"]);
     expect(spawned.executionIdentity).toEqual({
@@ -2777,7 +1808,6 @@ describe("HiveSpawner wiring", () => {
       tool: "codex",
       model: "gpt-test",
       effort: "ultra",
-      readOnly: true,
     });
     expect(spawned.executionIdentity).toEqual({
       tool: "codex",
@@ -2800,9 +1830,9 @@ describe("HiveSpawner wiring", () => {
       port: 4317,
       config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      issueCredential: (agent, role) => {
-        issued.push([agent.name, role, agent.capabilityEpoch]);
-        return { token: "test-capability", rollback: () => {} };
+      issueCredential: (name, role, epoch) => {
+        issued.push([name, role, epoch]);
+        return "test-capability";
       },
       tmux,
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2825,8 +1855,7 @@ describe("HiveSpawner wiring", () => {
     expect(issued).toEqual([[spawned.name, "reader", 0]]);
     const shell = tmux.sessions[0]?.[2] ?? "";
     expect(shell).toContain("'--sandbox' 'read-only'");
-    expect(await codexDeveloperPrompt(shell)).not.toContain("hive_land");
-    expect(await codexUserPrompt(shell)).toEqual("Audit only");
+    expect(await deliveredPrompt(shell)).not.toContain("hive_land");
   });
 
   test("a read-only spawn refuses before creating a worktree when reader authority cannot be established", async () => {
@@ -2839,9 +1868,6 @@ describe("HiveSpawner wiring", () => {
       repoRoot: root,
       port: 4317,
       config: {},
-      // This test proves the reader-authority refusal, so it must NOT inherit
-      // the harness default credential issuer.
-      issueCredential: undefined,
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       tmux: new FakeTmux(),
       createWorktree: async () => {
@@ -2884,7 +1910,7 @@ describe("HiveSpawner wiring", () => {
         buildHash: "test-build",
         channel: "stable",
       }),
-      issueCredential: () => ({ token: "test-capability", rollback: () => {} }),
+      issueCredential: () => "test-capability",
       tmux,
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
@@ -2910,9 +1936,7 @@ describe("HiveSpawner wiring", () => {
     });
     const shell = tmux.sessions[0]?.[2] ?? "";
     expect(shell).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
-    expect(shell).toContain(
-      `'grok' '--cwd' '${spawned.worktreePath}' '--trust' '-m' 'catalog-model'`,
-    );
+    expect(shell).toContain("'grok' '-m' 'catalog-model'");
     expect(shell).toContain("'--reasoning-effort' 'high'");
     expect(shell).toContain("'--always-approve'");
     const config = await readFile(join(spawned.worktreePath!, ".grok", "config.toml"), "utf8");
@@ -3100,7 +2124,6 @@ describe("HiveSpawner wiring", () => {
     const codex = await spawner.spawn({
       task: "Add route tests",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(claude.name).toEqual("maya");
@@ -3126,7 +2149,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(await codexDeveloperPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
+    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
       "You are david",
     );
     expect(claude.model).toEqual("claude-fable-5");
@@ -3202,9 +2225,9 @@ describe("HiveSpawner wiring", () => {
         sleep: signalReadiness(store),
       });
 
-      await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding", readOnly: true });
+      await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding" });
 
-      const launched = await codexDeveloperPrompt(tmux.sessions[0]?.[2] ?? "");
+      const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
       expect(launched).toContain("Hive memory index");
       expect(launched).toContain(
         "[repo/testing] flaky-login-test (2026-06-01) [unverified]: The login test is flaky",
@@ -3253,7 +2276,6 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Become ready during polling",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(spawned.status).toEqual("working");
@@ -3307,7 +2329,6 @@ describe("HiveSpawner wiring", () => {
       category: "complex_coding",
       name: "Riley",
       tool: "codex",
-      readOnly: true,
     });
 
     expect(claude.name).toEqual("quinn-2");
@@ -3430,7 +2451,6 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Fail at startup",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(failed.status).toEqual("failed");
@@ -3440,69 +2460,6 @@ describe("HiveSpawner wiring", () => {
     expect(store.agents).toEqual([failed]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
-  });
-
-  test("terminalization between preserve read and CAS wins over stuck spawn bookkeeping", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-spawner-terminal-race-"));
-    tempRoots.push(root);
-    const worktreePath = join(root, "maya");
-    await mkdir(worktreePath, { recursive: true });
-    class TerminalizingStore extends FakeStore {
-      terminalized = false;
-
-      override updateAgentIfCurrent(
-        expected: AgentStateCas,
-        updates: ConditionalAgentUpdate,
-      ): AgentRecord | null {
-        if (!this.terminalized && updates.status === "stuck") {
-          this.terminalized = true;
-          this.markAgentTerminal(
-            expected.id,
-            "2026-07-09T12:05:00.000Z",
-            "dead",
-            { failureReason: "operator terminalization won" },
-          );
-        }
-        return super.updateAgentIfCurrent(expected, updates);
-      }
-    }
-    const store = new TerminalizingStore();
-    const tmux = new FakeTmux("Error: model not supported for this account");
-    let removals = 0;
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: {},
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux,
-      createWorktree: async () => ({
-        path: worktreePath,
-        branch: "hive/maya-terminal-race",
-      }),
-      removeWorktree: async () => {
-        removals += 1;
-      },
-      sleep: async () => {},
-    });
-
-    const result = await spawner.spawn({
-      task: "Fail while an operator terminalizes the holder",
-      category: "simple_coding",
-      readOnly: true,
-    });
-
-    expect(store.terminalized).toBe(true);
-    expect(result).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      failureReason: "operator terminalization won",
-      closedAt: "2026-07-09T12:05:00.000Z",
-    });
-    expect(store.getAgentById(result.id)).toEqual(result);
-    expect(removals).toBe(0);
   });
 
   test("an unverified failed spawn stop stays stuck and preserves work and quota", async () => {
@@ -3559,7 +2516,6 @@ describe("HiveSpawner wiring", () => {
     const stuck = await spawner.spawn({
       task: "Fail without proving the process stopped",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(stopAttempts).toBeGreaterThanOrEqual(1);
@@ -3605,7 +2561,6 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Fail before readiness",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(failed.status).toEqual("failed");
@@ -3655,7 +2610,6 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Fix the error handling",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(spawned.status).toEqual("working");
@@ -3700,7 +2654,6 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Survive cosmetic failures",
       category: "simple_coding",
-      readOnly: true,
     });
 
     expect(spawned.status).toEqual("working");
@@ -3758,7 +2711,6 @@ describe("HiveSpawner wiring", () => {
     const spawned = await spawner.spawn({
       task: "Prove life without borrowing another rollout",
       category: "simple_coding",
-      readOnly: true,
     });
 
     // A process-backed screen heartbeat is positive launch proof. Even if the
@@ -3805,7 +2757,6 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Hang at launch forever",
       category: "simple_coding",
-      readOnly: true,
     });
 
     // Exhausting the poll budget with no positive signal is a failed launch,
@@ -3850,7 +2801,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding", readOnly: true });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
 
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(0);
@@ -3886,7 +2837,7 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding", readOnly: true });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(1);
   });
@@ -3921,140 +2872,12 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding", readOnly: true });
+    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
     expect(failed.status).toEqual("failed");
     expect(removed).toEqual(0);
     expect(failed.failureReason).toContain("could not be checked");
   });
 
-});
-
-describe("worker prompt partition", () => {
-  const worktree = {
-    path: "/repo/.hive/worktrees/maya",
-    branch: "hive/maya-golden",
-  };
-  const commonFullPreamble = [
-    `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
-    "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
-    'Your orchestrator is named queen. Users and agents may address it as queen without quotation marks; the synonym "orchestrator" remains accepted. Send concise completion reports, blockers, and important findings to queen with hive_send; reference large artifacts instead of pasting them.',
-    "Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to queen rather than grinding.",
-    "If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until queen answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.",
-  ];
-  const readOnlyProtocol =
-    "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.";
-  const cases: {
-    label: string;
-    task: string;
-    memoryIndex: string;
-    options: AgentPromptOptions;
-    bytes: number;
-    sha256: string;
-    expectedBlocks: readonly string[];
-  }[] = [
-    {
-      label: "concise writer",
-      task: "Summarize auth",
-      memoryIndex: "MEMORY INDEX",
-      options: {
-        tool: "claude",
-        category: "summarization",
-        brief: "SCOPED BRIEF",
-        graphBrief: "GRAPH BRIEF",
-        graphifyTools: true,
-      },
-      bytes: 6_190,
-      sha256: "d788ebca42be494a1dae4af678da69001bba178dd960f110ac0971ab46e49880",
-      expectedBlocks: [
-        "You are maya, a Hive writer agent.",
-        `Work only inside your worktree at ${worktree.path}.`,
-        'Your orchestrator is named queen. Report completion, blockers, and findings to queen with hive_send (hive_inbox and hive_status are also available; the synonym "orchestrator" is still accepted). Reference artifacts by path; never paste them.',
-        "Read only what the task names. Search for the lines that matter rather than reading files whole. If the task is substantially bigger than briefed, stop and report rather than grinding.",
-        "If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until queen answers. Never grind on under-powered, and never quietly lower the quality bar instead.",
-        buildLandingProtocol(worktree.branch, "/repo", "main", "maya", 0, true),
-      ],
-    },
-    {
-      label: "full Grok writer",
-      task: "Implement auth",
-      memoryIndex: "MEMORY INDEX",
-      options: {
-        tool: "grok",
-        brief: "SCOPED BRIEF",
-        graphBrief: "GRAPH BRIEF",
-        graphifyTools: true,
-      },
-      bytes: 8_480,
-      sha256: "9778959f6a6d40fca9d52b148eab8ab6ad91d7eea1d4ae5b92fa4b32cbc02dad",
-      expectedBlocks: [
-        "You are maya, a Hive writer agent.",
-        ...commonFullPreamble,
-        buildLandingProtocol(worktree.branch, "/repo", "main", "maya", 0, false),
-        GROK_SAFETY_DIRECTIVE,
-      ],
-    },
-    {
-      label: "full read-only agent",
-      task: "Audit auth",
-      memoryIndex: "MEMORY INDEX",
-      options: {
-        tool: "claude",
-        readOnly: true,
-        brief: "SCOPED BRIEF",
-        graphBrief: "GRAPH BRIEF",
-        graphifyTools: true,
-      },
-      bytes: 5_917,
-      sha256: "13c9473e75196f3440a795e69bc04da0ebf4961fcd902ff55776c1ef3ef69af4",
-      expectedBlocks: [
-        "You are maya, a Hive read-only agent.",
-        ...commonFullPreamble,
-        readOnlyProtocol,
-      ],
-    },
-  ];
-
-  const occurrences = (text: string, block: string): number =>
-    text.split(block).length - 1;
-
-  test.each(cases)(
-    "$label preserves the pre-partition Claude/Grok bytes and partitions Codex roles",
-    ({ task, memoryIndex, options, bytes, sha256, expectedBlocks }) => {
-      const parts = buildAgentPromptParts(
-        "maya",
-        task,
-        worktree,
-        "/repo",
-        memoryIndex,
-        options,
-      );
-
-      expect(Buffer.byteLength(parts.combinedPrompt)).toBe(bytes);
-      expect(createHash("sha256").update(parts.combinedPrompt).digest("hex"))
-        .toBe(sha256);
-      expect(parts.combinedPrompt).toBe(
-        buildAgentPrompt("maya", task, worktree, "/repo", memoryIndex, options),
-      );
-      expect(parts.userPrompt).toBe(task);
-      expect(parts.developerInstructions).not.toContain(task);
-      expect(parts.userPrompt).not.toContain("You are maya");
-      expect(occurrences(parts.combinedPrompt, `Your task: ${task}`)).toBe(1);
-
-      for (const block of [
-        ...expectedBlocks,
-        CODING_GUIDELINES,
-        HIVE_PROTOCOL_RULES,
-        SEARCH_HYGIENE,
-        "SCOPED BRIEF",
-        "GRAPH BRIEF",
-        "This repo serves a graphify knowledge graph over MCP",
-        "MEMORY INDEX",
-      ]) {
-        expect(occurrences(parts.developerInstructions, block)).toBe(1);
-        expect(occurrences(parts.combinedPrompt, block)).toBe(1);
-      }
-    },
-  );
 });
 
 describe("agent landing protocol", () => {
@@ -4281,7 +3104,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
   test("the rules reach a launched CODEX agent — both the TUI argv and the app-server turn", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-guidelines-codex-"));
     tempRoots.push(root);
-    const starts: CodexSessionBootstrap[] = [];
+    const starts: string[] = [];
     const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) =>
       newTestSpawner({
         isModelEnabled: async () => true,
@@ -4306,33 +3129,28 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
         codexAppServer: {
           isAvailable: async () => true,
           buildHostCommand: () => ["hive", "codex-app-server-host"],
-          startAgent: async (_value, bootstrap) => {
-            starts.push(bootstrap);
+          startAgent: async (_value, prompt) => {
+            starts.push(prompt);
           },
           disconnect: () => undefined,
         },
       });
 
-    // Codex receives durable setup as developer instructions on both drivers.
+    // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
     const tuiTmux = new FakeTmux();
-    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", category: "simple_coding", readOnly: true });
+    await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", category: "simple_coding" });
     const tuiCommand = tuiTmux.sessions[0]?.[2] ?? "";
     expect(tuiCommand).toContain("'codex'");
-    const tuiLaunched = await codexDeveloperPrompt(tuiCommand);
+    const tuiLaunched = await deliveredPrompt(tuiCommand);
     for (const rule of RULES) expect(tuiLaunched).toContain(rule);
-    expect(await codexUserPrompt(tuiCommand)).toEqual("Build auth API");
 
     const hostTmux = new FakeTmux();
     await codexSpawner("app-server", hostTmux).spawn({
       task: "Build auth API",
       category: "simple_coding",
-      readOnly: true,
     });
     expect(starts).toHaveLength(1);
-    for (const rule of RULES) {
-      expect(starts[0]?.developerInstructions).toContain(rule);
-    }
-    expect(starts[0]?.initialUserPrompt).toEqual("Build auth API");
+    for (const rule of RULES) expect(starts[0]).toContain(rule);
   });
 
   test("the blocks between them carry every rule (they are what the prompt splices in)", () => {
@@ -4609,7 +3427,6 @@ describe("a refusal names the reason it actually refused for", () => {
       policy?: RoutingPolicy;
       claudeAllowance?: number;
       category?: RoutingCategory;
-      readOnly?: boolean;
     } = {},
   ): Promise<{ failure: string; store: FakeStore; tmux: FakeTmux }> {
     const store = new FakeStore();
@@ -4671,7 +3488,6 @@ describe("a refusal names the reason it actually refused for", () => {
       await spawner.spawn({
         task: "the spawn that was refused for a route that existed",
         category: options.category ?? "simple_coding",
-        ...(options.readOnly ? { readOnly: true } : {}),
       });
     } catch (error) {
       failure = error instanceof Error ? error.message : String(error);
@@ -4737,9 +3553,7 @@ describe("a refusal names the reason it actually refused for", () => {
     );
     expect(failure).toBe("");
     expect(store.listAgents()[0]).toMatchObject({ tool: "grok", model: "grok-4.5" });
-    expect(tmux.sessions[0]?.[2]).toContain(
-      `'grok' '--cwd' '${store.listAgents()[0]!.worktreePath}' '--trust' '-m' 'grok-4.5'`,
-    );
+    expect(tmux.sessions[0]?.[2]).toContain("'grok' '-m' 'grok-4.5'");
   });
 
   test("choice honors the authored order while the first link is launchable", async () => {
@@ -4782,7 +3596,7 @@ describe("a refusal names the reason it actually refused for", () => {
       root,
       "grok-4.5",
       true,
-      { policy, claudeAllowance: 1, readOnly: true },
+      { policy, claudeAllowance: 1 },
     );
 
     expect(failure).toBe("");
@@ -5080,230 +3894,4 @@ test("Grok safety facts ride the spawn prompt, not skill uptake", () => {
   expect(prompt).toContain("CLAUDE.md");
   expect(buildAgentPrompt("maya", "Fix auth", worktree, "/repo"))
     .not.toContain("Grok safety facts");
-});
-
-
-describe("Codex writer containment", () => {
-  test("refuses an explicit Codex writer before worktree or process launch", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-writer-refuse-"));
-    tempRoots.push(root);
-    let worktrees = 0;
-    let sessions = 0;
-    const tmux = new FakeTmux();
-    const origNew = tmux.newSession.bind(tmux);
-    tmux.newSession = async (...args: Parameters<FakeTmux["newSession"]>) => {
-      sessions += 1;
-      return origNew(...args);
-    };
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: new FakeStore(),
-      repoRoot: root,
-      port: 4317,
-      config: {},
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux,
-      createWorktree: async () => {
-        worktrees += 1;
-        throw new Error("must not create worktree for a contained writer");
-      },
-      sleep: async () => {},
-    });
-
-    await expect(spawner.spawn({
-      task: "Write code with Codex",
-      category: "simple_coding",
-      tool: "codex",
-      model: "gpt-test",
-    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
-    expect(worktrees).toEqual(0);
-    expect(sessions).toEqual(0);
-    expect(tmux.sessions).toHaveLength(0);
-  });
-
-  test("refuses a routed Codex writer with no silent fallback", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-routed-refuse-"));
-    tempRoots.push(root);
-    let worktrees = 0;
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: new FakeStore(),
-      repoRoot: root,
-      port: 4317,
-      config: {},
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux: new FakeTmux(),
-      createWorktree: async () => {
-        worktrees += 1;
-        throw new Error("must not create");
-      },
-      sleep: async () => {},
-    });
-
-    await expect(spawner.spawn({
-      task: "Routed writer",
-      category: "simple_coding",
-    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
-    expect(worktrees).toEqual(0);
-  });
-
-  test("allows a Codex reader on the same routes", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-reader-allow-"));
-    tempRoots.push(root);
-    const store = new FakeStore();
-    const tmux = new FakeTmux();
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: store,
-      repoRoot: root,
-      port: 4317,
-      config: {},
-      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      tmux,
-      createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, name);
-        await mkdir(path, { recursive: true });
-        return { path, branch: `hive/${name}-${slug}` };
-      },
-      sleep: signalReadiness(store),
-    });
-
-    const spawned = await spawner.spawn({
-      task: "Review only",
-      category: "simple_coding",
-      tool: "codex",
-      readOnly: true,
-    });
-    expect(spawned.tool).toEqual("codex");
-    expect(spawned.readOnly).toBeTrue();
-    expect(tmux.sessions).toHaveLength(1);
-    expect(tmux.sessions[0]?.[2]).toContain("'--sandbox' 'read-only'");
-  });
-
-  // Launch regression for writer admission. Admission turns on the DRIVER and
-  // nothing else — no version, no build, no schema hash. What keeps the
-  // admitted writer safe is the read-only sandbox plus the per-mutation gate,
-  // not a check performed here.
-  test("refuses a Codex TUI writer before any worktree or launch", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-tui-writer-refuse-"));
-    tempRoots.push(root);
-    let worktrees = 0;
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: new FakeStore(),
-      repoRoot: root,
-      port: 4317,
-      // The TUI driver: PreToolUse fails open and the writer owns its own hook
-      // scripts, so this can never be a writer surface.
-      config: { codex: { driver: "tui" } },
-      readRoutingPolicy: () => policyFromRoute({
-        ...CODEX_ROUTE,
-        tool: "codex",
-        codex: { model: "gpt-test", effort: "high" },
-      }),
-      tmux: new FakeTmux(),
-      createWorktree: async () => {
-        worktrees += 1;
-        throw new Error("must not create");
-      },
-      sleep: async () => {},
-    });
-
-    await expect(spawner.spawn({
-      task: "TUI writer",
-      category: "simple_coding",
-    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
-    expect(worktrees).toEqual(0);
-  });
-
-  test("refuses a Codex writer when the app-server is unavailable, rather than using the TUI", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-noappserver-"));
-    tempRoots.push(root);
-    let worktrees = 0;
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: new FakeStore(),
-      repoRoot: root,
-      port: 4317,
-      config: { codex: { driver: "app-server" } },
-      readRoutingPolicy: () => policyFromRoute({
-        ...CODEX_ROUTE,
-        tool: "codex",
-        codex: { model: "gpt-test", effort: "high" },
-      }),
-      tmux: new FakeTmux(),
-      createWorktree: async () => {
-        worktrees += 1;
-        throw new Error("must not create");
-      },
-      sleep: async () => {},
-      codexAppServer: {
-        // Configured for the app-server, but the binary cannot host one. The
-        // driver resolves to the TUI, so the writer is refused — it must never
-        // quietly become a TUI writer just because the config asked nicely.
-        isAvailable: async () => false,
-        buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async () => undefined,
-        disconnect: () => undefined,
-      },
-    });
-
-    await expect(spawner.spawn({
-      task: "Writer without an app-server",
-      category: "simple_coding",
-    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
-    expect(worktrees).toEqual(0);
-  });
-
-  test("admits a Codex app-server writer, and never falls back to the TUI when its handshake fails", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-codex-app-writer-admit-"));
-    tempRoots.push(root);
-    const tmux = new FakeTmux();
-    let hostStarts = 0;
-    const spawner = newTestSpawner({
-      isModelEnabled: async () => true,
-      db: new FakeStore(),
-      repoRoot: root,
-      port: 4317,
-      config: { codex: { driver: "app-server" } },
-      readRoutingPolicy: () => policyFromRoute({
-        ...CODEX_ROUTE,
-        tool: "codex",
-        codex: { model: "gpt-test", effort: "high" },
-      }),
-      tmux,
-      sleep: async () => {},
-      createWorktree: async () => ({
-        path: root,
-        branch: "hive/maya-task",
-      }),
-      codexAppServer: {
-        isAvailable: async () => true,
-        buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async () => {
-          hostStarts += 1;
-          // The broker never came up. There is now no gate for this writer's
-          // mutations, so the spawn must fail rather than silently degrade.
-          throw new Error("handshake failed");
-        },
-        disconnect: () => undefined,
-      },
-    });
-
-    // The writer was admitted (the driver was the app-server), so the launch
-    // proceeds far enough to attempt the handshake...
-    const record = await spawner.spawn({
-      task: "App-server writer",
-      category: "simple_coding",
-    });
-    expect(hostStarts).toEqual(1);
-    // ...and when that handshake fails the agent ends up failed, not running.
-    expect(record.status).toEqual("failed");
-    // The decisive assertion: exactly one session was ever launched, and it is
-    // the app-server host — no second, TUI session was started to replace it.
-    // A fallback here would be an ungated Codex writer, the one outcome
-    // containment exists to prevent.
-    expect(tmux.sessions).toHaveLength(1);
-    expect(tmux.sessions[0]?.[2] ?? "").toContain("codex-app-server-host");
-  });
 });

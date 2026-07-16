@@ -216,33 +216,6 @@ describe("a swallowed failure still leaves a trace", () => {
     }
   });
 
-  test("an HTTP rejection reaches the trace while the rendered line stays clean", async () => {
-    const home = mkdtempSync(join(tmpdir(), "hive-sl-err-"));
-    const previous = process.env.HIVE_HOME;
-    process.env.HIVE_HOME = home;
-    try {
-      // A 500 used to present as delivered — the transport never read
-      // response.ok, so the observation was lost with a clean diagnostic.
-      const line = await runStatusline(
-        "maya",
-        41_000,
-        JSON.stringify(payload),
-        () => Promise.resolve(new Response("boom", { status: 500 })),
-      );
-
-      expect(line).toBe("🐝 maya · 5h 24% · 7d 41%");
-      const trace = JSON.parse(readFileSync(statuslineErrorPath(), "utf8"));
-      expect(trace).toMatchObject({
-        agent: "maya",
-        error: "statusline report rejected: HTTP 500",
-        count: 1,
-      });
-    } finally {
-      if (previous === undefined) delete process.env.HIVE_HOME;
-      else process.env.HIVE_HOME = previous;
-    }
-  });
-
   // A status line that fails once fails on every keystroke. The trace counts;
   // it must never append, or it would fill the disk with the same error.
   test("counts repeats instead of growing without bound", async () => {

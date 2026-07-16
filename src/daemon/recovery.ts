@@ -14,7 +14,6 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexResumeCommand,
-  buildCodexResumeOptions,
   discoverCodexRecoverySessionId,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -27,22 +26,16 @@ import {
 import {
   ORCHESTRATOR_NAME,
   CapabilityProviderSchema,
-  isTerminalAgentStatus,
   unknownVendor,
   type AgentRecord,
   type ExecutionIdentity,
   type HiveConfig,
 } from "../schemas";
-import { codexWriterContainment } from "./codex-containment";
-import { agentStateCas, type HiveDatabase } from "./db";
+import type { HiveDatabase } from "./db";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
-import {
-  buildCodexTuiShellCommand,
-  codexDeveloperPromptPath,
-} from "./launch-prompt";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -70,19 +63,13 @@ export type SessionResolver = (
   agentCreatedAt: string,
 ) => Promise<string | null>;
 
-export interface RecoveryCredentialGrant {
-  rollback: () => void;
-}
-
 type RecoveryStore = Pick<
   HiveDatabase,
   | "listAgents"
   | "getAgentByName"
   | "getAgentById"
   | "upsertAgent"
-  | "updateAgentIfCurrent"
-  | "beginAgentProcess"
-  | "markAgentTerminalIfCurrent"
+  | "markAgentDead"
   | "isAgentNameReserved"
   | "getUndeliveredMessages"
   | "markMessageAlerted"
@@ -119,10 +106,7 @@ export interface CrashRecoveryDependencies {
   /** Revokes the dead agent's capability subject and deletes its credential
    * file — the same guarantee hive_kill and hive_mark_dead give, so a
    * capability can never outlive its agent through the recovery death path. */
-  revokeCapabilities?: (agent: AgentRecord) => void;
-  /** Manual terminal revival mints a new exact-epoch credential only after
-   * the final pre-launch CAS. Automatic recovery never calls this. */
-  reauthorizeAgent?: (agent: AgentRecord) => RecoveryCredentialGrant | null;
+  revokeCapabilities?: (agentName: string) => void;
   resolveClaudeSessionId?: SessionResolver;
   resolveCodexSessionId?: SessionResolver;
   resolveGrokSessionId?: SessionResolver;
@@ -170,25 +154,6 @@ function tailLines(value: string, count: number): string {
 
 function boundedTask(task: string, limit = 500): string {
   return task.length <= limit ? task : `${task.slice(0, limit)}…`;
-}
-
-function sameRecoveryProcess(
-  expected: AgentRecord,
-  current: AgentRecord,
-): boolean {
-  return current.id === expected.id &&
-    (current.processIncarnation ?? 0) ===
-      (expected.processIncarnation ?? 0) &&
-    (current.processStartedAt ?? null) ===
-      (expected.processStartedAt ?? null) &&
-    current.capabilityEpoch === expected.capabilityEpoch &&
-    current.writeRevoked === expected.writeRevoked &&
-    current.readOnly === expected.readOnly &&
-    current.branch === expected.branch &&
-    (current.toolSessionId ?? null) === (expected.toolSessionId ?? null) &&
-    current.recoveryAttempts === expected.recoveryAttempts &&
-    (current.controlMessageId ?? null) ===
-      (expected.controlMessageId ?? null);
 }
 
 export class CrashRecovery {
@@ -320,11 +285,9 @@ export class CrashRecovery {
     if (agent.status === "done") {
       return { agent: name, action: "skipped", reason: "agent is done" };
     }
-    const revivingTerminal = agent.status === "dead" || agent.status === "failed";
     if (
-      !revivingTerminal &&
-      (agent.status === "control-paused" ||
-        (agent.writeRevoked && agent.controlMessageId !== undefined))
+      agent.status === "control-paused" ||
+      (agent.writeRevoked && agent.controlMessageId !== undefined)
     ) {
       return {
         agent: name,
@@ -332,7 +295,7 @@ export class CrashRecovery {
         reason: "write authority is revoked; control recovery owns this agent",
       };
     }
-    if (!revivingTerminal && agent.writeRevoked) {
+    if (agent.writeRevoked) {
       return {
         agent: name,
         action: "skipped",
@@ -372,42 +335,6 @@ export class CrashRecovery {
     agent: AgentRecord,
     options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
-    // Re-prove the agent has not been deliberately closed since the sweep read
-    // it. hive_kill / reap marks the row terminal durably *before* it tears the
-    // tmux session down, so automatic recovery that raced the teardown reads
-    // this fresh row and refuses — it must never resurrect a deliberately
-    // closed agent (the finished, clean agent that was relaunched as a crash
-    // recovery). Manual recovery is the explicit "bring her back" path and may
-    // revive a dead/failed row on purpose, so it is exempt.
-    if (!options.manual) {
-      const current = this.deps.db.getAgentById(agent.id);
-      if (
-        current === null || current.closedAt !== undefined ||
-        isTerminalAgentStatus(current.status)
-      ) {
-        return {
-          agent: agent.name,
-          action: "skipped",
-          reason:
-            "agent was deliberately closed since the sweep observed it; recovery will not resurrect it",
-        };
-      }
-    }
-    // Codex writer authoring is contained: a crashed Codex writer must not be
-    // relaunched (defense-in-depth for legacy writers). Mark it dead with the
-    // actionable diagnostic; recovery never deletes the worktree, so the work
-    // survives for a read-only respawn or a different provider.
-    // Driver `null`: recovery re-launches from a durable record, and 0.144.4
-    // has no durable app-server resume — there is no brokered session to
-    // reattach to, so a recovered Codex writer could only run unbrokered.
-    const writerContainment = codexWriterContainment(
-      agent.tool,
-      agent.readOnly,
-      null,
-    );
-    if (writerContainment !== null) {
-      return this.markDead(agent, writerContainment);
-    }
     // Callers checked hasSession before entering, but that check is stale by
     // now if another recovery finished in between; resuming over a live
     // session would fail the tmux launch and mark a healthy agent dead.
@@ -429,31 +356,12 @@ export class CrashRecovery {
     }
     let sessionId: string | null;
     try {
-      if (agent.tool === "codex") {
-        const observed = await this.resolveSession(
+      sessionId = agent.toolSessionId ??
+        await this.resolveSession(
           agent.tool,
           agent.worktreePath,
-          agent.processStartedAt ?? agent.createdAt,
+          agent.createdAt,
         );
-        if (
-          agent.toolSessionId !== undefined &&
-          observed !== agent.toolSessionId
-        ) {
-          return this.preserveUnverifiedRecovery(
-            agent,
-            `stored Codex session ${agent.toolSessionId} could not be revalidated ` +
-              `against this process incarnation's provider rollout`,
-          );
-        }
-        sessionId = observed;
-      } else {
-        sessionId = agent.toolSessionId ??
-          await this.resolveSession(
-            agent.tool,
-            agent.worktreePath,
-            agent.createdAt,
-          );
-      }
     } catch (error) {
       return this.preserveUnverifiedRecovery(
         agent,
@@ -468,27 +376,7 @@ export class CrashRecovery {
         "no resumable tool session was found for this worktree",
       );
     }
-    // Final authoritative terminal check IMMEDIATELY before the relaunch. The
-    // guard at the top of this method is stale after the awaited hasSession and
-    // session-discovery work above, during which hive_kill can mark this agent
-    // terminal (marks the row dead durably before tearing the session down). A
-    // relaunch here would resurrect a deliberately closed agent — so re-prove
-    // the fresh row is not closed right before the live-row upsert/launch.
-    if (!options.manual) {
-      const latest = this.deps.db.getAgentById(agent.id);
-      if (
-        latest === null || latest.closedAt !== undefined ||
-        isTerminalAgentStatus(latest.status)
-      ) {
-        return {
-          agent: agent.name,
-          action: "skipped",
-          reason:
-            "agent was closed during recovery preparation; recovery will not resurrect it",
-        };
-      }
-    }
-    return this.resume(agent, sessionId, options);
+    return this.resume(agent, sessionId);
   }
 
   /**
@@ -514,84 +402,18 @@ export class CrashRecovery {
     }
   }
 
-  private currentIfRecoverable(
-    agent: AgentRecord,
-    options: { manual: boolean },
-  ): AgentRecord | null {
-    const current = this.deps.db.getAgentById(agent.id);
-    if (current === null) return null;
-    if (
-      !sameRecoveryProcess(agent, current) || current.status !== agent.status ||
-      current.lastEventAt !== agent.lastEventAt
-    ) {
-      return null;
-    }
-    // Never accept a concurrent terminal/closed row — including manual mode
-    // once kill has marked the row after recovery started.
-    if (current.closedAt !== undefined || isTerminalAgentStatus(current.status)) {
-      // Manual may start from a dead row only when that was the original target
-      // (same closedAt/status at kickoff). A newly terminal row mid-flight aborts.
-      if (!options.manual) return null;
-      if (
-        agent.status !== current.status ||
-        (agent.closedAt ?? null) !== (current.closedAt ?? null) ||
-        agent.capabilityEpoch !== current.capabilityEpoch
-      ) {
-        return null;
-      }
-    }
-    // Automatic recovery also refuses revoked/control-paused rows it did not own.
-    if (
-      !options.manual &&
-      (current.writeRevoked || current.status === "control-paused")
-    ) {
-      return null;
-    }
-    return current;
-  }
-
   private async resume(
     agent: AgentRecord,
     sessionId: string,
-    options: { manual: boolean },
   ): Promise<RecoveryOutcome> {
-    // Atomic current-row check immediately before any live upsert.
-    const live = this.currentIfRecoverable(agent, options);
-    if (live === null) {
-      return {
-        agent: agent.name,
-        action: "skipped",
-        reason:
-          "agent was deliberately closed before recovery upsert; recovery will not resurrect it",
-      };
-    }
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
-    const revivingTerminal = options.manual && isTerminalAgentStatus(live.status);
-    const processStartedAt = new Date().toISOString();
-    const begun = this.deps.db.beginAgentProcess(
-      agentStateCas(live),
-      processStartedAt,
-      sessionId,
-      live.recoveryAttempts + 1,
-      {
-        status: "spawning",
-        reviveTerminal: options.manual,
-        // Recovery always relaunches Codex on the TUI driver; the row must
-        // record the replacement process's actual driver, not the original's.
-        ...(live.tool === "codex" ? { codexDriver: "tui" as const } : {}),
-      },
-    );
-    if (begun === null) {
-      return {
-        agent: agent.name,
-        action: "skipped",
-        reason:
-          "agent process incarnation changed before recovery launch; predecessor recovery was abandoned",
-      };
-    }
-    let record = begun;
-    let reauthorization: RecoveryCredentialGrant | null = null;
+    let record = this.deps.db.upsertAgent({
+      ...agent,
+      toolSessionId: sessionId,
+      recoveryAttempts: agent.recoveryAttempts + 1,
+      lastEventAt: new Date().toISOString(),
+    });
     this.denyPendingApprovals(record.name);
 
     const identity = record.executionIdentity;
@@ -624,8 +446,6 @@ export class CrashRecovery {
       // the launch-failure catch below naming it. Splitting the two would let
       // a future vendor write one harness's config and launch the other's CLI.
       let argv: string[];
-      let codexResumeOptions: string[] | undefined;
-      let codexDeveloperPath: string | undefined;
       switch (record.tool) {
         case "claude": {
           // Re-seed rather than assume: the operator's ~/.claude.json may have
@@ -667,17 +487,13 @@ export class CrashRecovery {
           break;
         }
         case "codex": {
-          // Recovery relaunches the TUI: there is no durable app-server resume,
-          // and a Codex writer was already refused above, so only a reader ever
-          // reaches here.
           await this.writeCodexConfig(worktreePath, {
             daemonPort: this.daemonPort(),
             name: record.name,
             readOnly: record.readOnly,
-            driver: "tui",
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           });
-          const codexOptions = {
+          argv = buildCodexResumeCommand({
             daemonPort: this.daemonPort(),
             effort: identity?.tool === "codex" ? identity.effort : "medium",
             model,
@@ -685,17 +501,7 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             dangerous,
             worktreePath,
-          };
-          codexResumeOptions = buildCodexResumeOptions(codexOptions);
-          argv = buildCodexResumeCommand(codexOptions, sessionId);
-          const developerPath = codexDeveloperPromptPath(record.tmuxSession);
-          if (existsSync(developerPath)) {
-            codexDeveloperPath = developerPath;
-          } else {
-            console.warn(
-              `Hive resumed legacy Codex session ${record.name} with its original visible bootstrap semantics`,
-            );
-          }
+          }, sessionId);
           break;
         }
         case "grok": {
@@ -717,12 +523,6 @@ export class CrashRecovery {
       }
       const command = record.tool === "grok"
         ? wrapGrokSpawnWithCompatibilityEnv(shellJoin(argv))
-        : record.tool === "codex" && codexDeveloperPath !== undefined
-        ? buildCodexTuiShellCommand(
-            codexResumeOptions!,
-            { developerPath: codexDeveloperPath },
-            [sessionId],
-          )
         : shellJoin(argv);
       const revalidated = await this.deps.authorizeLaunch?.(
         identity,
@@ -736,99 +536,32 @@ export class CrashRecovery {
         throw new Error("resume authorization changed before the process adapter");
       }
       requireAuthorizedLaunch(revalidated);
-      // Fresh terminal check immediately before launch — kill during awaited
-      // config/policy work must not be resurrected.
-      const launchCurrent = this.deps.db.updateAgentIfCurrent(
-        agentStateCas(record),
-        {},
-      );
-      if (launchCurrent === null) {
-        return {
-          agent: record.name,
-          action: "skipped",
-          reason:
-            "agent session/incarnation/authority changed before relaunch; predecessor recovery will not launch",
-        };
-      }
-      record = launchCurrent;
-      if (revivingTerminal) {
-        if (this.deps.reauthorizeAgent === undefined) {
-          throw new Error(
-            "manual terminal recovery cannot mint a fresh agent credential",
-          );
-        }
-        reauthorization = this.deps.reauthorizeAgent(record);
-        if (reauthorization === null) {
-          return {
-            agent: record.name,
-            action: "skipped",
-            reason:
-              "manual terminal holder changed before credential issuance; predecessor recovery will not launch",
-          };
-        }
-      }
-      const launch = this.deps.tmux.newSession(
+      await this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,
         command,
       );
-      await launch;
       const failure = await this.monitorResume(record);
       if (failure !== null) {
-        return await this.failResume(record, failure, reauthorization);
+        return await this.failResume(
+          this.deps.db.getAgentById(record.id) ?? record,
+          failure,
+        );
       }
     } catch (error) {
       return await this.failResume(
-        record,
+        this.deps.db.getAgentById(record.id) ?? record,
         error instanceof Error ? error.message : "unknown error",
-        reauthorization,
       );
     }
 
     // A freshly resumed TUI sits at its prompt with the conversation
     // restored: idle is the honest status until an event says otherwise.
-    // Never spread a terminal row back to live after readiness awaits.
-    const afterReady = this.deps.db.getAgentById(record.id);
-    if (
-      afterReady === null || !sameRecoveryProcess(record, afterReady) ||
-      isTerminalAgentStatus(afterReady.status) || afterReady.writeRevoked ||
-      afterReady.status === "control-paused"
-    ) {
-      reauthorization?.rollback();
-      return {
-        agent: record.name,
-        action: "skipped",
-        reason:
-          "agent session/incarnation/authority changed after relaunch readiness; predecessor recovery will not persist state",
-      };
-    }
-    if (afterReady.status === "spawning") {
-      const idle = this.deps.db.updateAgentIfCurrent(agentStateCas(afterReady), {
-        status: "idle",
-        lastEventAt: new Date().toISOString(),
-      });
-      if (idle === null) {
-        const fresh = this.deps.db.getAgentById(record.id);
-        if (
-          fresh === null || !sameRecoveryProcess(record, fresh) ||
-          isTerminalAgentStatus(fresh.status) || fresh.writeRevoked ||
-          fresh.status === "control-paused"
-        ) {
-          reauthorization?.rollback();
-          return {
-            agent: record.name,
-            action: "skipped",
-            reason:
-              "agent state changed during the final recovery CAS; predecessor recovery did not overwrite it",
-          };
-        }
-        record = fresh;
-      } else {
-        record = idle;
-      }
-    } else {
-      record = afterReady;
-    }
+    record = this.deps.db.upsertAgent({
+      ...(this.deps.db.getAgentById(record.id) ?? record),
+      status: "idle",
+      lastEventAt: new Date().toISOString(),
+    });
 
     await this.deps.send(
       "hive-recovery",
@@ -852,45 +585,11 @@ export class CrashRecovery {
   private async failResume(
     agent: AgentRecord,
     failure: string,
-    reauthorization: RecoveryCredentialGrant | null = null,
   ): Promise<RecoveryOutcome> {
     const reason = `resume launch failed: ${failure}`;
-    // Durably revoke terminal authority BEFORE process teardown so a crash
-    // mid-teardown cannot leave a live credential.
-    const now = new Date().toISOString();
-    const current = this.deps.db.getAgentById(agent.id);
-    if (
-      current === null || !sameRecoveryProcess(agent, current) ||
-      isTerminalAgentStatus(current.status) || current.writeRevoked ||
-      current.status === "control-paused"
-    ) {
-      reauthorization?.rollback();
-      return {
-        agent: agent.name,
-        action: "skipped",
-        reason:
-          `${reason}; predecessor failure lost to a newer process/control state`,
-      };
-    }
-    const terminal = this.deps.db.markAgentTerminalIfCurrent(
-      agentStateCas(current),
-      now,
-      "dead",
-      { failureReason: reason },
-    );
-    if (terminal === null) {
-      reauthorization?.rollback();
-      return {
-        agent: agent.name,
-        action: "skipped",
-        reason: `${reason}; final terminal CAS lost to a newer state`,
-      };
-    }
-    if (reauthorization === null) this.deps.revokeCapabilities?.(agent);
-    else reauthorization.rollback();
     if (this.deps.stopSession === undefined) {
       return this.preserveUnverifiedRecovery(
-        this.deps.db.getAgentById(agent.id) ?? agent,
+        agent,
         `${reason}; verified teardown is unavailable`,
       );
     }
@@ -898,21 +597,19 @@ export class CrashRecovery {
       const stopped = await this.deps.stopSession(agent);
       if (stopped.survivors.length > 0) {
         return this.preserveUnverifiedRecovery(
-          this.deps.db.getAgentById(agent.id) ?? agent,
+          agent,
           `${reason}; ${stopped.survivors.length} process(es) survived teardown`,
         );
       }
     } catch (error) {
       return this.preserveUnverifiedRecovery(
-        this.deps.db.getAgentById(agent.id) ?? agent,
+        agent,
         `${reason}; teardown could not be verified: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
     }
-    await this.deps.settleQuota(agent);
-    this.denyPendingApprovals(agent.name);
-    return { agent: agent.name, action: "marked-dead", reason };
+    return await this.markDead(agent, reason);
   }
 
   private async monitorResume(record: AgentRecord): Promise<string | null> {
@@ -957,23 +654,15 @@ export class CrashRecovery {
     reason: string,
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
-    const current = this.deps.db.getAgentById(agent.id);
-    if (
-      current === null || isTerminalAgentStatus(current.status) ||
-      !sameRecoveryProcess(agent, current)
-    ) {
-      return { agent: agent.name, action: "skipped", reason };
-    }
-    const preserved = this.deps.db.updateAgentIfCurrent(agentStateCas(current), {
+    const current = this.deps.db.getAgentById(agent.id) ?? agent;
+    this.deps.db.upsertAgent({
+      ...current,
       status: "stuck",
       writeRevoked: true,
       failureReason: reason,
       lastEventAt: now,
     });
-    if (preserved === null) {
-      return { agent: agent.name, action: "skipped", reason };
-    }
-    this.deps.revokeCapabilities?.(agent);
+    this.deps.revokeCapabilities?.(agent.name);
     this.denyPendingApprovals(agent.name);
     await this.deps.send(
       "hive-recovery",
@@ -1014,44 +703,12 @@ export class CrashRecovery {
     reason: string,
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
-    const current = this.deps.db.getAgentById(agent.id);
-    if (current === null) {
-      return { agent: agent.name, action: "skipped", reason };
-    }
-    if (!isTerminalAgentStatus(current.status)) {
-      if (
-        current.status !== agent.status || current.lastEventAt !== agent.lastEventAt ||
-        !sameRecoveryProcess(agent, current)
-      ) {
-        return {
-          agent: agent.name,
-          action: "skipped",
-          reason: `${reason}; predecessor state changed before terminal CAS`,
-        };
-      }
-      const terminal = this.deps.db.markAgentTerminalIfCurrent(
-        agentStateCas(current),
-        now,
-        "dead",
-        { failureReason: reason },
-      );
-      if (terminal === null) {
-        return {
-          agent: agent.name,
-          action: "skipped",
-          reason: `${reason}; final terminal CAS lost to a newer state`,
-        };
-      }
-    } else {
-      return current.status === agent.status && sameRecoveryProcess(agent, current)
-        ? { agent: agent.name, action: "marked-dead", reason }
-        : {
-          agent: agent.name,
-          action: "skipped",
-          reason: `${reason}; terminal holder changed before recovery bookkeeping`,
-        };
-    }
-    this.deps.revokeCapabilities?.(agent);
+    this.deps.db.markAgentDead(
+      agent.id,
+      now,
+      reason,
+    );
+    this.deps.revokeCapabilities?.(agent.name);
     await this.deps.settleQuota(agent);
     this.denyPendingApprovals(agent.name);
     // Queued traffic to a dead agent can never inject; flag it once so

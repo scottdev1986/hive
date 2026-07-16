@@ -68,7 +68,6 @@ describe("CLI-to-daemon smoke", () => {
     const tmux = new FakeTmux();
     const spawner = new HiveSpawner({
       isModelEnabled: async () => true,
-      codexVersion: async () => "0.144.4",
       db,
       repoRoot: root,
       port: 4317,
@@ -83,10 +82,7 @@ describe("CLI-to-daemon smoke", () => {
         chains: { default: [{ provider: "codex", model: "gpt-test", effort: { mode: "exact", value: "medium" } }] },
         selection: { global: "choice", categories: {} },
       }),
-      issueCredential: () => ({
-        token: "test-reader-capability",
-        rollback: () => {},
-      }),
+      issueCredential: () => "test-reader-capability",
       tmux,
       stopSession: async () => ({ killed: [], survivors: [] }),
       createWorktree: async (_repoRoot, name, slug) => ({
@@ -135,21 +131,6 @@ describe("CLI-to-daemon smoke", () => {
       });
       expect(spawned.name).toEqual("maya");
       expect(spawned).toMatchObject({ readOnly: true, writeRevoked: false });
-      const eventToken = daemon.capabilities.mint("maya", "reader", {
-        epoch: spawned.capabilityEpoch,
-        holder: {
-          agentId: spawned.id,
-          processIncarnation: spawned.processIncarnation ?? 0,
-        },
-      }).token;
-      const agentEventFetch = (
-        input: string | URL | Request,
-        init?: RequestInit,
-      ): Promise<Response> => {
-        const headers = new Headers(init?.headers);
-        headers.set("Authorization", `Bearer ${eventToken}`);
-        return daemon!.fetch(new Request(input, { ...init, headers }));
-      };
       expect((await fetchAgentStatus(port, daemonFetch))[0]).toMatchObject({
         status: "working",
         graphifyCalls: null,
@@ -159,7 +140,7 @@ describe("CLI-to-daemon smoke", () => {
         "turn-start",
         port,
         { agent: "maya" },
-        agentEventFetch,
+        daemonFetch,
       ))
         .toEqual(0);
       expect((await fetchAgentStatus(port, daemonFetch))[0]?.status).toEqual(
@@ -168,7 +149,7 @@ describe("CLI-to-daemon smoke", () => {
 
       expect(await runHiveEvent("turn-end", port, {
         agent: "maya",
-      }, agentEventFetch)).toEqual(0);
+      }, daemonFetch)).toEqual(0);
       const [finished] = await fetchAgentStatus(port, daemonFetch);
       expect(finished?.status).toEqual("idle");
 
@@ -176,7 +157,7 @@ describe("CLI-to-daemon smoke", () => {
         "turn-start",
         port,
         { agent: "maya" },
-        agentEventFetch,
+        daemonFetch,
       )).toEqual(0);
       await sendOrchestratorMessage(
         port,

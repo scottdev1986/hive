@@ -1,150 +1,49 @@
 import Foundation
 
-public struct LaunchIdentitySnapshot: Equatable, Decodable {
-    public let model: String
-    public let effort: String?
-
-    public init(model: String, effort: String? = nil) {
-        self.model = model
-        self.effort = effort
-    }
-}
-
-public struct ObservedIdentitySnapshot: Equatable, Decodable {
-    public let model: String
-    public let effort: String?
-    /// Where the observation came from ("codex-rollout" is a process-time
-    /// scan, display grade; "codex-app-server" is the process-bound
-    /// attestation surface). Rendered so an observed claim carries its
-    /// confidence, never displayed as more than it is.
-    public let source: String?
-
-    public init(model: String, effort: String? = nil, source: String? = nil) {
-        self.model = model
-        self.effort = effort
-        self.source = source
-    }
-}
-
 /// One agent as reported by `hive workspace-feed` (NDJSON, one snapshot per
 /// line: `{"v":1,"agents":[...]}`). Decoding is deliberately tolerant: only
-/// exact `id` plus `name` are required, unknown fields are ignored, and an
-/// absent or unreadable status stays `unknown` — the feed contract may grow
-/// without making an agent look healthy without evidence.
+/// `name` is required, unknown fields are ignored, and an absent or unreadable
+/// status stays `unknown` — the feed contract may grow without making an agent
+/// look healthy without evidence.
 public struct AgentSnapshot: Equatable, Decodable {
-    public let id: String
     public let name: String
     public let tool: String?
     public let model: String?
-    public let liveModel: String?
-    public let liveEffort: String?
-    public let executionIdentity: LaunchIdentitySnapshot?
-    public let observedIdentity: ObservedIdentitySnapshot?
-    public let identityState: String
     public let status: String
     public let taskDescription: String?
     public let tmuxSession: String?
-    public let toolSessionID: String?
-    public let processIncarnation: Int?
     public let contextPct: Double?
-    /// Nil means the wire did not answer. Write authority is daemon-enforced
-    /// (landing/mutation); it is header information here, never an input gate.
-    public let writeRevoked: Bool?
     /// ISO datetime; present means the agent is closed and must not get a pane.
     public let closedAt: String?
 
-    public init(id: String, name: String, tool: String? = nil, model: String? = nil,
-                liveModel: String? = nil, liveEffort: String? = nil,
-                executionIdentity: LaunchIdentitySnapshot? = nil,
-                observedIdentity: ObservedIdentitySnapshot? = nil,
-                identityState: String = "unattested",
+    public init(name: String, tool: String? = nil, model: String? = nil,
                 status: String = "working", taskDescription: String? = nil,
-                tmuxSession: String? = nil, toolSessionID: String? = nil,
-                processIncarnation: Int? = nil, contextPct: Double? = nil,
-                writeRevoked: Bool? = false,
+                tmuxSession: String? = nil, contextPct: Double? = nil,
                 closedAt: String? = nil) {
-        self.id = id
         self.name = name
         self.tool = tool
         self.model = model
-        self.liveModel = liveModel
-        self.liveEffort = liveEffort
-        self.executionIdentity = executionIdentity
-        self.observedIdentity = observedIdentity
-        self.identityState = Self.normalizedIdentityState(identityState)
         self.status = status
         self.taskDescription = taskDescription
         self.tmuxSession = tmuxSession
-        self.toolSessionID = toolSessionID
-        self.processIncarnation = processIncarnation
         self.contextPct = contextPct
-        self.writeRevoked = writeRevoked
         self.closedAt = closedAt
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, tool, model, liveModel, liveEffort, executionIdentity
-        case observedIdentity, identityState, status, taskDescription, tmuxSession
-        case toolSessionID = "toolSessionId"
-        case processIncarnation, contextPct, writeRevoked, closedAt
+        case name, tool, model, status, taskDescription, tmuxSession, contextPct, closedAt
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
-        id = try container.decode(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         tool = try? container.decodeIfPresent(String.self, forKey: .tool)
         model = try? container.decodeIfPresent(String.self, forKey: .model)
-        liveModel = try? container.decodeIfPresent(String.self, forKey: .liveModel)
-        liveEffort = try? container.decodeIfPresent(String.self, forKey: .liveEffort)
-        executionIdentity = try? container.decodeIfPresent(
-            LaunchIdentitySnapshot.self, forKey: .executionIdentity)
-        observedIdentity = try? container.decodeIfPresent(
-            ObservedIdentitySnapshot.self, forKey: .observedIdentity)
-        let reportedIdentityState =
-            (try? container.decodeIfPresent(String.self, forKey: .identityState)) ?? nil
-        identityState = Self.normalizedIdentityState(reportedIdentityState ?? "unattested")
         status = (try? container.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
         taskDescription = try? container.decodeIfPresent(String.self, forKey: .taskDescription)
         tmuxSession = try? container.decodeIfPresent(String.self, forKey: .tmuxSession)
-        toolSessionID = try? container.decodeIfPresent(String.self, forKey: .toolSessionID)
-        processIncarnation = try? container.decodeIfPresent(Int.self, forKey: .processIncarnation)
         contextPct = try? container.decodeIfPresent(Double.self, forKey: .contextPct)
-        writeRevoked = try? container.decodeIfPresent(Bool.self, forKey: .writeRevoked)
         closedAt = try? container.decodeIfPresent(String.self, forKey: .closedAt)
-    }
-
-    public var launchModel: String? { executionIdentity?.model ?? model }
-    public var launchEffort: String? { executionIdentity?.effort }
-    public var observedModel: String? { observedIdentity?.model ?? liveModel }
-    public var observedEffort: String? {
-        observedIdentity == nil ? liveEffort : observedIdentity?.effort
-    }
-
-    /// The exact tmux child this pane may view. Deliberately does NOT require
-    /// `toolSessionID`: that is provider conversation identity, and the Codex
-    /// path never binds it, so gating here would leave Codex panes permanently
-    /// closed. Identity/authority states render in the header as information;
-    /// they never gate the human's keyboard (a pane the user can see but not
-    /// type into is a bug, not a safety posture — landing/mutation authority
-    /// is enforced daemon-side, not at the keyboard).
-    public func attachmentIdentity(
-        in workspace: WorkspaceInstanceIdentity
-    ) -> PaneAttachmentIdentity? {
-        guard !id.isEmpty, !workspace.instanceID.isEmpty,
-              !workspace.instanceHome.isEmpty, workspace.daemonPort > 0,
-              !workspace.tmuxSocket.isEmpty,
-              let processIncarnation, processIncarnation > 0,
-              let tmuxSession, !tmuxSession.isEmpty else { return nil }
-        return PaneAttachmentIdentity(
-            workspace: workspace, agentID: id,
-            processIncarnation: processIncarnation,
-            tmuxSession: tmuxSession)
-    }
-
-    private static func normalizedIdentityState(_ value: String) -> String {
-        ["unattested", "matching", "drift", "unknown"].contains(value)
-            ? value : "unknown"
     }
 }
 

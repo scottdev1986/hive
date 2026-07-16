@@ -76,7 +76,6 @@ class AcceptanceSpawner implements Spawner {
       ? "grok-test"
       : "codex-test";
     const now = new Date().toISOString();
-    const toolSessionId = `acceptance-${request.name}`;
     const record: AgentRecord = {
       id: crypto.randomUUID(),
       name: request.name,
@@ -95,17 +94,6 @@ class AcceptanceSpawner implements Spawner {
       capabilityEpoch: 0,
       readOnly: false,
       writeRevoked: false,
-      toolSessionId,
-      ...(tool === "codex"
-        ? {
-          executionIdentity: {
-            tool: "codex" as const,
-            model,
-            effort: "medium" as const,
-          },
-          identityState: "matching" as const,
-        }
-        : {}),
     };
     this.tmux.addSession(record.tmuxSession);
     return record;
@@ -156,28 +144,6 @@ const daemon = new HiveDaemon({
   tokenUsage: new TokenUsageStore(db, []),
   resourceRunners: {
     panePids: (session) => tmux.listPanePids(session),
-  },
-  // Fresh landing reattest: acceptance agents have no real Codex rollout, so
-  // the identity reader synthesizes a matching observation from the launch
-  // identity the AcceptanceSpawner recorded.
-  telemetryReaders: {
-    codexIdentity: async (_worktree, toolSessionId) => {
-      const agent = db.listAgents().find((row) =>
-        row.toolSessionId === toolSessionId
-      );
-      const launch = agent?.executionIdentity;
-      if (launch === undefined || launch.tool !== "codex") {
-        return { status: "absent" };
-      }
-      return {
-        status: "observed",
-        model: launch.model,
-        effort: launch.effort,
-        turnId: "acceptance-turn",
-        sessionId: toolSessionId ?? "acceptance",
-        observedAt: new Date().toISOString(),
-      };
-    },
   },
 });
 daemon.start();

@@ -56,124 +56,6 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 
-// The provider surface an observation of the *running* identity was read from.
-// Codex is the only vendor Hive attests today; Claude and Grok keep their
-// existing `liveModel` reconciliation path untouched.
-export const ObservedIdentitySourceSchema = z.enum([
-  // Newest `turn_context` in a Codex TUI rollout selected by cwd + process
-  // start time (session_meta.source === "cli"). DISPLAY GRADE: 0.144.4 gives
-  // no PID/nonce binding a rollout to a process, so this observation informs
-  // status only and never write admission.
-  "codex-rollout",
-  // A native Codex app-server thread/turn notification — the exact,
-  // process-bound surface writer authority requires.
-  "codex-app-server",
-]);
-
-export type ObservedIdentitySource = z.infer<typeof ObservedIdentitySourceSchema>;
-
-// What Hive has *observed* the process running, with the provenance of the
-// observation. This is never synthesized from the launch request: an absent
-// `observedIdentity` means "not observed", never "the same as launch". It is
-// the richer companion of `liveModel`/`liveEffort`, which stay for wire
-// compatibility.
-export const ObservedIdentitySchema = z.strictObject({
-  model: z.string().min(1),
-  effort: z.string().min(1).optional(),
-  // The provider-native session id the observation came from (Codex rollout
-  // session id / app-server thread id), so a stale predecessor's artifact can
-  // never be mistaken for this agent's identity.
-  sessionId: z.string().min(1).optional(),
-  // The provider-native turn id the identity was read from.
-  turnId: z.string().min(1).optional(),
-  source: ObservedIdentitySourceSchema,
-  observedAt: z.iso.datetime(),
-});
-
-
-export type ObservedIdentity = z.infer<typeof ObservedIdentitySchema>;
-
-/** One process frozen at pause time, with a stable start identity so PID reuse
- * cannot be mistaken for the same process. `birth` is `ps -o lstart=` text. */
-export const CapturedProcessSchema = z.strictObject({
-  pid: z.number().int().positive(),
-  command: z.string().min(1),
-  birth: z.string().min(1),
-  role: z.enum(["tmux-root", "descendant", "app-server-host"]),
-});
-export type CapturedProcess = z.infer<typeof CapturedProcessSchema>;
-
-/** Exact pause-time process-tree binding. Resume must validate and SIGCONT this
- * capture — never re-sample current pane PIDs. Survives daemon restart via DB. */
-export const PauseCaptureSchema = z.strictObject({
-  agentId: z.string().min(1),
-  agentName: z.string().min(1),
-  tmuxSession: z.string().min(1),
-  toolSessionId: z.string().min(1).nullable(),
-  // Dedicated process generation. A tool session may survive a relaunch, so
-  // it is not an incarnation identifier.
-  processIncarnation: z.number().int().nonnegative().optional(),
-  hostPid: z.number().int().positive().nullable(),
-  tree: z.array(CapturedProcessSchema).min(1),
-  capturedAt: z.iso.datetime(),
-});
-export type PauseCapture = z.infer<typeof PauseCaptureSchema>;
-
-
-// How the observed identity relates to the immutable launch identity. A Codex
-// is recorded for reattestation/landing of legacy processes; every other
-// value fails closed.
-// - `unattested`: never observed — the spawn default, before any turn boundary
-//   has produced an identity record. Also the reset value on app-server->TUI
-//   fallback.
-// - `matching`: observed model AND effort equal the launch identity.
-// - `drift`: a complete observation differs from the launch identity.
-// - `unknown`: an observation was attempted but the artifact was missing or
-//   unparseable, or was incomplete (e.g. model without effort). Unknown is not
-//   matching; it is fail-closed for authority like drift, without asserting a
-//   deliberate change occurred.
-export const IdentityStateSchema = z.enum([
-  "unattested",
-  "matching",
-  "drift",
-  "unknown",
-]);
-
-export type IdentityState = z.infer<typeof IdentityStateSchema>;
-
-/** The immutable launch identity — decision 6's execution identity. The durable
- * field is `executionIdentity`; `hive status` surfaces it as `launchIdentity`
- * beside `observedIdentity` so a reader never confuses intent with observation.
- * This function names that concept without duplicating the stored field. */
-export function launchIdentityOf(
-  agent: Pick<AgentRecord, "executionIdentity">,
-): ExecutionIdentity | undefined {
-  return agent.executionIdentity;
-}
-
-/** Compare a *complete* observation against the launch intent. Both model and
- * effort must match. A caller that could not read both fields must record
- * `unknown` instead of calling this — a missing observation is never a match. */
-export function compareObservedIdentity(
-  launch: Pick<ExecutionIdentity, "model" | "effort">,
-  observed: Pick<ObservedIdentity, "model" | "effort">,
-): "matching" | "drift" {
-  const modelMatches = observed.model === launch.model;
-  const effortMatches = (launch.effort ?? undefined) ===
-    (observed.effort ?? undefined);
-  return modelMatches && effortMatches ? "matching" : "drift";
-}
-
-/** The attestation state of an agent, reading an absent field as the
- * fail-closed `unattested`. Every consumer must go through this rather than
- * touching `identityState` directly, so a null column can never be mistaken
- * for a permissive value. */
-export function attestationStateOf(
-  agent: Pick<AgentRecord, "identityState">,
-): IdentityState {
-  return agent.identityState ?? "unattested";
-}
-
 // A closed agent is done with the world: it holds no tmux session, accepts no
 // messages, and its name is free to be issued again. Every other status —
 // including `spawning`, `control-paused`, and `stuck` — is a live holder that
@@ -206,21 +88,6 @@ const AgentRecordShape = {
    * means "no observation" — never "the same as spawn", because a guess is what
    * this field exists to stop. Quota accounting and `hive status` read it first. */
   liveModel: z.string().min(1).optional(),
-  /** The effort this agent is *observed* running — the effort sibling of
-   * `liveModel`, kept separate from the immutable launch `executionIdentity.effort`
-   * for the same reason. Codex reads it from the newest `turn_context`; Claude
-   * and Grok leave it unset. Absent means "not observed", never "same as launch". */
-  liveEffort: z.string().min(1).optional(),
-  /** Provider-native observation of the running execution identity, with its
-   * provenance and timestamp. Distinct from `executionIdentity` (the immutable
-   * launch intent) and never synthesized from it. Populated for Codex only. */
-  observedIdentity: ObservedIdentitySchema.optional(),
-  /** Attestation verdict comparing `observedIdentity` to the launch identity.
-   * Attestation for legacy/reattest paths: only `matching` is affirmative;
-   * `unattested`/`unknown`/`drift` all fail closed. Absent is read through
-   * `attestationStateOf` as `unattested` — the fail-closed spawn default and
-   * the reset value on an app-server->TUI fallback. */
-  identityState: IdentityStateSchema.optional(),
   /** The task category this agent was spawned under (was `tier` before the
    * 2026-07-13 cutover; existing rows are migrated at database open). */
   category: RoutingCategorySchema,
@@ -238,10 +105,9 @@ const AgentRecordShape = {
   failureReason: z.string().optional(),
   failedAt: z.iso.datetime().optional(),
   // When this holder closed. Stamped once, the first time the agent reaches a
-  // terminal status, and never cleared: terminal rows cannot be revived by
-  // recovery or generic persistence. Absent means the holder is live. This is
-  // what makes a name safe to reissue: the daemon can always say which exact
-  // agent closed and when.
+  // terminal status, and cleared if crash recovery brings the same agent back.
+  // Absent means the holder is live. This is what makes a name safe to reissue:
+  // the daemon can always say which agent closed and when.
   closedAt: z.iso.datetime().optional(),
   quotaReservationId: z.string().min(1).optional(),
   controlQuotaReservationId: z.string().min(1).optional(),
@@ -251,25 +117,10 @@ const AgentRecordShape = {
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   tmuxSession: z.string().min(1),
-  // The tool-level conversation identity used for native resume. Claude binds
-  // from trusted hook traffic. Codex binds from independently validated
-  // provider session_meta for the exact cwd and process launch/incarnation;
-  // hook-supplied Codex ids are ignored.
+  // The tool-level conversation identity (Claude session id, Codex thread id)
+  // captured from hook traffic, so a crashed process can be relaunched with
+  // its native resume instead of respawned from a blank prompt.
   toolSessionId: z.string().min(1).optional(),
-  // The driver a Codex launch actually used, frozen at spawn like the rest of
-  // the launch identity. Telemetry/identity maintenance dispatches on THIS —
-  // never on readOnly, which is permission, not driver: the TUI rollout scan
-  // is meaningless for an app-server session (its session_meta.source is the
-  // editor client) in either permission mode. Absent on non-Codex rows and on
-  // legacy rows spawned before the field existed.
-  codexDriver: z.enum(["tui", "app-server"]).optional(),
-  /** Monotonic generation of the process currently assigned to this row.
-   * Fresh launches start at 1 and every relaunch/replacement increments it.
-   * Zero is reserved for migrated rows whose process generation is unknown. */
-  processIncarnation: z.number().int().nonnegative().optional(),
-  /** Start of the current process generation. Used to reject predecessor
-   * provider artifacts when independently binding a native session. */
-  processStartedAt: z.iso.datetime().optional(),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   /**
    * How full this agent's context is, or **null when Hive has not observed it**.
@@ -304,10 +155,6 @@ const AgentRecordShape = {
   // later revoked by critical control.
   readOnly: z.boolean().default(false),
   writeRevoked: z.boolean().default(false),
-  // Exact process-tree capture from a non-destructive pause. Present only while
-  // status is control-paused (and briefly until resume clears it). Resume uses
-  // this capture exclusively — never recaptures current PIDs.
-  pauseCapture: PauseCaptureSchema.optional(),
 } as const;
 
 export const AgentRecordObjectSchema = z.object(AgentRecordShape);

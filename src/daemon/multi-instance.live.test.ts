@@ -148,7 +148,7 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
         task: "write the acceptance marker",
         category: "simple_coding",
         name: "maya",
-        tool: "claude",
+        tool: "codex",
       },
     });
     await clientB.callTool({
@@ -157,7 +157,7 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
         task: "hold the sibling worktree",
         category: "simple_coding",
         name: "david",
-        tool: "claude",
+        tool: "codex",
       },
     });
 
@@ -209,9 +209,6 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
     git(statusA[0]!.worktreePath, [
       "commit", "-m", "acceptance marker", "--no-gpg-sign",
     ]);
-    // Codex writers are mechanically contained before launch/landing because
-    // 0.144.4 cannot bind a rollout to a process incarnation. This acceptance
-    // path exercises the live multi-instance merge with a supported writer.
     const landed = textValue(await clientA.callTool({
       name: "hive_land",
       arguments: { agent: "maya", capabilityEpoch: 0 },

@@ -4,17 +4,6 @@ import CoreGraphics
 
 final class ProjectStateTests: XCTestCase {
 
-    private let workspaceIdentity = WorkspaceInstanceIdentity(
-        instanceID: "instance-a", instanceHome: "/tmp/hive-a",
-        daemonPort: 4317, tmuxSocket: "hive-a")
-
-    private func state(projectID: ProjectID = "proj", displayName: String = "hive")
-        -> ProjectState {
-        ProjectState(
-            projectID: projectID, displayName: displayName,
-            workspaceIdentity: workspaceIdentity)
-    }
-
     func testTerminalScrollRequestMapsWheelDirectionAndVelocity() {
         XCTAssertNil(TerminalScrollRequest(deltaY: 0, visibleRows: 40))
         XCTAssertEqual(
@@ -32,7 +21,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testTerminalScrollSessionUsesLaunchMetadataForOrchestrator() throws {
-        let state = state(projectID: ProjectID("project"), displayName: "Project")
+        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
         state.addOrchestrator()
         let pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
 
@@ -43,7 +32,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testTerminalScrollSessionUsesFeedMetadataForAgent() throws {
-        let state = state(projectID: ProjectID("project"), displayName: "Project")
+        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
         state.addOrchestrator()
         state.apply(feed: [agent("worker", session: "hive-worker-instance")])
         let pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
@@ -54,7 +43,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testTerminalAllowsMouseReportingForBothPaneKinds() throws {
-        let state = state(projectID: ProjectID("project"), displayName: "Project")
+        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
         state.addOrchestrator()
         state.apply(feed: [agent("worker", session: "hive-worker-instance")])
         let orchestratorPane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
@@ -80,42 +69,19 @@ final class ProjectStateTests: XCTestCase {
         }
     }
 
-    private func agent(_ name: String, id: String? = nil, status: String = "working",
+    private func agent(_ name: String, status: String = "working",
                        tool: String = "claude", model: String = "opus",
                        task: String = "do things", session: String? = nil,
-                       toolSessionID: String? = nil, processIncarnation: Int = 1,
-                       launchEffort: String? = nil,
-                       observedModel: String? = nil, observedEffort: String? = "medium",
-                       observedSource: String? = nil,
-                       identityState: String = "matching", writeRevoked: Bool? = false,
-                       hasObservedIdentity: Bool = true,
-                       completeAttachment: Bool = true,
                        contextPct: Double = 12, closedAt: String? = nil) -> AgentSnapshot {
-        let agentID = id ?? "agent-\(name)"
-        let requestedEffort = launchEffort ?? observedEffort
-        return AgentSnapshot(
-                      id: agentID, name: name, tool: tool, model: model,
-                      liveModel: hasObservedIdentity ? (observedModel ?? model) : nil,
-                      liveEffort: hasObservedIdentity ? observedEffort : nil,
-                      executionIdentity: LaunchIdentitySnapshot(
-                        model: model, effort: requestedEffort),
-                      observedIdentity: hasObservedIdentity
-                        ? ObservedIdentitySnapshot(
-                            model: observedModel ?? model, effort: observedEffort,
-                            source: observedSource)
-                        : nil,
-                      identityState: identityState, status: status,
+        AgentSnapshot(name: name, tool: tool, model: model, status: status,
                       taskDescription: task, tmuxSession: session ?? "hive-\(name)",
-                      toolSessionID: toolSessionID,
-                      processIncarnation: completeAttachment ? processIncarnation : nil,
-                      contextPct: contextPct, writeRevoked: writeRevoked,
-                      closedAt: closedAt)
+                      contextPct: contextPct, closedAt: closedAt)
     }
 
     /// A workspace as the window builds it: orchestrator pane first, then a
     /// feed snapshot with three agents.
     private func drivenState() -> ProjectState {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
         state.apply(feed: [
             agent("indexer"),
@@ -174,7 +140,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testAgentHeaderHasEachFieldOnceAndUsesLiveActivity() throws {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         let paneID = ProjectState.paneID(forAgent: "reviewer")
         state.apply(feed: [
             agent("reviewer", status: "working", tool: "codex", model: "gpt-5.4",
@@ -183,8 +149,7 @@ final class ProjectStateTests: XCTestCase {
 
         XCTAssertEqual(
             try XCTUnwrap(state.panes[paneID]).headerDescription,
-            "codex · launch gpt-5.4 @ medium · observed gpt-5.4 @ medium · "
-                + "identity matching · working · ctx 12%")
+            "codex · gpt-5.4 · working · ctx 12%")
 
         let changes = state.apply(feed: [
             agent("reviewer", status: "idle", tool: "codex", model: "gpt-5.4",
@@ -193,182 +158,11 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertTrue(changes.contains(.statusChanged(paneID)))
         XCTAssertEqual(
             try XCTUnwrap(state.panes[paneID]).headerDescription,
-            "codex · launch gpt-5.4 @ medium · observed gpt-5.4 @ medium · "
-                + "identity matching · idle · ctx 12%")
-    }
-
-    func testSameNamePredecessorRebindsStablePaneToExactSuccessor() throws {
-        let state = state()
-        let paneID = ProjectState.paneID(forAgent: "worker")
-        state.apply(feed: [agent(
-            "worker", id: "uuid-old", session: "tmux-old",
-            toolSessionID: "tool-old", processIncarnation: 1)])
-        let layout = state.layout
-        XCTAssertEqual(state.focusedPane, paneID)
-
-        let changes = state.apply(feed: [agent(
-            "worker", id: "uuid-new", session: "tmux-new",
-            toolSessionID: "tool-new", processIncarnation: 1)])
-
-        XCTAssertTrue(changes.contains(.paneAttachmentChanged(paneID)))
-        XCTAssertFalse(changes.contains(.paneAdded(paneID)))
-        XCTAssertEqual(try XCTUnwrap(state.panes[paneID]).attachmentIdentity?.agentID,
-                       "uuid-new")
-        XCTAssertEqual(state.panes[paneID]?.attachmentIdentity?.tmuxSession, "tmux-new")
-        XCTAssertEqual(state.layout, layout, "selection/layout slot persists across holder reuse")
-        XCTAssertEqual(state.focusedPane, paneID)
-    }
-
-    func testSameNameLiveSiblingsDetachInsteadOfChoosingOne() throws {
-        let state = state()
-        let paneID = ProjectState.paneID(forAgent: "worker")
-        state.apply(feed: [agent("worker", id: "uuid-first")])
-
-        let changes = state.apply(feed: [
-            agent("worker", id: "uuid-first"),
-            agent("worker", id: "uuid-sibling"),
-        ])
-
-        let pane = try XCTUnwrap(state.panes[paneID])
-        XCTAssertTrue(changes.contains(.paneAttachmentChanged(paneID)))
-        XCTAssertNil(pane.attachmentIdentity)
-        XCTAssertEqual(pane.identityState, "unknown")
-        if case .disconnected = pane.status {} else {
-            XCTFail("a contradictory same-name sibling set must not select a child")
-        }
-    }
-
-    func testAttachmentTracksSessionIncarnationAndSocketNotToolSession() throws {
-        let state = state()
-        let paneID = ProjectState.paneID(forAgent: "worker")
-        var current = agent(
-            "worker", session: "tmux-1", toolSessionID: "tool-1",
-            processIncarnation: 1)
-        state.apply(feed: [current])
-
-        // The provider conversation id is not viewer identity: a change to it
-        // alone must not tear down and rebuild the tmux child.
-        let toolOnly = state.apply(feed: [agent(
-            "worker", session: "tmux-1", toolSessionID: "tool-2",
-            processIncarnation: 1)])
-        XCTAssertFalse(toolOnly.contains(.paneAttachmentChanged(paneID)))
-
-        // Session and process incarnation are exact viewer identity and rebind.
-        for changed in [
-            agent("worker", session: "tmux-2", processIncarnation: 1),
-            agent("worker", session: "tmux-2", processIncarnation: 2),
-        ] {
-            let changes = state.apply(feed: [changed])
-            XCTAssertTrue(changes.contains(.paneAttachmentChanged(paneID)))
-            current = changed
-        }
-
-        let first = try XCTUnwrap(current.attachmentIdentity(in: workspaceIdentity))
-        let otherHome = WorkspaceInstanceIdentity(
-            instanceID: "instance-b", instanceHome: "/tmp/hive-b",
-            daemonPort: 5317, tmuxSocket: "hive-b")
-        let second = try XCTUnwrap(current.attachmentIdentity(in: otherHome))
-        XCTAssertEqual(PaneAttachmentTransition.between(first, second), .recreate)
-        XCTAssertNotEqual(first, second,
-                          "same agent name/process values in two HIVE_HOMEs are distinct")
-    }
-
-    // The Codex path never binds a provider conversation id, so its wire row
-    // carries no toolSessionId and identity reads "unknown". The agent is fully
-    // live, so its pane must still attach — and unknown identity is header
-    // information, never a keyboard lock.
-    func testCodexWithoutToolSessionGetsAttachableTypablePane() throws {
-        let state = state()
-        let paneID = ProjectState.paneID(forAgent: "codex-worker")
-        state.apply(feed: [agent(
-            "codex-worker", status: "working", tool: "codex", model: "gpt-5.6-sol",
-            toolSessionID: nil, identityState: "unknown",
-            hasObservedIdentity: false)], now: 1)
-
-        let pane = try XCTUnwrap(state.panes[paneID])
-        // A live tmux child is schedulable: attachment binds without a provider
-        // conversation id, so ProjectWindowController.terminalCommand fires.
-        XCTAssertEqual(pane.attachmentIdentity?.tmuxSession, "hive-codex-worker")
-        XCTAssertEqual(pane.attachmentIdentity?.agentID, "agent-codex-worker")
-        if case .disconnected = pane.status {
-            XCTFail("a live Codex process must not read attachment-incomplete")
-        }
-        // The wire activity status is preserved, not flattened to "unknown".
-        XCTAssertEqual(pane.feedStatus, "working")
-        // Unknown identity renders in the header and never blocks typing.
-        XCTAssertTrue(pane.headerDescription.contains("identity unknown"))
-        XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
-    }
-
-    func testRequestedAndObservedIdentityRenderSeparately() throws {
-        let state = state()
-        let paneID = ProjectState.paneID(forAgent: "worker")
-        state.apply(feed: [agent(
-            "worker", tool: "codex", model: "gpt-requested",
-            launchEffort: "high",
-            observedModel: "gpt-observed", observedEffort: "low",
-            observedSource: "codex-rollout",
-            identityState: "drift")])
-
-        let pane = try XCTUnwrap(state.panes[paneID])
-        XCTAssertTrue(pane.headerDescription.contains("launch gpt-requested @ high"))
-        XCTAssertTrue(pane.headerDescription.contains("observed gpt-observed @ low"))
-        // The observation's provenance is part of the claim: a scan-derived
-        // identity must not display with attestation-grade confidence.
-        XCTAssertTrue(pane.headerDescription.contains("identity drift (rollout scan)"))
-        XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
-    }
-
-    // Identity, write-authority, and pause states are information, never input
-    // gates: every such pane still binds its attachment so the human can type.
-    // Only a physically incomplete attachment (no tmux child to type into)
-    // renders disconnected.
-    func testIdentityAuthorityAndPauseStatesNeverDetachTheTypablePane() throws {
-        let liveCases: [AgentSnapshot] = [
-            agent("worker", identityState: "unattested"),
-            agent("worker", identityState: "unknown"),
-            agent("worker", identityState: "drift"),
-            agent("worker", writeRevoked: true),
-            agent("worker", status: "control-paused"),
-            agent("worker", writeRevoked: nil),
-            agent("worker", observedModel: nil, identityState: "matching",
-                  hasObservedIdentity: false),
-        ]
-
-        for snapshot in liveCases {
-            let state = state()
-            state.apply(feed: [snapshot])
-            let pane = try XCTUnwrap(
-                state.panes[ProjectState.paneID(forAgent: snapshot.name)])
-            XCTAssertNotNil(pane.attachmentIdentity,
-                            "\(snapshot.name) must keep a typable tmux child")
-            XCTAssertFalse(pane.headerDescription.contains("authoring disabled"))
-        }
-
-        let state = state()
-        state.apply(feed: [agent("worker", completeAttachment: false)])
-        let pane = try XCTUnwrap(
-            state.panes[ProjectState.paneID(forAgent: "worker")])
-        XCTAssertNil(pane.attachmentIdentity)
-        if case .disconnected = pane.status {} else {
-            XCTFail("incomplete attachment must render disconnected")
-        }
-    }
-
-    func testCloseSuppressionDoesNotHideDirectSameNameSuccessor() {
-        let state = state()
-        let paneID = ProjectState.paneID(forAgent: "worker")
-        state.apply(feed: [agent("worker", id: "uuid-old")])
-        state.markUserClosed(paneID)
-        state.apply(.closePane(paneID))
-
-        state.apply(feed: [agent("worker", id: "uuid-new")])
-
-        XCTAssertEqual(state.panes[paneID]?.attachmentIdentity?.agentID, "uuid-new")
+            "codex · gpt-5.4 · idle · ctx 12%")
     }
 
     func testContextOnlyFeedChangeRerendersHeader() throws {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         let paneID = ProjectState.paneID(forAgent: "reviewer")
         state.apply(feed: [agent("reviewer", contextPct: 12)], now: 1)
 
@@ -380,7 +174,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testStatusWordsMapToSemanticStatus() {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
         state.apply(feed: [
             agent("a", status: "spawning"),
@@ -410,7 +204,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testDeadAgentWithoutPaneIsNeverInserted() {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
         state.apply(feed: [agent("ghost", status: "dead")], now: 1)
         XCTAssertNil(state.panes[ProjectState.paneID(forAgent: "ghost")])
@@ -444,7 +238,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testClosedAgentNeverGetsAPane() {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         state.addOrchestrator()
         state.apply(feed: [agent("old", closedAt: "2026-07-01T00:00:00Z")], now: 1)
         XCTAssertNil(state.panes[ProjectState.paneID(forAgent: "old")])
@@ -499,7 +293,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testPaneCreationNeverStealsFocus() {
-        let state = state()
+        let state = ProjectState(projectID: "proj", displayName: "hive")
         var focusChanges: [PaneID?] = []
         for change in state.addOrchestrator() {
             if case .focusChanged(let pane) = change { focusChanges.append(pane) }
@@ -565,10 +359,8 @@ final class ProjectStateTests: XCTestCase {
     // MARK: Feed line decoding (the NDJSON contract)
 
     func testMissingAndWrongTypedAgentStatusStayUnknown() throws {
-        let missing = try XCTUnwrap(FeedLine.parse(
-            #"{"v":1,"agents":[{"id":"missing-id","name":"missing"}]}"#))
-        let wrongType = try XCTUnwrap(FeedLine.parse(
-            #"{"v":1,"agents":[{"id":"wrong-id","name":"wrong","status":17}]}"#))
+        let missing = try XCTUnwrap(FeedLine.parse(#"{"v":1,"agents":[{"name":"missing"}]}"#))
+        let wrongType = try XCTUnwrap(FeedLine.parse(#"{"v":1,"agents":[{"name":"wrong","status":17}]}"#))
 
         for snapshot in [missing, wrongType] {
             let agent = try XCTUnwrap(snapshot.agents?.first)
@@ -586,11 +378,10 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testFeedLineKeepsAgentsWhenOptionalSiblingFieldsAreMalformed() throws {
-        let line = #"{"v":1,"agents":[{"id":"good-id","name":"good","status":"working"}],"autonomy":17,"orchestrator":{"status":17}}"#
+        let line = #"{"v":1,"agents":[{"name":"good","status":"working"}],"autonomy":17,"orchestrator":{"status":17}}"#
 
         let decoded = try XCTUnwrap(FeedLine.parse(line))
-        XCTAssertEqual(decoded.agents, [AgentSnapshot(
-            id: "good-id", name: "good", writeRevoked: nil)])
+        XCTAssertEqual(decoded.agents, [AgentSnapshot(name: "good")])
         XCTAssertNil(decoded.autonomy)
         XCTAssertNil(decoded.orchestrator)
     }
@@ -604,7 +395,7 @@ final class ProjectStateTests: XCTestCase {
     }
 
     func testFeedLineRejectsOnlyTheAgentFieldWhenAnyIdentityIsMalformed() throws {
-        let line = #"{"v":1,"agents":[{"id":"good-id","name":"good"},{"id":"bad-id","name":17}]}"#
+        let line = #"{"v":1,"agents":[{"name":"good"},{"name":17}]}"#
 
         let decoded = try XCTUnwrap(FeedLine.parse(line))
         XCTAssertNil(decoded.agents, "a partial snapshot could falsely close the omitted agent")

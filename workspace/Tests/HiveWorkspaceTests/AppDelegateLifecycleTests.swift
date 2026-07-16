@@ -88,15 +88,12 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
     func testAgentClosureDismissesItsKillFailureSheet() throws {
         _ = NSApplication.shared
-        let state = ProjectState(
-            projectID: "project", displayName: "Project",
-            workspaceIdentity: WorkspaceInstanceIdentity(
-                instanceID: "instance", instanceHome: "/tmp",
-                daemonPort: 1, tmuxSocket: "hive-test"))
+        let state = ProjectState(projectID: "project", displayName: "Project")
         let controller = ProjectWindowController(
             state: state, attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp", hivePath: "/usr/bin/false",
-            orchestrator: "claude", orchestratorSession: nil)
+            projectDirectory: "/tmp", hivePath: "/usr/bin/false", daemonPort: 1,
+            orchestrator: "claude", orchestratorSession: nil,
+            instanceID: "instance", instanceHome: "/tmp")
         controller.window?.isReleasedWhenClosed = false
         defer { controller.close() }
 
@@ -105,7 +102,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
 
         controller.applyFeed([
             AgentSnapshot(
-                id: "agent-worker", name: "worker", status: "done",
+                name: "worker", status: "done",
                 closedAt: "2026-07-13T23:00:00.000Z"),
         ])
 
@@ -127,48 +124,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertNil(pane.subviews[focusIndex].hitTest(.zero))
     }
 
-    func testExactAttachmentChangeReplacesPaneChildAndDriftKeepsAuthoringOpen() throws {
-        _ = NSApplication.shared
-        let state = ProjectState(
-            projectID: "project", displayName: "Project",
-            workspaceIdentity: WorkspaceInstanceIdentity(
-                instanceID: "instance", instanceHome: "/tmp/hive",
-                daemonPort: 4317, tmuxSocket: "hive-test"))
-        let controller = ProjectWindowController(
-            state: state, attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp", hivePath: "/usr/bin/true",
-            orchestrator: "codex", orchestratorSession: nil)
-        defer { controller.close() }
-        let paneID = ProjectState.paneID(forAgent: "worker")
-        func agent(id: String, session: String, identityState: String) -> AgentSnapshot {
-            AgentSnapshot(
-                id: id, name: "worker", tool: "codex", model: "gpt-launch",
-                executionIdentity: LaunchIdentitySnapshot(
-                    model: "gpt-launch", effort: "high"),
-                observedIdentity: ObservedIdentitySnapshot(
-                    model: identityState == "drift" ? "gpt-other" : "gpt-launch",
-                    effort: "high"),
-                identityState: identityState, status: "working",
-                tmuxSession: session, toolSessionID: "tool-\(id)",
-                processIncarnation: 1, writeRevoked: false)
-        }
-
-        controller.applyFeed([agent(
-            id: "uuid-old", session: "tmux-old", identityState: "matching")])
-        let firstView = try XCTUnwrap(controller.paneViewObjectID(paneID))
-        XCTAssertEqual(controller.paneAttachmentIdentity(paneID)?.agentID, "uuid-old")
-        XCTAssertEqual(controller.paneAllowsAuthoring(paneID), true)
-
-        controller.applyFeed([agent(
-            id: "uuid-new", session: "tmux-new", identityState: "drift")])
-
-        XCTAssertNotEqual(controller.paneViewObjectID(paneID), firstView)
-        XCTAssertEqual(controller.paneAttachmentIdentity(paneID)?.agentID, "uuid-new")
-        // Identity drift is header information, never a keyboard lock: the
-        // human must always be able to type into a live pane.
-        XCTAssertEqual(controller.paneAllowsAuthoring(paneID), true)
-    }
-
     func testPaneTitleTruncatesWithoutDrivingWindowWidth() throws {
         let pane = PaneView(paneID: "worker", title: "initial-title") { _ in }
         let title = try XCTUnwrap(textFields(in: pane).first {
@@ -184,7 +139,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
             feedStatus: "working", status: .running))
         XCTAssertEqual(title.toolTip, "updated-title")
         XCTAssertTrue(textFields(in: pane).contains {
-            $0.stringValue.contains("working") && $0.toolTip == $0.stringValue
+            $0.stringValue == "working" && $0.toolTip == "working"
         })
     }
 

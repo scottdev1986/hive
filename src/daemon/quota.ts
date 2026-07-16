@@ -652,14 +652,8 @@ export class QuotaService {
     agentName: string,
     liveModel: string,
     at = iso(this.clock()),
-    expectedReservationId?: string | null,
-    acceptReservations?: (reservations: readonly QuotaReservation[]) => boolean,
   ): Promise<QuotaReservation[] | null> {
     const held = this.ledger.getActiveReservationForAgent(agentName);
-    if (
-      expectedReservationId === null ||
-      (expectedReservationId !== undefined && held?.id !== expectedReservationId)
-    ) return null;
     if (held === null || held.model === liveModel) return null;
     const now = new Date(at);
     const candidate = {
@@ -693,15 +687,6 @@ export class QuotaService {
     // and record zero spend for a session that is demonstrably burning quota.
     if (held.startedAt !== null && reservations[0] !== undefined) {
       this.ledger.markStarted(reservations[0].id, held.startedAt);
-    }
-    // The caller owns the durable pointer to this booking. Bind it before any
-    // awaited alert lets row state change; if the exact-row CAS loses, settle
-    // the whole replacement group immediately so no ownerless capacity remains.
-    if (acceptReservations !== undefined && !acceptReservations(reservations)) {
-      if (reservations[0] !== undefined) {
-        await this.cancel(reservations[0].id, at);
-      }
-      return null;
     }
     for (const entry of entries) await this.alertPool(entry.limit, now);
     return reservations;
@@ -1537,39 +1522,14 @@ export class QuotaService {
     let candidates = request.candidates.filter((candidate) =>
       request.explicitTool === undefined || candidate.tool === request.explicitTool
     );
-    // Independent review must not run on the same provider as the tool under
-    // review. Track what the independence filter removed so a chain that *had*
-    // a route is never reported as one that lacked it.
-    let excludedForIndependence: typeof candidates = [];
     if (request.reviewOfTool !== undefined && request.category === "code_review") {
-      excludedForIndependence = candidates.filter((candidate) =>
-        candidate.tool === request.reviewOfTool
-      );
       candidates = candidates.filter((candidate) =>
         candidate.tool !== request.reviewOfTool
       );
     }
     if (candidates.length === 0) {
-      if (excludedForIndependence.length > 0) {
-        // The candidate cleared policy and quota; it was removed only because
-        // reviewOfTool requires a different provider. Say exactly that — the
-        // old "has no route" text made diagnostics claim the chain lacked the
-        // provider entirely (e.g. "Codex had no route") when it did not.
-        const providers = [
-          ...new Set(excludedForIndependence.map((candidate) => candidate.tool)),
-        ].join(", ");
-        throw new QuotaExhaustedError(
-          `Independent review of ${request.reviewOfTool} has no independent route for ` +
-            `${request.category}: ${excludedForIndependence.length} candidate(s) passed ` +
-            `policy (${providers}) but were excluded because reviewOfTool requires a ` +
-            `provider other than the one under review. The chain has a route; it lacks an ` +
-            `independent one.`,
-        );
-      }
       throw new QuotaExhaustedError(
-        request.explicitTool === undefined
-          ? `No route for ${request.category}`
-          : `Requested provider ${request.explicitTool} has no route for ${request.category}`,
+        `Requested provider ${request.explicitTool} has no route for ${request.category}`,
       );
     }
 
@@ -2074,14 +2034,6 @@ export class QuotaService {
        */
       model?: string;
       agent?: string;
-      /** Exact booking named by the statusline agent row before any await.
-       * Null means the row held no booking and therefore authorizes no rekey. */
-      reservationId?: string | null;
-      /** Synchronous exact-row handoff. A false result rolls back every
-       * replacement reservation before an alert can yield control. */
-      acceptReservationRekey?: (
-        reservations: readonly QuotaReservation[],
-      ) => boolean;
     },
   ): Promise<QuotaObservation | null> {
     if (report.model !== undefined && report.agent !== undefined) {
@@ -2089,8 +2041,6 @@ export class QuotaService {
         report.agent,
         report.model,
         report.observedAt,
-        report.reservationId,
-        report.acceptReservationRekey,
       );
     }
     if (report.fiveHour === undefined && report.sevenDay === undefined) {

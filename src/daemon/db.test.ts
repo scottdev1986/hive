@@ -12,7 +12,6 @@ import {
   getDatabaseIdentityPath,
   HiveDatabase,
   type Approval,
-  type RouteAudit,
 } from "./db";
 import {
   deleteAgentRow,
@@ -120,146 +119,6 @@ describe("HiveDatabase", () => {
     }
   });
 
-  test("round-trips observed identity, liveEffort, and identityState", () => {
-    const db = new HiveDatabase(join(home, "observed-identity.db"));
-    try {
-      // A fresh row leaves the new fields unset; identityState reads back as
-      // absent (fail-closed `unattested` via attestationStateOf), never a guess.
-      const fresh = db.insertAgent(agent());
-      expect(fresh.liveEffort).toBeUndefined();
-      expect(fresh.observedIdentity).toBeUndefined();
-      expect(fresh.identityState).toBeUndefined();
-
-      const attested = agent({
-        liveModel: "gpt-5.6-luna",
-        liveEffort: "low",
-        observedIdentity: {
-          model: "gpt-5.6-luna",
-          effort: "low",
-          sessionId: "019f-session",
-          turnId: "019f-turn",
-          source: "codex-rollout",
-          observedAt: "2026-07-15T18:00:00.000Z",
-        },
-        identityState: "drift",
-      });
-      expect(db.upsertAgent(attested)).toEqual(attested);
-      expect(db.getAgentByName("maya")).toEqual(attested);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("records structured route audits, newest first and scoped by agent", () => {
-    const db = new HiveDatabase(join(home, "route-audits.db"));
-    try {
-      const audit = (id: string, at: string): RouteAudit => ({
-        id,
-        agentName: "maya",
-        category: "code_review",
-        decidedAt: at,
-        policyRevision: 7,
-        reviewOfTool: "codex",
-        attempts: [
-          "codex/gpt — quota: Independent review of codex has no independent route",
-        ],
-        selectedTool: "claude",
-        selectedModel: "claude-model",
-        selectedEffort: "high",
-        reservationId: "res-1",
-      });
-      db.insertRouteAudit(audit("a", "2026-07-09T12:00:00.000Z"));
-      db.insertRouteAudit(audit("b", "2026-07-09T12:01:00.000Z"));
-
-      const all = db.listRouteAudits();
-      expect(all.map((row) => row.id)).toEqual(["b", "a"]);
-      // Full structured round-trip, including the JSON attempts chain.
-      expect(all[0]).toEqual(audit("b", "2026-07-09T12:01:00.000Z"));
-      expect(db.listRouteAudits("maya")).toHaveLength(2);
-      expect(db.listRouteAudits("someone-else")).toEqual([]);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("route audit retention trims the 501st row to the newest 500", () => {
-    const db = new HiveDatabase(join(home, "route-audit-retention.db"));
-    try {
-      for (let index = 0; index <= 500; index += 1) {
-        db.insertRouteAudit({
-          id: `audit-${index}`,
-          agentName: "maya",
-          category: "simple_coding",
-          decidedAt: "2026-07-09T12:00:00.000Z",
-          policyRevision: 7,
-          reviewOfTool: null,
-          attempts: [`attempt-${index}`],
-          selectedTool: "claude",
-          selectedModel: "claude-model",
-          selectedEffort: null,
-          reservationId: null,
-        });
-      }
-
-      const retained = db.listRouteAudits();
-      expect(retained).toHaveLength(500);
-      expect(retained[0]?.id).toEqual("audit-500");
-      expect(retained.at(-1)?.id).toEqual("audit-1");
-      expect(retained.some((audit) => audit.id === "audit-0")).toBeFalse();
-    } finally {
-      db.close();
-    }
-  });
-
-  test("route audit insert and cap roll back together when pruning fails", () => {
-    const path = join(home, "route-audit-atomic-cap.db");
-    const routeAudit = (index: number): RouteAudit => ({
-      id: `atomic-audit-${index}`,
-      agentName: "maya",
-      category: "simple_coding",
-      decidedAt: "2026-07-09T12:00:00.000Z",
-      policyRevision: 7,
-      reviewOfTool: null,
-      attempts: [`attempt-${index}`],
-      selectedTool: "claude",
-      selectedModel: "claude-model",
-      selectedEffort: null,
-      reservationId: null,
-    });
-    const db = new HiveDatabase(path);
-    try {
-      for (let index = 0; index < 500; index += 1) {
-        db.insertRouteAudit(routeAudit(index));
-      }
-      db.database.exec(`
-        CREATE TRIGGER reject_route_audit_prune
-        BEFORE DELETE ON route_audits
-        BEGIN
-          SELECT RAISE(ABORT, 'route audit prune rejected');
-        END
-      `);
-
-      expect(() => db.insertRouteAudit(routeAudit(500)))
-        .toThrow("route audit prune rejected");
-      expect(db.listRouteAudits()).toHaveLength(500);
-      expect(db.listRouteAudits().some((audit) =>
-        audit.id === "atomic-audit-500"
-      )).toBeFalse();
-    } finally {
-      db.close();
-    }
-
-    const reopened = new HiveDatabase(path);
-    try {
-      expect(reopened.listRouteAudits()).toHaveLength(500);
-      expect(reopened.listRouteAudits().some((audit) =>
-        audit.id === "atomic-audit-500"
-      )).toBeFalse();
-    } finally {
-      reopened.close();
-    }
-  });
-
   test("migrates legacy readers without clearing genuine control revocation", () => {
     const path = join(home, "legacy-reader-authority.db");
     const initial = new HiveDatabase(path);
@@ -299,56 +158,7 @@ describe("HiveDatabase", () => {
     }
   });
 
-
-  test("a genuinely pre-column DB migrates identity fields as unattested", () => {
-    // Opens a DB whose agents table never had liveEffort/observedIdentity/
-    // identityState, then lets HiveDatabase migrate and read a legacy row.
-    const path = join(home, "pre-identity-columns.db");
-    const legacy = new Database(path, { create: true });
-    legacy.exec(`
-      CREATE TABLE agents (
-        id TEXT PRIMARY KEY, name TEXT NOT NULL, tool TEXT NOT NULL,
-        model TEXT NOT NULL, category TEXT NOT NULL, status TEXT NOT NULL,
-        taskDescription TEXT NOT NULL, worktreePath TEXT, branch TEXT,
-        tmuxSession TEXT NOT NULL, contextPct REAL,
-        createdAt TEXT NOT NULL, lastEventAt TEXT NOT NULL,
-        recoveryAttempts INTEGER NOT NULL DEFAULT 0,
-        capabilityEpoch INTEGER NOT NULL DEFAULT 0,
-        readOnly INTEGER NOT NULL DEFAULT 0,
-        writeRevoked INTEGER NOT NULL DEFAULT 0
-      )
-    `);
-    legacy.exec(`
-      INSERT INTO agents (id, name, tool, model, category, status, taskDescription,
-        tmuxSession, contextPct, createdAt, lastEventAt, recoveryAttempts,
-        capabilityEpoch, readOnly, writeRevoked)
-      VALUES ('a1', 'maya', 'codex', 'gpt-5-codex', 'simple_coding', 'working',
-        'legacy', 'hive-maya', 10, '2026-07-09T12:00:00.000Z',
-        '2026-07-09T12:00:00.000Z', 0, 0, 0, 0)
-    `);
-    legacy.close();
-
-    const db = new HiveDatabase(path);
-    try {
-      const columns = new Set(
-        (db.database.query("PRAGMA table_info(agents)").all() as Array<{ name: string }>)
-          .map((c) => c.name),
-      );
-      expect(columns.has("liveEffort")).toBe(true);
-      expect(columns.has("observedIdentity")).toBe(true);
-      expect(columns.has("identityState")).toBe(true);
-      const row = db.getAgentByName("maya");
-      // Additive null-default: legacy rows are unattested, never matching.
-      expect(row?.liveEffort).toBeUndefined();
-      expect(row?.observedIdentity).toBeUndefined();
-      expect(row?.identityState).toBeUndefined();
-      expect(row?.tool).toBe("codex");
-    } finally {
-      db.close();
-    }
-  });
-
-  test("stamps closure once and generic persistence cannot revive it", () => {
+  test("stamps closure once and clears it when recovery revives the agent", () => {
     const db = new HiveDatabase(join(home, "closure.db"));
     try {
       db.insertAgent(agent());
@@ -359,9 +169,6 @@ describe("HiveDatabase", () => {
         "2026-07-09T12:02:00.000Z",
       );
       expect(dead?.closedAt).toEqual("2026-07-09T12:02:00.000Z");
-      // Terminal is authority-revoking.
-      expect(dead?.writeRevoked).toBe(true);
-      expect(dead?.capabilityEpoch).toBe(1);
 
       // A later write that keeps the agent closed must not slide the instant.
       const rewritten = db.upsertAgent({
@@ -371,59 +178,10 @@ describe("HiveDatabase", () => {
       });
       expect(rewritten.closedAt).toEqual("2026-07-09T12:02:00.000Z");
 
-      // Generic persistence is not an authority boundary for revival. An
-      // explicit recovery path must use a dedicated terminal CAS instead.
+      // Crash recovery brings this same agent back: it is live, not closed.
       const revived = db.upsertAgent({ ...rewritten, status: "working" });
-      expect(revived.status).toEqual("dead");
-      expect(revived.closedAt).toEqual("2026-07-09T12:02:00.000Z");
-      expect(db.getLiveAgentByName("maya")).toEqual(null);
-    } finally {
-      db.close();
-    }
-  });
-
-  test("repeated terminalization of an old id cannot revoke a reused name", () => {
-    const db = new HiveDatabase(join(home, "terminal-name-reuse.db"));
-    try {
-      db.insertAgent(agent());
-      const first = db.markAgentDead(
-        "agent-maya",
-        "2026-07-09T12:02:00.000Z",
-      );
-      expect(first?.capabilityEpoch).toEqual(1);
-
-      db.insertAgent(agent({
-        id: "agent-maya-2",
-        createdAt: "2026-07-09T13:00:00.000Z",
-      }));
-      db.insertCapability({
-        id: "new-holder-capability",
-        subject: "maya",
-        role: "writer",
-        epoch: 0,
-        issuedAt: "2026-07-09T13:00:00.000Z",
-        expiresAt: "2026-07-10T13:00:00.000Z",
-        revokedAt: null,
-      }, "hash");
-      db.insertApproval({
-        id: "new-holder-approval",
-        agentName: "maya",
-        description: "new holder permission",
-        status: "pending",
-        createdAt: "2026-07-09T13:00:00.000Z",
-        resolvedAt: null,
-      });
-
-      const repeated = db.markAgentDead(
-        "agent-maya",
-        "2026-07-09T14:00:00.000Z",
-      );
-      expect(repeated?.capabilityEpoch).toEqual(1);
-      expect(repeated?.closedAt).toEqual("2026-07-09T12:02:00.000Z");
-      expect(db.getCapability("new-holder-capability")?.capability.revokedAt)
-        .toEqual(null);
-      expect(db.getApproval("new-holder-approval")?.status).toEqual("pending");
-      expect(db.getLiveAgentByName("maya")?.id).toEqual("agent-maya-2");
+      expect(revived.closedAt).toBeUndefined();
+      expect(db.getLiveAgentByName("maya")?.id).toEqual("agent-maya");
     } finally {
       db.close();
     }

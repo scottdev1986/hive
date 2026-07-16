@@ -16,7 +16,6 @@ import {
 } from "../schemas/capability";
 import { pendingControlResponses, pendingResponses } from "./quota-sources";
 import { HIVE_VERSION } from "../version";
-import { probeCodexCliVersion } from "../adapters/tools/codex";
 import { parseGrokCliVersion } from "../adapters/tools/grok";
 
 /**
@@ -500,10 +499,7 @@ export class CodexStdioCapabilityTransport implements CodexCapabilityTransport {
   ) {}
 
   async readCatalog(timeoutMs: number): Promise<CodexCapabilityPayload> {
-    // Inventory and launch compatibility share the provider-owned exact parser.
-    // Inventory preserves unknown as evidence; launch authorization refuses it.
-    const cliVersion = await probeCodexCliVersion(this.versionArgv) ??
-      UNKNOWN_VERSION;
+    const cliVersion = await readCliVersion(this.versionArgv, UNKNOWN_VERSION);
     const child = Bun.spawn([...this.argv], {
       stdin: "pipe",
       stdout: "pipe",
@@ -763,47 +759,25 @@ function grokDefaultFromStdout(stdout: string): string | null {
   return null;
 }
 
-/** Why the refreshed cache cannot be used, or null when it can. A rejected
- * cache used to flatten into an empty record list and read back as the same
- * unactionable "no fresh usable model catalog" whatever the cause. */
-export function grokCacheRejection(
+export function recordsFromGrokModels(
   payload: GrokCapabilityPayload,
-): string | null {
+  observedAt: string,
+): CapabilityRecord[] {
   const parsed = GrokModelsCacheSchema.safeParse(payload.cache);
-  if (!parsed.success) {
-    return "models_cache.json did not match the expected shape";
-  }
-  if (!Number.isFinite(Date.parse(parsed.data.fetched_at))) {
-    return "models_cache.json fetched_at is unparseable";
-  }
-  if (parsed.data.grok_version !== payload.cliVersion) {
-    // An etag-matched refresh (HTTP 304) does not rewrite the cache, so a CLI
-    // self-update leaves the old version string standing until the upstream
-    // catalog next changes. Name both versions so this reads as the skew it
-    // is, not as a broken vendor.
-    return `models_cache.json was written by grok ${parsed.data.grok_version} ` +
-      `but the CLI is ${payload.cliVersion}`;
-  }
-  const violated = Object.entries(parsed.data.models).some(([key, entry]) => {
+  if (!parsed.success) return [];
+  const fetchedAt = Date.parse(parsed.data.fetched_at);
+  if (
+    !Number.isFinite(fetchedAt) ||
+    parsed.data.grok_version !== payload.cliVersion
+  ) return [];
+  const models = Object.entries(parsed.data.models);
+  if (models.some(([key, entry]) => {
     const info = entry.info;
     const efforts = info.reasoning_efforts ?? [];
     return info.id !== key ||
       (info.supports_reasoning_effort && efforts.length === 0) ||
       (!info.supports_reasoning_effort && efforts.length > 0);
-  });
-  if (violated) return "models_cache.json entries violated catalog invariants";
-  return null;
-}
-
-export function recordsFromGrokModels(
-  payload: GrokCapabilityPayload,
-  observedAt: string,
-): CapabilityRecord[] {
-  if (grokCacheRejection(payload) !== null) return [];
-  const parsed = GrokModelsCacheSchema.safeParse(payload.cache);
-  if (!parsed.success) return [];
-  const fetchedAt = Date.parse(parsed.data.fetched_at);
-  const models = Object.entries(parsed.data.models);
+  })) return [];
   const cacheObservedAt = new Date(fetchedAt).toISOString();
   const accountFingerprint = fingerprintAccount("grok", [
     parsed.data.auth_method,
@@ -852,21 +826,14 @@ export class GrokCapabilityProbe implements CapabilityProbe {
 
   async read(): Promise<CapabilityDiscoveryResult> {
     try {
-      // One retry: a single transient probe failure (a slow settings fetch, a
-      // lock held by a concurrent grok invocation) must not report a healthy
-      // installed vendor as nonexistent to the launch gate.
-      const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS)
-        .catch(() => this.transport.readCatalog(DISCOVERY_TIMEOUT_MS));
+      const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS);
       const observedAt = this.clock().toISOString();
       const records = recordsFromGrokModels(payload, observedAt);
       const defaultModel = grokDefaultFromStdout(payload.stdout);
       if (records.length === 0 || defaultModel === null) {
-        const rejection = grokCacheRejection(payload);
         return {
           status: "unavailable",
-          reason: rejection === null
-            ? "grok models returned no fresh usable model catalog/default"
-            : `grok models cache rejected: ${rejection}`,
+          reason: "grok models returned no fresh usable model catalog/default",
         };
       }
       if (!records.some((record) => record.canonicalId === defaultModel)) {

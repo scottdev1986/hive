@@ -13,18 +13,11 @@ import {
   AgentMessageSchema,
   AgentRecordObjectSchema,
   AgentRecordSchema,
-  AssignmentRecordSchema,
-  AssignmentSummarySchema,
   HookEventSchema,
   ExecutionIdentitySchema,
-  ObservedIdentitySchema,
-  PauseCaptureSchema,
   isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
-  type AssignmentRecord,
-  type AssignmentReportState,
-  type AssignmentSummary,
   type HookEvent,
 } from "../schemas";
 
@@ -37,8 +30,6 @@ const StoredCapabilitySchema = z.object({
   issuedAt: z.string().min(1),
   expiresAt: z.string().min(1),
   revokedAt: z.string().nullable(),
-  agentId: z.string().nullable().optional(),
-  processIncarnation: z.number().int().nonnegative().nullable().optional(),
 });
 
 const CapabilityRowSchema = StoredCapabilitySchema;
@@ -118,129 +109,6 @@ export const EscalationSchema = z.object({
 
 export type Escalation = z.infer<typeof EscalationSchema>;
 
-/** A bounded, structured audit of one routing decision, durable so a policy
- * revision, the original chain and its per-link gate results (including a
- * reviewOfTool independence exclusion), the selection, and the reservation can
- * be explained later — without retaining any prompt or account data. */
-export const RouteAuditSchema = z.object({
-  id: z.string().min(1),
-  agentName: z.string().min(1),
-  category: z.string().min(1),
-  decidedAt: z.iso.datetime({ offset: true }),
-  /** The routing policy revision in effect when the decision was made. */
-  policyRevision: z.number().int().nonnegative(),
-  /** The tool under review for an independent code_review, else null. */
-  reviewOfTool: z.string().nullable(),
-  /** The per-link gate results in chain order — refusals, effort errors, quota
-   * outcomes, and the reviewOfTool exclusion diagnostic. */
-  attempts: z.array(z.string()),
-  /** The selected route, or null when every link was refused. */
-  selectedTool: z.string().nullable(),
-  selectedModel: z.string().nullable(),
-  selectedEffort: z.string().nullable(),
-  reservationId: z.string().nullable(),
-});
-
-export type RouteAudit = z.infer<typeof RouteAuditSchema>;
-
-/** Exact persisted process/authority tuple for post-await compare-and-swap.
- * `toolSessionId` is deliberately only one member: sessions can survive a
- * relaunch, while `processIncarnation` changes for every process. */
-export interface AgentStateCas {
-  id: string;
-  processIncarnation: number;
-  processStartedAt: string | null;
-  capabilityEpoch: number;
-  status: AgentRecord["status"];
-  writeRevoked: boolean;
-  readOnly: boolean;
-  branch: string | null;
-  toolSessionId: string | null;
-  controlMessageId: string | null;
-  pauseCapture: string | null;
-  lastEventAt: string;
-}
-
-export function agentStateCas(agent: AgentRecord): AgentStateCas {
-  return {
-    id: agent.id,
-    processIncarnation: agent.processIncarnation ?? 0,
-    processStartedAt: agent.processStartedAt ?? null,
-    capabilityEpoch: agent.capabilityEpoch,
-    status: agent.status,
-    writeRevoked: agent.writeRevoked,
-    readOnly: agent.readOnly,
-    branch: agent.branch,
-    toolSessionId: agent.toolSessionId ?? null,
-    controlMessageId: agent.controlMessageId ?? null,
-    pauseCapture: agent.pauseCapture === undefined
-      ? null
-      : JSON.stringify(agent.pauseCapture),
-    lastEventAt: agent.lastEventAt,
-  };
-}
-
-/** Landing-only binding to the fresh provider observation. Lifecycle CAS does
- * not include these fields because reattestation deliberately updates them
- * before pausing/resuming; landing supplies this second tuple explicitly. */
-export interface AgentAttestationCas {
-  liveModel: string | null;
-  liveEffort: string | null;
-  observedIdentity: string | null;
-  identityState: string | null;
-}
-
-export function agentAttestationCas(agent: AgentRecord): AgentAttestationCas {
-  return {
-    liveModel: agent.liveModel ?? null,
-    liveEffort: agent.liveEffort ?? null,
-    observedIdentity: agent.observedIdentity === undefined
-      ? null
-      : JSON.stringify(agent.observedIdentity),
-    identityState: agent.identityState ?? null,
-  };
-}
-
-export type ConditionalAgentUpdate = Partial<Pick<AgentRecord,
-  | "status"
-  | "writeRevoked"
-  | "readOnly"
-  | "capabilityEpoch"
-  | "lastEventAt"
-  | "failureReason"
-  | "failedAt"
-  | "closedAt"
-  | "controlMessageId"
-  | "controlQuotaReservationId"
-  | "quotaReservationId"
-  | "executionIdentity"
-  | "toolSessionId"
-  | "codexDriver"
-  | "processIncarnation"
-  | "processStartedAt"
-  | "recoveryAttempts"
-  | "contextPct"
-  | "contextWindow"
-  | "liveModel"
-  | "liveEffort"
-  | "observedIdentity"
-  | "identityState"
-  | "pauseCapture"
->>;
-
-export type TerminalAgentCleanup = Partial<Pick<AgentRecord,
-  | "worktreePath"
-  | "branch"
-  | "quotaReservationId"
-  | "controlQuotaReservationId"
-  | "failureReason"
-  | "lastEventAt"
->>;
-
-/** Keep only the most recent decisions; a route audit is a bounded diagnostic,
- * not an unbounded log. */
-const ROUTE_AUDIT_LIMIT = 500;
-
 const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
@@ -248,27 +116,16 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   // Null on every row written before the model was observed separately from the
   // model it was launched with, and on every agent Hive has not observed yet.
   liveModel: z.string().nullable().default(null),
-  // Observed effort and the richer provider-native observation, both null until
-  // observed. Stored beside liveModel for the same reason it exists.
-  liveEffort: z.string().nullable().default(null),
-  observedIdentity: z.string().nullable().default(null),
-  // The attestation verdict; null on rows written before the column existed,
-  // read back as the schema default `unattested`.
-  identityState: z.string().nullable().default(null),
   quotaReservationId: z.string().nullable(),
   controlQuotaReservationId: z.string().nullable(),
   controlMessageId: z.string().nullable(),
   executionIdentity: z.string().nullable(),
   toolSessionId: z.string().nullable(),
-  codexDriver: z.string().nullable().default(null),
-  processIncarnation: z.number().int().nonnegative(),
-  processStartedAt: z.string().nullable(),
   contextWindow: z.number().int().positive().nullable().default(null),
   recoveryAttempts: z.number().int().nonnegative().default(0),
   capabilityEpoch: z.number().int().nonnegative().default(0),
   readOnly: z.union([z.boolean(), z.number().int()]).default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
-  pauseCapture: z.string().nullable().default(null),
 });
 
 function parseAgentRow(row: unknown): AgentRecord {
@@ -279,43 +136,16 @@ function parseAgentRow(row: unknown): AgentRecord {
     failedAt: value.failedAt ?? undefined,
     closedAt: value.closedAt ?? undefined,
     liveModel: value.liveModel ?? undefined,
-    liveEffort: value.liveEffort ?? undefined,
-    observedIdentity: value.observedIdentity === null
-      ? undefined
-      : ObservedIdentitySchema.parse(JSON.parse(value.observedIdentity)),
-    identityState: value.identityState ?? undefined,
     quotaReservationId: value.quotaReservationId ?? undefined,
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
     toolSessionId: value.toolSessionId ?? undefined,
-    codexDriver: value.codexDriver ?? undefined,
-    processIncarnation: value.processIncarnation === 0
-      ? undefined
-      : value.processIncarnation,
-    processStartedAt: value.processStartedAt ?? undefined,
     contextWindow: value.contextWindow ?? undefined,
     executionIdentity: value.executionIdentity === null
       ? undefined
       : ExecutionIdentitySchema.parse(JSON.parse(value.executionIdentity)),
     readOnly: value.readOnly === true || value.readOnly === 1,
     writeRevoked: value.writeRevoked === true || value.writeRevoked === 1,
-    pauseCapture: value.pauseCapture === null || value.pauseCapture === undefined
-      ? undefined
-      : PauseCaptureSchema.parse(JSON.parse(value.pauseCapture)),
-  });
-}
-
-const AssignmentDatabaseRowSchema = AssignmentRecordSchema.omit({
-  summary: true,
-}).extend({ summary: z.string().nullable() });
-
-function parseAssignmentRow(row: unknown): AssignmentRecord {
-  const value = AssignmentDatabaseRowSchema.parse(row);
-  return AssignmentRecordSchema.parse({
-    ...value,
-    summary: value.summary === null
-      ? null
-      : AssignmentSummarySchema.parse(JSON.parse(value.summary)),
   });
 }
 
@@ -419,9 +249,6 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       tool TEXT NOT NULL,
       model TEXT NOT NULL,
       liveModel TEXT,
-      liveEffort TEXT,
-      observedIdentity TEXT,
-      identityState TEXT,
       category TEXT NOT NULL,
       status TEXT NOT NULL,
       taskDescription TEXT NOT NULL,
@@ -442,16 +269,11 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       controlMessageId TEXT,
       executionIdentity TEXT,
       toolSessionId TEXT,
-      codexDriver TEXT,
-      processIncarnation INTEGER NOT NULL DEFAULT 0,
-      processStartedAt TEXT,
       recoveryAttempts INTEGER NOT NULL DEFAULT 0,
       capabilityEpoch INTEGER NOT NULL DEFAULT 0,
       readOnly INTEGER NOT NULL DEFAULT 0,
       writeRevoked INTEGER NOT NULL DEFAULT 0,
-      closedAt TEXT,
-      -- Exact process-tree capture from a non-destructive pause (JSON PauseCapture).
-      pauseCapture TEXT
+      closedAt TEXT
     )
   `;
 }
@@ -607,41 +429,6 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS events_agent_timestamp
         ON events(agentName, timestamp);
-      CREATE TABLE IF NOT EXISTS assignments (
-        id TEXT PRIMARY KEY,
-        agentId TEXT NOT NULL,
-        agentName TEXT NOT NULL,
-        taskDescription TEXT NOT NULL,
-        processIncarnation INTEGER NOT NULL,
-        state TEXT NOT NULL,
-        summary TEXT,
-        generation INTEGER NOT NULL DEFAULT 0,
-        createdAt TEXT NOT NULL,
-        updatedAt TEXT NOT NULL,
-        reportedAt TEXT,
-        acceptedAt TEXT,
-        acceptedBy TEXT
-      );
-      CREATE UNIQUE INDEX IF NOT EXISTS assignments_one_open_per_agent
-        ON assignments(agentId) WHERE state != 'accepted';
-      CREATE INDEX IF NOT EXISTS assignments_agent_history
-        ON assignments(agentId, createdAt);
-      CREATE TABLE IF NOT EXISTS route_audits (
-        id TEXT PRIMARY KEY,
-        agentName TEXT NOT NULL,
-        category TEXT NOT NULL,
-        decidedAt TEXT NOT NULL,
-        policyRevision INTEGER NOT NULL,
-        reviewOfTool TEXT,
-        -- JSON array of per-link gate results, including reviewOfTool exclusions.
-        attempts TEXT NOT NULL,
-        selectedTool TEXT,
-        selectedModel TEXT,
-        selectedEffort TEXT,
-        reservationId TEXT
-      );
-      CREATE INDEX IF NOT EXISTS route_audits_decided
-        ON route_audits(decidedAt);
       CREATE TABLE IF NOT EXISTS approvals (
         id TEXT PRIMARY KEY,
         agentName TEXT NOT NULL,
@@ -677,9 +464,7 @@ export class HiveDatabase {
         secretHash TEXT NOT NULL,
         issuedAt TEXT NOT NULL,
         expiresAt TEXT NOT NULL,
-        revokedAt TEXT,
-        agentId TEXT,
-        processIncarnation INTEGER
+        revokedAt TEXT
       );
       CREATE INDEX IF NOT EXISTS capabilities_subject ON capabilities(subject);
       -- A one-shot right is spent by inserting its row; the primary key makes
@@ -738,17 +523,6 @@ export class HiveDatabase {
     if (!agentColumnNames.has("toolSessionId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
     }
-    if (!agentColumnNames.has("codexDriver")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN codexDriver TEXT");
-    }
-    if (!agentColumnNames.has("processIncarnation")) {
-      this.database.exec(
-        "ALTER TABLE agents ADD COLUMN processIncarnation INTEGER NOT NULL DEFAULT 0",
-      );
-    }
-    if (!agentColumnNames.has("processStartedAt")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN processStartedAt TEXT");
-    }
     if (!agentColumnNames.has("contextWindow")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN contextWindow INTEGER");
     }
@@ -792,21 +566,6 @@ export class HiveDatabase {
     // Null means "not observed", never "same as spawn".
     if (!agentColumnNames.has("liveModel")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN liveModel TEXT");
-    }
-    // Observed effort and the richer provider-native observation, plus the
-    // attestation verdict. Additive and null-defaulted: a pre-existing row
-    // reads back as `unattested`, which fails closed for a Codex writer.
-    if (!agentColumnNames.has("liveEffort")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN liveEffort TEXT");
-    }
-    if (!agentColumnNames.has("observedIdentity")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN observedIdentity TEXT");
-    }
-    if (!agentColumnNames.has("identityState")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN identityState TEXT");
-    }
-    if (!agentColumnNames.has("pauseCapture")) {
-      this.database.exec("ALTER TABLE agents ADD COLUMN pauseCapture TEXT");
     }
     if (!agentColumnNames.has("writeRevoked")) {
       this.database.exec(
@@ -854,19 +613,6 @@ export class HiveDatabase {
       CREATE INDEX IF NOT EXISTS agents_name_history
         ON agents(name, createdAt);
     `);
-    const capabilityColumns = new Set(
-      z.array(z.object({ name: z.string() })).parse(
-        this.database.query("PRAGMA table_info(capabilities)").all(),
-      ).map((column) => column.name),
-    );
-    if (!capabilityColumns.has("agentId")) {
-      this.database.exec("ALTER TABLE capabilities ADD COLUMN agentId TEXT");
-    }
-    if (!capabilityColumns.has("processIncarnation")) {
-      this.database.exec(
-        "ALTER TABLE capabilities ADD COLUMN processIncarnation INTEGER",
-      );
-    }
     const messageColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(messages)").all(),
     );
@@ -931,19 +677,6 @@ export class HiveDatabase {
           )
       `).run(recoveredAt);
     })();
-    // Agents that were already live when this schema first arrived still own
-    // assigned work. Give each exact AgentUUID one active assignment history
-    // row, but never reopen a holder whose assignment was explicitly accepted.
-    this.transaction(() => {
-      for (const agent of this.listAgents()) {
-        if (
-          !isTerminalAgentStatus(agent.status) &&
-          this.getLatestAssignmentForAgent(agent.id) === null
-        ) {
-          this.createAssignmentForAgent(agent);
-        }
-      }
-    });
     if (persistent && expectedIdentity === null) {
       try {
         const proposed = crypto.randomUUID();
@@ -1123,23 +856,18 @@ export class HiveDatabase {
     const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
-        id, name, tool, model, liveModel, liveEffort, observedIdentity,
-        identityState, category, status, taskDescription,
+        id, name, tool, model, liveModel, category, status, taskDescription,
         worktreePath, branch, tmuxSession, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
-        executionIdentity, toolSessionId, codexDriver, processIncarnation,
-        processStartedAt, contextWindow, recoveryAttempts,
-        capabilityEpoch, readOnly, writeRevoked, closedAt, pauseCapture
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
+        capabilityEpoch, readOnly, writeRevoked, closedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
         model = excluded.model,
         liveModel = excluded.liveModel,
-        liveEffort = excluded.liveEffort,
-        observedIdentity = excluded.observedIdentity,
-        identityState = excluded.identityState,
         category = excluded.category,
         status = excluded.status,
         taskDescription = excluded.taskDescription,
@@ -1156,28 +884,18 @@ export class HiveDatabase {
         controlMessageId = excluded.controlMessageId,
         executionIdentity = excluded.executionIdentity,
         toolSessionId = excluded.toolSessionId,
-        codexDriver = excluded.codexDriver,
-        processIncarnation = excluded.processIncarnation,
-        processStartedAt = excluded.processStartedAt,
         contextWindow = excluded.contextWindow,
         recoveryAttempts = excluded.recoveryAttempts,
         capabilityEpoch = excluded.capabilityEpoch,
         readOnly = excluded.readOnly,
         writeRevoked = excluded.writeRevoked,
-        closedAt = excluded.closedAt,
-        pauseCapture = excluded.pauseCapture
-      WHERE agents.status NOT IN ('done', 'dead', 'failed')
+        closedAt = excluded.closedAt
     `).run(
       value.id,
       value.name,
       value.tool,
       value.model,
       value.liveModel ?? null,
-      value.liveEffort ?? null,
-      value.observedIdentity === undefined
-        ? null
-        : JSON.stringify(value.observedIdentity),
-      value.identityState ?? null,
       value.category,
       value.status,
       value.taskDescription,
@@ -1196,18 +914,12 @@ export class HiveDatabase {
         ? null
         : JSON.stringify(value.executionIdentity),
       value.toolSessionId ?? null,
-      value.codexDriver ?? null,
-      value.processIncarnation ?? 0,
-      value.processStartedAt ?? null,
       value.contextWindow ?? null,
       value.recoveryAttempts,
       value.capabilityEpoch,
       value.readOnly ? 1 : 0,
       value.writeRevoked ? 1 : 0,
       closedAt,
-      value.pauseCapture === undefined
-        ? null
-        : JSON.stringify(value.pauseCapture),
     );
     return this.getAgentById(value.id)!;
   }
@@ -1217,8 +929,7 @@ export class HiveDatabase {
    * that can close an agent (kill, crash sweep, done event, failed spawn)
    * would otherwise have to remember. It is written once — a later write that
    * keeps the agent terminal must not slide the timestamp forward — and
-   * Generic persistence never clears it: terminal revival, when explicitly
-   * authorized, must use a dedicated compare-and-swap transition.
+   * cleared when crash recovery returns this same id to a live status.
    */
   private resolveClosedAt(value: AgentRecord): string | null {
     if (!isTerminalAgentStatus(value.status)) return null;
@@ -1230,532 +941,7 @@ export class HiveDatabase {
   }
 
   insertAgent(agent: AgentRecord): AgentRecord {
-    return this.transaction(() => {
-      const existing = this.getAgentById(agent.id);
-      const persisted = this.upsertAgent(agent);
-      if (existing === null && persisted.status === "spawning") {
-        this.createAssignmentForAgent(persisted);
-      }
-      return persisted;
-    });
-  }
-
-  createAssignmentForAgent(agent: AgentRecord): AssignmentRecord {
-    const existing = this.getLatestAssignmentForAgent(agent.id);
-    if (existing !== null) return existing;
-    const now = agent.createdAt;
-    const value = AssignmentRecordSchema.parse({
-      id: crypto.randomUUID(),
-      agentId: agent.id,
-      agentName: agent.name,
-      taskDescription: agent.taskDescription,
-      processIncarnation: agent.processIncarnation ?? 0,
-      state: "active",
-      summary: null,
-      generation: 0,
-      createdAt: now,
-      updatedAt: now,
-      reportedAt: null,
-      acceptedAt: null,
-      acceptedBy: null,
-    });
-    this.database.query(`
-      INSERT INTO assignments (
-        id, agentId, agentName, taskDescription, processIncarnation, state,
-        summary, generation, createdAt, updatedAt, reportedAt, acceptedAt,
-        acceptedBy
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.id,
-      value.agentId,
-      value.agentName,
-      value.taskDescription,
-      value.processIncarnation,
-      value.state,
-      null,
-      value.generation,
-      value.createdAt,
-      value.updatedAt,
-      null,
-      null,
-      null,
-    );
-    return this.getAssignmentById(value.id)!;
-  }
-
-  getAssignmentById(id: string): AssignmentRecord | null {
-    const row = this.database.query("SELECT * FROM assignments WHERE id = ?")
-      .get(id);
-    return row === null ? null : parseAssignmentRow(row);
-  }
-
-  getOpenAssignmentForAgent(agentId: string): AssignmentRecord | null {
-    const row = this.database.query(`
-      SELECT * FROM assignments
-      WHERE agentId = ? AND state != 'accepted'
-      ORDER BY createdAt DESC LIMIT 1
-    `).get(agentId);
-    return row === null ? null : parseAssignmentRow(row);
-  }
-
-  getLatestAssignmentForAgent(agentId: string): AssignmentRecord | null {
-    const row = this.database.query(`
-      SELECT * FROM assignments
-      WHERE agentId = ? ORDER BY createdAt DESC LIMIT 1
-    `).get(agentId);
-    return row === null ? null : parseAssignmentRow(row);
-  }
-
-  listAssignments(): AssignmentRecord[] {
-    return this.database.query("SELECT * FROM assignments ORDER BY createdAt, id")
-      .all().map(parseAssignmentRow);
-  }
-
-  reportAssignment(
-    assignmentId: string,
-    agentId: string,
-    processIncarnation: number,
-    report: AssignmentReportState,
-    summary: AssignmentSummary,
-    reportedAt: string,
-  ): AssignmentRecord | null {
-    const current = this.getAssignmentById(assignmentId);
-    if (
-      current === null || current.agentId !== agentId ||
-      current.processIncarnation !== processIncarnation ||
-      current.state === "accepted"
-    ) return null;
-    if (current.state === "reported_complete" && report !== "complete") {
-      return null;
-    }
-    const state = report === "complete" ? "reported_complete" : report;
-    const changed = this.database.query(`
-      UPDATE assignments
-      SET state = ?, summary = ?, updatedAt = ?, reportedAt = ?
-      WHERE id = ? AND agentId = ? AND processIncarnation = ?
-        AND state != 'accepted'
-    `).run(
-      state,
-      JSON.stringify(AssignmentSummarySchema.parse(summary)),
-      reportedAt,
-      reportedAt,
-      assignmentId,
-      agentId,
-      processIncarnation,
-    );
-    return changed.changes === 1 ? this.getAssignmentById(assignmentId) : null;
-  }
-
-  acceptAssignment(
-    assignmentId: string,
-    acceptedBy: string,
-    acceptedAt: string,
-  ): AssignmentRecord | null {
-    const changed = this.database.query(`
-      UPDATE assignments
-      SET state = 'accepted', updatedAt = ?, acceptedAt = ?, acceptedBy = ?
-      WHERE id = ? AND state = 'reported_complete'
-    `).run(acceptedAt, acceptedAt, acceptedBy, assignmentId);
-    return changed.changes === 1 ? this.getAssignmentById(assignmentId) : null;
-  }
-
-  advanceAssignmentForFollowup(
-    agentId: string,
-    processIncarnation: number,
-    updatedAt: string,
-  ): AssignmentRecord | null {
-    const changed = this.database.query(`
-      UPDATE assignments
-      SET state = 'in_progress', summary = NULL, reportedAt = NULL,
-          generation = generation + 1, updatedAt = ?
-      WHERE agentId = ? AND processIncarnation = ? AND state != 'accepted'
-    `).run(updatedAt, agentId, processIncarnation);
-    return changed.changes === 1
-      ? this.getOpenAssignmentForAgent(agentId)
-      : null;
-  }
-
-  /** Narrow state mutation guarded by the complete process/authority tuple.
-   * This is the only persistence primitive async telemetry, attestation,
-   * control, pause/resume, and recovery should use after yielding. It cannot
-   * revive or rewrite a terminal row, and terminal transitions remain the
-   * responsibility of `markAgentTerminal` so revocation stays atomic. */
-  updateAgentIfCurrent(
-    expected: AgentStateCas,
-    updates: ConditionalAgentUpdate,
-    expectedAttestation?: AgentAttestationCas,
-  ): AgentRecord | null {
-    if (
-      updates.status !== undefined && isTerminalAgentStatus(updates.status)
-    ) {
-      throw new Error("Terminal status requires markAgentTerminal");
-    }
-    const assignments: string[] = [];
-    const values: Array<string | number | null> = [];
-    const set = (column: string, value: string | number | null): void => {
-      assignments.push(`${column} = ?`);
-      values.push(value);
-    };
-    if ("status" in updates) set("status", updates.status ?? expected.status);
-    if ("writeRevoked" in updates) set("writeRevoked", updates.writeRevoked ? 1 : 0);
-    if ("readOnly" in updates) set("readOnly", updates.readOnly ? 1 : 0);
-    if ("capabilityEpoch" in updates) {
-      set("capabilityEpoch", updates.capabilityEpoch ?? expected.capabilityEpoch);
-    }
-    if ("lastEventAt" in updates) set("lastEventAt", updates.lastEventAt ?? expected.lastEventAt);
-    if ("failureReason" in updates) set("failureReason", updates.failureReason ?? null);
-    if ("failedAt" in updates) set("failedAt", updates.failedAt ?? null);
-    if ("closedAt" in updates) set("closedAt", updates.closedAt ?? null);
-    if ("controlMessageId" in updates) set("controlMessageId", updates.controlMessageId ?? null);
-    if ("controlQuotaReservationId" in updates) {
-      set("controlQuotaReservationId", updates.controlQuotaReservationId ?? null);
-    }
-    if ("quotaReservationId" in updates) set("quotaReservationId", updates.quotaReservationId ?? null);
-    if ("executionIdentity" in updates) {
-      set(
-        "executionIdentity",
-        updates.executionIdentity === undefined
-          ? null
-          : JSON.stringify(ExecutionIdentitySchema.parse(updates.executionIdentity)),
-      );
-    }
-    if ("toolSessionId" in updates) set("toolSessionId", updates.toolSessionId ?? null);
-    if ("codexDriver" in updates) set("codexDriver", updates.codexDriver ?? null);
-    if ("processIncarnation" in updates) {
-      set("processIncarnation", updates.processIncarnation ?? expected.processIncarnation);
-    }
-    if ("processStartedAt" in updates) set("processStartedAt", updates.processStartedAt ?? null);
-    if ("recoveryAttempts" in updates) set("recoveryAttempts", updates.recoveryAttempts ?? 0);
-    if ("contextPct" in updates) set("contextPct", updates.contextPct ?? null);
-    if ("contextWindow" in updates) set("contextWindow", updates.contextWindow ?? null);
-    if ("liveModel" in updates) set("liveModel", updates.liveModel ?? null);
-    if ("liveEffort" in updates) set("liveEffort", updates.liveEffort ?? null);
-    if ("observedIdentity" in updates) {
-      set(
-        "observedIdentity",
-        updates.observedIdentity === undefined
-          ? null
-          : JSON.stringify(ObservedIdentitySchema.parse(updates.observedIdentity)),
-      );
-    }
-    if ("identityState" in updates) set("identityState", updates.identityState ?? null);
-    if ("pauseCapture" in updates) {
-      set(
-        "pauseCapture",
-        updates.pauseCapture === undefined ? null : JSON.stringify(updates.pauseCapture),
-      );
-    }
-    if (assignments.length === 0 && expectedAttestation === undefined) {
-      const current = this.getAgentById(expected.id);
-      return current !== null &&
-          JSON.stringify(agentStateCas(current)) === JSON.stringify(expected)
-        ? current
-        : null;
-    }
-    const changed = this.database.query(`
-      UPDATE agents SET ${assignments.length === 0 ? "id = id" : assignments.join(", ")}
-      WHERE id = ?
-        AND processIncarnation = ?
-        AND processStartedAt IS ?
-        AND capabilityEpoch = ?
-        AND status = ?
-        AND writeRevoked = ?
-        AND readOnly = ?
-        AND branch IS ?
-        AND toolSessionId IS ?
-        AND controlMessageId IS ?
-        AND pauseCapture IS ?
-        AND lastEventAt = ?
-        ${expectedAttestation === undefined ? "" : `
-        AND liveModel IS ?
-        AND liveEffort IS ?
-        AND observedIdentity IS ?
-        AND identityState IS ?`}
-        AND status NOT IN ('done', 'dead', 'failed')
-    `).run(
-      ...values,
-      expected.id,
-      expected.processIncarnation,
-      expected.processStartedAt,
-      expected.capabilityEpoch,
-      expected.status,
-      expected.writeRevoked ? 1 : 0,
-      expected.readOnly ? 1 : 0,
-      expected.branch,
-      expected.toolSessionId,
-      expected.controlMessageId,
-      expected.pauseCapture,
-      expected.lastEventAt,
-      ...(expectedAttestation === undefined ? [] : [
-        expectedAttestation.liveModel,
-        expectedAttestation.liveEffort,
-        expectedAttestation.observedIdentity,
-        expectedAttestation.identityState,
-      ]),
-    );
-    return changed.changes === 1 ? this.getAgentById(expected.id) : null;
-  }
-
-  /** Allocate a new process generation before any process adapter is called.
-   * Manual recovery may explicitly revive the exact terminal holder it began
-   * from; no generic write can do so. */
-  beginAgentProcess(
-    expected: AgentStateCas,
-    startedAt: string,
-    sessionId: string | null,
-    recoveryAttempts: number,
-    options: {
-      status: Exclude<AgentRecord["status"], "done" | "dead" | "failed">;
-      reviveTerminal?: boolean;
-      /** The driver the REPLACEMENT process will launch with. codexDriver is a
-       * per-incarnation launch fact — an app-server row whose replacement
-       * relaunches as TUI must not keep claiming app-server, or maintenance
-       * skips its rollout observation forever. Omit to leave unchanged
-       * (non-Codex callers). */
-      codexDriver?: AgentRecord["codexDriver"];
-    },
-  ): AgentRecord | null {
-    const updates: ConditionalAgentUpdate = {
-      status: options.status,
-      toolSessionId: sessionId ?? undefined,
-      processIncarnation: expected.processIncarnation + 1,
-      processStartedAt: startedAt,
-      recoveryAttempts,
-      lastEventAt: startedAt,
-      identityState: undefined,
-      observedIdentity: undefined,
-      liveModel: undefined,
-      liveEffort: undefined,
-      ...("codexDriver" in options ? { codexDriver: options.codexDriver } : {}),
-    };
-    return this.transaction(() => {
-      let updated: AgentRecord | null;
-      if (!isTerminalAgentStatus(expected.status)) {
-        updated = this.updateAgentIfCurrent(expected, updates);
-      } else {
-        if (options.reviveTerminal !== true) return null;
-        const changed = this.database.query(`
-          UPDATE agents SET
-            status = ?, closedAt = NULL, writeRevoked = 0,
-            capabilityEpoch = capabilityEpoch + 1, toolSessionId = ?,
-            processIncarnation = ?, processStartedAt = ?, recoveryAttempts = ?,
-            lastEventAt = ?, identityState = NULL, observedIdentity = NULL,
-            liveModel = NULL, liveEffort = NULL,
-            codexDriver = COALESCE(?, codexDriver)
-          WHERE id = ?
-            AND processIncarnation = ?
-            AND processStartedAt IS ?
-            AND capabilityEpoch = ?
-            AND status = ?
-            AND writeRevoked = ?
-            AND readOnly = ?
-            AND branch IS ?
-            AND toolSessionId IS ?
-            AND controlMessageId IS ?
-            AND pauseCapture IS ?
-            AND lastEventAt = ?
-        `).run(
-          options.status,
-          sessionId,
-          expected.processIncarnation + 1,
-          startedAt,
-          recoveryAttempts,
-          startedAt,
-          options.codexDriver ?? null,
-          expected.id,
-          expected.processIncarnation,
-          expected.processStartedAt,
-          expected.capabilityEpoch,
-          expected.status,
-          expected.writeRevoked ? 1 : 0,
-          expected.readOnly ? 1 : 0,
-          expected.branch,
-          expected.toolSessionId,
-          expected.controlMessageId,
-          expected.pauseCapture,
-          expected.lastEventAt,
-        );
-        updated = changed.changes === 1 ? this.getAgentById(expected.id) : null;
-      }
-      if (updated !== null) {
-        this.database.query(`
-          UPDATE assignments SET processIncarnation = ?, updatedAt = ?
-          WHERE agentId = ? AND processIncarnation = ? AND state != 'accepted'
-        `).run(
-          expected.processIncarnation + 1,
-          startedAt,
-          expected.id,
-          expected.processIncarnation,
-        );
-      }
-      return updated;
-    });
-  }
-
-  /** Cleanup metadata on an already-terminal exact holder. Authority, status,
-   * epoch, session, and incarnation cannot be changed by this primitive. */
-  updateTerminalAgentIfCurrent(
-    expected: AgentStateCas,
-    updates: TerminalAgentCleanup,
-  ): AgentRecord | null {
-    if (!isTerminalAgentStatus(expected.status)) return null;
-    const assignments: string[] = [];
-    const values: Array<string | null> = [];
-    const set = (column: string, value: string | null): void => {
-      assignments.push(`${column} = ?`);
-      values.push(value);
-    };
-    if ("worktreePath" in updates) set("worktreePath", updates.worktreePath ?? null);
-    if ("branch" in updates) set("branch", updates.branch ?? null);
-    if ("quotaReservationId" in updates) set("quotaReservationId", updates.quotaReservationId ?? null);
-    if ("controlQuotaReservationId" in updates) {
-      set("controlQuotaReservationId", updates.controlQuotaReservationId ?? null);
-    }
-    if ("failureReason" in updates) set("failureReason", updates.failureReason ?? null);
-    if ("lastEventAt" in updates) set("lastEventAt", updates.lastEventAt ?? expected.lastEventAt);
-    if (assignments.length === 0) return this.getAgentById(expected.id);
-    const changed = this.database.query(`
-      UPDATE agents SET ${assignments.join(", ")}
-      WHERE id = ? AND processIncarnation = ? AND processStartedAt IS ?
-        AND capabilityEpoch = ? AND status = ? AND writeRevoked = ?
-        AND readOnly = ? AND branch IS ? AND toolSessionId IS ?
-        AND controlMessageId IS ? AND pauseCapture IS ?
-        AND lastEventAt = ?
-        AND status IN ('done', 'dead', 'failed')
-    `).run(
-      ...values,
-      expected.id,
-      expected.processIncarnation,
-      expected.processStartedAt,
-      expected.capabilityEpoch,
-      expected.status,
-      expected.writeRevoked ? 1 : 0,
-      expected.readOnly ? 1 : 0,
-      expected.branch,
-      expected.toolSessionId,
-      expected.controlMessageId,
-      expected.pauseCapture,
-      expected.lastEventAt,
-    );
-    return changed.changes === 1 ? this.getAgentById(expected.id) : null;
-  }
-
-  /**
-   * Every terminal transition is one fail-closed transaction: bump epoch, set
-   * writeRevoked + closedAt, revoke capability rows, deny pending approvals.
-   * Callers must not upsert a live status over a terminal row afterwards.
-   */
-  markAgentTerminal(
-    agentId: string,
-    timestamp: string,
-    status: "dead" | "failed" | "done",
-    options: { failureReason?: string; failedAt?: string } = {},
-  ): AgentRecord | null {
-    return this.transaction(() => {
-      const current = this.getAgentById(agentId);
-      if (current === null) {
-        return null;
-      }
-      if (isTerminalAgentStatus(current.status)) {
-        // Idempotent for this exact holder. In particular, do not revoke by
-        // name again: that name may now belong to a newer AgentUUID.
-        return current;
-      }
-      const failureReason = options.failureReason ?? current.failureReason;
-      const failedAt = options.failedAt ??
-        (status === "failed" ? timestamp : current.failedAt);
-      const changed = this.database.query(`
-        UPDATE agents SET
-          status = ?, writeRevoked = 1,
-          capabilityEpoch = capabilityEpoch + 1,
-          failureReason = ?, failedAt = ?, lastEventAt = ?, closedAt = ?,
-          pauseCapture = NULL, controlMessageId = NULL
-        WHERE id = ? AND status NOT IN ('done', 'dead', 'failed')
-      `).run(
-        status,
-        failureReason ?? null,
-        failedAt ?? null,
-        timestamp,
-        current.closedAt ?? timestamp,
-        current.id,
-      );
-      if (changed.changes !== 1) {
-        return this.getAgentById(agentId);
-      }
-      this.database.query(`
-        UPDATE capabilities SET revokedAt = ?
-        WHERE subject = ? AND revokedAt IS NULL
-      `).run(timestamp, current.name);
-      this.database.query(`
-        UPDATE approvals SET status = 'denied', resolvedAt = ?
-        WHERE agentName = ? AND status = 'pending'
-      `).run(timestamp, current.name);
-      return this.getAgentById(agentId);
-    });
-  }
-
-  /** Terminalize only the exact live process holder observed by an async
-   * operation. A predecessor's late failure must never close or revoke a
-   * replacement incarnation that reused the same durable agent id. */
-  markAgentTerminalIfCurrent(
-    expected: AgentStateCas,
-    timestamp: string,
-    status: "dead" | "failed" | "done",
-    options: { failureReason?: string; failedAt?: string } = {},
-  ): AgentRecord | null {
-    if (isTerminalAgentStatus(expected.status)) return null;
-    return this.transaction(() => {
-      const current = this.getAgentById(expected.id);
-      if (
-        current === null || isTerminalAgentStatus(current.status) ||
-        JSON.stringify(agentStateCas(current)) !== JSON.stringify(expected)
-      ) {
-        return null;
-      }
-      const failureReason = options.failureReason ?? current.failureReason;
-      const failedAt = options.failedAt ??
-        (status === "failed" ? timestamp : current.failedAt);
-      const changed = this.database.query(`
-        UPDATE agents SET
-          status = ?, writeRevoked = 1,
-          capabilityEpoch = capabilityEpoch + 1,
-          failureReason = ?, failedAt = ?, lastEventAt = ?, closedAt = ?,
-          pauseCapture = NULL, controlMessageId = NULL
-        WHERE id = ? AND processIncarnation = ? AND processStartedAt IS ?
-          AND capabilityEpoch = ? AND status = ? AND writeRevoked = ?
-          AND readOnly = ? AND branch IS ? AND toolSessionId IS ?
-          AND controlMessageId IS ? AND pauseCapture IS ? AND lastEventAt = ?
-          AND status NOT IN ('done', 'dead', 'failed')
-      `).run(
-        status,
-        failureReason ?? null,
-        failedAt ?? null,
-        timestamp,
-        current.closedAt ?? timestamp,
-        expected.id,
-        expected.processIncarnation,
-        expected.processStartedAt,
-        expected.capabilityEpoch,
-        expected.status,
-        expected.writeRevoked ? 1 : 0,
-        expected.readOnly ? 1 : 0,
-        expected.branch,
-        expected.toolSessionId,
-        expected.controlMessageId,
-        expected.pauseCapture,
-        expected.lastEventAt,
-      );
-      if (changed.changes !== 1) return null;
-      this.database.query(`
-        UPDATE capabilities SET revokedAt = ?
-        WHERE subject = ? AND revokedAt IS NULL
-      `).run(timestamp, current.name);
-      this.database.query(`
-        UPDATE approvals SET status = 'denied', resolvedAt = ?
-        WHERE agentName = ? AND status = 'pending'
-      `).run(timestamp, current.name);
-      return this.getAgentById(expected.id);
-    });
+    return this.upsertAgent(agent);
   }
 
   markAgentDead(
@@ -1763,8 +949,17 @@ export class HiveDatabase {
     timestamp: string,
     failureReason?: string,
   ): AgentRecord | null {
-    return this.markAgentTerminal(agentId, timestamp, "dead", {
-      failureReason,
+    return this.transaction(() => {
+      const current = this.getAgentById(agentId);
+      if (current === null) {
+        return null;
+      }
+      return this.upsertAgent({
+        ...current,
+        status: "dead",
+        failureReason: failureReason ?? current.failureReason,
+        lastEventAt: timestamp,
+      });
     });
   }
 
@@ -2203,9 +1398,8 @@ export class HiveDatabase {
   insertCapability(capability: CapabilityRow, secretHash: string): void {
     this.database.query(`
       INSERT INTO capabilities (
-        id, subject, role, epoch, secretHash, issuedAt, expiresAt, revokedAt,
-        agentId, processIncarnation
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        id, subject, role, epoch, secretHash, issuedAt, expiresAt, revokedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       capability.id,
       capability.subject,
@@ -2215,8 +1409,6 @@ export class HiveDatabase {
       capability.issuedAt,
       capability.expiresAt,
       capability.revokedAt,
-      capability.agentId ?? null,
-      capability.processIncarnation ?? null,
     );
   }
 
@@ -2278,24 +1470,6 @@ export class HiveDatabase {
       UPDATE capabilities SET revokedAt = ?
       WHERE subject = ? AND revokedAt IS NULL
     `).run(timestamp, subject).changes;
-  }
-
-  revokeCapability(id: string, timestamp: string): boolean {
-    return this.database.query(`
-      UPDATE capabilities SET revokedAt = ?
-      WHERE id = ? AND revokedAt IS NULL
-    `).run(timestamp, id).changes === 1;
-  }
-
-  revokeCapabilitiesForAgentHolder(
-    agentId: string,
-    processIncarnation: number,
-    timestamp: string,
-  ): number {
-    return this.database.query(`
-      UPDATE capabilities SET revokedAt = ?
-      WHERE agentId = ? AND processIncarnation = ? AND revokedAt IS NULL
-    `).run(timestamp, agentId, processIncarnation).changes;
   }
 
   insertAuditEntry(entry: AuditRow): void {
@@ -2400,56 +1574,6 @@ export class HiveDatabase {
       "SELECT COUNT(*) AS count FROM escalations WHERE agentId = ?",
     ).get(agentId) as { count: number };
     return row.count;
-  }
-
-  insertRouteAudit(audit: RouteAudit): RouteAudit {
-    const value = RouteAuditSchema.parse(audit);
-    this.transaction(() => {
-      this.database.query(`
-        INSERT INTO route_audits (
-          id, agentName, category, decidedAt, policyRevision, reviewOfTool,
-          attempts, selectedTool, selectedModel, selectedEffort, reservationId
-        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-      `).run(
-        value.id,
-        value.agentName,
-        value.category,
-        value.decidedAt,
-        value.policyRevision,
-        value.reviewOfTool,
-        JSON.stringify(value.attempts),
-        value.selectedTool,
-        value.selectedModel,
-        value.selectedEffort,
-        value.reservationId,
-      );
-      // Insert and cap are one durability decision: prune failure rolls the
-      // new row back instead of reopening above the promised bound.
-      this.database.query(`
-        DELETE FROM route_audits WHERE id NOT IN (
-          SELECT id FROM route_audits ORDER BY decidedAt DESC, rowid DESC LIMIT ?
-        )
-      `).run(ROUTE_AUDIT_LIMIT);
-    });
-    return value;
-  }
-
-  /** The retained route decisions, newest first; scoped to one agent when named. */
-  listRouteAudits(agentName?: string): RouteAudit[] {
-    const rows = agentName === undefined
-      ? this.database.query(
-        "SELECT * FROM route_audits ORDER BY decidedAt DESC, rowid DESC LIMIT ?",
-      ).all(ROUTE_AUDIT_LIMIT)
-      : this.database.query(
-        "SELECT * FROM route_audits WHERE agentName = ? ORDER BY decidedAt DESC, rowid DESC LIMIT ?",
-      ).all(agentName, ROUTE_AUDIT_LIMIT);
-    return rows.map((row) => {
-      const record = row as Record<string, unknown>;
-      return RouteAuditSchema.parse({
-        ...record,
-        attempts: JSON.parse(String(record.attempts ?? "[]")),
-      });
-    });
   }
 
   resolveApproval(

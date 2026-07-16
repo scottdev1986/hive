@@ -12,8 +12,6 @@ import {
 } from "../adapters/tools/claude";
 import {
   buildCodexSpawnCommand,
-  codexCompatibilityRefusal,
-  probeCodexCliVersion,
   wrapCodexSpawnWithCapabilityEnv,
   writeCodexAgentConfig,
 } from "../adapters/tools/codex";
@@ -63,19 +61,10 @@ import {
   modelCategoryFit,
   type ChainEntry,
 } from "../schemas";
-import { agentStateCas, type HiveDatabase } from "./db";
+import type { HiveDatabase } from "./db";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
-import {
-  buildCodexTuiShellCommand,
-  codexDeveloperPromptPath,
-  promptArgument,
-  readCodexDeveloperInstructions,
-  writeCodexSessionBootstrap,
-  writeCodexUserPrompt,
-  writeLaunchPrompt,
-  type CodexLaunchArtifacts,
-} from "./launch-prompt";
+import { promptArgument, writeLaunchPrompt } from "./launch-prompt";
 import { watchForProofOfLife } from "./readiness";
 import {
   parseProcessTable,
@@ -94,11 +83,6 @@ import {
   type RawLaunchCandidate,
   requireAuthorizedLaunch,
 } from "./authorized-launch";
-import {
-  assertCodexWriterContained,
-  CodexWriterContainedError,
-  type CodexDriver,
-} from "./codex-containment";
 import { agentTmuxSession } from "./tmux-sessions";
 import { resolveAutoEffort, validateEffort } from "./effort";
 import type { CapabilityDiscoveryResult } from "./capability-discovery";
@@ -228,12 +212,7 @@ type AgentStore = Pick<
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
-  | "updateAgentIfCurrent"
-  | "beginAgentProcess"
-  | "insertRouteAudit"
   | "listAgents"
-  | "markAgentTerminal"
-  | "markAgentTerminalIfCurrent"
   | "releaseAgentName"
   | "reserveAgentName"
 >;
@@ -263,33 +242,14 @@ function launchedCommandName(argv: string[]): string {
   return processCommandName(argv[0] ?? "");
 }
 
-function sameSpawnerProcess(
-  expected: AgentRecord,
-  current: AgentRecord,
-): boolean {
-  return current.id === expected.id &&
-    (current.processIncarnation ?? 0) ===
-      (expected.processIncarnation ?? 0) &&
-    (current.processStartedAt ?? null) ===
-      (expected.processStartedAt ?? null) &&
-    current.capabilityEpoch === expected.capabilityEpoch &&
-    current.writeRevoked === expected.writeRevoked &&
-    current.readOnly === expected.readOnly && current.branch === expected.branch &&
-    (current.toolSessionId ?? null) === (expected.toolSessionId ?? null);
-}
-
-/** Mints one exact holder's capability, writes its 0600 credential file, and
- * returns the token with an exact-object rollback. Absent (tests, tooling) the
- * agent is launched with no credential and its daemon calls fail closed. */
-export interface AgentCredentialGrant {
-  token: string;
-  rollback: () => void;
-}
-
+/** Mints one agent's capability, writes it to its 0600 credential file, and
+ * returns the token. Absent (tests, tooling) the agent is launched with no
+ * credential and its daemon calls fail closed rather than fail open. */
 export type CredentialIssuer = (
-  agent: AgentRecord,
+  name: string,
   role: "writer" | "reader",
-) => AgentCredentialGrant | null;
+  epoch: number,
+) => string;
 
 /**
  * The only context-window evidence the catalogs publish today: Claude's
@@ -343,8 +303,6 @@ export interface HiveSpawnerDependencies {
   /** Free `grok --version` identity probe; injectable so tests bind the
    * undocumented session contract without requiring a machine installation. */
   grokIdentity?: typeof probeGrokCliVersion;
-  /** Free `codex --version` launch-compatibility probe. Unknown fails closed. */
-  codexVersion?: () => Promise<string | null>;
   /**
    * The account's live pool readings. The release valve is derived from these —
    * from the pools the provider actually meters — rather than from a model name.
@@ -602,12 +560,6 @@ export interface AgentPromptOptions {
   graphifyTools?: boolean;
 }
 
-export interface AgentPromptParts {
-  developerInstructions: string;
-  userPrompt: string;
-  combinedPrompt: string;
-}
-
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
  * in the spawn prompt every agent demonstrably reads — not a skill.
  * Graph-first is the product decision; the concrete fallback criteria are
@@ -660,14 +612,14 @@ export const SEARCH_HYGIENE =
   "for memory, never re-run it wider: a wider pattern is a bigger allocation, " +
   "not a better search.";
 
-export function buildAgentPromptParts(
+export function buildAgentPrompt(
   name: string,
   task: string,
   worktree: CreatedWorktree,
   repoRoot: string,
   memoryIndex = "",
   options: AgentPromptOptions = {},
-): AgentPromptParts {
+): string {
   const readOnly = options.readOnly === true;
   const concise = options.category !== undefined &&
     CONCISE_CATEGORIES.includes(options.category);
@@ -691,9 +643,8 @@ export function buildAgentPromptParts(
         `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until ${ORCHESTRATOR_NAME} answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.`,
         CONTINUOUS_EXECUTION,
       ];
-  const durableBlocks = [
-    preamble[0]!,
-    ...preamble.slice(2),
+  return [
+    ...preamble,
     // Every category: the trimmed prompt drops narration, never a
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
@@ -715,34 +666,7 @@ export function buildAgentPromptParts(
     ...(options.graphifyTools === true ? [GRAPHIFY_DIRECTIVE] : []),
     ...(options.tool === "grok" ? [GROK_SAFETY_DIRECTIVE] : []),
     ...(memoryIndex === "" ? [] : [memoryIndex]),
-  ];
-  return {
-    developerInstructions: durableBlocks.join("\n\n"),
-    userPrompt: task,
-    combinedPrompt: [
-      ...preamble,
-      ...durableBlocks.slice(preamble.length - 1),
-    ].join("\n\n"),
-  };
-}
-
-/** Combined-prompt compatibility wrapper for Claude, Grok, and older callers. */
-export function buildAgentPrompt(
-  name: string,
-  task: string,
-  worktree: CreatedWorktree,
-  repoRoot: string,
-  memoryIndex = "",
-  options: AgentPromptOptions = {},
-): string {
-  return buildAgentPromptParts(
-    name,
-    task,
-    worktree,
-    repoRoot,
-    memoryIndex,
-    options,
-  ).combinedPrompt;
+  ].join("\n\n");
 }
 
 /** The worktree's own `.mcp.json`, written by `writeClaudeAgentConfig`. Naming
@@ -790,31 +714,6 @@ export class HiveSpawner implements Spawner {
     return port;
   }
 
-  /** The driver a Codex launch will actually use, resolved once so the gate
-   * that admits a writer and the launch that runs it cannot disagree. Null for
-   * every other tool.
-   *
-   * A WRITER engages the app-server whenever it is available, regardless of
-   * config: app-server is the only surface a Codex writer is admissible on
-   * (every mutation brokered, pane input bridged), so resolving TUI would
-   * just be resolving a containment refusal. Readers keep the explicit
-   * config opt-in — the TUI is their native, fully interactive surface. */
-  private async resolveCodexDriver(
-    tool: CapabilityProvider,
-    readOnly: boolean,
-  ): Promise<CodexDriver | null> {
-    if (tool !== "codex") return null;
-    if (!readOnly) {
-      return (await this.dependencies.codexAppServer?.isAvailable() ?? false)
-        ? "app-server"
-        : "tui";
-    }
-    // Readers on the default config never probe: the TUI is their surface.
-    const appServer = this.dependencies.config.codex?.driver === "app-server" &&
-      (await this.dependencies.codexAppServer?.isAvailable() ?? false);
-    return appServer ? "app-server" : "tui";
-  }
-
   /** Servers a Codex spawn would inherit from the user's global config. Read
    * once per spawn, never written. A read failure means "inherit nothing to
    * exclude" — the agent keeps today's surface rather than failing to launch. */
@@ -853,15 +752,7 @@ export class HiveSpawner implements Spawner {
     const cached = this.capabilityCache.get(provider);
     const now = Date.now();
     if (cached !== undefined && now - cached.at < 60_000) return cached.result;
-    let result: CapabilityDiscoveryResult;
-    try {
-      result = await discover(provider);
-    } catch (error) {
-      result = {
-        status: "unavailable",
-        reason: error instanceof Error ? error.message : String(error),
-      };
-    }
+    const result = await discover(provider);
     this.capabilityCache.set(provider, { at: now, result });
     if (result.status === "ok") {
       this.dependencies.quota?.replaceCapabilityCatalog?.(
@@ -899,24 +790,12 @@ export class HiveSpawner implements Spawner {
     identity: ExecutionIdentity,
   ): Promise<AuthorizedLaunch> {
     let record: CapabilityRecord | undefined;
-    let codexVersion: Promise<string | null> | undefined;
     const result = await AuthorizedLaunch.gate(identity, {
-      compatibility: async (candidate) => {
-        if (candidate.tool !== "codex") return null;
-        codexVersion ??= (
-          this.dependencies.codexVersion?.() ?? probeCodexCliVersion()
-        ).catch(() => null);
-        return codexCompatibilityRefusal(await codexVersion);
-      },
       resolution: async (candidate) => {
         if (this.dependencies.discoverCapabilities === undefined) return null;
         const discovery = await this.discoverOnce(candidate.tool);
         if (discovery === undefined || discovery.status !== "ok") {
-          // Carry the probe's own reason (see authorizeCandidate.resolution).
-          return `${candidate.tool}'s model catalog is unreadable` +
-            (discovery?.status === "unavailable"
-              ? ` — ${discovery.reason}`
-              : "");
+          return `${candidate.tool}'s model catalog is unreadable`;
         }
         record = discovery.records.find((entry) =>
           entry.launchToken === candidate.model ||
@@ -1016,25 +895,6 @@ export class HiveSpawner implements Spawner {
         `Cannot restart ${agent.name} for critical control: quota accounting is unavailable; capability remains revoked`,
       );
     }
-    let codexDeveloperInstructions: string | undefined;
-    let codexDeveloperPath: string | undefined;
-    if (identity.tool === "codex") {
-      codexDeveloperPath = codexDeveloperPromptPath(agent.tmuxSession);
-      try {
-        codexDeveloperInstructions = await readCodexDeveloperInstructions(
-          codexDeveloperPath,
-        );
-      } catch {
-        await this.failClosedControlRestart(
-          agent,
-          message,
-          "the Codex developer-instruction artifact is missing or invalid",
-        );
-        throw new Error(
-          `Cannot restart ${agent.name} for critical control: the Codex developer-instruction artifact is missing or invalid; capability remains revoked`,
-        );
-      }
-    }
     let authorized = await this.authorizeLaunch(identity);
 
     let reservationId: string;
@@ -1044,12 +904,6 @@ export class HiveSpawner implements Spawner {
         category: agent.category,
         tool: identity.tool,
         model: identity.model,
-        // Reserve against the *complete* identity. Dropping effort charged the
-        // control run to (model, null) — a different route than the one that
-        // actually launched — so quota and route health tracked a run that
-        // never existed. The immutable identity always carries effort here
-        // (the guard above rejects a Codex/Grok row that lacks it).
-        effort: identity.effort,
         controlMessageId: message.id,
       });
       reservationId = reservation.id;
@@ -1078,30 +932,20 @@ export class HiveSpawner implements Spawner {
     // The restarted process is read-only, so it re-mints as a reader at the
     // freshly advanced epoch: the critical control that paused it has already
     // revoked its write and landing rights, and its old token is now stale.
-    let credentialGrant: AgentCredentialGrant | null = null;
-    let capabilityToken: string | undefined;
+    const capabilityToken = this.dependencies.issueCredential?.(
+      agent.name,
+      "reader",
+      prepared.record.capabilityEpoch,
+    );
+    // The replacement process only has to read the control message and
+    // acknowledge it through Hive's own server; the human's servers would be
+    // pure context cost on a process that must not act.
+    const excludeMcpServers = identity.tool === "codex"
+      ? await this.inheritedCodexMcpServers()
+      // Claude is scoped by --strict-mcp-config. Grok disables all inherited
+      // Claude/Cursor MCP imports through its ten process environment switches.
+      : [];
     try {
-      credentialGrant = this.dependencies.issueCredential?.(
-        prepared.record,
-        "reader",
-      ) ?? null;
-      if (
-        this.dependencies.issueCredential !== undefined &&
-        credentialGrant === null
-      ) {
-        throw new Error(
-          `Cannot restart ${agent.name}: exact holder changed before credential issuance`,
-        );
-      }
-      capabilityToken = credentialGrant?.token;
-      // The replacement process only has to read the control message and
-      // acknowledge it through Hive's own server; the human's servers would be
-      // pure context cost on a process that must not act.
-      const excludeMcpServers = identity.tool === "codex"
-        ? await this.inheritedCodexMcpServers()
-        // Claude is scoped by --strict-mcp-config. Grok disables all inherited
-        // Claude/Cursor MCP imports through its ten process environment switches.
-        : [];
       await provisionSkills(agent.worktreePath, identity.tool);
       // Aliased so the default clause still has the vendor to name: switching
       // on `identity.tool` narrows `identity` itself to `never` there.
@@ -1130,29 +974,16 @@ export class HiveSpawner implements Spawner {
           break;
         }
         case "codex": {
-          const driver = await this.resolveCodexDriver(identity.tool, readOnly);
-          // The driver is a per-incarnation launch fact: the restart row must
-          // record what THIS process launches with — the config (and so the
-          // resolved driver) may differ from the prior incarnation's.
-          const driven = this.dependencies.db.updateAgentIfCurrent(
-            agentStateCas(prepared.record),
-            { codexDriver: driver ?? "tui" },
-          );
-          if (driven === null) {
-            throw new Error(
-              `Cannot restart ${agent.name}: exact holder changed while recording the launch driver`,
-            );
-          }
-          prepared = { record: driven };
-          const useAppServer = driver === "app-server";
           await writeCodexAgentConfig(agent.worktreePath, {
             daemonPort: this.daemonPort(),
             name: agent.name,
             readOnly,
-            driver: driver ?? "tui",
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
+          const useAppServer =
+            this.dependencies.config.codex?.driver === "app-server" &&
+            (await this.dependencies.codexAppServer?.isAvailable() ?? false);
           if (useAppServer) {
             argv = this.dependencies.codexAppServer!.buildHostCommand(
               prepared.record,
@@ -1202,30 +1033,19 @@ export class HiveSpawner implements Spawner {
       const nativeCodex = identity.tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
-      const codexArtifacts: CodexLaunchArtifacts | undefined =
-        identity.tool === "codex"
-          ? {
-              developerPath: codexDeveloperPath!,
-              userPath: await writeCodexUserPrompt(
-                agent.tmuxSession,
-                controlPrompt,
-              ),
-            }
-          : undefined;
       // The control order enters through the launch shell, never an argv: it
       // carries the agent's whole prior assignment and is bounded by nothing.
-      const promptSuffix = identity.tool === "codex"
-        ? ""
-        : ` ${
-          promptArgument(await writeLaunchPrompt(agent.tmuxSession, controlPrompt))
-        }`;
+      const promptSuffix = ` ${
+        promptArgument(await writeLaunchPrompt(agent.tmuxSession, controlPrompt))
+      }`;
       // The token value enters through the launch shell, never an argv.
       const restartWorktreePath = agent.worktreePath;
       const withCapabilityEnv = (command: string): string => {
         if (identity.tool === "grok") {
           return wrapGrokSpawnWithCompatibilityEnv(command);
         }
-        return identity.tool === "codex" && capabilityToken !== undefined
+        return identity.tool === "codex" && !nativeCodex &&
+            capabilityToken !== undefined
           ? wrapCodexSpawnWithCapabilityEnv(command, restartWorktreePath)
           : command;
       };
@@ -1239,13 +1059,7 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
-        withCapabilityEnv(
-          nativeCodex
-            ? shellJoin(argv)
-            : codexArtifacts === undefined
-            ? shellJoin(argv) + promptSuffix
-            : buildCodexTuiShellCommand(argv, codexArtifacts),
-        ),
+        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
       );
       if (nativeCodex) {
         try {
@@ -1254,10 +1068,8 @@ export class HiveSpawner implements Spawner {
           this.dependencies.quota.requireActiveReservation(reservationId);
           await this.dependencies.codexAppServer!.startAgent(
             prepared.record,
-            {
-              developerInstructions: codexDeveloperInstructions!,
-              initialUserPrompt: controlPrompt,
-            },
+            controlPrompt,
+            readOnly,
             identity.tool === "codex"
               ? identity.effort
               : (() => { throw new Error("Codex app-server requires Codex identity"); })(),
@@ -1273,55 +1085,6 @@ export class HiveSpawner implements Spawner {
             prepared.record,
             `Codex app-server fallback for ${agent.name}`,
           );
-          const stopped = this.dependencies.db.getAgentById(
-            prepared.record.id,
-          );
-          if (
-            stopped === null || !sameSpawnerProcess(prepared.record, stopped)
-          ) {
-            throw new Error(
-              `Codex fallback refused for ${agent.name}: control process incarnation changed`,
-            );
-          }
-          const fallbackRecord = this.dependencies.db.beginAgentProcess(
-            agentStateCas(stopped),
-            new Date().toISOString(),
-            null,
-            stopped.recoveryAttempts,
-            // The replacement process is the TUI; the row must say so or
-            // maintenance skips its rollout observation forever.
-            { status: "control-paused", codexDriver: "tui" },
-          );
-          if (fallbackRecord === null) {
-            throw new Error(
-              `Codex fallback refused for ${agent.name}: could not allocate a replacement process incarnation`,
-            );
-          }
-          prepared = { record: fallbackRecord };
-          credentialGrant?.rollback();
-          credentialGrant = null;
-          credentialGrant = this.dependencies.issueCredential?.(
-            fallbackRecord,
-            "reader",
-          ) ?? null;
-          if (
-            this.dependencies.issueCredential !== undefined &&
-            credentialGrant === null
-          ) {
-            throw new Error(
-              `Codex fallback refused for ${agent.name}: replacement credential issuance lost its exact holder`,
-            );
-          }
-          capabilityToken = credentialGrant?.token;
-          await writeCodexAgentConfig(agent.worktreePath, {
-            daemonPort: this.daemonPort(),
-            name: agent.name,
-            readOnly,
-            // This is the fallback to the TUI, which cannot host a writer.
-            driver: "tui",
-            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-            ...(capabilityToken === undefined ? {} : { capabilityToken }),
-          });
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
             effort: identity.tool === "codex"
@@ -1335,10 +1098,7 @@ export class HiveSpawner implements Spawner {
             withCapabilityToken: capabilityToken !== undefined,
           });
           launchedCommand = launchedCommandName(fallback);
-          const fallbackCommand = buildCodexTuiShellCommand(
-            fallback,
-            codexArtifacts!,
-          );
+          const fallbackCommand = shellJoin(fallback) + promptSuffix;
           const fallbackShell = capabilityToken !== undefined
             ? wrapCodexSpawnWithCapabilityEnv(
               fallbackCommand,
@@ -1362,16 +1122,12 @@ export class HiveSpawner implements Spawner {
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
     } catch (error) {
-      credentialGrant?.rollback();
       const reason = error instanceof Error
         ? error.message
         : "control acknowledgement process failed to launch";
       const current = this.dependencies.db.getAgentById(prepared.record.id) ??
         prepared.record;
-      if (
-        current.status !== "stuck" &&
-        sameSpawnerProcess(prepared.record, current)
-      ) {
+      if (current.status !== "stuck") {
         await this.stopVerifiedSession(
           current,
           `Critical control ${message.id} restart failed`,
@@ -1400,7 +1156,8 @@ export class HiveSpawner implements Spawner {
         );
         throw new Error(stuck.failureReason!, { cause: cancelError });
       }
-      this.dependencies.db.updateAgentIfCurrent(agentStateCas(stopped), {
+      this.dependencies.db.insertAgent({
+        ...stopped,
         status: "control-paused",
         writeRevoked: true,
         failureReason: `Critical control ${message.id} restart failed: ${reason}`,
@@ -1422,36 +1179,16 @@ export class HiveSpawner implements Spawner {
     failureReason?: string,
   ): Promise<{ record: AgentRecord }> {
     const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
-    const preparedAt = new Date().toISOString();
-    const prepared = this.dependencies.db.updateAgentIfCurrent(
-      agentStateCas(current),
-      {
+    const record = this.dependencies.db.insertAgent({
+      ...current,
       status: "control-paused",
       readOnly: true,
       writeRevoked: true,
       controlMessageId: message.id,
       controlQuotaReservationId: reservationId,
       failureReason,
-        lastEventAt: preparedAt,
-      },
-    );
-    if (prepared === null) {
-      throw new Error(
-        `Cannot prepare control restart for ${agent.name}: session/incarnation/authority changed`,
-      );
-    }
-    const record = this.dependencies.db.beginAgentProcess(
-      agentStateCas(prepared),
-      preparedAt,
-      null,
-      prepared.recoveryAttempts,
-      { status: "control-paused" },
-    );
-    if (record === null) {
-      throw new Error(
-        `Cannot allocate control process incarnation for ${agent.name}: state changed`,
-      );
-    }
+      lastEventAt: new Date().toISOString(),
+    });
     return { record };
   }
 
@@ -1460,16 +1197,12 @@ export class HiveSpawner implements Spawner {
     message: AgentMessage,
     reason: string,
   ): Promise<void> {
-    const current = this.dependencies.db.getAgentById(agent.id) ?? agent;
-    this.dependencies.db.updateAgentIfCurrent(agentStateCas(current), {
-      status: "control-paused",
-      readOnly: true,
-      writeRevoked: true,
-      controlMessageId: message.id,
-      controlQuotaReservationId: undefined,
-      failureReason: `Critical control ${message.id} is pending: ${reason}`,
-      lastEventAt: new Date().toISOString(),
-    });
+    await this.prepareControlRestart(
+      agent,
+      message,
+      undefined,
+      `Critical control ${message.id} is pending: ${reason}`,
+    );
   }
 
   private async monitorControlReadiness(
@@ -1660,82 +1393,11 @@ export class HiveSpawner implements Spawner {
     name: string,
   ): Promise<AgentRecord> {
     const readOnly = request.readOnly ?? false;
-    type AuditFields = {
-      attempts: string[];
-      selectedTool: string | null;
-      selectedModel: string | null;
-      selectedEffort: string | null;
-      reservationId: string | null;
-      category?: string;
-      policyRevision?: number;
-    };
-    let routeAuditFields: AuditFields = {
-      attempts: [],
-      selectedTool: null,
-      selectedModel: null,
-      selectedEffort: null,
-      reservationId: null,
-    };
-    let routeAuditFinalized = false;
-    let loadedPolicyRevision: number | undefined;
-    const accumulateRouteAudit = (fields: AuditFields): void => {
-      routeAuditFields = fields;
-    };
-    const finalizeRouteAudit = (fields?: AuditFields): void => {
-      if (fields !== undefined) accumulateRouteAudit(fields);
-      if (routeAuditFinalized) return;
-      routeAuditFinalized = true;
-
-      let policyRevision = routeAuditFields.policyRevision ?? loadedPolicyRevision;
-      if (policyRevision === undefined) {
-        try {
-          policyRevision = this.dependencies.readRoutingPolicy?.().revision ?? 0;
-        } catch (error) {
-          policyRevision = 0;
-          routeAuditFields = {
-            ...routeAuditFields,
-            attempts: [
-              ...routeAuditFields.attempts,
-              `audit metadata: policy revision unavailable — ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            ],
-          };
-        }
-      }
-      try {
-        this.dependencies.db.insertRouteAudit({
-          id: crypto.randomUUID(),
-          agentName: name,
-          category: routeAuditFields.category ?? request.category,
-          decidedAt: new Date().toISOString(),
-          policyRevision,
-          reviewOfTool: request.reviewOfTool ?? null,
-          attempts: routeAuditFields.attempts,
-          selectedTool: routeAuditFields.selectedTool,
-          selectedModel: routeAuditFields.selectedModel,
-          selectedEffort: routeAuditFields.selectedEffort,
-          reservationId: routeAuditFields.reservationId,
-        });
-      } catch (error) {
-        console.error(
-          `Hive could not persist the route audit for ${name}: ${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      }
-    };
-    const refuseRoute = (error: Error): never => {
-      finalizeRouteAudit({
-        ...routeAuditFields,
-        attempts: [...routeAuditFields.attempts, `refused: ${error.message}`],
-        selectedTool: null,
-        selectedModel: null,
-        selectedEffort: null,
-        reservationId: null,
-      });
-      throw error;
-    };
+    if (readOnly && this.dependencies.issueCredential === undefined) {
+      throw new Error(
+        `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
+      );
+    }
     // What governs this spawn: the user's routing policy — the ordered
     // fallback chain the user authored for this task category — and nothing
     // else. No tier ladder, no preferred-vendor table, no vendor default to
@@ -1747,40 +1409,14 @@ export class HiveSpawner implements Spawner {
     // never answered as "you have no policy" (unknown-read-as-permission).
     const readPolicy = (): RoutingPolicy => {
       if (this.dependencies.readRoutingPolicy === undefined) {
-        return refuseRoute(new Error(
+        throw new Error(
           `Cannot spawn ${name}: no routing policy source is configured`,
-        ));
-      }
-      let policy: RoutingPolicy;
-      try {
-        policy = this.dependencies.readRoutingPolicy();
-      } catch (error) {
-        return refuseRoute(
-          error instanceof Error ? error : new Error(String(error)),
         );
       }
-      loadedPolicyRevision = policy.revision;
-      return policy;
+      return this.dependencies.readRoutingPolicy();
     };
-    let tool!: CapabilityProvider;
+    let tool: CapabilityProvider;
     let explicitModel: string | undefined = request.model;
-    let executionIdentity: ExecutionIdentity | undefined;
-    let quotaReservationId: string | undefined;
-    let effort: string | undefined;
-    let authorized!: AuthorizedLaunch;
-    let pendingSuccessAudit: AuditFields | null = null;
-    // Null for every non-Codex tool; for Codex it is the driver the containment
-    // gate admitted, and the driver the launch below must therefore use.
-    let codexDriver: CodexDriver | null = null;
-
-    // Begin before the first route dependency. Once a decision is finalized,
-    // the catch at the method boundary becomes a pure rethrow for launch errors.
-    try {
-    if (readOnly && this.dependencies.issueCredential === undefined) {
-      refuseRoute(new Error(
-        `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
-      ));
-    }
     if (request.model !== undefined) {
       // An explicit model is bound to its vendor before anything launches.
       // The vendor is read from the DISCOVERED CATALOG — the vendor's own
@@ -1791,12 +1427,12 @@ export class HiveSpawner implements Spawner {
         await forEachProvider((provider) => this.discoverOnce(provider)),
       );
       if (identified.state === "unclaimed") {
-        refuseRoute(new Error(
+        throw new Error(
           `Cannot spawn ${name}: no vendor's catalog lists model ` +
             `${JSON.stringify(request.model)}. Every vendor Hive knows was asked ` +
             "and none of them can run it, so there is no tool to launch it on. " +
             "Name a model one of them publishes.",
-        ));
+        );
       }
       // Unreadable is not permission, and with no routed tool left to fall
       // back on it is not a route either: an explicit model whose vendor
@@ -1806,11 +1442,11 @@ export class HiveSpawner implements Spawner {
         : modelVendor(request.model);
       if (vendor !== null) {
         if (request.tool !== undefined && request.tool !== vendor) {
-          refuseRoute(new Error(
+          throw new Error(
             `Cannot spawn ${name}: model ${JSON.stringify(request.model)} is a ${vendor} model, ` +
               `but tool=${JSON.stringify(request.tool)} was explicitly requested. ` +
               `Drop the tool to run it on ${vendor}, or name a ${request.tool} model.`,
-          ));
+          );
         }
         tool = vendor;
       } else if (request.tool !== undefined) {
@@ -1821,17 +1457,20 @@ export class HiveSpawner implements Spawner {
         );
         tool = request.tool;
       } else {
-        refuseRoute(new Error(
+        throw new Error(
           `Cannot spawn ${name}: no vendor's catalog could be read to identify ` +
             `${JSON.stringify(request.model)}, and no tool= was given. Pass the ` +
             "vendor explicitly to launch it.",
-        ));
+        );
       }
     } else {
       // Routed spawns get their tool from the chain walk below; this value is
       // never read before the walk assigns the authorized launch.
       tool = request.tool ?? "claude";
     }
+    let executionIdentity: ExecutionIdentity | undefined;
+    let quotaReservationId: string | undefined;
+    let effort: string | undefined;
     /**
      * Per-link effort, three-valued like the store: an exact level rides the
      * candidate into the gate for validation; "none" and provider-controlled
@@ -1879,33 +1518,17 @@ export class HiveSpawner implements Spawner {
       }
       return undefined;
     };
-    // One initial routing decision can contain several Codex links. They all
-    // share one free version observation; adapter revalidation probes afresh.
-    let codexVersion: Promise<string | null> | undefined;
     const authorizeCandidate = async (
       raw: RawLaunchCandidate,
     ): Promise<LaunchGateResult> => {
       let record: CapabilityRecord | undefined;
       const checks: LaunchGateChecks = {
-        compatibility: async (candidate) => {
-          if (candidate.tool !== "codex") return null;
-          codexVersion ??= (
-            this.dependencies.codexVersion?.() ?? probeCodexCliVersion()
-          ).catch(() => null);
-          return codexCompatibilityRefusal(await codexVersion);
-        },
         resolution: async (candidate) => {
           if (candidate.model.trim().length === 0) return "model is empty";
           if (this.dependencies.discoverCapabilities === undefined) return null;
           const discovery = await this.discoverOnce(candidate.tool);
           if (discovery === undefined || discovery.status !== "ok") {
-            // Carry the probe's own reason: "unreadable" alone turned every
-            // distinct failure (CLI missing, stale cache, no live signal)
-            // into the same unactionable mystery in the route audit.
-            return `${candidate.tool}'s model catalog is unreadable` +
-              (discovery?.status === "unavailable"
-                ? ` — ${discovery.reason}`
-                : "");
+            return `${candidate.tool}'s model catalog is unreadable`;
           }
           record = discovery.records.find((entry) =>
             entry.launchToken === candidate.model ||
@@ -2021,102 +1644,35 @@ export class HiveSpawner implements Spawner {
       }
       return result.authorized;
     };
-    // Success audits are deferred until after Codex writer containment so a
-    // later refusal is not recorded as selected/success.
+    let authorized: AuthorizedLaunch;
     if (explicitModel !== undefined) {
-      // A user-named model is the only candidate and is never substituted.
-      // Every explicit decision records exactly one prompt-free route audit —
-      // gate refusal, same-provider exclusion, and success alike.
+      // A user-named model is the only candidate and is never substituted:
+      // it passes the same gates as any link (a pin is a route, not a
+      // consent), and unsafe quota fails the spawn with the capacity report
+      // instead of sliding to a different model.
       const raw: RawLaunchCandidate = {
         tool,
         model: explicitModel,
         ...(request.effort === undefined ? {} : { effort: request.effort }),
       };
-      const result = await authorizeCandidate(raw);
-      if (result.refusal !== undefined) {
-        finalizeRouteAudit({
-          attempts: [
-            `explicit: refused ${raw.tool}/${raw.model} — ${result.refusal.reason}: ${result.refusal.detail}`,
-          ],
-          selectedTool: null,
-          selectedModel: null,
-          selectedEffort: null,
-          reservationId: null,
-        });
-        throw new Error(
-          `Cannot spawn ${name}: ${result.refusal.reason} refused ` +
-            `${raw.tool}/${raw.model}: ${result.refusal.detail}`,
-        );
-      }
-      const gated = result.authorized;
-      if (
-        request.reviewOfTool !== undefined &&
-        request.category === "code_review" &&
-        gated.tool === request.reviewOfTool
-      ) {
-        finalizeRouteAudit({
-          attempts: [
-            `explicit: eligible ${gated.tool}/${gated.model}`,
-            `explicit: excluded same-provider for reviewOfTool=${request.reviewOfTool}`,
-            `explicit: refused — no independent route`,
-          ],
-          selectedTool: null,
-          selectedModel: null,
-          selectedEffort: null,
-          reservationId: null,
-        });
-        throw new Error(
-          `Cannot spawn ${name}: independent review of ${request.reviewOfTool} ` +
-            `refuses same-provider candidate ${gated.tool}/${gated.model}`,
-        );
-      }
+      const gated = await requireGate(raw);
       if (this.dependencies.quota?.config.enabled === true) {
-        try {
-          const decision = await this.dependencies.quota.routeAndReserve({
-            agentName: name,
-            category: request.category,
-            selection: "strict",
-            explicitTool: tool,
-            explicitCandidate: true,
-            ...(request.reviewOfTool === undefined
-              ? {}
-              : { reviewOfTool: request.reviewOfTool }),
-            candidates: [gated],
-          });
-          authorized = decision.authorized;
-          quotaReservationId = decision.reservation.id;
-        } catch (error) {
-          finalizeRouteAudit({
-            attempts: [
-              `explicit: eligible ${gated.tool}/${gated.model}`,
-              `explicit: quota refused — ${
-                error instanceof Error ? error.message : String(error)
-              }`,
-            ],
-            selectedTool: null,
-            selectedModel: null,
-            selectedEffort: null,
-            reservationId: null,
-          });
-          throw error;
-        }
+        const decision = await this.dependencies.quota.routeAndReserve({
+          agentName: name,
+          category: request.category,
+          selection: "strict",
+          explicitTool: tool,
+          explicitCandidate: true,
+          ...(request.reviewOfTool === undefined
+            ? {}
+            : { reviewOfTool: request.reviewOfTool }),
+          candidates: [gated],
+        });
+        authorized = decision.authorized;
+        quotaReservationId = decision.reservation.id;
       } else {
         authorized = gated;
       }
-      pendingSuccessAudit = {
-        attempts: [
-          `explicit: eligible ${authorized.tool}/${authorized.model}`,
-          `explicit: selected ${authorized.tool}/${authorized.model}`,
-          ...(request.reviewOfTool !== undefined &&
-            request.category === "code_review"
-            ? [`independence: reviewOfTool=${request.reviewOfTool}`]
-            : []),
-        ],
-        selectedTool: authorized.tool,
-        selectedModel: authorized.model,
-        selectedEffort: authorized.effort ?? null,
-        reservationId: quotaReservationId ?? null,
-      };
     } else {
       // THE CHAIN SELECTION. The category's chain names the CAPABLE models,
       // best first; it is not a strict always-try-#1 ladder, because a strict
@@ -2132,15 +1688,6 @@ export class HiveSpawner implements Spawner {
       const category = request.category;
       const selection = selectionModeFor(policy, category);
       if (selection === "never-configured") {
-        finalizeRouteAudit({
-          category,
-          policyRevision: policy.revision,
-          attempts: [`refused: preference for ${category} is never-configured`],
-          selectedTool: null,
-          selectedModel: null,
-          selectedEffort: null,
-          reservationId: null,
-        });
         throw new Error(
           `Cannot spawn ${name}: preference for ${category} is never-configured. ` +
             "Choose Hive decides or an exact chain in the Model Control Center.",
@@ -2154,15 +1701,6 @@ export class HiveSpawner implements Spawner {
       ): Promise<AuthorizedLaunch[]> => {
         const eligible: AuthorizedLaunch[] = [];
         for (const entry of entries) {
-          // Persist progress before the next dependency can throw. The outer
-          // exactly-once finalizer then retains earlier link results instead of
-          // replacing the whole chain with only the later exception.
-          accumulateRouteAudit({
-            ...routeAuditFields,
-            attempts: [...attempts],
-            category,
-            policyRevision: policy.revision,
-          });
           const key = `${entry.provider}\0${entry.model}`;
           if (tried.has(key)) continue;
           tried.add(key);
@@ -2189,7 +1727,6 @@ export class HiveSpawner implements Spawner {
             attempts.push(`${label} — ${gate.refusal.reason}: ${gate.refusal.detail}`);
             continue;
           }
-          attempts.push(`${label} — eligible`);
           eligible.push(gate.authorized);
         }
         return eligible;
@@ -2198,34 +1735,11 @@ export class HiveSpawner implements Spawner {
         eligible: AuthorizedLaunch[],
         quotaSelection = selection === "auto" ? "spread" as const : "strict" as const,
       ): Promise<{ authorized: AuthorizedLaunch; reservationId?: string } | null> => {
-        // Same-provider code-review exclusion is an authorization rule, not a
-        // quota rule: enforce it even when QuotaService is absent/disabled.
-        let candidates = eligible;
-        if (
-          request.reviewOfTool !== undefined &&
-          request.category === "code_review"
-        ) {
-          const excluded = candidates.filter((c) => c.tool === request.reviewOfTool);
-          candidates = candidates.filter((c) => c.tool !== request.reviewOfTool);
-          for (const c of excluded) {
-            attempts.push(
-              `independence: excluded ${c.tool}/${c.model} (same-provider reviewOfTool=${request.reviewOfTool})`,
-            );
-          }
-          if (candidates.length === 0 && excluded.length > 0) {
-            attempts.push(
-              `independence: refused — no independent route remains for review of ${request.reviewOfTool}`,
-            );
-            return null;
-          }
-        }
-        if (candidates.length === 0) return null;
+        if (eligible.length === 0) return null;
         if (this.dependencies.quota?.config.enabled !== true) {
           // Without quota there is no headroom to spread by; rank order is
           // the only honest signal left, for either mode.
-          const pick = candidates[0]!;
-          attempts.push(`selected ${pick.tool}/${pick.model} (quota disabled/absent)`);
-          return { authorized: pick };
+          return { authorized: eligible[0]! };
         }
         try {
           const decision = await this.dependencies.quota.routeAndReserve({
@@ -2236,18 +1750,15 @@ export class HiveSpawner implements Spawner {
             ...(request.reviewOfTool === undefined
               ? {}
               : { reviewOfTool: request.reviewOfTool }),
-            candidates,
+            candidates: eligible,
           });
-          attempts.push(
-            `selected ${decision.authorized.tool}/${decision.authorized.model} (quota)`,
-          );
           return {
             authorized: decision.authorized,
             reservationId: decision.reservation.id,
           };
         } catch (error) {
           attempts.push(
-            `quota: refused — ${error instanceof Error ? error.message : String(error)}`,
+            `quota: ${error instanceof Error ? error.message : String(error)}`,
           );
           return null;
         }
@@ -2267,17 +1778,6 @@ export class HiveSpawner implements Spawner {
         ? policy.chains.default ?? []
         : [];
       if (categoryChain.length === 0 && defaultChain.length === 0) {
-        finalizeRouteAudit({
-          category,
-          policyRevision: policy.revision,
-          attempts: [
-            `refused: category ${category} has no chain and global default is empty`,
-          ],
-          selectedTool: null,
-          selectedModel: null,
-          selectedEffort: null,
-          reservationId: null,
-        });
         throw new Error(
           `Cannot spawn ${name}: category ${category} has no chain and the ` +
             "global default chain is empty. Configure a chain in the Model " +
@@ -2294,21 +1794,7 @@ export class HiveSpawner implements Spawner {
       let chosen = await selectFrom(await gateChain(categoryChain, category));
       chosen ??= await selectFrom(await gateChain(defaultChain, "default"));
       chosen ??= await selectFrom(await gateChain(fallbackChain, "fallback"), "spread");
-      // Persist a bounded, structured route audit so this decision can be
-      // explained later: the policy revision, the per-link gate chain (including
-      // any reviewOfTool independence exclusion, captured in `attempts`), the
-      // selection, and the reservation — no prompt or account data. Written for
-      // both a selection and a total refusal.
       if (chosen === null) {
-        finalizeRouteAudit({
-          attempts: [...attempts, "refused: total chain exhaustion"],
-          selectedTool: null,
-          selectedModel: null,
-          selectedEffort: null,
-          reservationId: null,
-          category,
-          policyRevision: policy.revision,
-        });
         throw new Error(
           `Cannot spawn ${name}: every link of the ${category} chain` +
             `${defaultChain.length > 0 ? " and the global default chain" : ""} ` +
@@ -2319,51 +1805,8 @@ export class HiveSpawner implements Spawner {
       }
       authorized = chosen.authorized;
       quotaReservationId = chosen.reservationId;
-      pendingSuccessAudit = {
-        attempts: [...attempts],
-        selectedTool: authorized.tool,
-        selectedModel: authorized.model,
-        selectedEffort: authorized.effort ?? null,
-        reservationId: quotaReservationId ?? null,
-        category,
-        policyRevision: policy.revision,
-      };
     }
     tool = authorized.tool;
-    // Codex writer admission is a question about the driver, so resolve the
-    // driver here and refuse before any worktree or launch. The same resolution
-    // decides the launch below, and `isAvailable()` is cached, so the driver
-    // this gate admitted is the driver that actually runs.
-    codexDriver = await this.resolveCodexDriver(tool, readOnly);
-    // Audit only after this gate so containment is never recorded as success.
-    try {
-      assertCodexWriterContained(tool, readOnly, codexDriver);
-    } catch (error) {
-      // The containment text alone reads as policy; a writer only lands here
-      // when the admissible driver did not ENGAGE, and that reason must be
-      // visible or a broken probe masquerades as a design decision.
-      const engage = this.dependencies.codexAppServer === undefined
-        ? "no Codex app-server manager is configured in this daemon"
-        : "the `codex app-server --help` availability probe failed " +
-          "(codex missing or broken on the daemon's PATH)";
-      const message = `${
-        error instanceof Error ? error.message : String(error)
-      }\nWhy the app-server driver did not engage: ${engage}`;
-      finalizeRouteAudit({
-        attempts: [
-          ...(pendingSuccessAudit?.attempts ?? []),
-          `containment: refused ${tool} writer — ${message}`,
-        ],
-        selectedTool: null,
-        selectedModel: null,
-        selectedEffort: null,
-        reservationId: null,
-      });
-      throw new Error(message);
-    }
-    if (pendingSuccessAudit !== null) {
-      finalizeRouteAudit(pendingSuccessAudit);
-    }
     const model: string = authorized.model;
     effort = authorized.effort;
     if (model !== "default") {
@@ -2451,7 +1894,7 @@ export class HiveSpawner implements Spawner {
           },
         ),
     ]);
-    const promptParts = buildAgentPromptParts(
+    const prompt = buildAgentPrompt(
       name,
       request.task,
       worktree,
@@ -2466,7 +1909,6 @@ export class HiveSpawner implements Spawner {
         ...(graphifyUrl === null ? {} : { graphifyTools: true }),
       },
     );
-    const prompt = promptParts.combinedPrompt;
     const timestamp = new Date().toISOString();
     // Grok's session id is named by Hive, not discovered afterwards. Claude and
     // Codex report theirs on hook traffic; Grok has no lifecycle hooks, so
@@ -2477,17 +1919,12 @@ export class HiveSpawner implements Spawner {
     // the first moment. This is the same defect that already bit the liveModel
     // reader, fixed there the same way.
     const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
-    let record = this.dependencies.db.insertAgent({
+    const record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
       // its row — erasing the very closure record that lets history tell the
       // two agents apart.
       id: crypto.randomUUID(),
       ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
-      // Frozen launch fact: telemetry/identity maintenance dispatches on the
-      // driver, never on readOnly (permission is not driver).
-      ...(codexDriver === null ? {} : { codexDriver }),
-      processIncarnation: 1,
-      processStartedAt: timestamp,
       name,
       tool,
       model,
@@ -2524,22 +1961,12 @@ export class HiveSpawner implements Spawner {
     let argv: string[];
     // A reader carries no landing or memory-write right. A writer gets exactly
     // one landing right for its own branch.
-    let credentialGrant: AgentCredentialGrant | null = null;
-    let capabilityToken: string | undefined;
+    const capabilityToken = this.dependencies.issueCredential?.(
+      name,
+      readOnly ? "reader" : "writer",
+      record.capabilityEpoch,
+    );
     try {
-      credentialGrant = this.dependencies.issueCredential?.(
-        record,
-        readOnly ? "reader" : "writer",
-      ) ?? null;
-      if (
-        this.dependencies.issueCredential !== undefined &&
-        credentialGrant === null
-      ) {
-        throw new Error(
-          `Cannot spawn ${name}: exact holder changed before credential issuance`,
-        );
-      }
-      capabilityToken = credentialGrant?.token;
       await provisionSkills(worktree.path, tool);
       switch (tool) {
         case "claude": {
@@ -2568,16 +1995,17 @@ export class HiveSpawner implements Spawner {
         break;
         }
         case "codex": {
-        const useAppServer = codexDriver === "app-server";
         await writeCodexAgentConfig(worktree.path, {
           daemonPort: this.daemonPort(),
           name,
           readOnly,
-          driver: codexDriver ?? "tui",
           hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
+        const useAppServer =
+          this.dependencies.config.codex?.driver === "app-server" &&
+          (await this.dependencies.codexAppServer?.isAvailable() ?? false);
         argv = useAppServer
           ? this.dependencies.codexAppServer!.buildHostCommand(
               record,
@@ -2619,24 +2047,16 @@ export class HiveSpawner implements Spawner {
       const nativeCodex = tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
-      const codexArtifacts = tool === "codex"
-        ? await writeCodexSessionBootstrap(record.tmuxSession, {
-            developerInstructions: promptParts.developerInstructions,
-            initialUserPrompt: promptParts.userPrompt,
-          })
-        : undefined;
       // The brief enters through the launch shell, never an argv: tmux caps a
       // command well below ARG_MAX and Hive's briefs outgrow that cap by design.
       // Written even for the app-server, whose TUI fallback below needs it.
-      const promptSuffix = tool === "codex"
-        ? ""
-        : ` ${
-          promptArgument(await writeLaunchPrompt(record.tmuxSession, prompt))
-        }`;
+      const promptSuffix = ` ${
+        promptArgument(await writeLaunchPrompt(record.tmuxSession, prompt))
+      }`;
       // The token value enters through the launch shell, never an argv.
       const withCapabilityEnv = (command: string): string => {
         if (tool === "grok") return wrapGrokSpawnWithCompatibilityEnv(command);
-        return tool === "codex" && capabilityToken !== undefined
+        return tool === "codex" && !nativeCodex && capabilityToken !== undefined
           ? wrapCodexSpawnWithCapabilityEnv(command, worktree.path)
           : command;
       };
@@ -2678,43 +2098,14 @@ export class HiveSpawner implements Spawner {
       let launchedCommand = launchedCommandName(argv);
       await launchTmux(
         await revalidateAtAdapter(),
-        withCapabilityEnv(
-          nativeCodex
-            ? shellJoin(argv)
-            : codexArtifacts === undefined
-            ? shellJoin(argv) + promptSuffix
-            : buildCodexTuiShellCommand(argv, codexArtifacts),
-        ),
+        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
       );
       if (nativeCodex) {
         try {
           const candidate = await revalidateAtAdapter();
           requireAuthorizedLaunch(candidate);
-          await this.dependencies.codexAppServer!.startAgent(
-            record,
-            {
-              developerInstructions: promptParts.developerInstructions,
-              initialUserPrompt: promptParts.userPrompt,
-            },
-            effort ?? "medium",
-          );
+          await this.dependencies.codexAppServer!.startAgent(record, prompt, readOnly, effort ?? "medium");
         } catch (error) {
-          // A writer was admitted ONLY because the app-server would broker its
-          // mutations. If that handshake fails there is no broker, and the TUI
-          // fallback below would silently produce the one thing containment
-          // forbids: an ungated Codex writer. Fail the spawn instead.
-          if (!readOnly) {
-            this.dependencies.codexAppServer!.disconnect(name);
-            await this.stopVerifiedSession(
-              record,
-              `Codex app-server handshake failed for ${record.name}`,
-            );
-            throw new CodexWriterContainedError(
-              `Codex writer ${name} could not start on the app-server driver: ${
-                error instanceof Error ? error.message : "unknown error"
-              }.\nHive refuses to fall back to the Codex TUI for a writer, because the TUI cannot broker mutations.\nFix: retry, launch this agent read-only, or use a Claude or Grok writer.`,
-            );
-          }
           // The binary advertised app-server support but the control process
           // could not complete its handshake. Replace it immediately with the
           // maintained TUI path; tmux paste remains the automatic fallback.
@@ -2728,51 +2119,10 @@ export class HiveSpawner implements Spawner {
             record,
             `Codex app-server fallback for ${record.name}`,
           );
-          const stopped = this.dependencies.db.getAgentById(record.id);
-          if (stopped === null || !sameSpawnerProcess(record, stopped)) {
-            throw new Error(
-              `Codex fallback refused for ${record.name}: process incarnation changed`,
-            );
-          }
-          const fallbackRecord = this.dependencies.db.beginAgentProcess(
-            agentStateCas(stopped),
-            new Date().toISOString(),
-            null,
-            stopped.recoveryAttempts,
-            // The replacement process is the TUI; the row must say so or
-            // maintenance skips its rollout observation forever.
-            { status: "spawning", codexDriver: "tui" },
-          );
-          if (fallbackRecord === null) {
-            throw new Error(
-              `Codex fallback refused for ${record.name}: could not allocate a replacement process incarnation`,
-            );
-          }
-          record = fallbackRecord;
-          credentialGrant?.rollback();
-          credentialGrant = null;
-          credentialGrant = this.dependencies.issueCredential?.(
-            fallbackRecord,
-            readOnly ? "reader" : "writer",
-          ) ?? null;
-          if (
-            this.dependencies.issueCredential !== undefined &&
-            credentialGrant === null
-          ) {
-            throw new Error(
-              `Codex fallback refused for ${record.name}: replacement credential issuance lost its exact holder`,
-            );
-          }
-          capabilityToken = credentialGrant?.token;
-          await writeCodexAgentConfig(worktree.path, {
-            daemonPort: this.daemonPort(),
-            name,
-            readOnly,
-            // This is the fallback to the TUI, which cannot host a writer.
-            driver: "tui",
-            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-            ...(capabilityToken === undefined ? {} : { capabilityToken }),
-            ...(graphifyUrl === null ? {} : { graphifyUrl }),
+          this.dependencies.db.insertAgent({
+            ...record,
+            status: "spawning",
+            lastEventAt: new Date().toISOString(),
           });
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
@@ -2786,10 +2136,7 @@ export class HiveSpawner implements Spawner {
             withCapabilityToken: capabilityToken !== undefined,
           });
           launchedCommand = launchedCommandName(fallback);
-          const fallbackCommand = buildCodexTuiShellCommand(
-            fallback,
-            codexArtifacts!,
-          );
+          const fallbackCommand = shellJoin(fallback) + promptSuffix;
           const fallbackShell = capabilityToken !== undefined
             ? wrapCodexSpawnWithCapabilityEnv(
               fallbackCommand,
@@ -2819,18 +2166,13 @@ export class HiveSpawner implements Spawner {
       // claim launch is still in flight forever. Promote only if no stronger
       // lifecycle event has already moved the row elsewhere.
       const ready = this.dependencies.db.getAgentById(record.id);
-      if (
-        ready?.status === "spawning" && sameSpawnerProcess(record, ready)
-      ) {
-        this.dependencies.db.updateAgentIfCurrent(agentStateCas(ready), {
-          status: "working",
-        });
+      if (ready?.status === "spawning") {
+        this.dependencies.db.insertAgent({ ...ready, status: "working" });
       }
       if (quotaReservationId !== undefined) {
         this.dependencies.quota?.markStarted(quotaReservationId);
       }
     } catch (error) {
-      credentialGrant?.rollback();
       // Nothing thrown here has been past the transport. Building the argv,
       // writing the config, and handing the command to tmux all happen on this
       // machine, before the model is contacted — so a throw is never evidence
@@ -2847,22 +2189,6 @@ export class HiveSpawner implements Spawner {
     }
 
     return this.dependencies.db.getAgentById(record.id) ?? record;
-    } catch (error) {
-      if (!routeAuditFinalized) {
-        finalizeRouteAudit({
-          ...routeAuditFields,
-          attempts: [
-            ...routeAuditFields.attempts,
-            `refused: ${error instanceof Error ? error.message : String(error)}`,
-          ],
-          selectedTool: null,
-          selectedModel: null,
-          selectedEffort: null,
-          reservationId: null,
-        });
-      }
-      throw error;
-    }
   }
 
   private async monitorReadiness(
@@ -2900,30 +2226,21 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     failureReason: string,
   ): AgentRecord {
-    const current = this.dependencies.db.getAgentById(record.id);
-    if (current === null || !sameSpawnerProcess(record, current)) {
-      return current ?? record;
-    }
-    return this.dependencies.db.updateAgentIfCurrent(agentStateCas(current), {
+    return this.dependencies.db.insertAgent({
+      ...(this.dependencies.db.getAgentById(record.id) ?? record),
       status: "stuck",
       writeRevoked: true,
       failureReason,
       lastEventAt: new Date().toISOString(),
-    }) ?? this.dependencies.db.getAgentById(record.id) ?? current;
+    });
   }
 
   private async stopVerifiedSession(
     record: AgentRecord,
     context: string,
   ): Promise<void> {
-    const current = this.dependencies.db.getAgentById(record.id);
-    if (current === null || !sameSpawnerProcess(record, current)) {
-      throw new Error(
-        `${context}: process incarnation changed before verified teardown`,
-      );
-    }
     try {
-      const outcome = await this.dependencies.stopSession(current);
+      const outcome = await this.dependencies.stopSession(record);
       if (outcome.survivors.length > 0) {
         throw new Error(
           `${outcome.survivors.length} process(es) survived teardown`,
@@ -2946,10 +2263,7 @@ export class HiveSpawner implements Spawner {
     layer: LaunchFailureLayer,
   ): Promise<AgentRecord> {
     const current = this.dependencies.db.getAgentById(record.id);
-    if (
-      current !== null &&
-      (current.status !== "spawning" || !sameSpawnerProcess(record, current))
-    ) {
+    if (current !== null && current.status !== "spawning") {
       return current;
     }
     return await this.failSpawn(record, worktree, failureReason, layer);
@@ -2994,17 +2308,14 @@ export class HiveSpawner implements Spawner {
       }
     }
     const failedAt = new Date().toISOString();
-    const base = this.dependencies.db.getAgentById(record.id) ?? stopping;
-    const terminal = this.dependencies.db.markAgentTerminalIfCurrent(
-      agentStateCas(base),
+    let failed = this.dependencies.db.insertAgent({
+      ...(this.dependencies.db.getAgentById(record.id) ?? stopping),
+      status: "failed",
+      writeRevoked: true,
+      failureReason,
       failedAt,
-      "failed",
-      { failureReason, failedAt },
-    );
-    if (terminal === null) {
-      return this.dependencies.db.getAgentById(record.id) ?? base;
-    }
-    let failed = terminal;
+      lastEventAt: failedAt,
+    });
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;
 

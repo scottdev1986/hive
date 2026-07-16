@@ -10,9 +10,7 @@ import {
   QuotaConfigSchema,
   RoutingPolicySchema,
   StatuslineReportSchema,
-  attestationStateOf,
   canonicalOrchestratorName,
-  compareObservedIdentity,
   isOrchestratorName,
   orchestratorRecipientNames,
   type AgentRecord,
@@ -78,7 +76,7 @@ describe("AgentRecordSchema", () => {
     lastEventAt: timestamp,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
-    readOnly: true,
+    readOnly: false,
     writeRevoked: false,
   } satisfies AgentRecord;
 
@@ -330,33 +328,4 @@ describe("root orchestrator naming", () => {
     expect(canonicalOrchestratorName("queen")).toEqual("queen");
     expect(canonicalOrchestratorName("maya")).toEqual("maya");
   });
-});
-
-describe("execution-identity attestation", () => {
-  test("matching requires both model and effort to equal the launch identity", () => {
-    const launch = { model: "gpt-5.6-sol", effort: "xhigh" };
-    expect(
-      compareObservedIdentity(launch, { model: "gpt-5.6-sol", effort: "xhigh" }),
-    ).toEqual("matching");
-    // Wrong model.
-    expect(
-      compareObservedIdentity(launch, { model: "gpt-5.6-luna", effort: "xhigh" }),
-    ).toEqual("drift");
-    // Right model, wrong effort — the exact Sam incident (Sol/xhigh -> Luna/low
-    // would drift on model, but even a same-model effort change must drift).
-    expect(
-      compareObservedIdentity(launch, { model: "gpt-5.6-sol", effort: "low" }),
-    ).toEqual("drift");
-  });
-
-  test("attestationStateOf reads an absent verdict as fail-closed unattested", () => {
-    expect(attestationStateOf({ identityState: undefined })).toEqual(
-      "unattested",
-    );
-    expect(attestationStateOf({ identityState: "matching" })).toEqual(
-      "matching",
-    );
-    expect(attestationStateOf({ identityState: "drift" })).toEqual("drift");
-  });
-
 });

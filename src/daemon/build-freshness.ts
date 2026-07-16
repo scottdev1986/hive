@@ -71,17 +71,14 @@ const unknown = (version: string, commit: string | null, reason: string): BuildF
 });
 
 /**
- * Explicit Hive-development diagnostic: compare the running binary's build
- * commit against the Hive source checkout's main.
+ * Compare the running binary's build commit against the repository's main.
  *
  * Never throws: a broken git, a missing main, or an unknown commit is an
  * honest UNKNOWN, not a failure and not a clean bill of health.
- * Generic project status must not call this function: an active project's
- * path, name, or local registry identity does not prove it is Hive's source.
  */
-export async function checkHiveDevelopmentBuildFreshness(
-  sourceRoot: string,
-  git: GitRunner = (args) => runGit(sourceRoot, args),
+export async function checkBuildFreshness(
+  repoRoot: string,
+  git: GitRunner = (args) => runGit(repoRoot, args),
   provenance: BuildProvenance = runningBuildProvenance(),
 ): Promise<BuildFreshness> {
   const { version, commit } = provenance;

@@ -1,25 +1,14 @@
-// Credential storage. A token never travels in argv, which is world-readable
-// through `ps`. It rests in a 0600 file inside a 0700 directory; provider
-// launchers may deliberately copy it into their process environment because
-// Codex bearer_token_env_var has no file-valued form. That environment is
-// inherited by descendants, so exact-holder capability checks—not environment
-// secrecy—are the authority boundary.
+// Credential delivery. A token never travels in an environment variable and
+// never in argv: env is inherited by every descendant of an agent process, and
+// argv is world-readable through `ps`. It travels in a 0600 file inside a 0700
+// directory outside every worktree, read with O_CLOEXEC so the descriptor does
+// not survive an exec.
 //
 // This does not stop a same-UID process that knows the path from reading the
 // file — nothing at this layer can, and the blueprint says so. What it does is
-// keep the token out of argv and unrelated process environments.
-import {
-  closeSync,
-  constants,
-  existsSync,
-  mkdirSync,
-  openSync,
-  readFileSync,
-  readSync,
-  renameSync,
-  rmSync,
-  writeFileSync,
-} from "node:fs";
+// guarantee that a process which merely *descends* from a credential holder
+// inherits nothing usable.
+import { closeSync, constants, mkdirSync, openSync, readSync, rmSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 import { getHiveHome } from "./db";
 
@@ -91,26 +80,4 @@ export function readCredential(subject: string): string | null {
 
 export function removeCredential(subject: string): void {
   rmSync(credentialPath(subject), { force: true });
-}
-
-/** Atomically removes only the credential object containing `token`. A
- * same-name successor that replaced the path is restored/preserved. */
-export function removeCredentialIfMatches(
-  subject: string,
-  token: string,
-): boolean {
-  const path = credentialPath(subject);
-  const quarantined = `${path}.remove-${crypto.randomUUID()}`;
-  try {
-    renameSync(path, quarantined);
-  } catch {
-    return false;
-  }
-  const matches = readFileSync(quarantined, "utf8").trim() === token;
-  if (matches) {
-    rmSync(quarantined, { force: true });
-    return true;
-  }
-  if (!existsSync(path)) renameSync(quarantined, path);
-  return false;
 }

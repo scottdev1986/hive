@@ -10,7 +10,6 @@ import {
 } from "../daemon/tmux-sessions";
 import {
   buildOrchestratorCommand,
-  buildOrchestratorBrief,
   buildOrchestratorLaunchCommand,
   buildCodexRootAuthorityCommand,
   CODEX_ROOT_TOKEN_SUBJECT,
@@ -48,19 +47,12 @@ afterEach(async () => {
 
 describe("orchestrator brief", () => {
   test("builds an authority-first Codex root command without enabling it yet", () => {
-    const command = buildCodexRootAuthorityCommand(
-      "/tmp/hive-root.sock",
-      ["-c", "features.multi_agent=false"],
-      "",
-      "/tmp/root.developer.toml",
-    );
+    const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
     expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
     expect(command[2]).toContain("codex app-server --listen 'unix:///tmp/hive-root.sock'");
     expect(command[2]).toContain(
-      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen' '-c' 'features.multi_agent=false'",
+      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen'",
     );
-    expect(command[2]!.match(/features\.multi_agent=false/g)).toHaveLength(2);
-    expect(command[2]!.match(/root\.developer\.toml/g)).toHaveLength(2);
   });
   test("is non-empty and names every orchestration MCP tool", () => {
     expect(ORCHESTRATOR_BRIEF.trim().length).toBeGreaterThan(100);
@@ -108,13 +100,12 @@ describe("orchestrator brief", () => {
       "-c",
       "features.apps=false",
       "-c",
-      "features.multi_agent=false",
-      "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "-c",
       'mcp_servers.hive.default_tools_approval_mode="approve"',
       "--sandbox",
       "read-only",
+      ORCHESTRATOR_BRIEF,
     ]);
   });
 
@@ -125,10 +116,7 @@ describe("orchestrator brief", () => {
       `${ORCHESTRATOR_BRIEF}\n\n${index}`,
     );
     const codexCommand = buildOrchestratorCommand("codex", 4317, index);
-    expect(codexCommand).not.toContain(index);
-    expect(buildOrchestratorBrief(index)).toEqual(
-      `${ORCHESTRATOR_BRIEF}\n\n${index}`,
-    );
+    expect(codexCommand.at(-1)).toEqual(`${ORCHESTRATOR_BRIEF}\n\n${index}`);
     const plainClaudeCommand = buildOrchestratorCommand("claude", 4317);
     expect(
       plainClaudeCommand[plainClaudeCommand.indexOf("--append-system-prompt") + 1],
@@ -180,14 +168,8 @@ describe("orchestrator brief", () => {
       "claude",
       "",
       recovery,
-      [],
-      "/tmp/root.developer.toml",
-      "/tmp/root.user.txt",
     );
-    const codexShell = codex[codex.indexOf(";") - 1]!;
-    expect(codexShell).not.toContain(recovery);
-    expect(codexShell).toContain("root.developer.toml");
-    expect(codexShell).toContain("root.user.txt");
+    expect(codex[codex.indexOf(";") - 1]).toContain(recovery);
   });
 
   test("runs Codex root through an app-server authority and remote TUI", () => {
@@ -199,11 +181,6 @@ describe("orchestrator brief", () => {
       "/repo",
       memory,
       guidance,
-      "claude",
-      "",
-      "",
-      [],
-      "/tmp/root.developer.toml",
     );
     expect(command.slice(0, 9)).toEqual([
       "tmux", "-L", hiveTmuxSocketName(), "new-session", "-s",
@@ -214,8 +191,6 @@ describe("orchestrator brief", () => {
     expect(shellCommand).toContain("'codex' '--remote' 'unix://");
     expect(shellCommand).toContain("'features.apps=false'");
     expect(shellCommand.match(/features\.apps=false/g)).toHaveLength(2);
-    expect(shellCommand).toContain("'features.multi_agent=false'");
-    expect(shellCommand.match(/features\.multi_agent=false/g)).toHaveLength(2);
     expect(shellCommand).toContain("mcp_servers.hive.url=");
     expect(shellCommand.match(/mcp_servers\.hive\.url=/g)).toHaveLength(2);
     expect(shellCommand).toContain(
@@ -225,11 +200,9 @@ describe("orchestrator brief", () => {
       shellCommand.match(/mcp_servers\.hive\.default_tools_approval_mode/g),
     ).toHaveLength(2);
     expect(shellCommand).toContain("'--sandbox' 'read-only'");
-    expect(shellCommand).not.toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
-    expect(shellCommand).not.toContain(guidance);
-    expect(shellCommand).not.toContain(memory);
-    expect(shellCommand.match(/root\.developer\.toml/g)).toHaveLength(2);
-    expect(shellCommand).not.toContain("root.user.txt");
+    expect(shellCommand).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
+    expect(shellCommand).toContain(guidance);
+    expect(shellCommand).toContain(memory);
     expect(command.slice(-5)).toEqual([
       ";", "set-option", "-g", "mouse", "on",
     ]);
@@ -246,14 +219,13 @@ describe("orchestrator brief", () => {
       "",
       "",
       ["-c", "mcp_servers.codex_apps.enabled=false"],
-      "/tmp/root.developer.toml",
     );
     const shellCommand = command[command.indexOf(";") - 1]!;
     expect(shellCommand).toContain("'mcp_servers.codex_apps.enabled=false'");
     expect(shellCommand).toContain("'mcp_servers.hive.url=");
   });
 
-  test("Codex launch gates Codex without resolving Claude", async () => {
+  test("Codex launch does not resolve or version-gate Claude", async () => {
     let command: string[] = [];
     const exitCode = await launchOrchestrator(
       "codex",
@@ -263,7 +235,7 @@ describe("orchestrator brief", () => {
         command = spawned;
         return { exited: Promise.resolve(0) };
       },
-      async () => "0.144.4",
+      async () => { throw new Error("must not inspect Claude"); },
       () => { throw new Error("must not resolve Claude"); },
       noExistingRoot,
       "",
@@ -271,91 +243,16 @@ describe("orchestrator brief", () => {
       async () => "/tmp/codex-root.cap",
     );
     expect(exitCode).toEqual(0);
-    const shellCommand = command[command.indexOf(";") - 1]!;
-    expect(shellCommand).not.toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
-    expect(shellCommand).not.toContain(".user.txt");
-    expect(shellCommand).toContain(
-      "mcp_servers.codex_apps.enabled=false",
-    );
-    expect(shellCommand).not.toContain(
-      "mcp_servers.hive.enabled=false",
-    );
-    const developerPath = /\$\(cat '([^']+\.developer\.toml)'\)/
-      .exec(shellCommand)?.[1];
-    expect(developerPath).toBeDefined();
-    const parsed = Bun.TOML.parse(
-      await readFile(developerPath!, "utf8"),
-    ) as Record<string, unknown>;
-    expect(parsed.developer_instructions).toContain(
+    expect(command[command.indexOf(";") - 1]).toContain(
       ORCHESTRATOR_BRIEF.slice(0, 80),
     );
-  });
-
-  test("Codex recovery hides durable state and shows only the short trigger", async () => {
-    let command: string[] = [];
-    const recovery = "RECOVERY MODE — BACKUP ORCHESTRATOR\n- maya | working";
-    await launchOrchestrator(
-      "codex",
-      4317,
-      process.cwd(),
-      (spawned) => {
-        command = spawned;
-        return { exited: Promise.resolve(0) };
-      },
-      async () => "0.144.4",
-      () => { throw new Error("must not resolve Claude"); },
-      noExistingRoot,
-      recovery,
-      async () => [],
-      async () => "/tmp/codex-root.cap",
+    expect(command[command.indexOf(";") - 1]).toContain(
+      "mcp_servers.codex_apps.enabled=false",
     );
-
-    const shellCommand = command[command.indexOf(";") - 1]!;
-    expect(shellCommand).not.toContain(recovery);
-    const developerPath = /\$\(cat '([^']+\.developer\.toml)'\)/
-      .exec(shellCommand)?.[1];
-    const userPath = /\$\(cat '([^']+\.user\.txt)'\)/
-      .exec(shellCommand)?.[1];
-    expect(developerPath).toBeDefined();
-    expect(userPath).toBeDefined();
-    const parsed = Bun.TOML.parse(
-      await readFile(developerPath!, "utf8"),
-    ) as Record<string, unknown>;
-    expect(parsed.developer_instructions).toContain(recovery);
-    expect(await readFile(userPath!, "utf8")).toEqual(
-      "Resume Hive orchestration.",
+    expect(command[command.indexOf(";") - 1]).not.toContain(
+      "mcp_servers.hive.enabled=false",
     );
   });
-
-  test.each([
-    ["0.144.3", "Codex CLI 0.144.3 is unsupported"],
-    [null, "could not determine the Codex CLI version"],
-  ] as const)(
-    "refuses Codex version %j before root teardown, config, token, or spawn",
-    async (version, expected) => {
-      const touched: string[] = [];
-      await expect(launchOrchestrator(
-        "codex",
-        4317,
-        process.cwd(),
-        () => {
-          touched.push("spawn");
-          return { exited: Promise.resolve(0) };
-        },
-        async () => version,
-        () => { throw new Error("must not resolve Claude"); },
-        {
-          hasSession: async () => (touched.push("tmux"), false),
-          listClientTtys: async () => [],
-          killSession: async () => {},
-        },
-        "",
-        async () => (touched.push("mcp"), []),
-        async () => (touched.push("token"), "/tmp/token"),
-      )).rejects.toThrow(expected);
-      expect(touched).toEqual([]);
-    },
-  );
 
   test("kills an unattached stale root before launch", async () => {
     const killed: string[] = [];
@@ -550,9 +447,6 @@ describe("orchestrator brief", () => {
         "",
         "claude",
         "/home/x/.hive/credentials/codex-root.cap",
-        "",
-        [],
-        "/tmp/root.developer.toml",
       );
       const shellCommand = command[command.indexOf(";") - 1]!;
       expect(shellCommand).toContain(

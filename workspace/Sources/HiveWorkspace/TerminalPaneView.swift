@@ -301,14 +301,6 @@ final class TerminalPaneView: NSView, LocalProcessTerminalViewDelegate {
     }
 }
 
-private func isMouseWheelPacket(_ bytes: [UInt8]) -> Bool {
-    guard bytes.count >= 8, bytes[0...2] == [0x1b, 0x5b, 0x3c],
-          let flagEnd = bytes[3...].firstIndex(of: 0x3b),
-          let flags = Int(String(decoding: bytes[3..<flagEnd], as: UTF8.self))
-    else { return false }
-    return flags & 64 != 0
-}
-
 /// SwiftTerm deliberately receives a bounded environment. PATH selects the
 /// installed provider CLIs; TMPDIR is equally load-bearing on macOS because
 /// Codex binds its instance-scoped app-server socket in the private per-user

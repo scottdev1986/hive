@@ -5,14 +5,13 @@ import {
   beforeEach,
   describe,
   expect,
-  spyOn,
   test,
 } from "bun:test";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
-import { agentStateCas, HiveDatabase } from "./db";
+import { HiveDatabase } from "./db";
 import { submitPaste } from "./testing";
 import { MessageDelivery, type TmuxSender } from "./delivery";
 import {
@@ -20,10 +19,8 @@ import {
   MAX_AUTO_RESUME_ATTEMPTS,
   type CrashRecoveryDependencies,
 } from "./recovery";
-import { CODEX_WRITER_CONTAINMENT_REASON } from "./codex-containment";
 import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
-import { writeCodexSessionBootstrap } from "./launch-prompt";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
 
@@ -105,12 +102,6 @@ interface Harness {
   recovery: CrashRecovery;
   settled: string[];
   revoked: string[];
-  reauthorized: Array<{
-    id: string;
-    name: string;
-    epoch: number;
-    processIncarnation: number;
-  }>;
   /** The hardened resume monitor fails a resume that never proves life, so
    * every successful-resume test must call this before resuming: it makes
    * each readiness poll tick advance lastEventAt, standing in for the
@@ -120,17 +111,12 @@ interface Harness {
 }
 
 let home = "";
-let previousHiveHome: string | undefined;
 
 beforeEach(() => {
   home = mkdtempSync(join(tmpdir(), "hive-recovery-"));
-  previousHiveHome = process.env.HIVE_HOME;
-  process.env.HIVE_HOME = home;
 });
 
 afterEach(() => {
-  if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
-  else process.env.HIVE_HOME = previousHiveHome;
   rmSync(home, { recursive: true, force: true });
 });
 
@@ -143,7 +129,6 @@ function harness(
   const delivery = new MessageDelivery(db, sender);
   const settled: string[] = [];
   const revoked: string[] = [];
-  const reauthorized: Harness["reauthorized"] = [];
   let proveLife = false;
   const recovery = new CrashRecovery({
     db,
@@ -160,17 +145,8 @@ function harness(
       return { killed: [], survivors: [] };
     },
     flushQueued: (name) => delivery.flushQueued(name),
-    revokeCapabilities: (record) => {
-      revoked.push(record.name);
-    },
-    reauthorizeAgent: (record) => {
-      reauthorized.push({
-        id: record.id,
-        name: record.name,
-        epoch: record.capabilityEpoch,
-        processIncarnation: record.processIncarnation ?? 0,
-      });
-      return { rollback: () => undefined };
+    revokeCapabilities: (name) => {
+      revoked.push(name);
     },
     resolveClaudeSessionId: async () => null,
     resolveCodexSessionId: async () => null,
@@ -200,7 +176,6 @@ function harness(
     recovery,
     settled,
     revoked,
-    reauthorized,
     signalProofOfLife: () => {
       proveLife = true;
     },
@@ -260,37 +235,6 @@ describe("crash classification", () => {
     expect(alerts[0]).toContain("Build the server");
     expect(alerts[0]).toContain("Worktree preserved");
     expect(h.settled).toEqual(["maya"]);
-  });
-
-  test("does not resurrect an agent reaped between the sweep read and the relaunch", async () => {
-    const h = harness();
-    // A finished, clean agent: idle, no tmux session — a recovery candidate on
-    // paper (the Sarah reap-vs-recovery incident).
-    h.db.insertAgent(agent({ status: "idle" }));
-    h.tmux.sessions.delete("hive-maya");
-
-    // Simulate hive_kill completing its durable terminal mark in the window
-    // between the sweep reading the row and recovery relaunching it: the mark
-    // lands as the sweep probes the tmux session.
-    const probe = h.tmux.hasSession.bind(h.tmux);
-    h.tmux.hasSession = async (session: string) => {
-      const alive = await probe(session);
-      if (session === "hive-maya") {
-        h.db.markAgentDead("agent-maya", new Date().toISOString());
-      }
-      return alive;
-    };
-
-    const outcomes = await h.recovery.sweep();
-    expect(outcomes).toEqual([{
-      agent: "maya",
-      action: "skipped",
-      reason:
-        "agent was deliberately closed since the sweep observed it; recovery will not resurrect it",
-    }]);
-    // No resume was launched, and the deliberate close stands.
-    expect(h.tmux.created).toEqual([]);
-    expect(h.db.getAgentByName("maya")?.status).toEqual("dead");
   });
 
   test("a spawning agent whose name is still reserved is an in-flight spawn and is left alone", async () => {
@@ -430,7 +374,6 @@ describe("crash resume", () => {
       status: "idle",
       recoveryAttempts: 1,
       toolSessionId: "0189-claude-session",
-      processIncarnation: 1,
     });
     // The resumed tmux session receives the recovery notice.
     expect(h.sender.sent.some(({ session, text }) =>
@@ -442,14 +385,9 @@ describe("crash resume", () => {
   });
 
   test("a codex agent resumes through `codex resume <thread-id>` with its spawn config overrides", async () => {
-    const bootstrap = await writeCodexSessionBootstrap("hive-maya", {
-      developerInstructions: "durable developer contract",
-      initialUserPrompt: "original task must not replay",
-    });
     // The resumed codex TUI emits no hook event before its first turn-end;
     // fresh rollout-file activity is its proof of life, injected here.
     const h = harness({
-      resolveCodexSessionId: async () => "019f-codex-thread",
       readCodexActivity: async () =>
         new Date(Date.now() + 60_000).toISOString(),
     });
@@ -457,9 +395,6 @@ describe("crash resume", () => {
       tool: "codex",
       model: "gpt-5-codex",
       status: "working",
-      // Contained writers are not relaunched; reader recovery still exercises
-      // the codex resume argv path.
-      readOnly: true,
       toolSessionId: "019f-codex-thread",
       executionIdentity: {
         tool: "codex",
@@ -476,156 +411,7 @@ describe("crash resume", () => {
     expect(command).toContain("resume");
     expect(command).toContain("019f-codex-thread");
     expect(command).toContain("model_reasoning_effort=high");
-    expect(command).toContain("read-only");
-    expect(command).toContain(bootstrap.developerPath);
-    expect(command).not.toContain(bootstrap.userPath!);
-    expect(command).not.toContain("original task must not replay");
-    expect(command.indexOf(bootstrap.developerPath)).toBeLessThan(
-      command.indexOf("019f-codex-thread"),
-    );
-  });
-
-  test("recovering an app-server Codex reader records the replacement's TUI driver", async () => {
-    const h = harness({
-      resolveCodexSessionId: async () => "019f-appserver-thread",
-      readCodexActivity: async () =>
-        new Date(Date.now() + 60_000).toISOString(),
-    });
-    h.db.insertAgent(agent({
-      tool: "codex",
-      model: "gpt-5-codex",
-      status: "working",
-      readOnly: true,
-      codexDriver: "app-server",
-      toolSessionId: "019f-appserver-thread",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5-codex",
-        effort: "high",
-      },
-    }));
-
-    expect(await h.recovery.sweep()).toMatchObject([
-      { agent: "maya", action: "resumed" },
-    ]);
-    // Recovery relaunches Codex on the TUI; a row still claiming app-server
-    // would be skipped by telemetry/identity maintenance forever.
-    expect(h.db.getAgentByName("maya")?.codexDriver).toBe("tui");
-  });
-
-  test("a legacy Codex session without an artifact resumes without replay and names the visible-bootstrap fallback", async () => {
-    const warning = spyOn(console, "warn").mockImplementation(() => {});
-    try {
-      const h = harness({
-        resolveCodexSessionId: async () => "019f-legacy-thread",
-        readCodexActivity: async () =>
-          new Date(Date.now() + 60_000).toISOString(),
-      });
-      h.db.insertAgent(agent({
-        tool: "codex",
-        model: "gpt-5-codex",
-        status: "working",
-        readOnly: true,
-        toolSessionId: "019f-legacy-thread",
-        executionIdentity: {
-          tool: "codex",
-          model: "gpt-5-codex",
-          effort: "high",
-        },
-      }));
-
-      expect(await h.recovery.sweep()).toMatchObject([
-        { agent: "maya", action: "resumed" },
-      ]);
-      expect(h.tmux.created[0]!.command).toContain(
-        "'codex' 'resume'",
-      );
-      expect(h.tmux.created[0]!.command).not.toContain(".developer.toml");
-      expect(warning).toHaveBeenCalledWith(
-        "Hive resumed legacy Codex session maya with its original visible bootstrap semantics",
-      );
-    } finally {
-      warning.mockRestore();
-    }
-  });
-
-  test("a replacement incarnation during prelaunch authorization prevents predecessor launch", async () => {
-    let h!: Harness;
-    let checks = 0;
-    h = harness({
-      authorizeLaunch: async (identity) => {
-        const authorized = (await authorizeForQuotaTest([identity]))[0]!;
-        checks += 1;
-        if (checks === 2) {
-          const current = h.db.getAgentById("agent-maya")!;
-          h.db.upsertAgent({
-            ...current,
-            processIncarnation: (current.processIncarnation ?? 0) + 1,
-            processStartedAt: "2026-07-15T20:00:00.000Z",
-            status: "working",
-            lastEventAt: "2026-07-15T20:00:00.000Z",
-          });
-        }
-        return authorized;
-      },
-    });
-    h.db.insertAgent(agent({
-      status: "working",
-      toolSessionId: "0189-prelaunch-session",
-    }));
-
-    const outcomes = await h.recovery.sweep();
-
-    expect(outcomes).toEqual([{
-      agent: "maya",
-      action: "skipped",
-      reason:
-        "agent session/incarnation/authority changed before relaunch; predecessor recovery will not launch",
-    }]);
-    expect(h.tmux.created).toEqual([]);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      processIncarnation: 2,
-      status: "working",
-    });
-  });
-
-  test("a replacement after readiness is not overwritten by predecessor recovery", async () => {
-    let db!: HiveDatabase;
-    let replaced = false;
-    const h = harness({
-      sleep: async () => {
-        if (replaced) return;
-        replaced = true;
-        const current = db.getAgentById("agent-maya")!;
-        db.upsertAgent({
-          ...current,
-          processIncarnation: (current.processIncarnation ?? 0) + 1,
-          processStartedAt: "2099-07-15T20:01:00.000Z",
-          status: "working",
-          lastEventAt: "2099-07-15T20:01:00.000Z",
-        });
-      },
-    });
-    db = h.db;
-    h.db.insertAgent(agent({
-      status: "working",
-      toolSessionId: "0189-post-ready-session",
-    }));
-
-    const outcomes = await h.recovery.sweep();
-
-    expect(outcomes).toEqual([{
-      agent: "maya",
-      action: "skipped",
-      reason:
-        "agent session/incarnation/authority changed after relaunch readiness; predecessor recovery will not persist state",
-    }]);
-    expect(h.tmux.created).toHaveLength(1);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      processIncarnation: 2,
-      processStartedAt: "2099-07-15T20:01:00.000Z",
-      status: "working",
-    });
+    expect(command).toContain("workspace-write");
   });
 
   test("a resume resolves the daemon port after an ephemeral bind", async () => {
@@ -633,7 +419,6 @@ describe("crash resume", () => {
     let configuredPort: number | undefined;
     const h = harness({
       port: () => daemonPort,
-      resolveCodexSessionId: async () => "019f-dynamic-port",
       writeCodexConfig: async (_worktreePath, options) => {
         configuredPort = options.daemonPort;
       },
@@ -644,7 +429,6 @@ describe("crash resume", () => {
       tool: "codex",
       model: "gpt-5-codex",
       status: "working",
-      readOnly: true,
       toolSessionId: "019f-dynamic-port",
       executionIdentity: {
         tool: "codex",
@@ -685,9 +469,7 @@ describe("crash resume", () => {
     expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
     const command = h.tmux.created[0]!.command;
     expect(command).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");
-    expect(command).toContain(
-      "'grok' '-r' '019f-grok-session' '--cwd' '/repo/.hive/worktrees/maya' '--trust' '-m' 'catalog-model'",
-    );
+    expect(command).toContain("'grok' '-r' '019f-grok-session'");
     expect(command).toContain("'--reasoning-effort' 'high'");
     expect(command).toContain("'--always-approve'");
     expect(command).not.toContain("--session-id");
@@ -741,43 +523,6 @@ describe("crash resume", () => {
       action: "skipped",
       reason: "write authority is revoked; recovery requires explicit cleanup",
     }]);
-  });
-
-  test("terminalization between preserve read and CAS wins over unverified recovery", async () => {
-    const h = harness({
-      resolveClaudeSessionId: async () => {
-        throw new Error("ambiguous provider session");
-      },
-    });
-    h.db.insertAgent(agent({ toolSessionId: undefined }));
-    const update = h.db.updateAgentIfCurrent.bind(h.db);
-    let terminalized = false;
-    h.db.updateAgentIfCurrent = ((...args: Parameters<typeof update>) => {
-      const updates = args[1];
-      if (!terminalized && updates.status === "stuck") {
-        terminalized = true;
-        h.db.markAgentDead(
-          "agent-maya",
-          "2026-07-10T10:00:00.000Z",
-          "operator terminalization won",
-        );
-      }
-      return update(...args);
-    }) as typeof h.db.updateAgentIfCurrent;
-
-    expect(await h.recovery.sweep()).toMatchObject([{
-      action: "skipped",
-      reason: expect.stringContaining("ambiguous provider session"),
-    }]);
-    expect(terminalized).toBe(true);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      failureReason: "operator terminalization won",
-      closedAt: "2026-07-10T10:00:00.000Z",
-    });
-    expect(h.revoked).toEqual([]);
   });
 
   test("manual recovery resumes a read-only agent as a reader", async () => {
@@ -904,7 +649,7 @@ describe("crash resume", () => {
     }
   });
 
-  test("terminal death wins when failed-resume teardown readback fails", async () => {
+  test("a failed resume stays nonterminal when teardown readback fails", async () => {
     const h = harness({
       stopSession: async () => {
         throw new Error("ps verification failed");
@@ -924,10 +669,9 @@ describe("crash resume", () => {
       "teardown could not be verified: ps verification failed",
     );
     expect(h.db.getAgentByName("maya")).toMatchObject({
-      status: "dead",
+      status: "stuck",
       writeRevoked: true,
     });
-    expect(h.db.getAgentByName("maya")?.closedAt).toBeDefined();
     expect(h.settled).toEqual([]);
   });
 
@@ -1080,159 +824,6 @@ describe("dead-path bookkeeping", () => {
 });
 
 describe("manual recovery", () => {
-  test("real terminalization revives only manually with a new epoch, credential, and process incarnation", async () => {
-    const h = harness();
-    h.signalProofOfLife();
-    h.db.insertAgent(agent({
-      status: "working",
-      toolSessionId: "sess-1",
-      processIncarnation: 4,
-      processStartedAt: timestamp,
-    }));
-    const dead = h.db.markAgentDead(
-      "agent-maya",
-      "2026-07-10T10:00:00.000Z",
-      "confirmed dead",
-    )!;
-    expect(dead).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      processIncarnation: 4,
-    });
-
-    // Automatic reconciliation remains fail-closed for a genuine terminal row.
-    expect(await h.recovery.sweep()).toEqual([]);
-    expect(h.tmux.created).toEqual([]);
-    expect(h.reauthorized).toEqual([]);
-
-    expect(await h.recovery.recoverAgent("maya")).toEqual({
-      agent: "maya",
-      action: "resumed",
-      sessionId: "sess-1",
-    });
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "idle",
-      writeRevoked: false,
-      capabilityEpoch: 2,
-      processIncarnation: 5,
-    });
-    expect(h.reauthorized).toEqual([{
-      id: "agent-maya",
-      name: "maya",
-      epoch: 2,
-      processIncarnation: 5,
-    }]);
-  });
-
-  test("manual retry after a failed automatic resume reauthorizes the new process only", async () => {
-    const h = harness();
-    h.db.insertAgent(agent({
-      status: "working",
-      toolSessionId: "sess-1",
-      processIncarnation: 1,
-      processStartedAt: timestamp,
-    }));
-    h.tmux.failNewSession = true;
-    expect(await h.recovery.sweep()).toMatchObject([{
-      action: "marked-dead",
-      reason: expect.stringContaining("resume launch failed"),
-    }]);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
-      capabilityEpoch: 1,
-      processIncarnation: 2,
-    });
-    expect(h.reauthorized).toEqual([]);
-
-    h.tmux.failNewSession = false;
-    h.signalProofOfLife();
-    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
-      action: "resumed",
-      sessionId: "sess-1",
-    });
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "idle",
-      writeRevoked: false,
-      capabilityEpoch: 2,
-      processIncarnation: 3,
-    });
-    expect(h.reauthorized).toEqual([{
-      id: "agent-maya",
-      name: "maya",
-      epoch: 2,
-      processIncarnation: 3,
-    }]);
-  });
-
-  test("a same-name successor prevents manual revival of its terminal predecessor", async () => {
-    const h = harness();
-    h.db.insertAgent(agent({ status: "working", toolSessionId: "old-session" }));
-    h.db.markAgentDead("agent-maya", "2026-07-10T10:00:00.000Z");
-    h.db.insertAgent(agent({
-      id: "agent-maya-successor",
-      status: "working",
-      toolSessionId: "successor-session",
-      processIncarnation: 9,
-      tmuxSession: "hive-maya-successor",
-    }));
-    h.tmux.sessions.add("hive-maya-successor");
-
-    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
-      action: "skipped",
-      reason: "tmux session is running",
-    });
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "dead",
-      writeRevoked: true,
-    });
-    expect(h.db.getAgentById("agent-maya-successor")).toMatchObject({
-      status: "working",
-      processIncarnation: 9,
-    });
-    expect(h.reauthorized).toEqual([]);
-  });
-
-  test("same-name reuse after the final manual check cannot mint or launch for the predecessor", async () => {
-    let h!: Harness;
-    h = harness({
-      reauthorizeAgent: (record) => {
-        const current = h.db.getAgentById(record.id)!;
-        expect(h.db.markAgentTerminalIfCurrent(
-          agentStateCas(current),
-          "2026-07-10T10:01:00.000Z",
-          "dead",
-        )).not.toBeNull();
-        h.db.insertAgent(agent({
-          id: "agent-maya-successor",
-          status: "working",
-          toolSessionId: "successor-session",
-          processIncarnation: 9,
-          tmuxSession: "hive-maya-successor",
-        }));
-        return null;
-      },
-    });
-    h.signalProofOfLife();
-    h.db.insertAgent(agent({
-      status: "dead",
-      toolSessionId: "sess-1",
-      processIncarnation: 4,
-    }));
-
-    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
-      action: "skipped",
-      reason: expect.stringContaining("holder changed before credential issuance"),
-    });
-    expect(h.tmux.created).toEqual([]);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({ status: "dead" });
-    expect(h.db.getAgentById("agent-maya-successor")).toMatchObject({
-      status: "working",
-      processIncarnation: 9,
-    });
-  });
-
   test("recovers an agent already marked dead — the bring-her-back path", async () => {
     const h = harness();
     h.signalProofOfLife();
@@ -1324,95 +915,5 @@ describe("manual recovery", () => {
     expect(h.recovery.recoverAgent("ghost")).rejects.toThrow(
       "Hive agent not found: ghost",
     );
-  });
-});
-
-
-describe("Codex writer containment in recovery", () => {
-  test("marks a crashed Codex writer dead with the containment reason and keeps the worktree", async () => {
-    const h = harness();
-    h.db.insertAgent(agent({
-      tool: "codex",
-      model: "gpt-5-codex",
-      status: "working",
-      readOnly: false,
-      toolSessionId: "legacy-writer",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5-codex",
-        effort: "high",
-      },
-      worktreePath: "/repo/.hive/worktrees/maya",
-    }));
-
-    const outcomes = await h.recovery.sweep();
-    expect(outcomes).toMatchObject([{
-      agent: "maya",
-      action: "marked-dead",
-      reason: CODEX_WRITER_CONTAINMENT_REASON,
-    }]);
-    const row = h.db.getAgentByName("maya")!;
-    expect(row.status).toBe("dead");
-    expect(row.failureReason).toBe(CODEX_WRITER_CONTAINMENT_REASON);
-    // Recovery never deletes the worktree; work survives for a reader respawn.
-    expect(row.worktreePath).toBe("/repo/.hive/worktrees/maya");
-    expect(h.tmux.created).toHaveLength(0);
-  });
-
-  test("still recovers a Codex reader", async () => {
-    const h = harness({
-      resolveCodexSessionId: async () => "reader-thread",
-      readCodexActivity: async () =>
-        new Date(Date.now() + 60_000).toISOString(),
-    });
-    h.db.insertAgent(agent({
-      tool: "codex",
-      model: "gpt-5-codex",
-      status: "working",
-      readOnly: true,
-      toolSessionId: "reader-thread",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5-codex",
-        effort: "high",
-      },
-    }));
-
-    const outcomes = await h.recovery.sweep();
-    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
-    expect(h.tmux.created[0]!.command).toContain("codex");
-    expect(h.tmux.created[0]!.command).toContain("resume");
-  });
-
-  test("recovery revalidates the stored Codex parent binding", async () => {
-    const h = harness({
-      resolveCodexSessionId: async () => "same-cwd-child",
-    });
-    h.db.insertAgent(agent({
-      tool: "codex",
-      model: "gpt-5-codex",
-      status: "working",
-      readOnly: true,
-      toolSessionId: "stored-parent",
-      executionIdentity: {
-        tool: "codex",
-        model: "gpt-5-codex",
-        effort: "high",
-      },
-    }));
-
-    const outcomes = await h.recovery.sweep();
-
-    expect(outcomes).toMatchObject([{
-      agent: "maya",
-      action: "skipped",
-      reason: expect.stringContaining("could not be revalidated"),
-    }]);
-    expect(h.tmux.created).toEqual([]);
-    expect(h.db.getAgentById("agent-maya")).toMatchObject({
-      status: "stuck",
-      writeRevoked: true,
-      toolSessionId: "stored-parent",
-    });
   });
 });
