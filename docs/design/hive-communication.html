@@ -18,8 +18,8 @@
       <div class="hero">
         <p class="eyebrow">Communication fabric · cross-cutting contract</p>
         <h1>Durable messages. Bounded context. Measured receipt.</h1>
-        <p class="hero-copy">Hive’s communication plane is a local, durable control system for agentic engineers. It identifies the real actor, authorizes the route, separates work from conversation, and reports only the delivery facts it can prove.</p>
-        <div class="hero-chips" aria-label="Contract pillars"><span>DAEMON-OWNED LEDGER</span><span>MCP CONTROL SURFACE</span><span>PROVIDER-AWARE DELIVERY</span><span>WORK-SCOPED ROUTING</span></div>
+        <p class="hero-copy">Hive’s communication plane is a local, durable control system for agentic engineers. It identifies the real actor, authorizes the route, separates work from conversation, keeps durable truth lossless, and places only the relevant working set into provider context.</p>
+        <div class="hero-chips" aria-label="Contract pillars"><span>DAEMON-OWNED LEDGER</span><span>MCP CONTROL SURFACE</span><span>PROVIDER-AWARE DELIVERY</span><span>WORK-SCOPED ROUTING</span><span>MEASURED CONTEXT TAX</span></div>
       </div>
     </div>
 
@@ -37,21 +37,21 @@
       <article class="phase-card">
         <span class="phase-tag">C0 · TERMINAL</span>
         <h3>Make delivery truthful</h3>
-        <p>Introduce stable address binding, MessageEnvelope v2, immutable receipt events, bounded wakes, and one serialized delivery lane while the flat assignment policy still governs.</p>
+        <p>Introduce stable address binding, MessageEnvelope v2, immutable receipt events, token-and-byte-bounded wakes, one serialized delivery lane, and per-boundary Hive context attribution while the flat assignment policy still governs.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C1 · HIERARCHY</span>
         <h3>Make routing accountable</h3>
-        <p>Authorize every route through the current hierarchy revision, task ownership, delegation chain, or explicit channel. Add artifacts, rollups, recovery, and per-edge budgets.</p>
+        <p>Authorize every sparse route through the current hierarchy revision, task ownership, delegation chain, or explicit channel. Add artifacts, delta rollups, recovery, and per-edge byte/token bounds without replaying history when an edge opens.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C2 · UI</span>
         <h3>Make state legible</h3>
-        <p>Expose derived queue, receipt, channel, artifact, and failure projections in the native AppKit workspace. The UI never invents a stronger state than the daemon ledger contains.</p>
+        <p>Expose derived queue, receipt, channel, artifact, failure, and token-attribution projections in the native AppKit workspace. The UI never invents a stronger state than the daemon ledger contains.</p>
       </article>
     </div>
 
-    <div class="callout"><strong>Ownership boundary.</strong> <a href="terminal-stack-transition.html">Terminal Stack Transition</a> owns bytes, sessions, provider adapters, and safe injection. <a href="agentic-hierarchy.html">The Queen’s Hive</a> owns who may communicate, about which task, under which authority. This document owns the envelope, MCP operations, durable delivery ledger, and receipt semantics. <a href="split-horizon.html">Split Horizon</a> owns presentation and engineer controls.</div>
+    <div class="callout"><strong>Ownership boundary.</strong> <a href="terminal-stack-transition.html">Terminal Stack Transition</a> owns bytes, sessions, provider adapters, safe injection, and raw provider-usage observations. <a href="agentic-hierarchy.html">The Queen’s Hive</a> owns who may communicate, about which task, under which authority. This document owns the envelope, MCP operations, durable delivery ledger, context selection, Hive-added input attribution, and receipt semantics. <a href="split-horizon.html">Split Horizon</a> owns presentation and engineer controls.</div>
   </div>
 </section>
 
@@ -115,6 +115,7 @@
           <tr><td>Normal inbox pulls can mark a message applied</td><td>Stop doing this in v2. A read produces a read receipt; application requires an explicit disposition or system evidence.</td><td>Reading content is not acting on it.</td></tr>
           <tr><td>Legacy phrase classifier infers a narrow control intent</td><td>Retain only during migration, instrument usage, then remove.</td><td>Raw prose must not revoke authority or control a process.</td></tr>
           <tr><td>Scoped brief assembled before each spawn</td><td>Keep as process-input launch provenance; C1 formalizes it as the hierarchy-owned <code>SpawnBrief</code>, never an inbox message.</td><td>Launch context is process input bound to one exact generation, not conversation, and never re-enters delivery or retry.</td></tr>
+          <tr><td>Settings groups the orchestrator’s whole provider session as “Hive control”</td><td>Replace at Communication Fabric cutover with provider total input/output plus separately attributed Hive-delivered input.</td><td>The queen’s reasoning and task work are not protocol overhead. The current view cannot distinguish useful delivered payload from Hive wrappers, replay, or tool context.</td></tr>
         </tbody>
       </table>
     </div>
@@ -139,12 +140,14 @@
           <li><strong>Policy engine:</strong> evaluates MessageScope, instance/Assignment, and capability bindings at C0 — hierarchy/task/channel/run fences from C1 — at admission and use.</li>
           <li><strong>Message ledger:</strong> stores immutable envelopes, decisions, attempts, receipts, and terminal failure reasons.</li>
           <li><strong>Scheduler:</strong> enforces per-recipient order, fair bounded queues, backpressure, expiry, and a separate control lane.</li>
+          <li><strong>Context assembler:</strong> selects pinned truth, the active working set, and referenced history; records every Hive-delivered block before it crosses a provider boundary.</li>
         </ul>
       </article>
       <article class="detail-panel">
         <h3>Execution and presentation</h3>
         <ul class="check-list">
           <li><strong>Provider adapters:</strong> expose only the boundaries Claude, Codex, or Grok can actually prove.</li>
+          <li><strong>Usage observers:</strong> normalize provider-reported input, output, cached input, and reasoning where available; missing fields remain unknown and no price is inferred.</li>
           <li><strong>sessiond:</strong> owns Ghostty process transport and safe terminal input after the terminal transition.</li>
           <li><strong>Hierarchy services:</strong> own Task, InterfaceContract, ArtifactRef, DelegationGrant, SpecRevision, SpawnBrief, and CommunicationChannel authorization.</li>
           <li><strong>Workspace:</strong> renders projections and sends typed engineer commands; it never writes ledger state directly.</li>
@@ -179,6 +182,8 @@
           <tr><td><strong>ReceiptEvent</strong></td><td>messageId, event kind, actor/system source, timestamp, envelope digest, disposition, optional evidence reference</td><td>Kinds include transport-written, provider-observed, read, recipient-acknowledged, applied, rejected, expired, cancelled, and in-doubt. Events append; they do not overwrite one another.</td></tr>
           <tr><td><strong>CommunicationChannel (hierarchy-owned)</strong></td><td>channelId, owner, participant addresses (authorized <code>root</code>/<code>agent</code> kinds only), run/task/interface binding, purpose, allowed actions, byte/token budget, createdAt, expiresAt, hierarchy revision, lifecycle</td><td>Channels authorize routes; they do not create task, filesystem, or landing authority. The channel record’s lifecycle and policy are hierarchy truth — The Queen’s Hive owns it; this contract owns its admission, delivery, and receipts. Expiry or revocation closes future admission and delivery. <code>system</code> is sender-only and <code>operator</code> interacts with the queen rather than joining worker channels; the engineer observes and controls through typed operator authority without becoming a participant.</td></tr>
           <tr><td><strong>SpawnBrief (hierarchy-owned)</strong></td><td>briefId, run/task/spec/plan revisions, recipient agentId + generation, delegation grant, branch/worktree/base binding, selected source excerpts and graph snapshot provenance, recovery checkpoint if any, byte/token budget, createdAt, digest</td><td>A spawn brief is immutable process-input provenance, not an ordinary message. The Queen’s Hive owns its content; the daemon spawner passes it exactly once as launch context — no MessageEnvelope, DeliveryAttempt, or ReceiptEvent is created. The daemon constructs it only after identity reservation and policy admission, records exactly what context was selected, and binds it to one generation. A successor receives a new brief that cites the prior recovery checkpoint; a reused name receives nothing.</td></tr>
+          <tr><td><strong>ContextInputRecord</strong></td><td>boundaryId, provider/model/session, exact recipient binding, MessageScope/run/task when present, ordered blocks of origin + purpose + source ID/revision/digest + required-read flag + rendered bytes/tokens + count method, createdAt</td><td>Immutable record of the input Hive added at one real provider boundary. Origins distinguish <code>message-payload</code>, <code>protocol</code>, <code>rollup</code>, <code>handoff</code>, <code>tool-schema</code>, and <code>tool-result</code>. Counting is <code>provider-exact</code>, <code>tokenizer-estimate</code>, or <code>unknown</code>; an estimate never renders as exact. Reusing a digest records replay rather than pretending it is new information.</td></tr>
+          <tr><td><strong>TokenAttributionProjection</strong></td><td>scope and interval, per-provider/model observations, provider input/output/cached/reasoning/total with measured state and source, Hive-delivered payload/protocol/replayed input, unknown subjects, observedAt</td><td>Joins raw provider-usage observations to ContextInputRecords. Provider totals remain primary and per-provider; an all-provider value is only a labeled arithmetic sum. Hive attribution applies only to input Hive placed in context—never causally assigns provider output or reasoning to Hive. This projection contains no prices, costs, budgets, or user-selectable efficiency levels.</td></tr>
           <tr><td><strong>WorkManifest</strong></td><td>manifestId/revision, repo/instance/worktree identity and path, branch/base/head, owning Assignment ID + generation at C0 and Task/SpawnBrief refs at C1, exact ahead commit IDs/count with bounded summaries, dirty and untracked relative paths with status/digest/size, agent ID + generation + last accepted status, structured handoff (goal, done, remaining, decisions, uncertainty), evidence/recovery refs at C0 with ArtifactRefs and pending PromotionGrant refs at C1, per-field <code>measured</code>|<code>claimed</code> provenance, observedAt/watcher watermark, completeness <code>known</code>|<code>unknown</code>, digest, lifecycle <code>active</code>|<code>stranded</code>|<code>claimed</code>|<code>resuming</code>|<code>completed</code>|<code>cleaned</code>|<code>discarded</code></td><td>Hive must always know whether stranded work exists and what is on it without opening the worktree. The manifest carries paths and digests, never secret file contents; surviving bytes stay in the worktree and its commits. The daemon computes only branch/ref/commit/dirty/evidence inventory — it never infers semantic progress from a diff. The handoff is seeded at spawn (goal = pinned Assignment/SpawnBrief, done = [], remaining = goal, decisions = []) and thereafter advanced only by agent-written structured progress accepted with status or checkpoint calls, each carrying observedAt and provenance; without a later checkpoint the handoff is shown stale/unknown, never invented.</td></tr>
         </tbody>
       </table>
@@ -284,8 +289,8 @@
         <thead><tr><th>Operation</th><th>Input</th><th>Result contract</th></tr></thead>
         <tbody>
           <tr><td><strong>hive_send</strong></td><td><code>to</code> = queen, owner, agentId, nodeId (from C1), or current display alias, resolved once by the daemon to an exact Address; optional channelId from C1 selects an already-authorized route between that sender and recipient; body/parts; optional threadId; priority; structured intent; idempotency key; expiry</td><td>No <code>from</code>, and no caller-restated scope truth: the daemon infers instance/Assignment at C0 and the current Task from C1; channelId only selects an already-authorized channel. Returns messageId, resolved stable recipient, admission result, and current measured projection. <code>queued</code> is reported as not received.</td></tr>
-          <tr><td><strong>hive_inbox</strong></td><td>cursor, limit, maxBytes, optional scope/channel filters</td><td>The authenticated recipient is implicit. Results are bounded and at least once. Reading appends a read receipt but never marks content applied.</td></tr>
-          <tr><td><strong>hive_read_message</strong></td><td>messageId, optional part index and bounded byte range</td><td>Returns authorized inline parts and/or bounded ranges of a message-scoped content object after digest checks. Reads are audited, do not acknowledge action, and never make the content independently addressable.</td></tr>
+          <tr><td><strong>hive_inbox</strong></td><td>cursor, limit, maxBytes, maxTokens, optional fields and scope/channel filters</td><td>The authenticated recipient is implicit. Results are bounded by the lower byte/token limit and at least once. Field selection avoids returning bodies, receipts, or status the caller did not request. Reading appends a read receipt but never marks content applied.</td></tr>
+          <tr><td><strong>hive_read_message</strong></td><td>messageId, optional part index, bounded byte range, and maxTokens</td><td>Returns authorized inline parts and/or bounded ranges of a message-scoped content object after digest checks. Reads are bounded by both representations, audited, do not acknowledge action, and never make the content independently addressable.</td></tr>
           <tr><td><strong>hive_ack_message</strong></td><td>one or more messageIds, envelope digests, disposition = accepted/deferred/rejected/applied, optional evidence or bound state revision</td><td>Idempotently appends recipient receipt events. <code>applied</code> requires a typed state transition or evidence reference when the message requested work.</td></tr>
           <tr><td><strong>hive_message_status</strong></td><td>messageId or sender-owned idempotency key</td><td>Returns the derived event timeline visible to the sender, owner, or queen; it never exposes unauthorized body content.</td></tr>
           <tr><td><strong>hive_open_channel (from C1)</strong></td><td>task/interface binding, exact participants, purpose, budget, expiry</td><td>Available only to the current owner or queen; the call invokes the hierarchy-owned channel transition. Returns a revisioned channel or a reasoned rejection; it grants communication only.</td></tr>
@@ -295,6 +300,12 @@
         </tbody>
       </table>
     </div>
+
+    <div class="callout"><strong>Attribution boundary.</strong> Where an adapter can count the final rendered input, Hive compares that input with an otherwise identical rendering that omits Hive-owned blocks; the marginal difference is Hive-delivered input, and any tokenizer-boundary residual is protocol overhead. The ordered block manifest allocates that result to payload, protocol, and replay. Where exact counterfactual counting is unavailable, Hive counts only its rendered blocks with the provider tokenizer and labels the result estimated. Provider total always comes from the provider observation, not this attribution calculation.</div>
+
+    <div class="callout"><strong>Usage is not an agent tool.</strong> TokenAttributionProjection is a read-only Workspace/CLI daemon projection and is not loaded into provider tool schemas or model context. Observing whether Hive is efficient must not itself add recurring Hive tokens.</div>
+
+    <div class="callout"><strong>Tool context is context.</strong> Each recipient receives only the small authorized core schema needed for its current work. Optional Hive tool families are deferred or discovered on demand where the provider supports it; unsupported adapters use a deliberately bounded static set. Tool discovery changes visibility, never capability or authority.</div>
 
     <div class="split">
       <article class="detail-panel">
@@ -333,7 +344,7 @@
       </table>
     </div>
 
-    <div class="callout"><strong>Wake budget.</strong> A wake envelope is at most 4 KiB total and contains bounded previews plus message IDs. Full content is pulled only when needed. Critical explanation is at most 2 KiB; the control operation itself is typed outside the body.</div>
+    <div class="callout"><strong>Wake budget.</strong> A wake envelope is at most 4 KiB and 512 rendered tokens; the lower limit wins. It contains a batch cursor, counts, message IDs that fit, and bounded previews. Overflow remains queued for the next pull rather than expanding the wake. Full content is pulled only when needed. Critical explanation remains self-contained, is at most 2 KiB, and must also fit the rendered-token ceiling; the control operation itself is typed outside the body.</div>
 
     <div class="split">
       <article class="detail-panel">
@@ -412,20 +423,42 @@
     <div class="section-head">
       <div>
         <p class="section-label">10 · Context and flow control</p>
-        <h2>The queue has budgets because context has a price.</h2>
+        <h2>The durable truth is lossless. Active context is selective.</h2>
       </div>
-      <p>Multi-agent communication carries a measurable token and attention tax. Hive treats bytes, wakeups, and content reads as resolved-scope resources rather than allowing a noisy peer to consume the hive.</p>
+      <p>Multi-agent communication carries a measurable token and attention tax. Hive reduces repetition and irrelevant context, never the only copy of information the engineer or agent may need.</p>
     </div>
 
     <div class="split">
       <article class="detail-panel">
+        <h3>Three internal context classes</h3>
+        <ul class="check-list">
+          <li><strong>Pinned truth:</strong> exact active engineer instructions, requirements, acceptance criteria, authority, unresolved decisions, blockers, and uncertainty survive every compaction and handoff.</li>
+          <li><strong>Active working set:</strong> current objective, recent relevant deltas, evidence, failures, and next action are revised in place instead of appended repeatedly.</li>
+          <li><strong>Referenced history:</strong> old messages, completed decisions, transcripts, logs, files, diffs, and tool output remain durable and boundedly retrievable by ID, revision, digest, and range.</li>
+          <li>These are deterministic context classes, not user-selectable quality or usage modes.</li>
+        </ul>
+      </article>
+      <article class="detail-panel">
         <h3>Bounded delivery</h3>
         <ul class="check-list">
-          <li>Per-recipient message-count and byte limits; C0 budgets instance and Assignment scopes, C1 adds channel and run budgets.</li>
+          <li>Per-recipient message-count, byte, and rendered-token limits; C0 bounds instance and Assignment scopes, C1 adds channel and run bounds.</li>
           <li>One ordinary wake per available provider boundary, containing a bounded batch.</li>
+          <li>Opening a channel or adding a participant does not inject prior channel history; the recipient receives only its brief plus novel deltas and exact references.</li>
           <li>Fair scheduling across eligible scope senders after the isolated control lane.</li>
           <li>Explicit backpressure with retry guidance; no silent drop and no unbounded SQLite queue.</li>
           <li>Expiry for advisory traffic; durable task and control records use their own lifecycle.</li>
+        </ul>
+      </article>
+    </div>
+
+    <div class="split">
+      <article class="detail-panel">
+        <h3>Valuable information cannot hide behind a preview</h3>
+        <ul class="check-list">
+          <li>New operator instructions, changed requirements or acceptance criteria, authority changes, direct work requests, decisions, review verdicts, blockers, and changed uncertainty are mandatory reads.</li>
+          <li>A mandatory item is delivered in full when bounded, or the recipient must pull and digest-check its exact content before acknowledging or continuing affected work.</li>
+          <li>The daemon classifies mandatory reads from typed sender, intent, task, review, and authority state; it does not spend another model call guessing importance from prose.</li>
+          <li>Receipts, unchanged status, duplicate revisions, and low-value lifecycle chatter stay outside provider context unless explicitly requested.</li>
         </ul>
       </article>
       <article class="detail-panel">
@@ -433,16 +466,22 @@
         <ul class="check-list">
           <li>Summaries cite message IDs and digests, MessageContentRefs, Assignment evidence, commits, diffs, tests, and decisions at C0; C1 adds Task revisions and ArtifactRefs.</li>
           <li>Rollups contain deltas since the receiver’s acknowledged snapshot, not repeated full state.</li>
+          <li>Agents send changed decisions, evidence, blockers, and requests—not restated briefs or full conversation history.</li>
           <li>Large content is range-readable and digest-checked.</li>
           <li>Messages do not duplicate source files, full transcripts, or status already available through typed tools.</li>
+          <li>Content IDs, revisions, and digests suppress unchanged replay; tool results return requested fields or daemon-computed aggregates rather than full logs.</li>
           <li>Uncertainty and blockers survive summarization; the rollup may not collapse “unknown” into “green.”</li>
         </ul>
       </article>
     </div>
 
-    <div class="callout"><strong>Context compaction is explicit.</strong> A summary records its source message range, the resolved MessageScope revisions (Assignment in C0; task/tree/channel in C1), MessageContentRef/ArtifactRef IDs and digests as available, unresolved decisions, and omitted-byte count. It supplements the durable ledger; it never deletes the only copy of a pending instruction or silently changes the engineer-approved specification.</div>
+    <div class="callout"><strong>Context compaction is explicit.</strong> A structured checkpoint records its source message range, the resolved MessageScope revisions (Assignment in C0; task/tree/channel in C1), MessageContentRef/ArtifactRef IDs and digests as available, unresolved decisions, blockers, uncertainty, and omitted byte/token counts. Pinned truth is restored exactly. Provider-native compaction may reduce active context but its opaque output is never Hive’s only recovery record; the checkpoint supplements the durable ledger and never deletes the only copy of a pending instruction or silently changes the engineer-approved specification.</div>
 
     <div class="callout"><strong>Handoff shape (SPEC §7).</strong> A compaction or replacement handoff carries three layers: pinned engineer constraints byte-identical to their approved source; daemon- and worktree-computed state as pointers and digests, never re-typed; and a short written layer of goal, done, failures with reasons, uncertainty, and next action. Transcripts, raw tool output, and file copies are dropped — the recipient verifies pointers against the ledger and worktree. Unknown context is not free: it is named as unknown and re-proven before new work depends on it. Checkpoints reference message ID ranges, queue high-waters, resolved scope revisions, and message-content/artifact IDs and digests; they never copy bodies or read/acknowledgement traffic.</div>
+
+    <div class="callout"><strong>Caching is not token reduction.</strong> Stable provider prefixes may improve provider cache reuse, but cached input still occupies context and remains provider-reported usage. Hive never credits a cache hit as fewer tokens, and stateful provider session IDs are not counted as savings unless the provider’s measured input actually falls.</div>
+
+    <div class="callout"><strong>No cost system.</strong> Token attribution exists to expose and reduce Hive’s context tax. The ledger stores token observations and their provenance only—no currency, price table, projected spend, automatic budget increase, or efficiency-level control.</div>
   </div>
 </section>
 
@@ -488,12 +527,12 @@
       <article class="phase-card">
         <span class="phase-tag">C0A · DURABLE CORE</span>
         <h3>Envelope and identity</h3>
-        <p>Add v2 envelopes/events; reserve stable identity before spawn; bind sender implicitly; add digests, causal links, idempotency scope, limits, and a compatibility projection for current callers. Add the message-content object store, envelope digest binding, bounded previews/range reads, budget accounting, retention, and orphan GC. Add the WorkManifest record, its append-only checksummed manifest journal outside every worktree, and the event-driven write cadence.</p>
+        <p>Add v2 envelopes/events; reserve stable identity before spawn; bind sender implicitly; add digests, causal links, idempotency scope, limits, and a compatibility projection for current callers. Add the message-content object store, envelope digest binding, bounded previews/range reads, flow accounting, retention, and orphan GC. Add ContextInputRecord and the per-provider TokenAttributionProjection, fed by raw provider observations without price data. Add the WorkManifest record, its append-only checksummed manifest journal outside every worktree, and the event-driven write cadence.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C0B · DELIVERY</span>
         <h3>Bounded truthful wakes</h3>
-        <p>Route tmux/sessiond/native attempts through one lane, preserve the composer lease, split provider-observed from applied, add inbox cursors and explicit acknowledgements, then instrument legacy phrase and name routing.</p>
+        <p>Route tmux/sessiond/native attempts through one lane, preserve the composer lease, split provider-observed from applied, enforce byte and rendered-token bounds, add inbox cursors, field selection, mandatory reads, and explicit acknowledgements, then instrument legacy phrase and name routing.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C0C · RECOVERY CONTINUITY</span>
@@ -508,16 +547,16 @@
       <article class="phase-card">
         <span class="phase-tag">C1B · CUTOVER</span>
         <h3>Remove ambiguous paths</h3>
-        <p>After no live legacy binding remains, reject caller-supplied <code>from</code>, name-only durable addresses, inbox-implies-applied, unbounded full-body paste, and prose-derived control intent.</p>
+        <p>After no live legacy binding remains, reject caller-supplied <code>from</code>, name-only durable addresses, inbox-implies-applied, unbounded full-body paste, prose-derived control intent, and the old whole-orchestrator “Hive control” attribution.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C2 · WORKSPACE</span>
         <h3>Expose projections</h3>
-        <p>Render queue pressure, stable participants, delivery timelines, channel expiry, artifacts, in-doubt actions, and adapter degradation. Engineer controls call typed MCP/daemon operations.</p>
+        <p>Render queue pressure, stable participants, delivery timelines, channel expiry, artifacts, in-doubt actions, adapter degradation, provider totals, and Hive-delivered payload/protocol/replay input. Engineer controls call typed MCP/daemon operations; there are no cost controls or efficiency modes.</p>
       </article>
     </div>
 
-    <div class="callout"><strong>No flag-day migration.</strong> A message is wholly v1 or v2 and carries its protocol version. Compatibility code may project v2 facts into old fields; it may not fabricate v2 receipts from old timestamps. Restart recovery drains critical v2 control before ordinary traffic.</div>
+    <div class="callout"><strong>No flag-day message migration.</strong> A message is wholly v1 or v2 and carries its protocol version. Compatibility code may project v2 facts into old fields; it may not fabricate v2 receipts from old timestamps. The token UI is a hard semantic cutover: existing provider collectors may supply raw observations, but the whole-orchestrator “Hive control” projection and old Usage view are removed rather than shown beside TokenAttributionProjection. Restart recovery drains critical v2 control before ordinary traffic.</div>
   </div>
 </section>
 
@@ -551,7 +590,7 @@
           <li>Crash after admission, after transport write, and before receipt append: retry is idempotent or becomes in-doubt, never optimistic success — and no attempt blindly repeats after transport-written or in-doubt.</li>
           <li>Claude, Codex, and Grok expose truthful steer/cancel degradation; no adapter test double substitutes for live acceptance.</li>
           <li>Pause preserves and verifies the same process; stop/restrict-writes follows teardown and capability fencing. A paused run blocks work-bearing admission and delivery while control, recovery, acknowledgement, and evidence still flow; historical receipts with then-valid epochs remain evidence unless explicitly invalidated.</li>
-          <li>Normal batches respect recipient order, fair channel service, queue caps, and the 4 KiB wake budget.</li>
+          <li>Normal batches respect recipient order, fair channel service, queue caps, and the 4 KiB / 512-rendered-token wake budget.</li>
         </ul>
       </article>
     </div>
@@ -562,8 +601,19 @@
         <ul class="check-list">
           <li>A 1 MiB message becomes one MessageContentRef with a bounded preview in C0; from C1, a durable reusable work product becomes an ArtifactRef instead. Neither path terminal-pastes the body.</li>
           <li>Inbox read does not become applied; explicit acknowledgement without matching digest is rejected.</li>
-          <li>Rollup compaction preserves blockers, uncertainty, source ranges, revisions, and omitted-byte counts.</li>
+          <li>Rollup compaction preserves exact pinned truth, blockers, uncertainty, source ranges, revisions, and omitted byte/token counts.</li>
+          <li>Every mandatory item is fully delivered or exact-content-read before affected work continues; preview-only delivery cannot satisfy it.</li>
           <li>Duplicate idempotency keys return the original message only within the same sender binding and resolved message scope.</li>
+        </ul>
+      </article>
+      <article class="detail-panel">
+        <h3>Token efficiency without quality loss</h3>
+        <ul class="check-list">
+          <li>For each supported provider, reconcile provider-reported input/output with ContextInputRecords and prove Hive payload + protocol + replay = Hive-delivered input; estimates and unknowns never render as measured.</li>
+          <li>Replay an unchanged message, rollup, tool result, and handoff: each repeated digest is attributed as replay and no unchanged body enters a delta rollup.</li>
+          <li>Exercise cold/warm cache and stateful-session paths: neither is called a token reduction unless measured provider input falls.</li>
+          <li>Run direct, flat, and representative 19-agent tasks against the full-context baseline; measure provider total input/output, Hive payload/protocol/replay, task success, missed requirements, altered decisions, missed blockers, review defects, retries, and rework.</li>
+          <li>An efficiency change fails its gate if any active engineer constraint disappears, a decision or uncertainty changes meaning, or task/review quality regresses. Runtime work does not invoke another evaluator model merely to compute attribution.</li>
         </ul>
       </article>
       <article class="detail-panel">
@@ -584,6 +634,8 @@
           <li>No official operation accepts actor identity as caller-controlled data.</li>
           <li>No agent-addressed envelope or generation-bound control crosses its exact binding; only ordinary logical-root/operator mail may survive process replacement, and it is reauthorized before delivery. No envelope crosses a revoked Assignment, Run, or channel boundary.</li>
           <li>No UI or CLI string says received, stopped, applied, or safe without the corresponding durable evidence.</li>
+          <li>No UI calls the queen’s whole provider session Hive overhead; token presentation shows provider totals and Hive-delivered input with payload/protocol provenance, and exposes neither prices nor usage modes.</li>
+          <li>No compaction or efficiency mechanism deletes the only durable copy of engineer instructions, requirements, decisions, blockers, uncertainty, or evidence.</li>
           <li>Legacy message rows and active sessions drain before ambiguous paths are deleted.</li>
         </ul>
       </article>
@@ -607,7 +659,7 @@
         <tbody>
           <tr><td>Terminal Stack Transition</td><td>Immutable envelope ID, bounded delivery request, priority/intent, exact recipient binding, immutable attempt-evidence callback</td><td>Hierarchy roles, task lifecycle, routing policy, or UI workflow</td></tr>
           <tr><td>The Queen’s Hive</td><td>Stable Address/MessageScope primitives, ledger event timelines, channel admission and enforcement hooks, bounded rollups, and control/evidence hooks</td><td>PTY bytes, provider keystrokes, Ghostty rendering, or composer implementation</td></tr>
-          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, message-content ranges, tasks, channels, artifacts, receipts, incidents, and WorkManifest/stranded-work recovery prompts</td><td>Receipt synthesis, direct SQLite mutation, or transport selection</td></tr>
+          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, message-content ranges, tasks, channels, artifacts, receipts, incidents, WorkManifest/stranded-work recovery prompts, and per-provider TokenAttributionProjection</td><td>Receipt synthesis, token attribution, price tracking, direct SQLite mutation, or transport selection</td></tr>
         </tbody>
       </table>
     </div>
@@ -639,6 +691,15 @@
           <li><a href="https://research.google/pubs/macaroons-cookies-with-contextual-caveats-for-decentralized-authorization-in-the-cloud/">Macaroons</a></li>
           <li><a href="https://ucan.xyz/delegation/">UCAN Delegation</a></li>
           <li><a href="https://ucan.xyz/revocation/">UCAN Revocation</a></li>
+          <li><a href="https://developers.openai.com/api/docs/guides/token-counting">OpenAI token counting</a></li>
+          <li><a href="https://developers.openai.com/api/docs/guides/prompt-caching">OpenAI prompt caching</a></li>
+          <li><a href="https://developers.openai.com/api/docs/guides/compaction">OpenAI compaction</a></li>
+          <li><a href="https://platform.claude.com/docs/en/build-with-claude/prompt-caching">Anthropic prompt caching</a></li>
+          <li><a href="https://platform.claude.com/docs/en/build-with-claude/context-editing">Anthropic context editing</a></li>
+          <li><a href="https://platform.claude.com/docs/en/agents-and-tools/tool-use/manage-tool-context">Anthropic tool-context management</a></li>
+          <li><a href="https://ai.google.dev/gemini-api/docs/tokens">Gemini token counting</a></li>
+          <li><a href="https://openreview.net/forum?id=LkzuPorQ5L">AgentPrune</a></li>
+          <li><a href="https://aclanthology.org/2026.acl-long.1387/">AgentSlimming</a></li>
           <li><a href="https://arxiv.org/abs/2601.13295">CooperBench</a></li>
           <li><a href="https://arxiv.org/abs/2602.20493">AWCP</a></li>
         </ul>
