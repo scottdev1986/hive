@@ -1,7 +1,7 @@
 # Launch mechanics
 
-Updated: 2026-07-15
-Sources: Hive source tree, 2026-07-14; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
+Updated: 2026-07-16
+Sources: Hive source tree, 2026-07-16; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 
 ## Summary
@@ -19,7 +19,7 @@ Model ids named anywhere here are **examples observed on a date**, not a concret
 | autonomy | `permissions.defaultMode` in `.claude/settings.local.json` | writers refused; readers may set `approval_policy="never"` while staying `sandbox_mode="read-only"` | `--always-approve` |
 | read-only | `--permission-mode default` | `--sandbox read-only` (`-c sandbox_mode` on resume) | `--deny`/`--allow` rules |
 | MCP scoping | `--mcp-config <path> --strict-mcp-config` | `-c mcp_servers.<name>.enabled=false`, per inherited server | worktree `.grok/config.toml` |
-| session id | reported by trusted Claude hook payloads | bound only from independently validated provider `session_meta`; hook claims ignored | **Hive must name it** (`--session-id`) |
+| session id | reported by trusted Claude hook payloads | process association is unknown on 0.144.4: `session_meta` has no PID/nonce/incarnation binding and hook claims are ignored | **Hive must name it** (`--session-id`) |
 
 Every cell that differs from its neighbours is a bug someone has already written. The effort row is the one that bites hardest: there is no `--effort` on Codex, and passing one runs a prompt.
 
@@ -44,6 +44,8 @@ It exists to **silently substitute a different model** when the requested one fa
 ## Codex
 
 Only Codex readers reach this adapter; writer argv and config construction are refused at the adapter boundary as well as by the spawner and recovery paths. **Model** is `-m/--model <MODEL>` at the CLI, or the config-override form `-c model="…"`; Hive passes the override form (`src/adapters/tools/codex.ts`). **Effort is config-only** — `-c model_reasoning_effort=<level>`. There is no `--effort` flag on Codex. That asymmetry with Claude is the single most common launch bug in this area.
+
+The app-server boundary is independently reader-only. `CodexAppServerManager.buildHostCommand` and `startAgent` reject a writer before starting the host process or provider thread. Once a reader is running, command execution, file changes, permission expansion, `execCommand`, `applyPatch`, workspace-write, and elevation requests are denied in the request handler and never queued; manager resolution, daemon queueing, and `hive_approve` also refuse a positive attempted approval. The app-server pane is an event feed, not an escape hatch from the read-only sandbox (`src/adapters/tools/codex-app-server.ts`, `src/daemon/server.ts`).
 
 With no flag the CLI reads `model` from the layered config, which is why the effective default must be read from `config/read` rather than guessed (see [capability-discovery.md](capability-discovery.md)).
 
@@ -99,9 +101,9 @@ The model a spawn launches with is the agent's **recorded execution identity**. 
 
 The launch identity is an **intent**; what a Codex process is actually running is a separate fact, and a refuted claim used to hide it. Correcting the record:
 
-- **Codex 0.144.4 rollouts DO carry the running identity.** Every turn writes a top-level `turn_context` record whose `payload` carries `model`, `effort`, `turn_id`, and `cwd` (verified against real on-disk rollouts, not vendor docs). Hive first binds the productive parent from the earliest validated `session_meta` at or after the exact process launch, requiring `source=cli` and exact cwd; predecessor rollouts and later same-cwd children are excluded. Only the newest `turn_context` from that bound session is the observed running identity. A lifecycle hook may trigger reattestation, but its claimed session id is ignored. The reader is `readCodexObservedIdentity` (`src/daemon/tool-telemetry.ts`), attested by the sweep and at each turn boundary (`src/daemon/server.ts`).
+- **Codex 0.144.4 rollouts carry running identity but not process identity.** Every turn writes a top-level `turn_context` record whose `payload` carries `model`, `effort`, `turn_id`, and `cwd` (verified against real on-disk rollouts, not vendor docs). But `session_meta` carries no PID, launch nonce, process handle, or provider datum independently tied to Hive's process incarnation. Exact cwd, `source=cli`, agent nickname, and timestamps can all match a child-first session as well as the productive parent, so earliest-after-launch chronology is not proof. `findCodexRolloutForProcess` and `discoverCodexRecoverySessionId` therefore return null instead of guessing. `readCodexObservedIdentity` may read the newest `turn_context` only when an exact session id was established independently; a lifecycle hook never establishes it (`src/adapters/tools/codex.ts`, `src/daemon/tool-telemetry.ts`).
 - **The productive parent can drift without a human `/model`.** A provider-native `thread_settings_applied`/settings change can flip the parent to a different model+effort mid-session (the incident: launched `gpt-5.6-sol/xhigh`, every later turn ran `gpt-5.6-luna/low`). Drift is not only the human-switch case the statusline covers.
-- **Absence is `unknown`, never the launch model.** A missing or unparseable `turn_context` is recorded as `unknown` and fails closed; the launch identity is never copied into the observation slot (`src/daemon/identity-attestation.ts`).
+- **Absence or ambiguous parent association is `unknown`, never the launch model.** A missing exact session binding or unparseable `turn_context` fails closed; the launch identity is never copied into the observation slot. Automatic and manual Codex recovery likewise refuse to resume a rollout selected only by same-cwd chronology (`src/daemon/identity-attestation.ts`, `src/daemon/recovery.ts`).
 - **Codex-internal subagents are distinct execution identities.** `codex features list` reports `multi_agent` as a stable feature on by default; a worker that spawns internal children gives them identities Hive never authorized, reserved quota for, or attested (the incident's `/root/review` and `/root/review_grok` rollouts, which run at their own cwd). Hive disables them with `-c features.multi_agent=false` on every TUI spawn/resume (`src/adapters/tools/codex.ts`) and on the app-server host argv (`src/adapters/tools/codex-app-server.ts`). There is no SubagentStart/SubagentStop backstop in Hive. All Codex **writers** are refused at launch until an enforceable per-mutation boundary exists; only Codex readers launch. There is no fallback from observed identity to the launch intention for authority.
 - **Fail-closed is non-destructive for legacy processes.** New Codex *writers* are refused at launch until an enforceable per-mutation boundary exists. A still-running legacy Codex writer observed to have drifted (or unknown at turn-start) is paused, not killed: capability is revoked first, then SIGSTOP freezes the exact captured tree. `hive_resume` reattests readers (and any residual paused process) and only SIGCONTs after exact pause-capture validation; Codex writers remain contained and cannot reacquire write authority. A suspended process cannot acknowledge, so the pause is measured by process/daemon state, never an ACK.
 
