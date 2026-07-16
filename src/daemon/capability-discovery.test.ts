@@ -367,6 +367,17 @@ describe("Grok models catalog", () => {
       .toMatchObject({ status: "ok" });
   });
 
+  test("admits an unrecognized CLI version when the live catalog is coherent", async () => {
+    const unknownVersion = { ...GROK_PAYLOAD, cliVersion: "unknown" };
+    const records = recordsFromGrokModels(unknownVersion, OBSERVED_AT);
+
+    expect(records).toHaveLength(2);
+    expect(records[0]?.cliVersion).toBe("unknown");
+    expect(await new GrokCapabilityProbe({
+      readCatalog: async () => unknownVersion,
+    }).read()).toMatchObject({ status: "ok" });
+  });
+
   test("fails closed on a changed or incoherent runtime catalog", async () => {
     const wrongVersion = {
       ...GROK_PAYLOAD,

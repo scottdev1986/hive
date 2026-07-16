@@ -1884,7 +1884,7 @@ describe("HiveSpawner wiring", () => {
     expect(worktrees).toEqual(0);
   });
 
-  test("launches Grok with catalog identity, project MCP config, and compatibility isolation", async () => {
+  test("launches Grok with unknown CLI identity, project MCP config, and compatibility isolation", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-grok-"));
     tempRoots.push(root);
     const store = new FakeStore();
@@ -1906,9 +1906,9 @@ describe("HiveSpawner wiring", () => {
           ? discovery(record)
           : { status: "unavailable", reason: "not in fixture" },
       grokIdentity: () => ({
-        version: "test-version",
-        buildHash: "test-build",
-        channel: "stable",
+        version: null,
+        buildHash: null,
+        channel: null,
       }),
       issueCredential: () => "test-capability",
       tmux,
@@ -1931,8 +1931,8 @@ describe("HiveSpawner wiring", () => {
       tool: "grok",
       model: "catalog-model",
       effort: "high",
-      cliVersion: "test-version",
-      cliBuildHash: "test-build",
+      cliVersion: "unknown",
+      cliBuildHash: "unknown",
     });
     const shell = tmux.sessions[0]?.[2] ?? "";
     expect(shell).toContain("GROK_CLAUDE_SKILLS_ENABLED=false");

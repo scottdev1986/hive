@@ -16,7 +16,7 @@ import {
 } from "../schemas/capability";
 import { pendingControlResponses, pendingResponses } from "./quota-sources";
 import { HIVE_VERSION } from "../version";
-import { parseGrokCliVersion } from "../adapters/tools/grok";
+import { probeGrokCliVersion } from "../adapters/tools/grok";
 
 /**
  * Runtime capability discovery.
@@ -690,17 +690,8 @@ export interface GrokCapabilityTransport {
 
 export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
   async readCatalog(timeoutMs: number): Promise<GrokCapabilityPayload> {
-    const version = Bun.spawnSync(["grok", "--version"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: timeoutMs,
-      killSignal: "SIGKILL",
-    });
-    const identity = version.exitCode === 0
-      ? parseGrokCliVersion(version.stdout.toString())
-      : null;
-    if (identity === null) throw new Error("grok --version was unrecognized");
+    const identity = probeGrokCliVersion("grok", timeoutMs);
+    if (identity === null) throw new Error("grok --version failed");
     const debugRoot = await mkdtemp(join(tmpdir(), "hive-grok-models-"));
     const debugFile = join(debugRoot, "debug.log");
     try {
@@ -735,7 +726,7 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
       const cache = JSON.parse(
         await readFile(join(home, "models_cache.json"), "utf8"),
       );
-      return { stdout, cache, cliVersion: identity.version };
+      return { stdout, cache, cliVersion: identity.version ?? UNKNOWN_VERSION };
     } finally {
       await rm(debugRoot, { recursive: true, force: true });
     }
@@ -768,7 +759,8 @@ export function recordsFromGrokModels(
   const fetchedAt = Date.parse(parsed.data.fetched_at);
   if (
     !Number.isFinite(fetchedAt) ||
-    parsed.data.grok_version !== payload.cliVersion
+    (payload.cliVersion !== UNKNOWN_VERSION &&
+      parsed.data.grok_version !== payload.cliVersion)
   ) return [];
   const models = Object.entries(parsed.data.models);
   if (models.some(([key, entry]) => {

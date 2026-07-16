@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join, resolve } from "node:path";
 import {
@@ -9,6 +9,7 @@ import {
   findLatestGrokSessionId,
   GROK_COMPATIBILITY_ENV,
   parseGrokCliVersion,
+  probeGrokCliVersion,
   readLiveGrokModel,
   removeGrokAgentConfig,
   wrapGrokSpawnWithCompatibilityEnv,
@@ -93,7 +94,51 @@ describe("Grok adapter", () => {
   test("parses only the vendor version identity shape", () => {
     expect(parseGrokCliVersion("grok 0.2.93 (f00f96316d4b) [stable]\n"))
       .toEqual({ version: "0.2.93", buildHash: "f00f96316d4b", channel: "stable" });
+    const current = parseGrokCliVersion("grok 0.2.101 (5bc4b5dfadcf)");
+    expect(current).not.toBeNull();
+    expect(current).toEqual({
+      version: "0.2.101",
+      buildHash: "5bc4b5dfadcf",
+      channel: null,
+    });
     expect(parseGrokCliVersion("0.2.93")).toBeNull();
+  });
+
+  test("gates availability on command success, not version recognition", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-grok-version-"));
+    roots.push(root);
+    const executable = async (name: string, output: string, exitCode = 0) => {
+      const path = join(root, name);
+      await writeFile(path, [
+        "#!/bin/sh",
+        `printf '%s\\n' '${output}'`,
+        `exit ${exitCode}`,
+        "",
+      ].join("\n"));
+      await chmod(path, 0o755);
+      return path;
+    };
+
+    const current = await executable(
+      "current",
+      "grok 0.2.101 (5bc4b5dfadcf)",
+    );
+    expect(probeGrokCliVersion(current)).toEqual({
+      version: "0.2.101",
+      buildHash: "5bc4b5dfadcf",
+      channel: null,
+    });
+
+    const future = await executable("future", "grok-cli v9 nightly");
+    expect(probeGrokCliVersion(future)).toEqual({
+      version: null,
+      buildHash: null,
+      channel: null,
+    });
+
+    const failed = await executable("failed", "grok-cli v9 nightly", 1);
+    expect(probeGrokCliVersion(failed)).toBeNull();
+    expect(probeGrokCliVersion(join(root, "missing"))).toBeNull();
   });
 
   test("writes project MCPs with capability auth and preserves unrelated config", async () => {

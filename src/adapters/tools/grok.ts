@@ -50,32 +50,38 @@ export const GROK_COMPATIBILITY_ENV = {
 } as const;
 
 export interface GrokCliIdentity {
-  version: string;
-  buildHash: string;
-  channel: string;
+  version: string | null;
+  buildHash: string | null;
+  channel: string | null;
 }
 
-const GROK_VERSION_PATTERN = /^grok (\S+) \(([0-9a-f]+)\) \[(\w+)\]$/;
+const GROK_VERSION_PATTERN = /^grok (\S+) \(([0-9a-f]+)\)(?: \[(\w+)\])?$/;
 
 export function parseGrokCliVersion(output: string): GrokCliIdentity | null {
   const match = GROK_VERSION_PATTERN.exec(output.trim());
   return match === null
     ? null
-    : { version: match[1]!, buildHash: match[2]!, channel: match[3]! };
+    : { version: match[1]!, buildHash: match[2]!, channel: match[3] ?? null };
 }
 
-export function probeGrokCliVersion(executable = "grok"): GrokCliIdentity | null {
+export function probeGrokCliVersion(
+  executable = "grok",
+  timeoutMs = 5_000,
+): GrokCliIdentity | null {
   try {
     const result = Bun.spawnSync([executable, "--version"], {
       stdin: "ignore",
       stdout: "pipe",
       stderr: "ignore",
-      timeout: 5_000,
+      timeout: timeoutMs,
       killSignal: "SIGKILL",
     });
-    return result.exitCode === 0
-      ? parseGrokCliVersion(result.stdout.toString())
-      : null;
+    if (result.exitCode !== 0) return null;
+    return parseGrokCliVersion(result.stdout.toString()) ?? {
+      version: null,
+      buildHash: null,
+      channel: null,
+    };
   } catch {
     return null;
   }

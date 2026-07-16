@@ -1825,14 +1825,14 @@ export class HiveSpawner implements Spawner {
           const identity = this.dependencies.grokIdentity?.() ??
             probeGrokCliVersion();
           if (identity === null) {
-            throw new Error("Cannot spawn Grok: grok --version was unavailable or unrecognized");
+            throw new Error("Cannot spawn Grok: grok --version failed");
           }
           executionIdentity = {
             tool,
             model,
             ...(effort === undefined ? {} : { effort }),
-            cliVersion: identity.version,
-            cliBuildHash: identity.buildHash,
+            cliVersion: identity.version ?? "unknown",
+            cliBuildHash: identity.buildHash ?? "unknown",
           };
           break;
         }
