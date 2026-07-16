@@ -33,7 +33,7 @@
         <article class="principle">
           <span class="num">01 / GROUND</span>
           <strong>Clarify before building</strong>
-          <p>Grill the task, scout the real code, and earn an approved spec before decomposition.</p>
+          <p>Grill the task, scout the real code, and present the SpecRevision plus preliminary plan as one approval package before execution.</p>
         </article>
         <article class="principle">
           <span class="num">02 / CONTAIN</span>
@@ -55,13 +55,13 @@
             <p class="section-label">01 · The hierarchy</p>
             <h2>Four responsibilities, one revisioned ownership chain.</h2>
           </div>
-          <p>The queen is the permanent task root. The run’s TopologyDecision attaches each worker directly to the queen or inserts a lead owner above a crew; either way, every candidate crosses an independent review and a daemon-serialized promotion before it joins its next integration stage.</p>
+          <p>The queen is the permanent task root. The run’s TopologyDecision attaches each worker directly to the queen or inserts a lead owner above a crew; either way, every authored candidate crosses an independent review before the daemon serially promotes it into its next integration stage.</p>
         </div>
 
         <figure class="diagram" aria-label="Illustrative full-hive organization chart: Engineer to Queen to Leads to Workers, with independent review gates on promotion edges">
           <svg viewBox="0 0 1100 610" role="img" aria-labelledby="org-title org-desc">
             <title id="org-title">The Queen’s Hive — illustrative full-hive shape</title>
-            <desc id="org-desc">One illustrative full-hive run: the engineer directs the queen; the queen owns three lead crews in this example. Direct and flat runs attach workers straight to the queen and are equally first-class. Independent reviewers gate every promotion.</desc>
+            <desc id="org-desc">One illustrative full-hive run: the engineer directs the queen; the queen owns three lead crews in this example. Direct and flat runs attach workers straight to the queen and are equally first-class. Independent reviewers gate every authored candidate before its first promotion.</desc>
             <defs>
               <marker id="org-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--line-strong)"/>
@@ -132,7 +132,7 @@
             </g>
 
             <circle cx="350" cy="588" r="5" fill="var(--purple)"/>
-            <text x="365" y="592" class="svg-small" fill="var(--purple)">ILLUSTRATIVE FULL-HIVE SHAPE · REVIEW = mandatory independent promotion gate · temporary assignment · cross-vendor preferred</text>
+            <text x="365" y="592" class="svg-small" fill="var(--purple)">ILLUSTRATIVE FULL-HIVE SHAPE · REVIEW = mandatory independent gate for every authored candidate · temporary assignment · cross-vendor preferred</text>
           </svg>
         </figure>
 
@@ -140,7 +140,7 @@
           <article class="role-card engineer">
             <span class="role-num">Authority · Human</span>
             <h3>Engineer</h3>
-            <p>Holds final authority over the <strong>spec, architecture choices, irreversible actions, and final land</strong>. Receives periodic and on-demand updates from the queen.</p>
+            <p>Holds final authority over the <strong>spec, architecture choices, irreversible actions, and final land authorization</strong>. Receives periodic and on-demand updates from the queen.</p>
           </article>
           <article class="role-card queen">
             <span class="role-num">Orchestration · No code</span>
@@ -240,7 +240,7 @@
             <p class="section-label">03 · Operating process</p>
             <h2>Seven phases, two human gates.</h2>
           </div>
-          <p>Autonomy increases after the spec is approved, then narrows again at land. G1 prevents premature execution; G2 prevents an assembled feature from silently becoming production policy.</p>
+          <p>Autonomy increases after the proposal package is approved, then narrows again at land. G1 prevents premature execution; G2 prevents an assembled feature from silently becoming production policy.</p>
         </div>
 
         <div class="table-wrap">
@@ -262,7 +262,7 @@
         <figure class="diagram" aria-label="Seven-phase pipeline with engineer approval gates G1 and G2">
           <svg viewBox="0 0 1100 410" role="img" aria-labelledby="pipeline-title pipeline-desc">
             <title id="pipeline-title">The seven-phase Queen’s Hive pipeline</title>
-            <desc id="pipeline-desc">P0 Intake and Grill produces the proposal package for engineer gate G1, followed by P1 Decompose and Route, P2 Build, P3 Independent Review and Promotion, P4 Assemble and Validate, engineer gate G2 on the exact run-stage SHA, P5 daemon-only Land, and P6 Close-out.</desc>
+            <desc id="pipeline-desc">P0 Intake and Grill produces the proposal package for engineer gate G1, followed by P1 Materialize and Route, P2 Build, P3 Independent Review and Promotion, P4 Assemble and Validate, engineer gate G2 on the exact run-stage SHA, P5 daemon-only Land, and P6 Close-out.</desc>
             <defs>
               <marker id="pipe-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
@@ -278,12 +278,12 @@
             <path d="M246 112 H290" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <circle cx="329" cy="112" r="37" class="node-gate"/>
             <text x="329" y="107" text-anchor="middle" class="svg-label" fill="var(--amber)">G1</text>
-            <text x="329" y="126" text-anchor="middle" class="svg-small">SPEC</text>
+            <text x="329" y="126" text-anchor="middle" class="svg-small">PACKAGE</text>
 
             <path d="M366 112 H410" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <rect x="412" y="59" width="222" height="106" rx="16" class="node"/>
             <text x="432" y="88" class="svg-label" fill="var(--green)">P1</text>
-            <text x="432" y="116" class="svg-title">Decompose &amp; Route</text>
+            <text x="432" y="116" class="svg-title">Materialize &amp; Route</text>
             <text x="432" y="141" class="svg-copy svg-muted">tasks + grants + stages</text>
 
             <path d="M634 112 H678" class="connector-strong" marker-end="url(#pipe-arrow)"/>
@@ -310,7 +310,7 @@
             <path d="M524 305 H562" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <circle cx="601" cy="305" r="37" class="node-gate"/>
             <text x="601" y="300" text-anchor="middle" class="svg-label" fill="var(--amber)">G2</text>
-            <text x="601" y="319" text-anchor="middle" class="svg-small">FEATURE</text>
+            <text x="601" y="319" text-anchor="middle" class="svg-small">SHA</text>
 
             <path d="M638 305 H676" class="connector-strong" marker-end="url(#pipe-arrow)"/>
             <rect x="678" y="252" width="166" height="106" rx="16" class="node node-engineer"/>
@@ -334,7 +334,7 @@
           </article>
           <article class="phase-card">
             <span class="phase-id">P1</span>
-            <h3>Decompose &amp; Route</h3>
+            <h3>Materialize &amp; Route</h3>
             <p>Materialize Tasks, DelegationSpecs, nodes, grants, stages, and path leases within the G1-approved boundaries. Parallelize only file-disjoint, independent parts; use one agent for tightly coupled decisions. A broader plan, topology, or spec change returns to the engineer.</p>
           </article>
           <article class="phase-card">
@@ -345,7 +345,7 @@
           <article class="phase-card">
             <span class="phase-id">P3</span>
             <h3>Independent Review &amp; Promotion</h3>
-            <p>Every candidate gets an independent digest-bound review and automated validation at the predicted target SHA. The daemon’s serial CAS promotion alone moves a candidate into its next integration stage.</p>
+            <p>Every authored candidate gets an independent digest-bound review and automated validation at the predicted target SHA. The daemon’s serial CAS promotion alone moves a candidate into its next integration stage.</p>
           </article>
           <article class="phase-card">
             <span class="phase-id">P4</span>
@@ -367,7 +367,7 @@
         <div class="gate-band" aria-label="Engineer approval gates">
           <div class="gate-card">
             <span class="gate-id">G1</span>
-            <div><strong>Engineer CAS-approves the exact proposal package</strong><p>SpecRevision, preliminary PlanRevision, TopologyDecision, and RunBudget/gate policy together. No spawn or implementation before G1.</p></div>
+            <div><strong>Engineer CAS-approves the exact proposal package</strong><p>SpecRevision, preliminary PlanRevision, TopologyDecision, and RunBudget/gate policy together. No spawn, authoring, or work-bearing delegation before G1.</p></div>
           </div>
           <div class="gate-card">
             <span class="gate-id">G2</span>
