@@ -2933,6 +2933,12 @@ export class HiveDaemon {
     agentName: string,
     description: string,
   ): Promise<string> {
+    const current = this.db.getAgentByName(agentName);
+    if (current?.readOnly) {
+      throw new Error(
+        `Cannot queue a mutation approval for read-only agent ${agentName}; the request is denied mechanically.`,
+      );
+    }
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     this.db.transaction(() => {
@@ -3831,7 +3837,7 @@ export class HiveDaemon {
             : value.kind === "turn-start"
               ? "working"
               : value.kind === "approval-request"
-                ? "awaiting-approval"
+                ? (agent.readOnly ? agent.status : "awaiting-approval")
                 : value.kind === "notification"
                   // The vendor's own dialog. Claude raises this hook when it is
                   // BLOCKED asking for permission, and Hive used to hold the
@@ -3871,7 +3877,7 @@ export class HiveDaemon {
         this.db.upsertAgent(updated);
       }
 
-      if (value.kind === "approval-request") {
+      if (value.kind === "approval-request" && agent?.readOnly !== true) {
         this.db.insertApproval({
           id: crypto.randomUUID(),
           agentName: value.agentName,
@@ -4492,23 +4498,29 @@ export class HiveDaemon {
         "approval:decide",
         pending?.agentName,
       );
+      const target = pending === null
+        ? null
+        : this.db.getAgentByName(pending.agentName);
+      const readerMutationApproval = decision === "approve" &&
+        pending?.kind === "tool-permission" && target?.readOnly === true;
+      const approved = decision === "approve" && !readerMutationApproval;
       const approval = this.db.resolveApproval(
         id,
-        decision === "approve" ? "approved" : "denied",
+        approved ? "approved" : "denied",
         new Date().toISOString(),
       );
       if (approval === null) {
         throw new Error(`Pending approval not found: ${id}`);
       }
       if (
-        decision === "approve" &&
+        approved &&
         approval.description.startsWith(LAND_REARM_PREFIX)
       ) {
         this.capabilities.rearmOneShot(approval.agentName, "branch:land");
       }
       await this.codexControl?.resolveApproval(
         approval.id,
-        decision === "approve",
+        approved,
       );
       const agent = this.db.getAgentByName(approval.agentName);
       if (agent?.status === "awaiting-approval") {
@@ -4527,7 +4539,7 @@ export class HiveDaemon {
       // approve or deny — gets an explicit envelope naming the approval and
       // the outcome, independent of whatever status-flush path
       // above already applies.
-      const resolutionBody = decision === "approve"
+      const resolutionBody = approved
         ? approval.description.startsWith(LAND_REARM_PREFIX)
           ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
           : `Your approval request "${approval.description}" was approved.`

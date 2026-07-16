@@ -596,6 +596,45 @@ describe("a descendant process inherits no reusable credential", () => {
 });
 
 describe("legitimate workflows keep working", () => {
+  test("read-only agents cannot queue or approve mutation requests", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord({ readOnly: true, branch: null }));
+    const { token } = daemon.capabilities.mint("orchestrator", "orchestrator");
+
+    await expect(
+      daemon.queueCodexApproval("maya", "Run rm -rf build"),
+    ).rejects.toThrow(/read-only agent maya.*denied mechanically/);
+    expect(db.listApprovals()).toEqual([]);
+    expect(db.getAgentByName("maya")?.status).toBe("working");
+
+    await daemon.processEvent({
+      kind: "approval-request",
+      agentName: "maya",
+      timestamp: "2026-07-10T12:01:00.000Z",
+      description: "Apply a patch",
+    });
+    expect(db.listApprovals()).toEqual([]);
+    expect(db.getAgentByName("maya")?.status).toBe("working");
+
+    db.insertApproval({
+      id: "legacy-reader-mutation",
+      agentName: "maya",
+      kind: "tool-permission",
+      description: "Request workspace-write permissions",
+      status: "pending",
+      createdAt: "2026-07-10T12:02:00.000Z",
+      resolvedAt: null,
+    });
+    db.upsertAgent({ ...db.getAgentByName("maya")!, status: "awaiting-approval" });
+    expect((await callTool(daemon, token, "hive_approve", {
+      id: "legacy-reader-mutation",
+      decision: "approve",
+    })).ok).toBe(true);
+    expect(db.getApproval("legacy-reader-mutation")?.status).toBe("denied");
+    expect(db.getAgentByName("maya")?.status).toBe("idle");
+    await daemon.stop();
+  });
+
   test("the orchestrator spawns, approves, kills, and reads the global inbox", async () => {
     const { daemon, db, spawner } = harness();
     db.upsertAgent(agentRecord());
