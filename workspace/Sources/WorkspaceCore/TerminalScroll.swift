@@ -11,7 +11,7 @@ public func terminalScrollSession(
     case .orchestrator:
         return orchestratorSession
     case .agent:
-        return pane.tmuxSession
+        return pane.attachmentIdentity?.tmuxSession
     }
 }
 

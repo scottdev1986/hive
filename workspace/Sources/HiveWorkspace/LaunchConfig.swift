@@ -41,7 +41,7 @@ struct LaunchConfig {
     /// explainer window.
     var isComplete: Bool {
         projectDirectory != nil && port != nil && instanceID != nil
-            && instanceHome != nil && hivePath != nil
+            && instanceHome != nil && hivePath != nil && tmuxSocket != nil
     }
 
     /// The feed subprocess invocation: the override binary verbatim, or

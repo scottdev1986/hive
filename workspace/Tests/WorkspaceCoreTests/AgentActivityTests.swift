@@ -3,6 +3,14 @@ import XCTest
 
 final class AgentActivityTests: XCTestCase {
 
+    private func state() -> ProjectState {
+        ProjectState(
+            projectID: ProjectID("p"), displayName: "p",
+            workspaceIdentity: WorkspaceInstanceIdentity(
+                instanceID: "instance", instanceHome: "/tmp/hive",
+                daemonPort: 4317, tmuxSocket: "hive-test"))
+    }
+
     func testUnifiedLegendMapsEveryActivityToOneAppearance() {
         XCTAssertEqual(AgentActivity.working.appearance,
                        StatusAppearance(color: .green, symbol: "circle.fill", border: .solid))
@@ -73,8 +81,12 @@ final class AgentActivityTests: XCTestCase {
     /// The feed-lost path rewrites feedStatus to "unknown", so a dead feed
     /// turns every agent dot gray rather than freezing a stale colour.
     func testFeedLossTurnsDotUnknown() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
-        state.apply(feed: [AgentSnapshot(name: "alfie", status: "working")], now: 0)
+        let state = state()
+        state.apply(feed: [AgentSnapshot(
+            id: "agent-alfie", name: "alfie", model: "opus", liveModel: "opus",
+            observedIdentity: ObservedIdentitySnapshot(model: "opus"),
+            identityState: "matching", status: "working", tmuxSession: "hive-alfie",
+            toolSessionID: "session-alfie", processIncarnation: 1)], now: 0)
         state.markFeedLost()
         let pane = state.panes[ProjectState.paneID(forAgent: "alfie")]!
         XCTAssertEqual(FeedStatusMap.activity(for: pane.feedStatus), .unknown)
@@ -91,7 +103,7 @@ final class AgentActivityTests: XCTestCase {
     /// unknown and the root — alive by definition — was gray forever. The seed
     /// must now be an honest "unknown", and no status word may be fabricated.
     func testOrchestratorIsSeededUnknownNotAFabricatedWord() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        let state = state()
         state.addOrchestrator()
         let pane = orchestratorPane(in: state)
         XCTAssertEqual(pane.feedStatus, "unknown")
@@ -102,7 +114,7 @@ final class AgentActivityTests: XCTestCase {
 
     /// A measured open turn: the root is working, and the dot goes green.
     func testOrchestratorWorkingFromFeed() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        let state = state()
         state.addOrchestrator()
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
         XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .working)
@@ -111,7 +123,7 @@ final class AgentActivityTests: XCTestCase {
     /// A measured closed turn: the root is idle (yellow), which is a real state
     /// and NOT the same as unknown (gray). That distinction is the whole point.
     func testOrchestratorIdleFromFeed() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        let state = state()
         state.addOrchestrator()
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "idle"), now: 0)
         let activity = FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus)
@@ -122,7 +134,7 @@ final class AgentActivityTests: XCTestCase {
     /// The terminal child is an independent liveness surface. If it exits,
     /// the last turn boundary cannot leave the pane looking idle or working.
     func testOrchestratorExitOverridesAndOutlivesFeedStatus() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        let state = state()
         state.addOrchestrator()
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "idle"), now: 0)
 
@@ -145,7 +157,7 @@ final class AgentActivityTests: XCTestCase {
     /// BACK to unknown rather than keep the last word it heard: a lost signal
     /// must never become a confident stale claim.
     func testOrchestratorRevertsToUnknownWhenTheFieldIsAbsent() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        let state = state()
         state.addOrchestrator()
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
         XCTAssertEqual(FeedStatusMap.activity(for: orchestratorPane(in: state).feedStatus), .working)
@@ -158,7 +170,7 @@ final class AgentActivityTests: XCTestCase {
     /// The pane used to be exempt, which was only ever right while its word was
     /// a constant — a constant cannot go stale. A measured one can.
     func testFeedLossTurnsTheOrchestratorDotUnknownToo() {
-        let state = ProjectState(projectID: ProjectID("p"), displayName: "p")
+        let state = state()
         state.addOrchestrator()
         state.apply(feed: [], orchestrator: OrchestratorSnapshot(status: "working"), now: 0)
         state.markFeedLost()

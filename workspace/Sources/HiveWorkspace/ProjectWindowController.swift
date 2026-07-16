@@ -14,7 +14,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let daemonPort: Int
     private let orchestrator: String
     private let orchestratorSession: String?
-    private let tmuxSocket: String?
+    private let tmuxSocket: String
     private let instanceID: String
     private let instanceHome: String
     private let container = LayoutContainerView()
@@ -34,20 +34,18 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     var paneViewCount: Int { paneViews.count }
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
-         projectDirectory: String, hivePath: String, daemonPort: Int,
-         orchestrator: String, orchestratorSession: String?,
-         tmuxSocket: String? = nil,
-         instanceID: String, instanceHome: String) {
+         projectDirectory: String, hivePath: String,
+         orchestrator: String, orchestratorSession: String?) {
         self.state = state
         self.attentionCenter = attentionCenter
         self.projectDirectory = projectDirectory
         self.hivePath = hivePath
-        self.daemonPort = daemonPort
+        self.daemonPort = state.workspaceIdentity.daemonPort
         self.orchestrator = orchestrator
         self.orchestratorSession = orchestratorSession
-        self.tmuxSocket = tmuxSocket
-        self.instanceID = instanceID
-        self.instanceHome = instanceHome
+        self.tmuxSocket = state.workspaceIdentity.tmuxSocket
+        self.instanceID = state.workspaceIdentity.instanceID
+        self.instanceHome = state.workspaceIdentity.instanceHome
 
         let window = WorkspaceWindow(
             contentRect: NSRect(x: 120, y: 80, width: 1280, height: 800),
@@ -140,7 +138,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         // once, and if it holds unlanded work its branch is preserved and the
         // orchestrator is told.
         if case .closePane(let paneID) = command,
-           let pane = state.panes[paneID], pane.kind == .agent {
+           let pane = state.panes[paneID], pane.kind == .agent,
+           pane.attachmentIdentity != nil, !pane.closePending {
             state.markUserClosed(paneID)
             killAgent(pane.title)
         }
@@ -244,6 +243,8 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
                 if let pane = state.panes[paneID] {
                     paneViews[paneID]?.update(state: pane)
                 }
+            case .paneAttachmentChanged(let paneID):
+                replacePaneView(for: paneID)
             case .attentionChanged:
                 attentionCenter.refresh()
             }
@@ -263,7 +264,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             paneID: paneID,
             title: pane.title,
             tmuxSession: scrollSession,
-            tmuxSocket: tmuxSocket,
+            tmuxSocket: pane.kind == .agent
+                ? pane.attachmentIdentity?.workspace.tmuxSocket : tmuxSocket,
+            attachmentIdentity: pane.attachmentIdentity,
             allowsMouseReporting: allowsMouseReporting) { [weak self] command in
             self?.dispatch(command)
         }
@@ -274,9 +277,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         view.contentView.onComposerInput = { [weak self] action in
             self?.onComposerInput?(recipient, action)
         }
-        view.contentView.schedule(
-            command: terminalCommand(for: pane),
-            workingDirectory: projectDirectory)
+        if let command = terminalCommand(for: pane) {
+            view.contentView.schedule(command: command, workingDirectory: projectDirectory)
+        }
         if pane.kind == .orchestrator {
             view.contentView.onChildExit = { [weak self] exitCode in
                 guard let self, !self.isClosing else { return }
@@ -292,19 +295,41 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
+    /// Rebinds a stable visual slot to a different exact process identity. The
+    /// old tmux client is terminated before the successor can be scheduled, so
+    /// a reused name can never leave a predecessor child behind.
+    private func replacePaneView(for paneID: PaneID) {
+        guard let previous = paneViews.removeValue(forKey: paneID) else {
+            addPaneView(for: paneID)
+            return
+        }
+        let frame = previous.frame
+        let hadFocus = window?.firstResponder === previous.contentView.terminal
+            || (window?.firstResponder as? NSView)?.isDescendant(
+                of: previous.contentView.terminal) == true
+        previous.contentView.terminateChild()
+        previous.removeFromSuperview()
+        addPaneView(for: paneID)
+        guard let replacement = paneViews[paneID] else { return }
+        replacement.frame = frame
+        replacement.commitCellGeometry()
+        if hadFocus { replacement.contentView.focusTerminal() }
+    }
+
     /// What runs inside a pane's pty:
     /// - master: the private Workspace boundary starts the selected
     ///   orchestrator and attaches its tmux session.
     /// - agent: a plain tmux attach client for the daemon-owned session;
     ///   killing it later merely detaches.
-    private func terminalCommand(for pane: PaneState) -> String {
+    private func terminalCommand(for pane: PaneState) -> String? {
         switch pane.kind {
         case .orchestrator:
             return "exec env HIVE_HOME=\(shellQuoted(instanceHome)) \(shellQuoted(hivePath)) workspace-orchestrator --tool \(shellQuoted(orchestrator)) --port \(daemonPort) --instance-id \(shellQuoted(instanceID))"
         case .agent:
-            let session = pane.tmuxSession ?? pane.title
+            guard let attachment = pane.attachmentIdentity else { return nil }
+            let session = attachment.tmuxSession
             let target = shellQuoted("=\(session):")
-            let socket = tmuxSocket.map { " -L \(shellQuoted($0))" } ?? ""
+            let socket = " -L \(shellQuoted(attachment.workspace.tmuxSocket))"
             return "until tmux\(socket) has-session -t \(target) 2>/dev/null; do sleep 0.5; done; "
                 + "exec tmux\(socket) attach-session -t \(shellQuoted(session))"
         }
@@ -436,6 +461,18 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     func terminalChildRunning(pane: PaneID) -> Bool {
         paneViews[pane]?.contentView.childRunning ?? false
+    }
+
+    func paneViewObjectID(_ pane: PaneID) -> ObjectIdentifier? {
+        paneViews[pane].map(ObjectIdentifier.init)
+    }
+
+    func paneAttachmentIdentity(_ pane: PaneID) -> PaneAttachmentIdentity? {
+        paneViews[pane]?.attachmentIdentity
+    }
+
+    func paneAllowsAuthoring(_ pane: PaneID) -> Bool? {
+        paneViews[pane]?.contentView.authoringEnabled
     }
 
     /// Delivers a real left-click at the pane's center through the window's own

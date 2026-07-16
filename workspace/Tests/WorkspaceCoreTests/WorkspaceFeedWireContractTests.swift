@@ -20,6 +20,7 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
 
         XCTAssertEqual(decoded.v, 1)
         let agent = try XCTUnwrap(decoded.agents?.first)
+        XCTAssertEqual(agent.id, "agent-indexer")
         XCTAssertEqual(agent.name, "indexer")
         XCTAssertEqual(agent.tool, "codex")
         XCTAssertEqual(agent.model, "gpt-5.4")
@@ -31,5 +32,33 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .running)
         XCTAssertEqual(decoded.autonomy, "dangerous")
         XCTAssertEqual(decoded.orchestrator?.status, "working")
+    }
+
+    func testDecodesExactAttachmentAndSeparateLaunchObservedIdentity() throws {
+        let line = #"{"v":1,"agents":[{"id":"uuid-1","name":"same-name","tool":"codex","model":"requested-fallback","liveModel":"observed-compat","liveEffort":"low","executionIdentity":{"tool":"codex","model":"gpt-launch","effort":"high"},"observedIdentity":{"model":"gpt-observed","effort":"medium","source":"codex-rollout","observedAt":"2026-07-16T00:00:00.000Z"},"identityState":"drift","status":"working","tmuxSession":"hive-same-instance","toolSessionId":"tool-session-1","processIncarnation":7,"writeRevoked":true}] }"#
+
+        let decoded = try XCTUnwrap(FeedLine.parse(line))
+        let agent = try XCTUnwrap(decoded.agents?.first)
+
+        XCTAssertEqual(agent.id, "uuid-1")
+        XCTAssertEqual(agent.launchModel, "gpt-launch")
+        XCTAssertEqual(agent.launchEffort, "high")
+        XCTAssertEqual(agent.observedModel, "gpt-observed")
+        XCTAssertEqual(agent.observedEffort, "medium")
+        XCTAssertEqual(agent.identityState, "drift")
+        XCTAssertEqual(agent.toolSessionID, "tool-session-1")
+        XCTAssertEqual(agent.processIncarnation, 7)
+        XCTAssertEqual(agent.writeRevoked, true)
+    }
+
+    func testMissingOrMalformedLoadBearingAgentIDRejectsOnlyTheSnapshot() throws {
+        for line in [
+            #"{"v":1,"agents":[{"name":"missing"}],"autonomy":"dangerous"}"#,
+            #"{"v":1,"agents":[{"id":17,"name":"wrong"}],"autonomy":"dangerous"}"#,
+        ] {
+            let decoded = try XCTUnwrap(FeedLine.parse(line))
+            XCTAssertNil(decoded.agents)
+            XCTAssertEqual(decoded.autonomy, "dangerous")
+        }
     }
 }

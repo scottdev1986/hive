@@ -1,0 +1,73 @@
+import Foundation
+
+/// The exact Hive instance whose daemon feed and tmux socket this window views.
+/// A name or port alone is not identity: two HIVE_HOMEs may use the same agent
+/// names, and a restarted daemon may reuse a port.
+public struct WorkspaceInstanceIdentity: Equatable, Sendable {
+    public let instanceID: String
+    public let instanceHome: String
+    public let daemonPort: Int
+    public let tmuxSocket: String
+
+    public init(instanceID: String, instanceHome: String, daemonPort: Int,
+                tmuxSocket: String) {
+        self.instanceID = instanceID
+        self.instanceHome = instanceHome
+        self.daemonPort = daemonPort
+        self.tmuxSocket = tmuxSocket
+    }
+}
+
+/// Everything that must still agree before a pane may reuse a tmux child.
+/// Agent names are deliberately absent: they are presentation/routing labels,
+/// not process identity.
+public struct PaneAttachmentIdentity: Equatable, Sendable {
+    public let workspace: WorkspaceInstanceIdentity
+    public let agentID: String
+    public let processIncarnation: Int
+    public let toolSessionID: String
+    public let tmuxSession: String
+
+    public init(workspace: WorkspaceInstanceIdentity, agentID: String,
+                processIncarnation: Int, toolSessionID: String,
+                tmuxSession: String) {
+        self.workspace = workspace
+        self.agentID = agentID
+        self.processIncarnation = processIncarnation
+        self.toolSessionID = toolSessionID
+        self.tmuxSession = tmuxSession
+    }
+}
+
+/// Pure pane-child lifecycle decision. The AppKit layer applies `recreate` by
+/// detaching the old tmux client before it starts the exact new attachment.
+public enum PaneAttachmentTransition: Equatable {
+    case unchanged
+    case recreate
+    case disconnect
+
+    public static func between(_ current: PaneAttachmentIdentity?,
+                               _ desired: PaneAttachmentIdentity?) -> Self {
+        switch (current, desired) {
+        case (nil, nil):
+            return .unchanged
+        case (.some, nil):
+            return .disconnect
+        case (nil, .some):
+            return .recreate
+        case let (.some(current), .some(desired)):
+            return current == desired ? .unchanged : .recreate
+        }
+    }
+}
+
+public enum AgentAuthoringBlocker: String, Equatable, Sendable {
+    case attachmentUnavailable = "viewer disconnected"
+    case unattested = "identity unattested"
+    case drift = "identity drift"
+    case unknownIdentity = "identity unknown"
+    case observedIdentityUnavailable = "observed identity unavailable"
+    case writeRevoked = "write authority revoked"
+    case writeAuthorityUnknown = "write authority unknown"
+    case controlPaused = "control paused"
+}

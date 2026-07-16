@@ -6,11 +6,25 @@ import WorkspaceCore
 @MainActor
 final class ProjectSwitcherTests: XCTestCase {
 
+    private func state(_ path: String) -> ProjectState {
+        ProjectState(
+            projectID: ProjectID(path), displayName: (path as NSString).lastPathComponent,
+            workspaceIdentity: WorkspaceInstanceIdentity(
+                instanceID: "instance", instanceHome: "/tmp/hive",
+                daemonPort: 4317, tmuxSocket: "hive-test"))
+    }
+
+    private func agent(status: String) -> AgentSnapshot {
+        AgentSnapshot(
+            id: "agent-worker", name: "worker", model: "opus", liveModel: "opus",
+            observedIdentity: ObservedIdentitySnapshot(model: "opus"),
+            identityState: "matching", status: status, tmuxSession: "hive-worker",
+            toolSessionID: "session-worker", processIncarnation: 1)
+    }
+
     func testVisibleProjectCardRefreshesWithState() throws {
         _ = NSApplication.shared
-        let state = ProjectState(
-            projectID: ProjectID("/tmp/refresh-project"),
-            displayName: "refresh-project")
+        let state = state("/tmp/refresh-project")
         _ = state.addOrchestrator()
         let switcher = ProjectSwitcherController()
         switcher.register(state: state) {}
@@ -19,7 +33,7 @@ final class ProjectSwitcherTests: XCTestCase {
 
         XCTAssertTrue(labelValues().contains("1 panes · 1 running"))
 
-        _ = state.apply(feed: [AgentSnapshot(name: "worker", status: "working")])
+        _ = state.apply(feed: [agent(status: "working")])
         switcher.refresh()
 
         let refreshedLabels = labelValues()
@@ -37,19 +51,17 @@ final class ProjectSwitcherTests: XCTestCase {
     }
 
     func testProjectControllerPublishesStateChanges() {
-        let state = ProjectState(
-            projectID: ProjectID("/tmp/state-change"), displayName: "state-change")
-        _ = state.apply(feed: [AgentSnapshot(name: "worker", status: "working")])
+        let state = state("/tmp/state-change")
+        _ = state.apply(feed: [agent(status: "working")])
         let controller = ProjectWindowController(
             state: state, attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp", hivePath: "/usr/bin/true", daemonPort: 1,
-            orchestrator: "codex", orchestratorSession: nil,
-            instanceID: "test", instanceHome: "/tmp")
+            projectDirectory: "/tmp", hivePath: "/usr/bin/true",
+            orchestrator: "codex", orchestratorSession: nil)
         defer { controller.window?.close() }
         var notifications = 0
         controller.onStateChange = { notifications += 1 }
 
-        controller.applyFeed([AgentSnapshot(name: "worker", status: "failed")])
+        controller.applyFeed([agent(status: "failed")])
 
         XCTAssertEqual(notifications, 1)
     }

@@ -63,7 +63,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
               let hivePath = config.hivePath,
               let daemonPort = config.port,
               let instanceID = config.instanceID,
-              let instanceHome = config.instanceHome else {
+              let instanceHome = config.instanceHome,
+              let tmuxSocket = config.tmuxSocket else {
             NSApp.mainMenu = MainMenuBuilder.build()
             if config.smoke {
                 // Smoke must never hang on a bad invocation.
@@ -77,14 +78,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
 
         let displayName = (projectDirectory as NSString).lastPathComponent
-        let state = ProjectState(projectID: ProjectID(projectDirectory), displayName: displayName)
+        let state = ProjectState(
+            projectID: ProjectID(projectDirectory), displayName: displayName,
+            workspaceIdentity: WorkspaceInstanceIdentity(
+                instanceID: instanceID, instanceHome: instanceHome,
+                daemonPort: daemonPort, tmuxSocket: tmuxSocket))
         let controller = ProjectWindowController(
             state: state, attentionCenter: attentionCenter,
             projectDirectory: projectDirectory, hivePath: hivePath,
-            daemonPort: daemonPort, orchestrator: config.orchestrator,
-            orchestratorSession: config.orchestratorSession,
-            tmuxSocket: config.tmuxSocket,
-            instanceID: instanceID, instanceHome: instanceHome)
+            orchestrator: config.orchestrator,
+            orchestratorSession: config.orchestratorSession)
         self.controller = controller
         let composerLeases = ComposerLeaseStore(instanceHome: instanceHome)
         self.composerLeases = composerLeases
