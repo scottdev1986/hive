@@ -82,8 +82,8 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
-/** Codex writer fixture that can pass the fresh landing reattest gate. */
-function landableCodex(overrides: Partial<AgentRecord> = {}): AgentRecord {
+/** Legacy pre-containment Codex writer fixture for landing defense-in-depth. */
+function landableLegacyCodex(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return agent({
     toolSessionId: "session-land",
     executionIdentity: { tool: "codex", model: "gpt-5-codex", effort: "medium" },
@@ -1462,9 +1462,9 @@ describe("HiveDaemon HTTP server", () => {
       },
 });
     try {
-      // A Codex writer must have attested matching to land (the fail-closed
-      // identity gate); a real agent gets this from its turn-boundary reattest.
-      db.insertAgent(landableCodex());
+      // Persisted pre-containment Codex writer rows still need a fresh matching
+      // provider reattestation; new Codex writers never reach this boundary.
+      db.insertAgent(landableLegacyCodex());
       await daemon.landAgent("maya", 0);
       expect(landed).toEqual(["hive/maya-server"]);
 
@@ -1551,7 +1551,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("a Codex writer that has not attested matching cannot land", async () => {
+  test("a legacy Codex writer without matching attestation cannot land", async () => {
     const db = new HiveDatabase(join(home, "land-attestation-gate.db"));
     const landed: string[] = [];
     let observed = {
@@ -1572,7 +1572,7 @@ describe("HiveDaemon HTTP server", () => {
     });
     try {
       // Fresh reattest of an unreadable rollout is unknown — cannot merge.
-      db.insertAgent(landableCodex({ identityState: undefined }));
+      db.insertAgent(landableLegacyCodex({ identityState: undefined }));
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
         /fresh Codex reattestation is unknown/,
       );
@@ -1585,7 +1585,7 @@ describe("HiveDaemon HTTP server", () => {
         sessionId: "session-land",
         observedAt: "2026-07-15T18:00:00.000Z",
       } as never;
-      db.upsertAgent(landableCodex({ identityState: "matching" }));
+      db.upsertAgent(landableLegacyCodex({ identityState: "matching" }));
       await expect(daemon.landAgent("maya", 0)).rejects.toThrow(/is drift/);
       expect(landed).not.toContain("hive/maya-server");
 
@@ -1691,7 +1691,7 @@ describe("HiveDaemon HTTP server", () => {
         codexIdentity: matchingCodexIdentity,
       },
 });
-    db.insertAgent(landableCodex());
+    db.insertAgent(landableLegacyCodex());
     const landing = daemon.landAgent("maya", 0);
     try {
       await landingStarted;
@@ -3950,7 +3950,7 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("pauses a drifted Codex writer non-destructively and wakes queen", async () => {
+  test("pauses a drifted legacy Codex writer non-destructively and wakes queen", async () => {
     const db = new HiveDatabase(join(home, "attest-pause.db"));
     const suspended: string[] = [];
     const daemon = new HiveDaemon({
@@ -4062,7 +4062,7 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
-  test("turn-boundary reattest pauses a Codex writer that drifted before its turn", async () => {
+  test("turn-boundary reattest pauses a legacy Codex writer that drifted before its turn", async () => {
     const db = new HiveDatabase(join(home, "attest-turn-boundary.db"));
     const suspended: string[] = [];
     const daemon = new HiveDaemon({
@@ -4088,7 +4088,8 @@ describe("Codex execution-identity attestation sweep", () => {
     });
     db.insertAgent(codexAgent());
     try {
-      // The trusted turn boundary reattests before the turn's mutating tools.
+      // The hook event is only a boundary signal; identity comes from the
+      // independently bound provider rollout read during reattestation.
       await daemon.processEvent({
         kind: "turn-start",
         agentName: "maya",
@@ -4710,8 +4711,8 @@ describe("landed is not live", () => {
 });
 
 
-describe("Codex writer containment on resume", () => {
-  test("refuses to reissue write authority to a paused Codex writer", async () => {
+describe("legacy Codex writer containment on resume", () => {
+  test("refuses to reissue write authority to a paused legacy Codex writer", async () => {
     const db = new HiveDatabase(join(home, "contain-resume-writer.db"));
     const resumed: string[] = [];
     const daemon = new HiveDaemon({
@@ -4944,7 +4945,7 @@ describe("exact pause capture resume (N5)", () => {
       },
       telemetryReaders: { codexIdentity: matchingCodexIdentity },
     });
-    const paused = landableCodex({
+    const paused = landableLegacyCodex({
       readOnly: true,
       status: "control-paused",
       writeRevoked: true,
@@ -5018,7 +5019,7 @@ describe("exact pause capture resume (N5)", () => {
       },
       telemetryReaders: { codexIdentity: matchingCodexIdentity },
     });
-    const paused = landableCodex({
+    const paused = landableLegacyCodex({
       readOnly: true,
       status: "control-paused",
       writeRevoked: true,

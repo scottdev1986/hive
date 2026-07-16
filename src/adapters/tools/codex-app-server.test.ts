@@ -318,7 +318,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      readOnly: false,
+      readOnly: true,
       writeRevoked: false,
     };
     const path = codexAgentSocketPath(agent);
@@ -345,7 +345,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      readOnly: false,
+      readOnly: true,
       writeRevoked: false,
     };
     const path = codexAgentSocketPath(agent);
@@ -373,7 +373,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      readOnly: false,
+      readOnly: true,
       writeRevoked: false,
     };
     const path = codexAgentSocketPath(agent);
@@ -399,7 +399,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      readOnly: false,
+      readOnly: true,
       writeRevoked: false,
     };
     expect(() => codexAgentSocketPath(agent)).toThrow(
@@ -424,7 +424,7 @@ describe("codexAgentSocketPath", () => {
       lastEventAt: "2026-07-10T12:00:00.000Z",
       recoveryAttempts: 0,
       capabilityEpoch: 0,
-      readOnly: false,
+      readOnly: true,
       writeRevoked: false,
     };
     const path1 = codexAgentSocketPath(agent);

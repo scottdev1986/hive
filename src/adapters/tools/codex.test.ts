@@ -18,6 +18,7 @@ import {
 } from "./codex";
 import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
 import { RecoverySessionDiscoveryError } from "./recovery-session";
+import { CODEX_WRITER_CONTAINMENT_REASON } from "../../daemon/codex-containment";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -49,7 +50,7 @@ describe("Codex spawn-scoped MCP surface", () => {
     effort: "medium" as const,
     worktreePath: "/tmp/worktree",
     daemonPort: 4317,
-    readOnly: false,
+    readOnly: true,
   };
 
   test("detaches each inherited server for this process only", () => {
@@ -178,7 +179,7 @@ const expectedHookOverrides = (
   // writer-tamperable, so writers are refused at launch instead.
 
 describe("Codex adapter", () => {
-  test("builds writer and read-only spawn argv", () => {
+  test("builds only read-only spawn argv", () => {
     const base = {
       name: "agent-4",
       model: "gpt-5-codex",
@@ -187,29 +188,6 @@ describe("Codex adapter", () => {
       daemonPort: 4317,
     };
 
-    expect(buildCodexSpawnCommand({ ...base, readOnly: false })).toEqual([
-      "codex",
-      "-c",
-      "features.apps=false",
-      "-c",
-      "features.multi_agent=false",
-      "-c",
-      "model=gpt-5-codex",
-      "-c",
-      "model_reasoning_effort=high",
-      "-c",
-      'sandbox_mode="workspace-write"',
-      "-c",
-      'approval_policy="on-request"',
-      "-c",
-      'projects."/tmp/worktree".trust_level="trusted"',
-      "--dangerously-bypass-hook-trust",
-      "-c",
-      "features.hooks=true",
-      ...expectedHookOverrides("/tmp/worktree"),
-      "-c",
-      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
-    ]);
     expect(buildCodexSpawnCommand({ ...base, readOnly: true })).toEqual([
       "codex",
       "-c",
@@ -233,6 +211,28 @@ describe("Codex adapter", () => {
     ]);
   });
 
+  test("refuses writer argv and config at the adapter boundary", async () => {
+    const writer = {
+      name: "agent-4",
+      model: "gpt-5-codex",
+      effort: "high" as const,
+      worktreePath: "/tmp/worktree",
+      daemonPort: 4317,
+      readOnly: false,
+    };
+    expect(() => buildCodexSpawnCommand(writer)).toThrow(
+      CODEX_WRITER_CONTAINMENT_REASON,
+    );
+    expect(() => buildCodexResumeCommand(writer, "legacy-session")).toThrow(
+      CODEX_WRITER_CONTAINMENT_REASON,
+    );
+    await expect(writeCodexAgentConfig(worktreePath, {
+      name: writer.name,
+      daemonPort: writer.daemonPort,
+      readOnly: false,
+    })).rejects.toThrow(CODEX_WRITER_CONTAINMENT_REASON);
+  });
+
   test("full autonomy removes prompts without weakening a read-only sandbox", () => {
     const base = {
       name: "agent-4",
@@ -242,22 +242,6 @@ describe("Codex adapter", () => {
       daemonPort: 4317,
     };
 
-    const dangerous = buildCodexSpawnCommand({
-      ...base,
-      readOnly: false,
-      dangerous: true,
-    });
-    expect(dangerous).toContain('sandbox_mode="danger-full-access"');
-    expect(dangerous).toContain('approval_policy="never"');
-    expect(dangerous).not.toContain('approval_policy="on-request"');
-    // The resume path replays the same posture, so a crash-recovered agent
-    // does not silently stall on a prompt nobody is watching.
-    expect(
-      buildCodexResumeCommand({ ...base, readOnly: false, dangerous: true }, "s1"),
-    ).toContain('approval_policy="never"');
-
-    // Full autonomy governs prompts for readers too, while read-only remains
-    // the stronger filesystem restriction.
     const readOnly = buildCodexSpawnCommand({
       ...base,
       readOnly: true,
@@ -289,7 +273,7 @@ describe("Codex adapter", () => {
       effort: "high",
       worktreePath: "/tmp/work tree",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
     });
     expect(command).toContain("--dangerously-bypass-hook-trust");
     expect(command).toContain("features.hooks=true");
@@ -325,14 +309,14 @@ describe("Codex adapter", () => {
     });
   });
 
-  test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
+  test("builds a reader resume argv that replays the spawn overrides", () => {
     expect(buildCodexResumeCommand({
       name: "agent-4",
       model: "gpt-5-codex",
       effort: "high" as const,
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
     }, "019f-thread")).toEqual([
       "codex",
       "resume",
@@ -345,15 +329,13 @@ describe("Codex adapter", () => {
       "-c",
       "model_reasoning_effort=high",
       "-c",
-      'sandbox_mode="workspace-write"',
-      "-c",
-      'approval_policy="on-request"',
+      'sandbox_mode="read-only"',
       "-c",
       'projects."/tmp/worktree".trust_level="trusted"',
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
-      ...expectedHookOverrides("/tmp/worktree"),
+      ...expectedHookOverrides("/tmp/worktree", { readOnly: true }),
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "019f-thread",
@@ -544,7 +526,7 @@ describe("Codex adapter", () => {
       effort: "low",
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
     });
 
     expect(command).not.toContain("model=default");
@@ -555,7 +537,7 @@ describe("Codex adapter", () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
     });
 
     const configSource = await readFile(
@@ -597,7 +579,7 @@ describe("Codex adapter", () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
       hiveCommand: ["/tmp/Hive Versions/0.0.999/hive"],
     });
 
@@ -616,7 +598,7 @@ describe("Codex adapter", () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
       graphifyUrl: "http://127.0.0.1:7799/mcp",
     });
     expect(await readFile(hookPath, "utf8")).toContain("127.0.0.1:7799/mcp");
@@ -624,7 +606,7 @@ describe("Codex adapter", () => {
     await writeCodexAgentConfig(worktreePath, {
       name: "agent-4",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
     });
     expect(readFile(hookPath, "utf8")).rejects.toThrow();
   });
@@ -636,7 +618,7 @@ describe("Codex adapter", () => {
     await writeCodexAgentConfig(worktreePath, {
       daemonPort: 4317,
       name: "maya",
-      readOnly: false,
+      readOnly: true,
       capabilityToken: "hv1.abc.secret-token",
     });
     const configPath = join(worktreePath, ".codex", "config.toml");
@@ -653,13 +635,13 @@ describe("Codex adapter", () => {
     await writeCodexAgentConfig(worktreePath, {
       daemonPort: 4317,
       name: "maya",
-      readOnly: false,
+      readOnly: true,
       capabilityToken: "hv1.abc.stale-token",
     });
     await writeCodexAgentConfig(worktreePath, {
       daemonPort: 4317,
       name: "maya",
-      readOnly: false,
+      readOnly: true,
     });
     const config = await readFile(
       join(worktreePath, ".codex", "config.toml"),
@@ -677,7 +659,7 @@ describe("Codex adapter", () => {
       effort: "high" as const,
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
-      readOnly: false,
+      readOnly: true,
     };
     const withToken = buildCodexSpawnCommand({
       ...base,

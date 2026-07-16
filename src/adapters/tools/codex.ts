@@ -17,6 +17,7 @@ import {
   type GraphifyHookKind,
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import { assertCodexWriterContained } from "../../daemon/codex-containment";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
@@ -36,9 +37,8 @@ export interface CodexSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** No-prompt autonomy through config overrides shared by spawn and resume.
-   * Read-only sessions keep their filesystem sandbox, but still inherit the
-   * user's no-prompt choice. */
+  /** No-prompt autonomy for readers through config overrides shared by spawn
+   * and resume. The filesystem sandbox always remains read-only. */
   dangerous?: boolean;
   /** Names of MCP servers this spawn inherits from the user's global
    * `~/.codex/config.toml` and does not need. Each is detached for this
@@ -113,6 +113,7 @@ function buildCodexConfigArgs(
   options: CodexSpawnOptions,
   sandbox: { asConfigOverride: boolean },
 ): string[] {
+  assertCodexWriterContained("codex", options.readOnly);
   // Apps/connectors do not appear in mcp_servers, so inherited-server
   // exclusions cannot detach them. Hive agents have a deliberately scoped
   // tool surface; disable Apps for this process without changing user config.
@@ -136,31 +137,16 @@ function buildCodexConfigArgs(
   }
   args.push("-c", `model_reasoning_effort=${options.effort}`);
 
-  if (options.readOnly) {
-    // `codex resume` documents no --sandbox flag, so the resume path passes
-    // the same restriction as a config override instead.
-    if (sandbox.asConfigOverride) {
-      args.push("-c", 'sandbox_mode="read-only"');
-    } else {
-      args.push("--sandbox", "read-only");
-    }
-    if (options.dangerous ?? false) {
-      args.push("-c", 'approval_policy="never"');
-    }
-  } else if (options.dangerous ?? false) {
-    args.push(
-      "-c",
-      'sandbox_mode="danger-full-access"',
-      "-c",
-      'approval_policy="never"',
-    );
+  // Codex writers are contained before the adapter can construct argv.
+  // `codex resume` documents no --sandbox flag, so that path carries the same
+  // reader restriction as a config override instead.
+  if (sandbox.asConfigOverride) {
+    args.push("-c", 'sandbox_mode="read-only"');
   } else {
-    args.push(
-      "-c",
-      'sandbox_mode="workspace-write"',
-      "-c",
-      'approval_policy="on-request"',
-    );
+    args.push("--sandbox", "read-only");
+  }
+  if (options.dangerous ?? false) {
+    args.push("-c", 'approval_policy="never"');
   }
 
   // The lifecycle hooks ride the command line, not the worktree's
@@ -278,9 +264,9 @@ export function codexSessionsDirectory(home = homedir()): string {
 }
 
 // Codex records every conversation as a rollout file whose first line is a
-// session_meta entry carrying the session id and cwd. When a crashed agent's
-// thread id was never captured from a notify payload, the newest rollout
-// whose cwd is the agent's worktree is the session to resume.
+// session_meta entry carrying the session id, cwd, source, and creation time.
+// Hook-claimed ids are not trusted. Authority-bearing callers bind the earliest
+// independently validated source=cli rollout for the exact process launch.
 const ROLLOUT_SCAN_LIMIT = 100;
 
 export interface CodexRolloutLocation {
@@ -359,8 +345,9 @@ async function listCodexRollouts(
   return rollouts;
 }
 
-// The newest rollout recorded for a worktree — used only when no durable
-// session id has been captured yet (crash-recovery discovery).
+// Raw newest-rollout lookup for telemetry and legacy recovery discovery. This
+// cwd-only result is never sufficient to bind an active process; that uses
+// findCodexRolloutForProcess below.
 export async function findLatestCodexRollout(
   worktreePath: string,
   home = homedir(),
@@ -513,6 +500,7 @@ export async function writeCodexAgentConfig(
   worktreePath: string,
   options: CodexAgentConfigOptions,
 ): Promise<void> {
+  assertCodexWriterContained("codex", options.readOnly);
   const codexDirectory = join(worktreePath, ".codex");
   const notifyPath = join(codexDirectory, CODEX_NOTIFY_SCRIPT);
   const graphifyPath = graphifyHookPath(worktreePath, ".codex");

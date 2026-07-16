@@ -3,8 +3,9 @@ import { z } from "zod";
 const HookEventBaseSchema = z.strictObject({
   agentName: z.string().min(1),
   timestamp: z.iso.datetime({ offset: true }),
-  // Claude pipes session_id to every hook; Codex session identity is observed from rollout session_meta / lifecycle hooks (notify/thread-id is not a proven path).
-  // Either one is the handle a crash recovery needs for a native resume.
+  // Claude pipes a trusted session_id to its hooks. Codex hook claims are
+  // untrusted and ignored for binding; Codex binds only from independently
+  // validated provider session_meta for the exact process launch.
   toolSessionId: z.string().min(1).optional(),
 });
 

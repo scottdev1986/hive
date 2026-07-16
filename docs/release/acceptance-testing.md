@@ -172,7 +172,7 @@ HIVE_HOME="$GROK_HOME" TMPDIR="$GROK_TMP" HIVE_PORT=0 \
 
 Do not assume the environment on those invocations crosses the Workspace boundary. Verify three separate application PIDs, windows, instance ids, daemon locks, ports, databases, capability directories, runtime markers, tmux socket names, sessions, evidence logs, and provider session artifacts. At the LaunchServices, Workspace, feed, root, hook, and spawned-agent boundaries, inspect the actual arguments, environment, and executable: require the recorded absolute `--hive`, `--instance-home`, `--instance-id`, `--port`, and `--tmux-socket` values where applicable. All three project arguments and root PTYs must resolve to the actual repository. Bracket each launch and GUI phase with the production sentinel.
 
-In each Workspace, select **Agents → Full Autonomy (No Permission Prompts)**. Verify the menu checkmark only after the feed confirms `dangerous`, confirm the same value with `HIVE_HOME="$I_HOME" "$HIVE" autonomy --port "$I_PORT"`, and inspect each spawned agent's recorded launch configuration. A Codex agent that raises an approval prompt or requires a person to continue fails acceptance. The read-only Codex root must also call Hive's own orchestration MCP without prompting; its narrow Hive-server preapproval is independent of the writer-autonomy dial.
+In each Workspace, select **Agents → Full Autonomy (No Permission Prompts)**. Verify the menu checkmark only after the feed confirms `dangerous`, confirm the same value with `HIVE_HOME="$I_HOME" "$HIVE" autonomy --port "$I_PORT"`, and inspect each spawned agent's recorded launch configuration. A Codex reader that raises an approval prompt or requires a person to continue fails acceptance, but its filesystem sandbox must remain read-only. The read-only Codex root must also call Hive's own orchestration MCP without prompting; its narrow Hive-server preapproval is independent of the writer-autonomy dial.
 
 ## Visible prompt-driving contract
 
@@ -190,7 +190,7 @@ Do not use tmux injection to impersonate human root input. Tmux capture may be u
 
 ## The 3×3 compatibility matrix
 
-Use unique instance, agent, task, and correlation identifiers in every cell. Each root must use Hive's normal orchestration tools to spawn exactly one Claude Code agent, one Codex agent, and one Grok agent. Spawn writer agents (`readOnly=false`) so the run actually exercises the selected full-autonomy posture; the assignment itself remains strictly read-only. A capability-enforced reader can prove no-prompt read access, but it cannot prove that a writer received the selected autonomous launch configuration. The no-op task template is:
+Use unique instance, agent, task, and correlation identifiers in every cell. Each root must use Hive's normal orchestration tools to spawn exactly one Claude Code agent, one Codex agent, and one Grok agent. Spawn Claude and Grok writers (`readOnly=false`) so those cells exercise the selected full-autonomy posture; the assignment itself remains strictly read-only. Spawn Codex only as a reader (`readOnly=true`): every Codex writer path is contained and must refuse before creating a worktree or process. The Codex cell proves no-prompt read access without weakening the read-only sandbox; it is not evidence of a Codex writer posture. Separately attempt one Codex writer request and record the containment refusal and absence of a worktree/process. The no-op task template is:
 
 ```text
 READ-ONLY HIVE ACCEPTANCE TASK <task-id>, correlation <correlation-id>.
@@ -210,7 +210,7 @@ queued follow-up can then appear stuck even though routing is healthy.
 
 For every cell, prove:
 
-1. the requested provider starts with the expected model/autonomy configuration and no blocking dialog;
+1. the requested provider starts with the expected model/autonomy configuration and no blocking dialog (Codex remains a reader);
 2. its database row, tmux session, worktree ownership, local capability, and UI pane belong to the correct instance;
 3. it receives the exact task and correlation identifiers;
 4. its response returns to the originating root and is attributed to the correct agent;

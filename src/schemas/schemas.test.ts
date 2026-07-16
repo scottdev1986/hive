@@ -78,7 +78,7 @@ describe("AgentRecordSchema", () => {
     lastEventAt: timestamp,
     recoveryAttempts: 0,
     capabilityEpoch: 0,
-    readOnly: false,
+    readOnly: true,
     writeRevoked: false,
   } satisfies AgentRecord;
 

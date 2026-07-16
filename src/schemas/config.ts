@@ -26,16 +26,13 @@ export const HiveConfigSchema = z.strictObject({
   codex: z.strictObject({
     driver: z.enum(["tui", "app-server"]).default("tui"),
   }).default({ driver: "tui" }),
-  // Agent autonomy. "sandboxed" (the default) runs writers inside
-  // their vendor sandboxes with decision 4's approval queue (acceptEdits
-  // allowlist, workspace-write + on-request): a fresh install is safe out of
-  // the box, per the 2026-07-11 user decision (SPEC §4). "dangerous" launches
-  // agents with no human input required — writers use Claude with
-  // permissions.defaultMode "bypassPermissions" in its worktree settings,
-  // Codex with approval_policy="never" and sandbox_mode="danger-full-access"
-  // — while readers keep their read-only boundary and suppress vendor/MCP
-  // confirmation prompts. The dial remains available through Workspace's Agents
-  // menu and `hive autonomy`, both of which persist here. An absent key means
+  // Agent autonomy. "sandboxed" (the default) runs launched writers inside
+  // their vendor sandboxes with decision 4's approval queue, so a fresh install
+  // is safe out of the box per the 2026-07-11 user decision (SPEC §4).
+  // "dangerous" removes prompts for Claude/Grok writers. Codex writers are
+  // refused on every launch path; Codex readers may suppress prompts but always
+  // keep their read-only sandbox. The dial remains available through the
+  // Workspace Agents menu and `hive autonomy`, both of which persist here. An absent key means
   // this default; an explicit key always means what it says. The read-only
   // orchestrator and read-only control restarts keep their reduced authority.
   autonomy: z.enum(["dangerous", "sandboxed"]).default("sandboxed"),

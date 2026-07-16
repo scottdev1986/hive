@@ -1,6 +1,6 @@
 # Launch mechanics
 
-Updated: 2026-07-14
+Updated: 2026-07-15
 Sources: Hive source tree, 2026-07-14; [cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 Raw: [Cross-vendor architecture review](../../raw/reviews/cross-vendor-architecture-review.md)
 
@@ -16,10 +16,10 @@ Model ids named anywhere here are **examples observed on a date**, not a concret
 |---|---|---|---|
 | model | `--model <id>` | `-m/--model`, or `-c model="…"` (Hive uses `-c`) | `-m <id>` |
 | effort | **flag**: `--effort <level>` | **config only**: `-c model_reasoning_effort=<level>` | **flag**: `--reasoning-effort <level>` |
-| autonomy | `permissions.defaultMode` in `.claude/settings.local.json` | `-c approval_policy="never" -c sandbox_mode="danger-full-access"` | `--always-approve` |
+| autonomy | `permissions.defaultMode` in `.claude/settings.local.json` | writers refused; readers may set `approval_policy="never"` while staying `sandbox_mode="read-only"` | `--always-approve` |
 | read-only | `--permission-mode default` | `--sandbox read-only` (`-c sandbox_mode` on resume) | `--deny`/`--allow` rules |
 | MCP scoping | `--mcp-config <path> --strict-mcp-config` | `-c mcp_servers.<name>.enabled=false`, per inherited server | worktree `.grok/config.toml` |
-| session id | reported by the CLI | reported by the CLI | **Hive must name it** (`--session-id`) |
+| session id | reported by trusted Claude hook payloads | bound only from independently validated provider `session_meta`; hook claims ignored | **Hive must name it** (`--session-id`) |
 
 Every cell that differs from its neighbours is a bug someone has already written. The effort row is the one that bites hardest: there is no `--effort` on Codex, and passing one runs a prompt.
 
@@ -43,7 +43,7 @@ It exists to **silently substitute a different model** when the requested one fa
 
 ## Codex
 
-**Model** is `-m/--model <MODEL>` at the CLI, or the config-override form `-c model="…"`; Hive passes the override form (`src/adapters/tools/codex.ts:107-115`). **Effort is config-only** — `-c model_reasoning_effort=<level>`. There is no `--effort` flag on Codex. That asymmetry with Claude is the single most common launch bug in this area.
+Only Codex readers reach this adapter; writer argv and config construction are refused at the adapter boundary as well as by the spawner and recovery paths. **Model** is `-m/--model <MODEL>` at the CLI, or the config-override form `-c model="…"`; Hive passes the override form (`src/adapters/tools/codex.ts`). **Effort is config-only** — `-c model_reasoning_effort=<level>`. There is no `--effort` flag on Codex. That asymmetry with Claude is the single most common launch bug in this area.
 
 With no flag the CLI reads `model` from the layered config, which is why the effective default must be read from `config/read` rather than guessed (see [capability-discovery.md](capability-discovery.md)).
 
@@ -75,13 +75,13 @@ Argv, permission rules, session naming, and the `.grok/config.toml` MCP path are
 
 ## Autonomy: spawning without a human at the keyboard
 
-Writers launch sandboxed by default; `autonomy = "dangerous"` launches them fully autonomous. The per-CLI mechanics are not interchangeable, and one of them has a trap.
+Claude and Grok writers launch sandboxed by default; `autonomy = "dangerous"` launches them fully autonomous. Codex writers do not launch. The per-CLI mechanics are not interchangeable, and one of them has a trap.
 
 **Claude — set `permissions.defaultMode = "bypassPermissions"` in the worktree's `.claude/settings.local.json`** (`src/adapters/tools/claude.ts:567-591`). The session starts in bypass mode with no dialog.
 
 > **Do NOT use `--dangerously-skip-permissions`.** It raises a blocking acceptance dialog on *every* launch that an unattended spawn cannot answer; `--allow-dangerously-skip-permissions` does not suppress it; and accepting it does not persist. Hive instead expresses the posture in the generated settings (`src/adapters/tools/claude.ts:563-591`).
 
-**Codex — `-c approval_policy="never" -c sandbox_mode="danger-full-access"`** (`src/adapters/tools/codex.ts:125-131`), rendered by the TUI as `permissions: YOLO mode`. The non-dangerous writer path is `sandbox_mode="workspace-write"` + `approval_policy="on-request"` (`src/adapters/tools/codex.ts:132-139`).
+**Codex — readers only.** Both spawn and resume always carry a read-only sandbox. Dangerous autonomy may add `-c approval_policy="never"` to suppress a reader's prompts, but never changes `sandbox_mode` and never makes a writer launchable (`src/adapters/tools/codex.ts`).
 
 **Read-only** is its own posture on both: an attended Claude reader gets `--permission-mode default`, while an autonomous reader takes bypass mode plus a deny list from its worktree settings (`src/adapters/tools/claude.ts:282-291`, `:563-587`). Codex gets `--sandbox read-only` — or `-c sandbox_mode="read-only"` on the resume path, because `codex resume` documents no `--sandbox` flag (`src/adapters/tools/codex.ts:117-124`).
 
@@ -91,7 +91,7 @@ The Codex root is a separate read-only case. Its job is to call Hive's local, ca
 
 The model a spawn launches with is the agent's **recorded execution identity**. It is what a critical-control restart replays, and what the quota reservation is keyed to. Three mechanics fall out of that:
 
-- **Pin concrete ids, not aliases.** An alias passes through verbatim into the record. `default` on Claude and `default` on Codex are *literal* values Hive omits the flag for — they mean "whatever this machine's layered config resolves to," which is precisely what a restart cannot reproduce if the config moved. A recorded `opus` tells you nothing about what will relaunch.
+- **Pin concrete ids, not aliases.** An alias passes through verbatim into the record. `default` on Claude and on a Codex reader are *literal* values Hive omits the flag for — they mean "whatever this machine's layered config resolves to," which is precisely what a restart cannot reproduce if the config moved. A recorded `opus` tells you nothing about what will relaunch.
 - **Raw vendor effort strings must survive persistence.** A shipped enum that rejects a level the vendor advertised is a level a critical restart cannot replay (`src/schemas/capability.ts:209-217`). Codex 0.144.1 already advertised levels Hive's old enums did not know.
 - **Mid-session model change is impossible by design.** Re-routing is a handoff, not a mutation. But a *human* can switch models inside a session, which is invisible to the spawn-time record — the statusline payload's `model.id` is the live correction (see [quota-surfaces.md](quota-surfaces.md)).
 
@@ -99,7 +99,7 @@ The model a spawn launches with is the agent's **recorded execution identity**. 
 
 The launch identity is an **intent**; what a Codex process is actually running is a separate fact, and a refuted claim used to hide it. Correcting the record:
 
-- **Codex 0.144.4 rollouts DO carry the running identity.** Every turn writes a top-level `turn_context` record whose `payload` carries `model`, `effort`, `turn_id`, and `cwd` (verified against real on-disk rollouts, not vendor docs). The newest such record for the worktree is the observed running identity; the old belief that "a Codex rollout records no model name" was wrong and drove `hive status` to report the immutable requested model as if it were observed. The reader is `readCodexObservedIdentity` (`src/daemon/tool-telemetry.ts`), attested by the sweep and at each turn boundary (`src/daemon/server.ts`).
+- **Codex 0.144.4 rollouts DO carry the running identity.** Every turn writes a top-level `turn_context` record whose `payload` carries `model`, `effort`, `turn_id`, and `cwd` (verified against real on-disk rollouts, not vendor docs). Hive first binds the productive parent from the earliest validated `session_meta` at or after the exact process launch, requiring `source=cli` and exact cwd; predecessor rollouts and later same-cwd children are excluded. Only the newest `turn_context` from that bound session is the observed running identity. A lifecycle hook may trigger reattestation, but its claimed session id is ignored. The reader is `readCodexObservedIdentity` (`src/daemon/tool-telemetry.ts`), attested by the sweep and at each turn boundary (`src/daemon/server.ts`).
 - **The productive parent can drift without a human `/model`.** A provider-native `thread_settings_applied`/settings change can flip the parent to a different model+effort mid-session (the incident: launched `gpt-5.6-sol/xhigh`, every later turn ran `gpt-5.6-luna/low`). Drift is not only the human-switch case the statusline covers.
 - **Absence is `unknown`, never the launch model.** A missing or unparseable `turn_context` is recorded as `unknown` and fails closed; the launch identity is never copied into the observation slot (`src/daemon/identity-attestation.ts`).
 - **Codex-internal subagents are distinct execution identities.** `codex features list` reports `multi_agent` as a stable feature on by default; a worker that spawns internal children gives them identities Hive never authorized, reserved quota for, or attested (the incident's `/root/review` and `/root/review_grok` rollouts, which run at their own cwd). Hive disables them with `-c features.multi_agent=false` on every TUI spawn/resume (`src/adapters/tools/codex.ts`) and on the app-server host argv (`src/adapters/tools/codex-app-server.ts`). There is no SubagentStart/SubagentStop backstop in Hive. All Codex **writers** are refused at launch until an enforceable per-mutation boundary exists; only Codex readers launch. There is no fallback from observed identity to the launch intention for authority.
@@ -117,7 +117,7 @@ These are not model facts; they are the two ways adapter code most reliably manu
 
 **2. Long-lived provider sessions must be excluded from probe-style timeouts.** Short hard deadlines are correct for *probes* — 10s on every tmux invocation (`src/adapters/tmux.ts:27`), 5s on the Claude version probe (`src/adapters/tools/claude.ts:88-101`), 5s on the Codex app-server availability probe (`src/adapters/tools/codex-app-server.ts:382-397`), and 5s on the Grok version probe (`src/adapters/tools/grok.ts:74`). They are *wrong* for the Codex app-server host and the agent TUIs, which are intentionally long-running. Their lifecycle belongs to daemon supervision, not a 5s deadline; applying probe timeouts to them breaks their contract. The line between "a subprocess I am asking a question" and "a process I am hosting" is the line the timeout policy follows.
 
-**3. Installed lifecycle hooks must call the exact running Hive binary.** An isolated native acceptance install deliberately puts no `hive` on `PATH`. A generated Codex hook that used `exec hive event …` consequently returned 127 on every `PostToolUse` and `Stop`, leaving an idle agent recorded as working and blocking queued follow-ups. Spawn and recovery now pass `hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath)` into `writeCodexAgentConfig`, exactly as Claude already did; source mode still receives Bun plus the entry script (`src/adapters/tools/codex.ts`, `src/daemon/spawner-impl.ts`, `src/daemon/recovery.ts`).
+**3. Installed lifecycle hooks must call the exact running Hive binary.** An isolated native acceptance install deliberately puts no `hive` on `PATH`. A generated Codex hook that used `exec hive event …` consequently returned 127 on every `PostToolUse` and `Stop`, leaving an idle agent recorded as working and blocking queued follow-ups. Spawn and recovery now pass `hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath)` into `writeCodexAgentConfig`, exactly as Claude already did; source mode still receives Bun plus the entry script (`src/adapters/tools/codex.ts`, `src/daemon/spawner-impl.ts`, `src/daemon/recovery.ts`). These hooks are lifecycle wake signals only; they do not bind Codex session identity.
 
 ## When a model "won't open"
 

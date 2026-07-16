@@ -60,7 +60,7 @@ export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 // Codex is the only vendor Hive attests today; Claude and Grok keep their
 // existing `liveModel` reconciliation path untouched.
 export const ObservedIdentitySourceSchema = z.enum([
-  // Newest main-thread `source=cli` `turn_context` in the Codex TUI rollout.
+  // Newest `turn_context` in the process-bound, source=cli Codex TUI rollout.
   "codex-rollout",
   // A native Codex app-server thread/turn notification.
   "codex-app-server",
@@ -234,9 +234,10 @@ const AgentRecordShape = {
   failureReason: z.string().optional(),
   failedAt: z.iso.datetime().optional(),
   // When this holder closed. Stamped once, the first time the agent reaches a
-  // terminal status, and cleared if crash recovery brings the same agent back.
-  // Absent means the holder is live. This is what makes a name safe to reissue:
-  // the daemon can always say which agent closed and when.
+  // terminal status, and never cleared: terminal rows cannot be revived by
+  // recovery or generic persistence. Absent means the holder is live. This is
+  // what makes a name safe to reissue: the daemon can always say which exact
+  // agent closed and when.
   closedAt: z.iso.datetime().optional(),
   quotaReservationId: z.string().min(1).optional(),
   controlQuotaReservationId: z.string().min(1).optional(),
@@ -246,9 +247,10 @@ const AgentRecordShape = {
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
   tmuxSession: z.string().min(1),
-  // The tool-level conversation identity (Claude session id, Codex thread id)
-  // captured from hook traffic, so a crashed process can be relaunched with
-  // its native resume instead of respawned from a blank prompt.
+  // The tool-level conversation identity used for native resume. Claude binds
+  // from trusted hook traffic. Codex binds from independently validated
+  // provider session_meta for the exact cwd and process launch/incarnation;
+  // hook-supplied Codex ids are ignored.
   toolSessionId: z.string().min(1).optional(),
   /** Monotonic generation of the process currently assigned to this row.
    * Fresh launches start at 1 and every relaunch/replacement increments it.
