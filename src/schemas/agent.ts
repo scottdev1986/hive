@@ -256,6 +256,13 @@ const AgentRecordShape = {
   // provider session_meta for the exact cwd and process launch/incarnation;
   // hook-supplied Codex ids are ignored.
   toolSessionId: z.string().min(1).optional(),
+  // The driver a Codex launch actually used, frozen at spawn like the rest of
+  // the launch identity. Telemetry/identity maintenance dispatches on THIS —
+  // never on readOnly, which is permission, not driver: the TUI rollout scan
+  // is meaningless for an app-server session (its session_meta.source is the
+  // editor client) in either permission mode. Absent on non-Codex rows and on
+  // legacy rows spawned before the field existed.
+  codexDriver: z.enum(["tui", "app-server"]).optional(),
   /** Monotonic generation of the process currently assigned to this row.
    * Fresh launches start at 1 and every relaunch/replacement increments it.
    * Zero is reserved for migrated rows whose process generation is unknown. */

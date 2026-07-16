@@ -2003,14 +2003,19 @@ export class HiveDaemon {
           }
           break;
         case "codex":
-          // The process-time rollout scan is READER observation on the TUI
-          // driver. A writer is only admissible on the app-server driver,
-          // whose exact thread+turn observation the manager records with
-          // source "codex-app-server" — the chronology scan (which cannot
-          // even see an app-server rollout: its session_meta.source is the
-          // editor client, not "cli") must never run for it, or a healthy
-          // writer's exact observation is overwritten with "unknown".
-          if (!agent.readOnly) break;
+          // The process-time rollout scan is observation for the TUI driver
+          // only, and driver — never readOnly, which is permission — decides
+          // the dispatch: an app-server session in either permission mode is
+          // invisible to the chronology scan (its session_meta.source is the
+          // editor client, not "cli"), so scanning it would overwrite an
+          // exact app-server observation with "unknown". Writers are only
+          // admissible on app-server; a legacy row without a persisted driver
+          // is guarded by its permission bit and any app-server-sourced
+          // observation it already holds.
+          if (
+            agent.codexDriver === "app-server" || !agent.readOnly ||
+            agent.observedIdentity?.source === "codex-app-server"
+          ) break;
           try {
             codexSession = agent.processStartedAt === undefined
               ? null
@@ -2147,10 +2152,13 @@ export class HiveDaemon {
           // comparing them. The observation is never synthesized from the launch
           // request — an absent/unknown reading leaves observedIdentity alone and
           // only marks the verdict, which fails closed for a writer.
-          // READERS only: a writer's identity is the app-server manager's exact
-          // thread+turn observation, which this TUI-scan verdict must never
-          // overwrite with "unknown".
-          if (current.readOnly) {
+          // TUI readers only: an app-server row's identity (either permission
+          // mode) is the manager's exact thread+turn observation, which this
+          // TUI-scan verdict must never overwrite with "unknown".
+          if (
+            current.codexDriver !== "app-server" && current.readOnly &&
+            current.observedIdentity?.source !== "codex-app-server"
+          ) {
             const launch = current.executionIdentity;
             const attestation = !codexSessionTrusted
               ? {

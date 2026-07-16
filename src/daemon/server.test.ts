@@ -4774,6 +4774,7 @@ describe("Codex execution-identity attestation sweep", () => {
       observedAt: "2026-07-15T18:00:00.000Z",
     };
     db.insertAgent(codexAgent({
+      codexDriver: "app-server",
       identityState: "matching",
       observedIdentity: observed,
       liveModel: "gpt-5.6-sol",
@@ -4786,6 +4787,53 @@ describe("Codex execution-identity attestation sweep", () => {
       // it with a scan verdict nor pauses the writer holding it.
       expect(row.status).toBe("working");
       expect(row.writeRevoked).toBe(false);
+      expect(row.identityState).toBe("matching");
+      expect(row.observedIdentity).toMatchObject(observed);
+      expect(row.liveModel).toBe("gpt-5.6-sol");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a READ-ONLY app-server row is never TUI-scanned: driver, not permission, decides", async () => {
+    const db = new HiveDatabase(join(home, "attest-appserver-reader.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      telemetryReaders: {
+        // The scan cannot see an app-server rollout; running it at all for
+        // this row is the bug (it would overwrite matching with unknown).
+        codexSession: async () => {
+          throw new Error("an app-server row must never be rollout-scanned");
+        },
+        codex: async () => {
+          throw new Error("an app-server row must never be rollout-scanned");
+        },
+        codexIdentity: async () => {
+          throw new Error("an app-server row must never be rollout-scanned");
+        },
+      },
+    });
+    const observed = {
+      model: "gpt-5.6-sol",
+      effort: "xhigh",
+      source: "codex-app-server" as const,
+      turnId: "turn-3",
+      observedAt: "2026-07-15T18:00:00.000Z",
+    };
+    db.insertAgent(codexAgent({
+      readOnly: true,
+      codexDriver: "app-server",
+      identityState: "matching",
+      observedIdentity: observed,
+      liveModel: "gpt-5.6-sol",
+      liveEffort: "xhigh",
+    }));
+    try {
+      await daemon.refreshToolTelemetry();
+      const row = db.getAgentByName("maya")!;
+      expect(row.status).toBe("working");
       expect(row.identityState).toBe("matching");
       expect(row.observedIdentity).toMatchObject(observed);
       expect(row.liveModel).toBe("gpt-5.6-sol");

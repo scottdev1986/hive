@@ -2447,6 +2447,9 @@ export class HiveSpawner implements Spawner {
       // two agents apart.
       id: crypto.randomUUID(),
       ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
+      // Frozen launch fact: telemetry/identity maintenance dispatches on the
+      // driver, never on readOnly (permission is not driver).
+      ...(codexDriver === null ? {} : { codexDriver }),
       processIncarnation: 1,
       processStartedAt: timestamp,
       name,

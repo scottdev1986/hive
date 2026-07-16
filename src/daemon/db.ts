@@ -259,6 +259,7 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   controlMessageId: z.string().nullable(),
   executionIdentity: z.string().nullable(),
   toolSessionId: z.string().nullable(),
+  codexDriver: z.string().nullable().default(null),
   processIncarnation: z.number().int().nonnegative(),
   processStartedAt: z.string().nullable(),
   contextWindow: z.number().int().positive().nullable().default(null),
@@ -286,6 +287,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
     toolSessionId: value.toolSessionId ?? undefined,
+    codexDriver: value.codexDriver ?? undefined,
     processIncarnation: value.processIncarnation === 0
       ? undefined
       : value.processIncarnation,
@@ -439,6 +441,7 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       controlMessageId TEXT,
       executionIdentity TEXT,
       toolSessionId TEXT,
+      codexDriver TEXT,
       processIncarnation INTEGER NOT NULL DEFAULT 0,
       processStartedAt TEXT,
       recoveryAttempts INTEGER NOT NULL DEFAULT 0,
@@ -733,6 +736,9 @@ export class HiveDatabase {
     }
     if (!agentColumnNames.has("toolSessionId")) {
       this.database.exec("ALTER TABLE agents ADD COLUMN toolSessionId TEXT");
+    }
+    if (!agentColumnNames.has("codexDriver")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN codexDriver TEXT");
     }
     if (!agentColumnNames.has("processIncarnation")) {
       this.database.exec(
@@ -1121,10 +1127,10 @@ export class HiveDatabase {
         worktreePath, branch, tmuxSession, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
-        executionIdentity, toolSessionId, processIncarnation, processStartedAt,
-        contextWindow, recoveryAttempts,
+        executionIdentity, toolSessionId, codexDriver, processIncarnation,
+        processStartedAt, contextWindow, recoveryAttempts,
         capabilityEpoch, readOnly, writeRevoked, closedAt, pauseCapture
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -1149,6 +1155,7 @@ export class HiveDatabase {
         controlMessageId = excluded.controlMessageId,
         executionIdentity = excluded.executionIdentity,
         toolSessionId = excluded.toolSessionId,
+        codexDriver = excluded.codexDriver,
         processIncarnation = excluded.processIncarnation,
         processStartedAt = excluded.processStartedAt,
         contextWindow = excluded.contextWindow,
@@ -1188,6 +1195,7 @@ export class HiveDatabase {
         ? null
         : JSON.stringify(value.executionIdentity),
       value.toolSessionId ?? null,
+      value.codexDriver ?? null,
       value.processIncarnation ?? 0,
       value.processStartedAt ?? null,
       value.contextWindow ?? null,
