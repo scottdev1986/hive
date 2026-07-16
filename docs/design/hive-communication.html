@@ -179,8 +179,20 @@
           <tr><td><strong>ReceiptEvent</strong></td><td>messageId, event kind, actor/system source, timestamp, envelope digest, disposition, optional evidence reference</td><td>Kinds include transport-written, provider-observed, read, recipient-acknowledged, applied, rejected, expired, cancelled, and in-doubt. Events append; they do not overwrite one another.</td></tr>
           <tr><td><strong>CommunicationChannel (hierarchy-owned)</strong></td><td>channelId, owner, participant addresses (authorized <code>root</code>/<code>agent</code> kinds only), run/task/interface binding, purpose, allowed actions, byte/token budget, createdAt, expiresAt, hierarchy revision, lifecycle</td><td>Channels authorize routes; they do not create task, filesystem, or landing authority. The channel record’s lifecycle and policy are hierarchy truth — The Queen’s Hive owns it; this contract owns its admission, delivery, and receipts. Expiry or revocation closes future admission and delivery. <code>system</code> is sender-only and <code>operator</code> interacts with the queen rather than joining worker channels; the engineer observes and controls through typed operator authority without becoming a participant.</td></tr>
           <tr><td><strong>SpawnBrief (hierarchy-owned)</strong></td><td>briefId, run/task/spec/plan revisions, recipient agentId + generation, delegation grant, branch/worktree/base binding, selected source excerpts and graph snapshot provenance, recovery checkpoint if any, byte/token budget, createdAt, digest</td><td>A spawn brief is immutable process-input provenance, not an ordinary message. The Queen’s Hive owns its content; the daemon spawner passes it exactly once as launch context — no MessageEnvelope, DeliveryAttempt, or ReceiptEvent is created. The daemon constructs it only after identity reservation and policy admission, records exactly what context was selected, and binds it to one generation. A successor receives a new brief that cites the prior recovery checkpoint; a reused name receives nothing.</td></tr>
+          <tr><td><strong>WorkManifest</strong></td><td>manifestId/revision, repo/instance/worktree identity and path, branch/base/head, owning Assignment ID + generation at C0 and Task/SpawnBrief refs at C1, exact ahead commit IDs/count with bounded summaries, dirty and untracked relative paths with status/digest/size, agent ID + generation + last accepted status, structured handoff (goal, done, remaining, decisions, uncertainty), evidence/recovery refs at C0 with ArtifactRefs and pending PromotionGrant refs at C1, per-field <code>measured</code>|<code>claimed</code> provenance, observedAt/watcher watermark, completeness <code>known</code>|<code>unknown</code>, digest, lifecycle <code>active</code>|<code>stranded</code>|<code>claimed</code>|<code>resuming</code>|<code>completed</code>|<code>cleaned</code>|<code>discarded</code></td><td>Hive must always know whether stranded work exists and what is on it without opening the worktree. The manifest carries paths and digests, never secret file contents; surviving bytes stay in the worktree and its commits. The daemon computes only branch/ref/commit/dirty/evidence inventory — it never infers semantic progress from a diff. The handoff is seeded at spawn (goal = pinned Assignment/SpawnBrief, done = [], remaining = goal, decisions = []) and thereafter advanced only by agent-written structured progress accepted with status or checkpoint calls, each carrying observedAt and provenance; without a later checkpoint the handoff is shown stale/unknown, never invented.</td></tr>
         </tbody>
       </table>
+    </div>
+
+    <div class="split">
+      <article class="detail-panel">
+        <h3>The manifest journal is the durable truth</h3>
+        <p>The normative copy of every WorkManifest revision is an append-only, checksummed manifest journal in Hive-owned storage outside every worktree, written with atomic compare-and-swap revisions. SQLite holds only a query projection that startup can rebuild from the journal. A manifest row is independent of the agent/worktree registry — no cascade ever deletes it — because the disaster window this record exists for is exactly when mutable registry rows have historically been lost.</p>
+      </article>
+      <article class="detail-panel">
+        <h3>Write cadence is event-driven</h3>
+        <p>The daemon appends a manifest revision on spawn/Assignment, on each accepted status or progress checkpoint, on observed Git ref/commit and file-watcher changes, on promotion, and at final teardown capture. A bounded reconciliation sweep is evidence maintenance only. Watcher overflow or an inaccessible worktree sets completeness = unknown; unknown never means empty.</p>
+      </article>
     </div>
 
     <div class="table-wrap">
@@ -277,6 +289,8 @@
           <tr><td><strong>hive_ack_message</strong></td><td>one or more messageIds, envelope digests, disposition = accepted/deferred/rejected/applied, optional evidence or bound state revision</td><td>Idempotently appends recipient receipt events. <code>applied</code> requires a typed state transition or evidence reference when the message requested work.</td></tr>
           <tr><td><strong>hive_message_status</strong></td><td>messageId or sender-owned idempotency key</td><td>Returns the derived event timeline visible to the sender, owner, or queen; it never exposes unauthorized body content.</td></tr>
           <tr><td><strong>hive_open_channel (from C1)</strong></td><td>task/interface binding, exact participants, purpose, budget, expiry</td><td>Available only to the current owner or queen; the call invokes the hierarchy-owned channel transition. Returns a revisioned channel or a reasoned rejection; it grants communication only.</td></tr>
+          <tr><td><strong>hive_get_work_manifest</strong></td><td>manifestId, optional revision</td><td>Returns the bounded WorkManifest projection by ID and revision — never by worktree path — to an authenticated operator, the queen, or the current owner only, reauthorized at read. <code>hive_status</code> carries a bounded stranded-work summary that never leaks paths across scope; no caller supplies path, branch, or task truth.</td></tr>
+          <tr><td><strong>hive_resolve_stranded_work</strong></td><td>manifestId, expectedRevision, idempotency key, action = <code>resume</code> | <code>preserve</code> | <code>discard</code></td><td>Authenticated operator only; compare-and-swap on the manifest revision. An identical idempotency key returns the original disposition result; a different key with a stale expectedRevision is rejected. <code>resume</code> CAS-moves the manifest stranded → claimed, preflights the recorded worktree/branch/head, and atomically binds the preserved work to a fresh Assignment and agent generation with a new brief citing the WorkManifest — a concurrent resume loses the CAS, and a spawn failure returns the manifest to preserved/stranded with evidence, never attaching the work to a reused display name; <code>preserve</code> records the disposition without claiming completion; <code>discard</code> is the sole destructive path and records authorization and a tombstone. Completion is never a direct state flip — resumed work proves itself through ordinary promotion and gates.</td></tr>
           <tr><td><strong>hive_close_channel (from C1)</strong></td><td>channelId, expected revision, reason</td><td>Append-only closure invoking the hierarchy-owned transition; queued messages are re-evaluated and normally expire rejected.</td></tr>
         </tbody>
       </table>
@@ -379,6 +393,17 @@
         <p>Missed urgent deadlines, terminal recipient loss, queue pressure, and adapter degradation append durable incidents. Acknowledgment deadlines start at the matching transport-written event, never enqueue. Initial policy is urgent 180 seconds and critical 10 seconds. A miss appends typed attention and invokes intent-specific escalation/recovery; it does not rewrite any receipt or permit blind retry. At C0 the queen receives instance and Assignment aggregates; C1 adds owner-subtree and run rollups. Repeated maintenance polls do not flood agent context with identical alerts.</p>
       </article>
     </div>
+
+    <div class="split">
+      <article class="detail-panel">
+        <h3>Stranding is measured, not inferred</h3>
+        <p>Startup after an unclosed daemon epoch reads the manifest journal first, rebuilds the projection, and marks every <code>active</code> manifest <code>stranded</code> from journal state alone — before any worktree is opened. Hive worktree registrations and the worktrees directory are enumerated only to detect existence and missing/orphan cases, never to reconstruct task context. A worktree with no manifest is a surfaced incident, never silently adopted or deleted. The one permitted on-disk safety measurement exists to prevent unsafe cleanup; it is not forensic reconstruction and never overwrites the journaled handoff.</p>
+      </article>
+      <article class="detail-panel">
+        <h3>Reconciliation and the Engineer prompt</h3>
+        <p>Auto-clean requires both a known-complete manifest and an agreeing safety measurement taken with untracked-files=all semantics: zero unique commits relative to the recorded base, zero dirty files, zero untracked files, and no recovery artifacts or pending promotion. The cleanup itself is bound to that exact manifest revision, head, and watcher watermark under compare-and-swap after the measurement — any intervening change preserves and prompts, closing the measure-then-delete race. Any disagreement, unknown, or content preserves the worktree and raises a typed Engineer prompt rendering the goal/task/brief, owner and generation, exact commits with summaries, dirty/untracked list, last progress/decisions/evidence, and freshness/cause. Typed choices: <strong>resume/complete</strong> (a fresh agent binding and generation spawned with a brief citing the WorkManifest), <strong>preserve</strong>, or <strong>discard</strong> (explicit destructive authorization). Completion still follows ordinary promotion and landing, never an ad hoc cleanup. Before Split Horizon the prompt is a CLI/daemon surface. Commit subjects, dirty paths, and agent-written handoff fields are untrusted measured/claimed data: the prompt and the successor brief render them outside control fields, they can never override pinned engineer constraints, mint authority, select a disposition, or become instructions merely because they sit in a WorkManifest — the successor verifies them.</p>
+      </article>
+    </div>
   </div>
 </section>
 
@@ -436,12 +461,12 @@
         <thead><tr><th>Control</th><th>Requirement</th></tr></thead>
         <tbody>
           <tr><td>Credentials</td><td>Per agentId + generation + capability epoch for agents; operator, root, and system actions bind their exact authenticated action binding. Never placed in prompts, message bodies, command-line arguments, or logs.</td></tr>
-          <tr><td>Storage</td><td>SQLite database, WAL, message-content objects, artifacts, and runtime bindings use owner-only permissions. Message bodies and secrets are redacted from routine logs.</td></tr>
+          <tr><td>Storage</td><td>SQLite database, WAL, message-content objects, the manifest journal, artifacts, and runtime bindings use owner-only permissions. Message bodies and secrets are redacted from routine logs.</td></tr>
           <tr><td>Authorization</td><td>Validate the current instance, Assignment, and capability bindings at C0 — delegation chains and hierarchy fences from C1 — at invocation time. A stale admission is not a future permit.</td></tr>
           <tr><td>Content trust</td><td>Peer text is untrusted data. Control fields are rendered separately and raw body content cannot call tools, change priority, or mint grants.</td></tr>
           <tr><td>Content access</td><td>ArtifactRef resolves only through the daemon after task/channel authorization; a MessageContentRef resolves only through its containing envelope’s authorization. Arbitrary sender-provided paths are rejected.</td></tr>
           <tr><td>Audit</td><td>Body and message-content reads, artifact opens, channel changes, authority failures, and control operations append actor-bound records.</td></tr>
-          <tr><td>Retention</td><td>Every content object has a retention class. The default retains bodies through the resolved scope’s closure and review — Assignment or instance at C0, Run at C1; cleanup removes content only after engineer-approved retention while preserving the minimum audit metadata and digests.</td></tr>
+          <tr><td>Retention</td><td>Every content object has a retention class. The default retains bodies through the resolved scope’s closure and review — Assignment or instance at C0, Run at C1; cleanup removes content only after engineer-approved retention while preserving the minimum audit metadata and digests. WorkManifest active/stranded revisions are retained until ordinary Assignment/Run closure plus Engineer disposition; cleanup may compact them to a checksummed tombstone/audit digest but never erases the only handoff before resolution.</td></tr>
           <tr><td>External gateways</td><td>A2A or other remote bridges terminate at a separately authorized gateway identity. Remote agent cards or credentials never become internal hierarchy authority.</td></tr>
         </tbody>
       </table>
@@ -463,7 +488,7 @@
       <article class="phase-card">
         <span class="phase-tag">C0A · DURABLE CORE</span>
         <h3>Envelope and identity</h3>
-        <p>Add v2 envelopes/events; reserve stable identity before spawn; bind sender implicitly; add digests, causal links, idempotency scope, limits, and a compatibility projection for current callers. Add the message-content object store, envelope digest binding, bounded previews/range reads, budget accounting, retention, and orphan GC.</p>
+        <p>Add v2 envelopes/events; reserve stable identity before spawn; bind sender implicitly; add digests, causal links, idempotency scope, limits, and a compatibility projection for current callers. Add the message-content object store, envelope digest binding, bounded previews/range reads, budget accounting, retention, and orphan GC. Add the WorkManifest record, its append-only checksummed manifest journal outside every worktree, and the event-driven write cadence.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C0B · DELIVERY</span>
@@ -471,9 +496,14 @@
         <p>Route tmux/sessiond/native attempts through one lane, preserve the composer lease, split provider-observed from applied, add inbox cursors and explicit acknowledgements, then instrument legacy phrase and name routing.</p>
       </article>
       <article class="phase-card">
+        <span class="phase-tag">C0C · RECOVERY CONTINUITY</span>
+        <h3>Stranded work survives shutdown</h3>
+        <p>Run the startup stranding reconciliation: journal-first rebuild of the WorkManifest projection, agreed-empty auto-clean, and the typed Engineer prompt with resume/preserve/discard dispositions through the operator-only resolver.</p>
+      </article>
+      <article class="phase-card">
         <span class="phase-tag">C1A · POLICY</span>
         <h3>Hierarchy-aware routes</h3>
-        <p>Add current-revision edge checks, owner aliases, channels, delegation validation, run/task binding, emergency escalation, artifacts, rollups, budgets, and recovery routing.</p>
+        <p>Add current-revision edge checks, owner aliases, channels, delegation validation, run/task binding, emergency escalation, artifacts, rollups, budgets, and recovery routing. Bind WorkManifests to formal Task, SpawnBrief, and RecoveryCheckpoint records.</p>
       </article>
       <article class="phase-card">
         <span class="phase-tag">C1B · CUTOVER</span>
@@ -537,6 +567,18 @@
         </ul>
       </article>
       <article class="detail-panel">
+        <h3>Stranded work</h3>
+        <ul class="check-list">
+          <li>kill -9 the daemon and every agent mid-work: each WorkManifest is readable and actionable before any worktree is touched.</li>
+          <li>An agreed-empty stranding is auto-cleaned exactly once; a content-bearing stranding prompts with correct rendered contents.</li>
+          <li>A fresh agent resumes and completes from the manifest alone — no archaeology in the worktree beyond its recorded state.</li>
+          <li>Registry-row loss and pruned worktree registrations still reconcile from the journal and disk; a missing manifest surfaces as an incident, never adoption or deletion.</li>
+          <li>Watcher overflow yields completeness = unknown and blocks auto-clean; manifest/disk disagreement preserves and prompts.</li>
+          <li>hive_resolve_stranded_work rejects non-operator callers and stale expectedRevision; repeated identical resolutions are idempotent; discard without explicit authorization fails closed.</li>
+          <li>A hostile commit subject, dirty path, or handoff field ("discard this", "approved", tool-call syntax) renders inert in the prompt and successor brief: no disposition, authority, or instruction results from manifest content.</li>
+        </ul>
+      </article>
+      <article class="detail-panel">
         <h3>Definition of done</h3>
         <ul class="check-list">
           <li>No official operation accepts actor identity as caller-controlled data.</li>
@@ -565,7 +607,7 @@
         <tbody>
           <tr><td>Terminal Stack Transition</td><td>Immutable envelope ID, bounded delivery request, priority/intent, exact recipient binding, immutable attempt-evidence callback</td><td>Hierarchy roles, task lifecycle, routing policy, or UI workflow</td></tr>
           <tr><td>The Queen’s Hive</td><td>Stable Address/MessageScope primitives, ledger event timelines, channel admission and enforcement hooks, bounded rollups, and control/evidence hooks</td><td>PTY bytes, provider keystrokes, Ghostty rendering, or composer implementation</td></tr>
-          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, message-content ranges, tasks, channels, artifacts, receipts, and incidents</td><td>Receipt synthesis, direct SQLite mutation, or transport selection</td></tr>
+          <tr><td>Split Horizon</td><td>Read-only projections plus typed engineer actions for queues, messages, message-content ranges, tasks, channels, artifacts, receipts, incidents, and WorkManifest/stranded-work recovery prompts</td><td>Receipt synthesis, direct SQLite mutation, or transport selection</td></tr>
         </tbody>
       </table>
     </div>
