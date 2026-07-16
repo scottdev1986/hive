@@ -402,9 +402,6 @@
               <marker id="git-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
                 <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--green)"/>
               </marker>
-              <marker id="git-blue-arrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="7" markerHeight="7" orient="auto">
-                <path d="M 0 0 L 10 5 L 0 10 z" fill="var(--blue)"/>
-              </marker>
             </defs>
 
             <rect x="40" y="36" width="1020" height="84" rx="18" class="node node-engineer"/>
@@ -467,7 +464,7 @@
 
         <div class="ci-block" aria-labelledby="ci-title">
           <div class="ci-block-head">
-            <h3 id="ci-title">CI gets broader at every merge boundary.</h3>
+            <h3 id="ci-title">CI gets broader at every promotion boundary.</h3>
             <p>Fast local feedback stays close to the worker. Integration and release gates progressively widen until the exact production candidate has crossed the full stack.</p>
           </div>
           <div class="table-wrap ci-table">
@@ -630,7 +627,7 @@
           <table>
             <thead><tr><th>Durable record</th><th>Required fields and invariant</th></tr></thead>
             <tbody>
-              <tr><td><strong>Run</strong></td><td>runId, repo/instance, immutable approved spec revision, current PlanRevision, TopologyDecision, P0–P6 phase, G1/G2 state and decider, base SHA, RunBudget, run epoch, lifecycle, revision. G2 binds one exact assembled candidate; it is not approval of a floating branch.</td></tr>
+              <tr><td><strong>Run</strong></td><td>runId, repo/instance, immutable approved spec revision, current PlanRevision, TopologyDecision, P0–P6 phase, G1/G2 state and decider, base SHA, RunBudget, run epoch, lifecycle, revision. G2 binds the exact run-stage SHA, digest, evidence set, and target-main base; it is not approval of a floating branch.</td></tr>
               <tr><td><strong>PlanRevision</strong></td><td>runId, parent revision, task DAG, topology rationale, proposer, createdAt, digest, lifecycle. Queen and lead workers may revise decomposition by compare-and-swap inside approved acceptance boundaries. Goal, acceptance, scope, outward-effect, gate, or budget increases require engineer approval.</td></tr>
               <tr><td><strong>HierarchyNode</strong></td><td>nodeId, runId, parentNodeId, ownerNodeId, organizational role = <code>lead-worker</code> or <code>worker</code>, assignment kind, task scope, capacity charge, lifecycle, revision. Reviewer is an assignment kind, never a hierarchy tier.</td></tr>
               <tr><td><strong>AgentBinding</strong></td><td>nodeId, reserved agentId + generation, provider/model, immutable SessionLocator, worktree/branch/base, credential ID, capability epoch, boundAt/unboundAt. Provider session and display name are locators, not identity.</td></tr>
@@ -641,8 +638,8 @@
               <tr><td><strong>ArtifactRef</strong></td><td>artifactId, kind, owner/task, content or commit digest, content revision, storage locator, access capability, size, createdAt, retention. Agents exchange the reference, never an arbitrary path or unverifiable “latest” file.</td></tr>
               <tr><td><strong>CommunicationChannel</strong></td><td>channelId/revision, owner, exact participant bindings, run/task/interface binding, purpose, allowed communication actions, byte/token budget, createdAt/expiresAt, hierarchy revision, lifecycle. It grants messaging only and is the hierarchy-owned authorization record consumed by Communication Fabric.</td></tr>
               <tr><td><strong>Review</strong></td><td>reviewId, reviewer assignment/binding, all author bindings in merge-base..head, candidate commit, patch/diff digest, target base, spec/task/contract revisions, toolchain/environment, findings, verdict, evidence, invalidation state. Reviewer differs from every author, owns no commit in the candidate diff range, and has no overlapping authoring task.</td></tr>
-              <tr><td><strong>IntegrationStage</strong></td><td>stageId/revision, kind = <code>lead</code> or <code>run</code>, run and owner node, daemon-owned ref, base/head SHA, accepted PromotionGrant IDs and order, validation environment/evidence, queue high-water, lifecycle. Every run has exactly one queen-owned <code>run</code> stage; full-hive lead subtrees add one <code>lead</code> stage each; direct/flat runs never fabricate lead stages.</td></tr>
-              <tr><td><strong>PromotionGrant</strong></td><td>source commit/branch and patch digest, exact target stage plus expected revision/base/head, predicted result SHA, task/review/contract/path-lease/CI evidence, author/reviewer/lead action epochs plus invalidation status, hierarchy/run revisions, expiry. Target is bound into the grant; callers never supply an arbitrary landing ref.</td></tr>
+              <tr><td><strong>IntegrationStage</strong></td><td>stageId/revision, kind = <code>lead</code> or <code>run</code>, runId, owner = logical root or lead nodeId, daemon-owned ref, base/head SHA, accepted PromotionGrant IDs and order, validation environment/evidence, queue high-water, lifecycle. Every run has exactly one queen-owned <code>run</code> stage; full-hive lead subtrees add one <code>lead</code> stage each; direct/flat runs never fabricate lead stages.</td></tr>
+              <tr><td><strong>PromotionGrant</strong></td><td>source commit/branch and patch digest, exact target stage plus expected revision/base/head, predicted result SHA, task/review/contract/path-lease/CI evidence, author/reviewer/current-owner action bindings and epochs plus invalidation status, hierarchy/run revisions, expiry. Target is bound into the grant; callers never supply an arbitrary landing ref.</td></tr>
               <tr><td><strong>RunBudget</strong></td><td>hard and soft limits for active sessions, total spawns, per-lead crew, reviewer pool/vendor quota, tokens/cost, wall time, CI, wake/message budget, anomaly thresholds, and current reservations/usage. Enforcement belongs to the daemon, outside agent code.</td></tr>
               <tr><td><strong>RunDecision</strong></td><td>decisionId/revision, issue, options/evidence, authority required, decider, affected tasks/contracts, outcome, superseded records, createdAt. Cross-lead disputes and engineer choices become append-only state, not hidden chat history.</td></tr>
               <tr><td><strong>RunCheckpoint / QueenSuccession</strong></td><td>Approved spec, tree/plan/topology revisions, phases/gates/budgets, tasks/contracts/decisions, promotion-queue snapshot references and pending-message cursors/IDs/digests, artifacts, unresolved questions, measured agent snapshot/replies, prior/new root generation, reason, digest, and attestation. This formalizes the existing backup-root recovery flow.</td></tr>
@@ -685,7 +682,7 @@
           </table>
         </div>
 
-        <div class="callout"><strong>Composition rule.</strong> A promotion succeeds only when the delegation chain is valid at the current hierarchyRevision, the current runEpoch admits promotion, the submitting/invoking binding is current, each recorded author/reviewer/lead action was made under its bound epoch with no later revocation explicitly invalidating that pending candidate, verdict, or grant, and all task/contract/ref records pass their own expected-revision compare-and-swap. These counters are fencing tokens: the protected daemon and ref writer must reject older values. Advancing a counter without checking it at the write is not safety. Ordinary record revisions remain optimistic-concurrency controls; they are not a fourth authority epoch.</div>
+        <div class="callout"><strong>Composition rule.</strong> A promotion succeeds only when the delegation chain is valid at the current hierarchyRevision, the current runEpoch admits promotion, the submitting/invoking binding is current, each recorded author/reviewer/current-owner action was made under its bound epoch with no later revocation explicitly invalidating that pending candidate, verdict, or grant, and all task/contract/ref records pass their own expected-revision compare-and-swap. These counters are fencing tokens: the protected daemon and ref writer must reject older values. Advancing a counter without checking it at the write is not safety. Ordinary record revisions remain optimistic-concurrency controls; they are not a fourth authority epoch.</div>
       </div>
     </section>
 
@@ -707,8 +704,9 @@
               <tr><td><strong>task update</strong></td><td>Exact assignee or owner binding</td><td>Compare-and-swap the typed Task state. An assignee may report progress, blocker, evidence, or completion; it cannot accept its own result, approve review, move a gate, or expand scope.</td></tr>
               <tr><td><strong>message/channel</strong></td><td>Current owner edge or explicit channel participant</td><td>Apply <a href="hive-communication.html">Communication Fabric</a> admission and delivery-time authorization. Messaging grants no filesystem, task, review, or landing right.</td></tr>
               <tr><td><strong>review</strong></td><td>Distinct reviewer assignment with review grant</td><td>Verify reviewer independence over merge-base..head, exact candidate/patch/base/environment, task/contract revisions, capacity charge, and evidence. Fresh-context and cross-vendor review are preferred when quota permits.</td></tr>
-              <tr><td><strong>promotion request</strong></td><td>Author to owner; owner/queen to its bound integration stage</td><td>Caller never supplies the target. Daemon constructs PromotionGrant from the Task and policy, enqueues validation, and alone mutates the integration ref by compare-and-swap.</td></tr>
-              <tr><td><strong>G1 / G2</strong></td><td>Engineer</td><td>G1 approves exact spec/topology/budget/gate policy. G2 approves one exact assembled candidate and evidence set. Any candidate movement invalidates G2.</td></tr>
+              <tr><td><strong>promotion request</strong></td><td>Author to current owner for a source candidate; lead or queen for an already-validated stage candidate</td><td>Caller never supplies a ref. The daemon derives the next IntegrationStage from current topology/ownership, constructs the PromotionGrant, validates the predicted result SHA, and alone CAS-moves the stage ref.</td></tr>
+              <tr><td><strong>G1 / G2</strong></td><td>Engineer</td><td>G1 approves the exact SpecRevision/PlanRevision/TopologyDecision/RunBudget/gate package. G2 approves the exact run-stage SHA, digest, evidence, and target-main base. Any bound value movement invalidates the gate.</td></tr>
+              <tr><td><strong>land</strong></td><td>Engineer through a valid G2 decision</td><td>Daemon revalidates the exact run stage, target-main base, hierarchyRevision/runEpoch, evidence, and expected main ref, then alone CAS-moves main. No caller supplies the target.</td></tr>
               <tr><td><strong>pause / resume / abort</strong></td><td>Engineer; queen may request a safety or budget pause</td><td>Daemon advances the run epoch, fences authority, records partial measured process state, and follows the run-control protocol below. No agent process is trusted to police its own hard limit.</td></tr>
               <tr><td><strong>close / reap</strong></td><td>Owner requests normal closure; daemon executes and retains safety authority</td><td>Capture process tree and task/worktree state before terminal destruction. Complete durable teardown finalizers before cleanup; normal ownership does not disable the daemon’s orphan reaper.</td></tr>
             </tbody>
@@ -737,11 +735,11 @@
         <div class="split">
           <article class="detail-panel">
             <h3>Review is exact—and fallible</h3>
-            <p>The semantic verdict binds to the patch/diff digest and reviewed base. A parent-only rebase with an identical patch may preserve that verdict only after automated checks validate the exact new synthetic SHA. Any patch change requires a new review. Reviewers consume the assigning run and lead’s capacity and the selected provider’s quota. G2 remains the engineer’s backstop; a green review is evidence, not infallibility.</p>
+            <p>The semantic verdict binds to the patch/diff digest and reviewed base. A parent-only rebase with an identical patch may preserve that verdict only after automated checks validate the exact new synthetic SHA. Any patch change requires a new review. Reviewers consume the assigning run and current owner’s capacity and the selected provider’s quota. G2 remains the engineer’s backstop; a green review is evidence, not infallibility.</p>
           </article>
           <article class="detail-panel">
             <h3>Interfaces are admission state</h3>
-            <p>Promotion rechecks the cross-crew InterfaceContract registry, not merely the source paths. A task depending on a conflicted, stale, or superseded contract cannot promote. Path leases constrain admission and landing, while contracts cover semantic coupling that paths cannot see. “Dangerous autonomy” may broaden exploration only by explicit engineer grant; it never broadens promotion scope.</p>
+            <p>Promotion rechecks the cross-task/crew InterfaceContract registry, not merely the source paths. A task depending on a conflicted, stale, or superseded contract cannot promote. Path leases constrain authoring and promotion, while contracts cover semantic coupling that paths cannot see. “Dangerous autonomy” may broaden exploration only by explicit engineer grant; it never broadens promotion scope.</p>
           </article>
         </div>
 
