@@ -272,6 +272,11 @@ export function buildOrchestratorCommand(
         // `codex_apps`. Hive orchestration needs only Hive's own MCP server.
         "-c",
         "features.apps=false",
+        // Codex 0.144.4 enables internal subagents by default. A root child is
+        // outside Hive's identity, quota, and lifecycle tracking while still
+        // inheriting the root capability, so the coordinator must disable it.
+        "-c",
+        "features.multi_agent=false",
         // The root is a Hive coordinator, not a general-purpose Codex
         // session. Detach addressable MCP servers inherited from the user's
         // global config for this process only, exactly as Codex agents do.

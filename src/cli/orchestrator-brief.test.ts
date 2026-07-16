@@ -47,12 +47,16 @@ afterEach(async () => {
 
 describe("orchestrator brief", () => {
   test("builds an authority-first Codex root command without enabling it yet", () => {
-    const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
+    const command = buildCodexRootAuthorityCommand(
+      "/tmp/hive-root.sock",
+      ["-c", "features.multi_agent=false"],
+    );
     expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
     expect(command[2]).toContain("codex app-server --listen 'unix:///tmp/hive-root.sock'");
     expect(command[2]).toContain(
-      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen'",
+      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen' '-c' 'features.multi_agent=false'",
     );
+    expect(command[2].match(/features\.multi_agent=false/g)).toHaveLength(2);
   });
   test("is non-empty and names every orchestration MCP tool", () => {
     expect(ORCHESTRATOR_BRIEF.trim().length).toBeGreaterThan(100);
@@ -99,6 +103,8 @@ describe("orchestrator brief", () => {
       "codex",
       "-c",
       "features.apps=false",
+      "-c",
+      "features.multi_agent=false",
       "-c",
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "-c",
@@ -191,6 +197,8 @@ describe("orchestrator brief", () => {
     expect(shellCommand).toContain("'codex' '--remote' 'unix://");
     expect(shellCommand).toContain("'features.apps=false'");
     expect(shellCommand.match(/features\.apps=false/g)).toHaveLength(2);
+    expect(shellCommand).toContain("'features.multi_agent=false'");
+    expect(shellCommand.match(/features\.multi_agent=false/g)).toHaveLength(2);
     expect(shellCommand).toContain("mcp_servers.hive.url=");
     expect(shellCommand.match(/mcp_servers\.hive\.url=/g)).toHaveLength(2);
     expect(shellCommand).toContain(
