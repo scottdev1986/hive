@@ -98,8 +98,17 @@ export function actingAs(
   role: Role = "operator",
   options: { epoch?: number } = {},
 ): AuthorizedFetch {
+  const agent = daemon.db.getAgentByName(subject);
   const { token } = daemon.capabilities.mint(subject, role, {
-    epoch: options.epoch ?? 0,
+    epoch: options.epoch ?? agent?.capabilityEpoch ?? 0,
+    ...(agent === null
+      ? {}
+      : {
+        holder: {
+          agentId: agent.id,
+          processIncarnation: agent.processIncarnation ?? 0,
+        },
+      }),
   });
   return (input, init) => {
     // Headers must merge through the Headers API: spreading a Headers instance

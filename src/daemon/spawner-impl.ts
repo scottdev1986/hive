@@ -263,14 +263,18 @@ function sameSpawnerProcess(
     (current.toolSessionId ?? null) === (expected.toolSessionId ?? null);
 }
 
-/** Mints one agent's capability, writes it to its 0600 credential file, and
- * returns the token. Absent (tests, tooling) the agent is launched with no
- * credential and its daemon calls fail closed rather than fail open. */
+/** Mints one exact holder's capability, writes its 0600 credential file, and
+ * returns the token with an exact-object rollback. Absent (tests, tooling) the
+ * agent is launched with no credential and its daemon calls fail closed. */
+export interface AgentCredentialGrant {
+  token: string;
+  rollback: () => void;
+}
+
 export type CredentialIssuer = (
-  name: string,
+  agent: AgentRecord,
   role: "writer" | "reader",
-  epoch: number,
-) => string;
+) => AgentCredentialGrant | null;
 
 /**
  * The only context-window evidence the catalogs publish today: Claude's
@@ -967,20 +971,30 @@ export class HiveSpawner implements Spawner {
     // The restarted process is read-only, so it re-mints as a reader at the
     // freshly advanced epoch: the critical control that paused it has already
     // revoked its write and landing rights, and its old token is now stale.
-    const capabilityToken = this.dependencies.issueCredential?.(
-      agent.name,
-      "reader",
-      prepared.record.capabilityEpoch,
-    );
-    // The replacement process only has to read the control message and
-    // acknowledge it through Hive's own server; the human's servers would be
-    // pure context cost on a process that must not act.
-    const excludeMcpServers = identity.tool === "codex"
-      ? await this.inheritedCodexMcpServers()
-      // Claude is scoped by --strict-mcp-config. Grok disables all inherited
-      // Claude/Cursor MCP imports through its ten process environment switches.
-      : [];
+    let credentialGrant: AgentCredentialGrant | null = null;
+    let capabilityToken: string | undefined;
     try {
+      credentialGrant = this.dependencies.issueCredential?.(
+        prepared.record,
+        "reader",
+      ) ?? null;
+      if (
+        this.dependencies.issueCredential !== undefined &&
+        credentialGrant === null
+      ) {
+        throw new Error(
+          `Cannot restart ${agent.name}: exact holder changed before credential issuance`,
+        );
+      }
+      capabilityToken = credentialGrant?.token;
+      // The replacement process only has to read the control message and
+      // acknowledge it through Hive's own server; the human's servers would be
+      // pure context cost on a process that must not act.
+      const excludeMcpServers = identity.tool === "codex"
+        ? await this.inheritedCodexMcpServers()
+        // Claude is scoped by --strict-mcp-config. Grok disables all inherited
+        // Claude/Cursor MCP imports through its ten process environment switches.
+        : [];
       await provisionSkills(agent.worktreePath, identity.tool);
       // Aliased so the default clause still has the vendor to name: switching
       // on `identity.tool` narrows `identity` itself to `never` there.
@@ -1142,6 +1156,28 @@ export class HiveSpawner implements Spawner {
             );
           }
           prepared = { record: fallbackRecord };
+          credentialGrant?.rollback();
+          credentialGrant = null;
+          credentialGrant = this.dependencies.issueCredential?.(
+            fallbackRecord,
+            "reader",
+          ) ?? null;
+          if (
+            this.dependencies.issueCredential !== undefined &&
+            credentialGrant === null
+          ) {
+            throw new Error(
+              `Codex fallback refused for ${agent.name}: replacement credential issuance lost its exact holder`,
+            );
+          }
+          capabilityToken = credentialGrant?.token;
+          await writeCodexAgentConfig(agent.worktreePath, {
+            daemonPort: this.daemonPort(),
+            name: agent.name,
+            readOnly,
+            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+            ...(capabilityToken === undefined ? {} : { capabilityToken }),
+          });
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
             effort: identity.tool === "codex"
@@ -1179,6 +1215,7 @@ export class HiveSpawner implements Spawner {
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
     } catch (error) {
+      credentialGrant?.rollback();
       const reason = error instanceof Error
         ? error.message
         : "control acknowledgement process failed to launch";
@@ -1951,6 +1988,15 @@ export class HiveSpawner implements Spawner {
       ): Promise<AuthorizedLaunch[]> => {
         const eligible: AuthorizedLaunch[] = [];
         for (const entry of entries) {
+          // Persist progress before the next dependency can throw. The outer
+          // exactly-once finalizer then retains earlier link results instead of
+          // replacing the whole chain with only the later exception.
+          accumulateRouteAudit({
+            ...routeAuditFields,
+            attempts: [...attempts],
+            category,
+            policyRevision: policy.revision,
+          });
           const key = `${entry.provider}\0${entry.model}`;
           if (tried.has(key)) continue;
           tried.add(key);
@@ -2296,12 +2342,22 @@ export class HiveSpawner implements Spawner {
     let argv: string[];
     // A reader carries no landing or memory-write right. A writer gets exactly
     // one landing right for its own branch.
-    const capabilityToken = this.dependencies.issueCredential?.(
-      name,
-      readOnly ? "reader" : "writer",
-      record.capabilityEpoch,
-    );
+    let credentialGrant: AgentCredentialGrant | null = null;
+    let capabilityToken: string | undefined;
     try {
+      credentialGrant = this.dependencies.issueCredential?.(
+        record,
+        readOnly ? "reader" : "writer",
+      ) ?? null;
+      if (
+        this.dependencies.issueCredential !== undefined &&
+        credentialGrant === null
+      ) {
+        throw new Error(
+          `Cannot spawn ${name}: exact holder changed before credential issuance`,
+        );
+      }
+      capabilityToken = credentialGrant?.token;
       await provisionSkills(worktree.path, tool);
       switch (tool) {
         case "claude": {
@@ -2473,6 +2529,29 @@ export class HiveSpawner implements Spawner {
             );
           }
           record = fallbackRecord;
+          credentialGrant?.rollback();
+          credentialGrant = null;
+          credentialGrant = this.dependencies.issueCredential?.(
+            fallbackRecord,
+            readOnly ? "reader" : "writer",
+          ) ?? null;
+          if (
+            this.dependencies.issueCredential !== undefined &&
+            credentialGrant === null
+          ) {
+            throw new Error(
+              `Codex fallback refused for ${record.name}: replacement credential issuance lost its exact holder`,
+            );
+          }
+          capabilityToken = credentialGrant?.token;
+          await writeCodexAgentConfig(worktree.path, {
+            daemonPort: this.daemonPort(),
+            name,
+            readOnly,
+            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+            ...(capabilityToken === undefined ? {} : { capabilityToken }),
+            ...(graphifyUrl === null ? {} : { graphifyUrl }),
+          });
           const fallback = buildCodexSpawnCommand({
             daemonPort: this.daemonPort(),
             effort: effort ?? "medium",
@@ -2526,6 +2605,7 @@ export class HiveSpawner implements Spawner {
         this.dependencies.quota?.markStarted(quotaReservationId);
       }
     } catch (error) {
+      credentialGrant?.rollback();
       // Nothing thrown here has been past the transport. Building the argv,
       // writing the config, and handing the command to tmux all happen on this
       // machine, before the model is contacted — so a throw is never evidence

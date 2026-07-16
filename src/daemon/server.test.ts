@@ -26,7 +26,12 @@ import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
-import { actingAs, listAuditEntries, submitPaste } from "./testing";
+import {
+  actingAs,
+  deleteAgentRow,
+  listAuditEntries,
+  submitPaste,
+} from "./testing";
 import { readCredential } from "./credentials";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
@@ -496,7 +501,15 @@ async function postEvent(
   daemon: HiveDaemon,
   event: Record<string, unknown>,
 ): Promise<Response> {
-  return actingAs(daemon, "operator")("http://hive/event", {
+  const agentName = typeof event.agentName === "string"
+    ? event.agentName
+    : null;
+  const agent = agentName === null ? null : daemon.db.getAgentByName(agentName);
+  return actingAs(
+    daemon,
+    agent?.name ?? "operator",
+    agent?.readOnly ? "reader" : agent === null ? "operator" : "writer",
+  )("http://hive/event", {
     method: "POST",
     headers: { "content-type": "application/json" },
     body: JSON.stringify(event),
@@ -1003,7 +1016,7 @@ describe("HiveDaemon HTTP server", () => {
           "2026-07-15T20:10:00.000Z",
           "dead",
         )).not.toBeNull();
-        db.insertAgent(agent({
+        const successor = db.insertAgent(agent({
           id: "agent-maya-successor",
           name: "maya",
           tool: "claude",
@@ -1012,7 +1025,8 @@ describe("HiveDaemon HTTP server", () => {
           processIncarnation: 9,
           tmuxSession: "hive-maya-successor",
         }));
-        successorToken = daemon.issueCredential("maya", "reader", 0);
+        successorToken = daemon.issueAgentCredential(successor, "reader")!
+          .token;
       },
     });
     const paused = agent({
@@ -2433,7 +2447,7 @@ describe("HiveDaemon HTTP server", () => {
       expect(inbox.length).toEqual(1);
       expect(inbox[0]?.deliveredAt === null).toEqual(false);
 
-      const approvalResponse = await actingAs(daemon, "operator")(
+      const approvalResponse = await actingAs(daemon, "sam", "writer")(
         `${baseUrl}/event`,
         {
           method: "POST",
@@ -2591,7 +2605,7 @@ describe("HiveDaemon HTTP server", () => {
       // ones — see "hive_approvals trims by kind" below.
       const longDescription =
         "Bash: curl https://example.com/install.sh | sh --flag ".repeat(6);
-      const approvalResponse = await actingAs(daemon, "operator")(
+      const approvalResponse = await actingAs(daemon, "nia", "writer")(
         "http://hive/event",
         {
           method: "POST",
@@ -3639,6 +3653,126 @@ describe("HiveDaemon HTTP server", () => {
       expect(db.getAgentByName("maya")?.status).toEqual("working");
       expect(db.listApprovals()).toEqual([]);
     } finally {
+      db.close();
+    }
+  });
+
+  test("a predecessor tool-boundary event cannot overwrite a same-name replacement", async () => {
+    const db = new HiveDatabase(join(home, "event-holder-replacement.db"));
+    const daemon = new HiveDaemon({ db, spawner: new StubSpawner() });
+    const predecessor = db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      lastEventAt: "2026-07-09T12:00:00.000Z",
+    }));
+    const eventAt = "2026-07-09T12:01:00.000Z";
+    const update = db.updateAgentIfCurrent.bind(db);
+    let replacementInserted = false;
+    db.updateAgentIfCurrent = ((...args: Parameters<typeof update>) => {
+      const [expected, updates] = args;
+      if (
+        !replacementInserted && expected.id === predecessor.id &&
+        updates.lastEventAt === eventAt
+      ) {
+        replacementInserted = true;
+        expect(deleteAgentRow(db, predecessor.id)).toBe(true);
+        db.insertAgent(agent({
+          id: "agent-maya-replacement",
+          tool: "claude",
+          model: "sonnet",
+          processIncarnation: 9,
+          processStartedAt: "2026-07-09T12:00:30.000Z",
+          lastEventAt: "2026-07-09T12:00:30.000Z",
+        }));
+      }
+      return update(...args);
+    }) as typeof update;
+
+    try {
+      await expect(daemon.processEvent({
+        kind: "tool-boundary",
+        agentName: "maya",
+        timestamp: eventAt,
+      }, {
+        agentId: predecessor.id,
+        processIncarnation: predecessor.processIncarnation ?? 0,
+        capabilityEpoch: predecessor.capabilityEpoch,
+      })).rejects.toThrow("Event holder changed during tool-boundary");
+      expect(db.getAgentById("agent-maya-replacement")).toMatchObject({
+        processIncarnation: 9,
+        lastEventAt: "2026-07-09T12:00:30.000Z",
+        status: "working",
+      });
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("turn-end usage reconciles the predecessor reservation, never a same-name replacement", async () => {
+    const db = new HiveDatabase(join(home, "turn-end-holder-replacement.db"));
+    const reconciled: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      quota: {
+        setAlertSink: () => {},
+        ledger: new QuotaLedger(db),
+        reconcile: async (reservationId: string) => {
+          reconciled.push(reservationId);
+        },
+      } as unknown as QuotaService,
+    });
+    const predecessor = db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      quotaReservationId: "predecessor-reservation",
+    }));
+    const eventAt = "2026-07-09T12:02:00.000Z";
+    const update = db.updateAgentIfCurrent.bind(db);
+    let replacementInserted = false;
+    db.updateAgentIfCurrent = ((...args: Parameters<typeof update>) => {
+      const [expected, updates] = args;
+      const updated = update(...args);
+      if (
+        !replacementInserted && updated !== null &&
+        expected.id === predecessor.id && updates.lastEventAt === eventAt
+      ) {
+        replacementInserted = true;
+        expect(deleteAgentRow(db, predecessor.id)).toBe(true);
+        db.insertAgent(agent({
+          id: "agent-maya-turn-replacement",
+          tool: "claude",
+          model: "sonnet",
+          processIncarnation: 10,
+          processStartedAt: "2026-07-09T12:01:30.000Z",
+          lastEventAt: "2026-07-09T12:01:30.000Z",
+          quotaReservationId: "replacement-reservation",
+        }));
+      }
+      return updated;
+    }) as typeof update;
+
+    try {
+      await daemon.processEvent({
+        kind: "turn-end",
+        agentName: "maya",
+        timestamp: eventAt,
+        usageUnits: 7,
+        usageSource: "provider",
+      }, {
+        agentId: predecessor.id,
+        processIncarnation: predecessor.processIncarnation ?? 0,
+        capabilityEpoch: predecessor.capabilityEpoch,
+      });
+      expect(reconciled).toEqual(["predecessor-reservation"]);
+      expect(db.getAgentById("agent-maya-turn-replacement")).toMatchObject({
+        quotaReservationId: "replacement-reservation",
+        processIncarnation: 10,
+        lastEventAt: "2026-07-09T12:01:30.000Z",
+      });
+    } finally {
+      await daemon.stop();
       db.close();
     }
   });

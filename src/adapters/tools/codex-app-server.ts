@@ -213,7 +213,7 @@ export interface CodexAppServerManagerOptions {
   transport?: (path: string) => Promise<CodexAppServerTransport>;
   commandRunner?: (argv: string[]) => Promise<number>;
   sleep?: (milliseconds: number) => Promise<void>;
-  onEvent: (event: HookEvent) => Promise<void>;
+  onEvent: (event: HookEvent, holder: AgentRecord) => Promise<void>;
   queueApproval: (request: CodexApprovalRequest) => Promise<string>;
   observeRateLimits: (
     model: string,
@@ -417,7 +417,7 @@ export class CodexAppServerManager {
         kind: "session-start",
         agentName: agent.name,
         timestamp: timestamp(),
-      });
+      }, session.agent);
       await this.startTurn(agent, prompt, effort);
     } catch (error) {
       client.close();
@@ -566,7 +566,7 @@ export class CodexAppServerManager {
         kind: "turn-start",
         agentName,
         timestamp: timestamp(),
-      });
+      }, session.agent);
       return;
     }
     if (message.method === "thread/tokenUsage/updated") {
@@ -606,7 +606,7 @@ export class CodexAppServerManager {
         ...(usageUnits === undefined || usageUnits === 0
           ? {}
           : { usageUnits, usageSource: "provider" as const }),
-      });
+      }, session.agent);
     }
   }
 

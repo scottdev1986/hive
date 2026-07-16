@@ -83,7 +83,7 @@ import {
 } from "./capabilities";
 import {
   OPERATOR_SUBJECT,
-  removeCredential,
+  readCredential,
   removeCredentialIfMatches,
   writeCredential,
 } from "./credentials";
@@ -938,21 +938,16 @@ export class HiveDaemon {
       db: this.db,
       tmux: this.tmux,
       port: () => this.listeningPort ?? this.port,
-      revokeCapabilities: (agentName) => {
-        this.capabilities.revokeSubject(agentName);
-        removeCredential(agentName);
-      },
+      revokeCapabilities: (agent) => this.revokeExactAgentAuthority(agent),
       reauthorizeAgent: (agent) => {
         return this.issueAgentCredential(
           agent,
           agent.readOnly ? "reader" : "writer",
-          agent.capabilityEpoch,
         );
       },
       stopSession: (agent) =>
         this.stopAgentProcesses(agent, () => {
-          this.capabilities.revokeSubject(agent.name);
-          removeCredential(agent.name);
+          this.revokeExactAgentAuthority(agent);
         }),
       send: (from, to, body, sendOptions) =>
         this.delivery.send(from, to, body, sendOptions),
@@ -1066,13 +1061,17 @@ export class HiveDaemon {
   /** Mint for one exact durable process holder. Rollback revokes only this
    * capability id and removes only this token object, never a same-name
    * successor's capability or replacement credential. */
-  private issueAgentCredential(
+  issueAgentCredential(
     agent: AgentRecord,
     role: "reader" | "writer",
-    epoch: number,
-  ): { rollback: () => void } | null {
+    epoch = agent.capabilityEpoch,
+  ): { token: string; rollback: () => void } | null {
     const expected = agentStateCas(agent);
     if (this.db.updateAgentIfCurrent(expected, {}) === null) return null;
+    this.capabilities.revokeAgentHolder(
+      agent.id,
+      agent.processIncarnation ?? 0,
+    );
     const { token, capability } = this.capabilities.mint(agent.name, role, {
       epoch,
       holder: {
@@ -1094,7 +1093,27 @@ export class HiveDaemon {
       rollback();
       return null;
     }
-    return { rollback };
+    return { token, rollback };
+  }
+
+  /** Revoke/remove only authority proven to belong to this exact holder. */
+  private revokeExactAgentAuthority(agent: AgentRecord): void {
+    const token = readCredential(agent.name);
+    if (token !== null) {
+      const authenticated = this.capabilities.authenticate(token);
+      if (
+        authenticated.ok && authenticated.capability.agentId === agent.id &&
+        authenticated.capability.processIncarnation ===
+          (agent.processIncarnation ?? 0)
+      ) {
+        this.capabilities.revoke(authenticated.capability.id);
+        removeCredentialIfMatches(agent.name, token);
+      }
+    }
+    this.capabilities.revokeAgentHolder(
+      agent.id,
+      agent.processIncarnation ?? 0,
+    );
   }
 
   private denied(decision: Denial): Response {
@@ -1122,6 +1141,29 @@ export class HiveDaemon {
       { route, action, ...(subject === undefined ? {} : { subject }) },
       auditAllow,
     );
+  }
+
+  /** Resolve a worker capability to the exact durable holder it authenticated. */
+  private exactAgentForCapability(
+    capability: Capability,
+    name: string,
+  ): AgentRecord | null {
+    if (
+      capability.agentId === undefined || capability.agentId === null ||
+      capability.processIncarnation === undefined ||
+      capability.processIncarnation === null
+    ) {
+      return null;
+    }
+    const row = this.db.getAgentById(capability.agentId);
+    if (
+      row === null || row.name !== name ||
+      (row.processIncarnation ?? 0) !== capability.processIncarnation ||
+      row.capabilityEpoch !== capability.epoch
+    ) {
+      return null;
+    }
+    return this.db.updateAgentIfCurrent(agentStateCas(row), {});
   }
 
   /** The MCP transport has no place for an HTTP status, so a denial becomes a
@@ -1629,8 +1671,7 @@ export class HiveDaemon {
     if (paused === null) {
       return; // concurrent kill/terminal wins
     }
-    this.capabilities.revokeSubject(agent.name);
-    removeCredential(agent.name);
+    this.revokeExactAgentAuthority(paused);
     const frozen = await this.freezeAgentProcessTree(paused);
     const current = this.db.updateAgentIfCurrent(agentStateCas(paused), {
       status: frozen === null || frozen.outcome.unstopped.length > 0
@@ -2435,8 +2476,7 @@ export class HiveDaemon {
     // Revoke in-memory capability and on-disk credential immediately after the
     // durable terminal mark (which already bumped epoch + writeRevoked). Do not
     // wait for process-tree capture — that window is the durable crash hole.
-    this.capabilities.revokeSubject(agent.name);
-    removeCredential(agent.name);
+    this.revokeExactAgentAuthority(killed);
     let reaped: ReapOutcome;
     try {
       reaped = await this.stopAgentProcesses(killed);
@@ -3167,18 +3207,26 @@ export class HiveDaemon {
       false,
     );
     if (!decision.ok) return this.denied(decision);
-    const agent = this.db.getAgentByName(parsed.data.agent);
+    let agent = this.exactAgentForCapability(
+      authenticated.capability,
+      parsed.data.agent,
+    );
     if (agent === null) {
       return json(
-        { error: `Hive agent not found: ${parsed.data.agent}` },
-        { status: 404 },
+        { error: `Statusline holder changed or is not exactly bound: ${parsed.data.agent}` },
+        { status: 409 },
       );
     }
     if (
       parsed.data.effort !== undefined &&
       (agent.tool === "claude" || agent.tool === "grok")
     ) {
-      await this.reconcileClaudeEffort(agent, parsed.data.effort);
+      agent = await this.reconcileClaudeEffort(agent, parsed.data.effort);
+      if (agent === null) {
+        return json({ error: "Statusline holder changed during effort reconciliation" }, {
+          status: 409,
+        });
+      }
     }
     // Claude's own occupancy figure, landed on the row exactly as measured —
     // and the window it was measured against. The window is the fact the
@@ -3190,23 +3238,30 @@ export class HiveDaemon {
       parsed.data.contextUsedPct !== undefined ||
       parsed.data.contextWindow !== undefined
     ) {
-      this.reconcileContext(
+      agent = this.reconcileContext(
         agent,
         parsed.data.contextUsedPct,
         parsed.data.contextWindow,
       );
+      if (agent === null) {
+        return json({ error: "Statusline holder changed during context reconciliation" }, {
+          status: 409,
+        });
+      }
     }
     // Bind this observation to the model the agent is *running*, not the one it
     // was spawned with. `agent.model` is a spawn-time intention that a `/model`
     // inside the session silently invalidates, and quota charged to a model
     // nobody is running is quota charged to nobody.
-    const model = await this.reconcileModel(agent);
-    if (model === null) {
+    const modelResult = await this.reconcileModel(agent);
+    if (modelResult === null) {
       return json(
         { error: `Statusline agent/session changed while telemetry was being read for ${agent.name}.` },
         { status: 409 },
       );
     }
+    agent = modelResult.agent;
+    const model = modelResult.model;
     const observation = await this.quota?.observeStatusline(
       { tool: agent.tool, model },
       {
@@ -3248,35 +3303,33 @@ export class HiveDaemon {
   private async reconcileClaudeEffort(
     agent: AgentRecord,
     observedEffort: string,
-  ): Promise<void> {
+  ): Promise<AgentRecord | null> {
     const current = agent;
-    if (current.tool !== "claude" && current.tool !== "grok") return;
+    if (current.tool !== "claude" && current.tool !== "grok") return current;
     const identity = current.executionIdentity;
     if (identity === undefined) {
       if (current.tool === "grok") {
         console.error(
           `Cannot reconcile Grok effort for ${current.name}: execution identity is absent`,
         );
-        return;
+        return current;
       }
-      if (current.model === "default") return;
-      this.db.updateAgentIfCurrent(agentStateCas(current), {
+      if (current.model === "default") return current;
+      return this.db.updateAgentIfCurrent(agentStateCas(current), {
         executionIdentity: {
           tool: "claude",
           model: current.model,
           effort: observedEffort,
         },
       });
-      return;
     }
-    if (identity.tool !== current.tool) return;
+    if (identity.tool !== current.tool) return current;
     if (identity.effort === undefined) {
-      this.db.updateAgentIfCurrent(agentStateCas(current), {
+      return this.db.updateAgentIfCurrent(agentStateCas(current), {
         executionIdentity: { ...identity, effort: observedEffort },
       });
-      return;
     }
-    if (identity.effort === observedEffort) return;
+    if (identity.effort === observedEffort) return current;
 
     const description =
       `Execution effort drifted from immutable launch value ${identity.effort} ` +
@@ -3284,7 +3337,7 @@ export class HiveDaemon {
     const alreadyRecorded = this.db.listEvents(current.name).some((event) =>
       event.kind === "effort-drift" && event.description === description
     );
-    if (alreadyRecorded) return;
+    if (alreadyRecorded) return current;
     const timestamp = new Date().toISOString();
     this.db.insertEvent({
       kind: "effort-drift",
@@ -3302,6 +3355,7 @@ export class HiveDaemon {
           `effort-drift:${current.id}:${identity.effort}:${observedEffort}`,
       },
     ).catch(() => undefined);
+    return this.db.updateAgentIfCurrent(agentStateCas(current), {});
   }
 
   /**
@@ -3327,7 +3381,7 @@ export class HiveDaemon {
     agent: AgentRecord,
     contextUsedPct: number | undefined,
     contextWindow: number | undefined,
-  ): void {
+  ): AgentRecord | null {
     const updates: {
       contextPct?: number | null;
       contextWindow?: number;
@@ -3339,8 +3393,9 @@ export class HiveDaemon {
       updates.contextWindow = contextWindow;
     }
     if (Object.keys(updates).length > 0) {
-      this.db.updateAgentIfCurrent(agentStateCas(agent), updates);
+      return this.db.updateAgentIfCurrent(agentStateCas(agent), updates);
     }
+    return this.db.updateAgentIfCurrent(agentStateCas(agent), {});
   }
 
   /**
@@ -3366,11 +3421,16 @@ export class HiveDaemon {
    * model; provider rollout identity is handled by the separate fail-closed
    * attestation sweep.
    */
-  private async reconcileModel(agent: AgentRecord): Promise<string | null> {
+  private async reconcileModel(
+    agent: AgentRecord,
+  ): Promise<{ model: string; agent: AgentRecord } | null> {
     const known = agent.liveModel ?? agent.model;
-    const stillCurrent = (): boolean =>
-      this.db.updateAgentIfCurrent(agentStateCas(agent), {}) !== null;
-    if (agent.worktreePath === null) return stillCurrent() ? known : null;
+    const stillCurrent = (): AgentRecord | null =>
+      this.db.updateAgentIfCurrent(agentStateCas(agent), {});
+    if (agent.worktreePath === null) {
+      const current = stillCurrent();
+      return current === null ? null : { model: known, agent: current };
+    }
 
     let live: string | null;
     switch (agent.tool) {
@@ -3387,20 +3447,28 @@ export class HiveDaemon {
       case "codex":
         // Attested by refreshToolTelemetry from the newest turn_context, not
         // from this statusline-shaped path.
-        return stillCurrent() ? known : null;
+        {
+          const current = stillCurrent();
+          return current === null ? null : { model: known, agent: current };
+        }
       default:
         return unknownVendor(agent.tool, "live model reconciliation");
     }
-    if (live === null) return stillCurrent() ? known : null;
+    if (live === null) {
+      const current = stillCurrent();
+      return current === null ? null : { model: known, agent: current };
+    }
     if (live !== agent.liveModel) {
       const updated = this.db.updateAgentIfCurrent(agentStateCas(agent), {
         liveModel: live,
       });
       if (updated === null) return null;
-    } else if (!stillCurrent()) {
-      return null;
+      return { model: live, agent: updated };
+    } else {
+      const current = stillCurrent();
+      if (current === null) return null;
+      return { model: live, agent: current };
     }
-    return live;
   }
 
   /**
@@ -3808,7 +3876,14 @@ export class HiveDaemon {
     }
   }
 
-  async processEvent(event: HookEvent): Promise<void> {
+  async processEvent(
+    event: HookEvent,
+    holder?: {
+      agentId: string;
+      processIncarnation: number;
+      capabilityEpoch: number;
+    },
+  ): Promise<AgentRecord | null> {
     const parsed = HookEventSchema.parse(event);
     // One root identity at ingress: legacy/case-varied orchestrator events
     // register and store as queen so status, token usage, and consumers agree.
@@ -3825,18 +3900,33 @@ export class HiveDaemon {
         this.repoRoot,
       );
     }
+    let eventAgent: AgentRecord | null = null;
+    if (value.agentName !== ORCHESTRATOR_NAME) {
+      eventAgent = holder === undefined
+        ? this.db.getAgentByName(value.agentName)
+        : this.db.getAgentById(holder.agentId);
+      if (
+        eventAgent === null || eventAgent.name !== value.agentName ||
+        (holder !== undefined &&
+          ((eventAgent.processIncarnation ?? 0) !== holder.processIncarnation ||
+            eventAgent.capabilityEpoch !== holder.capabilityEpoch))
+      ) {
+        throw new Error(
+          `Event holder changed before ${value.kind} for ${value.agentName}`,
+        );
+      }
+    }
     if (value.kind === "tool-boundary") {
       // A deep agent fires this on every tool call — hundreds per turn — so
       // it deliberately skips the events table and the quota machinery. It
       // proves the process is alive mid-turn and marks the one safe moment
       // to inject urgent traffic into a busy session.
-      const agent = this.db.getAgentByName(value.agentName);
+      const agent = eventAgent;
       if (
         agent !== null && agent.status !== "dead" &&
         agent.status !== "done" && agent.status !== "failed"
       ) {
-        this.db.upsertAgent({
-          ...agent,
+        const updated = this.db.updateAgentIfCurrent(agentStateCas(agent), {
           lastEventAt: new Date(value.timestamp).toISOString(),
           // A tool ran to completion, so any native permission dialog that was
           // holding this agent has been answered. This is the only honest way
@@ -3851,24 +3941,29 @@ export class HiveDaemon {
             ? { toolSessionId: value.toolSessionId }
             : {}),
         });
+        if (updated === null) {
+          throw new Error(
+            `Event holder changed during tool-boundary for ${value.agentName}`,
+          );
+        }
         this.delivery.confirmSteerAtToolBoundary(value.agentName, value.timestamp);
         await this.delivery.flushUrgent(value.agentName);
         await this.delivery.flushSteer(value.agentName);
       }
-      return;
+      return agent === null ? null : this.db.getAgentById(agent.id);
     }
+    let processedAgent: AgentRecord | null = eventAgent;
     this.db.transaction(() => {
       this.db.insertEvent(value);
 
-      const agent = this.db.getAgentByName(value.agentName);
+      const agent = eventAgent;
       if (
         agent !== null &&
         agent.status !== "dead" &&
         agent.status !== "done" &&
         agent.status !== "failed"
       ) {
-        const updated: AgentRecord = {
-          ...agent,
+        const updates = {
           status: agent.writeRevoked && agent.controlMessageId !== undefined &&
               value.kind !== "dead"
             ? "control-paused"
@@ -3914,7 +4009,15 @@ export class HiveDaemon {
             ? { recoveryAttempts: 0 }
             : {}),
         };
-        this.db.upsertAgent(updated);
+        processedAgent = this.db.updateAgentIfCurrent(
+          agentStateCas(agent),
+          updates,
+        );
+        if (processedAgent === null) {
+          throw new Error(
+            `Event holder changed during ${value.kind} for ${value.agentName}`,
+          );
+        }
       }
 
       if (value.kind === "approval-request" && agent?.readOnly !== true) {
@@ -3933,15 +4036,17 @@ export class HiveDaemon {
     });
 
     if (value.kind === "dead") {
-      const dead = this.db.getAgentByName(value.agentName);
-      if (dead !== null) {
-        await this.killAgentTeardown(dead, { at: value.timestamp });
+      if (processedAgent !== null) {
+        await this.killAgentTeardown(processedAgent, {
+          at: value.timestamp,
+          expected: agentStateCas(processedAgent),
+        });
       }
     }
 
-    const agent = this.db.getAgentByName(value.agentName);
-    const eventReservationId = agent?.controlQuotaReservationId ??
-      agent?.quotaReservationId;
+    const agent = processedAgent;
+    const eventReservationId = eventAgent?.controlQuotaReservationId ??
+      eventAgent?.quotaReservationId;
     if (eventReservationId !== undefined) {
       if (value.kind === "session-start" || value.kind === "turn-start") {
         this.quota?.markStarted(eventReservationId, value.timestamp);
@@ -3965,8 +4070,6 @@ export class HiveDaemon {
       value.kind === "turn-start" && agent !== null && agent !== undefined &&
       agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked
     ) {
-      const epochAtStart = agent.capabilityEpoch;
-      const toolSessionAtStart = agent.toolSessionId ?? null;
       if (
         agent.executionIdentity === undefined || agent.worktreePath === null ||
         agent.toolSessionId === undefined || agent.processStartedAt === undefined
@@ -3992,13 +4095,8 @@ export class HiveDaemon {
           };
         }
         // Post-await CAS snapshot before pause mutation.
-        const mid = this.db.getAgentById(agent.id);
-        if (
-          mid === null ||
-          isTerminalAgentStatus(mid.status) ||
-          mid.capabilityEpoch !== epochAtStart ||
-          (mid.toolSessionId ?? null) !== toolSessionAtStart
-        ) {
+        const mid = this.db.updateAgentIfCurrent(agentStateCas(agent), {});
+        if (mid === null || isTerminalAgentStatus(mid.status)) {
           // concurrent kill/terminal/incarnation change wins
         } else if (attestation.identityState !== "matching") {
           const observed = attestation.observedIdentity;
@@ -4048,8 +4146,15 @@ export class HiveDaemon {
       await this.delivery.recoverCriticalControls();
     }
     if (value.kind === "session-start" || value.kind === "turn-end") {
-      await this.delivery.flushQueued(value.agentName);
+      const current = agent === null ? null : this.db.getAgentById(agent.id);
+      if (
+        agent !== null && current !== null && current.name === agent.name &&
+        (current.processIncarnation ?? 0) === (agent.processIncarnation ?? 0)
+      ) {
+        await this.delivery.flushQueued(value.agentName);
+      }
     }
+    return agent === null ? null : this.db.getAgentById(agent.id);
   }
 
   private async receiveEvent(request: Request): Promise<Response> {
@@ -4084,8 +4189,26 @@ export class HiveDaemon {
       false,
     );
     if (!decision.ok) return this.denied(decision);
+    const exact = normalized.agentName === ORCHESTRATOR_NAME
+      ? null
+      : this.exactAgentForCapability(
+        authenticated.capability,
+        normalized.agentName,
+      );
+    if (normalized.agentName !== ORCHESTRATOR_NAME && exact === null) {
+      return json(
+        { error: `Event holder changed or is not exactly bound: ${normalized.agentName}` },
+        { status: 409 },
+      );
+    }
     try {
-      await this.processEvent(normalized);
+      await this.processEvent(normalized, exact === null
+        ? undefined
+        : {
+          agentId: exact.id,
+          processIncarnation: exact.processIncarnation ?? 0,
+          capabilityEpoch: exact.capabilityEpoch,
+        });
       return json({ ok: true });
     } catch (error) {
       return json(

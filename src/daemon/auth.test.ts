@@ -15,7 +15,7 @@ import { mkdtempSync, readFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
-import { HiveDatabase } from "./db";
+import { agentStateCas, HiveDatabase } from "./db";
 import type { LandReadiness } from "./landing";
 import { deleteAgentRow, listAuditEntries } from "./testing";
 import { readCredential, writeCredential, credentialPath } from "./credentials";
@@ -383,6 +383,44 @@ describe("an agent capability is bound to the exact process holder", () => {
       route: "/mcp:hive_memory_write",
     })).toMatchObject({ ok: false, reason: "capability.stale-epoch" });
     db.close();
+  });
+
+  test("production credential rotation revokes the predecessor without touching the replacement", async () => {
+    const { daemon, db } = harness();
+    const predecessor = db.upsertAgent(agentRecord({ processIncarnation: 1 }));
+    const first = daemon.issueAgentCredential(predecessor, "writer");
+    expect(first).not.toBeNull();
+    if (first === null) throw new Error("predecessor credential was not issued");
+    expect(readCredential("maya")).toBe(first.token);
+
+    const replacement = db.beginAgentProcess(
+      agentStateCas(predecessor),
+      "2026-07-10T12:01:00.000Z",
+      "session-replacement",
+      0,
+      { status: "spawning" },
+    );
+    expect(replacement).not.toBeNull();
+    if (replacement === null) throw new Error("replacement process was not allocated");
+    first.rollback();
+    const second = daemon.issueAgentCredential(replacement, "writer");
+    expect(second).not.toBeNull();
+    if (second === null) throw new Error("replacement credential was not issued");
+
+    expect(second.token).not.toBe(first.token);
+    expect(readCredential("maya")).toBe(second.token);
+    expect(daemon.capabilities.authenticate(first.token)).toMatchObject({
+      ok: false,
+      reason: "capability.revoked",
+    });
+    expect(daemon.capabilities.authenticate(second.token).ok).toBe(true);
+
+    // A repeated/delayed predecessor rollback is exact-object cleanup: it
+    // cannot remove or revoke the replacement credential under the same name.
+    first.rollback();
+    expect(readCredential("maya")).toBe(second.token);
+    expect(daemon.capabilities.authenticate(second.token).ok).toBe(true);
+    await daemon.stop();
   });
 });
 
@@ -782,14 +820,20 @@ describe("legitimate workflows keep working", () => {
     // This is the generic writer workflow. Codex writers are contained before
     // launch, so use a launchable Claude writer rather than a legacy Codex row
     // that the turn-boundary sweep must revoke.
-    db.upsertAgent(agentRecord({
+    const agent = db.upsertAgent(agentRecord({
       tool: "claude",
       model: "claude-sonnet",
       toolSessionId: "claude-session",
       executionIdentity: { tool: "claude", model: "claude-sonnet" },
       identityState: undefined,
     }));
-    const { token } = daemon.capabilities.mint("maya", "writer", { epoch: 0 });
+    const { token } = daemon.capabilities.mint("maya", "writer", {
+      epoch: 0,
+      holder: {
+        agentId: agent.id,
+        processIncarnation: agent.processIncarnation ?? 0,
+      },
+    });
 
     const event = await authorized(daemon, token)("http://hive/event", {
       method: "POST",

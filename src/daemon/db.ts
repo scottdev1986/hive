@@ -2176,30 +2176,33 @@ export class HiveDatabase {
 
   insertRouteAudit(audit: RouteAudit): RouteAudit {
     const value = RouteAuditSchema.parse(audit);
-    this.database.query(`
-      INSERT INTO route_audits (
-        id, agentName, category, decidedAt, policyRevision, reviewOfTool,
-        attempts, selectedTool, selectedModel, selectedEffort, reservationId
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    `).run(
-      value.id,
-      value.agentName,
-      value.category,
-      value.decidedAt,
-      value.policyRevision,
-      value.reviewOfTool,
-      JSON.stringify(value.attempts),
-      value.selectedTool,
-      value.selectedModel,
-      value.selectedEffort,
-      value.reservationId,
-    );
-    // Bounded: keep only the most recent decisions.
-    this.database.query(`
-      DELETE FROM route_audits WHERE id NOT IN (
-        SELECT id FROM route_audits ORDER BY decidedAt DESC, rowid DESC LIMIT ?
-      )
-    `).run(ROUTE_AUDIT_LIMIT);
+    this.transaction(() => {
+      this.database.query(`
+        INSERT INTO route_audits (
+          id, agentName, category, decidedAt, policyRevision, reviewOfTool,
+          attempts, selectedTool, selectedModel, selectedEffort, reservationId
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        value.id,
+        value.agentName,
+        value.category,
+        value.decidedAt,
+        value.policyRevision,
+        value.reviewOfTool,
+        JSON.stringify(value.attempts),
+        value.selectedTool,
+        value.selectedModel,
+        value.selectedEffort,
+        value.reservationId,
+      );
+      // Insert and cap are one durability decision: prune failure rolls the
+      // new row back instead of reopening above the promised bound.
+      this.database.query(`
+        DELETE FROM route_audits WHERE id NOT IN (
+          SELECT id FROM route_audits ORDER BY decidedAt DESC, rowid DESC LIMIT ?
+        )
+      `).run(ROUTE_AUDIT_LIMIT);
+    });
     return value;
   }
 
@@ -2207,11 +2210,11 @@ export class HiveDatabase {
   listRouteAudits(agentName?: string): RouteAudit[] {
     const rows = agentName === undefined
       ? this.database.query(
-        "SELECT * FROM route_audits ORDER BY decidedAt DESC, rowid DESC",
-      ).all()
+        "SELECT * FROM route_audits ORDER BY decidedAt DESC, rowid DESC LIMIT ?",
+      ).all(ROUTE_AUDIT_LIMIT)
       : this.database.query(
-        "SELECT * FROM route_audits WHERE agentName = ? ORDER BY decidedAt DESC, rowid DESC",
-      ).all(agentName);
+        "SELECT * FROM route_audits WHERE agentName = ? ORDER BY decidedAt DESC, rowid DESC LIMIT ?",
+      ).all(agentName, ROUTE_AUDIT_LIMIT);
     return rows.map((row) => {
       const record = row as Record<string, unknown>;
       return RouteAuditSchema.parse({

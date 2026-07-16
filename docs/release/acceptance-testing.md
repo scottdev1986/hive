@@ -192,6 +192,8 @@ Do not use tmux injection to impersonate human root input. Tmux capture may be u
 
 Use unique instance, agent, task, and correlation identifiers in every cell. Each root must use Hive's normal orchestration tools to spawn exactly one Claude Code agent, one Codex agent, and one Grok agent. Spawn Claude and Grok writers (`readOnly=false`) so those cells exercise the selected full-autonomy posture; the assignment itself remains strictly read-only. Spawn Codex only as a reader (`readOnly=true`): every Codex writer path is contained and must refuse before creating a worktree or process. The Codex cell proves no-prompt read access without weakening the read-only sandbox; it is not evidence of a Codex writer posture. Separately attempt one Codex writer request and record the containment refusal and absence of a worktree/process. The no-op task template is:
 
+When the installed Codex exposes `app-server`, configure at least one Codex reader cell with `codex.driver = "app-server"`. Require its host and child process environments to carry `HIVE_CAPABILITY_TOKEN` from the cell's `0600` credential without exposing the value in argv, then prove that reader can call authenticated `hive_status` and acknowledge a critical control with `hive_ack_message`. The same cell must retain every writer-host and mutation-approval refusal.
+
 ```text
 READ-ONLY HIVE ACCEPTANCE TASK <task-id>, correlation <correlation-id>.
 Do not modify files, the worktree/index, configuration, installed software,

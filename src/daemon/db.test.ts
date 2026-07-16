@@ -211,6 +211,55 @@ describe("HiveDatabase", () => {
     }
   });
 
+  test("route audit insert and cap roll back together when pruning fails", () => {
+    const path = join(home, "route-audit-atomic-cap.db");
+    const routeAudit = (index: number): RouteAudit => ({
+      id: `atomic-audit-${index}`,
+      agentName: "maya",
+      category: "simple_coding",
+      decidedAt: "2026-07-09T12:00:00.000Z",
+      policyRevision: 7,
+      reviewOfTool: null,
+      attempts: [`attempt-${index}`],
+      selectedTool: "claude",
+      selectedModel: "claude-model",
+      selectedEffort: null,
+      reservationId: null,
+    });
+    const db = new HiveDatabase(path);
+    try {
+      for (let index = 0; index < 500; index += 1) {
+        db.insertRouteAudit(routeAudit(index));
+      }
+      db.database.exec(`
+        CREATE TRIGGER reject_route_audit_prune
+        BEFORE DELETE ON route_audits
+        BEGIN
+          SELECT RAISE(ABORT, 'route audit prune rejected');
+        END
+      `);
+
+      expect(() => db.insertRouteAudit(routeAudit(500)))
+        .toThrow("route audit prune rejected");
+      expect(db.listRouteAudits()).toHaveLength(500);
+      expect(db.listRouteAudits().some((audit) =>
+        audit.id === "atomic-audit-500"
+      )).toBeFalse();
+    } finally {
+      db.close();
+    }
+
+    const reopened = new HiveDatabase(path);
+    try {
+      expect(reopened.listRouteAudits()).toHaveLength(500);
+      expect(reopened.listRouteAudits().some((audit) =>
+        audit.id === "atomic-audit-500"
+      )).toBeFalse();
+    } finally {
+      reopened.close();
+    }
+  });
+
   test("migrates legacy readers without clearing genuine control revocation", () => {
     const path = join(home, "legacy-reader-authority.db");
     const initial = new HiveDatabase(path);

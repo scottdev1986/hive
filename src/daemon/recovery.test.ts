@@ -153,8 +153,8 @@ function harness(
       return { killed: [], survivors: [] };
     },
     flushQueued: (name) => delivery.flushQueued(name),
-    revokeCapabilities: (name) => {
-      revoked.push(name);
+    revokeCapabilities: (record) => {
+      revoked.push(record.name);
     },
     reauthorizeAgent: (record) => {
       reauthorized.push({

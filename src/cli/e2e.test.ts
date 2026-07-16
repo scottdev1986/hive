@@ -82,7 +82,10 @@ describe("CLI-to-daemon smoke", () => {
         chains: { default: [{ provider: "codex", model: "gpt-test", effort: { mode: "exact", value: "medium" } }] },
         selection: { global: "choice", categories: {} },
       }),
-      issueCredential: () => "test-reader-capability",
+      issueCredential: () => ({
+        token: "test-reader-capability",
+        rollback: () => {},
+      }),
       tmux,
       stopSession: async () => ({ killed: [], survivors: [] }),
       createWorktree: async (_repoRoot, name, slug) => ({

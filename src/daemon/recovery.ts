@@ -114,7 +114,7 @@ export interface CrashRecoveryDependencies {
   /** Revokes the dead agent's capability subject and deletes its credential
    * file — the same guarantee hive_kill and hive_mark_dead give, so a
    * capability can never outlive its agent through the recovery death path. */
-  revokeCapabilities?: (agentName: string) => void;
+  revokeCapabilities?: (agent: AgentRecord) => void;
   /** Manual terminal revival mints a new exact-epoch credential only after
    * the final pre-launch CAS. Automatic recovery never calls this. */
   reauthorizeAgent?: (agent: AgentRecord) => RecoveryCredentialGrant | null;
@@ -846,7 +846,7 @@ export class CrashRecovery {
         reason: `${reason}; final terminal CAS lost to a newer state`,
       };
     }
-    if (reauthorization === null) this.deps.revokeCapabilities?.(agent.name);
+    if (reauthorization === null) this.deps.revokeCapabilities?.(agent);
     else reauthorization.rollback();
     if (this.deps.stopSession === undefined) {
       return this.preserveUnverifiedRecovery(
@@ -933,7 +933,7 @@ export class CrashRecovery {
     if (preserved === null) {
       return { agent: agent.name, action: "skipped", reason };
     }
-    this.deps.revokeCapabilities?.(agent.name);
+    this.deps.revokeCapabilities?.(agent);
     this.denyPendingApprovals(agent.name);
     await this.deps.send(
       "hive-recovery",
@@ -1011,7 +1011,7 @@ export class CrashRecovery {
           reason: `${reason}; terminal holder changed before recovery bookkeeping`,
         };
     }
-    this.deps.revokeCapabilities?.(agent.name);
+    this.deps.revokeCapabilities?.(agent);
     await this.deps.settleQuota(agent);
     this.denyPendingApprovals(agent.name);
     // Queued traffic to a dead agent can never inject; flag it once so

@@ -83,7 +83,7 @@ function newTestSpawner(
     // A default credential issuer so read-only Codex spawns (the allowed
     // surface after the Codex-writer containment) work without every test
     // wiring one; the two tests that assert credential behavior pass their own.
-    issueCredential: () => "test-capability",
+    issueCredential: () => ({ token: "test-capability", rollback: () => {} }),
     ...dependencies,
     stopSession: dependencies.stopSession ?? positivelyVerifiedStop,
   });
@@ -776,7 +776,10 @@ describe("HiveSpawner name pool", () => {
       tmux,
       sleep: signalControlReadiness(store),
       quota: controlQuota.quota,
-      issueCredential: () => "control-reader-secret",
+      issueCredential: () => ({
+        token: "control-reader-secret",
+        rollback: () => {},
+      }),
       codexAppServer: {
         isAvailable: async () => true,
         buildHostCommand: () => ["hive", "codex-app-server-host"],
@@ -1244,6 +1247,58 @@ describe("HiveSpawner name pool", () => {
     ]);
     expect(catalog.audit.selectedTool).toBeNull();
     quotaDb.close();
+  });
+
+  test("a later thrown catalog dependency preserves every earlier link attempt", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-late-catalog-error-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    const replaceCatalog = quota.replaceCapabilityCatalog.bind(quota);
+    const catalogError = new Error("second-link catalog replacement exploded");
+    quota.replaceCapabilityCatalog = (provider, records) => {
+      if (provider === "codex") throw catalogError;
+      replaceCatalog(provider, records);
+    };
+    const chain = [
+      {
+        provider: "claude",
+        model: "claude-opus-4-8",
+        effort: { mode: "provider-controlled" },
+      },
+      {
+        provider: "codex",
+        model: "gpt-5.6-sol",
+        effort: { mode: "provider-controlled" },
+      },
+    ] satisfies ChainEntry[];
+
+    try {
+      const failure = await captureRouteAudit({
+        task: "SECRET later dependency prompt",
+        category: "simple_coding",
+        readOnly: true,
+      }, {
+        quota,
+        readRoutingPolicy: () => policyWithChain(chain),
+        isModelEnabled: async (provider) => provider !== "claude",
+      });
+      expect(failure.error).toBe(catalogError);
+      expect(failure.audit.attempts.some((attempt) =>
+        attempt.includes("claude/claude-opus-4-8") &&
+        attempt.includes("not enabled")
+      )).toBeTrue();
+      expect(failure.audit.attempts.at(-1)).toEqual(
+        "refused: second-link catalog replacement exploded",
+      );
+      expect(failure.audit.selectedTool).toBeNull();
+    } finally {
+      quotaDb.close();
+    }
   });
 
   test("audit insertion failure never masks or retries the routing error", async () => {
@@ -1783,6 +1838,8 @@ describe("HiveSpawner wiring", () => {
     const tmux = new FakeTmux();
     const disconnected: string[] = [];
     const stopped: string[] = [];
+    const issued: Array<{ token: string; processIncarnation: number }> = [];
+    const rolledBack: string[] = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -1796,6 +1853,19 @@ describe("HiveSpawner wiring", () => {
         tool: "codex",
         codex: { model: "gpt-test", effort: "medium" },
       }),
+      issueCredential: (record) => {
+        const token = `holder-${record.processIncarnation ?? 0}`;
+        issued.push({
+          token,
+          processIncarnation: record.processIncarnation ?? 0,
+        });
+        return {
+          token,
+          rollback: () => {
+            rolledBack.push(token);
+          },
+        };
+      },
       tmux,
       stopSession: async (agent) => {
         stopped.push(agent.tmuxSession);
@@ -1820,7 +1890,11 @@ describe("HiveSpawner wiring", () => {
       },
     });
 
-    await spawner.spawn({ task: "Fallback task", category: "simple_coding", readOnly: true });
+    const spawned = await spawner.spawn({
+      task: "Fallback task",
+      category: "simple_coding",
+      readOnly: true,
+    });
     expect(disconnected).toEqual(["maya"]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(tmux.sessions).toHaveLength(2);
@@ -1834,6 +1908,15 @@ describe("HiveSpawner wiring", () => {
       processIncarnation: 2,
       status: "working",
     });
+    expect(issued).toEqual([
+      { token: "holder-1", processIncarnation: 1 },
+      { token: "holder-2", processIncarnation: 2 },
+    ]);
+    expect(rolledBack).toEqual(["holder-1"]);
+    expect(await readFile(
+      join(spawned.worktreePath!, ".codex", "capability-token"),
+      "utf8",
+    )).toEqual("holder-2");
   });
 
   test("does not launch a TUI fallback when the app-server stop is unverified", async () => {
@@ -2422,9 +2505,9 @@ describe("HiveSpawner wiring", () => {
       port: 4317,
       config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
-      issueCredential: (name, role, epoch) => {
-        issued.push([name, role, epoch]);
-        return "test-capability";
+      issueCredential: (agent, role) => {
+        issued.push([agent.name, role, agent.capabilityEpoch]);
+        return { token: "test-capability", rollback: () => {} };
       },
       tmux,
       createWorktree: async (_repoRoot, name, slug) => {
@@ -2505,7 +2588,7 @@ describe("HiveSpawner wiring", () => {
         buildHash: "test-build",
         channel: "stable",
       }),
-      issueCredential: () => "test-capability",
+      issueCredential: () => ({ token: "test-capability", rollback: () => {} }),
       tmux,
       createWorktree: async (_repoRoot, name, slug) => {
         const path = join(root, name);
