@@ -159,6 +159,8 @@ export interface Capability {
   readonly issuedAt: string;
   readonly expiresAt: string;
   readonly revokedAt: string | null;
+  readonly agentId?: string | null;
+  readonly processIncarnation?: number | null;
 }
 
 export interface AuditEntry {
@@ -247,7 +249,12 @@ export interface AuthorizeRequest {
  * is not a spawned agent (the operator and the orchestrator have no row). */
 export type AgentAuthorityLookup = (
   name: string,
-) => { capabilityEpoch: number; writeRevoked: boolean } | null;
+) => {
+  id?: string;
+  processIncarnation?: number;
+  capabilityEpoch: number;
+  writeRevoked: boolean;
+} | null;
 
 export class CapabilityStore {
   constructor(
@@ -259,7 +266,11 @@ export class CapabilityStore {
   mint(
     subject: string,
     role: Role,
-    options: { epoch?: number; ttlMs?: number } = {},
+    options: {
+      epoch?: number;
+      ttlMs?: number;
+      holder?: { agentId: string; processIncarnation: number };
+    } = {},
   ): { token: string; capability: Capability } {
     const issued = this.now();
     const id = crypto.randomUUID();
@@ -274,6 +285,10 @@ export class CapabilityStore {
         issued.getTime() + (options.ttlMs ?? DEFAULT_TTL_MS),
       ).toISOString(),
       revokedAt: null,
+      ...(options.holder === undefined ? {} : {
+        agentId: options.holder.agentId,
+        processIncarnation: options.holder.processIncarnation,
+      }),
     };
     this.db.insertCapability(capability, hashSecret(secret));
     return { token: `${TOKEN_PREFIX}.${id}.${secret}`, capability };
@@ -341,6 +356,21 @@ export class CapabilityStore {
     // a self-bound action is the caller and for an operator is someone else.
     const authorityOf = subject ?? capability.subject;
     const authority = this.agentAuthority(authorityOf);
+
+    if (
+      capability.agentId !== undefined && capability.agentId !== null &&
+      capability.processIncarnation !== undefined &&
+      capability.processIncarnation !== null &&
+      (authority === null || authority.id !== capability.agentId ||
+        authority.processIncarnation !== capability.processIncarnation ||
+        authority.capabilityEpoch !== capability.epoch)
+    ) {
+      return deny(
+        "capability.stale-epoch",
+        403,
+        `Capability belongs to a replaced agent holder for ${authorityOf}`,
+      );
+    }
 
     if (
       authority === null &&
@@ -418,6 +448,18 @@ export class CapabilityStore {
   revokeSubject(subject: string): number {
     return this.db.revokeCapabilitiesForSubject(
       subject,
+      this.now().toISOString(),
+    );
+  }
+
+  revoke(id: string): boolean {
+    return this.db.revokeCapability(id, this.now().toISOString());
+  }
+
+  revokeAgentHolder(agentId: string, processIncarnation: number): number {
+    return this.db.revokeCapabilitiesForAgentHolder(
+      agentId,
+      processIncarnation,
       this.now().toISOString(),
     );
   }

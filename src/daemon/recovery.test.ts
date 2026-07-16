@@ -11,7 +11,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../schemas";
-import { HiveDatabase } from "./db";
+import { agentStateCas, HiveDatabase } from "./db";
 import { submitPaste } from "./testing";
 import { MessageDelivery, type TmuxSender } from "./delivery";
 import {
@@ -163,6 +163,7 @@ function harness(
         epoch: record.capabilityEpoch,
         processIncarnation: record.processIncarnation ?? 0,
       });
+      return { rollback: () => undefined };
     },
     resolveClaudeSessionId: async () => null,
     resolveCodexSessionId: async () => null,
@@ -1108,6 +1109,45 @@ describe("manual recovery", () => {
       processIncarnation: 9,
     });
     expect(h.reauthorized).toEqual([]);
+  });
+
+  test("same-name reuse after the final manual check cannot mint or launch for the predecessor", async () => {
+    let h!: Harness;
+    h = harness({
+      reauthorizeAgent: (record) => {
+        const current = h.db.getAgentById(record.id)!;
+        expect(h.db.markAgentTerminalIfCurrent(
+          agentStateCas(current),
+          "2026-07-10T10:01:00.000Z",
+          "dead",
+        )).not.toBeNull();
+        h.db.insertAgent(agent({
+          id: "agent-maya-successor",
+          status: "working",
+          toolSessionId: "successor-session",
+          processIncarnation: 9,
+          tmuxSession: "hive-maya-successor",
+        }));
+        return null;
+      },
+    });
+    h.signalProofOfLife();
+    h.db.insertAgent(agent({
+      status: "dead",
+      toolSessionId: "sess-1",
+      processIncarnation: 4,
+    }));
+
+    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
+      action: "skipped",
+      reason: expect.stringContaining("holder changed before credential issuance"),
+    });
+    expect(h.tmux.created).toEqual([]);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({ status: "dead" });
+    expect(h.db.getAgentById("agent-maya-successor")).toMatchObject({
+      status: "working",
+      processIncarnation: 9,
+    });
   });
 
   test("recovers an agent already marked dead — the bring-her-back path", async () => {

@@ -27,6 +27,7 @@ import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
 import { actingAs, listAuditEntries, submitPaste } from "./testing";
+import { readCredential } from "./credentials";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
 import { agentTmuxSession, orchestratorTmuxSession } from "./tmux-sessions";
@@ -987,6 +988,60 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("same-name reuse after pause resume cannot remove the successor credential", async () => {
+    const db = new HiveDatabase(join(home, "pause-resume-name-reuse.db"));
+    let daemon!: HiveDaemon;
+    let successorToken = "";
+    daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmuxSender: new SilentTmuxSender(db),
+      resumeProcesses: async () => {
+        const current = db.getAgentById("agent-maya")!;
+        expect(db.markAgentTerminalIfCurrent(
+          agentStateCas(current),
+          "2026-07-15T20:10:00.000Z",
+          "dead",
+        )).not.toBeNull();
+        db.insertAgent(agent({
+          id: "agent-maya-successor",
+          name: "maya",
+          tool: "claude",
+          model: "sonnet",
+          readOnly: true,
+          processIncarnation: 9,
+          tmuxSession: "hive-maya-successor",
+        }));
+        successorToken = daemon.issueCredential("maya", "reader", 0);
+      },
+    });
+    const paused = agent({
+      tool: "claude",
+      model: "sonnet",
+      readOnly: true,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      controlMessageId: "pause-control",
+    });
+    paused.pauseCapture = testPauseCapture(paused);
+    db.insertAgent(paused);
+    try {
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(false);
+      expect(outcome.reason).toContain("no longer the paused incarnation");
+      expect(db.getAgentById("agent-maya-successor")).toMatchObject({
+        status: "working",
+        processIncarnation: 9,
+      });
+      expect(readCredential("maya")).toBe(successorToken);
+      const capabilityId = successorToken.split(".")[1]!;
+      expect(db.getCapability(capabilityId)?.capability.revokedAt).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
   test("repeated critical interruption settles the prior control run before starting the next", async () => {
     const db = new HiveDatabase(join(home, "repeated-critical.db"));
     const ledger = new QuotaLedger(db);
@@ -1328,6 +1383,132 @@ describe("HiveDaemon HTTP server", () => {
         });
       }
     } finally {
+      db.close();
+    }
+  });
+
+  test("teardown awaiting process stop cannot cancel a same-name successor reservation", async () => {
+    const db = new HiveDatabase(join(home, "kill-name-reuse-quota.db"));
+    const ledger = new QuotaLedger(db);
+    const quota = new QuotaService(
+      ledger,
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    let enterStop!: () => void;
+    let releaseStop!: () => void;
+    const stopEntered = new Promise<void>((resolve) => {
+      enterStop = resolve;
+    });
+    const stopMayFinish = new Promise<void>((resolve) => {
+      releaseStop = resolve;
+    });
+    const tmux = new class extends FakeDaemonTmux {
+      override async killSession(session: string): Promise<void> {
+        enterStop();
+        await stopMayFinish;
+        await super.killSession(session);
+      }
+    }();
+    tmux.sessions.add("hive-maya");
+    const oldReservation = ledger.insertUnboundedReservation({
+      id: "old-holder-reservation",
+      agentName: "maya",
+      provider: "claude",
+      account: "default",
+      pool: "unbounded",
+      model: "sonnet",
+      category: "simple_coding",
+      estimatedUnits: 10,
+      now: timestamp,
+      expiresAt: "2026-07-10T12:00:00.000Z",
+    });
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      quota,
+      resourceRunners: {
+        panePids: async () => [100],
+        reap: {
+          ps: async () => `100 1 10 claude\n${process.pid} 1 10 bun\n`,
+          psState: async () => `${process.pid} 1 S\n`,
+          kill: () => undefined,
+          wait: async () => undefined,
+        },
+      },
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+    });
+    db.insertAgent(agent({
+      tool: "claude",
+      model: "sonnet",
+      quotaReservationId: oldReservation.id,
+      worktreePath: null,
+      branch: null,
+    }));
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "kill-name-reuse", version: "1.0.0" });
+    await client.connect(transport);
+    try {
+      const killing = client.callTool({
+        name: "hive_kill",
+        arguments: { name: "maya" },
+      });
+      const boundary = await Promise.race([
+        stopEntered.then(() => null),
+        killing,
+        Bun.sleep(1_000).then(() => {
+          throw new Error("kill teardown did not enter process stop");
+        }),
+      ]);
+      if (boundary !== null) {
+        throw new Error(`kill returned before process stop: ${JSON.stringify(boundary)}`);
+      }
+      const successorReservation = ledger.insertUnboundedReservation({
+        id: "successor-reservation",
+        agentName: "maya",
+        provider: "claude",
+        account: "default",
+        pool: "unbounded",
+        model: "sonnet",
+        category: "simple_coding",
+        estimatedUnits: 10,
+        now: "2026-07-09T12:01:00.000Z",
+        expiresAt: "2026-07-10T12:00:00.000Z",
+      });
+      db.insertAgent(agent({
+        id: "agent-maya-successor",
+        name: "maya",
+        tool: "claude",
+        model: "sonnet",
+        readOnly: true,
+        processIncarnation: 9,
+        tmuxSession: "hive-maya-successor",
+        quotaReservationId: successorReservation.id,
+        worktreePath: null,
+        branch: null,
+      }));
+      releaseStop();
+      await Promise.race([
+        killing,
+        Bun.sleep(1_000).then(() => {
+          throw new Error("kill teardown did not finish after process stop");
+        }),
+      ]);
+
+      expect(ledger.getReservation(oldReservation.id)?.status).toBe("released");
+      expect(ledger.getReservation(successorReservation.id)?.status).toBe("active");
+      expect(db.getAgentById("agent-maya-successor")).toMatchObject({
+        status: "working",
+        processIncarnation: 9,
+      });
+    } finally {
+      releaseStop();
+      await client.close();
       db.close();
     }
   });

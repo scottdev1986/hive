@@ -65,6 +65,10 @@ export type SessionResolver = (
   agentCreatedAt: string,
 ) => Promise<string | null>;
 
+export interface RecoveryCredentialGrant {
+  rollback: () => void;
+}
+
 type RecoveryStore = Pick<
   HiveDatabase,
   | "listAgents"
@@ -113,7 +117,7 @@ export interface CrashRecoveryDependencies {
   revokeCapabilities?: (agentName: string) => void;
   /** Manual terminal revival mints a new exact-epoch credential only after
    * the final pre-launch CAS. Automatic recovery never calls this. */
-  reauthorizeAgent?: (agent: AgentRecord) => void;
+  reauthorizeAgent?: (agent: AgentRecord) => RecoveryCredentialGrant | null;
   resolveClaudeSessionId?: SessionResolver;
   resolveCodexSessionId?: SessionResolver;
   resolveGrokSessionId?: SessionResolver;
@@ -569,6 +573,7 @@ export class CrashRecovery {
       };
     }
     let record = begun;
+    let reauthorization: RecoveryCredentialGrant | null = null;
     this.denyPendingApprovals(record.name);
 
     const identity = record.executionIdentity;
@@ -712,7 +717,15 @@ export class CrashRecovery {
             "manual terminal recovery cannot mint a fresh agent credential",
           );
         }
-        this.deps.reauthorizeAgent(record);
+        reauthorization = this.deps.reauthorizeAgent(record);
+        if (reauthorization === null) {
+          return {
+            agent: record.name,
+            action: "skipped",
+            reason:
+              "manual terminal holder changed before credential issuance; predecessor recovery will not launch",
+          };
+        }
       }
       const launch = this.deps.tmux.newSession(
         record.tmuxSession,
@@ -722,12 +735,13 @@ export class CrashRecovery {
       await launch;
       const failure = await this.monitorResume(record);
       if (failure !== null) {
-        return await this.failResume(record, failure);
+        return await this.failResume(record, failure, reauthorization);
       }
     } catch (error) {
       return await this.failResume(
         record,
         error instanceof Error ? error.message : "unknown error",
+        reauthorization,
       );
     }
 
@@ -740,6 +754,7 @@ export class CrashRecovery {
       isTerminalAgentStatus(afterReady.status) || afterReady.writeRevoked ||
       afterReady.status === "control-paused"
     ) {
+      reauthorization?.rollback();
       return {
         agent: record.name,
         action: "skipped",
@@ -759,6 +774,7 @@ export class CrashRecovery {
           isTerminalAgentStatus(fresh.status) || fresh.writeRevoked ||
           fresh.status === "control-paused"
         ) {
+          reauthorization?.rollback();
           return {
             agent: record.name,
             action: "skipped",
@@ -796,6 +812,7 @@ export class CrashRecovery {
   private async failResume(
     agent: AgentRecord,
     failure: string,
+    reauthorization: RecoveryCredentialGrant | null = null,
   ): Promise<RecoveryOutcome> {
     const reason = `resume launch failed: ${failure}`;
     // Durably revoke terminal authority BEFORE process teardown so a crash
@@ -807,6 +824,7 @@ export class CrashRecovery {
       isTerminalAgentStatus(current.status) || current.writeRevoked ||
       current.status === "control-paused"
     ) {
+      reauthorization?.rollback();
       return {
         agent: agent.name,
         action: "skipped",
@@ -821,13 +839,15 @@ export class CrashRecovery {
       { failureReason: reason },
     );
     if (terminal === null) {
+      reauthorization?.rollback();
       return {
         agent: agent.name,
         action: "skipped",
         reason: `${reason}; final terminal CAS lost to a newer state`,
       };
     }
-    this.deps.revokeCapabilities?.(agent.name);
+    if (reauthorization === null) this.deps.revokeCapabilities?.(agent.name);
+    else reauthorization.rollback();
     if (this.deps.stopSession === undefined) {
       return this.preserveUnverifiedRecovery(
         this.deps.db.getAgentById(agent.id) ?? agent,

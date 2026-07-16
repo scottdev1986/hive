@@ -20,6 +20,7 @@ import type { LandReadiness } from "./landing";
 import { deleteAgentRow, listAuditEntries } from "./testing";
 import { readCredential, writeCredential, credentialPath } from "./credentials";
 import { AUTO_REARM_BUDGET, HiveDaemon } from "./server";
+import { CapabilityStore } from "./capabilities";
 import type { SpawnRequest, Spawner } from "./spawner";
 
 const home = mkdtempSync(join(tmpdir(), "hive-auth-test-"));
@@ -347,6 +348,44 @@ describe("a revoked epoch invalidates a capability", () => {
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(false);
     expect(denials(daemon)).toContain("capability.expired");
     await daemon.stop();
+  });
+});
+
+describe("an agent capability is bound to the exact process holder", () => {
+  test("same-name UUID reuse cannot inherit a predecessor token at the same epoch", () => {
+    const db = new HiveDatabase(":memory:");
+    let authority = {
+      id: "agent-maya-old",
+      processIncarnation: 4,
+      capabilityEpoch: 2,
+      writeRevoked: false,
+    };
+    const store = new CapabilityStore(db, () => authority);
+    const { token } = store.mint("maya", "writer", {
+      epoch: 2,
+      holder: { agentId: "agent-maya-old", processIncarnation: 4 },
+    });
+    const authenticated = store.authenticate(token);
+    expect(authenticated.ok).toBe(true);
+    if (!authenticated.ok) throw new Error(authenticated.message);
+    expect(store.authorize(authenticated.capability, {
+      action: "memory:write",
+      subject: "maya",
+      route: "/mcp:hive_memory_write",
+    }).ok).toBe(true);
+
+    authority = {
+      id: "agent-maya-successor",
+      processIncarnation: 4,
+      capabilityEpoch: 2,
+      writeRevoked: false,
+    };
+    expect(store.authorize(authenticated.capability, {
+      action: "memory:write",
+      subject: "maya",
+      route: "/mcp:hive_memory_write",
+    })).toMatchObject({ ok: false, reason: "capability.stale-epoch" });
+    db.close();
   });
 });
 

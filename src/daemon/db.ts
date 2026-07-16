@@ -32,6 +32,8 @@ const StoredCapabilitySchema = z.object({
   issuedAt: z.string().min(1),
   expiresAt: z.string().min(1),
   revokedAt: z.string().nullable(),
+  agentId: z.string().nullable().optional(),
+  processIncarnation: z.number().int().nonnegative().nullable().optional(),
 });
 
 const CapabilityRowSchema = StoredCapabilitySchema;
@@ -633,7 +635,9 @@ export class HiveDatabase {
         secretHash TEXT NOT NULL,
         issuedAt TEXT NOT NULL,
         expiresAt TEXT NOT NULL,
-        revokedAt TEXT
+        revokedAt TEXT,
+        agentId TEXT,
+        processIncarnation INTEGER
       );
       CREATE INDEX IF NOT EXISTS capabilities_subject ON capabilities(subject);
       -- A one-shot right is spent by inserting its row; the primary key makes
@@ -805,6 +809,19 @@ export class HiveDatabase {
       CREATE INDEX IF NOT EXISTS agents_name_history
         ON agents(name, createdAt);
     `);
+    const capabilityColumns = new Set(
+      z.array(z.object({ name: z.string() })).parse(
+        this.database.query("PRAGMA table_info(capabilities)").all(),
+      ).map((column) => column.name),
+    );
+    if (!capabilityColumns.has("agentId")) {
+      this.database.exec("ALTER TABLE capabilities ADD COLUMN agentId TEXT");
+    }
+    if (!capabilityColumns.has("processIncarnation")) {
+      this.database.exec(
+        "ALTER TABLE capabilities ADD COLUMN processIncarnation INTEGER",
+      );
+    }
     const messageColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(messages)").all(),
     );
@@ -1958,8 +1975,9 @@ export class HiveDatabase {
   insertCapability(capability: CapabilityRow, secretHash: string): void {
     this.database.query(`
       INSERT INTO capabilities (
-        id, subject, role, epoch, secretHash, issuedAt, expiresAt, revokedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, subject, role, epoch, secretHash, issuedAt, expiresAt, revokedAt,
+        agentId, processIncarnation
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       capability.id,
       capability.subject,
@@ -1969,6 +1987,8 @@ export class HiveDatabase {
       capability.issuedAt,
       capability.expiresAt,
       capability.revokedAt,
+      capability.agentId ?? null,
+      capability.processIncarnation ?? null,
     );
   }
 
@@ -2030,6 +2050,24 @@ export class HiveDatabase {
       UPDATE capabilities SET revokedAt = ?
       WHERE subject = ? AND revokedAt IS NULL
     `).run(timestamp, subject).changes;
+  }
+
+  revokeCapability(id: string, timestamp: string): boolean {
+    return this.database.query(`
+      UPDATE capabilities SET revokedAt = ?
+      WHERE id = ? AND revokedAt IS NULL
+    `).run(timestamp, id).changes === 1;
+  }
+
+  revokeCapabilitiesForAgentHolder(
+    agentId: string,
+    processIncarnation: number,
+    timestamp: string,
+  ): number {
+    return this.database.query(`
+      UPDATE capabilities SET revokedAt = ?
+      WHERE agentId = ? AND processIncarnation = ? AND revokedAt IS NULL
+    `).run(timestamp, agentId, processIncarnation).changes;
   }
 
   insertAuditEntry(entry: AuditRow): void {

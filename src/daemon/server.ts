@@ -81,7 +81,12 @@ import {
   type Denial,
   type Role,
 } from "./capabilities";
-import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
+import {
+  OPERATOR_SUBJECT,
+  removeCredential,
+  removeCredentialIfMatches,
+  writeCredential,
+} from "./credentials";
 import {
   agentStateCas,
   HiveDatabase,
@@ -702,6 +707,8 @@ export class HiveDaemon {
       // that never had writeRevoked flipped cannot authorize write/land.
       const terminal = isTerminalAgentStatus(record.status);
       return {
+        id: record.id,
+        processIncarnation: record.processIncarnation ?? 0,
         capabilityEpoch: record.capabilityEpoch,
         writeRevoked: record.writeRevoked || terminal,
       };
@@ -935,8 +942,8 @@ export class HiveDaemon {
         removeCredential(agentName);
       },
       reauthorizeAgent: (agent) => {
-        this.issueCredential(
-          agent.name,
+        return this.issueAgentCredential(
+          agent,
           agent.readOnly ? "reader" : "writer",
           agent.capabilityEpoch,
         );
@@ -1017,8 +1024,10 @@ export class HiveDaemon {
         lastEventAt: now,
       });
     }
-    this.capabilities.revokeSubject(agent.name);
-    removeCredential(agent.name);
+    this.capabilities.revokeAgentHolder(
+      agent.id,
+      agent.processIncarnation ?? 0,
+    );
     await this.delivery.send(
       "hive-resume-guard",
       ORCHESTRATOR_NAME,
@@ -1051,6 +1060,40 @@ export class HiveDaemon {
     });
     writeCredential(subject, token);
     return token;
+  }
+
+  /** Mint for one exact durable process holder. Rollback revokes only this
+   * capability id and removes only this token object, never a same-name
+   * successor's capability or replacement credential. */
+  private issueAgentCredential(
+    agent: AgentRecord,
+    role: "reader" | "writer",
+    epoch: number,
+  ): { rollback: () => void } | null {
+    const expected = agentStateCas(agent);
+    if (this.db.updateAgentIfCurrent(expected, {}) === null) return null;
+    const { token, capability } = this.capabilities.mint(agent.name, role, {
+      epoch,
+      holder: {
+        agentId: agent.id,
+        processIncarnation: agent.processIncarnation ?? 0,
+      },
+    });
+    const rollback = () => {
+      this.capabilities.revoke(capability.id);
+      removeCredentialIfMatches(agent.name, token);
+    };
+    try {
+      writeCredential(agent.name, token);
+    } catch (error) {
+      this.capabilities.revoke(capability.id);
+      throw error;
+    }
+    if (this.db.updateAgentIfCurrent(expected, {}) === null) {
+      rollback();
+      return null;
+    }
+    return { rollback };
   }
 
   private denied(decision: Denial): Response {
@@ -1729,16 +1772,18 @@ export class HiveDaemon {
           }`,
       };
     }
-    // Final exact CAS after identity/tree/SIGCONT. Mint at the next epoch
-    // first, while the row is still revoked; a failed CAS revokes/removes that
-    // unusable credential before returning.
+    // Final exact CAS after identity/tree/SIGCONT. Mint for this UUID/process
+    // holder at the next epoch while the row is still revoked; a failed CAS
+    // rolls back only that exact grant.
     const nextEpoch = agent.capabilityEpoch + 1;
-    this.issueCredential(
-      agent.name,
+    const grant = this.issueAgentCredential(
+      agent,
       agent.readOnly ? "reader" : "writer",
       nextEpoch,
     );
-    const resumed = this.db.updateAgentIfCurrent(agentStateCas(agent), {
+    const resumed = grant === null
+      ? null
+      : this.db.updateAgentIfCurrent(agentStateCas(agent), {
       status: "idle",
       writeRevoked: false,
       capabilityEpoch: nextEpoch,
@@ -1748,10 +1793,9 @@ export class HiveDaemon {
       ...(observed === undefined ? {} : { observedIdentity: observed }),
       ...(liveModel === undefined ? {} : { liveModel }),
       ...(liveEffort === undefined ? {} : { liveEffort }),
-    });
+      });
     if (resumed === null) {
-      this.capabilities.revokeSubject(agent.name);
-      removeCredential(agent.name);
+      grant?.rollback();
       let rollbackVerified = false;
       let rollbackDetail = "no production process readback was available";
       if (!this.usesInjectedResume) {
@@ -2284,8 +2328,16 @@ export class HiveDaemon {
     agent: AgentRecord,
     at?: string,
   ): Promise<void> {
-    const held = this.quota?.ledger.getActiveReservationForAgent(agent.name);
-    if (held !== null && held !== undefined) await this.quota?.cancel(held.id, at);
+    // Reservation ids are durable ownership evidence; a name is not. Teardown
+    // may await process stop after terminalizing this row, during which a new
+    // UUID can legitimately reuse the name and reserve its own quota.
+    const owned = new Set([
+      agent.quotaReservationId,
+      agent.controlQuotaReservationId,
+    ].filter((id): id is string => id !== undefined));
+    for (const reservationId of owned) {
+      await this.quota?.cancel(reservationId, at);
+    }
   }
 
   /**
