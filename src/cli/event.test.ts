@@ -5,6 +5,7 @@ import { buildEventOptions } from "../cli";
 import {
   buildHookEvent,
   parseHookStdin,
+  postHookEvent,
   readHookStdin,
   runHiveEvent,
   type EventFetcher,
@@ -198,6 +199,31 @@ describe("hive event", () => {
       isTTY: false,
       text: () => Promise.reject(new Error("closed")),
     })).toEqual({});
+  });
+
+  test("postHookEvent rejects an HTTP rejection as the lost boundary it is", async () => {
+    // A 401/500 used to present as delivered: the transport awaited the fetch
+    // and never read response.ok, so agent status silently went stale.
+    for (const status of [401, 500]) {
+      const denying: EventFetcher = () =>
+        Promise.resolve(new Response("denied", { status }));
+      await expect(postHookEvent(
+        {
+          kind: "turn-start",
+          agentName: "maya",
+          timestamp: "2026-07-15T18:00:00.000Z",
+        },
+        4317,
+        denying,
+      )).rejects.toThrow(`hook event rejected: HTTP ${status} for turn-start`);
+    }
+    // The CLI wrapper still exits 0 — a hook must never disrupt the agent's
+    // CLI — so this classifies the lost boundary; it does not yet repair
+    // status or make the failure durable.
+    const denying: EventFetcher = () =>
+      Promise.resolve(new Response("denied", { status: 500 }));
+    expect(await runHiveEvent("turn-start", 4317, { agent: "maya" }, denying))
+      .toEqual(0);
   });
 
   test("returns success when the daemon is down", async () => {

@@ -5076,6 +5076,65 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("an app-server turn-start with MATCHING identity still holds the writer: identity persists, authority is revoked, tree suspended", async () => {
+    const db = new HiveDatabase(join(home, "attest-appserver-matching-writer.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+    });
+    const rolloutPath = join(home, "appserver-matching-writer-rollout.jsonl");
+    await Bun.write(
+      rolloutPath,
+      JSON.stringify({
+        timestamp: "2026-07-15T18:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          turn_id: "turn-9",
+          cwd: "/tmp/hive-maya",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+        },
+      }) + "\n",
+    );
+    db.insertAgent(codexAgent({
+      codexDriver: "app-server",
+      toolSessionId: undefined,
+    }));
+    try {
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-15T18:00:01.000Z",
+        appServerTurn: { rolloutPath, turnId: "turn-9" },
+      });
+      const row = db.getAgentByName("maya")!;
+      // The exact attestation is recorded honestly on the held row.
+      expect(row.identityState).toBe("matching");
+      expect(row.observedIdentity).toMatchObject({
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        source: "codex-app-server",
+      });
+      // ...but no Codex writer runs until the pane-input bridge lands.
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(row.capabilityEpoch).toBe(1);
+      expect(suspended).toEqual(["hive-maya"]);
+      const toQueen = db.listMessages().filter((message) =>
+        message.to === "queen" && message.from === "hive-identity-guard"
+      );
+      expect(toQueen[0]?.body).toContain("pane-input bridge");
+    } finally {
+      db.close();
+    }
+  });
+
   test("an app-server turn-start that reads drift pauses the writer with the exact evidence", async () => {
     const db = new HiveDatabase(join(home, "attest-appserver-drift.db"));
     const suspended: string[] = [];
