@@ -82,7 +82,12 @@ import {
   type Role,
 } from "./capabilities";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
-import { agentStateCas, HiveDatabase, type Approval } from "./db";
+import {
+  agentAttestationCas,
+  agentStateCas,
+  HiveDatabase,
+  type Approval,
+} from "./db";
 import {
   RoutingPolicyConflictError,
   RoutingPolicyStore,
@@ -2850,9 +2855,13 @@ export class HiveDaemon {
     }
     // Final CAS immediately before Git — every provider. Kill/control during
     // reattest or lease wait must not reach merge.
+    const landingAttestation = agent.tool === "codex"
+      ? agentAttestationCas(authorityRow)
+      : undefined;
     const finalRow = this.db.updateAgentIfCurrent(
       agentStateCas(authorityRow),
       {},
+      landingAttestation,
     );
     if (finalRow === null || finalRow.branch === null) {
       const current = this.db.getAgentById(agent.id);
@@ -2865,9 +2874,16 @@ export class HiveDaemon {
     }
     const operation = await this.machineMutations?.beginOperation("landing");
     const authoritySnapshot = agentStateCas(finalRow);
+    const attestationSnapshot = agent.tool === "codex"
+      ? agentAttestationCas(finalRow)
+      : undefined;
     const branch = finalRow.branch;
     const assertLandAuthority = () => {
-      const row = this.db.updateAgentIfCurrent(authoritySnapshot, {});
+      const row = this.db.updateAgentIfCurrent(
+        authoritySnapshot,
+        {},
+        attestationSnapshot,
+      );
       if (row === null) {
         const current = this.db.getAgentById(authoritySnapshot.id);
         throw new Error(

@@ -1551,6 +1551,52 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("landing boundary CAS rejects attestation-only drift after fresh reattestation", async () => {
+    const db = new HiveDatabase(join(home, "land-attestation-boundary-cas.db"));
+    let mergeSpawned = false;
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      repoRoot: "/repo",
+      telemetryReaders: { codexIdentity: matchingCodexIdentity },
+      landBranch: async (_root, _branch, options) => {
+        const current = db.getAgentById("agent-maya")!;
+        expect(db.updateAgentIfCurrent(agentStateCas(current), {
+          identityState: "drift",
+          liveModel: "gpt-5.6-luna",
+          liveEffort: "low",
+          observedIdentity: {
+            model: "gpt-5.6-luna",
+            effort: "low",
+            turnId: "replacement-turn",
+            sessionId: "session-land",
+            observedAt: "2026-07-15T20:03:00.000Z",
+            source: "codex-rollout",
+          },
+        })).not.toBeNull();
+        options?.preMergeCheck?.();
+        mergeSpawned = true;
+        return { commit: "unreachable" };
+      },
+    });
+    db.insertAgent(landableLegacyCodex());
+    try {
+      await expect(daemon.landAgent("maya", 0)).rejects.toThrow(
+        /authority\/incarnation check failed at the Git boundary/,
+      );
+      expect(mergeSpawned).toBe(false);
+      expect(db.getAgentById("agent-maya")).toMatchObject({
+        status: "working",
+        writeRevoked: false,
+        identityState: "drift",
+        liveModel: "gpt-5.6-luna",
+      });
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("a legacy Codex writer without matching attestation cannot land", async () => {
     const db = new HiveDatabase(join(home, "land-attestation-gate.db"));
     const landed: string[] = [];

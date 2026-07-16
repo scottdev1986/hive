@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmodSync, writeFileSync } from "node:fs";
+import { chmod, mkdir, mkdtemp, rm, stat, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   diagnoseLand,
   landBranch,
+  type LandBranchOptions,
   readLandReadiness,
   runGit,
 } from "./landing";
@@ -52,6 +54,18 @@ async function repo(): Promise<string> {
 const landFails = async (root: string, branch = "hive/writer"): Promise<string> => {
   try {
     await landBranch(root, branch);
+  } catch (error) {
+    return (error as Error).message;
+  }
+  throw new Error("expected the land to fail, but it succeeded");
+};
+
+const landFailsWithOptions = async (
+  root: string,
+  options: LandBranchOptions,
+): Promise<string> => {
+  try {
+    await landBranch(root, "hive/writer", options);
   } catch (error) {
     return (error as Error).message;
   }
@@ -222,6 +236,7 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
     const root = await repo();
     try {
       await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+      await chmod(join(root, "feature.ts"), 0o640);
       await expect(landBranch(root, "hive/writer", {
         preMergeCheck: () => {
           throw new Error("authority revoked at boundary");
@@ -232,6 +247,7 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
       );
       expect(git(root, ["status", "--porcelain", "-uall"]))
         .toContain("?? feature.ts");
+      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o640);
       expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -242,6 +258,7 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
     const root = await repo();
     try {
       await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+      await chmod(join(root, "feature.ts"), 0o604);
       await expect(landBranch(root, "hive/writer", {
         preMergeCheck: () => undefined,
         spawnMerge: () => {
@@ -253,6 +270,55 @@ describe("untracked files the branch also adds — the drop-a-file-in incident",
       );
       expect(git(root, ["status", "--porcelain", "-uall"]))
         .toContain("?? feature.ts");
+      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o604);
+      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("mutation after proof but before cleanup quarantines, inspects, and restores the mutated object", async () => {
+    const root = await repo();
+    try {
+      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+      await chmod(join(root, "feature.ts"), 0o640);
+      await expect(landBranch(root, "hive/writer", {
+        beforeCollisionQuarantine: (path) => {
+          if (path !== "feature.ts") return;
+          writeFileSync(join(root, path), "mutated in proof-cleanup window\n");
+          chmodSync(join(root, path), 0o604);
+        },
+      })).rejects.toThrow(/changed before its atomic quarantine could prove identity/);
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe(
+        "mutated in proof-cleanup window\n",
+      );
+      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o604);
+      expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("a replacement appearing after quarantine is preserved beside the exact removed object", async () => {
+    const root = await repo();
+    let quarantinedPath = "";
+    try {
+      await writeFile(join(root, "feature.ts"), "export const f = 1;\n");
+      await chmod(join(root, "feature.ts"), 0o640);
+      const message = await landFailsWithOptions(root, {
+        afterCollisionQuarantine: (path, quarantine) => {
+          if (path !== "feature.ts") return;
+          quarantinedPath = quarantine;
+          writeFileSync(join(root, path), "external replacement\n");
+          chmodSync(join(root, path), 0o600);
+        },
+      });
+      expect(message).toContain("quarantined original was preserved");
+      expect(message).toContain(quarantinedPath);
+      expect(await Bun.file(join(root, "feature.ts")).text()).toBe("external replacement\n");
+      expect((await stat(join(root, "feature.ts"))).mode & 0o777).toBe(0o600);
+      expect(await Bun.file(quarantinedPath).text()).toBe("export const f = 1;\n");
+      expect((await stat(quarantinedPath)).mode & 0o777).toBe(0o640);
       expect(git(root, ["rev-parse", "--abbrev-ref", "HEAD"])).toBe("main");
     } finally {
       await rm(root, { recursive: true, force: true });

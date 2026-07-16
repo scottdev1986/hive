@@ -173,6 +173,27 @@ export function agentStateCas(agent: AgentRecord): AgentStateCas {
   };
 }
 
+/** Landing-only binding to the fresh provider observation. Lifecycle CAS does
+ * not include these fields because reattestation deliberately updates them
+ * before pausing/resuming; landing supplies this second tuple explicitly. */
+export interface AgentAttestationCas {
+  liveModel: string | null;
+  liveEffort: string | null;
+  observedIdentity: string | null;
+  identityState: string | null;
+}
+
+export function agentAttestationCas(agent: AgentRecord): AgentAttestationCas {
+  return {
+    liveModel: agent.liveModel ?? null,
+    liveEffort: agent.liveEffort ?? null,
+    observedIdentity: agent.observedIdentity === undefined
+      ? null
+      : JSON.stringify(agent.observedIdentity),
+    identityState: agent.identityState ?? null,
+  };
+}
+
 export type ConditionalAgentUpdate = Partial<Pick<AgentRecord,
   | "status"
   | "writeRevoked"
@@ -1142,6 +1163,7 @@ export class HiveDatabase {
   updateAgentIfCurrent(
     expected: AgentStateCas,
     updates: ConditionalAgentUpdate,
+    expectedAttestation?: AgentAttestationCas,
   ): AgentRecord | null {
     if (
       updates.status !== undefined && isTerminalAgentStatus(updates.status)
@@ -1184,7 +1206,7 @@ export class HiveDatabase {
         "observedIdentity",
         updates.observedIdentity === undefined
           ? null
-          : JSON.stringify(updates.observedIdentity),
+          : JSON.stringify(ObservedIdentitySchema.parse(updates.observedIdentity)),
       );
     }
     if ("identityState" in updates) set("identityState", updates.identityState ?? null);
@@ -1194,7 +1216,7 @@ export class HiveDatabase {
         updates.pauseCapture === undefined ? null : JSON.stringify(updates.pauseCapture),
       );
     }
-    if (assignments.length === 0) {
+    if (assignments.length === 0 && expectedAttestation === undefined) {
       const current = this.getAgentById(expected.id);
       return current !== null &&
           JSON.stringify(agentStateCas(current)) === JSON.stringify(expected)
@@ -1202,7 +1224,7 @@ export class HiveDatabase {
         : null;
     }
     const changed = this.database.query(`
-      UPDATE agents SET ${assignments.join(", ")}
+      UPDATE agents SET ${assignments.length === 0 ? "id = id" : assignments.join(", ")}
       WHERE id = ?
         AND processIncarnation = ?
         AND processStartedAt IS ?
@@ -1215,6 +1237,11 @@ export class HiveDatabase {
         AND controlMessageId IS ?
         AND pauseCapture IS ?
         AND lastEventAt = ?
+        ${expectedAttestation === undefined ? "" : `
+        AND liveModel IS ?
+        AND liveEffort IS ?
+        AND observedIdentity IS ?
+        AND identityState IS ?`}
         AND status NOT IN ('done', 'dead', 'failed')
     `).run(
       ...values,
@@ -1230,6 +1257,12 @@ export class HiveDatabase {
       expected.controlMessageId,
       expected.pauseCapture,
       expected.lastEventAt,
+      ...(expectedAttestation === undefined ? [] : [
+        expectedAttestation.liveModel,
+        expectedAttestation.liveEffort,
+        expectedAttestation.observedIdentity,
+        expectedAttestation.identityState,
+      ]),
     );
     return changed.changes === 1 ? this.getAgentById(expected.id) : null;
   }

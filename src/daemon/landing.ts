@@ -33,12 +33,10 @@
  * usual rule holds absolutely: name both versions and let the human choose.
  */
 import {
-  chmodSync,
   existsSync,
   readFileSync,
+  renameSync,
   rmSync,
-  statSync,
-  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -48,6 +46,9 @@ export type LandBranchOptions = {
   preMergeCheck?: () => void;
   /** Test seam around the process adapter. Production always uses runGit. */
   spawnMerge?: (repoRoot: string, branch: string) => Promise<GitResult>;
+  /** Test seams for deterministic pathname-replacement races. */
+  beforeCollisionQuarantine?: (path: string) => void;
+  afterCollisionQuarantine?: (path: string, quarantinedPath: string) => void;
 };
 
 export type LandBranch = (
@@ -493,40 +494,28 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
   const blocker = await diagnoseLand(repoRoot, branch);
   if (blocker !== null) throw landError(branch, blocker);
 
-  // The one provably lossless resolution (module doc): an untracked file whose
-  // bytes are identical to what the branch commits at the same path. git would
-  // still refuse to fast-forward over it, so remove it — the merge immediately
-  // restores the same content, tracked. Diagnosis above already turned any
-  // content MISMATCH into a refusal, so nothing differing is touched here; a
-  // removal that fails falls through to the merge's own refusal and re-diagnosis.
+  // The one provably lossless resolution (module doc): atomically move the
+  // exact pathname aside first, then hash THAT quarantined object against the
+  // branch blob. Reading/hash-proving the path before unlinking it left a
+  // replacement window in which a different object could be deleted. A
+  // quarantine rename binds the proof to the object Hive actually removed.
   const removed: Array<{
     path: string;
     absolutePath: string;
-    contents: Buffer;
-    mode: number;
+    quarantinedPath: string;
   }> = [];
   const restoreRemoved = (): string[] => {
     const errors: string[] = [];
-    for (const entry of removed) {
+    for (const entry of removed.toReversed()) {
       try {
+        if (!existsSync(entry.quarantinedPath)) continue;
         if (existsSync(entry.absolutePath)) {
-          const current = readFileSync(entry.absolutePath);
-          if (current.equals(entry.contents)) continue;
-          const rescue = `${entry.absolutePath}.hive-landing-restore-${crypto.randomUUID()}`;
-          writeFileSync(rescue, entry.contents, {
-            flag: "wx",
-            mode: entry.mode,
-          });
           errors.push(
-            `${entry.path} changed while landing; its original bytes were preserved at ${rescue}`,
+            `${entry.path} appeared while landing; its quarantined original was preserved at ${entry.quarantinedPath}`,
           );
           continue;
         }
-        writeFileSync(entry.absolutePath, entry.contents, {
-          flag: "wx",
-          mode: entry.mode,
-        });
-        chmodSync(entry.absolutePath, entry.mode);
+        renameSync(entry.quarantinedPath, entry.absolutePath);
       } catch (error) {
         errors.push(
           `${entry.path}: ${error instanceof Error ? error.message : "restore failed"}`,
@@ -547,15 +536,33 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
   for (const collision of await untrackedCollisions(repoRoot, branch)) {
     if (collision.identical) {
       const absolutePath = join(repoRoot, collision.path);
+      const quarantinedPath = `${absolutePath}.hive-landing-quarantine-${crypto.randomUUID()}`;
       try {
-        const contents = readFileSync(absolutePath);
-        const mode = statSync(absolutePath).mode & 0o777;
-        unlinkSync(absolutePath);
-        removed.push({ path: collision.path, absolutePath, contents, mode });
+        options?.beforeCollisionQuarantine?.(collision.path);
+        renameSync(absolutePath, quarantinedPath);
       } catch {
-        // The merge will either find the path already absent or refuse and
-        // preserve whatever remains. Only successfully removed files need a
-        // restoration record.
+        // A failed atomic rename removed nothing. The merge either finds the
+        // path already absent or refuses while preserving whatever remains.
+        continue;
+      }
+      removed.push({ path: collision.path, absolutePath, quarantinedPath });
+      try {
+        options?.afterCollisionQuarantine?.(collision.path, quarantinedPath);
+
+        const [quarantined, branchBlob] = await Promise.all([
+          runGit(repoRoot, ["hash-object", "--no-filters", "--", quarantinedPath]),
+          runGit(repoRoot, ["rev-parse", `${branch}:${collision.path}`]),
+        ]);
+        if (
+          quarantined.exitCode !== 0 || branchBlob.exitCode !== 0 ||
+          trimmed(quarantined) !== trimmed(branchBlob)
+        ) {
+          throw new Error(
+            `Cannot land ${branch}: ${collision.path} changed before its atomic quarantine could prove identity; landing refused.`,
+          );
+        }
+      } catch (error) {
+        rethrowAfterRestore(error);
       }
     }
   }
@@ -613,6 +620,7 @@ const landBranchUnlocked: LandBranch = async (repoRoot, branch, options) => {
           : `\nCollision cleanup restoration failed: ${restoreFailures.join("; ")}`),
     );
   }
+  for (const entry of removed) rmSync(entry.quarantinedPath, { force: true });
   removed.length = 0;
 
   const revision = await runGit(repoRoot, ["rev-parse", "HEAD"]);
