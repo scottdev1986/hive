@@ -4264,25 +4264,17 @@ export class HiveDaemon {
           ).catch(() => []),
         });
       }));
-      // Landed is not live: the daemon runs a compiled binary, so main can be
-      // ahead of the code answering this call. Status says so unasked — the
-      // failure mode is precisely that nobody thinks to ask.
-      const build = await this.buildFreshness();
       let result = (detail === "full"
         ? agents
         : compactActiveTeam(agents, evidence)) as unknown as Array<
-          Record<string, unknown>
-        >;
+        Record<string, unknown>
+      >;
       if (fields !== undefined) {
         result = result.map((record) => Object.fromEntries(fields
           .filter((field) => field in record)
           .map((field) => [field, record[field]])));
       }
-      return toolResult(
-        result,
-        "agents",
-        build.message,
-      );
+      return toolResult(result, "agents");
     });
 
     server.registerTool("hive_preserve_branch", {
@@ -4616,15 +4608,7 @@ export class HiveDaemon {
             }`,
           );
         }
-        // An agent spawned to test a fix that is not in the running binary is
-        // wasted money, so a spawn that Hive cannot vouch for carries the reason
-        // with it. Warn, never block: the caller stays in control.
-        const build = await this.buildFreshness();
-        return toolResult(
-          compactSpawnResult(persisted),
-          "agent",
-          build.state === "current" ? null : build.message,
-        );
+        return toolResult(compactSpawnResult(persisted), "agent");
       } finally {
         operation?.release();
       }

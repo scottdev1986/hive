@@ -5285,11 +5285,10 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
 });
 
 describe("landed is not live", () => {
-  // The daemon executes a compiled binary, so main can be ahead of the code
-  // answering a tool call. These assert the two surfaces an orchestrator sees
-  // without thinking to ask: every hive_status, and any hive_spawn Hive cannot
-  // vouch for. The warning rides as a second content block, so the payload the
-  // callers parse is untouched.
+  // The generic status surface must not leak build-freshness diagnostics into
+  // unrelated repos. These assert that `hive_status` and `hive_spawn` still
+  // return their ordinary payloads even when the daemon is given a stale or
+  // unverifiable build-freshness reading.
   async function withClient(
     freshness: BuildFreshness,
     dbName: string,
@@ -5332,10 +5331,10 @@ describe("landed is not live", () => {
     message: "STALE BINARY: this daemon runs 0.0.7, built from abc1234, which is 3 commits behind main (f00dcaf).",
   };
 
-  test("a stale binary warns on hive_status and on every spawn, and never blocks", async () => {
+  test("a stale binary stays out of hive_status and hive_spawn", async () => {
     await withClient(stale, "stale-binary.db", async (client) => {
       const status = await client.callTool({ name: "hive_status", arguments: {} });
-      expect(notes(status)).toEqual([stale.message]);
+      expect(notes(status)).toEqual([]);
       // The payload the parsers read is unchanged: still the bare agent array.
       expect(textValue(status)).toEqual([]);
 
@@ -5344,12 +5343,12 @@ describe("landed is not live", () => {
         arguments: { task: "Test the fix that is not in this binary", category: "code_review", name: "sam", tool: "claude" },
       });
       expect(spawned.isError).toBeUndefined();
-      expect(notes(spawned)).toEqual([stale.message]);
+      expect(notes(spawned)).toEqual([]);
       expect(textValue(spawned)).toMatchObject({ name: "sam", status: "working" });
     });
   });
 
-  test("a binary Hive cannot vouch for reports unknown, never fresh", async () => {
+  test("an unverifiable binary still stays out of hive_status and hive_spawn", async () => {
     const unknown: BuildFreshness = {
       state: "unknown",
       version: "0.0.0-dev",
@@ -5360,16 +5359,16 @@ describe("landed is not live", () => {
     };
     await withClient(unknown, "unknown-binary.db", async (client) => {
       const status = await client.callTool({ name: "hive_status", arguments: {} });
-      expect(notes(status)[0]).toContain("cannot tell");
+      expect(notes(status)).toEqual([]);
       const spawned = await client.callTool({
         name: "hive_spawn",
         arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
       });
-      expect(notes(spawned)[0]).toContain("cannot tell");
+      expect(notes(spawned)).toEqual([]);
     });
   });
 
-  test("a current binary confirms on status and stays silent on spawn", async () => {
+  test("a current binary also stays silent on both surfaces", async () => {
     const current: BuildFreshness = {
       state: "current",
       version: "0.0.7",
@@ -5380,7 +5379,7 @@ describe("landed is not live", () => {
     };
     await withClient(current, "current-binary.db", async (client) => {
       expect(notes(await client.callTool({ name: "hive_status", arguments: {} })))
-        .toEqual([current.message]);
+        .toEqual([]);
       const spawned = await client.callTool({
         name: "hive_spawn",
         arguments: { task: "Anything", category: "code_review", name: "sam", tool: "claude" },
