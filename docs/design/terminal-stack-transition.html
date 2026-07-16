@@ -824,7 +824,7 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
             <ul class="clean">
               <li>Keep its persistent hierarchy rail and one selected workbench.</li>
               <li>Replace the planned Electron/xterm.js shell with native AppKit and <code>HiveTerminalKit</code>.</li>
-              <li>Delete SwiftTerm after Ghostty parity; do not delete the native Workspace.</li>
+              <li>Treat SwiftTerm as already deleted at T7/TG7; remove the pane-grid/multi-surface topology only after one-workbench parity; do not delete the native Workspace.</li>
               <li>Keep typed <code>WorkspaceSnapshot v2</code>, task, artifact, review, message, and session events.</li>
               <li>Virtualize renderer surfaces, not sessions.</li>
               <li>Keep native menus, integrated settings, detach-on-quit, and explicit Stop Hive.</li>
