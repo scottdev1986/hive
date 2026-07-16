@@ -4000,7 +4000,7 @@ describe("Codex execution-identity attestation sweep", () => {
       });
       const row = db.getAgentByName("maya")!;
       expect(row.identityState).toBe("drift");
-      expect(row.status).toBe("control-paused");
+      expect(row.status).toBe("stuck");
       expect(row.writeRevoked).toBe(true);
       expect(suspended).toEqual(["hive-maya"]);
     } finally {
@@ -4668,6 +4668,7 @@ describe("exact pause capture resume (N5)", () => {
       agentName: "maya",
       tmuxSession: "hive-maya",
       toolSessionId: "session-1",
+      processIncarnation: 1,
       hostPid: 900 as number | null,
       tree: [
         { pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" as const },
@@ -4728,10 +4729,12 @@ describe("exact pause capture resume (N5)", () => {
       kill: () => undefined,
       wait: async () => undefined,
     };
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
     const daemon = new HiveDaemon({
       db,
       spawner: new StubSpawner(),
-      tmux: new FakeDaemonTmux(),
+      tmux,
       resourceRunners: { reap: reap as never, orphans: null },
       telemetryReaders: {
         codexIdentity: matchingCodexIdentity,
@@ -4765,6 +4768,148 @@ describe("exact pause capture resume (N5)", () => {
         status: "control-paused",
         writeRevoked: true,
       });
+    } finally {
+      db.close();
+    }
+  });
+
+  test("failed SIGCONT rollback becomes stuck and wakes queen", async () => {
+    const db = new HiveDatabase(join(home, "n5-rollback-unverified.db"));
+    const states = new Map([[100, "T"], [200, "T"]]);
+    const reap = {
+      ps: async () => "100 1 1024 codex\n200 100 1024 child\n",
+      psState: async () =>
+        `${process.pid} 1 S\n100 1 ${states.get(100)}\n200 100 ${states.get(200)}\n`,
+      psBirth: async () => "100 birth-100\n200 birth-200\n",
+      kill: (pid: number, signal: NodeJS.Signals) => {
+        if (pid === 200 && signal === "SIGCONT") throw new Error("ESRCH");
+        if (pid === 100 && signal === "SIGSTOP") throw new Error("EPERM");
+        states.set(pid, signal === "SIGSTOP" ? "T" : "S");
+      },
+      wait: async () => undefined,
+    };
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      resourceRunners: {
+        panePids: async () => [100],
+        reap: reap as never,
+        orphans: null,
+      },
+      telemetryReaders: { codexIdentity: matchingCodexIdentity },
+    });
+    const paused = landableCodex({
+      readOnly: true,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      pauseCapture: {
+        agentId: "agent-maya",
+        agentName: "maya",
+        tmuxSession: "hive-maya",
+        toolSessionId: "session-land",
+        processIncarnation: 1,
+        hostPid: null,
+        tree: [
+          { pid: 100, command: "codex", birth: "birth-100", role: "tmux-root" },
+          { pid: 200, command: "child", birth: "birth-200", role: "descendant" },
+        ],
+        capturedAt: "2026-07-15T18:00:00.000Z",
+      },
+    });
+    db.insertAgent(paused);
+    try {
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(false);
+      expect(outcome.reason).toContain("rollback UNVERIFIED");
+      expect(db.getAgentById(paused.id)).toMatchObject({
+        status: "stuck",
+        writeRevoked: true,
+      });
+      const alerts = db.listMessages().filter((message) =>
+        message.from === "hive-resume-guard" && message.to === "queen"
+      );
+      expect(alerts).toHaveLength(1);
+      expect(alerts[0]?.body).toContain("potentially running");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("final resume CAS loses to a new incarnation and verifies rollback stopped", async () => {
+    const db = new HiveDatabase(join(home, "n5-final-cas.db"));
+    let state = "T";
+    let waits = 0;
+    const reap = {
+      ps: async () => "100 1 1024 codex\n",
+      psState: async () => `${process.pid} 1 S\n100 1 ${state}\n`,
+      psBirth: async () => "100 birth-100\n",
+      kill: (_pid: number, signal: NodeJS.Signals) => {
+        state = signal === "SIGSTOP" ? "T" : "S";
+      },
+      wait: async () => {
+        waits += 1;
+        if (waits === 1) {
+          const current = db.getAgentById("agent-maya")!;
+          db.upsertAgent({
+            ...current,
+            processIncarnation: 2,
+            processStartedAt: "2026-07-15T18:01:00.000Z",
+          });
+        }
+      },
+    };
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      resourceRunners: {
+        panePids: async () => [100],
+        reap: reap as never,
+        orphans: null,
+      },
+      telemetryReaders: { codexIdentity: matchingCodexIdentity },
+    });
+    const paused = landableCodex({
+      readOnly: true,
+      status: "control-paused",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      pauseCapture: {
+        agentId: "agent-maya",
+        agentName: "maya",
+        tmuxSession: "hive-maya",
+        toolSessionId: "session-land",
+        processIncarnation: 1,
+        hostPid: null,
+        tree: [{
+          pid: 100,
+          command: "codex",
+          birth: "birth-100",
+          role: "tmux-root",
+        }],
+        capturedAt: "2026-07-15T18:00:00.000Z",
+      },
+    });
+    db.insertAgent(paused);
+    try {
+      const outcome = await daemon.resumeAgentAfterPause("maya");
+      expect(outcome.resumed).toBe(false);
+      expect(outcome.reason).toContain("re-stopped and read back");
+      expect(state).toBe("T");
+      expect(db.getAgentById(paused.id)).toMatchObject({
+        status: "control-paused",
+        writeRevoked: true,
+        processIncarnation: 2,
+      });
+      expect(db.listMessages().filter((message) =>
+        message.from === "hive-resume-guard"
+      )).toEqual([]);
     } finally {
       db.close();
     }

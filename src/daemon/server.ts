@@ -142,6 +142,7 @@ import {
 import {
   defaultReapDependencies,
   reapCapturedTree,
+  ResumeRollbackError,
   resumeAgentFromPauseCapture,
   resumeTmuxSession,
   stopAgentSession,
@@ -974,6 +975,40 @@ export class HiveDaemon {
     }
   }
 
+  private async failClosedUnsafeResume(
+    agent: AgentRecord,
+    detail: string,
+  ): Promise<void> {
+    const now = new Date().toISOString();
+    const current = this.db.getAgentById(agent.id);
+    if (current !== null && !isTerminalAgentStatus(current.status)) {
+      this.db.updateAgentIfCurrent(agentStateCas(current), {
+        status: "stuck",
+        writeRevoked: true,
+        capabilityEpoch: current.writeRevoked
+          ? current.capabilityEpoch
+          : current.capabilityEpoch + 1,
+        failureReason:
+          `Resume rollback could not prove the process stopped: ${detail}`,
+        lastEventAt: now,
+      });
+    }
+    this.capabilities.revokeSubject(agent.name);
+    removeCredential(agent.name);
+    await this.delivery.send(
+      "hive-resume-guard",
+      ORCHESTRATOR_NAME,
+      `${agent.name} resume FAILED CLOSED: Hive could not prove the continued ` +
+        `process tree was stopped again (${detail}). Write/landing authority ` +
+        `is revoked and the row is stuck, not paused. Treat the process as ` +
+        `potentially running until it is killed or physically verified stopped.`,
+      {
+        idempotencyKey:
+          `unsafe-resume:${agent.id}:${agent.processIncarnation ?? 0}`,
+      },
+    ).catch(logAlertDeliveryFailure);
+  }
+
   /** Mints a credential for one subject and writes it to its 0600 file,
    * revoking whatever that subject held before. Tokens come into existence
    * only from the daemon: here at spawn, and through the single sanctioned
@@ -1481,26 +1516,26 @@ export class HiveDaemon {
     agent: AgentRecord,
     message: AgentMessage,
   ): Promise<void> {
-    const epochAtStart = agent.capabilityEpoch;
+    const expected = agentStateCas(agent);
     const frozen = await this.freezeAgentProcessTree(agent);
-    const current = this.db.getAgentById(agent.id);
-    if (
-      current === null ||
-      isTerminalAgentStatus(current.status) ||
-      current.capabilityEpoch !== epochAtStart
-    ) {
-      throw new Error(
-        `Pause aborted for ${agent.name}: row became terminal or changed epoch during freeze`,
-      );
-    }
-    this.db.upsertAgent({
-      ...current,
-      status: "control-paused",
+    const unsafe = frozen === null || frozen.outcome.unstopped.length > 0;
+    const current = this.db.updateAgentIfCurrent(expected, {
+      status: unsafe ? "stuck" : "control-paused",
       writeRevoked: true,
       controlMessageId: message.id,
+      failureReason: unsafe
+        ? frozen === null
+          ? `Pause suspension failed for ${agent.name}; process state is unknown`
+          : `${frozen.outcome.unstopped.length} process(es) survived pause suspension`
+        : undefined,
       ...(frozen === null ? {} : { pauseCapture: frozen.capture }),
     });
-    if (frozen === null || frozen.outcome.unstopped.length > 0) {
+    if (current === null) {
+      throw new Error(
+        `Pause aborted for ${agent.name}: exact session/incarnation/authority tuple changed during freeze`,
+      );
+    }
+    if (unsafe) {
       throw new Error(
         frozen === null
           ? `Pause suspension failed for ${agent.name}; the process may still be running`
@@ -1513,46 +1548,35 @@ export class HiveDaemon {
     agent: AgentRecord,
     detail: string,
   ): Promise<void> {
-    const epochAtStart = agent.capabilityEpoch;
     const nextEpoch = agent.capabilityEpoch + 1;
-    // CAS: only pause if still the same non-terminal incarnation.
-    const pre = this.db.getAgentById(agent.id);
-    if (
-      pre === null ||
-      isTerminalAgentStatus(pre.status) ||
-      pre.capabilityEpoch !== epochAtStart ||
-      pre.writeRevoked
-    ) {
-      return; // concurrent kill/terminal wins
-    }
-    this.db.upsertAgent({
-      ...pre,
+    const paused = this.db.updateAgentIfCurrent(agentStateCas(agent), {
       status: "control-paused",
       writeRevoked: true,
       capabilityEpoch: nextEpoch,
-      identityState: agent.identityState ?? pre.identityState,
-      ...(agent.observedIdentity !== undefined
-        ? { observedIdentity: agent.observedIdentity }
-        : {}),
-      ...(agent.liveModel !== undefined ? { liveModel: agent.liveModel } : {}),
-      ...(agent.liveEffort !== undefined ? { liveEffort: agent.liveEffort } : {}),
+      identityState: agent.identityState,
+      observedIdentity: agent.observedIdentity,
+      liveModel: agent.liveModel,
+      liveEffort: agent.liveEffort,
     });
+    if (paused === null) {
+      return; // concurrent kill/terminal wins
+    }
     this.capabilities.revokeSubject(agent.name);
     removeCredential(agent.name);
-    const frozen = await this.freezeAgentProcessTree(agent);
-    const current = this.db.getAgentById(agent.id);
-    if (
-      current === null ||
-      isTerminalAgentStatus(current.status) ||
-      current.capabilityEpoch !== nextEpoch
-    ) {
+    const frozen = await this.freezeAgentProcessTree(paused);
+    const current = this.db.updateAgentIfCurrent(agentStateCas(paused), {
+      status: frozen === null || frozen.outcome.unstopped.length > 0
+        ? "stuck"
+        : "control-paused",
+      failureReason: frozen === null
+        ? "identity guard could not verify process suspension"
+        : frozen.outcome.unstopped.length > 0
+        ? `identity guard left ${frozen.outcome.unstopped.length} process(es) running`
+        : undefined,
+      ...(frozen === null ? {} : { pauseCapture: frozen.capture }),
+    });
+    if (current === null) {
       return; // concurrent kill won after freeze
-    }
-    if (frozen !== null) {
-      this.db.upsertAgent({
-        ...current,
-        pauseCapture: frozen.capture,
-      });
     }
     const halt = frozen === null
       ? "process suspension FAILED (see daemon log) — treat as unsafe"
@@ -1562,11 +1586,12 @@ export class HiveDaemon {
     await this.delivery.send(
       "hive-identity-guard",
       ORCHESTRATOR_NAME,
-      `Codex writer ${agent.name} PAUSED for execution-identity drift: ${detail}. ` +
-        `Write/landing capability revoked (epoch ${nextEpoch}); ${halt}. ` +
-        `Session/process/tmux/toolSession are preserved for an authorized ` +
-        `reattesting resume; a suspended process cannot acknowledge, so this ` +
-        `pause is measured by process state, not an ACK.`,
+      `Codex writer ${agent.name} ${current.status === "control-paused" ? "PAUSED" : "STUCK"} ` +
+        `for execution-identity drift: ${detail}. Write/landing capability ` +
+        `revoked (epoch ${nextEpoch}); ${halt}. Durable status is ${current.status}; ` +
+        (current.status === "control-paused"
+          ? "session/process/tmux/toolSession are preserved for an authorized reattesting resume."
+          : "do not call this paused: process suspension was not proven; kill or verify it physically."),
     );
   }
 
@@ -1629,21 +1654,12 @@ export class HiveDaemon {
       if (attestation.liveModel !== null) liveModel = attestation.liveModel;
       if (attestation.liveEffort !== null) liveEffort = attestation.liveEffort;
       if (identityState !== "matching") {
-        // Narrow attestation update only if still the same paused incarnation.
-        const mid = this.db.getAgentById(agent.id);
-        if (
-          mid !== null &&
-          mid.status === "control-paused" &&
-          mid.capabilityEpoch === agent.capabilityEpoch
-        ) {
-          this.db.upsertAgent({
-            ...mid,
-            identityState,
-            ...(observed === undefined ? {} : { observedIdentity: observed }),
-            ...(liveModel === undefined ? {} : { liveModel }),
-            ...(liveEffort === undefined ? {} : { liveEffort }),
-          });
-        }
+        this.db.updateAgentIfCurrent(agentStateCas(agent), {
+          identityState,
+          ...(observed === undefined ? {} : { observedIdentity: observed }),
+          ...(liveModel === undefined ? {} : { liveModel }),
+          ...(liveEffort === undefined ? {} : { liveEffort }),
+        });
         return {
           resumed: false,
           identityState,
@@ -1675,6 +1691,11 @@ export class HiveDaemon {
         });
       }
     } catch (error) {
+      if (
+        error instanceof ResumeRollbackError && !error.rollbackVerified
+      ) {
+        await this.failClosedUnsafeResume(agent, error.message);
+      }
       return {
         resumed: false,
         identityState,
@@ -1684,43 +1705,16 @@ export class HiveDaemon {
           }`,
       };
     }
-    // Final CAS after async identity/tree/SIGCONT: kill interleaving during
-    // awaits must leave the row terminal/revoked without reissuing authority.
-    // If CAS fails after SIGCONT, re-freeze the capture so process state stays paused.
-    const fresh = this.db.getAgentById(agent.id) ?? this.db.getAgentByName(name);
-    if (
-      fresh === null ||
-      fresh.status !== "control-paused" ||
-      !fresh.writeRevoked ||
-      fresh.capabilityEpoch !== agent.capabilityEpoch ||
-      isTerminalAgentStatus(fresh.status)
-    ) {
-      if (!this.usesInjectedResume && capture !== undefined) {
-        try {
-          await suspendCapturedTree(
-            capture.tree.map((e) => ({ pid: e.pid, command: e.command })),
-            this.reapDependencies,
-          );
-        } catch {
-          // best-effort re-freeze
-        }
-      }
-      return {
-        resumed: false,
-        identityState,
-        reason:
-          `resume refused after SIGCONT: row is no longer the paused incarnation ` +
-          `(status=${fresh?.status ?? "missing"}, epoch=${fresh?.capabilityEpoch ?? "?"})`,
-      };
-    }
-    const nextEpoch = fresh.capabilityEpoch + 1;
+    // Final exact CAS after identity/tree/SIGCONT. Mint at the next epoch
+    // first, while the row is still revoked; a failed CAS revokes/removes that
+    // unusable credential before returning.
+    const nextEpoch = agent.capabilityEpoch + 1;
     this.issueCredential(
-      fresh.name,
-      fresh.readOnly ? "reader" : "writer",
+      agent.name,
+      agent.readOnly ? "reader" : "writer",
       nextEpoch,
     );
-    this.db.upsertAgent({
-      ...fresh,
+    const resumed = this.db.updateAgentIfCurrent(agentStateCas(agent), {
       status: "idle",
       writeRevoked: false,
       capabilityEpoch: nextEpoch,
@@ -1731,6 +1725,43 @@ export class HiveDaemon {
       ...(liveModel === undefined ? {} : { liveModel }),
       ...(liveEffort === undefined ? {} : { liveEffort }),
     });
+    if (resumed === null) {
+      this.capabilities.revokeSubject(agent.name);
+      removeCredential(agent.name);
+      let rollbackVerified = false;
+      let rollbackDetail = "no production process readback was available";
+      if (!this.usesInjectedResume) {
+        try {
+          const rollback = await suspendCapturedTree(
+            capture.tree.map((entry) => ({
+              pid: entry.pid,
+              command: entry.command,
+            })),
+            this.reapDependencies,
+          );
+          rollbackVerified = rollback.unstopped.length === 0;
+          rollbackDetail = rollbackVerified
+            ? "continued tree was re-stopped and read back"
+            : `${rollback.unstopped.length} process(es) remained running`;
+        } catch (error) {
+          rollbackDetail = error instanceof Error
+            ? error.message
+            : "rollback readback failed";
+        }
+      }
+      if (!rollbackVerified) {
+        await this.failClosedUnsafeResume(agent, rollbackDetail);
+      }
+      const fresh = this.db.getAgentById(agent.id);
+      return {
+        resumed: false,
+        identityState,
+        reason:
+          `resume refused after SIGCONT: row is no longer the paused incarnation ` +
+          `(status=${fresh?.status ?? "missing"}, epoch=${fresh?.capabilityEpoch ?? "?"}); ` +
+          rollbackDetail,
+      };
+    }
     return {
       resumed: true,
       identityState,

@@ -187,6 +187,85 @@ export interface SuspendOutcome {
   unstopped: ReapedProcess[];
 }
 
+/** A resume failed after zero or more processes received SIGCONT. Callers may
+ * keep reporting control-paused only when rollback was physically verified. */
+export class ResumeRollbackError extends Error {
+  constructor(
+    message: string,
+    readonly rollbackVerified: boolean,
+  ) {
+    super(message);
+    this.name = "ResumeRollbackError";
+  }
+}
+
+async function failResumeAfterRollback(
+  reason: string,
+  continued: readonly ReapedProcess[],
+  dependencies: ReapDependencies,
+  verificationPid: number,
+): Promise<never> {
+  if (continued.length === 0) {
+    throw new ResumeRollbackError(
+      `${reason}; no process was continued, so rollback is verified`,
+      true,
+    );
+  }
+  const signalFailures: string[] = [];
+  for (const entry of [...continued].reverse()) {
+    try {
+      dependencies.kill(entry.pid, "SIGSTOP");
+    } catch (error) {
+      signalFailures.push(
+        `SIGSTOP pid ${entry.pid}: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+  }
+  await dependencies.wait(REAP_SETTLE_MS);
+  let states;
+  try {
+    states = parseStateTable(await dependencies.psState());
+  } catch (error) {
+    throw new ResumeRollbackError(
+      `${reason}; rollback readback failed: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+      false,
+    );
+  }
+  if (!states.some((sample) => sample.pid === verificationPid)) {
+    throw new ResumeRollbackError(
+      `${reason}; rollback readback did not contain verification pid ${verificationPid}`,
+      false,
+    );
+  }
+  const byPid = new Map(states.map((sample) => [sample.pid, sample]));
+  const running = continued.filter((entry) => {
+    const state = byPid.get(entry.pid);
+    return state !== undefined && !state.stat.startsWith("T") &&
+      !state.stat.startsWith("Z");
+  });
+  if (running.length > 0) {
+    const signals = signalFailures.length === 0
+      ? ""
+      : `; ${signalFailures.join("; ")}`;
+    throw new ResumeRollbackError(
+      `${reason}; rollback UNVERIFIED: pid(s) ${
+        running.map((entry) => entry.pid).join(", ")
+      } may still be running${signals}`,
+      false,
+    );
+  }
+  throw new ResumeRollbackError(
+    `${reason}; rollback verified every continued process stopped or gone${
+      signalFailures.length === 0 ? "" : ` (${signalFailures.join("; ")})`
+    }`,
+    true,
+  );
+}
+
 /**
  * SIGSTOP a captured tree — a NON-DESTRUCTIVE halt that preserves the process,
  * its rollout/thread, and its tmux holder instead of killing them. This is the
@@ -251,21 +330,12 @@ export async function resumeCapturedTree(
   if (captured.length === 0) {
     throw new Error("resume refused: empty process capture");
   }
-  const continued: number[] = [];
+  const continued: ReapedProcess[] = [];
   const failures: string[] = [];
-  const reStop = () => {
-    for (const pid of continued) {
-      try {
-        dependencies.kill(pid, "SIGSTOP");
-      } catch {
-        // best-effort re-freeze
-      }
-    }
-  };
   for (const entry of captured) {
     try {
       dependencies.kill(entry.pid, "SIGCONT");
-      continued.push(entry.pid);
+      continued.push(entry);
     } catch (error) {
       failures.push(
         `SIGCONT pid ${entry.pid}: ${
@@ -275,36 +345,60 @@ export async function resumeCapturedTree(
     }
   }
   if (failures.length > 0) {
-    reStop();
-    throw new Error(`SIGCONT failed: ${failures.join("; ")}`);
+    return failResumeAfterRollback(
+      `SIGCONT failed: ${failures.join("; ")}`,
+      continued,
+      dependencies,
+      verificationPid,
+    );
   }
   await dependencies.wait(REAP_SETTLE_MS);
-  const states = parseStateTable(await dependencies.psState());
+  let states;
+  try {
+    states = parseStateTable(await dependencies.psState());
+  } catch (error) {
+    return failResumeAfterRollback(
+      `SIGCONT readback failed: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`,
+      continued,
+      dependencies,
+      verificationPid,
+    );
+  }
   if (!states.some((sample) => sample.pid === verificationPid)) {
-    reStop();
-    throw new Error(
-      `Process-state verification did not contain verification pid ${verificationPid}`,
+    return failResumeAfterRollback(
+      `SIGCONT readback did not contain verification pid ${verificationPid}`,
+      continued,
+      dependencies,
+      verificationPid,
     );
   }
   const byPid = new Map(states.map((sample) => [sample.pid, sample]));
   for (const entry of captured) {
     const live = byPid.get(entry.pid);
     if (live === undefined) {
-      reStop();
-      throw new Error(
+      return failResumeAfterRollback(
         `SIGCONT readback: pid ${entry.pid} vanished (not non-stopped)`,
+        continued,
+        dependencies,
+        verificationPid,
       );
     }
     if (live.stat.startsWith("T")) {
-      reStop();
-      throw new Error(
+      return failResumeAfterRollback(
         `SIGCONT readback: pid ${entry.pid} is still stopped (${live.stat})`,
+        continued,
+        dependencies,
+        verificationPid,
       );
     }
     if (live.stat.startsWith("Z")) {
-      reStop();
-      throw new Error(
+      return failResumeAfterRollback(
         `SIGCONT readback: pid ${entry.pid} is a zombie (${live.stat})`,
+        continued,
+        dependencies,
+        verificationPid,
       );
     }
   }
@@ -442,6 +536,14 @@ export async function validatePauseCapture(
   if (capture.tmuxSession !== agent.tmuxSession) {
     throw new Error(
       `pause capture tmux session ${capture.tmuxSession} does not match ${agent.tmuxSession}`,
+    );
+  }
+  const capturedIncarnation = capture.processIncarnation ?? 0;
+  const currentIncarnation = agent.processIncarnation ?? 0;
+  if (capturedIncarnation !== currentIncarnation) {
+    throw new Error(
+      `pause capture process incarnation ${capturedIncarnation} does not match ` +
+        `current ${currentIncarnation}`,
     );
   }
   const currentTool = agent.toolSessionId ?? null;

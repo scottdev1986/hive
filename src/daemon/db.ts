@@ -149,6 +149,8 @@ export interface AgentStateCas {
   readOnly: boolean;
   branch: string | null;
   toolSessionId: string | null;
+  controlMessageId: string | null;
+  pauseCapture: string | null;
   lastEventAt: string;
 }
 
@@ -163,6 +165,10 @@ export function agentStateCas(agent: AgentRecord): AgentStateCas {
     readOnly: agent.readOnly,
     branch: agent.branch,
     toolSessionId: agent.toolSessionId ?? null,
+    controlMessageId: agent.controlMessageId ?? null,
+    pauseCapture: agent.pauseCapture === undefined
+      ? null
+      : JSON.stringify(agent.pauseCapture),
     lastEventAt: agent.lastEventAt,
   };
 }
@@ -1206,6 +1212,8 @@ export class HiveDatabase {
         AND readOnly = ?
         AND branch IS ?
         AND toolSessionId IS ?
+        AND controlMessageId IS ?
+        AND pauseCapture IS ?
         AND lastEventAt = ?
         AND status NOT IN ('done', 'dead', 'failed')
     `).run(
@@ -1219,6 +1227,8 @@ export class HiveDatabase {
       expected.readOnly ? 1 : 0,
       expected.branch,
       expected.toolSessionId,
+      expected.controlMessageId,
+      expected.pauseCapture,
       expected.lastEventAt,
     );
     return changed.changes === 1 ? this.getAgentById(expected.id) : null;
@@ -1268,6 +1278,8 @@ export class HiveDatabase {
         AND readOnly = ?
         AND branch IS ?
         AND toolSessionId IS ?
+        AND controlMessageId IS ?
+        AND pauseCapture IS ?
         AND lastEventAt = ?
     `).run(
       options.status,
@@ -1285,6 +1297,8 @@ export class HiveDatabase {
       expected.readOnly ? 1 : 0,
       expected.branch,
       expected.toolSessionId,
+      expected.controlMessageId,
+      expected.pauseCapture,
       expected.lastEventAt,
     );
     return changed.changes === 1 ? this.getAgentById(expected.id) : null;
@@ -1317,6 +1331,7 @@ export class HiveDatabase {
       WHERE id = ? AND processIncarnation = ? AND processStartedAt IS ?
         AND capabilityEpoch = ? AND status = ? AND writeRevoked = ?
         AND readOnly = ? AND branch IS ? AND toolSessionId IS ?
+        AND controlMessageId IS ? AND pauseCapture IS ?
         AND lastEventAt = ?
         AND status IN ('done', 'dead', 'failed')
     `).run(
@@ -1330,6 +1345,8 @@ export class HiveDatabase {
       expected.readOnly ? 1 : 0,
       expected.branch,
       expected.toolSessionId,
+      expected.controlMessageId,
+      expected.pauseCapture,
       expected.lastEventAt,
     );
     return changed.changes === 1 ? this.getAgentById(expected.id) : null;

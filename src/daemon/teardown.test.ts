@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 import {
   captureProcessTree,
   reapCapturedTree,
+  ResumeRollbackError,
   resumeCapturedTree,
   stopAgentSession,
   suspendCapturedTree,
@@ -544,29 +545,38 @@ describe("pause capture birth binding (N5)", () => {
 });
 
 describe("SIGCONT fail-closed re-freeze", () => {
-  test("thrown SIGCONT re-SIGSTOPs already continued pids", async () => {
-    const { resumeCapturedTree } = await import("./teardown");
+  test("partial SIGCONT physically verifies already-continued pids re-stopped", async () => {
     const signals: Array<{ pid: number; signal: string }> = [];
+    const states = new Map([[100, "T"], [200, "T"]]);
     const deps = {
       ps: async () => "100 1 1024 a\n200 1 1024 b\n",
-      psState: async () => "1 0 S\n100 1 S\n200 1 S\n",
+      psState: async () =>
+        `1 0 S\n100 1 ${states.get(100)}\n200 1 ${states.get(200)}\n`,
       kill: (pid: number, signal: NodeJS.Signals) => {
         signals.push({ pid, signal });
         if (pid === 200 && signal === "SIGCONT") {
           throw new Error("ESRCH");
         }
+        states.set(pid, signal === "SIGSTOP" ? "T" : "S");
       },
       wait: async () => undefined,
     };
-    await expect(
-      resumeCapturedTree(
+    let failure: unknown;
+    try {
+      await resumeCapturedTree(
         [{ pid: 100, command: "a" }, { pid: 200, command: "b" }],
         deps,
         1,
-      ),
-    ).rejects.toThrow(/SIGCONT failed/);
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ResumeRollbackError);
+    expect((failure as ResumeRollbackError).rollbackVerified).toBe(true);
+    expect((failure as Error).message).toMatch(/SIGCONT failed/);
     expect(signals.filter((s) => s.signal === "SIGSTOP").map((s) => s.pid))
       .toContain(100);
+    expect(states.get(100)).toBe("T");
   });
 
   test("still-T readback re-SIGSTOPs the tree", async () => {
@@ -580,10 +590,41 @@ describe("SIGCONT fail-closed re-freeze", () => {
       },
       wait: async () => undefined,
     };
-    await expect(
-      resumeCapturedTree([{ pid: 100, command: "a" }], deps, 1),
-    ).rejects.toThrow(/still stopped/);
+    let failure: unknown;
+    try {
+      await resumeCapturedTree([{ pid: 100, command: "a" }], deps, 1);
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ResumeRollbackError);
+    expect((failure as ResumeRollbackError).rollbackVerified).toBe(true);
+    expect((failure as Error).message).toMatch(/still stopped/);
     expect(signals.some((s) => s.pid === 100 && s.signal === "SIGSTOP")).toBe(true);
+  });
+
+  test("failed rollback reports unverified when readback still sees code running", async () => {
+    const deps = {
+      ps: async () => "100 1 1024 a\n200 1 1024 b\n",
+      psState: async () => "1 0 S\n100 1 S\n200 1 T\n",
+      kill: (pid: number, signal: NodeJS.Signals) => {
+        if (pid === 200 && signal === "SIGCONT") throw new Error("ESRCH");
+        if (pid === 100 && signal === "SIGSTOP") throw new Error("EPERM");
+      },
+      wait: async () => undefined,
+    };
+    let failure: unknown;
+    try {
+      await resumeCapturedTree(
+        [{ pid: 100, command: "a" }, { pid: 200, command: "b" }],
+        deps,
+        1,
+      );
+    } catch (error) {
+      failure = error;
+    }
+    expect(failure).toBeInstanceOf(ResumeRollbackError);
+    expect((failure as ResumeRollbackError).rollbackVerified).toBe(false);
+    expect((failure as Error).message).toMatch(/may still be running/);
   });
 });
 
