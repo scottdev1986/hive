@@ -67,6 +67,7 @@ import {
   type AgentMessage,
   type AgentRecord,
   type AssignmentRecord,
+  type DaemonHookEvent,
   type HookEvent,
   type IdentityState,
   type MemoryFact,
@@ -4185,14 +4186,20 @@ export class HiveDaemon {
   }
 
   async processEvent(
-    event: HookEvent,
+    event: DaemonHookEvent,
     holder?: {
       agentId: string;
       processIncarnation: number;
       capabilityEpoch: number;
     },
   ): Promise<AgentRecord | null> {
-    const parsed = HookEventSchema.parse(event);
+    // `appServerTurn` is privileged in-process evidence from the app-server
+    // manager. It is split off BEFORE the public-schema parse: the schema does
+    // not carry it, so the authenticated POST /event boundary already rejects
+    // any attempt to forge it (strict parse, 400), and this destructure keeps
+    // the internal call path type-honest rather than schema-smuggled.
+    const { appServerTurn, ...publicEvent } = event;
+    const parsed = HookEventSchema.parse(publicEvent);
     // One root identity at ingress: legacy/case-varied orchestrator events
     // register and store as queen so status, token usage, and consumers agree.
     const value = {
@@ -4395,10 +4402,12 @@ export class HiveDaemon {
     // rollout the app-server named plus the exact turn id): attest and
     // persist it for readers AND writers — this is the exact-source
     // observation the writer containment gates key on, and the only way an
-    // app-server row's identity is ever known.
+    // app-server row's identity is ever known. The evidence is honored only
+    // for a row whose CURRENT incarnation launched on the app-server driver.
     if (
-      value.kind === "turn-start" && value.appServerTurn !== undefined &&
+      value.kind === "turn-start" && appServerTurn !== undefined &&
       agent !== null && agent !== undefined && agent.tool === "codex" &&
+      agent.codexDriver === "app-server" &&
       agent.worktreePath !== null && agent.executionIdentity !== undefined
     ) {
       let attestation;
@@ -4406,9 +4415,9 @@ export class HiveDaemon {
         attestation = reconcileCodexIdentity(
           agent.executionIdentity,
           await readCodexAppServerTurnIdentity(
-            value.appServerTurn.rolloutPath,
+            appServerTurn.rolloutPath,
             agent.worktreePath,
-            value.appServerTurn.turnId,
+            appServerTurn.turnId,
           ),
           "codex-app-server",
         );

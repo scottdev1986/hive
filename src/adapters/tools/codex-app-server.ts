@@ -2,7 +2,7 @@ import { createServer, connect, type Socket } from "node:net";
 import { chmod, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
-import type { AgentRecord, HookEvent } from "../../schemas";
+import type { AgentRecord, DaemonHookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
 import type { CodexSessionBootstrap } from "./codex";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
@@ -255,7 +255,7 @@ export interface CodexAppServerManagerOptions {
   transport?: (path: string) => Promise<CodexAppServerTransport>;
   commandRunner?: (argv: string[]) => Promise<number>;
   sleep?: (milliseconds: number) => Promise<void>;
-  onEvent: (event: HookEvent, holder: AgentRecord) => Promise<void>;
+  onEvent: (event: DaemonHookEvent, holder: AgentRecord) => Promise<void>;
   queueApproval: (request: CodexApprovalRequest) => Promise<string>;
   /** Mark a durable approval row denied. Called when an approval can no longer
    * be delivered (the transport dropped), so the row cannot linger in

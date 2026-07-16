@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createWorktree } from "../adapters/worktrees";
 import {
   AgentMessageSchema,
+  HookEventSchema,
   QuotaConfigSchema,
   type AgentRecord,
   type HookEvent,
@@ -4996,6 +4997,74 @@ describe("Codex execution-identity attestation sweep", () => {
       // The matching app-server attestation is writer-grade: not paused.
       expect(row.status).toBe("working");
       expect(row.writeRevoked).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("appServerTurn is unforgeable: the public event schema rejects it and a TUI row never honors it", async () => {
+    // Boundary: the authenticated POST /event surface parses this exact
+    // schema, so a capability-holding agent cannot smuggle writer-grade
+    // provenance — the whole event is rejected, never silently stripped.
+    expect(HookEventSchema.safeParse({
+      kind: "turn-start",
+      agentName: "maya",
+      timestamp: "2026-07-15T18:00:01.000Z",
+      appServerTurn: { rolloutPath: "/tmp/forged.jsonl", turnId: "turn-9" },
+    }).success).toBe(false);
+
+    // Processing: even on the internal path, evidence is honored only for a
+    // row whose CURRENT incarnation launched on the app-server driver.
+    const db = new HiveDatabase(join(home, "attest-forged-driver.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+      telemetryReaders: {
+        codexSession: async () => "session-1",
+        codex: async () => ({ contextPct: null, lastActivityAt: null }),
+        codexIdentity: async () => ({
+          status: "observed",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+          turnId: "t",
+          sessionId: "session-1",
+          observedAt: "2026-07-15T18:00:00.000Z",
+        }),
+      },
+    });
+    const rolloutPath = join(home, "forged-rollout.jsonl");
+    await Bun.write(
+      rolloutPath,
+      JSON.stringify({
+        timestamp: "2026-07-15T18:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          turn_id: "turn-9",
+          cwd: "/tmp/hive-maya",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+        },
+      }) + "\n",
+    );
+    db.insertAgent(codexAgent({ codexDriver: "tui" }));
+    try {
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-15T18:00:01.000Z",
+        appServerTurn: { rolloutPath, turnId: "turn-9" },
+      });
+      const row = db.getAgentByName("maya")!;
+      // The TUI writer gate ran instead: no app-server source, still paused.
+      expect(row.observedIdentity?.source).not.toBe("codex-app-server");
+      expect(row.writeRevoked).toBe(true);
+      expect(suspended).toEqual(["hive-maya"]);
     } finally {
       db.close();
     }
