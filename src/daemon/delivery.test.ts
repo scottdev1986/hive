@@ -256,7 +256,7 @@ describe("MessageDelivery", () => {
       expect(queued.deliveredAt).toEqual(null);
       expect(tmux.calls).toEqual([]);
 
-      const response = await actingAs(daemon, "operator")("http://hive/event", {
+      const response = await actingAs(daemon, "maya", "writer")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -303,7 +303,7 @@ describe("MessageDelivery", () => {
       // A completed tool call is the nearest safe boundary (SPEC decision
       // 1): urgent traffic injects now, ordinary traffic still waits for
       // the turn to end.
-      const response = await actingAs(daemon, "operator")("http://hive/event", {
+      const response = await actingAs(daemon, "maya", "writer")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -449,7 +449,7 @@ describe("MessageDelivery", () => {
       db.insertAgent(agent("spawning"));
       db.releaseAgentName("maya");
 
-      const response = await actingAs(daemon, "operator")("http://hive/event", {
+      const response = await actingAs(daemon, "maya", "writer")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -686,7 +686,7 @@ describe("MessageDelivery", () => {
       expect(queued.deliveredAt).toEqual(null);
       expect(tmux.calls).toEqual([]);
 
-      const response = await actingAs(daemon, "operator")("http://hive/event", {
+      const response = await actingAs(daemon, "maya", "writer")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
@@ -781,7 +781,7 @@ describe("MessageDelivery", () => {
         "maya",
         "Second message",
       );
-      const response = await actingAs(daemon, "operator")("http://hive/event", {
+      const response = await actingAs(daemon, "maya", "writer")("http://hive/event", {
         method: "POST",
         headers: { "content-type": "application/json" },
         body: JSON.stringify({
