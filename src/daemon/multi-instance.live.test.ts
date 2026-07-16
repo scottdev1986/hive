@@ -1,5 +1,4 @@
 import { expect, test } from "bun:test";
-import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { existsSync } from "node:fs";
@@ -149,7 +148,7 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
         task: "write the acceptance marker",
         category: "simple_coding",
         name: "maya",
-        tool: "codex",
+        tool: "claude",
       },
     });
     await clientB.callTool({
@@ -158,7 +157,7 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
         task: "hold the sibling worktree",
         category: "simple_coding",
         name: "david",
-        tool: "codex",
+        tool: "claude",
       },
     });
 
@@ -210,15 +209,9 @@ test("two live daemon processes isolate one repo through spawn, message, land, a
     git(statusA[0]!.worktreePath, [
       "commit", "-m", "acceptance marker", "--no-gpg-sign",
     ]);
-    // A real Codex writer that made these commits would have attested matching
-    // at its turn boundary; this live test fakes maya's work, so stamp the
-    // attestation the fail-closed landing gate requires (WAL makes it visible to
-    // the running daemon's own connection).
-    const dbA = new Database(join(homeA, "hive.db"));
-    dbA.exec("PRAGMA busy_timeout = 5000");
-    dbA.query("UPDATE agents SET identityState = 'matching' WHERE name = 'maya'")
-      .run();
-    dbA.close();
+    // Codex writers are mechanically contained before launch/landing because
+    // 0.144.4 cannot bind a rollout to a process incarnation. This acceptance
+    // path exercises the live multi-instance merge with a supported writer.
     const landed = textValue(await clientA.callTool({
       name: "hive_land",
       arguments: { agent: "maya", capabilityEpoch: 0 },
