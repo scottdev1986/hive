@@ -17,7 +17,6 @@ import {
   writeCodexAgentConfig,
 } from "./codex";
 import { GRAPHIFY_HOOK_SCRIPT } from "./graphify-hook";
-import { RecoverySessionDiscoveryError } from "./recovery-session";
 import { CODEX_WRITER_CONTAINMENT_REASON } from "../../daemon/codex-containment";
 
 let tempRoot = "";
@@ -412,33 +411,38 @@ describe("Codex adapter", () => {
       .toEqual("large-meta-session");
   });
 
-  test("process binding excludes predecessors and chooses the parent before a same-cwd child", async () => {
+  test("process binding stays unknown when a same-name same-cwd child starts first", async () => {
     const fakeHome = join(tempRoot, "process-bound-codex-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "15");
     await mkdir(dayDir, { recursive: true });
     const meta = (id: string, timestamp: string) => `${JSON.stringify({
       timestamp,
       type: "session_meta",
-      payload: { id, cwd: worktreePath, source: "cli" },
+      payload: {
+        id,
+        cwd: worktreePath,
+        source: "cli",
+        agent_nickname: "maya",
+      },
     })}\n`;
     await writeFile(
       join(dayDir, "rollout-predecessor.jsonl"),
       meta("predecessor", "2026-07-15T17:59:59.000Z"),
     );
     await writeFile(
-      join(dayDir, "rollout-parent.jsonl"),
-      meta("parent", "2026-07-15T18:00:00.100Z"),
+      join(dayDir, "rollout-child.jsonl"),
+      meta("child", "2026-07-15T18:00:00.100Z"),
     );
     await writeFile(
-      join(dayDir, "rollout-child.jsonl"),
-      meta("child", "2026-07-15T18:00:00.200Z"),
+      join(dayDir, "rollout-parent.jsonl"),
+      meta("parent", "2026-07-15T18:00:00.200Z"),
     );
 
     expect(await findCodexRolloutForProcess(
       worktreePath,
       "2026-07-15T18:00:00.000Z",
       fakeHome,
-    )).toMatchObject({ sessionId: "parent" });
+    )).toBeNull();
   });
 
   test("refuses a session_meta record whose session id key is unknown", async () => {
@@ -459,19 +463,32 @@ describe("Codex adapter", () => {
     );
   });
 
-  test("recovery discovery uses session_meta creation evidence and refuses ambiguity", async () => {
+  test("recovery discovery stays unknown without process-bound provider evidence", async () => {
     const fakeHome = join(tempRoot, "codex-recovery-home");
     const dayDir = join(codexSessionsDirectory(fakeHome), "2026", "07", "13");
     await mkdir(dayDir, { recursive: true });
-    const meta = (sessionId: string, timestampKey: string, timestamp: string) =>
+    const meta = (sessionId: string, timestamp: string) =>
       `${JSON.stringify({
+        timestamp,
         type: "session_meta",
-        [timestampKey]: timestamp,
-        payload: { id: sessionId, cwd: worktreePath, source: "cli" },
+        payload: {
+          id: sessionId,
+          cwd: worktreePath,
+          source: "cli",
+          agent_nickname: "maya",
+        },
       })}\n`;
     await writeFile(
       join(dayDir, "rollout-predecessor.jsonl"),
-      meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
+      meta("predecessor", "2026-07-13T11:59:59.000Z"),
+    );
+    await writeFile(
+      join(dayDir, "rollout-child.jsonl"),
+      meta("child", "2026-07-13T12:00:01.000Z"),
+    );
+    await writeFile(
+      join(dayDir, "rollout-parent.jsonl"),
+      meta("parent", "2026-07-13T12:00:02.000Z"),
     );
 
     expect(await discoverCodexRecoverySessionId(
@@ -479,44 +496,6 @@ describe("Codex adapter", () => {
       "2026-07-13T12:00:00.000Z",
       fakeHome,
     )).toBeNull();
-    await writeFile(
-      join(dayDir, "rollout-current.jsonl"),
-      meta("current", "timestamp", "2026-07-13T12:00:01.000Z"),
-    );
-    await writeFile(
-      join(dayDir, "rollout-predecessor.jsonl"),
-      meta("predecessor", "timestamp", "2026-07-13T11:59:59.000Z"),
-    );
-
-    expect(await discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).toBe("current");
-
-    await writeFile(
-      join(dayDir, "rollout-second-current.jsonl"),
-      meta("second-current", "timestamp", "2026-07-13T12:00:02.000Z"),
-    );
-    expect(discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).rejects.toBeInstanceOf(RecoverySessionDiscoveryError);
-    await rm(join(dayDir, "rollout-second-current.jsonl"));
-
-    await writeFile(
-      join(dayDir, "rollout-unknown-evidence.jsonl"),
-      meta("unknown-evidence", "timestmp", "2026-07-13T12:00:03.000Z"),
-    );
-    expect(discoverCodexRecoverySessionId(
-      worktreePath,
-      "2026-07-13T12:00:00.000Z",
-      fakeHome,
-    )).rejects.toMatchObject({
-      name: "RecoverySessionDiscoveryError",
-      reason: "invalid-evidence",
-    });
   });
 
   test("omits the model override for the account default", () => {

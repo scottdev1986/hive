@@ -18,13 +18,6 @@ import {
 } from "./graphify-hook";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import { assertCodexWriterContained } from "../../daemon/codex-containment";
-import {
-  invalidRecoveryArtifactEvidence,
-  isMissingRecoveryArtifact,
-  recoveryArtifactTimestamp,
-  selectRecoverySessionId,
-  type RecoverySessionArtifact,
-} from "./recovery-session";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */
@@ -265,8 +258,8 @@ export function codexSessionsDirectory(home = homedir()): string {
 
 // Codex records every conversation as a rollout file whose first line is a
 // session_meta entry carrying the session id, cwd, source, and creation time.
-// Hook-claimed ids are not trusted. Authority-bearing callers bind the earliest
-// independently validated source=cli rollout for the exact process launch.
+// Hook-claimed ids are not trusted, and 0.144.4 exposes no independent datum
+// that binds one of these rollout records to a Hive process incarnation.
 const ROLLOUT_SCAN_LIMIT = 100;
 
 export interface CodexRolloutLocation {
@@ -303,7 +296,6 @@ async function findCodexRollout(
 
 async function listCodexRollouts(
   home: string,
-  strictEvidence = false,
 ): Promise<{ path: string; mtimeMs: number }[]> {
   const rollouts: { path: string; mtimeMs: number }[] = [];
   const pending = [codexSessionsDirectory(home)];
@@ -312,14 +304,7 @@ async function listCodexRollouts(
     let entries;
     try {
       entries = await readdir(directory, { withFileTypes: true });
-    } catch (error) {
-      if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-        invalidRecoveryArtifactEvidence(
-          "Codex",
-          directory,
-          "directory cannot be read",
-        );
-      }
+    } catch {
       continue;
     }
     for (const entry of entries) {
@@ -329,14 +314,7 @@ async function listCodexRollouts(
       } else if (/^rollout-.*\.jsonl$/.test(entry.name)) {
         try {
           rollouts.push({ path, mtimeMs: (await stat(path)).mtimeMs });
-        } catch (error) {
-          if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-            invalidRecoveryArtifactEvidence(
-              "Codex",
-              path,
-              "cannot be inspected",
-            );
-          }
+        } catch {
           // A rollout deleted mid-scan is simply not a candidate.
         }
       }
@@ -345,9 +323,8 @@ async function listCodexRollouts(
   return rollouts;
 }
 
-// Raw newest-rollout lookup for telemetry and legacy recovery discovery. This
-// cwd-only result is never sufficient to bind an active process; that uses
-// findCodexRolloutForProcess below.
+// Raw newest-rollout lookup for telemetry. This cwd-only result is never
+// sufficient to bind an active process.
 export async function findLatestCodexRollout(
   worktreePath: string,
   home = homedir(),
@@ -363,36 +340,18 @@ export async function findCodexRolloutBySessionId(
   return findCodexRollout(worktreePath, home, sessionId);
 }
 
-/** The provider session created by this exact process launch. The durable
- * process timestamp excludes a surviving predecessor; choosing the earliest
- * validated CLI session at/after it excludes child sessions created later in
- * the same cwd. */
-export async function findCodexRolloutForProcess(
+/** Codex 0.144.4 rollout metadata has no PID, launch nonce, process handle, or
+ * other datum Hive can bind to a process incarnation. Cwd/source/timestamps
+ * are shared by independent and child sessions, so chronology is not proof. */
+export function findCodexRolloutForProcess(
   worktreePath: string,
   processStartedAt: string,
   home = homedir(),
 ): Promise<CodexRolloutLocation | null> {
-  const launchedAt = Date.parse(processStartedAt);
-  if (!Number.isFinite(launchedAt)) return null;
-  const target = resolve(worktreePath);
-  const candidates: CodexRolloutLocation[] = [];
-  for (const rollout of await listCodexRollouts(home)) {
-    const meta = await readRolloutSessionMeta(rollout.path);
-    if (meta === null || meta.cwd !== target) continue;
-    const createdAt = Date.parse(meta.createdAt);
-    if (!Number.isFinite(createdAt) || createdAt < launchedAt) continue;
-    candidates.push({
-      path: rollout.path,
-      sessionId: meta.sessionId,
-      createdAt: meta.createdAt,
-      mtimeMs: rollout.mtimeMs,
-    });
-  }
-  candidates.sort((left, right) =>
-    Date.parse(left.createdAt) - Date.parse(right.createdAt) ||
-    left.mtimeMs - right.mtimeMs
-  );
-  return candidates[0] ?? null;
+  void worktreePath;
+  void processStartedAt;
+  void home;
+  return Promise.resolve(null);
 }
 
 export async function findLatestCodexSessionId(
@@ -402,32 +361,19 @@ export async function findLatestCodexSessionId(
   return (await findLatestCodexRollout(worktreePath, home))?.sessionId ?? null;
 }
 
-export async function discoverCodexRecoverySessionId(
+export function discoverCodexRecoverySessionId(
   worktreePath: string,
   agentCreatedAt: string,
   home = homedir(),
 ): Promise<string | null> {
-  const target = resolve(worktreePath);
-  const artifacts: RecoverySessionArtifact[] = [];
-  for (const rollout of await listCodexRollouts(home, true)) {
-    const meta = await readRolloutSessionMeta(rollout.path, true);
-    if (meta === null || meta.cwd !== target) continue;
-    artifacts.push({
-      sessionId: meta.sessionId,
-      createdAtMs: recoveryArtifactTimestamp(
-        "Codex",
-        rollout.path,
-        meta.createdAt,
-      ),
-      path: rollout.path,
-    });
-  }
-  return selectRecoverySessionId("Codex", agentCreatedAt, artifacts);
+  void worktreePath;
+  void agentCreatedAt;
+  void home;
+  return Promise.resolve(null);
 }
 
 async function readRolloutSessionMeta(
   path: string,
-  strictEvidence = false,
 ): Promise<{ sessionId: string; cwd: string; createdAt: string } | null> {
   let firstLine: string;
   try {
@@ -440,32 +386,19 @@ async function readRolloutSessionMeta(
       lines.close();
       input.destroy();
     }
-  } catch (error) {
-    if (strictEvidence && !isMissingRecoveryArtifact(error)) {
-      invalidRecoveryArtifactEvidence("Codex", path, "cannot be read");
-    }
+  } catch {
     return null;
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(firstLine);
   } catch {
-    if (strictEvidence) {
-      invalidRecoveryArtifactEvidence("Codex", path, "is not valid JSONL");
-    }
     return null;
   }
   if (
     typeof parsed !== "object" || parsed === null ||
     !("type" in parsed) || parsed.type !== "session_meta"
   ) {
-    if (strictEvidence) {
-      invalidRecoveryArtifactEvidence(
-        "Codex",
-        path,
-        "has no session_meta first record",
-      );
-    }
     return null;
   }
   if (
@@ -480,13 +413,6 @@ async function readRolloutSessionMeta(
     payload.source !== "cli" || typeof createdAt !== "string" ||
     !Number.isFinite(Date.parse(createdAt))
   ) {
-    if (strictEvidence) {
-      invalidRecoveryArtifactEvidence(
-        "Codex",
-        path,
-        "has invalid session_meta identity/source/timestamp",
-      );
-    }
     throw new Error(`Invalid Codex session_meta in ${path}`);
   }
   return {

@@ -126,6 +126,19 @@ describe("Codex app-server adapter", () => {
       .toContain("--graphify-url");
   });
 
+  test("the public host boundary refuses a writer before building its command", () => {
+    const manager = new CodexAppServerManager({
+      commandRunner: async () => 0,
+      onEvent: async () => undefined,
+      queueApproval: async () => "approval-1",
+      observeRateLimits: async () => null,
+    });
+    expect(() => manager.buildHostCommand(
+      agent({ readOnly: false }),
+      4317,
+    )).toThrow(/writer\/workspace-write threads are refused/);
+  });
+
   test("initializes, starts a thread and turn, steers with the active turn precondition, and interrupts", async () => {
     const transport = new FakeTransport();
     const events: HookEvent[] = [];
@@ -246,7 +259,7 @@ describe("Codex app-server adapter", () => {
     });
   });
 
-  test("routes app-server approvals through Hive and translates the decision", async () => {
+  test("mechanically denies every mutating reader approval without queueing", async () => {
     const transport = new FakeTransport();
     const queued: string[] = [];
     const manager = new CodexAppServerManager({
@@ -262,26 +275,55 @@ describe("Codex app-server adapter", () => {
     });
     await manager.startAgent(agent({ readOnly: true }), "Run checks", true, "medium");
 
-    transport.emit({
-      id: 91,
-      method: "item/commandExecution/requestApproval",
-      params: {
-        threadId: "thread-1",
-        turnId: "turn-5",
-        itemId: "item-1",
-        command: "npm publish",
-        cwd: "/tmp/maya",
-        reason: "requires network",
+    const attempts = [
+      {
+        method: "item/commandExecution/requestApproval",
+        params: {
+          command: "npm publish",
+          cwd: "/tmp/maya",
+          reason: "requires elevated network access",
+          additionalPermissions: { network: { enabled: true } },
+        },
+        result: { decision: "decline" },
       },
-    });
-    await Bun.sleep(0);
-    expect(queued[0]).toContain("npm publish");
-    expect(await manager.resolveApproval("approval-1", false)).toEqual(true);
-    await Bun.sleep(0);
-    expect(transport.sent.at(-1)).toEqual({
-      id: 91,
-      result: { decision: "decline" },
-    });
+      {
+        method: "item/fileChange/requestApproval",
+        params: { grantRoot: "/tmp/maya", reason: "modify files" },
+        result: { decision: "decline" },
+      },
+      {
+        method: "item/permissions/requestApproval",
+        params: {
+          permissions: {
+            filesystem: { write: ["/tmp/maya"] },
+            network: { enabled: true },
+          },
+          reason: "elevated permissions",
+        },
+        result: { permissions: {}, scope: "turn" },
+      },
+      {
+        method: "execCommandApproval",
+        params: { command: ["bun", "run", "release"] },
+        result: { decision: "denied" },
+      },
+      {
+        method: "applyPatchApproval",
+        params: { fileChanges: { "/tmp/maya/file.ts": { type: "add" } } },
+        result: { decision: "denied" },
+      },
+    ];
+    for (const [index, attempt] of attempts.entries()) {
+      const id = 91 + index;
+      transport.emit({ id, method: attempt.method, params: attempt.params });
+      await Bun.sleep(0);
+      expect(transport.sent.find((message) => message.id === id)).toEqual({
+        id,
+        result: attempt.result,
+      });
+    }
+    expect(queued).toEqual([]);
+    expect(await manager.resolveApproval("approval-1", true)).toEqual(false);
   });
 
   test("renders a readable host feed instead of raw protocol JSON", () => {

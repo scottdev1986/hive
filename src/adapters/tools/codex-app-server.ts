@@ -240,13 +240,6 @@ interface CodexQuotaSample {
   observedAt: string;
 }
 
-interface PendingApproval {
-  agentName: string;
-  method: string;
-  params: JsonObject;
-  resolve: (approved: boolean) => void;
-}
-
 const UUID_AGENT_ID =
   /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/;
 
@@ -302,10 +295,13 @@ const stringField = (value: JsonObject, key: string): string => {
 
 const timestamp = (): string => new Date().toISOString();
 const AVAILABILITY_PROBE_TIMEOUT_MS = 5_000;
+const CODEX_APP_SERVER_WRITER_REFUSAL =
+  "Codex app-server writer/workspace-write threads are refused: Hive " +
+  "cannot enforce per-mutation execution-identity on Codex app-server. " +
+  "Launch read-only, or use a Claude or Grok writer.";
 
 export class CodexAppServerManager {
   private readonly sessions = new Map<string, CodexSession>();
-  private readonly approvals = new Map<string, PendingApproval>();
   private availability: Promise<boolean> | null = null;
   private readonly socketPath: (agent: AgentRecord) => string;
   private readonly transport: (path: string) => Promise<CodexAppServerTransport>;
@@ -338,6 +334,9 @@ export class CodexAppServerManager {
     daemonPort: number,
     graphifyUrl?: string,
   ): string[] {
+    if (!agent.readOnly) {
+      throw new Error(CODEX_APP_SERVER_WRITER_REFUSAL);
+    }
     if (agent.worktreePath === null) {
       throw new Error(`Cannot host Codex app-server without a worktree: ${agent.name}`);
     }
@@ -377,12 +376,8 @@ export class CodexAppServerManager {
   ): Promise<void> {
     // Fail closed at the manager itself: a workspace-write / writer thread is
     // refused even if a caller bypasses the spawner containment gate.
-    if (!readOnly) {
-      throw new Error(
-        "Codex app-server writer/workspace-write threads are refused: Hive " +
-          "cannot enforce per-mutation execution-identity on Codex app-server. " +
-          "Launch read-only, or use a Claude or Grok writer.",
-      );
+    if (!readOnly || !agent.readOnly) {
+      throw new Error(CODEX_APP_SERVER_WRITER_REFUSAL);
     }
     const transport = await this.connectWithRetry(this.socketPath(agent));
     const client = new CodexAppServerClient(transport, {
@@ -498,19 +493,13 @@ export class CodexAppServerManager {
   }
 
   async resolveApproval(id: string, approved: boolean): Promise<boolean> {
-    const pending = this.approvals.get(id);
-    if (pending === undefined) return false;
-    this.approvals.delete(id);
-    pending.resolve(approved);
-    return true;
+    void id;
+    void approved;
+    return false;
   }
 
   async denyAgentApprovals(agentName: string): Promise<void> {
-    for (const [id, pending] of this.approvals) {
-      if (pending.agentName !== agentName) continue;
-      this.approvals.delete(id);
-      pending.resolve(false);
-    }
+    void agentName;
   }
 
   disconnect(agentName: string): void {
@@ -630,11 +619,7 @@ export class CodexAppServerManager {
       }
       throw new Error(`Unsupported Codex app-server request: ${method}`);
     }
-    const approvalId = await this.options.queueApproval({ agentName, description });
-    const approved = await new Promise<boolean>((resolve) => {
-      this.approvals.set(approvalId, { agentName, method, params, resolve });
-    });
-    return approvalResponse(method, params, approved);
+    return approvalDenialResponse(method, params);
   }
 }
 
@@ -664,24 +649,21 @@ function describeApproval(method: string, params: JsonObject): string | null {
   return null;
 }
 
-function approvalResponse(
+function approvalDenialResponse(
   method: string,
   params: JsonObject,
-  approved: boolean,
 ): unknown {
   if (method === "item/permissions/requestApproval") {
-    const requested = asObject(params.permissions, "requested permissions");
+    asObject(params.permissions, "requested permissions");
     return {
-      permissions: approved
-        ? Object.fromEntries(Object.entries(requested).filter(([, value]) => value !== null))
-        : {},
+      permissions: {},
       scope: "turn",
     };
   }
   if (method === "execCommandApproval" || method === "applyPatchApproval") {
-    return { decision: approved ? "approved" : "denied" };
+    return { decision: "denied" };
   }
-  return { decision: approved ? "accept" : "decline" };
+  return { decision: "decline" };
 }
 
 export function renderCodexHostMessage(message: RpcMessage): string | null {
