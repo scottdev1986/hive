@@ -69,12 +69,12 @@
       <article class="principle">
         <span class="num">01 / IDENTIFY</span>
         <strong>The daemon names the actor</strong>
-        <p>No caller supplies <code>from</code>. The authenticated process binding determines the sender, agent generation, hierarchy node, run, and capability epoch.</p>
+        <p>No caller supplies <code>from</code>. The authenticated action binding determines the sender Address, the exact process binding, and the resolved MessageScope.</p>
       </article>
       <article class="principle">
         <span class="num">02 / AUTHORIZE</span>
         <strong>The route is a capability</strong>
-        <p>A recipient name is not permission. The daemon resolves a target to a stable address, checks the live hierarchy edge or channel, and checks again before delivery and read.</p>
+        <p>A recipient name is not permission. The daemon resolves a target to a stable Address, checks instance/Assignment/capability authorization at C0 — owner edges, channels, and fences at C1 — and checks again before delivery and read.</p>
       </article>
       <article class="principle">
         <span class="num">03 / DELIVER</span>
@@ -114,7 +114,7 @@
           <tr><td>Root is a reserved destination without an agents row</td><td>Keep. Model it as a special Address kind, never a synthetic worker.</td><td>The queen’s lifecycle and authority are derived from root identity and measured provider state.</td></tr>
           <tr><td>Normal inbox pulls can mark a message applied</td><td>Stop doing this in v2. A read produces a read receipt; application requires an explicit disposition or system evidence.</td><td>Reading content is not acting on it.</td></tr>
           <tr><td>Legacy phrase classifier infers a narrow control intent</td><td>Retain only during migration, instrument usage, then remove.</td><td>Raw prose must not revoke authority or control a process.</td></tr>
-          <tr><td>Scoped brief assembled before each spawn</td><td>Keep as hierarchy-owned immutable launch provenance (<code>SpawnBrief</code>), never an inbox message.</td><td>Launch context is process input bound to one exact generation, not conversation, and never re-enters delivery or retry.</td></tr>
+          <tr><td>Scoped brief assembled before each spawn</td><td>Keep as process-input launch provenance; C1 formalizes it as the hierarchy-owned <code>SpawnBrief</code>, never an inbox message.</td><td>Launch context is process input bound to one exact generation, not conversation, and never re-enters delivery or retry.</td></tr>
         </tbody>
       </table>
     </div>
@@ -136,7 +136,7 @@
         <h3>Daemon control plane</h3>
         <ul class="check-list">
           <li><strong>Identity registry:</strong> reserves agentId and generation before provider spawn and binds credentials to the launched process.</li>
-          <li><strong>Policy engine:</strong> evaluates hierarchy, task, channel, run, and capability epochs at admission and use.</li>
+          <li><strong>Policy engine:</strong> evaluates MessageScope, instance/Assignment, and capability bindings at C0 — hierarchy/task/channel/run fences from C1 — at admission and use.</li>
           <li><strong>Message ledger:</strong> stores immutable envelopes, decisions, attempts, receipts, and terminal failure reasons.</li>
           <li><strong>Scheduler:</strong> enforces per-recipient order, fair bounded queues, backpressure, expiry, and a separate control lane.</li>
         </ul>
@@ -288,12 +288,12 @@
         <p>Assignment status, task transitions, reviews, promotion requests, G1/G2, budget changes, and pause/abort use hierarchy or run-control operations. A sentence such as “done,” “approved,” or “land this” has no lifecycle or authority effect.</p>
       </article>
       <article class="detail-panel">
-        <h3>Artifacts stay out of the queue</h3>
+        <h3>Artifacts stay out of the queue (from C1)</h3>
         <p><code>hive_publish_artifact</code> verifies the caller’s task/worktree scope, hashes the content or commit object, and returns the hierarchy-owned ArtifactRef. <code>hive_read_artifact</code> opens a bounded range after authorization. Messages carry summaries and references, not megabyte payloads or arbitrary filesystem paths.</p>
       </article>
     </div>
   
-    <div class="callout"><strong>Spawn is not send.</strong> <code>hive_spawn</code> accepts a typed task/delegation request. The daemon reserves identity, constructs and records the bounded SpawnBrief, launches the provider with that exact brief, and measures the first boundary. Failure terminates the reservation and brief binding. Chat messages may refine an active task; they never substitute for its initial contract.</div>
+    <div class="callout"><strong>Spawn is not send.</strong> At C0 <code>hive_spawn</code> launches with the current Assignment-scoped spawn brief; C1 accepts a typed Task/DelegationSpec request and records the hierarchy-owned SpawnBrief. Either way the daemon reserves identity first, launches the provider with that exact brief as process input, and measures the first boundary. Failure terminates the reservation and brief binding. Chat messages may refine an active task; they never substitute for its initial contract.</div>
   </div>
 </section>
 
