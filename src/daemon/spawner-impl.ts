@@ -792,12 +792,21 @@ export class HiveSpawner implements Spawner {
 
   /** The driver a Codex launch will actually use, resolved once so the gate
    * that admits a writer and the launch that runs it cannot disagree. Null for
-   * every other tool. */
+   * every other tool.
+   *
+   * A WRITER engages the app-server driver whenever it is available,
+   * regardless of the config default: app-server is the only driver a Codex
+   * writer is admissible on, so leaving it behind an opt-in config knob made
+   * every writer spawn refuse with a containment lecture while the admissible
+   * path silently never engaged. Readers follow the configured default. */
   private async resolveCodexDriver(
     tool: CapabilityProvider,
+    readOnly: boolean,
   ): Promise<CodexDriver | null> {
     if (tool !== "codex") return null;
-    const appServer = this.dependencies.config.codex?.driver === "app-server" &&
+    const wantsAppServer = !readOnly ||
+      this.dependencies.config.codex?.driver === "app-server";
+    const appServer = wantsAppServer &&
       (await this.dependencies.codexAppServer?.isAvailable() ?? false);
     return appServer ? "app-server" : "tui";
   }
@@ -1117,7 +1126,20 @@ export class HiveSpawner implements Spawner {
           break;
         }
         case "codex": {
-          const driver = await this.resolveCodexDriver(identity.tool);
+          const driver = await this.resolveCodexDriver(identity.tool, readOnly);
+          // The driver is a per-incarnation launch fact: the restart row must
+          // record what THIS process launches with — the config (and so the
+          // resolved driver) may differ from the prior incarnation's.
+          const driven = this.dependencies.db.updateAgentIfCurrent(
+            agentStateCas(prepared.record),
+            { codexDriver: driver ?? "tui" },
+          );
+          if (driven === null) {
+            throw new Error(
+              `Cannot restart ${agent.name}: exact holder changed while recording the launch driver`,
+            );
+          }
+          prepared = { record: driven };
           const useAppServer = driver === "app-server";
           await writeCodexAgentConfig(agent.worktreePath, {
             daemonPort: this.daemonPort(),
@@ -1262,7 +1284,9 @@ export class HiveSpawner implements Spawner {
             new Date().toISOString(),
             null,
             stopped.recoveryAttempts,
-            { status: "control-paused" },
+            // The replacement process is the TUI; the row must say so or
+            // maintenance skips its rollout observation forever.
+            { status: "control-paused", codexDriver: "tui" },
           );
           if (fallbackRecord === null) {
             throw new Error(
@@ -2306,24 +2330,32 @@ export class HiveSpawner implements Spawner {
     // driver here and refuse before any worktree or launch. The same resolution
     // decides the launch below, and `isAvailable()` is cached, so the driver
     // this gate admitted is the driver that actually runs.
-    codexDriver = await this.resolveCodexDriver(tool);
+    codexDriver = await this.resolveCodexDriver(tool, readOnly);
     // Audit only after this gate so containment is never recorded as success.
     try {
       assertCodexWriterContained(tool, readOnly, codexDriver);
     } catch (error) {
+      // The containment text alone reads as policy; a writer only lands here
+      // when the admissible driver failed to ENGAGE, and that reason must be
+      // visible or a broken probe masquerades as a design decision.
+      const engage = this.dependencies.codexAppServer === undefined
+        ? "no Codex app-server manager is configured in this daemon"
+        : "the `codex app-server --help` availability probe failed " +
+          "(codex missing or broken on the daemon's PATH)";
+      const message = `${
+        error instanceof Error ? error.message : String(error)
+      }\nWhy the app-server driver did not engage: ${engage}`;
       finalizeRouteAudit({
         attempts: [
           ...(pendingSuccessAudit?.attempts ?? []),
-          `containment: refused ${tool} writer — ${
-            error instanceof Error ? error.message : String(error)
-          }`,
+          `containment: refused ${tool} writer — ${message}`,
         ],
         selectedTool: null,
         selectedModel: null,
         selectedEffort: null,
         reservationId: null,
       });
-      throw error;
+      throw new Error(message);
     }
     if (pendingSuccessAudit !== null) {
       finalizeRouteAudit(pendingSuccessAudit);
@@ -2703,7 +2735,9 @@ export class HiveSpawner implements Spawner {
             new Date().toISOString(),
             null,
             stopped.recoveryAttempts,
-            { status: "spawning" },
+            // The replacement process is the TUI; the row must say so or
+            // maintenance skips its rollout observation forever.
+            { status: "spawning", codexDriver: "tui" },
           );
           if (fallbackRecord === null) {
             throw new Error(

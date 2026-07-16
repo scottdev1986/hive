@@ -707,11 +707,20 @@ export class CodexAppServerManager {
     const params = message.params ?? {};
     if (message.method === "turn/started") {
       const turn = asObject(params.turn, "turn notification");
-      session.activeTurnId = stringField(turn, "id");
+      const turnId = stringField(turn, "id");
+      session.activeTurnId = turnId;
+      // The applied identity for THIS turn is readable from the rollout the
+      // app-server itself names — carry that evidence on the event so the
+      // daemon can attest and persist it (identity always known, and the
+      // writer containment gates key on this exact-source observation). A
+      // failed thread/read degrades to null: unknown, never a guess.
+      const rolloutPath = await this.threadRolloutPath(session)
+        .catch(() => null);
       await this.options.onEvent({
         kind: "turn-start",
         agentName,
         timestamp: timestamp(),
+        appServerTurn: { rolloutPath, turnId },
       }, session.agent);
       return;
     }

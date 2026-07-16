@@ -485,6 +485,34 @@ describe("crash resume", () => {
     );
   });
 
+  test("recovering an app-server Codex reader records the replacement's TUI driver", async () => {
+    const h = harness({
+      resolveCodexSessionId: async () => "019f-appserver-thread",
+      readCodexActivity: async () =>
+        new Date(Date.now() + 60_000).toISOString(),
+    });
+    h.db.insertAgent(agent({
+      tool: "codex",
+      model: "gpt-5-codex",
+      status: "working",
+      readOnly: true,
+      codexDriver: "app-server",
+      toolSessionId: "019f-appserver-thread",
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5-codex",
+        effort: "high",
+      },
+    }));
+
+    expect(await h.recovery.sweep()).toMatchObject([
+      { agent: "maya", action: "resumed" },
+    ]);
+    // Recovery relaunches Codex on the TUI; a row still claiming app-server
+    // would be skipped by telemetry/identity maintenance forever.
+    expect(h.db.getAgentByName("maya")?.codexDriver).toBe("tui");
+  });
+
   test("a legacy Codex session without an artifact resumes without replay and names the visible-bootstrap fallback", async () => {
     const warning = spyOn(console, "warn").mockImplementation(() => {});
     try {

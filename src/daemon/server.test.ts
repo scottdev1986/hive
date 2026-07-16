@@ -4950,6 +4950,104 @@ describe("Codex execution-identity attestation sweep", () => {
     }
   });
 
+  test("an app-server turn-start attests and persists the exact turn identity for readers and writers", async () => {
+    const db = new HiveDatabase(join(home, "attest-appserver-turnstart.db"));
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async () => {
+        throw new Error("a matching app-server writer must not be paused");
+      },
+    });
+    const rolloutPath = join(home, "appserver-rollout.jsonl");
+    await Bun.write(
+      rolloutPath,
+      JSON.stringify({
+        timestamp: "2026-07-15T18:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          turn_id: "turn-9",
+          cwd: "/tmp/hive-maya",
+          model: "gpt-5.6-sol",
+          effort: "xhigh",
+        },
+      }) + "\n",
+    );
+    db.insertAgent(codexAgent({
+      codexDriver: "app-server",
+      toolSessionId: undefined,
+    }));
+    try {
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-15T18:00:01.000Z",
+        appServerTurn: { rolloutPath, turnId: "turn-9" },
+      });
+      const row = db.getAgentByName("maya")!;
+      expect(row.identityState).toBe("matching");
+      expect(row.observedIdentity).toMatchObject({
+        model: "gpt-5.6-sol",
+        effort: "xhigh",
+        source: "codex-app-server",
+      });
+      expect(row.liveModel).toBe("gpt-5.6-sol");
+      // The matching app-server attestation is writer-grade: not paused.
+      expect(row.status).toBe("working");
+      expect(row.writeRevoked).toBe(false);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an app-server turn-start that reads drift pauses the writer with the exact evidence", async () => {
+    const db = new HiveDatabase(join(home, "attest-appserver-drift.db"));
+    const suspended: string[] = [];
+    const daemon = new HiveDaemon({
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      suspendProcesses: async (session) => {
+        suspended.push(session);
+        return { suspended: [{ pid: 100, command: "codex" }], unstopped: [] };
+      },
+    });
+    const rolloutPath = join(home, "appserver-drift-rollout.jsonl");
+    await Bun.write(
+      rolloutPath,
+      JSON.stringify({
+        timestamp: "2026-07-15T18:00:01.000Z",
+        type: "turn_context",
+        payload: {
+          turn_id: "turn-9",
+          cwd: "/tmp/hive-maya",
+          model: "gpt-5.6-luna",
+          effort: "low",
+        },
+      }) + "\n",
+    );
+    db.insertAgent(codexAgent({
+      codexDriver: "app-server",
+      toolSessionId: undefined,
+    }));
+    try {
+      await daemon.processEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: "2026-07-15T18:00:01.000Z",
+        appServerTurn: { rolloutPath, turnId: "turn-9" },
+      });
+      const row = db.getAgentByName("maya")!;
+      expect(row.identityState).toBe("drift");
+      expect(row.status).toBe("control-paused");
+      expect(row.writeRevoked).toBe(true);
+      expect(suspended).toEqual(["hive-maya"]);
+    } finally {
+      db.close();
+    }
+  });
+
   test("turn-start pauses a writer even when the rollout scan reads matching (display grade is not admission)", async () => {
     const db = new HiveDatabase(join(home, "attest-turn-scan-matching.db"));
     const suspended: string[] = [];

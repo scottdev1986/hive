@@ -20,7 +20,19 @@ export const HookEventSchema = z.discriminatedUnion("kind", [
   // native Workspace, so liveness belongs in the same structured event stream
   // as turn state rather than in terminal scraping.
   HookEventBaseSchema.extend({ kind: z.literal("session-end") }),
-  HookEventBaseSchema.extend({ kind: z.literal("turn-start") }),
+  HookEventBaseSchema.extend({
+    kind: z.literal("turn-start"),
+    // Populated by exactly one producer: the Codex app-server driver, which
+    // names the rollout the app-server itself reported for this thread
+    // (thread/read) and the exact started turn, so the daemon can attest the
+    // applied identity for THIS turn from the provider's own surface. No hook
+    // command Hive writes for any vendor can supply it, and the `hive event`
+    // CLI never parses or forwards it.
+    appServerTurn: z.strictObject({
+      rolloutPath: z.string().min(1).nullable(),
+      turnId: z.string().min(1),
+    }).optional(),
+  }),
   HookEventBaseSchema.extend({
     kind: z.literal("turn-end"),
     // Populated by exactly one producer: the Codex app-server driver

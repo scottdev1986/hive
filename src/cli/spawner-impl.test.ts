@@ -484,7 +484,10 @@ class FakeStore {
     startedAt: string,
     sessionId: string | null,
     recoveryAttempts: number,
-    options: { status: Exclude<AgentRecord["status"], "done" | "dead" | "failed"> },
+    options: {
+      status: Exclude<AgentRecord["status"], "done" | "dead" | "failed">;
+      codexDriver?: AgentRecord["codexDriver"];
+    },
   ): AgentRecord | null {
     return this.updateAgentIfCurrent(expected, {
       status: options.status,
@@ -497,6 +500,7 @@ class FakeStore {
       observedIdentity: undefined,
       liveModel: undefined,
       liveEffort: undefined,
+      ...("codexDriver" in options ? { codexDriver: options.codexDriver } : {}),
     });
   }
 
@@ -790,6 +794,9 @@ describe("HiveSpawner name pool", () => {
       worktreePath: root,
       capabilityEpoch: 1,
       writeRevoked: true,
+      // The prior incarnation ran the TUI; the config has since selected
+      // app-server. The restart must record the driver IT launches with.
+      codexDriver: "tui",
       executionIdentity: {
         tool: "codex",
         model: "gpt-5.6-sol",
@@ -848,6 +855,9 @@ describe("HiveSpawner name pool", () => {
       },
       readOnly: true,
     }]);
+    // The driver is per-incarnation: the replacement launched on app-server
+    // and the row must say so, not repeat the prior incarnation's TUI.
+    expect(store.listAgents()[0]?.codexDriver).toBe("app-server");
     controlQuota.db.close();
   });
 
@@ -2136,6 +2146,10 @@ describe("HiveSpawner wiring", () => {
     expect(store.listAgents()[0]).toMatchObject({
       processIncarnation: 2,
       status: "working",
+      // The driver is a per-incarnation launch fact: the replacement process
+      // runs the TUI, and a row still claiming app-server would be skipped by
+      // telemetry/identity maintenance forever.
+      codexDriver: "tui",
     });
     expect(issued).toEqual([
       { token: "holder-1", processIncarnation: 1 },

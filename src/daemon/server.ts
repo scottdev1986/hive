@@ -4391,11 +4391,62 @@ export class HiveDaemon {
       }
     }
 
-    // Fail-closed at the turn boundary for legacy Codex writers: any non-matching
+    // An app-server turn-start carries the provider's own evidence (the
+    // rollout the app-server named plus the exact turn id): attest and
+    // persist it for readers AND writers — this is the exact-source
+    // observation the writer containment gates key on, and the only way an
+    // app-server row's identity is ever known.
+    if (
+      value.kind === "turn-start" && value.appServerTurn !== undefined &&
+      agent !== null && agent !== undefined && agent.tool === "codex" &&
+      agent.worktreePath !== null && agent.executionIdentity !== undefined
+    ) {
+      let attestation;
+      try {
+        attestation = reconcileCodexIdentity(
+          agent.executionIdentity,
+          await readCodexAppServerTurnIdentity(
+            value.appServerTurn.rolloutPath,
+            agent.worktreePath,
+            value.appServerTurn.turnId,
+          ),
+          "codex-app-server",
+        );
+      } catch {
+        attestation = {
+          identityState: "unknown" as const,
+          observedIdentity: null,
+          liveModel: null,
+          liveEffort: null,
+        };
+      }
+      const mid = this.db.updateAgentIfCurrent(agentStateCas(agent), {
+        identityState: attestation.identityState,
+        ...(attestation.observedIdentity === null
+          ? {}
+          : { observedIdentity: attestation.observedIdentity }),
+        ...(attestation.liveModel === null
+          ? {}
+          : { liveModel: attestation.liveModel }),
+        ...(attestation.liveEffort === null
+          ? {}
+          : { liveEffort: attestation.liveEffort }),
+      });
+      if (
+        mid !== null && !isTerminalAgentStatus(mid.status) &&
+        !agent.readOnly && !agent.writeRevoked &&
+        attestation.identityState !== "matching"
+      ) {
+        await this.pauseWriterForIdentityDrift(
+          mid,
+          `turn-start app-server reattestation is ${attestation.identityState}, not matching`,
+        );
+      }
+    } // Fail-closed at the turn boundary for legacy Codex writers: any non-matching
     // reattestation (or missing launch identity/path) immediately persists
     // unknown/unattested, revokes, and pauses. Concurrent kill during the awaited
     // read wins via pauseWriterForIdentityDrift CAS.
-    if (
+    else if (
       value.kind === "turn-start" && agent !== null && agent !== undefined &&
       agent.tool === "codex" && !agent.readOnly && !agent.writeRevoked
     ) {

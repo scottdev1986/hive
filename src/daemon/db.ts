@@ -215,6 +215,7 @@ export type ConditionalAgentUpdate = Partial<Pick<AgentRecord,
   | "quotaReservationId"
   | "executionIdentity"
   | "toolSessionId"
+  | "codexDriver"
   | "processIncarnation"
   | "processStartedAt"
   | "recoveryAttempts"
@@ -1419,6 +1420,7 @@ export class HiveDatabase {
       );
     }
     if ("toolSessionId" in updates) set("toolSessionId", updates.toolSessionId ?? null);
+    if ("codexDriver" in updates) set("codexDriver", updates.codexDriver ?? null);
     if ("processIncarnation" in updates) {
       set("processIncarnation", updates.processIncarnation ?? expected.processIncarnation);
     }
@@ -1505,6 +1507,12 @@ export class HiveDatabase {
     options: {
       status: Exclude<AgentRecord["status"], "done" | "dead" | "failed">;
       reviveTerminal?: boolean;
+      /** The driver the REPLACEMENT process will launch with. codexDriver is a
+       * per-incarnation launch fact — an app-server row whose replacement
+       * relaunches as TUI must not keep claiming app-server, or maintenance
+       * skips its rollout observation forever. Omit to leave unchanged
+       * (non-Codex callers). */
+      codexDriver?: AgentRecord["codexDriver"];
     },
   ): AgentRecord | null {
     const updates: ConditionalAgentUpdate = {
@@ -1518,6 +1526,7 @@ export class HiveDatabase {
       observedIdentity: undefined,
       liveModel: undefined,
       liveEffort: undefined,
+      ...("codexDriver" in options ? { codexDriver: options.codexDriver } : {}),
     };
     return this.transaction(() => {
       let updated: AgentRecord | null;
@@ -1531,7 +1540,8 @@ export class HiveDatabase {
             capabilityEpoch = capabilityEpoch + 1, toolSessionId = ?,
             processIncarnation = ?, processStartedAt = ?, recoveryAttempts = ?,
             lastEventAt = ?, identityState = NULL, observedIdentity = NULL,
-            liveModel = NULL, liveEffort = NULL
+            liveModel = NULL, liveEffort = NULL,
+            codexDriver = COALESCE(?, codexDriver)
           WHERE id = ?
             AND processIncarnation = ?
             AND processStartedAt IS ?
@@ -1551,6 +1561,7 @@ export class HiveDatabase {
           startedAt,
           recoveryAttempts,
           startedAt,
+          options.codexDriver ?? null,
           expected.id,
           expected.processIncarnation,
           expected.processStartedAt,

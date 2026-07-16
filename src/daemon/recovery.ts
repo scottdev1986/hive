@@ -574,7 +574,13 @@ export class CrashRecovery {
       processStartedAt,
       sessionId,
       live.recoveryAttempts + 1,
-      { status: "spawning", reviveTerminal: options.manual },
+      {
+        status: "spawning",
+        reviveTerminal: options.manual,
+        // Recovery always relaunches Codex on the TUI driver; the row must
+        // record the replacement process's actual driver, not the original's.
+        ...(live.tool === "codex" ? { codexDriver: "tui" as const } : {}),
+      },
     );
     if (begun === null) {
       return {
