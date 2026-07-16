@@ -1,0 +1,301 @@
+<!DOCTYPE html>
+<html lang="en" class="doc-agent-integration">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light dark">
+  <title>Hive: Agent Integration</title>
+  <link rel="stylesheet" href="hive-design.css">
+</head>
+<body>
+  <header class="shell topbar">
+    <div class="brand"><span class="brand-mark" aria-hidden="true">H</span> Hive</div>
+    <div class="doc-meta">AGENT INTEGRATION · RELIABILITY CONTRACT · 2026-07-16</div>
+  </header>
+
+  <main>
+    <div class="shell">
+      <div class="hero">
+        <p class="eyebrow">Agent integration · reliability contract</p>
+        <h1>An agent you can always reach, read, and trust.</h1>
+        <p class="hero-copy">This document defines how provider agents (Claude, Codex, Grok) are integrated into Hive — launch, identity, status, input, permission modes, and lifecycle — and the reliability contract an engineer can hold Hive to. It is written against the designs at HEAD: <a href="terminal-stack-transition.html">Terminal Stack Transition</a>, <a href="agentic-hierarchy.html">The Queen’s Hive</a>, <a href="hive-communication.html">Communication Fabric</a>, and <a href="split-horizon.html">Split Horizon</a>. Where older documents disagree, those four win.</p>
+        <div class="hero-chips" aria-label="Contract pillars"><span>ALWAYS TYPABLE</span><span>STATUS CURRENT</span><span>IDENTITY KNOWN</span><span>HONEST FAILURE</span></div>
+      </div>
+    </div>
+
+<section id="contract">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">01 · The reliability contract</p>
+        <h2>Four guarantees, each enforced by a mechanism — never by hope.</h2>
+      </div>
+      <p>The user’s bar is agent uptime an engineer can build on. Every guarantee below names the mechanism that enforces it and the direction it degrades in. The degradation rule is uniform: <strong>unknown degrades to open and visible, never to locked and silent.</strong></p>
+    </div>
+
+    <div class="principles">
+      <article class="principle">
+        <span class="num">01 / TYPE</span>
+        <strong>A rendered pane is a typable pane</strong>
+        <p>Keyboard, paste, and programmatic input into an agent’s terminal never branch on identity, write authority, pause state, activity status, feed health, or liveness. Those states render in the pane header as information. The only thing that cannot be typed into is a pane with no attached terminal — a physical absence, not a policy. App-server panes meet this through the pane-input bridge (§05); TUI panes meet it natively.</p>
+      </article>
+      <article class="principle">
+        <span class="num">02 / READ</span>
+        <strong>Status is measured at provider boundaries</strong>
+        <p>Turn state comes from each vendor’s own lifecycle surface (hooks, native notifications, or session artifacts), and the maintenance sweep records what it observed <em>including nothing</em>: an unreadable measurement overwrites a stale verdict with unknown rather than letting a fiction stand — for every vendor, not only Codex.</p>
+      </article>
+      <article class="principle">
+        <span class="num">03 / KNOW</span>
+        <strong>Identity is observed, and carries its confidence</strong>
+        <p>Every running agent’s row carries a provenance verdict — matching, drift, unknown, or unattested — comparing what was launched against what a real provider surface observes, for all three vendors. A display-grade observation is never presented — or consumed — as attestation-grade. Where a vendor exposes no surface, the row says so and this document says so explicitly below.</p>
+      </article>
+      <article class="principle">
+        <span class="num">04 / FAIL HONESTLY</span>
+        <strong>A refusal names its true cause</strong>
+        <p>A healthy installed vendor must never read as nonexistent. Launch refusals carry the failing probe’s own reason into the route audit; discovery retries once before declaring a vendor unavailable; a lost hook boundary leaves a durable trace instead of a silence; a policy refusal is never the cover story for a mechanism that silently failed to engage.</p>
+      </article>
+    </div>
+
+    <div class="callout"><strong>Where safety actually lives.</strong> None of these guarantees weaken containment, because input was never the enforcement point. Landing requires a current capability epoch through the daemon’s gate; Codex mutations are brokered per-turn on the app-server driver against the exact durable holder, re-proven after every await; write revocation acts on the daemon’s authority records without touching the conversation. A human typing into a revoked writer’s pane converses with a process that still cannot land or mutate anything.</div>
+  </div>
+</section>
+
+<section id="launch">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">02 · Launch</p>
+        <h2>One spawn path, three vendors, immutable launch identity.</h2>
+      </div>
+      <p>A spawn resolves a category through the user’s routing policy, passes the launch gate (catalog resolution, enablement, quota, containment), creates a worktree and tmux session, and wires the vendor’s signal path. The launch identity — vendor, model, effort — is frozen on the row; everything observed later is compared against it, never merged into it.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Vendor</th><th>Process</th><th>Signal path wired at spawn</th></tr></thead>
+        <tbody>
+          <tr><td>Claude</td><td>Claude Code TUI in tmux</td><td>Lifecycle hooks (SessionStart, UserPromptSubmit, Stop, Notification, PostToolUse) plus the statusline pipe, which is the only surface that carries the context window.</td></tr>
+          <tr><td>Codex · TUI driver</td><td>Codex TUI in tmux (readers)</td><td>Native command hooks for turn boundaries; rollout files as the durable sensor. Hook-supplied session ids authenticate the agent name only — they are never identity.</td></tr>
+          <tr><td>Codex · app-server driver</td><td><code>hive codex-app-server-host</code> around <code>codex app-server --stdio</code></td><td>Native JSON-RPC lifecycle: turn started/completed, token usage, rate limits, approvals — per-turn identity evidence (the rollout path the app-server itself names, plus the exact turn id) — and the pane-input bridge (§05) for human typing.</td></tr>
+          <tr><td>Grok</td><td>Grok CLI in tmux, session named by Hive up front</td><td>No lifecycle hooks exist. The session’s own artifacts (<code>signals.json</code>, <code>updates.jsonl</code>) are read by the maintenance sweep; status lags at most one sweep.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout"><strong>The driver is a per-incarnation launch fact.</strong> A Codex agent’s row records the driver its <em>current process</em> launched with, and every incarnation transition (spawn fallback, crash recovery, critical-control restart) re-records the driver it actually launches, because telemetry, identity maintenance, and the mutation gate dispatch on it. A Codex <strong>writer auto-engages the app-server whenever it is available</strong> — it is the only surface a writer is admissible on, and with the pane-input bridge its pane types like any other. Readers keep the TUI by default with an explicit config opt-in for app-server. A refused Codex writer names the true blocker in its error and route audit: manager unconfigured, or the availability probe failed — never a policy text covering a broken mechanism.</div>
+  </div>
+</section>
+
+<section id="identity">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">03 · Identity</p>
+        <h2>Two grades of knowing, both labeled — for all three vendors.</h2>
+      </div>
+      <p>Hive distinguishes what a process was <em>asked</em> to run (launch identity) from what it is <em>observed</em> running, and it distinguishes two observation grades. The provenance travels with the claim: on the wire (<code>observedIdentity.source</code>, <code>identitySource</code> in <code>hive_status</code>) and in the pane header (<code>identity matching (rollout scan)</code> vs <code>(app-server)</code>).</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Grade</th><th>Surface</th><th>May feed</th><th>May never feed</th></tr></thead>
+        <tbody>
+          <tr><td><strong>Display-grade observation</strong><br><code>codex-rollout</code> · Claude transcript · Grok session log</td><td>Codex TUI: the newest in-worktree <code>turn_context</code> in the rollout selected by cwd + process start time. Claude: the transcript’s assistant records. Grok: the session summary’s model id. Observed at turn boundaries (Codex TUI readers) and on the sweep.</td><td>Status rows, pane headers, liveModel/liveEffort, provenance verdicts, drift alerts.</td><td>Write admission, landing, resume reauthorization. A scan-observed “matching” never grants what an attestation would.</td></tr>
+          <tr><td><strong>Attestation-grade observation</strong><br><code>codex-app-server</code></td><td>The applied identity for one exact turn, read from the rollout the app-server itself names over the authenticated connection (<code>thread/read</code> + exact <code>turn_id</code>), constructed only in-process — the public event boundary rejects it.</td><td>Everything display-grade feeds, plus writer containment: a matching app-server attestation is what lets a writer keep authority at turn boundaries and per mutation.</td><td>Nothing — this is the strongest identity fact Hive has for Codex.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Vendor</th><th>Observed model</th><th>Observed effort</th><th>Verdict semantics</th></tr></thead>
+        <tbody>
+          <tr><td>Claude</td><td>Transcript’s assistant records (hook-bound session).</td><td><strong>None</strong> — no per-turn effort surface; the verdict compares model only.</td><td>Exact id comparison (launch and transcript share one concrete domain, e.g. <code>claude-fable-5</code>). Failed read → unknown; nothing yet → unattested.</td></tr>
+          <tr><td>Codex · TUI</td><td>Rollout <code>turn_context</code> (model + effort together), scanned backwards whole-file. Observed at the <em>first turn boundary</em> — a fresh reader is not identity-unknown for its first sweep interval.</td><td>Same record as the model.</td><td>Model + effort must both match. No process binding in 0.144.4 metadata: display-grade by construction.</td></tr>
+          <tr><td>Codex · app-server</td><td>Per-turn attestation (above); between session start and its first turn the row is honestly unattested.</td><td>Same record.</td><td>Model + effort exact for the exact turn; anything unreadable is a denial for writers.</td></tr>
+          <tr><td>Grok</td><td>Session summary’s <code>current_model_id</code>, read by the sweep.</td><td><strong>None.</strong> Grok exposes no effort surface; the row keeps the launch effort labeled as launch, never as observed.</td><td>Exact model comparison, same rules as Claude. The id-domain equivalence is unverified live (no Grok fixture yet) — see the activation checklist (§10).</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout"><strong>Never gate on unknown.</strong> An unknown identity renders as <code>identity unknown</code> in the header and <code>identityState: "unknown"</code> in <code>hive_status</code>. It does not lock input, does not hide the pane, and does not stop delivery. For a brokered Codex writer it denies mutations and landing — authority, not conversation. Unknown is a measurement result, and the fix for it is a better observation path — the class of bug where “identity unknown” froze a perfectly live agent’s keyboard is deleted, not patched.</div>
+  </div>
+</section>
+
+<section id="status">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">04 · Status</p>
+        <h2>Turn state from the vendor’s own boundary, staleness bounded by the sweep.</h2>
+      </div>
+      <p>Status words (<code>spawning</code>, <code>working</code>, <code>idle</code>, <code>awaiting-approval</code>, <code>control-paused</code>, terminal states) are derived from provider boundary evidence: Claude and Codex TUI hooks, app-server native notifications, Grok’s <code>updates.jsonl</code> turn records. The ~30s maintenance sweep is the fallback that keeps rows honest when a push signal is lost, and a failed vendor read never skips the row: the verdict goes to unknown rather than letting the last confident word stand. A hook boundary the daemon rejects is retried once and then traced durably to <code>~/.hive/hook-event-failures.jsonl</code> — a lost boundary says so on disk while the sweep heals it.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Fact</th><th>Primary source</th><th>Fallback</th><th>Worst honest lag</th></tr></thead>
+        <tbody>
+          <tr><td>Turn start / end</td><td>Hooks (Claude, Codex TUI) · native notifications (app-server)</td><td>Rollout / artifact activity via sweep</td><td>One sweep</td></tr>
+          <tr><td>Context occupancy</td><td>Claude statusline · app-server <code>tokenUsage</code> · Codex rollout · Grok <code>signals.json</code></td><td>Sweep re-read; unknown overwrites stale</td><td>One sweep</td></tr>
+          <tr><td>Identity</td><td>App-server exact turn · turn-boundary rollout scan · transcript</td><td>Sweep re-read; failed read writes unknown</td><td>One sweep</td></tr>
+          <tr><td>Liveness</td><td>Daemon-owned process and tmux-session records — measured facts about the process, never activity proxies</td><td>None: an unmeasurable process reads unknown, and unknown is never reported as dead — or alive</td><td>Measured on demand</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout"><strong>Acting is not being.</strong> Hive’s recurring bug class proxied “did it call a tool” for “is it alive.” The rule that replaced it: status is turn state read from a boundary record; liveness is a measured process fact; neither is inferred from the other, from artifact timestamps, from elapsed time, or from a screen redraw. A lost signal reads unknown — visibly — instead of holding the last confident word.</div>
+  </div>
+</section>
+
+<section id="input">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">05 · Input</p>
+        <h2>The keyboard is the human’s, unconditionally.</h2>
+      </div>
+      <p>Every agent pane in the Workspace is a real terminal attached to the agent’s tmux session (plain <code>attach-session</code>, writable). Viewer attachment binds on workspace instance + agent UUID + process incarnation + tmux session — never on provider conversation identity. Windows are viewers, not containers: closing a pane detaches a client and never kills an agent.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>State</th><th>Rendered as</th><th>Input</th></tr></thead>
+        <tbody>
+          <tr><td>Identity unknown / unattested / drift</td><td>Header text with provenance</td><td>Open</td></tr>
+          <tr><td>Write authority revoked (brokered writer)</td><td>Header text</td><td>Open — revocation removes authority, never conversation; the process runs on, typing/steer/interrupt work, every mutation and landing denies</td></tr>
+          <tr><td>Control-paused (legacy unbrokered writer, SIGSTOP’d tree)</td><td>Header text + status border</td><td>The suspended process cannot read or respond while stopped — that is what paused means, stated rather than hidden. Typing resumes with an authorized reattesting resume. Brokered app-server writers are never put in this state.</td></tr>
+          <tr><td>Feed lost (metadata stream died)</td><td>All panes gray dashed, statuses unknown</td><td>Open — the terminals are still attached; what died is knowledge, not the agent</td></tr>
+          <tr><td>No attachment (no tmux session, ambiguous same-name rows)</td><td>Disconnected pane</td><td>Physically nothing to type into</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout"><strong>The pane-input bridge — how an app-server pane types.</strong> The app-server host renders the event feed, and its child’s stdin is the JSON-RPC stream, so raw pane bytes must never go there. Instead the host reads its own PTY stdin (streaming UTF-8 decode) and forwards each submitted line — and Ctrl-C — to the daemon’s <code>/pane-input</code> route, serialized through one chain so order holds and a failed POST renders visibly with the undelivered line rather than retrying blindly (an accepted-but-lost POST retried would deliver the same prompt twice). The daemon routes text onto the manager’s live session — idle starts a turn, an active turn is steered — through one serialized lane per exact holder; input typed before the session is boot-ready queues and flushes in order after the initial prompt. <strong>Ctrl-C is a turn interrupt, confirmed before the next line</strong> (it formerly killed the entire app-server via the host’s SIGINT handler), and it settles any mutation approval still waiting inside the interrupted turn without closing the conversation. The route authenticates conversation-grade: the host’s original launch token keeps typing alive across authority rotation (pause/resume reissue, critical epoch advance) while the exact holder binding — agent id + incarnation + name + app-server driver — still refuses any replacement. This route can approve, attest, and authorize nothing; its ceiling is steering a conversation the same credential could already message.</div>
+  </div>
+</section>
+
+<section id="modes">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">06 · Permission modes</p>
+        <h2>Sandboxed and dangerous change authority, never observability.</h2>
+      </div>
+      <p>The autonomy dial (<code>sandboxed</code> default, <code>dangerous</code> opt-in) is daemon-owned, live state — never an agent claim. It governs vendor sandboxes and approval prompting. It does not participate in input, status, or identity: every guarantee in §01 holds identically in both modes, for readers and writers.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Role</th><th>Claude</th><th>Codex</th><th>Grok</th></tr></thead>
+        <tbody>
+          <tr><td>Reader</td><td>TUI, deny-listed writes</td><td>TUI (default) or app-server; mutation approvals mechanically denied on app-server</td><td>CLI with semantic-prefix permission rules</td></tr>
+          <tr><td>Writer</td><td>TUI, approval queue in sandboxed mode</td><td><strong>App-server only</strong> (auto-engaged), read-only sandbox, every mutation brokered per-turn: <em>sandboxed</em> queues a one-shot human approval whose insertion validates the exact holder atomically; <em>dangerous</em> auto-allows only after the exact holder/incarnation/epoch/driver/session/thread/turn/applied-identity checks pass twice, with the dial and the live turn binding re-proven synchronously at the final allow boundary — a dial that drops mid-check denies, and a dial that rises never converts a queued human approval</td><td>CLI writer under vendor sandbox rules</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="lifecycle">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">07 · Lifecycle</p>
+        <h2>Incarnations are explicit; recovery re-records the facts it changes.</h2>
+      </div>
+      <p>A row is one durable holder of a name; a process incarnation is one launch of it. Every transition that allocates a new incarnation — spawn fallback, crash recovery, critical-control restart — resets the observed identity, re-records the driver it actually launches with, and reissues capability at a fresh epoch. Pane conversation survives that rotation for the same process (§05); a replacement incarnation’s pane starts its own. Teardown captures artifacts before destruction; an idle merged agent is reaped by the daemon on its own timer.</p>
+    </div>
+
+    <div class="callout"><strong>Viewer restart without machine loss is the contract — and today’s Workspace does not yet meet it.</strong> Per <a href="terminal-stack-transition.html">Terminal Stack Transition</a> and <a href="split-horizon.html">Split Horizon</a>, windows are viewers over daemon-owned state, so quitting a viewer must never destroy the machine. Today, quitting the Workspace app stops the whole instance, and an ordinary relaunch selects a fresh one: a restart is teardown plus cold start, losing live agents and pane history. The designed fix path is the terminal transition itself — sessiond-owned persistent sessions with Ghostty (or any viewer) attaching and detaching freely — which removes the app from the machine’s lifetime with minimum further change. Until that lands, daemon-side fixes activate only on a deliberately scheduled restart, and nothing in this document assumes the app can be bounced casually.</div>
+  </div>
+</section>
+
+<section id="vendor-honesty">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">08 · Vendor honesty ledger</p>
+        <h2>What each vendor cannot tell us, stated as fact.</h2>
+      </div>
+      <p>Requirement-level honesty: where a surface does not exist, Hive says unknown rather than synthesizing, and this table is the registry of those gaps so an absent value is never re-diagnosed as a Hive bug.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Vendor</th><th>Missing surface</th><th>Consequence, stated honestly</th></tr></thead>
+        <tbody>
+          <tr><td>Claude</td><td>Context window (except via statusline); per-turn effort</td><td>Window arrives only on the statusline pipe; effort is launch-frozen, and the provenance verdict compares model only.</td></tr>
+          <tr><td>Codex 0.144.4</td><td>PID/nonce binding rollouts to processes; <code>source</code> field on TUI turn_contexts</td><td>TUI identity is display-grade by construction; provenance is proven at session_meta level. Writer-grade identity exists only on the app-server driver.</td></tr>
+          <tr><td>Grok</td><td>Lifecycle hooks; effort observation; steer surface</td><td>Status and model lag one sweep; observed effort does not exist; steer degrades to next-turn delivery. Discovery retries once and names its failure cause — a healthy installed CLI must never read as nonexistent.</td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="wave">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">09 · What this program made true</p>
+        <h2>Each fix removed a class of flakiness, not an instance.</h2>
+      </div>
+      <p>Landed on main across three reviewed landings (input gate deletion · identity/discovery/attestation stack · writer wave), plus the cross-vendor bundle. Every claim below is verified in source and by the suites; rows marked <em>activation pending</em> take live effect at the next scheduled daemon restart (§10).</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>Flakiness class</th><th>Root cause</th><th>Fix</th></tr></thead>
+        <tbody>
+          <tr><td>Input lockout</td><td>Workspace consumed keystrokes whenever an authoring blocker was set — and it effectively always was</td><td>The gate class is deleted; states render as header information (§05). <em>Active since the app relaunch.</em></td></tr>
+          <tr><td>Deaf app-server panes</td><td>The host never read its PTY stdin, and pane Ctrl-C SIGKILLed the app-server via the host’s signal handler</td><td>The pane-input bridge (§05): serialized typed lines and confirmed turn interrupts, rotation-proof conversation auth. <em>Verified in source; activation pending.</em></td></tr>
+          <tr><td>Writers held or refused as a mystery (Codex)</td><td>No input path meant every writer was held; refusals showed policy text while the driver silently failed to engage</td><td>Writers auto-engage the brokered app-server; both permission modes work (§06); refusals name the true blocker. <em>Verified in source; activation pending.</em></td></tr>
+          <tr><td>Frozen conversations on identity failure</td><td>Identity drift SIGSTOPped the process tree — an unreachable agent, the exact failure the contract forbids</td><td>Brokered drift revokes mutation/landing and keeps the conversation running; SIGSTOP remains only for unbrokered legacy writers (§05). <em>Verified in source; activation pending.</em></td></tr>
+          <tr><td>Identity unknown forever (Codex)</td><td>Process-time rollout discovery stubbed to null; foreign-client rollouts poisoned scans; tail-bounded reads missed turn-start records</td><td>Restored display-grade discovery with containment preserved; first-turn boundary observation closes the fresh-reader window (§03). <em>Verified in source; activation pending.</em></td></tr>
+          <tr><td>Verdict-less vendors (Claude, Grok)</td><td><code>identityState</code> was Codex-only; other vendors showed a live model with no comparison against launch</td><td>All three vendors carry provenance verdicts with the same unknown-on-failure semantics (§03). <em>Verified in source; activation pending.</em></td></tr>
+          <tr><td>Stale status numbers</td><td>Vendor read failures skipped the whole row; nulls skipped as “no new information”; rejected hook boundaries vanished silently</td><td>The sweep writes unknown as a finding for every vendor; hook failures retry once then trace durably (§04). <em>Verified in source; activation pending.</em></td></tr>
+          <tr><td>Phantom-unavailable vendor (Grok)</td><td>Route audits swallowed the probe’s reason; etag-preserved caches after CLI self-update rejected as version skew; no retry on transients</td><td>Reasons propagate end-to-end, skew named explicitly, one retry (§08). <em>Verified in source; activation pending.</em></td></tr>
+        </tbody>
+      </table>
+    </div>
+  </div>
+</section>
+
+<section id="activation">
+  <div class="shell">
+    <div class="section-head">
+      <div>
+        <p class="section-label">10 · Activation checklist</p>
+        <h2>The live checks that run at the scheduled daemon restart.</h2>
+      </div>
+      <p>Daemon-side fixes activate only on a deliberately scheduled restart (§07). These are the measurements that turn “verified in source” into “verified live”; each names what it proves and both permission modes are exercised where they differ.</p>
+    </div>
+
+    <div class="table-wrap">
+      <table>
+        <thead><tr><th>#</th><th>Check</th><th>Proves</th></tr></thead>
+        <tbody>
+          <tr><td>1</td><td>Spawn a Codex app-server reader; type into its pane before, during, and after the first turn; Ctrl-C mid-turn, then type the next line immediately.</td><td>Bridge delivery, pre-session queueing, confirmed interrupt, next-line freshness.</td></tr>
+          <tr><td>2</td><td>Spawn a Codex writer in <em>sandboxed</em> mode; let it request a mutation; approve one, deny one, Ctrl-C past a third.</td><td>Human approval path; turn-bound settlement; the agent never parks in awaiting-approval.</td></tr>
+          <tr><td>3</td><td>Flip the dial to <em>dangerous</em>; let the same writer mutate.</td><td>Auto-allow on exact identity checks with zero human approval rows.</td></tr>
+          <tr><td>4</td><td>Pause/resume an app-server reader (credential reissue), then type into the SAME pane.</td><td>Conversation survives authority rotation; a replacement still refuses.</td></tr>
+          <tr><td>5</td><td><code>hive status</code> for one agent per vendor within 30s of spawn and after a model change.</td><td>Cross-vendor provenance verdicts; first-turn Codex observation; drift detection.</td></tr>
+          <tr><td>6</td><td>Make one vendor artifact unreadable (rename a transcript); sweep; restore it.</td><td>Unknown-on-failure, then recovery — never a stale verdict or a skipped row.</td></tr>
+          <tr><td>7</td><td>Spawn a Grok agent (discovery fix now active); compare its <code>liveModel</code> and verdict against the launch id.</td><td>Grok id-domain equivalence — the one comparison unverified at authoring time (§03).</td></tr>
+          <tr><td>8</td><td>Stop the daemon briefly mid-turn on a Claude agent; check <code>~/.hive/hook-event-failures.jsonl</code> and the row after the sweep.</td><td>Hook failure trace exists; the sweep heals the stale status.</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="callout"><strong>Transition ledger (non-blocking).</strong> Recorded residuals that do not stop an engineer from using an agent, kept for the Ghostty/sessiond transition rather than polished into the doomed host: holder-lane promise retention; Ctrl-C between the bytes of one UTF-8 character does not reset the stream decoder; transient ordering artifacts in name-keyed status recovery around async turn notifications; Grok id-domain equivalence pending check 7.</div>
+  </div>
+</section>
+
+  </main>
+
+  <footer class="shell footer">
+    <p>Hive · Agent integration and reliability contract · Cites <a href="terminal-stack-transition.html">Terminal Stack Transition</a>, <a href="agentic-hierarchy.html">The Queen’s Hive</a>, <a href="hive-communication.html">Communication Fabric</a>, <a href="split-horizon.html">Split Horizon</a> as design authority.</p>
+  </footer>
+</body>
+</html>
