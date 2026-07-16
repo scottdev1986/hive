@@ -13,6 +13,8 @@ import {
   AgentMessageSchema,
   AgentRecordObjectSchema,
   AgentRecordSchema,
+  AssignmentRecordSchema,
+  AssignmentSummarySchema,
   HookEventSchema,
   ExecutionIdentitySchema,
   ObservedIdentitySchema,
@@ -20,6 +22,9 @@ import {
   isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
+  type AssignmentRecord,
+  type AssignmentReportState,
+  type AssignmentSummary,
   type HookEvent,
 } from "../schemas";
 
@@ -294,6 +299,20 @@ function parseAgentRow(row: unknown): AgentRecord {
     pauseCapture: value.pauseCapture === null || value.pauseCapture === undefined
       ? undefined
       : PauseCaptureSchema.parse(JSON.parse(value.pauseCapture)),
+  });
+}
+
+const AssignmentDatabaseRowSchema = AssignmentRecordSchema.omit({
+  summary: true,
+}).extend({ summary: z.string().nullable() });
+
+function parseAssignmentRow(row: unknown): AssignmentRecord {
+  const value = AssignmentDatabaseRowSchema.parse(row);
+  return AssignmentRecordSchema.parse({
+    ...value,
+    summary: value.summary === null
+      ? null
+      : AssignmentSummarySchema.parse(JSON.parse(value.summary)),
   });
 }
 
@@ -584,6 +603,25 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS events_agent_timestamp
         ON events(agentName, timestamp);
+      CREATE TABLE IF NOT EXISTS assignments (
+        id TEXT PRIMARY KEY,
+        agentId TEXT NOT NULL,
+        agentName TEXT NOT NULL,
+        taskDescription TEXT NOT NULL,
+        processIncarnation INTEGER NOT NULL,
+        state TEXT NOT NULL,
+        summary TEXT,
+        generation INTEGER NOT NULL DEFAULT 0,
+        createdAt TEXT NOT NULL,
+        updatedAt TEXT NOT NULL,
+        reportedAt TEXT,
+        acceptedAt TEXT,
+        acceptedBy TEXT
+      );
+      CREATE UNIQUE INDEX IF NOT EXISTS assignments_one_open_per_agent
+        ON assignments(agentId) WHERE state != 'accepted';
+      CREATE INDEX IF NOT EXISTS assignments_agent_history
+        ON assignments(agentId, createdAt);
       CREATE TABLE IF NOT EXISTS route_audits (
         id TEXT PRIMARY KEY,
         agentName TEXT NOT NULL,
@@ -886,6 +924,19 @@ export class HiveDatabase {
           )
       `).run(recoveredAt);
     })();
+    // Agents that were already live when this schema first arrived still own
+    // assigned work. Give each exact AgentUUID one active assignment history
+    // row, but never reopen a holder whose assignment was explicitly accepted.
+    this.transaction(() => {
+      for (const agent of this.listAgents()) {
+        if (
+          !isTerminalAgentStatus(agent.status) &&
+          this.getLatestAssignmentForAgent(agent.id) === null
+        ) {
+          this.createAssignmentForAgent(agent);
+        }
+      }
+    });
     if (persistent && expectedIdentity === null) {
       try {
         const proposed = crypto.randomUUID();
@@ -1170,7 +1221,149 @@ export class HiveDatabase {
   }
 
   insertAgent(agent: AgentRecord): AgentRecord {
-    return this.upsertAgent(agent);
+    return this.transaction(() => {
+      const existing = this.getAgentById(agent.id);
+      const persisted = this.upsertAgent(agent);
+      if (existing === null && persisted.status === "spawning") {
+        this.createAssignmentForAgent(persisted);
+      }
+      return persisted;
+    });
+  }
+
+  createAssignmentForAgent(agent: AgentRecord): AssignmentRecord {
+    const existing = this.getLatestAssignmentForAgent(agent.id);
+    if (existing !== null) return existing;
+    const now = agent.createdAt;
+    const value = AssignmentRecordSchema.parse({
+      id: crypto.randomUUID(),
+      agentId: agent.id,
+      agentName: agent.name,
+      taskDescription: agent.taskDescription,
+      processIncarnation: agent.processIncarnation ?? 0,
+      state: "active",
+      summary: null,
+      generation: 0,
+      createdAt: now,
+      updatedAt: now,
+      reportedAt: null,
+      acceptedAt: null,
+      acceptedBy: null,
+    });
+    this.database.query(`
+      INSERT INTO assignments (
+        id, agentId, agentName, taskDescription, processIncarnation, state,
+        summary, generation, createdAt, updatedAt, reportedAt, acceptedAt,
+        acceptedBy
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      value.id,
+      value.agentId,
+      value.agentName,
+      value.taskDescription,
+      value.processIncarnation,
+      value.state,
+      null,
+      value.generation,
+      value.createdAt,
+      value.updatedAt,
+      null,
+      null,
+      null,
+    );
+    return this.getAssignmentById(value.id)!;
+  }
+
+  getAssignmentById(id: string): AssignmentRecord | null {
+    const row = this.database.query("SELECT * FROM assignments WHERE id = ?")
+      .get(id);
+    return row === null ? null : parseAssignmentRow(row);
+  }
+
+  getOpenAssignmentForAgent(agentId: string): AssignmentRecord | null {
+    const row = this.database.query(`
+      SELECT * FROM assignments
+      WHERE agentId = ? AND state != 'accepted'
+      ORDER BY createdAt DESC LIMIT 1
+    `).get(agentId);
+    return row === null ? null : parseAssignmentRow(row);
+  }
+
+  getLatestAssignmentForAgent(agentId: string): AssignmentRecord | null {
+    const row = this.database.query(`
+      SELECT * FROM assignments
+      WHERE agentId = ? ORDER BY createdAt DESC LIMIT 1
+    `).get(agentId);
+    return row === null ? null : parseAssignmentRow(row);
+  }
+
+  listAssignments(): AssignmentRecord[] {
+    return this.database.query("SELECT * FROM assignments ORDER BY createdAt, id")
+      .all().map(parseAssignmentRow);
+  }
+
+  reportAssignment(
+    assignmentId: string,
+    agentId: string,
+    processIncarnation: number,
+    report: AssignmentReportState,
+    summary: AssignmentSummary,
+    reportedAt: string,
+  ): AssignmentRecord | null {
+    const current = this.getAssignmentById(assignmentId);
+    if (
+      current === null || current.agentId !== agentId ||
+      current.processIncarnation !== processIncarnation ||
+      current.state === "accepted"
+    ) return null;
+    if (current.state === "reported_complete" && report !== "complete") {
+      return null;
+    }
+    const state = report === "complete" ? "reported_complete" : report;
+    const changed = this.database.query(`
+      UPDATE assignments
+      SET state = ?, summary = ?, updatedAt = ?, reportedAt = ?
+      WHERE id = ? AND agentId = ? AND processIncarnation = ?
+        AND state != 'accepted'
+    `).run(
+      state,
+      JSON.stringify(AssignmentSummarySchema.parse(summary)),
+      reportedAt,
+      reportedAt,
+      assignmentId,
+      agentId,
+      processIncarnation,
+    );
+    return changed.changes === 1 ? this.getAssignmentById(assignmentId) : null;
+  }
+
+  acceptAssignment(
+    assignmentId: string,
+    acceptedBy: string,
+    acceptedAt: string,
+  ): AssignmentRecord | null {
+    const changed = this.database.query(`
+      UPDATE assignments
+      SET state = 'accepted', updatedAt = ?, acceptedAt = ?, acceptedBy = ?
+      WHERE id = ? AND state = 'reported_complete'
+    `).run(acceptedAt, acceptedAt, acceptedBy, assignmentId);
+    return changed.changes === 1 ? this.getAssignmentById(assignmentId) : null;
+  }
+
+  advanceAssignmentForFollowup(
+    agentId: string,
+    processIncarnation: number,
+    updatedAt: string,
+  ): AssignmentRecord | null {
+    const changed = this.database.query(`
+      UPDATE assignments
+      SET state = 'in_progress', summary = NULL, reportedAt = NULL,
+          generation = generation + 1, updatedAt = ?
+      WHERE agentId = ? AND processIncarnation = ? AND state != 'accepted'
+    `).run(updatedAt, agentId, processIncarnation);
+    return changed.changes === 1
+      ? this.getOpenAssignmentForAgent(agentId)
+      : null;
   }
 
   /** Narrow state mutation guarded by the complete process/authority tuple.
@@ -1318,50 +1511,66 @@ export class HiveDatabase {
       liveModel: undefined,
       liveEffort: undefined,
     };
-    if (!isTerminalAgentStatus(expected.status)) {
-      return this.updateAgentIfCurrent(expected, updates);
-    }
-    if (options.reviveTerminal !== true) return null;
-    const changed = this.database.query(`
-      UPDATE agents SET
-        status = ?, closedAt = NULL, writeRevoked = 0,
-        capabilityEpoch = capabilityEpoch + 1, toolSessionId = ?,
-        processIncarnation = ?, processStartedAt = ?, recoveryAttempts = ?,
-        lastEventAt = ?, identityState = NULL, observedIdentity = NULL,
-        liveModel = NULL, liveEffort = NULL
-      WHERE id = ?
-        AND processIncarnation = ?
-        AND processStartedAt IS ?
-        AND capabilityEpoch = ?
-        AND status = ?
-        AND writeRevoked = ?
-        AND readOnly = ?
-        AND branch IS ?
-        AND toolSessionId IS ?
-        AND controlMessageId IS ?
-        AND pauseCapture IS ?
-        AND lastEventAt = ?
-    `).run(
-      options.status,
-      sessionId,
-      expected.processIncarnation + 1,
-      startedAt,
-      recoveryAttempts,
-      startedAt,
-      expected.id,
-      expected.processIncarnation,
-      expected.processStartedAt,
-      expected.capabilityEpoch,
-      expected.status,
-      expected.writeRevoked ? 1 : 0,
-      expected.readOnly ? 1 : 0,
-      expected.branch,
-      expected.toolSessionId,
-      expected.controlMessageId,
-      expected.pauseCapture,
-      expected.lastEventAt,
-    );
-    return changed.changes === 1 ? this.getAgentById(expected.id) : null;
+    return this.transaction(() => {
+      let updated: AgentRecord | null;
+      if (!isTerminalAgentStatus(expected.status)) {
+        updated = this.updateAgentIfCurrent(expected, updates);
+      } else {
+        if (options.reviveTerminal !== true) return null;
+        const changed = this.database.query(`
+          UPDATE agents SET
+            status = ?, closedAt = NULL, writeRevoked = 0,
+            capabilityEpoch = capabilityEpoch + 1, toolSessionId = ?,
+            processIncarnation = ?, processStartedAt = ?, recoveryAttempts = ?,
+            lastEventAt = ?, identityState = NULL, observedIdentity = NULL,
+            liveModel = NULL, liveEffort = NULL
+          WHERE id = ?
+            AND processIncarnation = ?
+            AND processStartedAt IS ?
+            AND capabilityEpoch = ?
+            AND status = ?
+            AND writeRevoked = ?
+            AND readOnly = ?
+            AND branch IS ?
+            AND toolSessionId IS ?
+            AND controlMessageId IS ?
+            AND pauseCapture IS ?
+            AND lastEventAt = ?
+        `).run(
+          options.status,
+          sessionId,
+          expected.processIncarnation + 1,
+          startedAt,
+          recoveryAttempts,
+          startedAt,
+          expected.id,
+          expected.processIncarnation,
+          expected.processStartedAt,
+          expected.capabilityEpoch,
+          expected.status,
+          expected.writeRevoked ? 1 : 0,
+          expected.readOnly ? 1 : 0,
+          expected.branch,
+          expected.toolSessionId,
+          expected.controlMessageId,
+          expected.pauseCapture,
+          expected.lastEventAt,
+        );
+        updated = changed.changes === 1 ? this.getAgentById(expected.id) : null;
+      }
+      if (updated !== null) {
+        this.database.query(`
+          UPDATE assignments SET processIncarnation = ?, updatedAt = ?
+          WHERE agentId = ? AND processIncarnation = ? AND state != 'accepted'
+        `).run(
+          expected.processIncarnation + 1,
+          startedAt,
+          expected.id,
+          expected.processIncarnation,
+        );
+      }
+      return updated;
+    });
   }
 
   /** Cleanup metadata on an already-terminal exact holder. Authority, status,

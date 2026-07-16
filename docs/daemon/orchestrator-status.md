@@ -21,6 +21,8 @@ The derivation is `src/daemon/orchestrator-status.ts`; provider-native boundary 
 
 It reads event **kinds only, never timestamps**. That is not stylistic — it is the type signature enforcing the design. No timeout inference can be introduced without changing the function's signature, which is exactly the review a timeout deserves.
 
+This word describes activity only. Assignment outcome lives in the separate durable `assignments` state machine (`active` / `in_progress` / `blocked` / `reported_complete` / `accepted`). A worker becoming idle, landing, or having a clean worktree never changes that outcome. Instead, an exact `turn-end` on an active or in-progress assignment transactionally queues one generation-keyed unfinished-idle message and immediately wakes queen; a same-agent follow-up advances the generation. Reported completion likewise wakes queen and stays open until explicit acceptance.
+
 Every provider feeds the same boundary stream under the root's preferred address queen. Delivery accepts the synonym `orchestrator` (case-insensitive) and stores the preferred form; pre-rename undelivered rows keyed as `orchestrator` still drain. The architectural role word and the instance tmux session (`hive-orchestrator-<instance>`) are separate surfaces and keep that spelling:
 
 - Claude posts `turn-start` on `UserPromptSubmit` and `turn-end` on `Stop` through its native hooks.

@@ -293,6 +293,16 @@ export class MessageDelivery {
           );
           capabilityEpoch = currentRecipient?.capabilityEpoch ?? capabilityEpoch;
         }
+        if (
+          currentRecipient !== null && isOrchestratorName(from) &&
+          intent === "instruction"
+        ) {
+          this.db.advanceAssignmentForFollowup(
+            currentRecipient.id,
+            currentRecipient.processIncarnation ?? 0,
+            now.toISOString(),
+          );
+        }
         const value = AgentMessageSchema.parse({
           id: crypto.randomUUID(),
           from,

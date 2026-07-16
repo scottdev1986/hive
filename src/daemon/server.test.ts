@@ -2314,15 +2314,25 @@ describe("HiveDaemon HTTP server", () => {
         name: "hive_status",
         arguments: { detail: "full" },
       }));
-      expect(status).toEqual([agent({
-        id: "agent-sam",
-        name: "sam",
-        category: "code_review",
-        taskDescription: "Review auth",
-        tmuxSession: "hive-sam",
-        worktreePath: "/tmp/hive-sam",
-        branch: "hive/sam-task",
-      })]);
+      expect(status).toEqual([{
+        ...agent({
+          id: "agent-sam",
+          name: "sam",
+          category: "code_review",
+          taskDescription: "Review auth",
+          tmuxSession: "hive-sam",
+          worktreePath: "/tmp/hive-sam",
+          branch: "hive/sam-task",
+        }),
+        assignment: {
+          id: expect.any(String),
+          state: "active",
+          generation: 0,
+          processIncarnation: 1,
+          summary: null,
+          updatedAt: timestamp,
+        },
+      }]);
 
       const inventory = textValue(await client.callTool({
         name: "hive_models",

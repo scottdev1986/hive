@@ -45,7 +45,10 @@ import {
   type UnmergedBranch,
 } from "../adapters/worktrees";
 import {
+  AgentMessageSchema,
   HookEventSchema,
+  AssignmentReportStateSchema,
+  AssignmentSummarySchema,
   ControlIntentSchema,
   compactMemoryWriteResult,
   HandoffSchema,
@@ -63,6 +66,7 @@ import {
   unknownVendor,
   type AgentMessage,
   type AgentRecord,
+  type AssignmentRecord,
   type HookEvent,
   type IdentityState,
   type MemoryFact,
@@ -272,6 +276,16 @@ const MessageAcknowledgementSchema = z.object({
   messageId: z.string().min(1),
   capabilityEpoch: z.number().int().nonnegative().optional(),
   applied: z.boolean().optional().default(false),
+});
+
+const AssignmentReportRequestSchema = z.strictObject({
+  agent: z.string().min(1),
+  status: AssignmentReportStateSchema,
+  summary: AssignmentSummarySchema,
+});
+
+const AssignmentAcceptanceRequestSchema = z.strictObject({
+  assignmentId: z.string().min(1),
 });
 
 /**
@@ -583,6 +597,17 @@ function toolResult(value: unknown, key: string, note?: string | null) {
       ? [payload]
       : [payload, { type: "text" as const, text: note }],
     structuredContent: { [key]: value },
+  };
+}
+
+function assignmentStatusView(assignment: AssignmentRecord) {
+  return {
+    id: assignment.id,
+    state: assignment.state,
+    generation: assignment.generation,
+    processIncarnation: assignment.processIncarnation,
+    summary: assignment.summary,
+    updatedAt: assignment.updatedAt,
   };
 }
 
@@ -3869,6 +3894,48 @@ export class HiveDaemon {
     }
   }
 
+  private enqueueAssignmentRootMessage(
+    assignment: AssignmentRecord,
+    kind: "unfinished-idle" | "blocked" | "reported-complete",
+    createdAt: string,
+  ): AgentMessage {
+    const idempotencyKey =
+      `assignment:${kind}:${assignment.id}:${assignment.generation}`;
+    const existing = this.db.findMessageByIdempotency(
+      "hive-assignment",
+      idempotencyKey,
+    );
+    if (existing !== null) return existing;
+    const body = kind === "unfinished-idle"
+      ? `ASSIGNMENT UNFINISHED-IDLE: agent=${assignment.agentName} ` +
+        `assignment=${assignment.id} generation=${assignment.generation} ` +
+        `state=${assignment.state}. Its turn ended while assigned work remained open. ` +
+        "Send a follow-up to this same live agent; Git, landing, and worktree cleanliness do not close assignments."
+      : kind === "blocked"
+      ? `ASSIGNMENT BLOCKED: agent=${assignment.agentName} ` +
+        `assignment=${assignment.id} generation=${assignment.generation}. ` +
+        "Inspect its bounded structured summary with hive_status, then send a follow-up to this same live agent when the blocker is resolved."
+      : `ASSIGNMENT REPORTED COMPLETE: agent=${assignment.agentName} ` +
+        `assignment=${assignment.id} generation=${assignment.generation}. ` +
+        `Inspect its bounded structured summary with hive_status. The assignment remains open until queen/operator accepts it with ` +
+        `hive_accept_assignment assignmentId=${assignment.id}; a follow-up instead keeps it active.`;
+    return this.db.insertMessage(AgentMessageSchema.parse({
+      id: crypto.randomUUID(),
+      from: "hive-assignment",
+      to: ORCHESTRATOR_NAME,
+      body,
+      createdAt,
+      deliveredAt: null,
+      priority: "normal",
+      intent: "instruction",
+      state: "queued",
+      deadlineAt: null,
+      sequence: this.db.nextMessageSequence(ORCHESTRATOR_NAME),
+      idempotencyKey,
+      capabilityEpoch: null,
+    }));
+  }
+
   async processEvent(
     event: HookEvent,
     holder?: {
@@ -3946,6 +4013,7 @@ export class HiveDaemon {
       return agent === null ? null : this.db.getAgentById(agent.id);
     }
     let processedAgent: AgentRecord | null = eventAgent;
+    let assignmentWake: AgentMessage | null = null;
     this.db.transaction(() => {
       this.db.insertEvent(value);
 
@@ -4013,6 +4081,22 @@ export class HiveDaemon {
         }
       }
 
+      if (value.kind === "turn-end" && processedAgent !== null) {
+        const assignment = this.db.getOpenAssignmentForAgent(processedAgent.id);
+        if (
+          assignment !== null &&
+          assignment.processIncarnation ===
+            (processedAgent.processIncarnation ?? 0) &&
+          (assignment.state === "active" || assignment.state === "in_progress")
+        ) {
+          assignmentWake = this.enqueueAssignmentRootMessage(
+            assignment,
+            "unfinished-idle",
+            value.timestamp,
+          );
+        }
+      }
+
       if (value.kind === "approval-request" && agent?.readOnly !== true) {
         this.db.insertApproval({
           id: crypto.randomUUID(),
@@ -4027,6 +4111,10 @@ export class HiveDaemon {
         });
       }
     });
+
+    if (assignmentWake !== null) {
+      await this.delivery.wakeOrchestrator();
+    }
 
     if (value.kind === "dead") {
       if (processedAgent !== null) {
@@ -4220,7 +4308,7 @@ export class HiveDaemon {
     server.registerTool("hive_status", {
       title: "Hive agent status",
       description:
-        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed.',
+        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, overlaps, and each durable open assignment/outcome. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed.',
       inputSchema: StatusRequestSchema,
     }, async ({ detail, history, fields }) => {
       this.authorizeTool(capability, "hive_status", "status:read", undefined, false);
@@ -4258,8 +4346,21 @@ export class HiveDaemon {
         });
       }));
       let result = (detail === "full"
-        ? agents
-        : compactActiveTeam(agents, evidence)) as unknown as Array<
+        ? agents.map((agent) => {
+          const assignment = this.db.getOpenAssignmentForAgent(agent.id);
+          return assignment === null
+            ? agent
+            : { ...agent, assignment: assignmentStatusView(assignment) };
+        })
+        : compactActiveTeam(agents, evidence).map((summary) => {
+          const agent = agents.find((value) => value.name === summary.name);
+          const assignment = agent === undefined
+            ? null
+            : this.db.getOpenAssignmentForAgent(agent.id);
+          return assignment === null
+            ? summary
+            : { ...summary, assignment: assignmentStatusView(assignment) };
+        })) as unknown as Array<
         Record<string, unknown>
       >;
       if (fields !== undefined) {
@@ -4403,6 +4504,91 @@ export class HiveDaemon {
         }),
         "result",
       );
+    });
+
+    server.registerTool("hive_assignment_report", {
+      title: "Report assignment outcome",
+      description:
+        "Report this exact agent holder's current assignment as in_progress, blocked, or complete with a bounded structured summary. Complete is only a report: it wakes queen and remains open until queen/operator accepts it. Git, landing, and worktree state never imply completion.",
+      inputSchema: AssignmentReportRequestSchema,
+    }, async ({ agent: agentName, status, summary }) => {
+      this.authorizeTool(
+        capability,
+        "hive_assignment_report",
+        "assignment:report",
+        agentName,
+      );
+      const exact = this.exactAgentForCapability(capability, agentName);
+      if (exact === null) {
+        throw new Error(
+          `Assignment report denied: ${agentName} is not the exact authenticated agent holder`,
+        );
+      }
+      const current = this.db.getOpenAssignmentForAgent(exact.id);
+      if (
+        current === null || current.processIncarnation !==
+          (exact.processIncarnation ?? 0)
+      ) {
+        throw new Error(
+          `Assignment report denied: no open assignment is bound to ${agentName}'s current incarnation`,
+        );
+      }
+      const reportedAt = new Date().toISOString();
+      let wake: AgentMessage | null = null;
+      const assignment = this.db.transaction(() => {
+        const updated = this.db.reportAssignment(
+          current.id,
+          exact.id,
+          exact.processIncarnation ?? 0,
+          status,
+          summary,
+          reportedAt,
+        );
+        if (updated === null) {
+          throw new Error(
+            `Assignment report lost an exact holder/state race for ${agentName}`,
+          );
+        }
+        if (status === "blocked" || status === "complete") {
+          wake = this.enqueueAssignmentRootMessage(
+            updated,
+            status === "blocked" ? "blocked" : "reported-complete",
+            reportedAt,
+          );
+        }
+        return updated;
+      });
+      if (wake !== null) await this.delivery.wakeOrchestrator();
+      return toolResult(assignment, "assignment");
+    });
+
+    server.registerTool("hive_accept_assignment", {
+      title: "Accept reported assignment completion",
+      description:
+        "Close one exact assignment after queen/operator verifies its reported completion. Refuses active, in-progress, or blocked work; acceptance is the second phase after reported_complete.",
+      inputSchema: AssignmentAcceptanceRequestSchema,
+    }, async ({ assignmentId }) => {
+      const current = this.db.getAssignmentById(assignmentId);
+      if (current === null) {
+        throw new Error(`Assignment not found: ${assignmentId}`);
+      }
+      this.authorizeTool(
+        capability,
+        "hive_accept_assignment",
+        "assignment:accept",
+        current.agentName,
+      );
+      const accepted = this.db.acceptAssignment(
+        assignmentId,
+        capability.subject,
+        new Date().toISOString(),
+      );
+      if (accepted === null) {
+        throw new Error(
+          `Assignment ${assignmentId} is ${current.state}, not reported_complete`,
+        );
+      }
+      return toolResult(accepted, "assignment");
     });
 
     server.registerTool("hive_send", {
@@ -4601,6 +4787,7 @@ export class HiveDaemon {
             }`,
           );
         }
+        this.db.createAssignmentForAgent(persisted);
         return toolResult(compactSpawnResult(persisted), "agent");
       } finally {
         operation?.release();

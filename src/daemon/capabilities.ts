@@ -35,6 +35,8 @@ export type Action =
   | "agent:recover"
   | "approval:read"
   | "approval:decide"
+  | "assignment:report"
+  | "assignment:accept"
   | "message:send"
   | "message:ack"
   | "message:read"
@@ -65,12 +67,14 @@ const AGENT_DIRECTED: readonly Action[] = [
   "agent:mark-dead",
   "agent:recover",
   "approval:decide",
+  "assignment:accept",
 ];
 
 const OPERATOR_ACTIONS: readonly Action[] = [
   "status:read", "quota:read", "quota:write", "token-usage:read",
   "token-usage:write", "agent:spawn", "agent:kill",
   "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
+  "assignment:accept",
   "message:send", "message:ack", "message:read", "inbox:read",
   "branch:land", "memory:read", "memory:write", "event:report",
   "telemetry:report",
@@ -110,6 +114,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "status:read", "quota:read", "quota:write", "token-usage:read",
       "agent:spawn", "agent:kill",
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
+      "assignment:accept",
       "message:send", "message:ack", "message:read", "inbox:read",
       "memory:read", "memory:write", "event:report", "telemetry:report",
       "autonomy:read",
@@ -120,6 +125,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   writer: {
     actions: [
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
+      "assignment:report",
       "branch:land", "memory:read", "memory:write", "event:report",
       "telemetry:report",
     ],
@@ -129,6 +135,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   reader: {
     actions: [
       "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
+      "assignment:report",
       "memory:read", "event:report", "telemetry:report",
     ],
     anySubject: [],

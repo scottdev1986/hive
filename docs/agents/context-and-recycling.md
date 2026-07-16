@@ -142,6 +142,7 @@ And the reasoning discipline that produced the rest of this article:
 - **Name what each direction of error actually costs before you call one of them safe.** Assuming that "conservative" meant "recycle early" is exactly what justified hardcoding a 200K denominator, on the reasoning that a larger window would merely read "conservatively high."
 - **A measurement beats an estimate; a label describes the number actually *published*, not the reading it was built from.**
 - **An honest `null` beats a confident wrong number** — a missing number stops a bad decision; a wrong one causes it. This is load-bearing in the code: `contextPct` is nullable end to end, null reads as *full, not free*, and an agent Hive cannot sense is an agent it will not reuse (`src/schemas/agent.ts:117`, `src/cli/orchestrator-brief.ts:3`, SPEC.md:198–232).
+- **Process or repository state never answers whether assigned work is complete.** Idle, landed, clean, reaped, killed, and recycled are activity or lifecycle facts. Only the exact holder's structured `reported_complete` followed by queen/operator `accepted` closes the durable assignment; recycling preserves the last truthful outcome.
 
 ## The cost of being wrong, in each direction
 

@@ -14,6 +14,8 @@ So teardown now kills the **process tree**, and then it **looks again**. One pat
 
 For acceptance, a recorded act is also not proof of ownership: resolve the full manifest-owned development identity before signaling, and treat a missing or mismatched target as unknown rather than falling back to another Hive.
 
+Teardown is not assignment adjudication. Killing, reaping, landing, preserving, or removing a worktree leaves the separate durable assignment outcome exactly as last explicitly reported. A terminal process can therefore still own an unfinished, blocked, or reported-complete-but-unaccepted assignment; queen receives lifecycle evidence without Hive translating it into completion.
+
 ## What was actually leaking
 
 Measured on 2026-07-13 against a throwaway `HIVE_HOME`, with a staged agent whose shape matches a real one: pane shell → vendor CLI → MCP stdio child, plus a `nohup`ed background command, plus a Codex host.
@@ -58,6 +60,7 @@ The agent dies at once — no confirmation, no blocking prompt. Nobody is asked 
 - Unlanded commits or uncommitted files ⇒ **the branch is preserved as a git ref** and queen is told what was saved and where.
 - Worktree removal still **refuses** to delete stranded work unless the caller passes `discardWork`.
 - A preserve that *fails* says so in the result rather than proceeding quietly.
+- The assignment row and its last explicit outcome survive independently; neither a clean branch nor destruction through `discardWork` closes it.
 
 `discardWork` is the deliberately destructive exception, not another name for cleanup. When the caller asks both to remove the worktree and to discard stranded work, Hive removes tracked and untracked changes, deletes the branch, removes the preservation ref it just created, and reports that deletion (`src/daemon/server.ts:1868-1897`). A preserved ref left behind would still retain every commit and would make “discard” a rename rather than a discard.
 
