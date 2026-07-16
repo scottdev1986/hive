@@ -1587,6 +1587,9 @@ export class HiveSpawner implements Spawner {
     let authorized!: AuthorizedLaunch;
     let pendingSuccessAudit: AuditFields | null = null;
 
+    // Begin before the first route dependency. Once a decision is finalized,
+    // the catch at the method boundary becomes a pure rethrow for launch errors.
+    try {
     if (readOnly && this.dependencies.issueCredential === undefined) {
       refuseRoute(new Error(
         `Cannot spawn ${name} read-only: reader capability issuance is unavailable`,
@@ -2540,6 +2543,22 @@ export class HiveSpawner implements Spawner {
     }
 
     return this.dependencies.db.getAgentById(record.id) ?? record;
+    } catch (error) {
+      if (!routeAuditFinalized) {
+        finalizeRouteAudit({
+          ...routeAuditFields,
+          attempts: [
+            ...routeAuditFields.attempts,
+            `refused: ${error instanceof Error ? error.message : String(error)}`,
+          ],
+          selectedTool: null,
+          selectedModel: null,
+          selectedEffort: null,
+          reservationId: null,
+        });
+      }
+      throw error;
+    }
   }
 
   private async monitorReadiness(

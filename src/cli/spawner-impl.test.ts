@@ -1123,6 +1123,95 @@ describe("HiveSpawner name pool", () => {
     expect(mismatch.audit.selectedTool).toBeNull();
   });
 
+  test("early vendor resolution exceptions write one audit and preserve the error", async () => {
+    const vendorError = new Error("vendor resolution exploded");
+    const failure = await captureRouteAudit({
+      task: "SECRET vendor exception prompt",
+      category: "simple_coding",
+      model: "vendor-resolution-test",
+    }, {
+      discoverCapabilities: async () => ({
+        status: "ok",
+        get records(): CapabilityRecord[] {
+          throw vendorError;
+        },
+      } as unknown as CapabilityDiscoveryResult),
+    });
+
+    expect(failure.error).toBe(vendorError);
+    expect(failure.audit.attempts).toEqual(["refused: vendor resolution exploded"]);
+    expect(failure.audit.selectedTool).toBeNull();
+  });
+
+  test("thrown billing and capability-catalog guards each write one audit", async () => {
+    const billingError = new Error("billing guard exploded");
+    const billing = await captureRouteAudit({
+      task: "SECRET billing exception prompt",
+      category: "simple_coding",
+      model: "claude-opus-4-8",
+    }, {
+      readBilling: async () => {
+        throw billingError;
+      },
+    });
+    expect(billing.error).toBe(billingError);
+    expect(billing.audit.attempts).toEqual(["refused: billing guard exploded"]);
+    expect(billing.audit.selectedTool).toBeNull();
+
+    const catalogError = new Error("capability catalog replacement exploded");
+    const root = await mkdtemp(join(tmpdir(), "hive-route-audit-catalog-error-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      new QuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({ enabled: false }),
+      () => new Date(timestamp),
+    );
+    quota.replaceCapabilityCatalog = () => {
+      throw catalogError;
+    };
+    const catalog = await captureRouteAudit({
+      task: "SECRET capability catalog prompt",
+      category: "simple_coding",
+      model: "claude-opus-4-8",
+    }, { quota });
+    expect(catalog.error).toBe(catalogError);
+    expect(catalog.audit.attempts).toEqual([
+      "refused: capability catalog replacement exploded",
+    ]);
+    expect(catalog.audit.selectedTool).toBeNull();
+    quotaDb.close();
+  });
+
+  test("audit insertion failure never masks or retries the routing error", async () => {
+    const store = new FakeStore();
+    const routingError = new Error("original routing failure");
+    let insertions = 0;
+    store.insertRouteAudit = () => {
+      insertions += 1;
+      throw new Error("route audit store unavailable");
+    };
+
+    let caught: unknown;
+    try {
+      await routeAuditTestSpawner(store, {
+        readBilling: async () => {
+          throw routingError;
+        },
+      }).spawn({
+        task: "SECRET failed audit prompt",
+        category: "simple_coding",
+        model: "claude-opus-4-8",
+      });
+    } catch (error) {
+      caught = error;
+    }
+
+    expect(caught).toBe(routingError);
+    expect(insertions).toEqual(1);
+    expect(store.routeAudits).toHaveLength(0);
+  });
+
   test("gate, independence, and quota refusals each write one truthful audit", async () => {
     const gate = await captureRouteAudit({
       task: "SECRET gate prompt",
