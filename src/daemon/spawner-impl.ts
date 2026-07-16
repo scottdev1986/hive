@@ -589,6 +589,12 @@ export interface AgentPromptOptions {
   graphifyTools?: boolean;
 }
 
+export interface AgentPromptParts {
+  developerInstructions: string;
+  userPrompt: string;
+  combinedPrompt: string;
+}
+
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
  * in the spawn prompt every agent demonstrably reads — not a skill.
  * Graph-first is the product decision; the concrete fallback criteria are
@@ -641,14 +647,14 @@ export const SEARCH_HYGIENE =
   "for memory, never re-run it wider: a wider pattern is a bigger allocation, " +
   "not a better search.";
 
-export function buildAgentPrompt(
+export function buildAgentPromptParts(
   name: string,
   task: string,
   worktree: CreatedWorktree,
   repoRoot: string,
   memoryIndex = "",
   options: AgentPromptOptions = {},
-): string {
+): AgentPromptParts {
   const readOnly = options.readOnly === true;
   const concise = options.category !== undefined &&
     CONCISE_CATEGORIES.includes(options.category);
@@ -672,8 +678,9 @@ export function buildAgentPrompt(
         `If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until ${ORCHESTRATOR_NAME} answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.`,
         CONTINUOUS_EXECUTION,
       ];
-  return [
-    ...preamble,
+  const durableBlocks = [
+    preamble[0]!,
+    ...preamble.slice(2),
     // Every category: the trimmed prompt drops narration, never a
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
@@ -695,7 +702,34 @@ export function buildAgentPrompt(
     ...(options.graphifyTools === true ? [GRAPHIFY_DIRECTIVE] : []),
     ...(options.tool === "grok" ? [GROK_SAFETY_DIRECTIVE] : []),
     ...(memoryIndex === "" ? [] : [memoryIndex]),
-  ].join("\n\n");
+  ];
+  return {
+    developerInstructions: durableBlocks.join("\n\n"),
+    userPrompt: task,
+    combinedPrompt: [
+      ...preamble,
+      ...durableBlocks.slice(preamble.length - 1),
+    ].join("\n\n"),
+  };
+}
+
+/** Combined-prompt compatibility wrapper for Claude, Grok, and older callers. */
+export function buildAgentPrompt(
+  name: string,
+  task: string,
+  worktree: CreatedWorktree,
+  repoRoot: string,
+  memoryIndex = "",
+  options: AgentPromptOptions = {},
+): string {
+  return buildAgentPromptParts(
+    name,
+    task,
+    worktree,
+    repoRoot,
+    memoryIndex,
+    options,
+  ).combinedPrompt;
 }
 
 /** The worktree's own `.mcp.json`, written by `writeClaudeAgentConfig`. Naming

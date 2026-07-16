@@ -14,6 +14,7 @@ import {
   rm,
   writeFile,
 } from "node:fs/promises";
+import { createHash } from "node:crypto";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -47,10 +48,13 @@ import type {
 } from "../schemas";
 import {
   buildAgentPrompt,
+  buildAgentPromptParts,
   buildLandingProtocol,
   CODING_GUIDELINES,
+  GROK_SAFETY_DIRECTIVE,
   HIVE_PROTOCOL_RULES,
   HiveSpawner,
+  type AgentPromptOptions,
   type HiveSpawnerDependencies,
   LANDING_MAX_ATTEMPTS,
   SEARCH_HYGIENE,
@@ -3754,6 +3758,134 @@ describe("HiveSpawner wiring", () => {
     expect(failed.failureReason).toContain("could not be checked");
   });
 
+});
+
+describe("worker prompt partition", () => {
+  const worktree = {
+    path: "/repo/.hive/worktrees/maya",
+    branch: "hive/maya-golden",
+  };
+  const commonFullPreamble = [
+    `Your file scope is your worktree at ${worktree.path}; do all code and file work there.`,
+    "Use the Hive MCP tools hive_send, hive_inbox, and hive_status to message and coordinate with other named agents.",
+    'Your orchestrator is named queen. Users and agents may address it as queen without quotation marks; the synonym "orchestrator" remains accepted. Send concise completion reports, blockers, and important findings to queen with hive_send; reference large artifacts instead of pasting them.',
+    "Read only what the task needs: search for the lines that matter instead of reading large files whole, and reuse artifacts other agents already wrote instead of re-deriving them. If the task proves substantially larger than briefed, stop and report to queen rather than grinding.",
+    "If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise (that is a stop-and-report) — commit your WIP to your branch, then call hive_escalate once with the evidence (why, and what you tried) and a handoff (goal, done, remaining, decisions). Keep working until queen answers; it may respawn the task on a stronger model with your handoff or tell you to continue. Never grind on under-powered, and never quietly lower the quality bar instead. Escalations are recorded and measured.",
+  ];
+  const readOnlyProtocol =
+    "This process is capability-enforced read-only: it may read the repo, run permitted read-only commands, use MCP tools, and report with hive_send. It cannot change the worktree or land its branch. Persist findings in durable Hive messages; do not attempt a commit.";
+  const cases: {
+    label: string;
+    task: string;
+    memoryIndex: string;
+    options: AgentPromptOptions;
+    bytes: number;
+    sha256: string;
+    expectedBlocks: readonly string[];
+  }[] = [
+    {
+      label: "concise writer",
+      task: "Summarize auth",
+      memoryIndex: "MEMORY INDEX",
+      options: {
+        tool: "claude",
+        category: "summarization",
+        brief: "SCOPED BRIEF",
+        graphBrief: "GRAPH BRIEF",
+        graphifyTools: true,
+      },
+      bytes: 6_190,
+      sha256: "d788ebca42be494a1dae4af678da69001bba178dd960f110ac0971ab46e49880",
+      expectedBlocks: [
+        "You are maya, a Hive writer agent.",
+        `Work only inside your worktree at ${worktree.path}.`,
+        'Your orchestrator is named queen. Report completion, blockers, and findings to queen with hive_send (hive_inbox and hive_status are also available; the synonym "orchestrator" is still accepted). Reference artifacts by path; never paste them.',
+        "Read only what the task names. Search for the lines that matter rather than reading files whole. If the task is substantially bigger than briefed, stop and report rather than grinding.",
+        "If the task exceeds your model — a genuine capability wall after at least two distinct failed approaches, not a scope surprise — commit your WIP, then call hive_escalate once with the evidence and a handoff. Keep working until queen answers. Never grind on under-powered, and never quietly lower the quality bar instead.",
+        buildLandingProtocol(worktree.branch, "/repo", "main", "maya", 0, true),
+      ],
+    },
+    {
+      label: "full Grok writer",
+      task: "Implement auth",
+      memoryIndex: "MEMORY INDEX",
+      options: {
+        tool: "grok",
+        brief: "SCOPED BRIEF",
+        graphBrief: "GRAPH BRIEF",
+        graphifyTools: true,
+      },
+      bytes: 8_480,
+      sha256: "9778959f6a6d40fca9d52b148eab8ab6ad91d7eea1d4ae5b92fa4b32cbc02dad",
+      expectedBlocks: [
+        "You are maya, a Hive writer agent.",
+        ...commonFullPreamble,
+        buildLandingProtocol(worktree.branch, "/repo", "main", "maya", 0, false),
+        GROK_SAFETY_DIRECTIVE,
+      ],
+    },
+    {
+      label: "full read-only agent",
+      task: "Audit auth",
+      memoryIndex: "MEMORY INDEX",
+      options: {
+        tool: "claude",
+        readOnly: true,
+        brief: "SCOPED BRIEF",
+        graphBrief: "GRAPH BRIEF",
+        graphifyTools: true,
+      },
+      bytes: 5_917,
+      sha256: "13c9473e75196f3440a795e69bc04da0ebf4961fcd902ff55776c1ef3ef69af4",
+      expectedBlocks: [
+        "You are maya, a Hive read-only agent.",
+        ...commonFullPreamble,
+        readOnlyProtocol,
+      ],
+    },
+  ];
+
+  const occurrences = (text: string, block: string): number =>
+    text.split(block).length - 1;
+
+  test.each(cases)(
+    "$label preserves the pre-partition Claude/Grok bytes and partitions Codex roles",
+    ({ task, memoryIndex, options, bytes, sha256, expectedBlocks }) => {
+      const parts = buildAgentPromptParts(
+        "maya",
+        task,
+        worktree,
+        "/repo",
+        memoryIndex,
+        options,
+      );
+
+      expect(Buffer.byteLength(parts.combinedPrompt)).toBe(bytes);
+      expect(createHash("sha256").update(parts.combinedPrompt).digest("hex"))
+        .toBe(sha256);
+      expect(parts.combinedPrompt).toBe(
+        buildAgentPrompt("maya", task, worktree, "/repo", memoryIndex, options),
+      );
+      expect(parts.userPrompt).toBe(task);
+      expect(parts.developerInstructions).not.toContain(task);
+      expect(parts.userPrompt).not.toContain("You are maya");
+      expect(occurrences(parts.combinedPrompt, `Your task: ${task}`)).toBe(1);
+
+      for (const block of [
+        ...expectedBlocks,
+        CODING_GUIDELINES,
+        HIVE_PROTOCOL_RULES,
+        SEARCH_HYGIENE,
+        "SCOPED BRIEF",
+        "GRAPH BRIEF",
+        "This repo serves a graphify knowledge graph over MCP",
+        "MEMORY INDEX",
+      ]) {
+        expect(occurrences(parts.developerInstructions, block)).toBe(1);
+        expect(occurrences(parts.combinedPrompt, block)).toBe(1);
+      }
+    },
+  );
 });
 
 describe("agent landing protocol", () => {
