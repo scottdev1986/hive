@@ -215,7 +215,10 @@ describe("Codex app-server adapter", () => {
     });
 
     expect(await manager.isAvailable()).toEqual(true);
-    await manager.startAgent(agent({ readOnly: true }), "Build the feature", true, "high");
+    await manager.startAgent(agent({ readOnly: true }), {
+      developerInstructions: "You are maya. Follow Hive rules.",
+      initialUserPrompt: "Build the feature",
+    }, true, "high");
     expect(transport.sent.map((message) => message.method)).toEqual([
       "initialize",
       "initialized",
@@ -223,12 +226,16 @@ describe("Codex app-server adapter", () => {
       "account/rateLimits/read",
       "turn/start",
     ]);
+    expect(transport.sent[0]?.params).toMatchObject({
+      capabilities: { experimentalApi: false },
+    });
     expect(transport.sent[2]?.params).toMatchObject({
       model: "gpt-5-codex",
       cwd: "/tmp/maya",
       approvalPolicy: "on-request",
       approvalsReviewer: "user",
       sandbox: "read-only",
+      developerInstructions: "You are maya. Follow Hive rules.",
     });
     expect(transport.sent[4]?.params).toMatchObject({
       threadId: "thread-1",
@@ -291,7 +298,10 @@ describe("Codex app-server adapter", () => {
       queueApproval: async () => "approval-1",
       observeRateLimits: async () => null,
     });
-    await manager.startAgent(agent({ readOnly: true }), "Build", true, "high");
+    await manager.startAgent(agent({ readOnly: true }), {
+      developerInstructions: "You are maya. Follow Hive rules.",
+      initialUserPrompt: "Build",
+    }, true, "high");
     // The initial turn completes; the session goes idle.
     transport.emit({
       method: "turn/completed",
@@ -327,7 +337,10 @@ describe("Codex app-server adapter", () => {
       },
       observeRateLimits: async () => null,
     });
-    await manager.startAgent(agent({ readOnly: true }), "Run checks", true, "medium");
+    await manager.startAgent(agent({ readOnly: true }), {
+      developerInstructions: "You are maya. Follow Hive rules.",
+      initialUserPrompt: "Run checks",
+    }, true, "medium");
 
     const attempts = [
       {
@@ -846,6 +859,29 @@ test("CodexAppServerManager refuses writer/workspace-write starts", async () => 
     onEvent: async () => {},
   } as never);
   await expect(
-    manager.startAgent(agent({ readOnly: false }), "write code", false, "high"),
+    manager.startAgent(agent({ readOnly: false }), {
+      developerInstructions: "writer rules",
+      initialUserPrompt: "write code",
+    }, false, "high"),
   ).rejects.toThrow(/writer\/workspace-write threads are refused/);
+});
+
+test("CodexAppServerManager refuses a worker without an initial user prompt", async () => {
+  let connected = false;
+  const manager = new CodexAppServerManager({
+    transport: async () => {
+      connected = true;
+      return new FakeTransport();
+    },
+    queueApproval: async () => "x",
+    observeRateLimits: async () => null,
+    onEvent: async () => {},
+  });
+  await expect(manager.startAgent(
+    agent({ readOnly: true }),
+    { developerInstructions: "reader rules" },
+    true,
+    "high",
+  )).rejects.toThrow("requires an initial user prompt");
+  expect(connected).toBeFalse();
 });

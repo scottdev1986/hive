@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
+import type { CodexSessionBootstrap } from "./codex";
 import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
 import {
   buildCodexMcpExclusionArgs,
@@ -371,7 +372,7 @@ export class CodexAppServerManager {
 
   async startAgent(
     agent: AgentRecord,
-    prompt: string,
+    bootstrap: CodexSessionBootstrap,
     readOnly: boolean,
     effort: string,
   ): Promise<void> {
@@ -379,6 +380,9 @@ export class CodexAppServerManager {
     // refused even if a caller bypasses the spawner containment gate.
     if (!readOnly || !agent.readOnly) {
       throw new Error(CODEX_APP_SERVER_WRITER_REFUSAL);
+    }
+    if (bootstrap.initialUserPrompt === undefined) {
+      throw new Error("Codex worker bootstrap requires an initial user prompt");
     }
     const transport = await this.connectWithRetry(this.socketPath(agent));
     const client = new CodexAppServerClient(transport, {
@@ -401,6 +405,7 @@ export class CodexAppServerManager {
         approvalPolicy: "on-request",
         approvalsReviewer: "user",
         sandbox: "read-only",
+        developerInstructions: bootstrap.developerInstructions,
       }), "thread/start response");
       const thread = asObject(threadResult.thread, "thread");
       const session: CodexSession = {
@@ -418,7 +423,7 @@ export class CodexAppServerManager {
         agentName: agent.name,
         timestamp: timestamp(),
       }, session.agent);
-      await this.startTurn(agent, prompt, effort);
+      await this.startTurn(agent, bootstrap.initialUserPrompt, effort);
     } catch (error) {
       client.close();
       this.sessions.delete(agent.name);

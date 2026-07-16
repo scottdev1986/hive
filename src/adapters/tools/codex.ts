@@ -151,6 +151,11 @@ export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
  * Populated only inside the agent's tmux launch shell, never in any argv. */
 export const CODEX_CAPABILITY_TOKEN_ENV = "HIVE_CAPABILITY_TOKEN";
 
+export interface CodexSessionBootstrap {
+  developerInstructions: string;
+  initialUserPrompt?: string;
+}
+
 export function codexCapabilityTokenPath(worktreePath: string): string {
   return join(worktreePath, ".codex", "capability-token");
 }

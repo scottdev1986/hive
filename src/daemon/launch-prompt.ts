@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
-import { shellQuote } from "../adapters/tmux";
+import { shellJoin, shellQuote } from "../adapters/tmux";
+import type { CodexSessionBootstrap } from "../adapters/tools/codex";
 import { getHiveHome } from "./db";
 
 /**
@@ -26,6 +27,72 @@ export function launchPromptPath(session: string): string {
   return join(getHiveHome(), "runtime", "prompts", `${session}.txt`);
 }
 
+export interface CodexLaunchArtifacts {
+  developerPath: string;
+  userPath?: string;
+}
+
+export function codexDeveloperPromptPath(session: string): string {
+  return join(getHiveHome(), "runtime", "prompts", `${session}.developer.toml`);
+}
+
+export function codexUserPromptPath(session: string): string {
+  return join(getHiveHome(), "runtime", "prompts", `${session}.user.txt`);
+}
+
+async function preparePromptDirectory(path: string): Promise<void> {
+  const directory = dirname(path);
+  await mkdir(directory, { recursive: true, mode: 0o700 });
+  await chmod(directory, 0o700);
+}
+
+export async function writeCodexSessionBootstrap(
+  session: string,
+  bootstrap: CodexSessionBootstrap,
+): Promise<CodexLaunchArtifacts> {
+  const developerPath = codexDeveloperPromptPath(session);
+  const userPath = codexUserPromptPath(session);
+  await preparePromptDirectory(developerPath);
+  await writeFile(
+    developerPath,
+    `developer_instructions=${JSON.stringify(bootstrap.developerInstructions)}`,
+    { mode: 0o600 },
+  );
+  await chmod(developerPath, 0o600);
+  if (bootstrap.initialUserPrompt === undefined) {
+    await rm(userPath, { force: true });
+    return { developerPath };
+  }
+  await writeFile(userPath, bootstrap.initialUserPrompt, { mode: 0o600 });
+  await chmod(userPath, 0o600);
+  return { developerPath, userPath };
+}
+
+export async function writeCodexUserPrompt(
+  session: string,
+  prompt: string,
+): Promise<string> {
+  const path = codexUserPromptPath(session);
+  await preparePromptDirectory(path);
+  await writeFile(path, prompt, { mode: 0o600 });
+  await chmod(path, 0o600);
+  return path;
+}
+
+export async function readCodexDeveloperInstructions(
+  path: string,
+): Promise<string> {
+  const parsed = Bun.TOML.parse(await readFile(path, "utf8")) as Record<
+    string,
+    unknown
+  >;
+  const value = parsed.developer_instructions;
+  if (typeof value !== "string") {
+    throw new Error(`Invalid Codex developer instruction artifact: ${path}`);
+  }
+  return value;
+}
+
 export async function writeLaunchPrompt(
   session: string,
   prompt: string,
@@ -44,4 +111,21 @@ export async function writeLaunchPrompt(
  */
 export function promptArgument(path: string): string {
   return `"$(cat ${shellQuote(path)})"`;
+}
+
+/** One ordered Codex TUI carrier for fresh, fallback, control, and resume. */
+export function buildCodexTuiShellCommand(
+  optionArguments: readonly string[],
+  artifacts: CodexLaunchArtifacts,
+  positionalArguments: readonly string[] = [],
+): string {
+  return `${shellJoin([...optionArguments])} -c ${
+    promptArgument(artifacts.developerPath)
+  }${
+    positionalArguments.length === 0
+      ? ""
+      : ` ${shellJoin([...positionalArguments])}`
+  }${
+    artifacts.userPath === undefined ? "" : ` ${promptArgument(artifacts.userPath)}`
+  }`;
 }

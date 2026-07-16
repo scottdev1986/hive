@@ -72,6 +72,12 @@ import { QuotaService } from "../daemon/quota";
 import { agentTmuxSession } from "../daemon/tmux-sessions";
 import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
 import type { StopAgentSession } from "../daemon/teardown";
+import {
+  codexDeveloperPromptPath,
+  readCodexDeveloperInstructions,
+  writeCodexSessionBootstrap,
+} from "../daemon/launch-prompt";
+import type { CodexSessionBootstrap } from "../adapters/tools/codex";
 
 const positivelyVerifiedStop: StopAgentSession = async () => ({
   killed: [],
@@ -555,6 +561,28 @@ async function deliveredPrompt(command: string): Promise<string> {
   return await readFile(path, "utf8");
 }
 
+async function codexDeveloperPrompt(command: string): Promise<string> {
+  const path = /\$\(cat '([^']+\.developer\.toml)'\)/.exec(command)?.[1];
+  if (path === undefined) {
+    throw new Error(`launch command carries no Codex developer artifact: ${command}`);
+  }
+  return await readCodexDeveloperInstructions(path);
+}
+
+async function codexUserPrompt(command: string): Promise<string> {
+  const path = /\$\(cat '([^']+\.user\.txt)'\)/.exec(command)?.[1];
+  if (path === undefined) {
+    throw new Error(`launch command carries no Codex user artifact: ${command}`);
+  }
+  return await readFile(path, "utf8");
+}
+
+async function seedCodexDeveloperArtifact(agent: AgentRecord): Promise<void> {
+  await writeCodexSessionBootstrap(agent.tmuxSession, {
+    developerInstructions: `Durable Hive rules for ${agent.name}`,
+  });
+}
+
 function signalReadiness(store: FakeStore): () => Promise<void> {
   return async () => {
     for (const current of store.listAgents()) {
@@ -718,10 +746,13 @@ describe("HiveSpawner name pool", () => {
         idempotencyKey: null,
         capabilityEpoch: 1,
       } satisfies AgentMessage;
+      if (tool === "codex") await seedCodexDeveloperArtifact(controlled);
       await spawner.restartForControl(controlled, message);
       const command = tmux.sessions[0]?.[2] ?? "";
       // The order itself travels in the prompt file; the flags stay on the argv.
-      const order = await deliveredPrompt(command);
+      const order = tool === "codex"
+        ? await codexUserPrompt(command)
+        : await deliveredPrompt(command);
       expect(order).toContain("CRITICAL HIVE CONTROL");
       expect(order).toContain("This process is read-only");
       expect(command).toContain(tool === "claude"
@@ -768,7 +799,10 @@ describe("HiveSpawner name pool", () => {
     const controlQuota = makeControlQuota(root);
     const store = new FakeStore([controlled]);
     const tmux = new FakeTmux();
-    const starts: Array<{ prompt: string; readOnly: boolean }> = [];
+    const starts: Array<{
+      bootstrap: CodexSessionBootstrap;
+      readOnly: boolean;
+    }> = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -788,14 +822,15 @@ describe("HiveSpawner name pool", () => {
       codexAppServer: {
         isAvailable: async () => true,
         buildHostCommand: () => ["hive", "codex-app-server-host"],
-        startAgent: async (_record, prompt, readOnly) => {
-          starts.push({ prompt, readOnly });
+        startAgent: async (_record, bootstrap, readOnly) => {
+          starts.push({ bootstrap, readOnly });
         },
         disconnect: () => undefined,
       },
     });
     const message = controlMessage("app-server-control");
 
+    await seedCodexDeveloperArtifact(controlled);
     await spawner.restartForControl(controlled, message);
 
     const command = tmux.sessions[0]?.[2] ?? "";
@@ -807,9 +842,56 @@ describe("HiveSpawner name pool", () => {
     expect(await readFile(join(root, ".codex", "capability-token"), "utf8"))
       .toEqual("control-reader-secret");
     expect(starts).toEqual([{
-      prompt: expect.stringContaining("hive_ack_message"),
+      bootstrap: {
+        developerInstructions: "Durable Hive rules for maya",
+        initialUserPrompt: expect.stringContaining("hive_ack_message"),
+      },
       readOnly: true,
     }]);
+    controlQuota.db.close();
+  });
+
+  test("a Codex critical restart fails closed without its developer artifact", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-control-codex-missing-"));
+    tempRoots.push(root);
+    const controlled = {
+      ...agent("maya", "control-paused"),
+      tool: "codex",
+      model: "gpt-5.6-sol",
+      worktreePath: root,
+      capabilityEpoch: 1,
+      writeRevoked: true,
+      executionIdentity: {
+        tool: "codex",
+        model: "gpt-5.6-sol",
+        effort: "high",
+      },
+    } satisfies AgentRecord;
+    await rm(codexDeveloperPromptPath(controlled.tmuxSession), { force: true });
+    const controlQuota = makeControlQuota(root);
+    const store = new FakeStore([controlled]);
+    const tmux = new FakeTmux();
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      tmux,
+      quota: controlQuota.quota,
+    });
+
+    await expect(spawner.restartForControl(
+      controlled,
+      controlMessage("missing-developer-artifact"),
+    )).rejects.toThrow("developer-instruction artifact is missing or invalid");
+    expect(tmux.sessions).toEqual([]);
+    expect(store.getAgentById(controlled.id)).toMatchObject({
+      status: "control-paused",
+      writeRevoked: true,
+      controlMessageId: "missing-developer-artifact",
+    });
+    expect(controlQuota.quota.ledger.activeReservations()).toEqual([]);
     controlQuota.db.close();
   });
 
@@ -843,6 +925,7 @@ describe("HiveSpawner name pool", () => {
       quota: controlQuota.quota,
     });
 
+    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("unavailable"),
@@ -897,6 +980,7 @@ describe("HiveSpawner name pool", () => {
       quota: controlQuota.quota,
     });
 
+    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("unverified-stop"),
@@ -943,6 +1027,7 @@ describe("HiveSpawner name pool", () => {
       tmux: new FakeTmux(),
     });
 
+    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("legacy"),
@@ -1004,6 +1089,7 @@ describe("HiveSpawner name pool", () => {
       quota,
     });
 
+    await seedCodexDeveloperArtifact(controlled);
     await expect(spawner.restartForControl(
       controlled,
       controlMessage("exhausted"),
@@ -1890,9 +1976,11 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).toContain("'codex'");
     expect(tmux.sessions[0]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[0]?.[2]).toContain("features.hooks=true");
-    expect(await deliveredPrompt(tmux.sessions[0]?.[2] ?? "")).toContain(
+    expect(await codexUserPrompt(tmux.sessions[0]?.[2] ?? "")).toEqual(
       "Visible interactive task",
     );
+    expect(await codexDeveloperPrompt(tmux.sessions[0]?.[2] ?? ""))
+      .toContain("You are maya");
     expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
   });
 
@@ -1901,7 +1989,11 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const store = new FakeStore();
     const tmux = new FakeTmux();
-    const starts: Array<{ name: string; prompt: string; effort: string }> = [];
+    const starts: Array<{
+      name: string;
+      bootstrap: CodexSessionBootstrap;
+      effort: string;
+    }> = [];
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -1930,8 +2022,8 @@ describe("HiveSpawner wiring", () => {
           "--agent",
           value.name,
         ],
-        startAgent: async (value, prompt, _readOnly, effort) => {
-          starts.push({ name: value.name, prompt, effort });
+        startAgent: async (value, bootstrap, _readOnly, effort) => {
+          starts.push({ name: value.name, bootstrap, effort });
           store.insertAgent({ ...value, status: "working" });
         },
         disconnect: () => undefined,
@@ -1956,7 +2048,13 @@ describe("HiveSpawner wiring", () => {
     )).toEqual("test-capability");
     expect(starts).toHaveLength(1);
     expect(starts[0]).toMatchObject({ name: "maya", effort: "high" });
-    expect(starts[0]?.prompt).toContain("Implement native control");
+    expect(starts[0]?.bootstrap.initialUserPrompt).toEqual(
+      "Implement native control",
+    );
+    expect(starts[0]?.bootstrap.developerInstructions).toContain("You are maya");
+    expect(starts[0]?.bootstrap.developerInstructions).not.toContain(
+      "Implement native control",
+    );
     expect(spawned.status).toEqual("working");
   });
 
@@ -2030,9 +2128,11 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
+    expect(await codexUserPrompt(tmux.sessions[1]?.[2] ?? "")).toEqual(
       "Fallback task",
     );
+    expect(await codexDeveloperPrompt(tmux.sessions[1]?.[2] ?? ""))
+      .toContain("You are maya");
     expect(store.listAgents()[0]).toMatchObject({
       processIncarnation: 2,
       status: "working",
@@ -2659,7 +2759,8 @@ describe("HiveSpawner wiring", () => {
     expect(issued).toEqual([[spawned.name, "reader", 0]]);
     const shell = tmux.sessions[0]?.[2] ?? "";
     expect(shell).toContain("'--sandbox' 'read-only'");
-    expect(await deliveredPrompt(shell)).not.toContain("hive_land");
+    expect(await codexDeveloperPrompt(shell)).not.toContain("hive_land");
+    expect(await codexUserPrompt(shell)).toEqual("Audit only");
   });
 
   test("a read-only spawn refuses before creating a worktree when reader authority cannot be established", async () => {
@@ -2957,7 +3058,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[1]?.[2]).toContain("'codex'");
     expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
     expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
+    expect(await codexDeveloperPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
       "You are david",
     );
     expect(claude.model).toEqual("claude-fable-5");
@@ -3035,7 +3136,7 @@ describe("HiveSpawner wiring", () => {
 
       await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding", readOnly: true });
 
-      const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
+      const launched = await codexDeveloperPrompt(tmux.sessions[0]?.[2] ?? "");
       expect(launched).toContain("Hive memory index");
       expect(launched).toContain(
         "[repo/testing] flaky-login-test (2026-06-01) [unverified]: The login test is flaky",
@@ -4112,7 +4213,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
   test("the rules reach a launched CODEX agent — both the TUI argv and the app-server turn", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-guidelines-codex-"));
     tempRoots.push(root);
-    const starts: string[] = [];
+    const starts: CodexSessionBootstrap[] = [];
     const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) =>
       newTestSpawner({
         isModelEnabled: async () => true,
@@ -4137,20 +4238,21 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
         codexAppServer: {
           isAvailable: async () => true,
           buildHostCommand: () => ["hive", "codex-app-server-host"],
-          startAgent: async (_value, prompt) => {
-            starts.push(prompt);
+          startAgent: async (_value, bootstrap) => {
+            starts.push(bootstrap);
           },
           disconnect: () => undefined,
         },
       });
 
-    // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
+    // Codex receives durable setup as developer instructions on both drivers.
     const tuiTmux = new FakeTmux();
     await codexSpawner("tui", tuiTmux).spawn({ task: "Build auth API", category: "simple_coding", readOnly: true });
     const tuiCommand = tuiTmux.sessions[0]?.[2] ?? "";
     expect(tuiCommand).toContain("'codex'");
-    const tuiLaunched = await deliveredPrompt(tuiCommand);
+    const tuiLaunched = await codexDeveloperPrompt(tuiCommand);
     for (const rule of RULES) expect(tuiLaunched).toContain(rule);
+    expect(await codexUserPrompt(tuiCommand)).toEqual("Build auth API");
 
     const hostTmux = new FakeTmux();
     await codexSpawner("app-server", hostTmux).spawn({
@@ -4159,7 +4261,10 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
       readOnly: true,
     });
     expect(starts).toHaveLength(1);
-    for (const rule of RULES) expect(starts[0]).toContain(rule);
+    for (const rule of RULES) {
+      expect(starts[0]?.developerInstructions).toContain(rule);
+    }
+    expect(starts[0]?.initialUserPrompt).toEqual("Build auth API");
   });
 
   test("the blocks between them carry every rule (they are what the prompt splices in)", () => {

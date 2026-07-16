@@ -66,7 +66,16 @@ import {
 import { agentStateCas, type HiveDatabase } from "./db";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
-import { promptArgument, writeLaunchPrompt } from "./launch-prompt";
+import {
+  buildCodexTuiShellCommand,
+  codexDeveloperPromptPath,
+  promptArgument,
+  readCodexDeveloperInstructions,
+  writeCodexSessionBootstrap,
+  writeCodexUserPrompt,
+  writeLaunchPrompt,
+  type CodexLaunchArtifacts,
+} from "./launch-prompt";
 import { watchForProofOfLife } from "./readiness";
 import {
   parseProcessTable,
@@ -974,6 +983,25 @@ export class HiveSpawner implements Spawner {
         `Cannot restart ${agent.name} for critical control: quota accounting is unavailable; capability remains revoked`,
       );
     }
+    let codexDeveloperInstructions: string | undefined;
+    let codexDeveloperPath: string | undefined;
+    if (identity.tool === "codex") {
+      codexDeveloperPath = codexDeveloperPromptPath(agent.tmuxSession);
+      try {
+        codexDeveloperInstructions = await readCodexDeveloperInstructions(
+          codexDeveloperPath,
+        );
+      } catch {
+        await this.failClosedControlRestart(
+          agent,
+          message,
+          "the Codex developer-instruction artifact is missing or invalid",
+        );
+        throw new Error(
+          `Cannot restart ${agent.name} for critical control: the Codex developer-instruction artifact is missing or invalid; capability remains revoked`,
+        );
+      }
+    }
     let authorized = await this.authorizeLaunch(identity);
 
     let reservationId: string;
@@ -1128,11 +1156,23 @@ export class HiveSpawner implements Spawner {
       const nativeCodex = identity.tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
+      const codexArtifacts: CodexLaunchArtifacts | undefined =
+        identity.tool === "codex"
+          ? {
+              developerPath: codexDeveloperPath!,
+              userPath: await writeCodexUserPrompt(
+                agent.tmuxSession,
+                controlPrompt,
+              ),
+            }
+          : undefined;
       // The control order enters through the launch shell, never an argv: it
       // carries the agent's whole prior assignment and is bounded by nothing.
-      const promptSuffix = ` ${
-        promptArgument(await writeLaunchPrompt(agent.tmuxSession, controlPrompt))
-      }`;
+      const promptSuffix = identity.tool === "codex"
+        ? ""
+        : ` ${
+          promptArgument(await writeLaunchPrompt(agent.tmuxSession, controlPrompt))
+        }`;
       // The token value enters through the launch shell, never an argv.
       const restartWorktreePath = agent.worktreePath;
       const withCapabilityEnv = (command: string): string => {
@@ -1153,7 +1193,13 @@ export class HiveSpawner implements Spawner {
       await this.dependencies.tmux.newSession(
         agent.tmuxSession,
         agent.worktreePath,
-        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
+        withCapabilityEnv(
+          nativeCodex
+            ? shellJoin(argv)
+            : codexArtifacts === undefined
+            ? shellJoin(argv) + promptSuffix
+            : buildCodexTuiShellCommand(argv, codexArtifacts),
+        ),
       );
       if (nativeCodex) {
         try {
@@ -1162,7 +1208,10 @@ export class HiveSpawner implements Spawner {
           this.dependencies.quota.requireActiveReservation(reservationId);
           await this.dependencies.codexAppServer!.startAgent(
             prepared.record,
-            controlPrompt,
+            {
+              developerInstructions: codexDeveloperInstructions!,
+              initialUserPrompt: controlPrompt,
+            },
             readOnly,
             identity.tool === "codex"
               ? identity.effort
@@ -1237,7 +1286,10 @@ export class HiveSpawner implements Spawner {
             withCapabilityToken: capabilityToken !== undefined,
           });
           launchedCommand = launchedCommandName(fallback);
-          const fallbackCommand = shellJoin(fallback) + promptSuffix;
+          const fallbackCommand = buildCodexTuiShellCommand(
+            fallback,
+            codexArtifacts!,
+          );
           const fallbackShell = capabilityToken !== undefined
             ? wrapCodexSpawnWithCapabilityEnv(
               fallbackCommand,
@@ -2329,7 +2381,7 @@ export class HiveSpawner implements Spawner {
           },
         ),
     ]);
-    const prompt = buildAgentPrompt(
+    const promptParts = buildAgentPromptParts(
       name,
       request.task,
       worktree,
@@ -2344,6 +2396,7 @@ export class HiveSpawner implements Spawner {
         ...(graphifyUrl === null ? {} : { graphifyTools: true }),
       },
     );
+    const prompt = promptParts.combinedPrompt;
     const timestamp = new Date().toISOString();
     // Grok's session id is named by Hive, not discovered afterwards. Claude and
     // Codex report theirs on hook traffic; Grok has no lifecycle hooks, so
@@ -2494,12 +2547,20 @@ export class HiveSpawner implements Spawner {
       const nativeCodex = tool === "codex" &&
         this.dependencies.codexAppServer !== undefined &&
         argv[1] === "codex-app-server-host";
+      const codexArtifacts = tool === "codex"
+        ? await writeCodexSessionBootstrap(record.tmuxSession, {
+            developerInstructions: promptParts.developerInstructions,
+            initialUserPrompt: promptParts.userPrompt,
+          })
+        : undefined;
       // The brief enters through the launch shell, never an argv: tmux caps a
       // command well below ARG_MAX and Hive's briefs outgrow that cap by design.
       // Written even for the app-server, whose TUI fallback below needs it.
-      const promptSuffix = ` ${
-        promptArgument(await writeLaunchPrompt(record.tmuxSession, prompt))
-      }`;
+      const promptSuffix = tool === "codex"
+        ? ""
+        : ` ${
+          promptArgument(await writeLaunchPrompt(record.tmuxSession, prompt))
+        }`;
       // The token value enters through the launch shell, never an argv.
       const withCapabilityEnv = (command: string): string => {
         if (tool === "grok") return wrapGrokSpawnWithCompatibilityEnv(command);
@@ -2545,13 +2606,27 @@ export class HiveSpawner implements Spawner {
       let launchedCommand = launchedCommandName(argv);
       await launchTmux(
         await revalidateAtAdapter(),
-        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
+        withCapabilityEnv(
+          nativeCodex
+            ? shellJoin(argv)
+            : codexArtifacts === undefined
+            ? shellJoin(argv) + promptSuffix
+            : buildCodexTuiShellCommand(argv, codexArtifacts),
+        ),
       );
       if (nativeCodex) {
         try {
           const candidate = await revalidateAtAdapter();
           requireAuthorizedLaunch(candidate);
-          await this.dependencies.codexAppServer!.startAgent(record, prompt, readOnly, effort ?? "medium");
+          await this.dependencies.codexAppServer!.startAgent(
+            record,
+            {
+              developerInstructions: promptParts.developerInstructions,
+              initialUserPrompt: promptParts.userPrompt,
+            },
+            readOnly,
+            effort ?? "medium",
+          );
         } catch (error) {
           // The binary advertised app-server support but the control process
           // could not complete its handshake. Replace it immediately with the
@@ -2620,7 +2695,10 @@ export class HiveSpawner implements Spawner {
             withCapabilityToken: capabilityToken !== undefined,
           });
           launchedCommand = launchedCommandName(fallback);
-          const fallbackCommand = shellJoin(fallback) + promptSuffix;
+          const fallbackCommand = buildCodexTuiShellCommand(
+            fallback,
+            codexArtifacts!,
+          );
           const fallbackShell = capabilityToken !== undefined
             ? wrapCodexSpawnWithCapabilityEnv(
               fallbackCommand,

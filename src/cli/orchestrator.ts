@@ -38,6 +38,10 @@ import {
 } from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
+import {
+  promptArgument,
+  writeCodexSessionBootstrap,
+} from "../daemon/launch-prompt";
 
 export type OrchestratorTool = CapabilityProvider;
 
@@ -66,7 +70,12 @@ export function buildCodexRootAuthorityCommand(
   socketPath = codexRootSocketPath(),
   codexArguments: readonly string[] = [],
   capabilityTokenFile = "",
+  developerPath = "",
+  userPath = "",
 ): string[] {
+  if (developerPath === "") {
+    throw new Error("Codex root launch requires a developer-instruction artifact");
+  }
   const shellQuote = (value: string): string =>
     `'${value.replaceAll("'", `'"'"'`)}'`;
   const remoteCommand = [
@@ -95,6 +104,8 @@ export function buildCodexRootAuthorityCommand(
   const authorityConfig = authorityConfigArguments.length === 0
     ? ""
     : ` ${authorityConfigArguments.map(shellQuote).join(" ")}`;
+  const developerOverride = ` -c ${promptArgument(developerPath)}`;
+  const initialPrompt = userPath === "" ? "" : ` ${promptArgument(userPath)}`;
   const quotedSocket = shellQuote(socketPath);
   const capabilityEnvironment = capabilityTokenFile === ""
     ? ""
@@ -104,12 +115,12 @@ export function buildCodexRootAuthorityCommand(
   return [
     "sh",
     "-lc",
-    `${capabilityEnvironment}codex app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
+    `${capabilityEnvironment}codex app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig}${developerOverride} & authority=$!; ` +
       `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
       `for attempt in $(seq 1 50); do ` +
       `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
       `test -S ${quotedSocket} || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
-      `exec ${remoteCommand}`,
+      `exec ${remoteCommand}${developerOverride}${initialPrompt}`,
   ];
 }
 
@@ -238,6 +249,16 @@ export async function buildOrchestratorDocGuidance(cwd: string): Promise<string>
   });
 }
 
+export function buildOrchestratorBrief(
+  memoryIndex = "",
+  docGuidance = "",
+  recoveryBrief = "",
+): string {
+  return [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
+    .filter((part) => part !== "")
+    .join("\n\n");
+}
+
 export function buildOrchestratorCommand(
   tool: OrchestratorTool,
   port: number,
@@ -248,9 +269,7 @@ export function buildOrchestratorCommand(
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
-  const brief = [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
-    .filter((part) => part !== "")
-    .join("\n\n");
+  const brief = buildOrchestratorBrief(memoryIndex, docGuidance, recoveryBrief);
   switch (tool) {
     case "claude": {
       const configRoot = orchestratorConfigRoot();
@@ -302,7 +321,6 @@ export function buildOrchestratorCommand(
         ]),
         "--sandbox",
         "read-only",
-        brief,
       ];
     case "grok": {
       const model = probeGrokDefaultModel();
@@ -333,6 +351,8 @@ export function buildOrchestratorLaunchCommand(
   codexTokenFile = "",
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
+  codexDeveloperPath = "",
+  codexUserPath = "",
 ): string[] {
   switch (tool) {
     case "codex": {
@@ -354,6 +374,8 @@ export function buildOrchestratorLaunchCommand(
           undefined,
           codexCommand.slice(1),
           codexTokenFile,
+          codexDeveloperPath,
+          codexUserPath,
         ),
         ";", "set-option", "-g", "mouse", "on"];
     }
@@ -494,6 +516,25 @@ export async function launchOrchestrator(
     buildMemoryIndex(cwd).catch(() => ""),
     buildOrchestratorDocGuidance(cwd).catch(() => ""),
   ]);
+  let codexDeveloperPath = "";
+  let codexUserPath = "";
+  if (tool === "codex") {
+    const artifacts = await writeCodexSessionBootstrap(
+      orchestratorTmuxSession(),
+      {
+        developerInstructions: buildOrchestratorBrief(
+          memoryIndex,
+          docGuidance,
+          recoveryBrief,
+        ),
+        ...(recoveryBrief === ""
+          ? {}
+          : { initialUserPrompt: "Resume Hive orchestration." }),
+      },
+    );
+    codexDeveloperPath = artifacts.developerPath;
+    codexUserPath = artifacts.userPath ?? "";
+  }
   const child = spawn(
     buildOrchestratorLaunchCommand(
       tool,
@@ -505,6 +546,8 @@ export async function launchOrchestrator(
       codexTokenFile,
       recoveryBrief,
       codexMcpExclusionArgs,
+      codexDeveloperPath,
+      codexUserPath,
     ),
     {
       cwd,
