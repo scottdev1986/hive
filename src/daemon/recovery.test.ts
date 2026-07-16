@@ -103,6 +103,12 @@ interface Harness {
   recovery: CrashRecovery;
   settled: string[];
   revoked: string[];
+  reauthorized: Array<{
+    id: string;
+    name: string;
+    epoch: number;
+    processIncarnation: number;
+  }>;
   /** The hardened resume monitor fails a resume that never proves life, so
    * every successful-resume test must call this before resuming: it makes
    * each readiness poll tick advance lastEventAt, standing in for the
@@ -130,6 +136,7 @@ function harness(
   const delivery = new MessageDelivery(db, sender);
   const settled: string[] = [];
   const revoked: string[] = [];
+  const reauthorized: Harness["reauthorized"] = [];
   let proveLife = false;
   const recovery = new CrashRecovery({
     db,
@@ -148,6 +155,14 @@ function harness(
     flushQueued: (name) => delivery.flushQueued(name),
     revokeCapabilities: (name) => {
       revoked.push(name);
+    },
+    reauthorizeAgent: (record) => {
+      reauthorized.push({
+        id: record.id,
+        name: record.name,
+        epoch: record.capabilityEpoch,
+        processIncarnation: record.processIncarnation ?? 0,
+      });
     },
     resolveClaudeSessionId: async () => null,
     resolveCodexSessionId: async () => null,
@@ -177,6 +192,7 @@ function harness(
     recovery,
     settled,
     revoked,
+    reauthorized,
     signalProofOfLife: () => {
       proveLife = true;
     },
@@ -943,6 +959,120 @@ describe("dead-path bookkeeping", () => {
 });
 
 describe("manual recovery", () => {
+  test("real terminalization revives only manually with a new epoch, credential, and process incarnation", async () => {
+    const h = harness();
+    h.signalProofOfLife();
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "sess-1",
+      processIncarnation: 4,
+      processStartedAt: timestamp,
+    }));
+    const dead = h.db.markAgentDead(
+      "agent-maya",
+      "2026-07-10T10:00:00.000Z",
+      "confirmed dead",
+    )!;
+    expect(dead).toMatchObject({
+      status: "dead",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      processIncarnation: 4,
+    });
+
+    // Automatic reconciliation remains fail-closed for a genuine terminal row.
+    expect(await h.recovery.sweep()).toEqual([]);
+    expect(h.tmux.created).toEqual([]);
+    expect(h.reauthorized).toEqual([]);
+
+    expect(await h.recovery.recoverAgent("maya")).toEqual({
+      agent: "maya",
+      action: "resumed",
+      sessionId: "sess-1",
+    });
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "idle",
+      writeRevoked: false,
+      capabilityEpoch: 2,
+      processIncarnation: 5,
+    });
+    expect(h.reauthorized).toEqual([{
+      id: "agent-maya",
+      name: "maya",
+      epoch: 2,
+      processIncarnation: 5,
+    }]);
+  });
+
+  test("manual retry after a failed automatic resume reauthorizes the new process only", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "sess-1",
+      processIncarnation: 1,
+      processStartedAt: timestamp,
+    }));
+    h.tmux.failNewSession = true;
+    expect(await h.recovery.sweep()).toMatchObject([{
+      action: "marked-dead",
+      reason: expect.stringContaining("resume launch failed"),
+    }]);
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "dead",
+      writeRevoked: true,
+      capabilityEpoch: 1,
+      processIncarnation: 2,
+    });
+    expect(h.reauthorized).toEqual([]);
+
+    h.tmux.failNewSession = false;
+    h.signalProofOfLife();
+    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
+      action: "resumed",
+      sessionId: "sess-1",
+    });
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "idle",
+      writeRevoked: false,
+      capabilityEpoch: 2,
+      processIncarnation: 3,
+    });
+    expect(h.reauthorized).toEqual([{
+      id: "agent-maya",
+      name: "maya",
+      epoch: 2,
+      processIncarnation: 3,
+    }]);
+  });
+
+  test("a same-name successor prevents manual revival of its terminal predecessor", async () => {
+    const h = harness();
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "old-session" }));
+    h.db.markAgentDead("agent-maya", "2026-07-10T10:00:00.000Z");
+    h.db.insertAgent(agent({
+      id: "agent-maya-successor",
+      status: "working",
+      toolSessionId: "successor-session",
+      processIncarnation: 9,
+      tmuxSession: "hive-maya-successor",
+    }));
+    h.tmux.sessions.add("hive-maya-successor");
+
+    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
+      action: "skipped",
+      reason: "tmux session is running",
+    });
+    expect(h.db.getAgentById("agent-maya")).toMatchObject({
+      status: "dead",
+      writeRevoked: true,
+    });
+    expect(h.db.getAgentById("agent-maya-successor")).toMatchObject({
+      status: "working",
+      processIncarnation: 9,
+    });
+    expect(h.reauthorized).toEqual([]);
+  });
+
   test("recovers an agent already marked dead — the bring-her-back path", async () => {
     const h = harness();
     h.signalProofOfLife();

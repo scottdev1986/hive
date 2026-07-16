@@ -111,6 +111,9 @@ export interface CrashRecoveryDependencies {
    * file — the same guarantee hive_kill and hive_mark_dead give, so a
    * capability can never outlive its agent through the recovery death path. */
   revokeCapabilities?: (agentName: string) => void;
+  /** Manual terminal revival mints a new exact-epoch credential only after
+   * the final pre-launch CAS. Automatic recovery never calls this. */
+  reauthorizeAgent?: (agent: AgentRecord) => void;
   resolveClaudeSessionId?: SessionResolver;
   resolveCodexSessionId?: SessionResolver;
   resolveGrokSessionId?: SessionResolver;
@@ -308,9 +311,11 @@ export class CrashRecovery {
     if (agent.status === "done") {
       return { agent: name, action: "skipped", reason: "agent is done" };
     }
+    const revivingTerminal = agent.status === "dead" || agent.status === "failed";
     if (
-      agent.status === "control-paused" ||
-      (agent.writeRevoked && agent.controlMessageId !== undefined)
+      !revivingTerminal &&
+      (agent.status === "control-paused" ||
+        (agent.writeRevoked && agent.controlMessageId !== undefined))
     ) {
       return {
         agent: name,
@@ -318,7 +323,7 @@ export class CrashRecovery {
         reason: "write authority is revoked; control recovery owns this agent",
       };
     }
-    if (agent.writeRevoked) {
+    if (!revivingTerminal && agent.writeRevoked) {
       return {
         agent: name,
         action: "skipped",
@@ -546,6 +551,7 @@ export class CrashRecovery {
     }
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
+    const revivingTerminal = options.manual && isTerminalAgentStatus(live.status);
     const processStartedAt = new Date().toISOString();
     const begun = this.deps.db.beginAgentProcess(
       agentStateCas(live),
@@ -700,6 +706,14 @@ export class CrashRecovery {
         };
       }
       record = launchCurrent;
+      if (revivingTerminal) {
+        if (this.deps.reauthorizeAgent === undefined) {
+          throw new Error(
+            "manual terminal recovery cannot mint a fresh agent credential",
+          );
+        }
+        this.deps.reauthorizeAgent(record);
+      }
       const launch = this.deps.tmux.newSession(
         record.tmuxSession,
         worktreePath,

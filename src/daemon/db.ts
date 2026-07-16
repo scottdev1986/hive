@@ -1307,7 +1307,8 @@ export class HiveDatabase {
     if (options.reviveTerminal !== true) return null;
     const changed = this.database.query(`
       UPDATE agents SET
-        status = ?, closedAt = NULL, toolSessionId = ?,
+        status = ?, closedAt = NULL, writeRevoked = 0,
+        capabilityEpoch = capabilityEpoch + 1, toolSessionId = ?,
         processIncarnation = ?, processStartedAt = ?, recoveryAttempts = ?,
         lastEventAt = ?, identityState = NULL, observedIdentity = NULL,
         liveModel = NULL, liveEffort = NULL

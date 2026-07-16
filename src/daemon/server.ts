@@ -935,6 +935,13 @@ export class HiveDaemon {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
       },
+      reauthorizeAgent: (agent) => {
+        this.issueCredential(
+          agent.name,
+          agent.readOnly ? "reader" : "writer",
+          agent.capabilityEpoch,
+        );
+      },
       stopSession: (agent) =>
         this.stopAgentProcesses(agent, () => {
           this.capabilities.revokeSubject(agent.name);
