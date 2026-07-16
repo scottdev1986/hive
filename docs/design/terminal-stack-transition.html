@@ -130,12 +130,12 @@
               <tr><td>I2</td><td><strong>Viewer lifecycle is not agent lifecycle.</strong></td><td>Workspace quit, pane close, renderer reset, and UI crash only detach. Explicit Stop/Terminate is a separate authorized command.</td></tr>
               <tr><td>I3</td><td><strong>One component owns PTY writes.</strong></td><td><code>hive-sessiond</code> is the only process holding the master write path. Human input and automated delivery enter one ordered arbiter.</td></tr>
               <tr><td>I4</td><td><strong>Human drafts have priority.</strong></td><td>The input claim is acquired synchronously before typing, paste, IME composition, or mouse-report bytes. It has no timer and fails closed after disconnect.</td></tr>
-              <tr><td>I5</td><td><strong>Display names never address a session.</strong></td><td>Every operation requires tenant, run, stable agent ID, and generation. A stale locator returns a typed error.</td></tr>
+              <tr><td>I5</td><td><strong>Display names never address a session.</strong></td><td>Every operation requires the instance identity, an exact tagged subject (root or stable agent ID), and generation. A stale locator returns a typed error.</td></tr>
               <tr><td>I6</td><td><strong>Status is structured and sourced.</strong></td><td>Every state carries source, observation time, revision, freshness, and confidence. Terminal parsing may emit a diagnostic hint only.</td></tr>
               <tr><td>I7</td><td><strong>Output and attention never steal focus.</strong></td><td>No output, status, message, or hierarchy event has a focus-mutating API. Only explicit human navigation changes first responder.</td></tr>
               <tr><td>I8</td><td><strong>Hierarchy authority lives outside agents and terminals.</strong></td><td>The control daemon validates sender, recipient, edge, capability epoch, and workflow gate before delivery is admitted.</td></tr>
               <tr><td>I9</td><td><strong>The app ships self-contained on macOS.</strong></td><td>No user-installed tmux, Ghostty, Zig, shell plugin, or package manager is required. Universal helpers and libraries are signed, notarized, inventoried, and verified.</td></tr>
-              <tr><td>I10</td><td><strong>Terminal resources are bounded.</strong></td><td>All sessions remain live headlessly; only the selected workbench and a small warm cache own Metal surfaces. Journals, images, scrollback, and client queues have measured caps.</td></tr>
+              <tr><td>I10</td><td><strong>Terminal resources are bounded.</strong></td><td>All sessions remain live headlessly; renderer surfaces are admitted against measured caps, and the terminal foundation does not choose the final selected/warm surface policy. Journals, images, scrollback, and client queues have measured caps.</td></tr>
             </tbody>
           </table>
         </div>
@@ -153,7 +153,7 @@
           <article class="arch-node">
             <span class="mono">PRESENTATION PLANE</span>
             <h3>AppKit Workspace<br>HiveTerminalKit</h3>
-            <p>Split Horizon layout, first responder, Ghostty Metal surface, selection, accessibility, search, copy, and visible input claim.</p>
+            <p>The existing AppKit pane topology during T0–T7 (Split Horizon’s one-workbench layout arrives after The Queen’s Hive): first responder, Ghostty Metal surface, selection, accessibility, search, copy, and visible input claim.</p>
           </article>
           <div class="arrow" aria-hidden="true">↔</div>
           <article class="arch-node core">
@@ -272,19 +272,19 @@ to detached hosts; a host crash can lose only its own generation.</pre>
     <section id="experience">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">06 · Native terminal experience</p><h2>The TUI stays authentic while Hive becomes visibly agentic.</h2></div>
-          <p>The terminal is one workbench inside Hive, not the navigation model. Hierarchy, status, review, artifacts, and settings are native controls around a real, unmodified provider TUI.</p>
+          <div><p class="section-label">06 · Native renderer experience</p><h2>The TUI stays authentic while the renderer becomes replaceable.</h2></div>
+          <p>T0–T7 replaces SwiftTerm inside the current AppKit pane topology; Hive owns the surface contract, not a new navigation model. The hierarchy rail, selected workbench, inspector, and global navigation are Split Horizon deliverables after The Queen’s Hive.</p>
         </div>
 
         <div class="split">
           <article class="panel">
-            <h3>Selected workbench</h3>
+            <h3>Attached surface</h3>
             <ul class="clean">
-              <li>The hierarchy rail selects exactly one live agent workbench by stable ID and generation.</li>
+              <li>A surface attaches to exactly one live session by exact locator and generation.</li>
               <li>The native title strip shows agent, role, task, provider/model, branch/worktree, status provenance, input owner, and connection health.</li>
-              <li>The Ghostty surface fills the workbench and gets first responder only after an explicit click or keyboard navigation.</li>
-              <li>Unread output and attention decorate the rail; neither switches the selected agent.</li>
-              <li>Off-screen agents remain fully alive in sessiond. Keep the selected surface plus at most a measured two-to-four surface warm cache.</li>
+              <li>The Ghostty surface fills its pane and gets first responder only after an explicit click or keyboard navigation.</li>
+              <li>Unread output and attention are surfaced without stealing focus; nothing retargets an attached surface implicitly.</li>
+              <li>Detached agents remain fully alive in sessiond. Renderers are disposable and admitted against measured caps; surface count and retention policy belong to the embedding UI.</li>
             </ul>
           </article>
           <article class="panel">
@@ -298,14 +298,14 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             </ul>
           </article>
           <article class="panel">
-            <h3>Attach and switch sequence</h3>
+            <h3>Attach and retarget sequence</h3>
             <ol>
-              <li>Resolve the selected agent to an exact <code>SessionLocator</code>.</li>
+              <li>Resolve the target agent to an exact <code>SessionLocator</code>.</li>
               <li>Authenticate the local client and request attach with geometry and last acknowledged output sequence.</li>
               <li>Apply the newest valid terminal checkpoint, then every subsequent frame in order.</li>
               <li>Create or reveal the Ghostty surface; acknowledge the applied sequence.</li>
               <li>Only after explicit focus may the client acquire a human input claim.</li>
-              <li>On selection change, release focus and renderer resources; do not alter the process or task.</li>
+              <li>On retarget, release focus and renderer resources; do not alter the process or task. Output never retargets: a late frame can never reach a surface bound to a different locator or generation.</li>
             </ol>
           </article>
           <article class="panel">
@@ -372,7 +372,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
   "summary": "Short, user-facing present tense",
   "blocker": null,
   "assignmentId": "asg_...",
-  "assignmentRevision": 12,
+  "assignmentGeneration": 12,
   "evidenceRefs": ["file:...", "test:..."],
   "nextCheckpoint": "Replay test passes"
 }</pre>
@@ -393,7 +393,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             <h3>Event delivery and the rollup seam</h3>
             <ul class="clean">
               <li>Replace Workspace feed polling with a resumable event subscription plus periodic snapshot reconciliation.</li>
-              <li>Sequence every event per tenant and include entity revision for idempotent Swift reducers.</li>
+              <li>Sequence every event per instance and include entity revision for idempotent Swift reducers.</li>
               <li>The subscription and reducers ship against today's flat queen→workers policy; no reducer requires a lead or reviewer to exist.</li>
               <li>The Queen's Hive later adds parent/edge/rollup reducers on the same envelope — scoped summaries instead of terminal transcripts.</li>
               <li>Engineer sees an honest aggregate with drill-down to the source evidence.</li>
@@ -454,8 +454,8 @@ to detached hosts; a host crash can lose only its own generation.</pre>
               <tr><td>Hierarchy edges</td><td><strong>Edge policy is supplied by The Queen's Hive and evaluated by the daemon; transport treats the authorization decision as opaque.</strong> Today's flat queen↔workers policy is the shipping baseline; the transport carries an authorization event ID either way.</td><td>One policy hook is shared by MCP, CLI, daemon, and UI tests. UI visibility does not grant authority. Edge rules live in <a href="agentic-hierarchy.html">agentic-hierarchy.html</a> and the communication contract.</td></tr>
               <tr><td>Priority</td><td><strong>normal, steer, urgent, critical keep existing semantics.</strong></td><td>Provider matrix verifies normal/steer boundaries, urgent cancellation, critical write revocation/recovery.</td></tr>
               <tr><td>Human claim</td><td><strong>Acquired before first input byte; released only on submit, cancel, or explicit discard/recovery.</strong></td><td>Crash at every claim transition produces no interleave and no timed unlock.</td></tr>
-              <tr><td>Delivery evidence</td><td><strong>Terminal transport records immutable attempt events; the communication fabric owns the canonical receipt projection.</strong></td><td>No stage is inferred from elapsed time. See <a href="hive-communication.html">hive-communication.html</a>; the UI can distinguish unheard, transport-written, provider-observed, acknowledged, and applied without terminal code owning those transitions.</td></tr>
-              <tr><td>Payload handling</td><td><strong>At least 1 MiB; streamed to the PTY; never placed in argv, environment, process listings, or ordinary logs.</strong></td><td>Exact digest under backpressure, bracketed paste, restart, and redaction tests.</td></tr>
+              <tr><td>Delivery evidence</td><td><strong>The terminal appends immutable attempt evidence; the Communication Fabric owns the canonical receipt projection.</strong></td><td>No stage is inferred from elapsed time. See <a href="hive-communication.html">hive-communication.html</a>; the UI can distinguish unheard, transport-written, provider-observed, acknowledged, and applied without terminal code owning those transitions.</td></tr>
+              <tr><td>Payload handling</td><td><strong>At least 1 MiB; streamed to the PTY; never placed in argv, environment, process listings, or ordinary logs.</strong> The 1 MiB transaction cap is transport safety for legacy, human, and explicitly authorized capacity — ordinary MessageEnvelope inline bodies cap at 16 KiB and larger outputs travel as ArtifactRefs (<a href="hive-communication.html">hive-communication.html</a>).</td><td>Exact digest under backpressure, bracketed paste, restart, and redaction tests.</td></tr>
             </tbody>
           </table>
         </div>
@@ -473,12 +473,12 @@ to detached hosts; a host crash can lose only its own generation.</pre>
           <article class="panel">
             <h3>Session locator</h3>
             <pre>{
-  "tenantId": "canonical HIVE_HOME identity",
-  "runId": "run_...",
-  "agentId": "agt_...",
+  "instanceId": "hiveInstanceSuffix(resolveHiveHome())",
+  "subject": { "kind": "agent", "agentId": "agt_..." },
   "generation": 4,
   "hostKind": "sessiond",
-  "sessionId": "ses_..."
+  "sessionId": "ses_...",
+  "engineBuildId": null
 }</pre>
             <p class="muted">The display name, role, provider, task, branch, and worktree are metadata. None may be used to recover a missing locator.</p>
           </article>
@@ -506,7 +506,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
           <article class="panel">
             <h3>Checkpoint truth</h3>
             <p>Sessiond parses every output byte through <code>libghostty-vt</code> and maintains a bounded journal. A checkpoint is valid only if it can restore both primary and alternate screen, cursor, modes, palette, hyperlinks, keyboard mode, scrolling region, tab stops, and Kitty graphics references needed by the renderer.</p>
-            <div class="callout stop"><strong>No false shortcut.</strong> The current formatter API appears capable of serializing active terminal state, but it is not the complete checkpoint contract. Implement or upstream the missing state export and pass G2 before sessiond admission. The bounded journal connects a valid checkpoint to live output; it is not permission to ship a “mostly restored” TUI.</div>
+            <div class="callout stop"><strong>No false shortcut.</strong> The current formatter API appears capable of serializing active terminal state, but it is not the complete checkpoint contract. Implement or upstream the missing state export and pass TG2 before sessiond admission. The bounded journal connects a valid checkpoint to live output; it is not permission to ship a “mostly restored” TUI.</div>
           </article>
           <article class="panel">
             <h3>Backpressure and resources</h3>
@@ -587,7 +587,7 @@ to detached hosts; a host crash can lose only its own generation.</pre>
             <ul class="clean">
               <li>Pin Zig/Xcode/Metal toolchains; hash headers and symbols.</li>
               <li>Test fidelity, IME, mouse, resize, copy/search, VoiceOver, and GPU lifecycle.</li>
-              <li>Measure memory per surface and select warm-cache budget.</li>
+              <li>Measure memory per surface; record the future warm-cache budget as nonblocking Split Horizon input.</li>
               <li>Complete license, SBOM, signing, notarization, and clean-machine install spike.</li>
             </ul>
             <div class="criteria"><div><b>Exit</b>Universal signed harness passes vendor and accessibility corpus.</div><div><b>Stop</b>Metal CI, Intel support, or required accessibility cannot be made reliable.</div></div>
@@ -740,8 +740,8 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
               <tr><td>Ghostty fidelity</td><td>VT golden corpus; Claude/Codex/Grok login, tool use, approval, alternate screen, resize, scrollback, search, images, synchronized output; standalone Ghostty comparison.</td><td>Wrong cells/cursor/modes, corrupted reconnect, missing ordinary shortcut, renderer crash.</td></tr>
               <tr><td>Input</td><td>Key layouts, Option, control/function keys, IME, paste 1 byte–1 MiB, bracketed paste, mouse, slow PTY, claim/disconnect at every boundary, normal/steer/urgent/critical.</td><td>Lost, duplicated, reordered, interleaved, wrong-target, logged, or prematurely released input.</td></tr>
               <tr><td>Crash/recovery</td><td>Kill Workspace, renderer, attach client, control daemon, sessiond broker, one session host, provider root, and auxiliary app server during idle, human draft, automation transaction, output burst, resize, and termination.</td><td>UI/broker crash kills TUI; one host kills another generation; false reattach; silent in-doubt message; orphan unlock; survivor reported terminated.</td></tr>
-              <tr><td>Identity/security</td><td>PID reuse, stale generation, display-name reuse, foreign tenant, socket substitution, token replay, capability epoch change, hierarchy denial, hostile escape sequences, OSC 52, hyperlink, oversized images/frames.</td><td>Unauthorized attach/write/inspect/kill, cross-tenant data, or resource escape.</td></tr>
-              <tr><td>Status</td><td>Out-of-order/duplicate/missing hooks, stale reports, conflicting sources, provider disconnect, report spoof, task revision change, snapshot/event gap, Swift/Bun reducer parity.</td><td>Agent self-approves, stale shown fresh, unsupported “working,” reducer disagreement, or lost critical attention.</td></tr>
+              <tr><td>Identity/security</td><td>PID reuse, stale generation, display-name reuse, foreign instance, socket substitution, token replay, capability epoch change, hierarchy denial, hostile escape sequences, OSC 52, hyperlink, oversized images/frames.</td><td>Unauthorized attach/write/inspect/kill, cross-instance data, or resource escape.</td></tr>
+              <tr><td>Status</td><td>Out-of-order/duplicate/missing hooks, stale reports, conflicting sources, provider disconnect, report spoof, Assignment generation change, snapshot/event gap, Swift/Bun reducer parity.</td><td>Agent self-approves, stale shown fresh, unsupported “working,” reducer disagreement, or lost critical attention.</td></tr>
               <tr><td>Scale/performance</td><td>19+ sessions, transient reviewers, high-output producers, rapid selection, long idle, images, scrollback, app sleep/wake, display changes, renderer churn, eight-hour soak.</td><td>PTY backpressure, unbounded RSS/disk/GPU, focus lag, missed output, hot off-screen rendering.</td></tr>
               <tr><td>Release</td><td>Clean macOS 14/15/26 Intel and Apple Silicon as supported, upgrade/rollback, Gatekeeper, notarization, quarantined download, no tmux/Ghostty/Zig in PATH, offline launch.</td><td>Unsigned nested code, runtime download, missing architecture, incompatible helper, loss of live generations.</td></tr>
             </tbody>
@@ -753,11 +753,11 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
             <h3>Release service objectives</h3>
             <p>These are v1 release gates. T1 and T3 measurements may tighten them. Relaxing one requires a reviewed design change with before/after evidence.</p>
             <ul class="clean">
-              <li>Selected-agent switch to first correct frame: p95 ≤ 150 ms with warm checkpoint.</li>
+              <li>Attach/retarget to first correct frame: p95 ≤ 150 ms with warm checkpoint.</li>
               <li>Human key-to-PTY-write overhead: p95 ≤ 8 ms inside Hive.</li>
               <li>Zero bytes lost or reordered in conformance and soak suites.</li>
               <li>Workspace crash survival: 100% for live sessiond-owned generations.</li>
-              <li>Background Metal surfaces: bounded by configured warm-cache count.</li>
+              <li>Detached Metal surfaces: no display-link or render submissions; renderer admission bounded by measured caps.</li>
               <li>Status event to visible reducer: p95 ≤ 250 ms locally when source is live.</li>
             </ul>
           </article>
@@ -817,7 +817,7 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
               <li>Measured capacity: 19 concurrent ordinary generations as a load target inside the 32-session cap.</li>
               <li>Focus, view, authority, lifecycle ownership, and input ownership as separate state.</li>
             </ul>
-            <div class="callout warn"><strong>Not supplied here.</strong> Hierarchy records, lead-owned worker lifecycle, reviewer duty gates, grant-bound land targets, and edge policy are deliverables of <a href="agentic-hierarchy.html">The Queen's Hive</a>, not assumptions it inherits.</div>
+            <div class="callout warn"><strong>Not supplied here.</strong> Hierarchy records, current-owner-bound worker lifecycle, independent review gates, grant-bound land targets, and edge policy are deliverables of <a href="agentic-hierarchy.html">The Queen's Hive</a>, not assumptions it inherits. Terminal messaging consumes today's flat authorization as an opaque decision; nothing in T0–T7 requires a hierarchy record to exist.</div>
           </article>
           <article class="panel">
             <h3>Split Horizon must change</h3>
@@ -850,10 +850,10 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
               <tr><td>Checkpoint replay is incomplete</td><td>Golden primary/alternate/graphics/mode corpus; complete bridge/upstream state export; bounded journal only after a valid checkpoint.</td><td>Any restored TUI has wrong cells, cursor, modes, keyboard protocol, or image lifetime.</td></tr>
               <tr><td>Metal/universal release complexity</td><td>Pin Zig, Xcode, Metal toolchain; universal XCFramework CI; Intel runner; sign/notarize nested artifacts early in T1.</td><td>Clean supported Macs require developer tools or reject/disable rendering.</td></tr>
               <tr><td>Accessibility regression</td><td>VoiceOver prototype in T1; semantic screen reads through supported APIs; native fallback behaviors and audit.</td><td>Core terminal content, cursor, selection, or status is unusable without sight.</td></tr>
-              <tr><td>19-agent resource growth</td><td>Headless session state; one selected surface; bounded warm cache/journal/images; soak tests and memory pressure handling.</td><td>Off-screen sessions create continuous GPU work or unbounded memory/disk.</td></tr>
-              <tr><td>Agent-reported status is misleading</td><td>Field-level authority, TTL, task revision, evidence refs, source/confidence display, immutable audit; authoritative gates excluded.</td><td>An agent can self-approve, hide contradictory source truth, or keep stale status fresh.</td></tr>
+              <tr><td>19-agent resource growth</td><td>Headless session state; attached renderer count bounded by measured caps; bounded journal/images; soak tests and memory pressure handling.</td><td>Off-screen sessions create continuous GPU work or unbounded memory/disk.</td></tr>
+              <tr><td>Agent-reported status is misleading</td><td>Field-level authority, TTL, Assignment generation, evidence refs, source/confidence display, immutable audit; authoritative gates excluded.</td><td>An agent can self-approve, hide contradictory source truth, or keep stale status fresh.</td></tr>
               <tr><td>macOS process escape/PID reuse</td><td>Process group plus start tokens, executable/readback evidence, auxiliary-process adapter, unrelated-process sentinel tests.</td><td>Hive kills the wrong process or reports success while owned processes survive.</td></tr>
-              <tr><td>Same-user local attack/confusion</td><td>Private canonical paths, peer UID, per-operation capabilities, exact generation, socket and symlink tests.</td><td>Another Hive tenant/viewer can attach, inspect, write, or terminate without authority.</td></tr>
+              <tr><td>Same-user local attack/confusion</td><td>Private canonical paths, peer UID, per-operation capabilities, exact generation, socket and symlink tests.</td><td>Another Hive instance/viewer can attach, inspect, write, or terminate without authority.</td></tr>
               <tr><td>Provider behavior drift</td><td>Versioned adapters, conformance corpus, honest degraded receipts, structured hook/app-server preference.</td><td>Elapsed time or screen text becomes the only production proof of delivery or lifecycle.</td></tr>
             </tbody>
           </table>
@@ -872,13 +872,13 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
           <table>
             <thead><tr><th>ID</th><th>Gate</th><th>Required proof</th><th>Failure action</th></tr></thead>
             <tbody>
-              <tr><td>G1</td><td><strong>Manual-I/O bridge</strong></td><td>The exact C ABI in §23 builds against the pinned commit, stays within the patch boundary, and passes key/text/IME/mouse/output/reconnect/ABI tests.</td><td>Stop T4. Keep the stock attach harness; do not ship direct ownership or broaden the fork.</td></tr>
-              <tr><td>G2</td><td><strong>Complete checkpoint</strong></td><td>Both screens, parser state, scrollback, modes, palette, cursor, styles, hyperlinks, graphemes, synchronized output, keyboard state, and Kitty images restore at adversarial byte boundaries with identical digests.</td><td>Stop sessiond admission. Do not market reconnect; retain tmux until the bridge can serialize the missing state.</td></tr>
-              <tr><td>G3</td><td><strong>Renderer resource budget</strong></td><td>One selected plus two warm Ghostty surfaces and 19 headless hosts remain within §28 CPU, memory, GPU, latency, and disk limits on Intel and Apple Silicon.</td><td>Reduce warm cache to zero/one and profile. Stop T6 if one selected surface still misses budget.</td></tr>
-              <tr><td>G4</td><td><strong>Provider delivery evidence</strong></td><td>Every supported Claude, Codex, and Grok build satisfies the readiness and receipt rules in §25 under idle, busy, approval, modal, backpressure, and 1 MiB input.</td><td>Mark that build unsupported or its receipt level unavailable. Never substitute a timer or screen phrase.</td></tr>
-              <tr><td>G5</td><td><strong>Crash isolation and adoption</strong></td><td>Broker death preserves all hosts and exact input state; one host death affects only its generation; adoption proves locator, PID start token, build, socket, and secret before use.</td><td>Stop T6. Preserve tmux admissions until blast radius and unknown-state handling conform.</td></tr>
-              <tr><td>G6</td><td><strong>Process containment</strong></td><td>Provider roots, double-fork, <code>setsid</code>, app servers, recovery children, PID reuse, and unrelated sentinels produce complete, verified termination or explicit survivors.</td><td>Refuse “stopped” and keep operator attention. Do not delete legacy teardown.</td></tr>
-              <tr><td>G7</td><td><strong>Legacy deletion</strong></td><td>Two stable releases, zero live legacy generations, clean install with tmux absent, no compatibility writes/direct calls, and a successful admissions rollback drill.</td><td>Keep the readers and flags. Deletion has no date-based override.</td></tr>
+              <tr><td>TG1</td><td><strong>Manual-I/O bridge</strong></td><td>The exact C ABI in §23 builds against the pinned commit, stays within the patch boundary, and passes key/text/IME/mouse/output/reconnect/ABI tests.</td><td>Stop T4. Keep the stock attach harness; do not ship direct ownership or broaden the fork.</td></tr>
+              <tr><td>TG2</td><td><strong>Complete checkpoint</strong></td><td>Both screens, parser state, scrollback, modes, palette, cursor, styles, hyperlinks, graphemes, synchronized output, keyboard state, and Kitty images restore at adversarial byte boundaries with identical digests.</td><td>Stop sessiond admission. Do not market reconnect; retain tmux until the bridge can serialize the missing state.</td></tr>
+              <tr><td>TG3</td><td><strong>Renderer resource budget</strong></td><td>The current supported attached-pane renderer count and 19 headless hosts remain within §28 CPU, memory, GPU, latency, and disk limits on Intel and Apple Silicon. The future one-selected-plus-two-warm profile is measured and recorded separately as nonblocking Split Horizon input, not a T0–T7 prerequisite.</td><td>Reduce the attached renderer count and profile. Stop T6 if a single attached surface still misses budget.</td></tr>
+              <tr><td>TG4</td><td><strong>Provider delivery evidence</strong></td><td>Every supported Claude, Codex, and Grok build satisfies the readiness and receipt rules in §25 under idle, busy, approval, modal, backpressure, and 1 MiB input.</td><td>Mark that build unsupported or its receipt level unavailable. Never substitute a timer or screen phrase.</td></tr>
+              <tr><td>TG5</td><td><strong>Crash isolation and adoption</strong></td><td>Broker death preserves all hosts and exact input state; one host death affects only its generation; adoption proves locator, PID start token, build, socket, and secret before use.</td><td>Stop T6. Preserve tmux admissions until blast radius and unknown-state handling conform.</td></tr>
+              <tr><td>TG6</td><td><strong>Process containment</strong></td><td>Provider roots, double-fork, <code>setsid</code>, app servers, recovery children, PID reuse, and unrelated sentinels produce complete, verified termination or explicit survivors.</td><td>Refuse “stopped” and keep operator attention. Do not delete legacy teardown.</td></tr>
+              <tr><td>TG7</td><td><strong>Legacy deletion</strong></td><td>Two stable releases, zero live legacy generations, clean install with tmux absent, no compatibility writes/direct calls, and a successful admissions rollback drill.</td><td>Keep the readers and flags. Deletion has no date-based override.</td></tr>
             </tbody>
           </table>
         </div>
@@ -946,12 +946,15 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
           <p>The TypeScript interface is the control-plane contract. The tmux and sessiond implementations run the same black-box suite. Swift uses the wire protocol in §20, not this TypeScript module, but observes identical postconditions. SessionSpec deliberately carries no organizational role: sessiond needs authority posture (<code>readOnly</code>), exact identity, and resources — a later HierarchyNode record from The Queen's Hive binds a locator to role and purpose, and only the daemon's read model joins it.</p>
         </div>
 
-        <pre aria-label="Normative SessionHost TypeScript contract">export type SessionLocator = Readonly&lt;{
+        <pre aria-label="Normative SessionHost TypeScript contract">export type SessionSubject =
+  | Readonly&lt;{ kind: "root" }&gt;
+  | Readonly&lt;{ kind: "agent"; agentId: string }&gt;; // stable database UUID, never display name
+
+export type SessionLocator = Readonly&lt;{
   schemaVersion: 1;
-  tenantId: string;       // canonical resolved-HIVE_HOME hash
-  runId: string;
-  agentId: string;        // stable database UUID, never display name
-  generation: number;     // positive, monotonically increasing per agentId
+  instanceId: string;     // hiveInstanceSuffix(resolveHiveHome())
+  subject: SessionSubject;
+  generation: number;     // positive, monotonically increasing per subject
   sessionId: string;      // random ses_ UUIDv7
   hostKind: "tmux" | "sessiond";
   engineBuildId: string | null;
@@ -982,7 +985,7 @@ export type TerminalGeometry = Readonly&lt;{
 export interface SessionHost {
   create(spec: SessionSpec, initialInput: Uint8Array): Promise&lt;CreateResult&gt;;
   inspect(locator: SessionLocator): Promise&lt;SessionInspection&gt;;
-  list(tenantId: string): Promise&lt;readonly SessionInspection[]&gt;;
+  list(instanceId: string): Promise&lt;readonly SessionInspection[]&gt;;
   capture(locator: SessionLocator, request: CaptureRequest): Promise&lt;CaptureResult&gt;;
   issueAttach(locator: SessionLocator, request: AttachRequest): Promise&lt;AttachGrant&gt;;
   resize(locator: SessionLocator, geometry: TerminalGeometry): Promise&lt;ResizeResult&gt;;
@@ -1059,14 +1062,14 @@ export type SessionEvent = Readonly&lt;{
             <thead><tr><th>Operation</th><th>Preconditions</th><th>Success postcondition</th><th>Failure contract</th></tr></thead>
             <tbody>
               <tr><td>create</td><td>Daemon has revalidated the exact launch grant, quota, model/tool/effort, role, worktree, capability epoch, capacity, and unused locator immediately before the call.</td><td><strong>One detached host and one provider PTY exist.</strong><span>Exact locator readback, root PID/start token, socket, process group, engine build, and initial geometry are recorded. Initial input is accepted out-of-band, never argv.</span></td><td>No success until readback. A timeout after host creation returns <code>IN_DOUBT</code> with the locator; caller inspects instead of retrying create.</td></tr>
-              <tr><td>inspect</td><td>Exact locator and authorized tenant.</td><td><strong>Returns present, exited, lost, or unknown plus evidence.</strong><span>Process roots, start tokens, expected executable, output/checkpoint sequence, input owner, viewers, resources, and exit data.</span></td><td>Never maps transport failure to absent. Generation mismatch is typed and does not resolve the successor.</td></tr>
-              <tr><td>list</td><td>Authorized tenant scope.</td><td><strong>Enumerates registry and live-host evidence without relying on hive.db.</strong></td><td>Returns per-entry unknowns and an overall completeness flag; partial enumeration is not a complete empty list.</td></tr>
+              <tr><td>inspect</td><td>Exact locator and authorized instance.</td><td><strong>Returns present, exited, lost, or unknown plus evidence.</strong><span>Process roots, start tokens, expected executable, output/checkpoint sequence, input owner, viewers, resources, and exit data.</span></td><td>Never maps transport failure to absent. Generation mismatch is typed and does not resolve the successor.</td></tr>
+              <tr><td>list</td><td>Authorized instance scope.</td><td><strong>Enumerates registry and live-host evidence without relying on hive.db.</strong></td><td>Returns per-entry unknowns and an overall completeness flag; partial enumeration is not a complete empty list.</td></tr>
               <tr><td>capture</td><td>Metadata is self/operator readable; visible text requires <code>terminal:observe</code> and content audit.</td><td><strong>Coherent exact-generation snapshot at one output sequence.</strong><span>UTF-8 plain text, rows/columns, cursor, screen kind, truncation, and digest.</span></td><td>Never attaches, focuses, changes viewport, or converts malformed bytes into status.</td></tr>
               <tr><td>issueAttach</td><td>Exact live generation, valid viewer identity, size greater than zero, viewer capacity.</td><td><strong>Registers one 30-second, one-use host grant.</strong><span>Returns endpoint, opaque token, engine build, checkpoint/output high-water, and granted operations.</span></td><td>A grant is not attachment. It expires unused and is stored only as a hash by the host.</td></tr>
               <tr><td>resize</td><td>Authorized selected viewer or control daemon; 1–1000 cells each dimension; at most 250,000 active cells; positive pixel/cell sizes.</td><td><strong>Host applies one coalesced <code>TIOCSWINSZ</code>, resizes headless state, and emits revision.</strong></td><td>Intermediate animation sizes and 0×0 are ignored. A failed resize preserves the prior geometry.</td></tr>
               <tr><td>writeAutomated</td><td>Hierarchy-authorized durable message, current recipient generation/epoch, provider delivery policy says now, input state is free.</td><td><strong>One idempotent transaction is serialized and returns transport evidence separately from provider/agent receipt.</strong></td><td>No partial retry. Busy human ownership returns queued; disconnect after commit returns in-doubt and is reconciled by idempotency key.</td></tr>
               <tr><td>terminate</td><td>Explicit authorized lifecycle intent; locator exact; preservation/landing policy already evaluated.</td><td><strong>All known owned roots are signaled in policy order, PTY/host is closed, absence and survivors are positively read back.</strong></td><td>Attempts all phases and returns survivors plus every error. Unknown verification cannot return <code>terminated</code>.</td></tr>
-              <tr><td>subscribe</td><td>Authorized tenant and retained event cursor.</td><td><strong>Ordered at-least-once events followed by heartbeats.</strong></td><td>Expired cursor returns <code>SNAPSHOT_REQUIRED</code>; consumer snapshots then resumes, never fills the gap by guessing.</td></tr>
+              <tr><td>subscribe</td><td>Authorized instance and retained event cursor.</td><td><strong>Ordered at-least-once events followed by heartbeats.</strong></td><td>Expired cursor returns <code>SNAPSHOT_REQUIRED</code>; consumer snapshots then resumes, never fills the gap by guessing.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1113,7 +1116,7 @@ export type SessionEvent = Readonly&lt;{
           <article class="panel">
             <h3>Version and liveness</h3>
             <ul class="clean">
-              <li><code>HELLO</code> is the first frame and names client role, build hash, protocol range, tenant, and presented grant. No other frame is processed first.</li>
+              <li><code>HELLO</code> is the first frame and names client role, build hash, protocol range, instance, and presented grant. No other frame is processed first.</li>
               <li><code>WELCOME</code> returns selected version, instance ID, endpoint role, build/engine IDs, connection ID, limits, and monotonic server epoch.</li>
               <li>Idle connections exchange PING/PONG every 5 seconds. Three missed PONG intervals detach the connection, not the session.</li>
               <li>Same major/minor may add optional JSON fields only. New frame types, state values, required fields, or changed postconditions require a minor/major bump as appropriate.</li>
@@ -1129,7 +1132,7 @@ export type SessionEvent = Readonly&lt;{
               <tr><td>HELLO / WELCOME / ERROR</td><td><code>0001 / 0002 / 0003</code></td><td>both</td><td>Handshake, selected version/identity/limits, and typed error.</td></tr>
               <tr><td>PING / PONG</td><td><code>0004 / 0005</code></td><td>both</td><td>Connection liveness; payload carries sender monotonic nanos.</td></tr>
               <tr><td>CREATE_BEGIN / INPUT / COMMIT / CREATED</td><td><code>0100–0103</code></td><td>daemon↔broker</td><td>Transactional creation. COMMIT includes total length and SHA-256; host is not admitted before exact digest and launch-grant recheck.</td></tr>
-              <tr><td>LIST / LISTED</td><td><code>0110 / 0111</code></td><td>daemon↔broker</td><td>Tenant inventory with completeness and per-entry evidence.</td></tr>
+              <tr><td>LIST / LISTED</td><td><code>0110 / 0111</code></td><td>daemon↔broker</td><td>Instance inventory with completeness and per-entry evidence.</td></tr>
               <tr><td>INSPECT / INSPECTED</td><td><code>0112 / 0113</code></td><td>client↔endpoint</td><td>Exact locator state and evidence.</td></tr>
               <tr><td>TERMINATE / TERMINATED</td><td><code>0114 / 0115</code></td><td>daemon↔broker/host</td><td>Explicit termination and positive readback.</td></tr>
               <tr><td>ATTACH_REQUEST / GRANT / HOST_ATTACH</td><td><code>0200–0202</code></td><td>Workspace↔broker↔host</td><td>Broker registers and returns a one-use host grant; Workspace then connects directly to the host.</td></tr>
@@ -1150,7 +1153,7 @@ export type SessionEvent = Readonly&lt;{
             <tbody>
               <tr><td>PROTOCOL_MISMATCH</td><td>No compatible protocol/build/engine.</td><td>Never retry same peers; update or use the matching installed version.</td></tr>
               <tr><td>UNAUTHENTICATED / FORBIDDEN</td><td>Grant absent/invalid/expired or operation outside scope.</td><td>Obtain a new daemon-authorized grant; do not broaden the request.</td></tr>
-              <tr><td>TENANT_MISMATCH / GENERATION_MISMATCH</td><td>Endpoint or locator belongs elsewhere or is stale.</td><td>Never resolve by name/latest. Refresh authoritative snapshot.</td></tr>
+              <tr><td>INSTANCE_MISMATCH / GENERATION_MISMATCH</td><td>Endpoint or locator belongs elsewhere or is stale.</td><td>Never resolve by name/latest. Refresh authoritative snapshot.</td></tr>
               <tr><td>NOT_FOUND / NOT_READY / ALREADY_EXISTS</td><td>Exact lifecycle state.</td><td>NOT_READY may subscribe/retry; create ALREADY_EXISTS must inspect.</td></tr>
               <tr><td>HUMAN_OWNED / HUMAN_ORPHANED / INPUT_BUSY</td><td>Arbiter refuses automation or a second owner.</td><td>Queue; only operator recovery resolves orphaned ownership.</td></tr>
               <tr><td>REBASE_REQUIRED / SNAPSHOT_REQUIRED</td><td>Client cursor fell behind retained state.</td><td>Detach stream, request checkpoint/snapshot, resume at returned high-water.</td></tr>
@@ -1206,7 +1209,7 @@ export type SessionEvent = Readonly&lt;{
             <h3>Authentication</h3>
             <ul class="clean">
               <li>All endpoints call <code>getpeereid</code> for peer UID/GID and <code>getsockopt(LOCAL_PEERPID)</code> for peer PID before HELLO. They derive the PID start token from <code>proc_pidinfo(PROC_PIDTBSDINFO)</code> start time and the executable with <code>proc_pidpath</code>. JSON identity claims confer no authority.</li>
-              <li>The broker accepts daemon control only when the peer PID/start token matches the current daemon lock and the HELLO values match product, build, protocol, schema, instance, tenant, and project from the existing control-daemon handshake.</li>
+              <li>The broker accepts daemon control only when the peer PID/start token matches the current daemon lock and the HELLO values match product, build, protocol, schema, instance, and project from the existing control-daemon handshake.</li>
               <li>Workspace calls the operator-authorized <code>POST /session-attach-grant</code>. The daemon asks the broker to register a random 256-bit, one-use, 30-second grant hash at the exact host; only the raw token returns over the already-authorized control channel.</li>
               <li>Raw grants never enter argv, environment, registry files, logs, crash metadata, or analytics. Agents never connect to sessiond; agent status and messages use daemon capabilities.</li>
               <li>Broker-to-host adoption uses the 32-byte secret passed at host launch over an inherited control file descriptor and retained as <code>adopt.cap</code>. The host also validates peer UID, locator, broker build/protocol, and requested operation.</li>
@@ -1369,7 +1372,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
               <li>Exactly one Hive public header, at most six modified upstream implementation files, and at most 1,500 non-test lines may implement the bridge. Generated bindings, tests, fixtures, and build wiring do not count.</li>
               <li>No Hive window, hierarchy, settings UI, message policy, process management, or provider code enters the Ghostty tree. No cmux source or generated artifact is copied; cmux remains behavior/reference research under its GPL boundary.</li>
               <li>The patch series, upstream commit, public header, exported symbol list, and produced XCFramework each receive a SHA-256 in the release lock/SBOM.</li>
-              <li>G1 or G2 failure stops sessiond admission. It does not authorize a larger app fork, partial checkpoint, terminal-screen scraping, or mislabeled reconnect.</li>
+              <li>TG1 or TG2 failure stops sessiond admission. It does not authorize a larger app fork, partial checkpoint, terminal-screen scraping, or mislabeled reconnect.</li>
             </ul>
           </article>
         </div>
@@ -1417,7 +1420,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
         <pre aria-label="Normative workspace event envelope">type WorkspaceEventV2 = Readonly&lt;{
   schemaVersion: 2;
   eventId: `evt_${string}`;
-  seq: string;                 // tenant event-log sequence, decimal u64
+  seq: string;                 // instance event-log sequence, decimal u64
   entity: { kind: string; id: string; generation?: number };
   entityRevision: string;      // decimal u64
   occurredAt: string;          // RFC 3339 UTC
@@ -1436,7 +1439,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
             <tbody>
               <tr><td>process / terminal health</td><td><strong>sessiond host evidence only</strong><span>Alive, PTY open, attach health, backpressure, output high-water, exit/survivor evidence.</span></td><td>Heartbeat every 5 s; show delayed after 10 s and disconnected/unknown after 15 s. Never infer dead from a missing viewer.</td></tr>
               <tr><td>provider lifecycle</td><td><strong>structured app-server, then provider hooks, then transcript telemetry</strong><span>Terminal hints are low-confidence diagnostics and cannot create a turn boundary.</span></td><td>Source freshness becomes stale after 30 s, but staleness does not rewrite the last proven state to idle or dead.</td></tr>
-              <tr><td>phase / progress / summary / blocker</td><td><strong>authenticated agent report, bounded by the caller’s live Assignment revision</strong><span>Provider lifecycle may contradict and visually annotate; it does not silently overwrite agent intent.</span></td><td>Agent chooses 30–600 s, default 120 s. After expiry, show stale and exclude from rollup counts that claim current work.</td></tr>
+              <tr><td>phase / progress / summary / blocker</td><td><strong>authenticated agent report, bounded by the caller’s live Assignment generation</strong><span>Provider lifecycle may contradict and visually annotate; it does not silently overwrite agent intent.</span></td><td>Agent chooses 30–600 s, default 120 s. After expiry, show stale and exclude from rollup counts that claim current work.</td></tr>
               <tr><td>task, gate, approval, land result</td><td><strong>daemon records only</strong><span>Today that means the flat assignment and landing records; The Queen's Hive defines the task/review/gate records that extend them. An agent can report evidence but cannot make these authoritative transitions, and no T0–T7 exit requires the future records to exist.</span></td><td>No timer. Superseded by a higher entity revision or explicit invalidation.</td></tr>
               <tr><td>message receipt</td><td><strong>delivery ledger under §25</strong><span>Transport, provider, agent acknowledgment, and applied evidence remain separate fields.</span></td><td>Durable until terminal message state; provider evidence must occur after injection.</td></tr>
               <tr><td>attention</td><td><strong>union of unhandled authoritative/provider/agent signals</strong><span>Higher severity wins; acknowledgment records viewer+revision and never deletes the cause.</span></td><td>Clears only when its cause revision resolves or an authorized actor acknowledges that exact revision.</td></tr>
@@ -1449,7 +1452,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
             <h3><code>hive_update_status</code></h3>
             <pre aria-label="MCP status update input">{
   "assignmentId": "asg_…",
-  "assignmentRevision": "42",
+  "assignmentGeneration": "42",
   "phase": "planning|implementing|testing|reviewing|blocked|complete",
   "progress": 0,
   "summary": "1–280 UTF-8 characters",
@@ -1460,7 +1463,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
 }</pre>
             <ul class="clean">
               <li>Add capability action <code>status:write</code> to the existing <code>hv1</code> capability system and grant it to both reader and writer roles. The subject must equal the capability’s bound agent and exact generation; the daemon also requires that exact incarnation to hold the named open Assignment. Reporting status grants no branch, landing, approval, or lifecycle authority.</li>
-              <li>The server binds agent ID, generation, role, tenant, capability epoch, issuer, and session from the authenticated channel; none are accepted from arguments. Assignment ID/revision must match the caller’s current Assignment. The hierarchy transition later adds task-bound status as a distinct source rather than making T0–T7 depend on future Task records.</li>
+              <li>The server binds agent ID, generation, role, instance, capability epoch, issuer, and session from the authenticated channel; none are accepted from arguments. Assignment ID/generation must match the caller’s current Assignment. The hierarchy transition later adds task-bound status as a distinct source rather than making T0–T7 depend on future Task records.</li>
               <li><code>progress</code> is optional integer 0–100. <code>blocker</code> is required and 1–1000 characters when phase is blocked, otherwise null. “complete” is a reported phase, not task completion or approval.</li>
               <li>Each accepted call appends an immutable event and returns event sequence, report revision, expiry, and current conflicts. Retries use request ID and identical digest.</li>
             </ul>
@@ -1474,7 +1477,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
   "maxRows": 50
 }</pre>
             <ul class="clean">
-              <li>Add capability action <code>terminal:observe</code>. Minimum role <code>reader</code> permits self metadata only. The capability constraint <code>content=true</code> permits self visible text; <code>operator</code> plus explicit descendant scope permits another agent’s visible text. Leads/queen consume descendant summaries by default, not raw terminal text.</li>
+              <li>Add capability action <code>terminal:observe</code>, granted to both reader and writer roles for self metadata. The capability constraint <code>content=true</code> permits self visible text; <code>operator</code> plus explicit scope permits another agent’s visible text. Future owners and the queen consume summaries by default, not raw terminal text.</li>
               <li><code>maxRows</code> is 1–200. Metadata returns geometry, screen kind, cursor, output sequence, mode flags, health, and a content digest. Visible text returns current active-screen plain text only—no scrollback, styles, clipboard, input, message bodies, or environment.</li>
               <li>Content reads create a redacted audit event naming reader, subject, row count, reason/capability, and sequence but never content. Screenshots are Workspace-only and require an explicit user action.</li>
               <li>Observation cannot focus, attach a renderer, acquire input, resize, refresh status, or trigger delivery.</li>
@@ -1487,14 +1490,14 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
             <h3>Reducer contract</h3>
             <ul class="clean">
               <li>Events are at-least-once. Deduplicate by <code>eventId</code>; reject an entity revision lower than the applied revision; accept duplicate identical events; treat duplicate IDs with different digests as corruption.</li>
-              <li>Tenant <code>seq</code> drives stream continuity, not entity ordering. Any gap pauses live reduction, fetches <code>WorkspaceSnapshot v2</code>, verifies its schema/hash/high-water, then resumes at the next sequence.</li>
+              <li>Instance <code>seq</code> drives stream continuity, not entity ordering. Any gap pauses live reduction, fetches <code>WorkspaceSnapshot v2</code>, verifies its schema/hash/high-water, then resumes at the next sequence.</li>
               <li>Bun and Swift consume generated schema constants and the same golden fixtures. Reducer parity tests compare the complete canonical JSON projection after every event prefix and permutation.</li>
               <li>The UI composes each field with source, freshness, confidence, and conflict; it does not flatten a whole agent into one unqualified “working” value.</li>
             </ul>
           </article>
           <article class="panel">
             <h3>Visible status composition</h3>
-            <p>The rail’s primary label is reported phase/summary when fresh, otherwise the last provider lifecycle with a stale marker, otherwise terminal/process health. Progress appears only from a fresh authenticated report. The inspector always exposes the source stack, last evidence time, conflicts, Assignment revision (and, after the hierarchy transition, Task revision), terminal health, message receipts, and why an action is disabled. Red/orange attention comes only from unresolved typed events, never from color or phrases inside the TUI.</p>
+            <p>The current Workspace status surface’s primary label is reported phase/summary when fresh, otherwise the last provider lifecycle with a stale marker, otherwise terminal/process health. Progress appears only from a fresh authenticated report. The source detail view always exposes the source stack, last evidence time, conflicts, Assignment generation (and, after the hierarchy transition, task-bound status as a distinct source), terminal health, message receipts, and why an action is disabled. Red/orange attention comes only from unresolved typed events, never from color or phrases inside the TUI. The future rail and inspector presentations belong to Split Horizon.</p>
           </article>
         </div>
       </div>
@@ -1531,7 +1534,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
     </tbody>
   </table>
 </div>
-<div class="callout"><strong>One evidence stream, one projection owner.</strong> Sessiond emits an immutable <code>DeliveryAttempt</code> outcome with the transaction ID, message ID, exact locator/generation, byte range or native endpoint receipt, timestamps, and evidence references. The communication scheduler consumes those events, owns retry/idempotency decisions, and projects the canonical message lifecycle defined in <a href="hive-communication.html">hive-communication.html</a>.</div>
+<div class="callout"><strong>One evidence stream, one projection owner.</strong> Sessiond emits an immutable <code>DeliveryAttempt</code> outcome with the transaction ID, message ID, exact locator/generation, byte range or native endpoint receipt, timestamps, and evidence references. The communication scheduler consumes those events, owns retry/idempotency decisions, and projects the canonical message lifecycle defined in <a href="hive-communication.html">hive-communication.html</a>. No attempt is blindly repeated after a committed or in-doubt outcome; a retry requires adapter-proven idempotency and is decided by the scheduler, never by the transport.</div>
 
         <div class="split">
           <article class="panel">
@@ -1559,20 +1562,18 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
     <section id="native-workspace-v1">
       <div class="shell">
         <div class="section-head">
-          <div><p class="section-label">26 · Native Workspace v1</p><h2>One hierarchy, one selected native TUI, one source of truth.</h2></div>
-          <p>The product is Hive—not a Ghostty profile manager and not a grid of terminal panes. AppKit owns the workbench and overlays; the selected session’s Ghostty Metal view renders the vendor TUI unmodified inside it.</p>
+          <div><p class="section-label">26 · Native terminal embedding</p><h2>Hive owns the terminal surface contract; Split Horizon owns the workspace.</h2></div>
+          <p>T4 embeds HiveTerminalKit into the existing AppKit pane topology to replace SwiftTerm. This section specifies only renderer attachment, terminal-local focus/input, geometry, settings, accessibility, and failure behavior. The production one-workbench window, hierarchy rail, inspector, overlays, menus, and navigation are built after The Queen’s Hive and are owned by <a href="split-horizon.html">Split Horizon</a>.</p>
         </div>
 
         <div class="table-wrap compact">
           <table>
-            <thead><tr><th>Region</th><th>Exact v1 behavior</th></tr></thead>
+            <thead><tr><th>Concern</th><th>Exact v1 behavior</th></tr></thead>
             <tbody>
-              <tr><td>Window</td><td><strong>One <code>NSWindow</code> per project workspace</strong><span>Minimum 960×600; restore last safe frame/display; native titlebar/toolbar; full screen supported. Opening another project creates/selects its window, never terminal tabs inside the current project.</span></td></tr>
-              <tr><td>Hierarchy rail</td><td><strong>Leading <code>NSSplitViewController</code> item, default 264 pt, min 220, max 360</strong><span>Outline groups queen → leads → workers/reviewers. Rows show name/role, fresh phase, terminal/provider health, attention, unread receipts, task progress, and stale/conflict treatment. Selection changes the workbench; disclosure does not.</span></td></tr>
-              <tr><td>Workbench header</td><td><strong>48 pt native control strip outside terminal</strong><span>Breadcrumb, agent/generation/provider, task, source-qualified status, input owner, message action, inspect, detach, and overflow. Stop is destructive and lives in overflow/menu with confirmation.</span></td></tr>
-              <tr><td>Terminal stage</td><td><strong>One edge-to-edge HiveTerminalView for the selected live generation</strong><span>The vendor’s real TUI, alternate screen, cursor, mouse, IME, images, selection, links, search, accessibility, and scrollback render here. Hive never reconstructs or replaces it with status cards.</span></td></tr>
-              <tr><td>Inspector</td><td><strong>Optional trailing item, default 320 pt, min 280, max 480</strong><span>Task/evidence, source stack, terminal/process details, receipts, hierarchy authority, resource metrics, and recovery actions. Hidden by default; does not resize the PTY until split animation finishes.</span></td></tr>
-              <tr><td>Overlays</td><td><strong>Native command palette, find bar, message composer, approval sheet, recovery sheet</strong><span>They own first responder while visible, expose their intent to VoiceOver, and return focus to the prior terminal/rail control on close.</span></td></tr>
+              <tr><td>Surface identity</td><td><strong>One edge-to-edge <code>HiveTerminalView</code> renders exactly one live generation by exact locator</strong><span>The vendor’s real TUI, alternate screen, cursor, mouse, IME, images, selection, links, search, accessibility, and scrollback render here. Hive never reconstructs or replaces it with status cards. A surface never displays bytes from any other locator or generation.</span></td></tr>
+              <tr><td>Attach / detach</td><td><strong>Attach obtains a one-use grant, imports checkpoint+journal, applies live bytes, and presents the first correct frame</strong><span>Retarget cancels obsolete attaches by connection ID; a late frame can never replace the currently bound locator/generation. Detach releases only the viewer; process stop is a separate daemon command with exact target and confirmation.</span></td></tr>
+              <tr><td>Focus / input</td><td><strong>The terminal becomes first responder only on direct click or an explicit focus action</strong><span>Status updates, new output, message delivery, automation, and renderer reconnect never steal focus. Only an event dispatched to the terminal may enter §22 claim/gesture handling.</span></td></tr>
+              <tr><td>Geometry / failure</td><td><strong>An attached terminal receives its actual backing-pixel and cell geometry; failures are typed states</strong><span>One host resize after 100 ms quiescence or at animation completion; never 0×0; detached surfaces do not resize the PTY. Renderer failure keeps sessiond live and reports the renderer plane separately from provider/process health.</span></td></tr>
             </tbody>
           </table>
         </div>
@@ -1581,18 +1582,18 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           <article class="panel">
             <h3>Renderer lifecycle and geometry</h3>
             <ul class="clean">
-              <li>Keep one selected surface plus at most two most-recent warm surfaces. A warm surface is disconnected from display rendering and receives bounded state updates; memory pressure destroys all warm surfaces immediately. Sessions remain headless and live.</li>
-              <li>Selection obtains a one-use attach grant, imports checkpoint+journal, applies live bytes, presents the first correct frame, then makes the surface first responder only if selection came from an explicit terminal-focused user action.</li>
-              <li>Rapid selection cancels obsolete attaches by connection ID. A late frame can never replace the currently selected locator/generation.</li>
-              <li>Observe split/window changes continuously but send one host resize after 100 ms quiescence or at animation completion. Never send 0×0. A selected terminal receives its actual backing-pixel and cell geometry; background surfaces do not resize the PTY.</li>
+              <li>Every renderer is disposable and admitted against measured caps. Sessions remain headless and live regardless of attached surfaces; the terminal foundation imposes no selected/warm surface topology — surface count and retention policy belong to the embedding UI (today’s panes, later Split Horizon).</li>
+              <li>Attach obtains a one-use grant, imports checkpoint+journal, applies live bytes, presents the first correct frame, then makes the surface first responder only if attachment came from an explicit terminal-focused user action.</li>
+              <li>Rapid retargeting cancels obsolete attaches by connection ID. A late frame can never replace the currently bound locator/generation.</li>
+              <li>Observe view-bounds changes continuously but send one host resize after 100 ms quiescence or at animation completion. Never send 0×0. An attached terminal receives its actual backing-pixel and cell geometry; detached surfaces do not resize the PTY.</li>
               <li>Closing a surface sends DETACH and releases only the viewer. Process stop is a separate daemon command with exact target and confirmation.</li>
             </ul>
           </article>
           <article class="panel">
             <h3>Focus and input</h3>
             <ul class="clean">
-              <li>The terminal becomes first responder on direct click or explicit “Focus Terminal.” Status/attention updates, new output, message delivery, agent selection from automation, and renderer reconnect never steal focus.</li>
-              <li>Rail arrow/disclosure keys stay in the rail. Overlay keys stay in the overlay. Only an event dispatched to the terminal may enter §22 claim/gesture handling.</li>
+              <li>The terminal becomes first responder on direct click or an explicit focus action. Status/attention updates, new output, message delivery, automated retargeting, and renderer reconnect never steal focus.</li>
+              <li>Only an event dispatched to the terminal may enter §22 claim/gesture handling; keys owned by surrounding chrome stay in the chrome.</li>
               <li>Selection is per viewer and survives renderer recreation. Copy reads selection only; no selection means Copy is disabled. Paste always uses the input claim and encoder. Control-C remains provider input; Command-C remains copy.</li>
               <li>A human-owned badge names the viewer and claim state. Orphaned ownership places a persistent recovery banner with Resume Draft and Discard Draft; it never self-clears.</li>
             </ul>
@@ -1603,21 +1604,13 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           <table>
             <thead><tr><th>Shortcut</th><th>Action</th><th>Scope / collision rule</th></tr></thead>
             <tbody>
-              <tr><td>⌘P / ⇧⌘P</td><td>Agent switcher / project switcher</td><td>Global window command; overlays show the exact target before selection.</td></tr>
-              <tr><td>⌘0</td><td>Select queen</td><td>Global project command. Does not change input owner or stop the prior agent.</td></tr>
-              <tr><td>⌥⌘↑ / ⌥⌘↓</td><td>Previous / next visible agent</td><td>Preserves current responder intent; when terminal initiated, the new selected terminal gains responder only after correct frame.</td></tr>
-              <tr><td>⌥⌘← / ⌥⌘→</td><td>Parent / first child</td><td>Hierarchy navigation; unavailable when no such node.</td></tr>
-              <tr><td>⌘F / Escape</td><td>Find / close current overlay</td><td>Escape closes an active overlay; with no overlay it is sent to the focused terminal through §22.</td></tr>
+              <tr><td>⌘F / Escape</td><td>Terminal find / close find</td><td>Escape closes the active find bar; with no find bar it is sent to the focused terminal through §22.</td></tr>
               <tr><td>⌘C / ⌘V / ⌘A</td><td>Copy / paste / select all</td><td>Native terminal edit actions. Paste requires claim; Select All selects terminal content only when it is responder.</td></tr>
               <tr><td>⌘= / ⌘− / ⇧⌘0</td><td>Increase / decrease / reset font</td><td>Hive terminal setting; triggers one geometry recomputation and resize.</td></tr>
-              <tr><td>⇧⌘K</td><td>Acknowledge selected attention</td><td>Existing Hive action; records exact cause revision. Disabled without authority/current attention.</td></tr>
-              <tr><td>⌘Return / ⇧⌘Return</td><td>Hierarchy promotion actions</td><td>Preserve existing Hive menu placement; final semantics/authority come from agentic-hierarchy.html, not terminal code.</td></tr>
-              <tr><td>⌘W / ⌘Q</td><td>Close project window / quit Workspace</td><td>Detach viewers only. If an orphaned human draft exists, show Resume/Discard/Keep Running; default Keep Running. Neither action stops Hive.</td></tr>
-              <tr><td>⌘,</td><td>Hive Settings</td><td>One native preferences window. No Ghostty config editor/import.</td></tr>
-              <tr><td>No default shortcut</td><td>Stop Agent / Stop Hive</td><td>Destructive menu actions. Stop Agent names exact agent+generation and offers Graceful/Immediate. Stop Hive shows live agents, drafts, unlanded work, and survivors; after explicit confirmation the daemon runs its authorized preservation/landing policy and §21 termination for every exact generation. Closing/quitting is never treated as confirmation.</td></tr>
             </tbody>
           </table>
         </div>
+        <div class="callout"><strong>Terminal-local bindings only.</strong> Workspace-level navigation, hierarchy, promotion, attention, window, and settings shortcuts are <a href="split-horizon.html">Split Horizon</a> deliverables and are not bound by this document. Existing Workspace menus and shortcuts keep their current behavior through T0–T7.</div>
 
         <pre aria-label="Hive terminal settings schema">// $HIVE_HOME/config/terminal.json — schemaVersion 1, atomic 0600 replace
 {
@@ -1628,7 +1621,6 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
   "bell": { "audible": false, "visual": true, "notifyWhenUnfocused": true },
   "selection": { "copyOnSelect": false, "trimTrailingSpaces": true },
   "links": { "requireCommandClick": true },
-  "renderer": { "warmSurfaceCount": 2 },
   "accessibility": { "announceAttention": true, "reduceMotionFollowsSystem": true }
 }</pre>
 
@@ -1637,14 +1629,14 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
             <h3>Settings rules</h3>
             <ul class="clean">
               <li>Hive resolves defaults plus this strict schema and passes only resolved values to Ghostty. It does not read <code>~/.config/ghostty</code>, Ghostty defaults files, themes, shell integration, keybindings, window state, or environment.</li>
-              <li>Font size 8–32 pt, line height 0.9–2.0, warm count 0–2. Unknown/invalid values leave the last valid settings active and show the field error. Writes lock, temp-write, fsync, rename, directory-fsync, then publish one revision.</li>
+              <li>Font size 8–32 pt, line height 0.9–2.0. Unknown/invalid values leave the last valid settings active and show the field error. Writes lock, temp-write, fsync, rename, directory-fsync, then publish one revision.</li>
               <li>Scrollback, journal, image caps, shell integration, security policies, and provider commands are product/release policy—not user settings in v1.</li>
             </ul>
           </article>
           <article class="panel">
             <h3>Accessibility and failure states</h3>
             <ul class="clean">
-              <li>Hierarchy is an outline with expanded/level/selected states and concise status values. Terminal exposes semantic rows, cursor, selection, and incremental text through the supported Ghostty accessibility seam; animations honor Reduce Motion and colors meet contrast targets.</li>
+              <li>The terminal exposes semantic rows, cursor, selection, and incremental text through the supported Ghostty accessibility seam; animations honor Reduce Motion and colors meet contrast targets.</li>
               <li>Starting, attaching, replaying, delayed, orphaned, exited, lost, incompatible-engine, unauthorized, and renderer-failed each have a distinct native state with evidence and safe actions. A screenshot or stale last frame never masquerades as a live terminal.</li>
               <li>If rendering fails, keep sessiond live, offer retry/compatible app version and bounded text observation when authorized, and report the renderer plane separately from provider/process health.</li>
             </ul>
@@ -1701,7 +1693,7 @@ swift build -c release --arch arm64 --arch x86_64</pre>
             <ul class="clean">
               <li><code>scripts/build-ghosttykit.sh</code> implements these commands, never downloads implicitly, compares all locked hashes, emits <code>GhosttyKit.xcframework</code>, both lib-vt slices, headers, symbols, licenses, and an artifact manifest.</li>
               <li>Build <code>hive-sessiond</code> arm64/x86_64 against the matching static lib-vt slice, then <code>lipo</code> only the helper Mach-O. Verify exactly two architectures and deployment target 14.0.</li>
-              <li><code>workspace/Package.swift</code> adds a local binary target for GhosttyKit and a <code>HiveTerminalKit</code> wrapper target. SwiftTerm remains linked only behind the migration flag until T7/G7.</li>
+              <li><code>workspace/Package.swift</code> adds a local binary target for GhosttyKit and a <code>HiveTerminalKit</code> wrapper target. SwiftTerm remains linked only behind the migration flag until T7/TG7.</li>
             </ul>
           </article>
           <article class="panel">
@@ -1743,16 +1735,16 @@ swift build -c release --arch arm64 --arch x86_64</pre>
             <thead><tr><th>Package</th><th>Depends on</th><th>Deliverables</th><th>Exit evidence</th></tr></thead>
             <tbody>
               <tr><td>WP0 · Contracts</td><td>—</td><td><strong>SessionHost, locators, wire/events/status/message schemas, code generators, fixture runner.</strong></td><td>Swift/TypeScript/Zig decode/encode the same valid/invalid corpus; reducer parity after every prefix.</td></tr>
-              <tr><td>WP1 · Native supply chain</td><td>WP0</td><td><strong>Toolchain lock, vendored pin+patch mechanism, offline cache, GhosttyKit/lib-vt/helper build, licenses/SBOM/signing harness.</strong></td><td>G1 ABI skeleton plus clean universal notarized harness on Intel/Apple Silicon.</td></tr>
+              <tr><td>WP1 · Native supply chain</td><td>WP0</td><td><strong>Toolchain lock, vendored pin+patch mechanism, offline cache, GhosttyKit/lib-vt/helper build, licenses/SBOM/signing harness.</strong></td><td>TG1 ABI skeleton plus clean universal notarized harness on Intel/Apple Silicon.</td></tr>
               <tr><td>WP2 · SessionHost migration</td><td>WP0</td><td><strong>Neutral interface, tmux adapter, compatibility record writer/reader, direct-call lint.</strong></td><td>Existing lifecycle/input/capture tests pass through the interface; no new direct tmux call outside adapter.</td></tr>
               <tr><td>WP3 · Broker</td><td>WP0, WP1</td><td><strong>UDS framing/auth, registry, grants, launch/adopt/list/inspect/terminate, quotas, diagnostics.</strong></td><td>Malformed/fuzz/security corpus; broker restart adoption; PID reuse and socket substitution fail closed.</td></tr>
-              <tr><td>WP4 · Session host</td><td>WP1, WP3</td><td><strong>PTY/process owner, headless VT/effects, journal/checkpoint, input arbiter, process inspector, exit evidence.</strong></td><td>G2, G5, G6; zero-loss 100 MiB output, transaction fault injection, exact-generation containment.</td></tr>
-              <tr><td>WP5 · HiveTerminalKit</td><td>WP1, WP4</td><td><strong>Manual surface wrapper, attach/rebase, main-thread renderer, native events/IME/mouse/search/selection/images/accessibility.</strong></td><td>Ghostty fidelity corpus and G1/G2 renderer restore; first correct frame and no duplicate query replies.</td></tr>
-              <tr><td>WP6 · Workspace</td><td>WP0, WP5</td><td><strong>One-workbench hierarchy UI, renderer cache, focus/geometry, settings, error/recovery states, menus.</strong></td><td>§26 UI/accessibility tests; crash-detach survival; rapid-switch/focus/resize corpus; G3.</td></tr>
+              <tr><td>WP4 · Session host</td><td>WP1, WP3</td><td><strong>PTY/process owner, headless VT/effects, journal/checkpoint, input arbiter, process inspector, exit evidence.</strong></td><td>TG2, TG5, TG6; zero-loss 100 MiB output, transaction fault injection, exact-generation containment.</td></tr>
+              <tr><td>WP5 · HiveTerminalKit</td><td>WP1, WP4</td><td><strong>Manual surface wrapper, attach/rebase, main-thread renderer, native events/IME/mouse/search/selection/images/accessibility.</strong></td><td>Ghostty fidelity corpus and TG1/TG2 renderer restore; first correct frame and no duplicate query replies.</td></tr>
+              <tr><td>WP6 · Workspace</td><td>WP0, WP5</td><td><strong>Current Workspace renderer migration to HiveTerminalKit, preserving existing pane topology, focus/geometry, settings, error/recovery states, and menus; no hierarchy UI.</strong></td><td>§26 embedding/accessibility tests; crash-detach survival; rapid attach-retarget/focus/resize corpus; TG3.</td></tr>
               <tr><td>WP7 · Status</td><td>WP0, WP3</td><td><strong>WorkspaceEvent v2, fusion reducer, snapshot/gap recovery, MCP status/observe, audit and freshness UI.</strong></td><td>Duplicate/gap/conflict/spoof/TTL corpus; Swift/Bun projection equality; no self-approval path.</td></tr>
-              <tr><td>WP8 · Providers/messages</td><td>WP0, WP4, WP7</td><td><strong>Version manifests, readiness adapters, durable lifecycle/receipts, native app-server path, conservative degradation.</strong></td><td>G4 for every supported version; busy/modal/backpressure/crash and 1 MiB cases with no duplicate injection.</td></tr>
+              <tr><td>WP8 · Providers/messages</td><td>WP0, WP4, WP7</td><td><strong>Version manifests, readiness adapters, durable lifecycle/receipts, native app-server path, conservative degradation.</strong></td><td>TG4 for every supported version; busy/modal/backpressure/crash and 1 MiB cases with no duplicate injection.</td></tr>
               <tr><td>WP9 · Canary/cutover</td><td>WP3–WP8</td><td><strong>Internal then provider cohorts, telemetry, admission/renderer flags, support bundles, update gating, rollback drill.</strong></td><td>All gates/SLOs below, eight-hour soak, clean signed/notarized installs, rollback of new admissions without live migration.</td></tr>
-              <tr><td>WP10 · Legacy deletion</td><td>WP9, G7</td><td><strong>Stop tmux admissions, drain records, remove SwiftTerm/tmux/scripts/CI/runtime assumptions, retain one-release read/terminate compatibility.</strong></td><td>G7 plus clean install/upgrade audit and zero production references outside explicit compatibility reader.</td></tr>
+              <tr><td>WP10 · Legacy deletion</td><td>WP9, TG7</td><td><strong>Stop tmux admissions, drain records, remove SwiftTerm/tmux/scripts/CI/runtime assumptions, retain one-release read/terminate compatibility.</strong></td><td>TG7 plus clean install/upgrade audit and zero production references outside explicit compatibility reader.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1761,16 +1753,16 @@ swift build -c release --arch arm64 --arch x86_64</pre>
           <table>
             <thead><tr><th>ID</th><th>Blocking release objective</th><th>Measurement</th></tr></thead>
             <tbody>
-              <tr><td>SLO-01</td><td>Selected agent to first correct frame p95 ≤ 150 ms warm; ≤ 500 ms cold.</td><td>19-session replay corpus, 500 randomized switches, frame digest must match selected locator before timing ends.</td></tr>
+              <tr><td>SLO-01</td><td>Attach/retarget of an exact locator to first correct frame p95 ≤ 150 ms warm; ≤ 500 ms cold.</td><td>19-session replay corpus, 500 randomized attaches/retargets, frame digest must match the target locator before timing ends.</td></tr>
               <tr><td>SLO-02</td><td>Human event to PTY-write-queue acceptance overhead p95 ≤ 8 ms, p99 ≤ 16 ms.</td><td>Local timestamped 10,000-event key/text/IME/mouse mix, excluding provider processing.</td></tr>
-              <tr><td>SLO-03</td><td>Status event to visible reducer p95 ≤ 250 ms, p99 ≤ 500 ms.</td><td>10,000 local events including hierarchy rollups; source live and UI not occluded.</td></tr>
+              <tr><td>SLO-03</td><td>Status event to visible reducer p95 ≤ 250 ms, p99 ≤ 500 ms.</td><td>10,000 local events against the current flat status reducer; source live and UI not occluded. Hierarchy rollups are measured after The Queen's Hive.</td></tr>
               <tr><td>SLO-04</td><td>Zero byte loss, duplication, reordering, or wrong-target input/output.</td><td>100 MiB output per session, 1 MiB transactions, reconnect/crash at every chunk boundary, digest+sequence proof.</td></tr>
               <tr><td>SLO-05</td><td>Workspace/broker crash preserves 100% of live unaffected generations; adoption p95 ≤ 2 s.</td><td>1,000 failure-injection cycles across idle/draft/automation/output/resize; exact process and high-water evidence.</td></tr>
               <tr><td>SLO-06</td><td>19 idle hosts + broker CPU ≤ 1%; broker RSS ≤ 64 MiB; fresh headless host overhead ≤ 24 MiB.</td><td>Five-minute steady-state median after warmup on supported Intel and Apple Silicon, excluding provider processes.</td></tr>
-              <tr><td>SLO-07</td><td>One selected + two warm Workspace RSS ≤ 300 MiB; total terminal infrastructure for 19 sessions ≤ 1.5 GiB.</td><td>Representative TUI/screens/scrollback; report engine images separately and still enforce per-session cap.</td></tr>
-              <tr><td>SLO-08</td><td>Selected terminal sustains display refresh without off-screen GPU work; UI interaction remains 60 fps where display supports it.</td><td>High-output and rapid-switch Instruments trace; zero display-link/render submissions from destroyed/cold background surfaces.</td></tr>
+              <tr><td>SLO-07</td><td>Current supported attached-pane renderer profile within its measured budget; total terminal infrastructure for 19 sessions ≤ 1.5 GiB.</td><td>Representative TUI/screens/scrollback; report engine images separately and still enforce per-session cap. Record the future one-selected-plus-two-warm profile as nonblocking Split Horizon input.</td></tr>
+              <tr><td>SLO-08</td><td>Focused/visible terminal sustains display refresh without GPU work from detached or destroyed surfaces; AppKit interaction remains 60 fps where display supports it.</td><td>High-output and rapid attach-retarget Instruments trace; zero display-link/render submissions from destroyed or detached surfaces.</td></tr>
               <tr><td>SLO-09</td><td>Terminal storage ≤ 2 GiB/HIVE_HOME and stable through eight-hour soak.</td><td>19 sessions, scrollback/images/checkpoint churn, forced failures; bounded journals and exactly two checkpoints.</td></tr>
-              <tr><td>SLO-10</td><td>No focus steal, unauthorized observation/input/kill, false receipt, false terminal state, or unsigned/runtime-fetched code.</td><td>Security, UI, provider, Gatekeeper, offline-launch, capability epoch, cross-tenant and hostile-sequence suites.</td></tr>
+              <tr><td>SLO-10</td><td>No focus steal, unauthorized observation/input/kill, false receipt, false terminal state, or unsigned/runtime-fetched code.</td><td>Security, UI, provider, Gatekeeper, offline-launch, capability epoch, cross-instance and hostile-sequence suites under the current flat authorization.</td></tr>
             </tbody>
           </table>
         </div>
@@ -1783,14 +1775,14 @@ swift build -c release --arch arm64 --arch x86_64</pre>
               <li><code>test/terminal-corpus</code>: VT byte traces, checkpoints at adversarial splits, effects, images, modes, real Claude/Codex/Grok workflows, standalone Ghostty comparison.</li>
               <li><code>workspace/Tests/Fixtures</code>: wire, event, reducer, focus, geometry, accessibility, snapshot/rebase, failure-state, and settings fixtures generated from canonical schemas.</li>
               <li>Fault harnesses for process/PID reuse, fork/setsid/app-server trees, disk/full queues, socket/grant attacks, kill/restart at every transaction transition, and renderer/GPU failure.</li>
-              <li>Release evidence bundle: manifests/hashes/SBOM/licenses, ABI/symbol diff, architectures/min OS, signatures/notarization/Gatekeeper, clean-machine recordings, SLO report, gates G1–G7, and rollback drill.</li>
+              <li>Release evidence bundle: manifests/hashes/SBOM/licenses, ABI/symbol diff, architectures/min OS, signatures/notarization/Gatekeeper, clean-machine recordings, SLO report, gates TG1–TG7, and rollback drill.</li>
             </ul>
           </article>
           <article class="panel">
             <h3>“Ready to build” checklist</h3>
             <ul class="clean">
-              <li>All normative schemas, frame constants, state enums, limits, paths, permissions, build pins, shortcuts, settings, and postconditions in §§18–28 have one canonical machine-readable source in WP0/WP1.</li>
-              <li>Open Ghostty questions are isolated to G1 complete manual I/O and G2 complete checkpoint. Until both pass, tmux/SwiftTerm remain the admission fallback and no direct-session claim ships.</li>
+              <li>All normative schemas, frame constants, state enums, limits, paths, permissions, build pins, terminal-local shortcuts, settings, and postconditions in §§18–28 have one canonical machine-readable source in WP0/WP1.</li>
+              <li>Open Ghostty questions are isolated to TG1 complete manual I/O and TG2 complete checkpoint. Until both pass, tmux/SwiftTerm remain the admission fallback and no direct-session claim ships.</li>
               <li>Hierarchy-specific delegation, review routing, artifact records, and the production one-workbench UI belong to the next two design documents. They <em>extend</em> these locators, capabilities, events, statuses, and message receipts; nothing in T0–T7 consumes an implemented role, task, or gate record, and terminal ownership does not change when they arrive.</li>
               <li>A package is done only when its evidence is automated in CI or an explicitly named clean-machine release gate. “Works manually” and elapsed soak without bounds do not satisfy an exit criterion.</li>
             </ul>
