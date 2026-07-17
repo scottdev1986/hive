@@ -737,24 +737,33 @@ pub const InputArbiter = struct {
         };
         const ledger_idx = self.ledger.items.len - 1;
 
-        // Plaintext body no longer needed; keep only the encoded ledger copy.
+        // Plaintext body is done after encode — §22 zeroing on commit of the
+        // body buffer is fine here. The encoder output is RETAINED in the
+        // ledger for sink retry; a failed write is NOT a §22 zeroing trigger
+        // (those are commit-success / cancel / disconnect / exit), so we must
+        // not free `entry.encoded` on SinkWriteFailed (N2 constraint #1).
         self.zeroAndFreeAutomationBuffers();
 
         // Sink write after ledger is secured.
         const pending = &self.ledger.items[ledger_idx];
         self.sink.write(pending.encoded.?) catch {
             // N2: typed failure; evidence stays .committed; do NOT return Ok.
-            // high_water not advanced; pending blocks new automation until
-            // retry-to-written or cancel.
-            self.state = .free; // human paths free; automation gated by hasPendingUnwritten
+            // HOLD in .automation_committed (§22 table: BUFFERING+COMMIT →
+            // AUTOMATION_COMMITTED → FREE — FREE only after the commit effect
+            // finishes; write is part of that effect). Holding an automation
+            // state blocks every other writer with no new mechanism (claim /
+            // gesture / humanInput / new BEGIN all reject automation_*), and
+            // write_high_water cannot advance under an interleaved writer — so
+            // the planned range stays valid for retry.
+            self.state = .automation_committed;
             return error.SinkWriteFailed;
         };
         return self.markWritten(pending);
     }
 
     /// Cancellation before COMMIT writes nothing; after COMMIT returns stored
-    /// result. For committed-not-written, also drops the encoded pending so a
-    /// new automation transaction may begin (N2 explicit cancel).
+    /// result (§22). For committed-not-written, drops the retained encoded
+    /// pending and releases the hold to FREE so a new automation may begin.
     pub fn automationCancel(self: *InputArbiter, idempotency_key: []const u8) Error!?TransactionResult {
         try self.requireLive();
         if (self.findLedger(idempotency_key)) |entry| {
@@ -763,24 +772,31 @@ pub const InputArbiter = struct {
                 .byte_range = entry.byte_range,
                 .result_label = entry.result_label,
             };
-            // Drop pending write payload so single-writer is released.
+            // Explicit cancel of committed-not-written (N2 constraint #2b):
+            // must not be blocked by a pure stored-result short-circuit that
+            // leaves the hold in place — drop encoded so the hold ends.
             if (entry.encoded) |buf| {
                 std.crypto.secureZero(u8, buf);
                 self.allocator.free(buf);
                 entry.encoded = null;
+            }
+            if (self.state == .automation_committed or self.state == .automation_buffering) {
+                self.zeroAndFreeAutomationBuffers();
+                self.state = .free;
             }
             return result;
         }
         if (self.state != .automation_buffering) return error.NotReady;
         if (self.idempotency_key == null or !std.mem.eql(u8, self.idempotency_key.?, idempotency_key))
             return error.Malformed;
-        // Write nothing.
+        // Write nothing (cancel before first successful commit write).
         self.zeroAndFreeAutomationBuffers();
         self.state = .free;
         return null;
     }
 
     fn hasPendingUnwritten(self: *const InputArbiter) bool {
+        // Belt-and-suspenders with automation_committed hold; primary gate is state.
         for (self.ledger.items) |entry| {
             if (entry.evidence == .committed and entry.encoded != null) return true;
         }
@@ -795,18 +811,21 @@ pub const InputArbiter = struct {
                 .result_label = entry.result_label,
             };
         }
+        // Reuse retained encoded bytes (not re-encoded from a zeroed body).
         const bytes = entry.encoded orelse return error.Internal;
-        self.sink.write(bytes) catch return error.SinkWriteFailed;
+        self.sink.write(bytes) catch {
+            self.state = .automation_committed;
+            return error.SinkWriteFailed;
+        };
         return self.markWritten(entry);
     }
 
     fn markWritten(self: *InputArbiter, entry: *LedgerEntry) Error!TransactionResult {
         const start = entry.planned_start;
-        // Only advance high-water if this planned range is still at the tip
-        // (no intervening writes). Planned ranges start at high_water at commit.
-        if (self.write_high_water == start) {
-            self.write_high_water = start + entry.planned_len;
-        }
+        // Holding automation_committed prevented interleaved writers, so
+        // write_high_water still equals planned_start (N2 free property).
+        if (self.write_high_water != start) return error.Internal;
+        self.write_high_water = start + entry.planned_len;
         const range = ByteRange{ .start = start, .end_exclusive = start + entry.planned_len };
         entry.byte_range = range;
         entry.evidence = .written;
@@ -1591,8 +1610,8 @@ test "M8: claimRelease records submit vs cancel kind distinctly" {
     try std.testing.expectEqualStrings("\r\x03", sink.writes.items);
 }
 
-// N2: sink fail → typed error + evidence .committed; retry writes exactly once;
-// no double-write; no new-txn while pending.
+// N2: sink fail → typed error + evidence .committed + hold automation_committed;
+// retained encoded enables retry; no double-write; writers blocked by state.
 test "N2: sink write failure is typed; retry writes once; blocks new automation" {
     var sink = MockSink{ .allocator = std.testing.allocator };
     defer sink.deinit();
@@ -1627,12 +1646,15 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
         .none,
     ));
     try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+    // HOLD in automation_committed — not FREE (N2 constraint #3/#4).
+    try std.testing.expectEqual(State.automation_committed, arb.currentState());
     const entry = arb.findLedger("idemp_m4").?;
     try std.testing.expectEqual(EvidenceLevel.committed, entry.evidence);
-    try std.testing.expect(entry.byte_range == null); // planned only, not written claim
-    try std.testing.expect(entry.encoded != null);
+    try std.testing.expect(entry.byte_range == null); // planned only
+    try std.testing.expect(entry.encoded != null); // content retained for retry
+    const high_water = arb.write_high_water;
 
-    // New automation blocked while pending unwritten.
+    // Existing state machine blocks every other writer (no new mechanism).
     try std.testing.expectError(error.InputBusy, arb.automationBegin(.{
         .transaction_id = "txn_other",
         .idempotency_key = "idemp_other",
@@ -1645,8 +1667,12 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
         .provider_strategy = "p",
         .submit = .none,
     }));
+    try std.testing.expectError(error.InputBusy, arb.claimAcquire("v", "clm"));
+    try std.testing.expectError(error.InputBusy, arb.gestureInput("x"));
+    // high_water frozen while held — planned range still valid.
+    try std.testing.expectEqual(high_water, arb.write_high_water);
 
-    // Retry re-attempts sink write exactly once → written.
+    // Retry reuses retained encoded; writes exactly once → written → FREE.
     const second = try arb.automationCommit(
         "txn_m4",
         "idemp_m4",
@@ -1660,6 +1686,7 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
     );
     try std.testing.expectEqual(EvidenceLevel.written, second.evidence);
     try std.testing.expect(second.byte_range != null);
+    try std.testing.expectEqual(State.free, arb.currentState());
     try std.testing.expectEqualStrings("once-only", sink.writes.items);
 
     // Further commit is pure idempotent return — no second write.
@@ -1676,6 +1703,61 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
     );
     try std.testing.expectEqual(EvidenceLevel.written, third.evidence);
     try std.testing.expectEqualStrings("once-only", sink.writes.items);
+}
+
+test "N2: cancel of committed-not-written releases hold to FREE" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const body = "cancel-pending";
+    const dig = sha256(body);
+    try arb.automationBegin(.{
+        .transaction_id = "txn_c",
+        .idempotency_key = "idemp_c",
+        .expected_len = body.len,
+        .expected_digest = dig,
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_c",
+        .locator = "ses_c",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, body);
+    sink.fail_next = true;
+    try std.testing.expectError(error.SinkWriteFailed, arb.automationCommit(
+        "txn_c",
+        "idemp_c",
+        body.len,
+        dig,
+        1,
+        1,
+        "msg_c",
+        "ses_c",
+        .none,
+    ));
+    try std.testing.expectEqual(State.automation_committed, arb.currentState());
+    const cancelled = try arb.automationCancel("idemp_c");
+    try std.testing.expect(cancelled != null);
+    try std.testing.expectEqual(EvidenceLevel.committed, cancelled.?.evidence);
+    try std.testing.expectEqual(State.free, arb.currentState());
+    try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+    // New automation may begin after cancel.
+    try arb.automationBegin(.{
+        .transaction_id = "txn_next",
+        .idempotency_key = "idemp_next",
+        .expected_len = 1,
+        .expected_digest = sha256("z"),
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_n",
+        .locator = "ses_n",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    try std.testing.expectEqual(State.automation_buffering, arb.currentState());
 }
 
 // B2 POSITIVE CONTROL: allocator failure during operatorResume must not leave
