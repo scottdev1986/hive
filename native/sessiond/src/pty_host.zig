@@ -20,9 +20,14 @@ const c = @cImport({
     @cInclude("sys/wait.h");
     @cInclude("sys/proc_info.h");
     @cInclude("termios.h");
+    @cInclude("poll.h");
     @cInclude("errno.h");
     @cInclude("stdlib.h");
 });
+
+/// Bound on parent wait for the exec-barrier (R5). Wedged pre-exec children
+/// fail at this bound rather than hanging the daemon spawn path forever.
+pub const exec_barrier_timeout_ms: c_int = 5_000;
 
 // openpty lives in libSystem on macOS; the util.h header is absent from the
 // Zig Xcode overlay, so declare it explicitly (same ABI as util.h).
@@ -203,15 +208,18 @@ pub const PtyHost = struct {
 
         // R1: CLOEXEC exec-barrier pipe — real evidence of the exec transition.
         // Write end is FD_CLOEXEC: successful execve auto-closes it → parent reads EOF;
-        // failed execve → child write()s errno then _exit (async-signal-safe).
+        // ANY pre-exec / execve failure → child write()s errno then _exit (R2).
         var exec_pipe: [2]c_int = .{ -1, -1 };
         if (c.pipe(&exec_pipe) != 0) return error.SpawnFailed;
         errdefer {
             if (exec_pipe[0] >= 0) _ = c.close(exec_pipe[0]);
             if (exec_pipe[1] >= 0) _ = c.close(exec_pipe[1]);
         }
+        // R4: CLOEXEC setup must not silently no-op — the barrier depends on it.
         const wfd_flags = c.fcntl(exec_pipe[1], c.F_GETFD);
-        if (wfd_flags >= 0) _ = c.fcntl(exec_pipe[1], c.F_SETFD, wfd_flags | c.FD_CLOEXEC);
+        if (wfd_flags < 0) return error.SpawnFailed;
+        if (c.fcntl(exec_pipe[1], c.F_SETFD, wfd_flags | c.FD_CLOEXEC) < 0)
+            return error.SpawnFailed;
 
         const pid = c.fork();
         if (pid < 0) return error.SpawnFailed;
@@ -224,12 +232,14 @@ pub const PtyHost = struct {
             _ = c.setsid();
             _ = c.ioctl(slave, c.TIOCSCTTY, @as(c_int, 0));
             _ = c.ioctl(slave, c.TIOCSWINSZ, &ws);
-            if (c.dup2(slave, posix.STDIN_FILENO) < 0) c._exit(126);
-            if (c.dup2(slave, posix.STDOUT_FILENO) < 0) c._exit(126);
-            if (c.dup2(slave, posix.STDERR_FILENO) < 0) c._exit(126);
+            // R2: every pre-exec failure reports through the barrier — never bare
+            // _exit, which looks like EOF/success to the parent.
+            if (c.dup2(slave, posix.STDIN_FILENO) < 0) childBarrierFail(exec_pipe[1], 126);
+            if (c.dup2(slave, posix.STDOUT_FILENO) < 0) childBarrierFail(exec_pipe[1], 126);
+            if (c.dup2(slave, posix.STDERR_FILENO) < 0) childBarrierFail(exec_pipe[1], 126);
             if (slave > 2) _ = c.close(slave);
             if (cwd_z) |dir| {
-                if (c.chdir(dir.ptr) != 0) c._exit(125);
+                if (c.chdir(dir.ptr) != 0) childBarrierFail(exec_pipe[1], 125);
             }
             // Inherit parent environment (sessiond sets the child's env at host
             // composition time via the spawn wrapper when needed).
@@ -238,10 +248,7 @@ pub const PtyHost = struct {
             const env_c: [*c]const [*c]u8 = @ptrCast(std.c.environ);
             _ = c.execve(file, argv_c, env_c);
             // execve failed — write errno to the barrier pipe, then exit.
-            // write() and _exit are async-signal-safe.
-            const e: c_int = std.c._errno().*;
-            _ = c.write(exec_pipe[1], @ptrCast(&e), @sizeOf(c_int));
-            c._exit(127);
+            childBarrierFail(exec_pipe[1], 127);
         }
 
         // ── parent ─────────────────────────────────────────────────────────
@@ -252,7 +259,14 @@ pub const PtyHost = struct {
 
         // CLOEXEC on master so later execs in the host don't leak it.
         const flags = c.fcntl(master, c.F_GETFD);
-        if (flags >= 0) _ = c.fcntl(master, c.F_SETFD, flags | c.FD_CLOEXEC);
+        if (flags < 0) {
+            self.forceKillChildWithPid(@intCast(pid));
+            return error.SpawnFailed;
+        }
+        if (c.fcntl(master, c.F_SETFD, flags | c.FD_CLOEXEC) < 0) {
+            self.forceKillChildWithPid(@intCast(pid));
+            return error.SpawnFailed;
+        }
         // Non-blocking master for the read loop.
         const fl = c.fcntl(master, c.F_GETFL);
         if (fl >= 0) _ = c.fcntl(master, c.F_SETFL, fl | c.O_NONBLOCK);
@@ -267,35 +281,30 @@ pub const PtyHost = struct {
         self.input_seq = 0;
         self.write_queue.clearRetainingCapacity();
 
-        // R1: barrier read — EOF (0) ⇒ exec succeeded; sizeof(c_int) ⇒ exec failed.
-        var exec_errno: c_int = 0;
-        const barrier_n = c.read(exec_pipe[0], @ptrCast(&exec_errno), @sizeOf(c_int));
+        // R1/R3/R5: barrier wait — poll with timeout; read retries EINTR.
+        // EOF (0) ⇒ exec succeeded; sizeof(c_int) ⇒ child reported failure.
+        const barrier = readExecBarrier(exec_pipe[0], exec_barrier_timeout_ms);
         _ = c.close(exec_pipe[0]);
         exec_pipe[0] = -1;
-        if (barrier_n < 0) {
-            self.forceKillChild();
-            self.closeMaster();
-            self.spawned = false;
-            return error.SpawnFailed;
+        switch (barrier) {
+            .success => {},
+            .exec_failed => {
+                self.forceKillChild();
+                self.closeMaster();
+                self.spawned = false;
+                return error.ExecFailed;
+            },
+            .spawn_failed, .timeout => {
+                self.forceKillChild();
+                self.closeMaster();
+                self.spawned = false;
+                return error.SpawnFailed;
+            },
         }
-        if (barrier_n == @sizeOf(c_int)) {
-            // Child reported execve failure with errno — not a live provider.
-            self.forceKillChild();
-            self.closeMaster();
-            self.spawned = false;
-            return error.ExecFailed;
-        }
-        if (barrier_n != 0) {
-            self.forceKillChild();
-            self.closeMaster();
-            self.spawned = false;
-            return error.SpawnFailed;
-        }
-        // barrier_n == 0: write end closed by successful execve (CLOEXEC).
 
         // Identity tuple from process_inspector — record whatever proc_pidpath
         // returns WITHOUT gating liveness on a basename match (shebang shims
-        // resolve to node/sh/etc.; path match was the R1 false-negative).
+        // resolve to node/sh/etc.).
         var identity: process_inspector.ProcessIdentity = undefined;
         var observed = false;
         var attempts: usize = 0;
@@ -460,13 +469,76 @@ pub const PtyHost = struct {
 
     fn forceKillChild(self: *PtyHost) void {
         if (self.pid > 0) {
-            _ = c.kill(self.pid, c.SIGKILL);
-            var st: c_int = 0;
-            _ = c.waitpid(self.pid, &st, 0);
+            self.forceKillChildWithPid(self.pid);
             self.pid = -1;
         }
     }
+
+    fn forceKillChildWithPid(_: *PtyHost, child_pid: i32) void {
+        if (child_pid > 0) {
+            _ = c.kill(child_pid, c.SIGKILL);
+            var st: c_int = 0;
+            _ = c.waitpid(child_pid, &st, 0);
+        }
+    }
 };
+
+const BarrierResult = enum { success, exec_failed, spawn_failed, timeout };
+
+/// Parent-side barrier: poll with bound (R5), read with EINTR retry (R3).
+/// EOF ⇒ success; 4-byte errno ⇒ exec_failed.
+fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
+    // Wait until readable/HUP or timeout.
+    while (true) {
+        var pfd: c.struct_pollfd = .{
+            .fd = read_fd,
+            .events = c.POLLIN,
+            .revents = 0,
+        };
+        const pr = c.poll(&pfd, 1, timeout_ms);
+        if (pr < 0) {
+            if (std.c._errno().* == c.EINTR) continue;
+            return .spawn_failed;
+        }
+        if (pr == 0) return .timeout;
+        break;
+    }
+
+    var buf: [@sizeOf(c_int)]u8 = undefined;
+    var filled: usize = 0;
+    while (filled < buf.len) {
+        const n = c.read(read_fd, buf[filled..].ptr, buf.len - filled);
+        if (n == 0) {
+            // EOF: write end closed.
+            if (filled == 0) return .success;
+            return .spawn_failed; // partial errno frame
+        }
+        if (n < 0) {
+            if (std.c._errno().* == c.EINTR) continue; // R3
+            return .spawn_failed;
+        }
+        filled += @intCast(n);
+    }
+    return .exec_failed;
+}
+
+/// Child-side: report errno on the barrier (EINTR-retried), then _exit.
+/// write() and _exit are async-signal-safe. 4-byte write is ≤ PIPE_BUF atomic.
+fn childBarrierFail(write_fd: c_int, exit_code: u8) noreturn {
+    var e: c_int = std.c._errno().*;
+    var sent: usize = 0;
+    const bytes: [*]const u8 = @ptrCast(&e);
+    while (sent < @sizeOf(c_int)) {
+        const n = c.write(write_fd, @ptrCast(bytes + sent), @sizeOf(c_int) - sent);
+        if (n < 0) {
+            if (std.c._errno().* == c.EINTR) continue;
+            break; // parent will timeout rather than see false EOF-as-success
+        }
+        if (n == 0) break;
+        sent += @intCast(n);
+    }
+    c._exit(exit_code);
+}
 
 fn winsizeFromGeometry(g: Geometry) c.struct_winsize {
     return .{
@@ -874,6 +946,22 @@ test "negative spawn: nonexistent binary returns ExecFailed" {
     const missing = "/tmp/hive-pty-host-no-such-binary-9f3c2e1a";
     try testing.expectError(error.ExecFailed, host.spawn(.{
         .argv = &[_][]const u8{missing},
+        .geometry = defaultGeometry(),
+    }));
+    try testing.expect(!host.spawned);
+    try testing.expect(host.master_fd < 0);
+    try testing.expect(host.pid <= 0);
+}
+
+// R2 positive control: bad cwd → chdir fails → barrier reports failure.
+// Old bare _exit(125) looked like EOF/success and returned a live zombie readback.
+test "R2: bad cwd returns ExecFailed not live-child readback" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    try testing.expectError(error.ExecFailed, host.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .cwd = "/nonexistent-dir-hive-pty-host-r2-9f3c",
         .geometry = defaultGeometry(),
     }));
     try testing.expect(!host.spawned);
