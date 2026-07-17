@@ -2662,12 +2662,21 @@ const TimerClock = struct {
     }
 };
 
+const PersistenceCursor = struct {
+    checkpoint_seq: ?u64 = null,
+};
+
 fn persistTerminalState(
     state: *terminal_state.TerminalState,
     directory: std.fs.Dir,
+    cursor: *PersistenceCursor,
 ) !void {
     try state.persistJournal(directory);
-    if (state.checkpointAvailable()) try state.persistCheckpoints(directory);
+    if (!state.checkpointAvailable()) return;
+    const checkpoint_seq = checkpointWireSeq(state);
+    if (cursor.checkpoint_seq == checkpoint_seq) return;
+    try state.persistCheckpoints(directory);
+    cursor.checkpoint_seq = checkpoint_seq;
 }
 
 fn refreshRegistration(
@@ -2704,12 +2713,13 @@ fn runHostLoop(
     timer: *std.time.Timer,
     pty: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
+    persistence: *PersistenceCursor,
 ) !void {
     while (!core.terminated) {
         refreshRegistration(core, state);
         const now_ns = timer.read();
         if (core.lease.expired(now_ns)) {
-            try persistTerminalState(state, runtime.directory);
+            try persistTerminalState(state, runtime.directory, persistence);
             refreshRegistration(core, state);
             _ = try core.enforceVisibilityExpiry(now_ns);
             break;
@@ -2719,7 +2729,7 @@ fn runHostLoop(
             defer stream.close();
             const connection_now_ns = timer.read();
             if (core.lease.expired(connection_now_ns)) {
-                try persistTerminalState(state, runtime.directory);
+                try persistTerminalState(state, runtime.directory, persistence);
                 refreshRegistration(core, state);
                 _ = try core.enforceVisibilityExpiry(connection_now_ns);
                 break;
@@ -2734,13 +2744,13 @@ fn runHostLoop(
             continue;
         }
 
-        pty.writeDrainAll() catch |err| switch (err) {
+        _ = pty.writeDrain() catch |err| switch (err) {
             error.Closed => {},
             else => return err,
         };
         const output = pty.readAvailable() catch |err| switch (err) {
             error.Closed => {
-                try persistTerminalState(state, runtime.directory);
+                try persistTerminalState(state, runtime.directory, persistence);
                 refreshRegistration(core, state);
                 const response = try core.terminateBound(.immediate, null);
                 core.allocator.free(response);
@@ -2750,7 +2760,7 @@ fn runHostLoop(
         };
         if (output.bytes.len > 0) {
             try state.feedOutput(output.bytes);
-            try persistTerminalState(state, runtime.directory);
+            try persistTerminalState(state, runtime.directory, persistence);
             refreshRegistration(core, state);
         }
         std.Thread.sleep(std.time.ns_per_ms);
@@ -2857,7 +2867,8 @@ pub fn runHostRole(
     );
     defer arbiter.deinit();
     try queueInitialInput(allocator, real_encoder, &sink, boot.initial_input);
-    try persistTerminalState(&state, runtime.directory);
+    var persistence: PersistenceCursor = .{};
+    try persistTerminalState(&state, runtime.directory, &persistence);
 
     const host_identity = switch (process_inspector.observeProcess(c.getpid())) {
         .present => |identity| identity,
@@ -2953,7 +2964,7 @@ pub fn runHostRole(
     );
     defer allocator.free(broker_build_id);
     core.broker_build_id = broker_build_id;
-    try runHostLoop(&runtime, &core, &timer, &pty, &state);
+    try runHostLoop(&runtime, &core, &timer, &pty, &state, &persistence);
 }
 
 test "visibility lease self-expires at the generated fifteen second bound" {
@@ -3059,6 +3070,23 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
     try state.tryCheckpoint();
     try std.testing.expect(state.checkpointAvailable());
     try std.testing.expect(checkpointWireSeq(&state) == state.outputSeq());
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var cursor: PersistenceCursor = .{};
+    try persistTerminalState(&state, temporary.dir, &cursor);
+    const first_checkpoint = try std.posix.fstatat(
+        temporary.dir.fd,
+        "checkpoint-0.bin",
+        std.posix.AT.SYMLINK_NOFOLLOW,
+    );
+    try state.feedOutput("tail");
+    try persistTerminalState(&state, temporary.dir, &cursor);
+    const unchanged_checkpoint = try std.posix.fstatat(
+        temporary.dir.fd,
+        "checkpoint-0.bin",
+        std.posix.AT.SYMLINK_NOFOLLOW,
+    );
+    try std.testing.expectEqual(first_checkpoint.ino, unchanged_checkpoint.ino);
     // No real_engine.deinit(): TerminalState owns the injected engine and its
     // deferred deinit is the single destruction path.
 }
