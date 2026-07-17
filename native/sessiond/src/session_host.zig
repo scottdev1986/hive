@@ -1308,19 +1308,43 @@ fn killAndWait(pid: i32) void {
     if (pid <= 0) return;
     _ = c.kill(pid, c.SIGKILL);
     var status: c_int = 0;
-    while (c.waitpid(pid, &status, 0) < 0) {}
+    while (true) {
+        const waited = c.waitpid(pid, &status, 0);
+        if (waited == pid) return;
+        if (waited >= 0) continue;
+        switch (std.posix.errno(waited)) {
+            .INTR => continue,
+            .CHILD => return,
+            else => return,
+        }
+    }
 }
 
-fn setControlTimeout(fd: std.posix.fd_t) !void {
+fn setControlTimeoutMs(fd: std.posix.fd_t, timeout_ms: u64) !void {
+    if (timeout_ms == 0) return error.InvalidControlTimeout;
     const timeout: c.struct_timeval = .{
-        .tv_sec = @intCast(generated.limits.control_rpc_timeout_ms / std.time.ms_per_s),
+        .tv_sec = @intCast(timeout_ms / std.time.ms_per_s),
         .tv_usec = @intCast(
-            (generated.limits.control_rpc_timeout_ms % std.time.ms_per_s) * std.time.us_per_ms,
+            (timeout_ms % std.time.ms_per_s) * std.time.us_per_ms,
         ),
     };
     if (c.setsockopt(fd, c.SOL_SOCKET, c.SO_RCVTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0 or
         c.setsockopt(fd, c.SOL_SOCKET, c.SO_SNDTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0)
         return error.ControlTimeoutUnavailable;
+}
+
+fn setControlTimeout(fd: std.posix.fd_t) !void {
+    return setControlTimeoutMs(fd, generated.limits.control_rpc_timeout_ms);
+}
+
+fn leaseBoundControlTimeoutMs(lease: VisibilityLease, now_ns: u64) !u64 {
+    if (now_ns >= lease.expires_mono_ns) return error.VisibilityExpired;
+    const remaining_ms = try std.math.divCeil(
+        u64,
+        lease.expires_mono_ns - now_ns,
+        std.time.ns_per_ms,
+    );
+    return @min(remaining_ms, generated.limits.control_rpc_timeout_ms);
 }
 
 fn socketEvidenceAt(directory: std.fs.Dir, name: []const u8) !broker.SocketEvidence {
@@ -1485,11 +1509,11 @@ fn executableBuildHash(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
 const LaunchClient = struct {
     allocator: std.mem.Allocator,
     parsed: ParsedRegistration,
-    host_pid: i32,
     wire: broker.WireHostClient,
 
     fn deinit(self: *LaunchClient) void {
-        if (self.host_pid > 0) killAndWait(self.host_pid);
+        // Closing broker control must not kill a successfully registered host.
+        // The host's independent visibility lease owns broker-crash cleanup.
         self.wire.deinit();
         self.parsed.deinit(self.allocator);
         self.* = undefined;
@@ -1634,7 +1658,6 @@ pub const ProductionHostLauncher = struct {
         client.* = .{
             .allocator = allocator,
             .parsed = parsed,
-            .host_pid = child.pid,
             .wire = wire,
         };
         try self.clients.append(self.allocator, client);
@@ -2633,8 +2656,18 @@ fn runHostLoop(
 
         if (try runtime.accept()) |stream| {
             defer stream.close();
-            try setControlTimeout(stream.handle);
-            serveHostConnection(core.allocator, stream, core, timer.read()) catch |err| {
+            const connection_now_ns = timer.read();
+            if (core.lease.expired(connection_now_ns)) {
+                try persistTerminalState(state, runtime.directory);
+                refreshRegistration(core, state);
+                _ = try core.enforceVisibilityExpiry(connection_now_ns);
+                break;
+            }
+            try setControlTimeoutMs(
+                stream.handle,
+                try leaseBoundControlTimeoutMs(core.lease, connection_now_ns),
+            );
+            serveHostConnection(core.allocator, stream, core, connection_now_ns) catch |err| {
                 std.log.err("host connection refused: {s}", .{@errorName(err)});
             };
             continue;
@@ -2906,6 +2939,23 @@ test "visibility positive control rejects stale and cross-workspace renewals" {
     );
     try lease.renew("workspace-1", 8, 2_000);
     try std.testing.expectEqual(@as(u64, 8), lease.open_terminal_revision);
+}
+
+test "accepted broker sockets cannot outlive the visibility deadline" {
+    const start_ns: u64 = 1_000;
+    const lease = try VisibilityLease.initial("workspace-1", 7, start_ns);
+    try std.testing.expectEqual(
+        generated.limits.control_rpc_timeout_ms,
+        try leaseBoundControlTimeoutMs(lease, start_ns),
+    );
+    try std.testing.expectEqual(
+        @as(u64, 1),
+        try leaseBoundControlTimeoutMs(lease, lease.expires_mono_ns - 1),
+    );
+    try std.testing.expectError(
+        error.VisibilityExpired,
+        leaseBoundControlTimeoutMs(lease, lease.expires_mono_ns),
+    );
 }
 
 test "bridge export is copied into the caller Zig allocator" {
