@@ -122,6 +122,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     session_host_module.addImport("broker", broker_module);
+    session_host_module.addImport("boot_envelope", boot_envelope_module);
     session_host_module.addImport("session_protocol_generated", generated);
     session_host_module.addImport("protocol", test_module);
     session_host_module.addImport("input_arbiter", input_arbiter_module);

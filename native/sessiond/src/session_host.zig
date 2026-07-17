@@ -5,6 +5,7 @@
 //! broker.zig; this module implements only the host process and its launcher.
 
 const std = @import("std");
+const boot_envelope = @import("boot_envelope");
 const broker = @import("broker");
 const generated = @import("session_protocol_generated");
 const input_arbiter = @import("input_arbiter");
@@ -36,90 +37,10 @@ test {
     std.testing.refAllDecls(@This());
 }
 
-/// Fixed descriptor inherited by `hive-sessiond host`. The descriptor number
-/// is not secret; every sensitive launch byte travels inside the socketpair.
-pub const inherited_control_fd: std.posix.fd_t = 3;
-
-/// Private fork/exec bootstrap envelope. This is not a §20 endpoint protocol:
-/// it exists only on the inherited SOCK_STREAM socketpair before the generated
-/// HELLO/HOST_REGISTER exchange. The fixed 48-byte header is:
-///   0..4   ASCII "HVB1" (magic and version)
-///   4..8   big-endian u32 CREATE_BEGIN JSON byte length
-///   8..12  big-endian u32 initial-input byte length
-///   12..16 reserved zero bytes (nonzero fails closed)
-///   16..48 raw 32-byte adoption secret
-/// It is followed immediately by the exact UTF-8 JSON bytes and then the exact
-/// opaque initial-input bytes, with no terminator, padding, or trailer. The
-/// launcher writes the complete envelope, then a generated broker HELLO on the
-/// same fd. The host consumes the complete envelope before opening host.sock or
-/// spawning the provider; after those are ready it reads HELLO and performs
-/// WELCOME, HOST_REGISTER, and HOST_REGISTER accepted on that same fd.
-const boot_magic = "HVB1";
-const boot_header_bytes: usize = 48;
-
-pub const BootMessage = struct {
-    spec_json: []u8,
-    initial_input: []u8,
-    adoption_secret: [32]u8,
-
-    pub fn deinit(self: *BootMessage, allocator: std.mem.Allocator) void {
-        allocator.free(self.spec_json);
-        std.crypto.secureZero(u8, self.initial_input);
-        allocator.free(self.initial_input);
-        std.crypto.secureZero(u8, &self.adoption_secret);
-        self.* = undefined;
-    }
-};
-
-pub fn writeBootMessage(
-    writer: anytype,
-    spec_json: []const u8,
-    initial_input: []const u8,
-    adoption_secret: [32]u8,
-) !void {
-    if (spec_json.len > generated.limits.control_json_bytes)
-        return error.SpecTooLarge;
-    if (initial_input.len > generated.limits.automated_message_bytes)
-        return error.InitialInputTooLarge;
-
-    var header: [boot_header_bytes]u8 = @splat(0);
-    @memcpy(header[0..boot_magic.len], boot_magic);
-    std.mem.writeInt(u32, header[4..8], @intCast(spec_json.len), .big);
-    std.mem.writeInt(u32, header[8..12], @intCast(initial_input.len), .big);
-    @memcpy(header[16..48], &adoption_secret);
-    try writer.writeAll(&header);
-    try writer.writeAll(spec_json);
-    try writer.writeAll(initial_input);
-}
-
-pub fn readBootMessage(allocator: std.mem.Allocator, reader: anytype) !BootMessage {
-    var header: [boot_header_bytes]u8 = undefined;
-    try reader.readNoEof(&header);
-    if (!std.mem.eql(u8, header[0..boot_magic.len], boot_magic) or
-        !std.mem.allEqual(u8, header[12..16], 0))
-        return error.InvalidBootMessage;
-
-    const spec_len = std.mem.readInt(u32, header[4..8], .big);
-    const input_len = std.mem.readInt(u32, header[8..12], .big);
-    if (spec_len > generated.limits.control_json_bytes or
-        input_len > generated.limits.automated_message_bytes)
-        return error.InvalidBootMessage;
-
-    const spec = try allocator.alloc(u8, spec_len);
-    errdefer allocator.free(spec);
-    const input = try allocator.alloc(u8, input_len);
-    errdefer {
-        std.crypto.secureZero(u8, input);
-        allocator.free(input);
-    }
-    try reader.readNoEof(spec);
-    try reader.readNoEof(input);
-    return .{
-        .spec_json = spec,
-        .initial_input = input,
-        .adoption_secret = header[16..48].*,
-    };
-}
+pub const inherited_control_fd = boot_envelope.inherited_control_fd;
+pub const BootMessage = boot_envelope.Message;
+pub const writeBootMessage = boot_envelope.write;
+pub const readBootMessage = boot_envelope.read;
 
 /// Host-owned visibility clock. Renewal and expiry use only the injected
 /// monotonic value; broker liveness is intentionally irrelevant.
@@ -2893,30 +2814,6 @@ pub fn runHostRole(
     defer allocator.free(broker_build_id);
     core.broker_build_id = broker_build_id;
     try runHostLoop(&runtime, &core, &timer, &pty, &state);
-}
-
-test "private boot message keeps secret and initial input off argv and env" {
-    var bytes: std.ArrayList(u8) = .{};
-    defer bytes.deinit(std.testing.allocator);
-    const secret: [32]u8 = @splat(0xa5);
-    try writeBootMessage(bytes.writer(std.testing.allocator), "{\"schemaVersion\":1}", "initial", secret);
-
-    var stream = std.io.fixedBufferStream(bytes.items);
-    var decoded = try readBootMessage(std.testing.allocator, stream.reader());
-    defer decoded.deinit(std.testing.allocator);
-    try std.testing.expectEqualStrings("{\"schemaVersion\":1}", decoded.spec_json);
-    try std.testing.expectEqualStrings("initial", decoded.initial_input);
-    try std.testing.expectEqualSlices(u8, &secret, &decoded.adoption_secret);
-}
-
-test "boot positive control rejects bad magic before allocation" {
-    var header: [boot_header_bytes]u8 = @splat(0);
-    @memcpy(header[0..4], "NOPE");
-    var stream = std.io.fixedBufferStream(&header);
-    try std.testing.expectError(
-        error.InvalidBootMessage,
-        readBootMessage(std.testing.allocator, stream.reader()),
-    );
 }
 
 test "visibility lease self-expires at the generated fifteen second bound" {
