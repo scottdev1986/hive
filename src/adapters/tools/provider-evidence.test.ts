@@ -18,20 +18,25 @@ import {
 import {
   classifyProviderObservation,
   parseAttemptContext,
+  receiptForBoundary,
+  receiptForLostBoundary,
   CLAUDE_PERMISSION_PROMPT_TYPE,
 } from "./provider-evidence";
 import {
+  adapterEvidenceIsStructurallyGrounded,
   buildProviderConformanceReport,
   PROVIDER_CONFORMANCE_REPORT,
 } from "./provider-conformance-report";
 import {
   ABSENT_FIELD_CONTROLS,
+  ADAPTER_EVIDENCE_SURFACE_FILES,
   CONFORMANCE_PROBES,
   EMITTABLE_PROBES,
   GROK_HOOK_ABSENCE_PROBES,
   IN_DOUBT_NEGATIVE_CONTROLS,
   TG4_SCENARIO_FIXTURES,
   attemptFor,
+  hasRequiredEvidenceGrounding,
 } from "./__fixtures__/tg4/corpus";
 
 /**
@@ -92,8 +97,8 @@ function section25Expectation(
     case "grok-tui":
       switch (scenario) {
         case "idle":
-          // summary.json mtime advance (grok.ts), not turn_completed
-          return { readiness: "ready", receipt: "provider-observed" };
+          // summary.json mtime advance is artifact activity, not idle/ready.
+          return { readiness: "evidence-absent", receipt: "provider-observed" };
         case "busy":
           // no turn stream in grok.ts
           return { readiness: "capability-absent", receipt: "capability-absent" };
@@ -149,7 +154,7 @@ describe("WP8 provider manifests", () => {
       .not.toContain("awaiting-approval");
   });
 
-  test("Grok marks updates.jsonl/turn_completed unavailable; summary mtime available", () => {
+  test("Grok marks ready and turn stream unavailable; summary mtime is activity", () => {
     const grok = PROVIDER_MANIFESTS["grok-tui"];
     const updates = grok.eventSchemas.find((e) => e.id === "hive.grok.updates-jsonl");
     expect(updates?.available).toBe(false);
@@ -157,7 +162,12 @@ describe("WP8 provider manifests", () => {
     const summary = grok.eventSchemas.find((e) => e.id === "hive.grok.summary-mtime");
     expect(summary?.available).toBe(true);
     expect(summary?.sourceCitations.some((c) => c.includes("grok.ts:"))).toBe(true);
+    expect(grok.readinessStates.value).not.toContain("ready");
     expect(grok.readinessStates.value).not.toContain("busy");
+    expect(
+      grok.eventSchemas.find((e) => e.id === "hive.grok.preassigned-session")
+        ?.role,
+    ).toBe("session-identity");
   });
 });
 
@@ -221,6 +231,26 @@ describe("WP8 attempt-context fail-closed", () => {
       validAttempt,
     );
     expect(good.receipt).toBe("provider-observed");
+  });
+
+  test("exported receipt helpers parse misspelled attempt keys fail-closed", () => {
+    const broken = {
+      atemptId: "txn-1",
+      committed: true,
+      providerSessionId: session,
+      committedAt: validAttempt.committedAt,
+    };
+    const observedAt = "2026-07-16T12:00:02.000Z";
+
+    expect(receiptForBoundary(broken, session, observedAt).receipt)
+      .toBe("evidence-absent");
+    expect(receiptForLostBoundary(broken, session, observedAt).receipt)
+      .toBe("evidence-absent");
+
+    expect(receiptForBoundary(validAttempt, session, observedAt).receipt)
+      .toBe("provider-observed");
+    expect(receiptForLostBoundary(validAttempt, session, observedAt).receipt)
+      .toBe("attempt-in-doubt");
   });
 
   test("without attempt context, receipt stays evidence-absent", () => {
@@ -311,7 +341,7 @@ describe("WP8 readiness prerequisites", () => {
     ).toBe("evidence-absent");
   });
 
-  test("Grok ready uses summary mtime, not turn_completed", () => {
+  test("Grok summary mtime proves activity receipt, never ready", () => {
     expect(
       classifyProviderObservation("grok-tui", {
         processState: "alive",
@@ -320,16 +350,30 @@ describe("WP8 readiness prerequisites", () => {
       }).readiness,
     ).toBe("evidence-absent");
 
-    expect(
-      classifyProviderObservation("grok-tui", {
+    const activity = classifyProviderObservation(
+      "grok-tui",
+      {
         processState: "alive",
         sessionId: "g",
         summaryLocated: true,
         previousSummaryMtimeMs: 1,
         summaryMtimeMs: 2,
         timestamp: "2026-07-16T12:00:02.000Z",
-      }).readiness,
-    ).toBe("ready");
+      },
+      attemptFor("g", "2026-07-16T12:00:01.000Z"),
+    );
+    expect(activity.readiness).toBe("evidence-absent");
+    expect(activity.receipt).toBe("provider-observed");
+
+    const withoutAttempt = classifyProviderObservation("grok-tui", {
+      processState: "alive",
+      sessionId: "g",
+      summaryLocated: true,
+      previousSummaryMtimeMs: 1,
+      summaryMtimeMs: 2,
+      timestamp: "2026-07-16T12:00:02.000Z",
+    });
+    expect(withoutAttempt.receipt).toBe("evidence-absent");
   });
 });
 
@@ -400,7 +444,10 @@ describe("WP8 TG4 scenario corpus", () => {
         control.correctlySpelled,
         control.attempt,
       );
-      expect(hit.readiness).not.toBe("evidence-absent");
+      expect(
+        hit.readiness !== "evidence-absent" ||
+          hit.receipt !== "evidence-absent",
+      ).toBe(true);
     }
   });
 
@@ -425,30 +472,38 @@ describe("WP8 TG4 scenario corpus", () => {
 });
 
 describe("WP8 emittable probes and conformance report", () => {
-  test("every CONFORMANCE_PROBE is emittable (adapter-cited)", () => {
+  test("adapter-origin probes cite and structurally validate the named adapter surface", () => {
     expect(CONFORMANCE_PROBES.length).toBeGreaterThan(0);
     expect(CONFORMANCE_PROBES.length).toBe(EMITTABLE_PROBES.length);
     for (const probe of CONFORMANCE_PROBES) {
-      expect(probe.sourceCitations.length).toBeGreaterThan(0);
-      for (const citation of probe.sourceCitations) {
-        expect(citation.length).toBeGreaterThan(0);
-        // Must point at repo source, not invent "collector says so"
+      expect(hasRequiredEvidenceGrounding(probe)).toBe(true);
+      if (probe.evidenceOrigins.includes("adapter")) {
+        expect(probe.adapterSurface).toBeDefined();
+        const adapterFile = ADAPTER_EVIDENCE_SURFACE_FILES[probe.adapterSurface!];
         expect(
-          citation.includes("src/") ||
-            citation.includes("docs/") ||
-            citation.includes("schemas/"),
+          probe.sourceCitations.some((citation) =>
+            citation.startsWith(`${adapterFile}:`)
+          ),
         ).toBe(true);
+        expect(adapterEvidenceIsStructurallyGrounded(probe)).toBe(true);
       }
     }
+
+    const adapterProbe = CONFORMANCE_PROBES.find((probe) =>
+      probe.evidenceOrigins.includes("adapter")
+    )!;
+    expect(
+      adapterEvidenceIsStructurallyGrounded({
+        ...adapterProbe,
+        sourceCitations: ["src/schemas/event.ts:1-70"],
+      }),
+    ).toBe(false);
   });
 
-  test("TG4 fixtures are also adapter-cited (emittable discipline)", () => {
+  test("TG4 fixtures declare host versus adapter evidence origins", () => {
     for (const fixture of TG4_SCENARIO_FIXTURES) {
-      expect(
-        fixture.sourceCitations.some(
-          (c) => c.includes("src/") || c.includes("docs/"),
-        ),
-      ).toBe(true);
+      expect(hasRequiredEvidenceGrounding(fixture)).toBe(true);
+      expect(adapterEvidenceIsStructurallyGrounded(fixture)).toBe(true);
     }
   });
 
@@ -472,18 +527,30 @@ describe("WP8 emittable probes and conformance report", () => {
         if (row.status === "provable-today") {
           expect(row.evidence).toContain("emittable probe");
           expect(row.evidence).toMatch(/cited /);
+          expect(row.evidenceOrigins.length).toBeGreaterThan(0);
+          if (row.evidenceOrigins.includes("adapter")) {
+            expect(row.evidence).toContain("adapter source structurally validated");
+          }
+        } else {
+          expect(row.evidenceOrigins).toEqual([]);
         }
       }
       for (const row of surface.receipt) {
         if (row.status === "provable-today") {
           expect(row.evidence).toContain("emittable probe");
           expect(row.evidence).toMatch(/cited /);
+          expect(row.evidenceOrigins.length).toBeGreaterThan(0);
+          if (row.evidenceOrigins.includes("adapter")) {
+            expect(row.evidence).toContain("adapter source structurally validated");
+          }
+        } else {
+          expect(row.evidenceOrigins).toEqual([]);
         }
       }
     }
   });
 
-  test("Grok busy and awaiting-approval unavailable; ready via summary is provable", () => {
+  test("Grok busy, awaiting-approval, and ready are unavailable", () => {
     const grok = PROVIDER_CONFORMANCE_REPORT.surfaces.find(
       (s) => s.surface === "grok-tui",
     )!;
@@ -492,7 +559,7 @@ describe("WP8 emittable probes and conformance report", () => {
     expect(grok.readiness.find((r) => r.kind === "awaiting-approval")?.status)
       .toBe("unavailable");
     expect(grok.readiness.find((r) => r.kind === "ready")?.status)
-      .toBe("provable-today");
+      .toBe("unavailable");
   });
 
   test("report matches live rebuild", () => {

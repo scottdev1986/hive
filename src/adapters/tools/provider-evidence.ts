@@ -20,7 +20,8 @@ import {
  * - Invalid/misspelled attempt fields → treat as no attempt (evidence-absent).
  *
  * Grok: grounded only in what grok.ts reads (summary.json location/mtime +
- * preassigned session id + process health). No updates.jsonl / turn_completed.
+ * preassigned session identity). Process health is a host fact. No
+ * updates.jsonl / turn_completed.
  */
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -114,12 +115,13 @@ function capabilityAbsent(
   );
 }
 
-/** Receipt for a post-injection boundary. attempt must already be schema-valid. */
+/** Receipt for a post-injection boundary. Exported raw input parses fail-closed. */
 export function receiptForBoundary(
-  attempt: AttemptContext | undefined,
+  attemptRaw: unknown,
   observationSessionId: string | undefined,
   observationTimestamp: string | undefined,
 ): { receipt: ReceiptEvidenceKind; path: string; means: string } {
+  const attempt = parseAttemptContext(attemptRaw);
   if (attempt === undefined) {
     return {
       receipt: "evidence-absent",
@@ -173,10 +175,11 @@ export function receiptForBoundary(
  * Missing session, missing timestamp, or pre-commit timestamp → evidence-absent.
  */
 export function receiptForLostBoundary(
-  attempt: AttemptContext | undefined,
+  attemptRaw: unknown,
   observationSessionId: string | undefined,
   lossTimestamp: string | undefined,
 ): { receipt: ReceiptEvidenceKind; path: string; means: string } {
+  const attempt = parseAttemptContext(attemptRaw);
   if (attempt === undefined || attempt.committed !== true) {
     return {
       receipt: "evidence-absent",
@@ -758,13 +761,13 @@ export function classifyGrokObservation(
     );
   }
 
-  // Ready requires summary.json located for this exact session + mtime advance
-  // (grok.ts:353-414 GrokSummaryLocation.mtimeMs).
+  // summary.json located for this exact session + mtime advance proves artifact
+  // activity only (grok.ts:353-414 GrokSummaryLocation.mtimeMs), never idle/ready.
   if (summaryLocated !== true) {
     return absent(
       surface,
       "summaryLocated",
-      "summary.json not located for session — grok.ts only proves readiness via summary discovery",
+      "summary.json not located for session — no artifact activity evidence",
     );
   }
   if (summaryMtimeMs === undefined || previousSummaryMtimeMs === undefined) {
@@ -787,13 +790,13 @@ export function classifyGrokObservation(
   const r = receiptForBoundary(attempt, sessionId, observedAt);
   return result(
     surface,
-    "ready",
+    "evidence-absent",
     r.receipt,
-    "processState+sessionId+summaryLocated+summaryMtime-advance",
-    "alive process, exact session, summary.json located with advanced mtime (grok.ts)",
+    "sessionId+summaryLocated+summaryMtime-advance",
+    "exact session summary.json mtime advanced after the attempt; this is artifact activity, not an idle/ready boundary",
     r.receipt === "provider-observed"
-      ? TERMINAL_EVIDENCE_CONTRACTS["provider-observed"].excludes
-      : ["provider-observed", "turn-busy-state", "updates.jsonl"],
+      ? [...TERMINAL_EVIDENCE_CONTRACTS["provider-observed"].excludes, "ready"]
+      : ["provider-observed", "ready", "turn-busy-state", "updates.jsonl"],
   );
 }
 

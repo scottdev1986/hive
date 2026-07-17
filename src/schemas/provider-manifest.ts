@@ -157,6 +157,7 @@ export const EventSchemaIdentifierSchema = z.strictObject({
     "approval",
     "native-session",
     "native-turn",
+    "session-identity",
     "process-health",
     "transcript-activity",
   ]),
@@ -243,6 +244,11 @@ export const ConformanceLevelStatusSchema = z.enum([
 ]);
 export type ConformanceLevelStatus = z.infer<typeof ConformanceLevelStatusSchema>;
 
+/** Whether a probe surface comes from a provider adapter or Hive host state. */
+export const PROVIDER_EVIDENCE_ORIGINS = ["adapter", "host"] as const;
+export const ProviderEvidenceOriginSchema = z.enum(PROVIDER_EVIDENCE_ORIGINS);
+export type ProviderEvidenceOrigin = z.infer<typeof ProviderEvidenceOriginSchema>;
+
 export const ProviderConformanceReportSchema = z.strictObject({
   schemaVersion: z.literal(1),
   generatedFor: z.literal("WP8-early-slice-TG4"),
@@ -259,6 +265,8 @@ export const ProviderConformanceReportSchema = z.strictObject({
           evidence: z.string().min(1),
           /** Observation path that produced this kind, if provable. */
           collectorPath: z.string().min(1).nullable(),
+          /** Empty only when the row is unavailable. */
+          evidenceOrigins: z.array(ProviderEvidenceOriginSchema),
         }),
       ),
       receipt: z.array(
@@ -267,6 +275,7 @@ export const ProviderConformanceReportSchema = z.strictObject({
           status: ConformanceLevelStatusSchema,
           evidence: z.string().min(1),
           collectorPath: z.string().min(1).nullable(),
+          evidenceOrigins: z.array(ProviderEvidenceOriginSchema),
         }),
       ),
     }),

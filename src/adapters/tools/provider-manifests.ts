@@ -519,7 +519,7 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     {
       id: "hive.grok.preassigned-session",
       providerName: "--session-id preassigned at spawn",
-      role: "process-health",
+      role: "session-identity",
       available: true,
       sourceCitations: [
         "src/adapters/tools/grok.ts:18-20",
@@ -587,9 +587,8 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     },
   ],
   readinessStates: {
-    // ready via summary mtime; busy unavailable (no turn stream in grok.ts)
+    // Neither ready nor busy is available: summary mtime is artifact activity.
     value: [
-      "ready",
       "disconnected",
       "restarting",
       "evidence-absent",
@@ -597,7 +596,7 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     ],
     sourceCitations: [
       "docs/design/terminal-stack-transition.html §25 Grok TUI row (conservative readiness)",
-      "src/adapters/tools/grok.ts:270-279,353-414 (summary mtime only)",
+      "src/adapters/tools/grok.ts:270-279,353-414 (summary mtime is artifact activity only)",
       "src/adapters/tools/provider-evidence.ts classifyGrokObservation",
     ],
   },
@@ -648,6 +647,7 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
       "awaiting-approval-classification",
       "turn-boundary-hook",
       "turn-busy-state (no turn stream)",
+      "idle/ready boundary (summary mtime proves artifact activity only)",
       "updates.jsonl / turn_completed reads",
       "native-structured-input-endpoint",
     ],

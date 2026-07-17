@@ -1,35 +1,80 @@
 import type {
   AttemptContext,
+  ProviderEvidenceOrigin,
   ProviderSurfaceId,
   Tg4Scenario,
 } from "../../../../schemas/provider-manifest";
 
 /**
- * TG4 recorded-shape fixture corpus — emittable observations only.
- * Every observation shape is grounded in adapter source via sourceCitations
- * on CONFORMANCE_PROBES / fixture notes. No fabricated codex-tui
+ * TG4 recorded-shape fixture corpus — grounded observations only.
+ * evidenceOrigins distinguishes provider-adapter emission from host/schema
+ * facts, and adapterSurface names every claimed adapter surface. No fabricated codex-tui
  * Notification/approval-request payloads; capability absences use
  * capabilityProbe shapes.
  */
 
 export interface Tg4Fixture {
   surface: ProviderSurfaceId;
+  evidenceOrigins: readonly ProviderEvidenceOrigin[];
+  adapterSurface?: AdapterEvidenceSurface;
   scenario: Tg4Scenario;
   observation: unknown;
   attempt?: AttemptContext;
   /** Human note; not substring-asserted. */
   note: string;
-  /** Adapter source grounding this observation shape. */
+  /** Sources grounding this observation shape. */
   sourceCitations: readonly string[];
 }
 
 export interface EmittableProbe {
   surface: ProviderSurfaceId;
+  evidenceOrigins: readonly ProviderEvidenceOrigin[];
+  adapterSurface?: AdapterEvidenceSurface;
   label: string;
   observation: unknown;
   attempt?: AttemptContext;
-  /** Required: adapter source that can emit this shape. */
+  /** Grounding sources; adapter origin requires the named adapter file. */
   sourceCitations: readonly string[];
+}
+
+export const ADAPTER_EVIDENCE_SURFACE_FILES = {
+  "claude:Stop": "src/adapters/tools/claude.ts",
+  "claude:UserPromptSubmit": "src/adapters/tools/claude.ts",
+  "claude:PostToolUse": "src/adapters/tools/claude.ts",
+  "claude:Notification": "src/adapters/tools/claude.ts",
+  "codex:Stop": "src/adapters/tools/codex.ts",
+  "codex:UserPromptSubmit": "src/adapters/tools/codex.ts",
+  "codex:PostToolUse": "src/adapters/tools/codex.ts",
+  "codex:registered-hooks": "src/adapters/tools/codex.ts",
+  "codex-app-server:turn/completed": "src/adapters/tools/codex-app-server.ts",
+  "codex-app-server:turn/started": "src/adapters/tools/codex-app-server.ts",
+  "codex-app-server:requestApproval": "src/adapters/tools/codex-app-server.ts",
+  "codex-app-server:unsupported-request": "src/adapters/tools/codex-app-server.ts",
+  "grok:summary-reader": "src/adapters/tools/grok.ts",
+  "grok:no-turn-stream": "src/adapters/tools/grok.ts",
+  "grok:hooks-disabled": "src/adapters/tools/grok.ts",
+} as const;
+export type AdapterEvidenceSurface = keyof typeof ADAPTER_EVIDENCE_SURFACE_FILES;
+
+export type EvidenceGrounding = Pick<
+  EmittableProbe,
+  "evidenceOrigins" | "adapterSurface" | "sourceCitations"
+>;
+
+export function hasRequiredEvidenceGrounding(
+  probe: EvidenceGrounding,
+): boolean {
+  if (
+    probe.evidenceOrigins.length === 0 ||
+    probe.sourceCitations.length === 0 ||
+    probe.sourceCitations.some((citation) => citation.length === 0)
+  ) return false;
+  if (!probe.evidenceOrigins.includes("adapter")) return true;
+  if (probe.adapterSurface === undefined) return false;
+  const expectedFile = ADAPTER_EVIDENCE_SURFACE_FILES[probe.adapterSurface];
+  return probe.sourceCitations.some((citation) =>
+    citation.startsWith(`${expectedFile}:`)
+  );
 }
 
 const T0 = "2026-07-16T12:00:00.000Z";
@@ -52,6 +97,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   // ── Claude TUI ──────────────────────────────────────────────
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:Stop",
     scenario: "idle",
     observation: {
       kind: "turn-end",
@@ -70,6 +117,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:UserPromptSubmit",
     scenario: "busy",
     observation: {
       kind: "turn-start",
@@ -86,6 +135,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:Notification",
     scenario: "approval",
     observation: {
       kind: "notification",
@@ -103,6 +154,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:Notification",
     scenario: "modal",
     observation: {
       kind: "notification",
@@ -119,6 +172,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["host"],
     scenario: "disconnect",
     observation: {
       kind: "dead",
@@ -134,6 +188,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["host"],
     scenario: "restart",
     observation: {
       kind: "session-launch",
@@ -149,6 +204,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   // ── Codex TUI ───────────────────────────────────────────────
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "codex:Stop",
     scenario: "idle",
     observation: {
       kind: "turn-end",
@@ -164,6 +221,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "codex:UserPromptSubmit",
     scenario: "busy",
     observation: {
       kind: "turn-start",
@@ -178,6 +237,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex:registered-hooks",
     scenario: "approval",
     // capability probe — not a fabricated approval-request payload
     observation: { capabilityProbe: "structured-approval" },
@@ -188,6 +249,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex:registered-hooks",
     scenario: "modal",
     // distinct capability probe for Notification absence
     observation: { capabilityProbe: "Notification" },
@@ -198,6 +261,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["host"],
     scenario: "disconnect",
     observation: {
       kind: "session-end",
@@ -211,6 +275,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["host"],
     scenario: "restart",
     observation: {
       kind: "session-launch",
@@ -224,6 +289,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   // ── Codex app-server ────────────────────────────────────────
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:turn/completed",
     scenario: "idle",
     observation: {
       method: "turn/completed",
@@ -241,6 +308,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:turn/started",
     scenario: "busy",
     observation: {
       method: "turn/started",
@@ -258,6 +327,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:requestApproval",
     scenario: "approval",
     observation: {
       method: "item/commandExecution/requestApproval",
@@ -272,6 +343,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:unsupported-request",
     scenario: "modal",
     observation: {
       method: "future/vendor/dialog",
@@ -285,6 +358,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["host"],
     scenario: "disconnect",
     observation: {
       kind: "dead",
@@ -301,6 +375,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["host"],
     scenario: "restart",
     observation: {
       kind: "session-launch",
@@ -311,9 +386,11 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
     sourceCitations: ["src/schemas/event.ts:12-15"],
   },
 
-  // ── Grok TUI (summary.json mtime only — grok.ts:264-417) ────
+  // ── Grok TUI (summary.json mtime is activity only — grok.ts:264-417) ────
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "grok:summary-reader",
     scenario: "idle",
     observation: {
       processState: "alive",
@@ -324,7 +401,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
       timestamp: T2,
     },
     attempt: attemptFor("grok-ses-1", T1),
-    note: "alive + exact session + summary.json located with mtime advance",
+    note: "summary.json mtime advance proves artifact activity, not idle/ready",
     sourceCitations: [
       "src/adapters/tools/grok.ts:18-20,127-133 (preassigned sessionId)",
       "src/adapters/tools/grok.ts:270-279,353-414 (summary.json + mtimeMs)",
@@ -332,6 +409,8 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:no-turn-stream",
     scenario: "busy",
     // turn-busy-state is not available from grok.ts
     observation: { capabilityProbe: "turn-busy-state" },
@@ -342,27 +421,32 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:hooks-disabled",
     scenario: "approval",
     observation: { capabilityProbe: "structured-approval" },
     note: "no structured approval in grok.ts",
     sourceCitations: [
-      "src/adapters/tools/grok.ts (no approval surface)",
+      "src/adapters/tools/grok.ts:39-50 (provider hook imports disabled)",
       "docs/design/terminal-stack-transition.html §25 Grok row",
     ],
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:hooks-disabled",
     scenario: "modal",
     // distinct probe from approval
     observation: { capabilityProbe: "structured-modal" },
     note: "no structured modal proof in grok.ts",
     sourceCitations: [
-      "src/adapters/tools/grok.ts (no modal/notification surface)",
+      "src/adapters/tools/grok.ts:39-50 (provider hook imports disabled)",
       "docs/design/terminal-stack-transition.html §25 Grok row",
     ],
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["host"],
     scenario: "disconnect",
     observation: {
       processState: "dead",
@@ -377,6 +461,7 @@ export const TG4_SCENARIO_FIXTURES: Tg4Fixture[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["host"],
     scenario: "restart",
     observation: {
       processState: "restarting",
@@ -485,6 +570,7 @@ export const ABSENT_FIELD_CONTROLS: AbsentFieldControl[] = [
       summaryMtimeMs: 2_000,
       timestamp: T2,
     },
+    attempt: attemptFor("grok-ses-1", T1),
   },
 ];
 
@@ -573,13 +659,15 @@ export const GROK_HOOK_ABSENCE_PROBES = [
 ] as const;
 
 /**
- * Emittable conformance probes only. Each row cites adapter source that can
- * produce the observation shape. CONFORMANCE_PROBES is this list filtered
- * to non-empty citations (generation gate).
+ * Conformance probes with explicit evidence origins. Adapter-origin rows name
+ * the provider surface and cite its adapter; host-only rows cannot be reported
+ * as adapter emission. CONFORMANCE_PROBES applies the metadata citation gate.
  */
 export const EMITTABLE_PROBES: EmittableProbe[] = [
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:Stop",
     label: "ready-stop",
     observation: {
       kind: "turn-end",
@@ -593,6 +681,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:UserPromptSubmit",
     label: "busy-turn-start",
     observation: {
       kind: "turn-start",
@@ -605,6 +695,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:PostToolUse",
     label: "turn-boundary",
     observation: {
       kind: "tool-boundary",
@@ -617,6 +709,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:Notification",
     label: "awaiting-approval",
     observation: {
       kind: "notification",
@@ -630,6 +724,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "claude:Notification",
     label: "blocked-unknown",
     observation: {
       kind: "notification",
@@ -640,6 +736,7 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["host"],
     label: "disconnected-in-doubt",
     observation: { kind: "dead", timestamp: T3, toolSessionId: "s" },
     attempt: attemptFor("s", T1),
@@ -647,12 +744,14 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["host"],
     label: "restarting",
     observation: { kind: "session-launch", timestamp: T0 },
     sourceCitations: ["src/schemas/event.ts:12-15"],
   },
   {
     surface: "claude-tui",
+    evidenceOrigins: ["host"],
     label: "evidence-absent-kind",
     observation: { knd: "turn-end" },
     sourceCitations: [
@@ -661,6 +760,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "codex:Stop",
     label: "ready-stop",
     observation: {
       kind: "turn-end",
@@ -674,6 +775,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "codex:UserPromptSubmit",
     label: "busy",
     observation: {
       kind: "turn-start",
@@ -686,6 +789,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "codex:PostToolUse",
     label: "turn-boundary",
     observation: {
       kind: "tool-boundary",
@@ -698,18 +803,23 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex:registered-hooks",
     label: "approval-capability-absent",
     observation: { capabilityProbe: "structured-approval" },
     sourceCitations: ["src/adapters/tools/codex.ts:174-186"],
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex:registered-hooks",
     label: "notification-capability-absent",
     observation: { capabilityProbe: "Notification" },
     sourceCitations: ["src/adapters/tools/codex.ts:174-186"],
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["host"],
     label: "disconnected",
     observation: { kind: "dead", timestamp: T3, toolSessionId: "s" },
     attempt: attemptFor("s", T1),
@@ -717,12 +827,15 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-tui",
+    evidenceOrigins: ["host"],
     label: "restarting",
     observation: { kind: "session-launch", timestamp: T0 },
     sourceCitations: ["src/schemas/event.ts:12-15"],
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:turn/completed",
     label: "ready",
     observation: {
       method: "turn/completed",
@@ -734,6 +847,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:turn/started",
     label: "busy",
     observation: {
       method: "turn/started",
@@ -745,6 +860,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:requestApproval",
     label: "approval",
     observation: {
       method: "item/commandExecution/requestApproval",
@@ -754,12 +871,15 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:unsupported-request",
     label: "blocked-unknown",
     observation: { method: "future/dialog", params: {} },
     sourceCitations: ["src/adapters/tools/codex-app-server.ts:605-614"],
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["host"],
     label: "disconnected",
     observation: { kind: "dead", toolSessionId: "th", timestamp: T3 },
     attempt: attemptFor("th", T1),
@@ -767,12 +887,15 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["host"],
     label: "restarting",
     observation: { kind: "session-launch", timestamp: T0 },
     sourceCitations: ["src/schemas/event.ts:12-15"],
   },
   {
     surface: "codex-app-server",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "codex-app-server:turn/started",
     label: "evidence-absent-no-turn-id",
     observation: {
       method: "turn/started",
@@ -785,7 +908,9 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "grok-tui",
-    label: "ready-summary-mtime",
+    evidenceOrigins: ["adapter", "host"],
+    adapterSurface: "grok:summary-reader",
+    label: "artifact-activity-summary-mtime",
     observation: {
       processState: "alive",
       sessionId: "g",
@@ -802,6 +927,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:no-turn-stream",
     label: "busy-capability-absent",
     observation: { capabilityProbe: "turn-busy-state" },
     sourceCitations: [
@@ -810,18 +937,27 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:hooks-disabled",
     label: "approval-capability-absent",
     observation: { capabilityProbe: "structured-approval" },
-    sourceCitations: ["src/adapters/tools/grok.ts (no approval surface)"],
+    sourceCitations: [
+      "src/adapters/tools/grok.ts:39-50 (provider hook imports disabled)",
+    ],
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:hooks-disabled",
     label: "modal-capability-absent",
     observation: { capabilityProbe: "structured-modal" },
-    sourceCitations: ["src/adapters/tools/grok.ts (no modal surface)"],
+    sourceCitations: [
+      "src/adapters/tools/grok.ts:39-50 (provider hook imports disabled)",
+    ],
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["host"],
     label: "disconnected",
     observation: {
       processState: "dead",
@@ -833,12 +969,15 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["host"],
     label: "restarting",
     observation: { processState: "restarting", sessionId: "g" },
     sourceCitations: ["src/adapters/tools/grok.ts:127-143"],
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:hooks-disabled",
     label: "hook-absent",
     observation: { capabilityProbe: "SessionStart" },
     sourceCitations: [
@@ -847,6 +986,8 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
   {
     surface: "grok-tui",
+    evidenceOrigins: ["adapter"],
+    adapterSurface: "grok:summary-reader",
     label: "evidence-absent-no-summary",
     observation: { processState: "alive", sessionId: "g" },
     sourceCitations: [
@@ -855,9 +996,7 @@ export const EMITTABLE_PROBES: EmittableProbe[] = [
   },
 ];
 
-/** Probes that pass the emittable gate (non-empty adapter source citations). */
+/** Probes that pass origin metadata and adapter-file citation gates. */
 export const CONFORMANCE_PROBES: EmittableProbe[] = EMITTABLE_PROBES.filter(
-  (probe) =>
-    probe.sourceCitations.length > 0 &&
-    probe.sourceCitations.every((c) => c.length > 0),
+  hasRequiredEvidenceGrounding,
 );
