@@ -1113,7 +1113,12 @@ fn parseRegistration(
 /// Launcher-side registration exchange. `expected_expiry_ns` is in the
 /// broker timer domain; the host independently enforces its own 15-second
 /// monotonic deadline.
-pub fn completeInheritedRegistration(
+const PendingRegistrationReadback = struct {
+    parsed: ParsedRegistration,
+    request_header: protocol.Header,
+};
+
+fn beginInheritedRegistration(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     spec_json: []const u8,
@@ -1122,7 +1127,7 @@ pub fn completeInheritedRegistration(
     broker_build_id: []const u8,
     instance_id: []const u8,
     expected_expiry_ns: u64,
-) !ParsedRegistration {
+) !PendingRegistrationReadback {
     try writeBootMessage(stream, spec_json, initial_input, adoption_secret);
     const hello = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -1184,13 +1189,49 @@ pub fn completeInheritedRegistration(
         !std.mem.eql(u8, result.registration.record.engine_build_id, welcome.value.engineBuildId.?))
         return error.InvalidHostRegister;
 
+    return .{
+        .parsed = result,
+        .request_header = register_frame.header,
+    };
+}
+
+fn acceptPendingRegistration(
+    stream: std.net.Stream,
+    request_header: protocol.Header,
+) !void {
     const accepted = "{\"schemaVersion\":1,\"accepted\":true}";
     try protocol.writeFrame(
         stream,
-        responseHeader(register_frame.header, generated.frame_type.host_register, accepted.len),
+        responseHeader(request_header, generated.frame_type.host_register, accepted.len),
         accepted,
     );
-    return result;
+}
+
+/// Compatibility helper for unit seams that admit immediately. The production
+/// launcher retains the pending readback until broker Registry admission.
+pub fn completeInheritedRegistration(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    spec_json: []const u8,
+    initial_input: []const u8,
+    adoption_secret: [32]u8,
+    broker_build_id: []const u8,
+    instance_id: []const u8,
+    expected_expiry_ns: u64,
+) !ParsedRegistration {
+    var pending = try beginInheritedRegistration(
+        allocator,
+        stream,
+        spec_json,
+        initial_input,
+        adoption_secret,
+        broker_build_id,
+        instance_id,
+        expected_expiry_ns,
+    );
+    errdefer pending.parsed.deinit(allocator);
+    try acceptPendingRegistration(stream, pending.request_header);
+    return pending.parsed;
 }
 
 const SpawnedHost = struct {
@@ -3486,8 +3527,11 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
         .registration = registration,
     };
     const thread = try std.Thread.spawn(.{}, RegistrationThread.run, .{&host});
-    errdefer thread.join();
-    errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+    var thread_joined = false;
+    defer if (!thread_joined) {
+        _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+        thread.join();
+    };
     const secret: [32]u8 = @splat(0x5a);
     var parsed = try completeInheritedRegistration(
         std.testing.allocator,
@@ -3501,6 +3545,7 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
     );
     defer parsed.deinit(std.testing.allocator);
     thread.join();
+    thread_joined = true;
     try std.testing.expect(host.failure == null);
     var boot = &(host.boot orelse return error.MissingBootMessage);
     defer boot.deinit(std.heap.c_allocator);
@@ -3514,6 +3559,50 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
         @as(u64, 15 * std.time.ns_per_s),
         parsed.registration.record.visibility.expires_mono_ns,
     );
+}
+
+test "pending HOST_REGISTER remains unpublished after a typed rejection" {
+    var sockets = try socketPair();
+    defer sockets[0].close();
+    defer sockets[1].close();
+    var expiry_storage: [24]u8 = undefined;
+    var registration = fixtureRegistration();
+    registration.expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        generated.limits.visibility_expiry_ms,
+    );
+    var host: RegistrationThread = .{
+        .stream = sockets[1],
+        .registration = registration,
+    };
+    const thread = try std.Thread.spawn(.{}, RegistrationThread.run, .{&host});
+    var thread_joined = false;
+    defer if (!thread_joined) {
+        _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+        thread.join();
+    };
+    var pending = try beginInheritedRegistration(
+        std.testing.allocator,
+        sockets[0],
+        "{\"schemaVersion\":1}",
+        "initial",
+        @splat(0x6b),
+        "broker-build-a",
+        "instance-a",
+        15 * std.time.ns_per_s,
+    );
+    defer pending.parsed.deinit(std.testing.allocator);
+    try writeHostFailure(
+        std.testing.allocator,
+        sockets[0],
+        pending.request_header,
+        .not_ready,
+    );
+    thread.join();
+    thread_joined = true;
+    const failure = host.failure orelse return error.MissingHostRejection;
+    try std.testing.expectEqualStrings("HostRegistrationRefused", @errorName(failure));
+    try std.testing.expect(host.boot == null);
 }
 
 test "HostLauncher positive control observes failed same-role exec" {
