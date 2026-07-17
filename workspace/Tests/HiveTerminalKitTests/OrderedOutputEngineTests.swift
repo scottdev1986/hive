@@ -39,17 +39,36 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(surface.throughSeq, 0, "a rejected gap must not advance through_seq")
     }
 
+    /// Cross-vendor review (2026-07-17, bobby) flagged the original version
+    /// of this test: it only checked throughSeq stayed at 5, but a BROKEN
+    /// implementation that incorrectly re-parses the duplicate bytes would
+    /// also leave throughSeq unchanged (re-parsing "hello" doesn't move
+    /// position) -- throughSeq alone is a success-mirror, not proof of
+    /// no-op. HiveManual.process() classifies duplicates and returns
+    /// .success BEFORE touching the parser/pending buffer/emit -- so the
+    /// real proof is that the event stream gets ZERO new entries.
     func testDuplicateExactRetransmitIsIdempotent() throws {
         let surface = try makeSurface()
         defer { surface.free() }
 
+        var events: [BridgeEvent] = []
+        surface.callbackContext.onEvent = { events.append($0) }
+
         let bytes = Data("hello".utf8)
         XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: 0), .success)
         XCTAssertEqual(surface.throughSeq, 5)
+        let eventCountAfterFirstParse = events.count
+        XCTAssertGreaterThan(eventCountAfterFirstParse, 0,
+                             "positive control: the real first parse must produce at least one event " +
+                             "(process() emits INVALIDATE unconditionally on every accepted call) -- " +
+                             "otherwise the zero-new-events check below would be vacuous")
 
         // Exact same [0,5) range, identical bytes -> duplicate, still success.
         XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: 0), .success)
         XCTAssertEqual(surface.throughSeq, 5, "a duplicate retransmit must not double-advance through_seq")
+        XCTAssertEqual(events.count, eventCountAfterFirstParse,
+                       "a duplicate retransmit must re-parse NOTHING -- zero additional events, " +
+                       "not merely an unchanged throughSeq")
     }
 
     func testConflictingBytesAtSameRangeIsInvalid() throws {
@@ -97,25 +116,55 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(writes.first, Data("\u{1B}[?62;22c".utf8))
     }
 
+    /// Reads the full screen text via `ghostty_surface_read_text`, matching
+    /// the real Ghostty app's own "cachedScreenContents" pattern exactly
+    /// (Surface View/SurfaceView_AppKit.swift ~244-262: GHOSTTY_POINT_SCREEN
+    /// top-left/bottom-right, non-rectangle selection reads the whole
+    /// screen).
+    private func readScreenText(_ surface: GhosttyManualSurface) -> String {
+        guard let handle = surface.surfaceHandle else { return "" }
+        var text = ghostty_text_s()
+        let sel = ghostty_selection_s(
+            top_left: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
+            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
+            rectangle: false
+        )
+        guard ghostty_surface_read_text(handle, sel, &text) else { return "" }
+        defer { ghostty_surface_free_text(handle, &text) }
+        return String(cString: text.text)
+    }
+
     /// Arbitrary chunk boundary across a UTF-8 codepoint: "é" (U+00E9,
-    /// 0xC3 0xA9) split into its two bytes across two calls. Must not
-    /// crash or corrupt parser state — INVALIDATE still fires once the
-    /// codepoint completes.
-    func testUTF8CodepointSplitAcrossChunkBoundaryDoesNotCorruptState() throws {
+    /// 0xC3 0xA9) split into its two bytes across two calls.
+    ///
+    /// Cross-vendor review (2026-07-17, bobby) flagged the original
+    /// version, which only checked "some INVALIDATE eventually fired."
+    /// That's not discriminating: process() emits INVALIDATE
+    /// unconditionally on every accepted call (not conditionally on a
+    /// complete grapheme forming), and a first FOLLOW-UP attempt at
+    /// comparing event COUNTS against a single-call baseline turned out to
+    /// be equally flawed -- two calls always produce one more INVALIDATE
+    /// than one call, purely because of the per-call-not-per-grapheme
+    /// architecture, regardless of whether the codepoint decoded
+    /// correctly. Neither approach can tell "correctly buffered
+    /// continuation byte" from "silently decoded as two garbled
+    /// characters" without reading the actual terminal content.
+    ///
+    /// The real proof: read back the screen text via
+    /// ghostty_surface_read_text and assert it is exactly "é" — not two
+    /// mangled replacement characters, not "é" plus a stray byte.
+    func testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter() throws {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var events: [BridgeEvent] = []
-        surface.callbackContext.onEvent = { events.append($0) }
-
-        let firstByte = Data([0xC3])
-        let secondByte = Data([0xA9])
-        XCTAssertEqual(surface.processOutput(bytes: firstByte, streamSeq: 0), .success)
-        XCTAssertEqual(surface.processOutput(bytes: secondByte, streamSeq: 1), .success)
-
-        XCTAssertTrue(events.contains { $0.type == .invalidate },
-                      "a split UTF-8 codepoint must still resolve to a normal paint")
+        XCTAssertEqual(surface.processOutput(bytes: Data([0xC3]), streamSeq: 0), .success)
+        XCTAssertEqual(surface.processOutput(bytes: Data([0xA9]), streamSeq: 1), .success)
         XCTAssertEqual(surface.throughSeq, 2)
+
+        let screen = readScreenText(surface)
+        XCTAssertTrue(screen.hasPrefix("é"),
+                      "the split lead+continuation bytes must decode to exactly 'é', not garbled/replacement " +
+                      "characters — got screen text starting with \(String(screen.prefix(4)).debugDescription)")
     }
 
     /// Failures must never poison later calls: a rejected gap is followed
