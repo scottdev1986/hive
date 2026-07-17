@@ -56,8 +56,10 @@ const StubHost = struct {
         context: *anyopaque,
         locator: broker.Locator,
         command: broker.TerminationCommand,
+        ownership: broker.HostProcessOwnership,
     ) broker.TerminationReadback {
         _ = command;
+        _ = ownership;
         const self: *StubHost = @ptrCast(@alignCast(context));
         if (!sameLocator(locator, self.readback.locator)) return .{
             .pty_closed = false,
@@ -759,7 +761,7 @@ test "TERMINATED response does not prove the still-live host exited" {
     try std.testing.expect(!server.failed.load(.acquire));
 }
 
-test "broker observes TERMINATED when the exact host exits after 500ms" {
+test "broker reaps its own exited host child and reports TERMINATED" {
     var root_storage: [48]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/h{x}", .{std.crypto.random.int(u32)});
     try std.fs.makeDirAbsolute(root);
@@ -799,14 +801,6 @@ test "broker observes TERMINATED when the exact host exits after 500ms" {
         std.posix.exit(0);
     }
     std.posix.close(ready_pipe[1]);
-    const Reaper = struct {
-        fn run(pid: i32) void {
-            var status: c_int = 0;
-            _ = c.waitpid(pid, &status, 0);
-        }
-    };
-    const reaper = try std.Thread.spawn(.{}, Reaper.run, .{child_pid});
-    defer reaper.join();
     defer {
         var status: c_int = 0;
         if (c.waitpid(child_pid, &status, c.WNOHANG) == 0) {
@@ -839,7 +833,7 @@ test "broker observes TERMINATED when the exact host exits after 500ms" {
     );
     defer client.deinit();
     var registry: broker.Registry = .{};
-    try std.testing.expect(registry.register(record, client.control()) == null);
+    try std.testing.expect(registry.registerCreatedHost(record, client.control()) == null);
     try std.testing.expectEqual(broker.TerminationState.terminated, registry.terminate(
         record.locator,
         .{
@@ -887,11 +881,11 @@ test "exact host identity absence requires a missing PID or changed start token"
     const start_token = try broker.formatStartToken(process.start_token, &start_token_storage);
     try std.testing.expectEqual(
         broker.ExactProcessPresence.present,
-        broker.observeExactProcess(c.getpid(), start_token),
+        broker.observeExactProcess(c.getpid(), start_token, .non_parent),
     );
-    try std.testing.expect(!broker.waitForExactProcessAbsence(c.getpid(), start_token));
-    try std.testing.expect(broker.waitForExactProcessAbsence(c.getpid(), "0:0"));
-    try std.testing.expect(broker.waitForExactProcessAbsence(std.math.maxInt(i32), "0:0"));
+    try std.testing.expect(!broker.waitForExactProcessAbsence(c.getpid(), start_token, .non_parent));
+    try std.testing.expect(broker.waitForExactProcessAbsence(c.getpid(), "0:0", .non_parent));
+    try std.testing.expect(broker.waitForExactProcessAbsence(std.math.maxInt(i32), "0:0", .non_parent));
 }
 
 test "broker launch accepts visibility expiry and rejects attach-grant expiry" {

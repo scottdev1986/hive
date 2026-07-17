@@ -79,23 +79,35 @@ pub fn inspectProcess(pid: i32) !ObservedProcess {
 }
 
 pub const ExactProcessPresence = enum { present, absent, unknown };
+pub const HostProcessOwnership = enum { child, non_parent };
 
-pub fn observeExactProcess(pid: i32, expected_start_token: []const u8) ExactProcessPresence {
+fn observeKillAbsence(pid: i32) ExactProcessPresence {
+    const rc = c.kill(pid, 0);
+    if (rc == 0 or std.posix.errno(rc) != .SRCH) return .unknown;
+    return .absent;
+}
+
+pub fn observeExactProcess(
+    pid: i32,
+    expected_start_token: []const u8,
+    ownership: HostProcessOwnership,
+) ExactProcessPresence {
     if (pid <= 0 or expected_start_token.len == 0) return .unknown;
-    const observed = inspectProcess(pid) catch {
-        const rc = c.kill(pid, 0);
-        if (rc == 0 or std.posix.errno(rc) != .SRCH) return .unknown;
-        return .absent;
-    };
+    if (ownership == .child) {
+        // Child ownership is recorded only after exact launch identity
+        // readback. Until this broker reaps it, that PID cannot be reused.
+        var status: c_int = 0;
+        const waited = c.waitpid(pid, &status, c.WNOHANG);
+        if (waited == pid) return .absent;
+        if (waited != 0) return .unknown;
+    }
+
+    const observed = inspectProcess(pid) catch return observeKillAbsence(pid);
     var token_storage: [64]u8 = undefined;
     const token = formatStartToken(observed.start_token, &token_storage) catch return .unknown;
     if (!std.mem.eql(u8, token, expected_start_token)) return .absent;
 
-    var status: c_int = 0;
-    const waited = c.waitpid(pid, &status, c.WNOHANG);
-    if (waited == pid) return .absent;
-    if (waited == 0) return .present;
-    if (std.posix.errno(waited) != .CHILD) return .unknown;
+    if (ownership == .child) return .present;
 
     const rc = c.kill(pid, 0);
     if (rc == 0) return .present;
@@ -105,10 +117,14 @@ pub fn observeExactProcess(pid: i32, expected_start_token: []const u8) ExactProc
 const host_exit_observation_timeout_ns = generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms;
 const host_exit_poll_interval_ns = 5 * std.time.ns_per_ms;
 
-pub fn waitForExactProcessAbsence(pid: i32, expected_start_token: []const u8) bool {
+pub fn waitForExactProcessAbsence(
+    pid: i32,
+    expected_start_token: []const u8,
+    ownership: HostProcessOwnership,
+) bool {
     var timer = std.time.Timer.start() catch return false;
     while (true) {
-        if (observeExactProcess(pid, expected_start_token) == .absent) return true;
+        if (observeExactProcess(pid, expected_start_token, ownership) == .absent) return true;
         if (timer.read() >= host_exit_observation_timeout_ns) return false;
         std.Thread.sleep(host_exit_poll_interval_ns);
     }
@@ -833,7 +849,7 @@ pub const HostControl = struct {
     context: *anyopaque,
     adopt_fn: *const fn (*anyopaque, Locator, [32]u8, u64) ?AdoptionReadback,
     register_grant_fn: *const fn (*anyopaque, Locator, GrantRegistration) bool,
-    terminate_fn: *const fn (*anyopaque, Locator, TerminationCommand) TerminationReadback,
+    terminate_fn: *const fn (*anyopaque, Locator, TerminationCommand, HostProcessOwnership) TerminationReadback,
 
     pub fn adopt(self: HostControl, locator: Locator, secret: [32]u8, now_ns: u64) ?AdoptionReadback {
         return self.adopt_fn(self.context, locator, secret, now_ns);
@@ -844,7 +860,16 @@ pub const HostControl = struct {
     }
 
     pub fn terminate(self: HostControl, locator: Locator, command: TerminationCommand) TerminationReadback {
-        return self.terminate_fn(self.context, locator, command);
+        return self.terminateWithOwnership(locator, command, .non_parent);
+    }
+
+    fn terminateWithOwnership(
+        self: HostControl,
+        locator: Locator,
+        command: TerminationCommand,
+        ownership: HostProcessOwnership,
+    ) TerminationReadback {
+        return self.terminate_fn(self.context, locator, command, ownership);
     }
 };
 
@@ -1258,6 +1283,7 @@ pub const WireHostClient = struct {
         self: *WireHostClient,
         locator: Locator,
         command: TerminationCommand,
+        ownership: HostProcessOwnership,
     ) !TerminationReadback {
         if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -1298,6 +1324,7 @@ pub const WireHostClient = struct {
             const host_exited = waitForExactProcessAbsence(
                 self.expected_record.host_pid,
                 self.expected_record.host_start_token,
+                ownership,
             );
             return .{
                 .pty_closed = true,
@@ -1347,9 +1374,10 @@ pub const WireHostClient = struct {
         context: *anyopaque,
         locator: Locator,
         command: TerminationCommand,
+        ownership: HostProcessOwnership,
     ) TerminationReadback {
         const self: *WireHostClient = @ptrCast(@alignCast(context));
-        return self.terminate(locator, command) catch .{
+        return self.terminate(locator, command, ownership) catch .{
             .pty_closed = false,
             .host_exited = false,
             .verification_complete = false,
@@ -1526,6 +1554,7 @@ const Grant = struct {
 const Entry = struct {
     record: HostRecord,
     host: ?HostControl,
+    host_process_ownership: HostProcessOwnership = .non_parent,
     quarantined: bool = false,
     grants: [generated.limits.viewers_per_generation]?Grant = @splat(null),
 };
@@ -1559,6 +1588,19 @@ pub const Registry = struct {
     }
 
     pub fn register(self: *Registry, record: HostRecord, host: HostControl) ?protocol.Failure {
+        return self.registerWithOwnership(record, host, .non_parent);
+    }
+
+    pub fn registerCreatedHost(self: *Registry, record: HostRecord, host: HostControl) ?protocol.Failure {
+        return self.registerWithOwnership(record, host, .child);
+    }
+
+    fn registerWithOwnership(
+        self: *Registry,
+        record: HostRecord,
+        host: HostControl,
+        ownership: HostProcessOwnership,
+    ) ?protocol.Failure {
         if (record.state != .live)
             return .{ .code = .not_ready, .close_connection = false };
         if (self.lookup(record.locator)) |result| switch (result) {
@@ -1566,7 +1608,11 @@ pub const Registry = struct {
             .failure => |failure| if (failure.code != .not_found) return failure,
         };
         for (&self.entries) |*slot| if (slot.* == null) {
-            slot.* = .{ .record = record, .host = host };
+            slot.* = .{
+                .record = record,
+                .host = host,
+                .host_process_ownership = ownership,
+            };
             return null;
         };
         return .{ .code = .capacity_exceeded, .close_connection = false };
@@ -1691,7 +1737,11 @@ pub const Registry = struct {
             .failure => return .unknown,
             .entry => |entry| entry,
         };
-        const readback = entry.host.?.terminate(locator, command);
+        const readback = entry.host.?.terminateWithOwnership(
+            locator,
+            command,
+            entry.host_process_ownership,
+        );
         if (readback.survivor_count != 0) return .survivors;
         if (!readback.verification_complete or !readback.pty_closed or !readback.host_exited) {
             entry.record.state = .unknown;
@@ -2205,7 +2255,7 @@ pub fn launchHost(
     );
     var admitted_record = readback.record;
     admitted_record.visibility.expires_mono_ns = attaching_expiry;
-    if (registry.register(admitted_record, readback.host)) |failure| return rejectLaunchedHost(
+    if (registry.registerCreatedHost(admitted_record, readback.host)) |failure| return rejectLaunchedHost(
         launcher,
         readback.pending,
         failure,
