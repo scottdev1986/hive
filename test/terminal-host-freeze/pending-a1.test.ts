@@ -7,7 +7,7 @@ const candidateSource = () => readFile(resolve(
   "../../native/sessiond/src/pty_host.zig",
 ), "utf8");
 
-describe("pending A1 real-sessiond discriminators (intentional xfail)", () => {
+describe("pending A1 real-sessiond discriminators", () => {
   test.failing("pending A1 / B: launch failure preserves semantic layer and OS code", async () => {
     const source = await candidateSource();
     expect(source).toContain("pub const LaunchFailureEvidence = struct");
@@ -21,7 +21,7 @@ describe("pending A1 real-sessiond discriminators (intentional xfail)", () => {
     expect(source).toMatch(/close(Unmapped|Inherited).*Descriptors/);
   });
 
-  test.failing("pending A1 / D: resize returns ordered revision and applied geometry readback", async () => {
+  test("pending A1 / D: resize returns ordered revision and applied geometry readback", async () => {
     const source = await candidateSource();
     expect(source).toContain("pub const ResizeReceipt = struct");
     expect(source).toMatch(/revision:\s*u64/);

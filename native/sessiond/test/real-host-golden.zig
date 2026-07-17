@@ -185,11 +185,106 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .entry => {},
         .failure => return error.HostAdoptionFailed,
     }
-    if (recovered.registry.terminate(locator, .{
+    var lifecycle_launcher = try session_host.ProductionHostLauncher.init(allocator, root);
+    defer lifecycle_launcher.deinit();
+    var lifecycle_backend = broker.ProductionBackend.init(
+        allocator,
+        &runtime,
+        &recovered.registry,
+        lifecycle_launcher.launcher(),
+    );
+    defer lifecycle_backend.deinit();
+    const backend = lifecycle_backend.backend();
+    const wire_locator = .{
+        .schemaVersion = @as(u8, 1),
+        .instanceId = instance_id,
+        .subject = .{ .kind = "agent", .agentId = "aaron" },
+        .generation = @as(u64, 1),
+        .sessionId = session_id,
+        .hostKind = "sessiond",
+        .engineBuildId = &engine_build_id,
+    };
+
+    const list_payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .instanceId = instance_id,
+    }, .{});
+    defer allocator.free(list_payload);
+    const listed = switch (backend.call(
+        allocator,
+        requestHeader(generated.frame_type.list, list_payload.len),
+        list_payload,
+        4,
+    )) {
+        .response => |payload| payload,
+        .no_response, .failure => return error.RealListFailed,
+    };
+    defer allocator.free(listed);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.listed_payload,
+        listed,
+    ) or std.mem.indexOf(u8, listed, session_id) == null) return error.InvalidRealList;
+
+    const inspect_payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
+    }, .{});
+    defer allocator.free(inspect_payload);
+    const inspected = switch (backend.call(
+        allocator,
+        requestHeader(generated.frame_type.inspect, inspect_payload.len),
+        inspect_payload,
+        5,
+    )) {
+        .response => |payload| payload,
+        .no_response, .failure => return error.RealInspectFailed,
+    };
+    defer allocator.free(inspected);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.inspected_payload,
+        inspected,
+    )) return error.InvalidRealInspection;
+    const InspectedProjection = struct {
+        presence: []const u8,
+        providerRoot: struct { pid: i32 },
+    };
+    var parsed_inspected = try std.json.parseFromSlice(
+        InspectedProjection,
+        allocator,
+        inspected,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_inspected.deinit();
+    if (!std.mem.eql(u8, parsed_inspected.value.presence, "present") or
+        parsed_inspected.value.providerRoot.pid != parsed_created.value.inspection.providerRoot.pid)
+        return error.InvalidRealInspection;
+
+    const terminate_payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
         .mode = "immediate",
         .reason = "real host golden completed",
-        .request_id = "req_018f1e90-7b5a-7cc0-8000-0000000000f4",
-    }) != .terminated) return error.HostTerminationFailed;
+        .requestId = "req_018f1e90-7b5a-7cc0-8000-0000000000f4",
+    }, .{});
+    defer allocator.free(terminate_payload);
+    const terminated = switch (backend.call(
+        allocator,
+        requestHeader(generated.frame_type.terminate, terminate_payload.len),
+        terminate_payload,
+        6,
+    )) {
+        .response => |payload| payload,
+        .no_response, .failure => return error.HostTerminationFailed,
+    };
+    defer allocator.free(terminated);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.terminated_payload,
+        terminated,
+    ) or std.mem.indexOf(u8, terminated, "\"state\":\"terminated\"") == null)
+        return error.HostTerminationFailed;
     switch (process_inspector.observeProcess(parsed_created.value.inspection.providerRoot.pid)) {
         .absent => {},
         .present, .unobservable => return error.ProviderStillPresent,

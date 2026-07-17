@@ -1114,6 +1114,100 @@ test "production CREATE reaches CREATED only after Registry admission" {
     try std.testing.expect(!startup_harness.failed.load(.acquire));
 }
 
+test "production wire exposes LIST INSPECT and TERMINATE through Registry evidence" {
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-lifecycle-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+
+    const record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
+    var host = fixtureHost(record);
+    var registry: broker.Registry = .{};
+    try std.testing.expect(registry.registerCreatedHost(record, host.control()) == null);
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = "unused",
+        .created_payload = "unused",
+        .host = host.control(),
+    };
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    var timer = try std.time.Timer.start();
+    var harness: ServedBackendHarness = .{
+        .stream = .{ .handle = sockets[1] },
+        .timer = &timer,
+        .backend = backend.backend(),
+    };
+    const thread = try std.Thread.spawn(.{}, ServedBackendHarness.run, .{&harness});
+    errdefer thread.join();
+    errdefer _ = c.shutdown(client.handle, c.SHUT_RDWR);
+    const file: std.fs.File = .{ .handle = client.handle };
+
+    const list = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.list_payload);
+    defer std.testing.allocator.free(list);
+    try writeCreateFrame(client, broker.generated.frame_type.list, 21, 0, list);
+    const listed_read = try broker.protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    const listed = listed_read.frame;
+    defer listed.deinit(std.testing.allocator);
+    try std.testing.expectEqual(broker.generated.frame_type.listed, listed.header.type_code);
+    try std.testing.expectEqual(@as(u64, 21), listed.header.request_id);
+    try std.testing.expect(broker.protocol.validateControlPayload(
+        std.testing.allocator,
+        broker.generated.wire_schema.listed_payload,
+        listed.payload,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, listed.payload, record.locator.session_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed.payload, "\"presence\":\"present\"") != null);
+
+    const inspect = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.inspect_payload);
+    defer std.testing.allocator.free(inspect);
+    try writeCreateFrame(client, broker.generated.frame_type.inspect, 22, 0, inspect);
+    const inspected_read = try broker.protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    const inspected = inspected_read.frame;
+    defer inspected.deinit(std.testing.allocator);
+    try std.testing.expectEqual(broker.generated.frame_type.inspected, inspected.header.type_code);
+    try std.testing.expectEqual(@as(u64, 22), inspected.header.request_id);
+    try std.testing.expect(broker.protocol.validateControlPayload(
+        std.testing.allocator,
+        broker.generated.wire_schema.inspected_payload,
+        inspected.payload,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, record.host_start_token) != null);
+    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, "\"state\":\"UNKNOWN\"") != null);
+
+    const terminate = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.terminate_payload);
+    defer std.testing.allocator.free(terminate);
+    try writeCreateFrame(client, broker.generated.frame_type.terminate, 23, 0, terminate);
+    const terminated_read = try broker.protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    const terminated = terminated_read.frame;
+    defer terminated.deinit(std.testing.allocator);
+    try std.testing.expectEqual(broker.generated.frame_type.terminated, terminated.header.type_code);
+    try std.testing.expectEqual(@as(u64, 23), terminated.header.request_id);
+    try std.testing.expect(broker.protocol.validateControlPayload(
+        std.testing.allocator,
+        broker.generated.wire_schema.terminated_payload,
+        terminated.payload,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, terminated.payload, "\"state\":\"terminated\"") != null);
+    try std.testing.expect(host.terminated);
+
+    client.close();
+    thread.join();
+    try std.testing.expect(!harness.failed.load(.acquire));
+}
+
 test "pre-admission CREATE rejection leaves Registry empty and tears down" {
     const now_ns = 1 * std.time.ns_per_s;
     const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);

@@ -2704,6 +2704,216 @@ const CreateTransaction = struct {
     }
 };
 
+fn inspectionGeometryValue(
+    allocator: std.mem.Allocator,
+    geometry: Geometry,
+) !std.json.Value {
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("columns", .{ .integer = geometry.columns });
+    try value.put("rows", .{ .integer = geometry.rows });
+    try value.put("widthPx", .{ .integer = geometry.width_px });
+    try value.put("heightPx", .{ .integer = geometry.height_px });
+    try value.put("cellWidthPx", .{ .float = geometry.cell_width_px });
+    try value.put("cellHeightPx", .{ .float = geometry.cell_height_px });
+    return .{ .object = value };
+}
+
+fn inspectionProcessRootValue(
+    allocator: std.mem.Allocator,
+    root: ProcessRoot,
+) !std.json.Value {
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("pid", .{ .integer = root.pid });
+    try value.put("startToken", .{ .string = root.start_token });
+    try value.put("processGroupId", .{ .integer = root.process_group_id });
+    return .{ .object = value };
+}
+
+fn inspectionVisibilityValue(
+    allocator: std.mem.Allocator,
+    visibility: Visibility,
+    now_ns: u64,
+) !std.json.Value {
+    const remaining_ns = visibility.expires_mono_ns -| now_ns;
+    const remaining_ms = std.math.divCeil(
+        u64,
+        remaining_ns,
+        std.time.ns_per_ms,
+    ) catch return error.InvalidVisibility;
+    var expiry_storage: [24]u8 = undefined;
+    const expiry = try wallDeadline(&expiry_storage, remaining_ms);
+    var revision_storage: [32]u8 = undefined;
+    const revision = try std.fmt.bufPrint(&revision_storage, "{d}", .{
+        visibility.open_terminal_revision,
+    });
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("state", .{ .string = @tagName(visibility.state) });
+    try value.put("workspaceSessionId", .{ .string = visibility.workspace_session_id });
+    try value.put("openTerminalRevision", .{ .string = try allocator.dupe(u8, revision) });
+    try value.put("expiresAt", .{ .string = try allocator.dupe(u8, expiry) });
+    return .{ .object = value };
+}
+
+fn inspectionValue(
+    allocator: std.mem.Allocator,
+    entry: *const Entry,
+    now_ns: u64,
+) !std.json.Value {
+    const record = entry.record;
+    // The broker registry does not own the host's live arbiter/checkpoint
+    // details. Preserve the known lifecycle fields but never label this
+    // projection complete.
+    const complete = false;
+    const presence: []const u8 = if (entry.quarantined or record.state == .unknown or record.state == .starting)
+        "unknown"
+    else if (record.state == .exited)
+        "exited"
+    else
+        "present";
+    var output_storage: [32]u8 = undefined;
+    var checkpoint_storage: [32]u8 = undefined;
+    const output_seq = try std.fmt.bufPrint(&output_storage, "{d}", .{record.output_seq});
+    const checkpoint_seq = try std.fmt.bufPrint(&checkpoint_storage, "{d}", .{record.checkpoint_seq});
+    var evidence_storage: [24]u8 = undefined;
+    const evidence_at = try wallDeadline(&evidence_storage, 0);
+
+    var input = std.json.ObjectMap.init(allocator);
+    try input.put("state", .{ .string = "UNKNOWN" });
+    try input.put("ownerViewerId", .null);
+    try input.put("claimId", .null);
+    const resources = std.json.ObjectMap.init(allocator);
+    const survivors = std.json.Array.init(allocator);
+    var diagnostics = std.json.Array.init(allocator);
+    try diagnostics.append(.{ .string = "sessiond-registry-projection" });
+
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("schemaVersion", .{ .integer = 1 });
+    try value.put("locator", try locatorJsonValue(allocator, record.locator));
+    try value.put("presence", .{ .string = presence });
+    try value.put("complete", .{ .bool = complete });
+    try value.put("hostPid", if (record.state == .exited) .null else .{ .integer = record.host_pid });
+    try value.put("hostStartToken", if (record.state == .exited) .null else .{ .string = record.host_start_token });
+    try value.put("providerRoot", if (record.state == .exited)
+        .null
+    else
+        try inspectionProcessRootValue(allocator, record.process_root));
+    try value.put("expectedExecutable", .{ .string = record.expected_executable });
+    try value.put("executableVerified", .{ .bool = false });
+    try value.put("outputSeq", .{ .string = try allocator.dupe(u8, output_seq) });
+    try value.put("checkpointSeq", .{ .string = try allocator.dupe(u8, checkpoint_seq) });
+    try value.put("checkpointAvailable", .{ .bool = false });
+    try value.put("input", .{ .object = input });
+    try value.put("viewerCount", .{ .integer = 0 });
+    try value.put("geometry", try inspectionGeometryValue(allocator, record.geometry));
+    try value.put("resources", .{ .object = resources });
+    try value.put("visibility", try inspectionVisibilityValue(allocator, record.visibility, now_ns));
+    try value.put("exit", .null);
+    try value.put("survivors", .{ .array = survivors });
+    try value.put("evidenceAt", .{ .string = try allocator.dupe(u8, evidence_at) });
+    try value.put("diagnosticIds", .{ .array = diagnostics });
+    return .{ .object = value };
+}
+
+fn encodeListedPayload(
+    allocator: std.mem.Allocator,
+    registry: *Registry,
+    instance_id: []const u8,
+    now_ns: u64,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    var entries = std.json.Array.init(a);
+    var complete = registry.enumeration_complete;
+    for (&registry.entries) |*slot| if (slot.*) |*entry| {
+        if (!std.mem.eql(u8, entry.record.locator.instance_id, instance_id)) continue;
+        try entries.append(try inspectionValue(a, entry, now_ns));
+        if (entry.quarantined or entry.record.state == .unknown) complete = false;
+    };
+    for (&registry.directory_quarantines) |slot| if (slot != null) {
+        complete = false;
+    };
+    var root = std.json.ObjectMap.init(a);
+    try root.put("schemaVersion", .{ .integer = 1 });
+    try root.put("entries", .{ .array = entries });
+    try root.put("complete", .{ .bool = complete });
+    const payload = try std.json.Stringify.valueAlloc(
+        allocator,
+        std.json.Value{ .object = root },
+        .{},
+    );
+    errdefer allocator.free(payload);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.listed_payload,
+        payload,
+    )) return error.InvalidListedPayload;
+    return payload;
+}
+
+fn encodeInspectedPayload(
+    allocator: std.mem.Allocator,
+    entry: *const Entry,
+    now_ns: u64,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const payload = try std.json.Stringify.valueAlloc(
+        allocator,
+        try inspectionValue(arena.allocator(), entry, now_ns),
+        .{},
+    );
+    errdefer allocator.free(payload);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.inspected_payload,
+        payload,
+    )) return error.InvalidInspectedPayload;
+    return payload;
+}
+
+fn encodeTerminatedPayload(
+    allocator: std.mem.Allocator,
+    locator: Locator,
+    state: TerminationState,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    const a = arena.allocator();
+    const positive = state == .terminated;
+    const survivors = std.json.Array.init(a);
+    var errors = std.json.Array.init(a);
+    if (!positive) {
+        var failure = std.json.ObjectMap.init(a);
+        try failure.put("phase", .{ .string = "process-tree" });
+        try failure.put("code", .{ .string = if (state == .survivors)
+            "survivor-details-unavailable"
+        else
+            "verification-unknown" });
+        try failure.put("diagnosticId", .{ .string = "sessiond-termination" });
+        try errors.append(.{ .object = failure });
+    }
+    var root = std.json.ObjectMap.init(a);
+    try root.put("schemaVersion", .{ .integer = 1 });
+    try root.put("locator", try locatorJsonValue(a, locator));
+    try root.put("state", .{ .string = if (positive) "terminated" else "unknown" });
+    try root.put("exit", .null);
+    try root.put("survivors", .{ .array = survivors });
+    try root.put("errors", .{ .array = errors });
+    const payload = try std.json.Stringify.valueAlloc(
+        allocator,
+        std.json.Value{ .object = root },
+        .{},
+    );
+    errdefer allocator.free(payload);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.terminated_payload,
+        payload,
+    )) return error.InvalidTerminatedPayload;
+    return payload;
+}
+
 pub const ProductionBackend = struct {
     allocator: std.mem.Allocator,
     runtime: *Runtime,
@@ -2750,7 +2960,91 @@ pub const ProductionBackend = struct {
         if (header.type_code == generated.frame_type.create_input) return self.input(header, payload);
         if (header.type_code == generated.frame_type.create_commit)
             return self.commit(allocator, payload, now_ns);
+        if (header.type_code == generated.frame_type.list)
+            return self.list(allocator, payload, now_ns);
+        if (header.type_code == generated.frame_type.inspect)
+            return self.inspect(allocator, payload, now_ns);
+        if (header.type_code == generated.frame_type.terminate)
+            return self.terminate(allocator, payload);
         return failure(.not_found);
+    }
+
+    fn list(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const Request = struct { schemaVersion: u8, instanceId: []const u8 };
+        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
+            return failure(.malformed_frame);
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
+        const response = encodeListedPayload(
+            allocator,
+            self.registry,
+            parsed.value.instanceId,
+            now_ns,
+        ) catch |err| return failure(if (err == error.OutOfMemory)
+            .resource_exhausted
+        else
+            .internal);
+        return .{ .response = response };
+    }
+
+    fn inspect(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const Request = struct { schemaVersion: u8, locator: DiskLocator };
+        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
+            return failure(.malformed_frame);
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
+        const locator = locatorFromDisk(parsed.value.locator) catch
+            return failure(.malformed_frame);
+        const found = self.registry.lookup(locator) orelse return failure(.not_found);
+        const entry = switch (found) {
+            .failure => |lookup_failure| return .{ .failure = lookup_failure },
+            .entry => |entry| entry,
+        };
+        const response = encodeInspectedPayload(allocator, entry, now_ns) catch |err|
+            return failure(if (err == error.OutOfMemory) .resource_exhausted else .internal);
+        return .{ .response = response };
+    }
+
+    fn terminate(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+    ) BackendResult {
+        const Request = struct {
+            schemaVersion: u8,
+            locator: DiskLocator,
+            mode: []const u8,
+            reason: []const u8,
+            requestId: []const u8,
+        };
+        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
+            return failure(.malformed_frame);
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
+        const locator = locatorFromDisk(parsed.value.locator) catch
+            return failure(.malformed_frame);
+        if (self.registry.lookup(locator)) |found| switch (found) {
+            .failure => |lookup_failure| return .{ .failure = lookup_failure },
+            .entry => {},
+        } else return failure(.not_found);
+        const state = self.registry.terminate(locator, .{
+            .mode = parsed.value.mode,
+            .reason = parsed.value.reason,
+            .request_id = parsed.value.requestId,
+        });
+        const response = encodeTerminatedPayload(allocator, locator, state) catch |err|
+            return failure(if (err == error.OutOfMemory) .resource_exhausted else .internal);
+        return .{ .response = response };
     }
 
     fn begin(self: *ProductionBackend, payload: []const u8) BackendResult {

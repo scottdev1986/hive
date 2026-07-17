@@ -1,6 +1,6 @@
 # M1-A1 sessiond qualification
 
-Status: the contract-freeze-facing minimum has landed. PTY creation, foreground job control, process-exit notification, reap authority, and termination evidence are qualified in the current review increment. Crash/adoption and bounded replay qualification remain open.
+Status: the contract-freeze-facing minimum and PTY/reap qualification have landed. Production broker inventory, inspection, and termination dispatch are qualified in the current review increment. Direct input, resize, attach streaming, visibility renewal, crash/adoption, and bounded replay qualification remain open.
 
 ## Qualified behavior
 
@@ -10,6 +10,7 @@ Status: the contract-freeze-facing minimum has landed. PTY creation, foreground 
 - PTY creation produces one master/slave pair. The replacement becomes a new session and process-group leader, receives the slave as all three standard streams and controlling terminal, starts in the foreground process group, and observes the requested initial geometry.
 - A process event is notification, not exit proof. Exit evidence is authoritative only when the host, as direct parent, obtains the status from `waitpid`. A nonblocking wait distinguishes a running child from an unavailable wait authority; `ECHILD` is reported as unknown rather than fabricated into an exit.
 - Process-tree termination cannot consume the root child's wait status behind the PTY owner's back. Root waits are routed through the owner, and successful immediate termination persists a positive direct-child wait observation.
+- The production broker dispatches inventory, exact-locator inspection, and termination instead of collapsing those defined operations to not-found. Inventory preserves enumeration completeness; registry-only inspection marks unavailable host-owned arbiter and checkpoint facts as partial rather than inventing them; termination reports success only after the registry receives positive host and process-tree readback.
 
 ## Live conformance evidence
 
@@ -25,6 +26,8 @@ Environment: macOS 26.3.1 (25D2128), arm64; locked Zig 0.15.2.
 | F — notify then reap | A real `EVFILT_PROC`/`NOTE_EXIT` event arrived for a child exiting 23. The event was followed by a separate direct-parent `waitpid`, which returned the same child's status and produced typed exited/reaped evidence. | Pass |
 | F — lost authority | A deliberate competing `waitpid` consumed a child exiting 29. The PTY owner's subsequent wait observed `ECHILD` and returned unavailable/unknown with no invented exit code. | Pass |
 | Termination evidence | A real provider tree was terminated while an unrelated sentinel process survived. The immutable terminal result reported no survivors and a positive root wait observation. | Pass |
+| Production broker lifecycle wire | A framed production-backend connection returned correlated, schema-valid inventory, exact inspection, and termination responses for one admitted generation. The same operations then ran against a real recovered sessiond host; exact provider and host PIDs became absent and immutable final evidence remained positive. | Pass |
+| Resize discriminator promotion | The formerly expected-failure resize shape discriminator now runs as an ordinary passing assertion, so a genuine resize receipt/readback regression is a normal suite failure rather than an expected failure or XPASS. | Pass |
 
 Positive controls were observed before the production changes: the focused freeze discriminator step reported 0/4 passing, and the live termination test observed a terminated tree whose root wait evidence had been lost. The strengthened behavioral discriminators and the complete native suite pass after the changes.
 
@@ -41,4 +44,4 @@ Positive controls were observed before the production changes: the focused freez
 
 ## Remaining A1 qualification
 
-The next increment must exercise broker/host crash and adoption matrices and qualify bounded journal/replay behavior against the frozen cases.
+The next increment must project the frozen claim, input-receipt, and resize-receipt shapes onto strict wire control payloads; wire direct byte input, resize/readback, attach streaming, and visibility renewal; then exercise broker/host crash and adoption matrices and bounded journal/replay behavior.
