@@ -274,6 +274,11 @@ pub const RealVtEngine = struct {
         length: usize,
     ) callconv(.c) void {
         const self: *RealVtEngine = @ptrCast(@alignCast(userdata orelse return));
+        if (length == 0) return;
+        if (data == null) {
+            self.effect_failed = true;
+            return;
+        }
         const bytes = data[0..length];
         if (self.effect_sink) |sink| {
             sink.write(bytes) catch {
@@ -3195,6 +3200,10 @@ test "live VT effects use only the bounded PTY sink with an audit control" {
     try std.testing.expectEqualStrings(reply, recorder.bytes.items);
     try std.testing.expectEqual(@as(usize, 0), live.effects.items.len);
     try std.testing.expect(!live.effect_failed);
+    RealVtEngine.writePtyCallback(live.terminal, live, null, 0);
+    try std.testing.expect(!live.effect_failed);
+    RealVtEngine.writePtyCallback(live.terminal, live, null, 1);
+    try std.testing.expect(live.effect_failed);
 
     const audit = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     defer audit.engine().deinit();
