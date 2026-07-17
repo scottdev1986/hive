@@ -507,6 +507,7 @@ pub const FinalEvidence = struct {
     state: []const u8,
     exitCode: ?u8,
     exitSignal: ?i32,
+    /// True iff PtyHost's own waitpid reaped this host-owned child; false does not imply the host is still alive—the inspector may have reaped it first.
     waitObserved: bool,
     outputSeq: []const u8,
     checkpointSeq: []const u8,

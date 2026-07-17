@@ -6,7 +6,9 @@ const protocol = @import("protocol");
 const session_host = @import("session_host");
 
 const c = @cImport({
+    @cInclude("fcntl.h");
     @cInclude("stdlib.h");
+    @cInclude("sys/wait.h");
     @cInclude("unistd.h");
 });
 
@@ -47,19 +49,6 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     const root_z = try allocator.dupeZ(u8, root);
     defer allocator.free(root_z);
     if (c.setenv("HIVE_HOME", root_z.ptr, 1) != 0) return error.SetEnvironmentFailed;
-
-    var runtime = try broker.Runtime.open(allocator, root);
-    defer runtime.deinit();
-    var registry: broker.Registry = .{};
-    var launcher = try session_host.ProductionHostLauncher.init(allocator, root);
-    defer launcher.deinit();
-    var backend = broker.ProductionBackend.init(
-        allocator,
-        &runtime,
-        &registry,
-        launcher.launcher(),
-    );
-    defer backend.deinit();
 
     const engine_digest = try session_host.RealVtEngine.engineBuildId();
     const engine_build_id = std.fmt.bytesToHex(engine_digest, .lower);
@@ -118,6 +107,159 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         spec,
     )) return error.InvalidGoldenSpec;
 
+    const created_pipe = try std.posix.pipe();
+    var pipe_owned = true;
+    errdefer if (pipe_owned) {
+        std.posix.close(created_pipe[0]);
+        std.posix.close(created_pipe[1]);
+    };
+    try setCloseOnExec(created_pipe[0]);
+    try setCloseOnExec(created_pipe[1]);
+    const create_broker_pid = try std.posix.fork();
+    if (create_broker_pid == 0) {
+        std.posix.close(created_pipe[0]);
+        const created_writer: std.fs.File = .{ .handle = created_pipe[1] };
+        runCreateBroker(allocator, root, spec, locator, created_writer) catch |err| {
+            std.debug.print("create broker failed: {s}\n", .{@errorName(err)});
+            created_writer.close();
+            std.posix.exit(125);
+        };
+        created_writer.close();
+        std.posix.exit(0);
+    }
+    std.posix.close(created_pipe[1]);
+    pipe_owned = false;
+    const created_reader: std.fs.File = .{ .handle = created_pipe[0] };
+    defer created_reader.close();
+    var create_status: c_int = 0;
+    if (c.waitpid(create_broker_pid, &create_status, 0) != create_broker_pid)
+        return error.CreateBrokerWaitFailed;
+    const create_status_bits: u32 = @bitCast(create_status);
+    if (!std.posix.W.IFEXITED(create_status_bits) or
+        std.posix.W.EXITSTATUS(create_status_bits) != 0)
+        return error.CreateBrokerFailed;
+    const created = try created_reader.readToEndAlloc(
+        allocator,
+        generated.limits.control_json_bytes,
+    );
+    defer allocator.free(created);
+    if (created.len == 0) return error.MissingCreatedResponse;
+
+    const CreatedProjection = struct {
+        created: bool,
+        inspection: struct {
+            presence: []const u8,
+            complete: bool,
+            hostPid: i32,
+            providerRoot: struct { pid: i32 },
+        },
+    };
+    var parsed_created = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_created.deinit();
+    if (!parsed_created.value.created or
+        !std.mem.eql(u8, parsed_created.value.inspection.presence, "present") or
+        parsed_created.value.inspection.hostPid == c.getpid() or
+        parsed_created.value.inspection.hostPid == create_broker_pid or
+        parsed_created.value.inspection.providerRoot.pid == c.getpid() or
+        parsed_created.value.inspection.providerRoot.pid == create_broker_pid or
+        parsed_created.value.inspection.providerRoot.pid == parsed_created.value.inspection.hostPid)
+        return error.ProductionHostCanaryFailed;
+
+    var runtime = try broker.Runtime.open(allocator, root);
+    defer runtime.deinit();
+    const self_executable = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(self_executable);
+    const build_id = try executableBuildHash(allocator, self_executable);
+    defer allocator.free(build_id);
+    var recovered = broker.RecoveredRegistry.init(allocator);
+    defer recovered.deinit();
+    var connector = broker.WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
+    defer connector.deinit();
+    try recovered.recover(&runtime, 3, connector.connector());
+
+    const lookup = recovered.registry.lookup(locator) orelse
+        return error.AdoptedHostMissing;
+    switch (lookup) {
+        .entry => {},
+        .failure => return error.HostAdoptionFailed,
+    }
+    if (recovered.registry.terminate(locator, .{
+        .mode = "immediate",
+        .reason = "real host golden completed",
+        .request_id = "req_018f1e90-7b5a-7cc0-8000-0000000000f4",
+    }) != .terminated) return error.HostTerminationFailed;
+    switch (process_inspector.observeProcess(parsed_created.value.inspection.providerRoot.pid)) {
+        .absent => {},
+        .present, .unobservable => return error.ProviderStillPresent,
+    }
+    switch (process_inspector.observeProcess(parsed_created.value.inspection.hostPid)) {
+        .absent => {},
+        .present, .unobservable => return error.HostStillPresent,
+    }
+
+    const final_path = try std.fs.path.join(allocator, &.{
+        root,
+        "runtime/sessiond/hosts",
+        session_id,
+        "final.json",
+    });
+    defer allocator.free(final_path);
+    const final_stat = try std.posix.fstatat(
+        std.posix.AT.FDCWD,
+        final_path,
+        std.posix.AT.SYMLINK_NOFOLLOW,
+    );
+    if (final_stat.uid != std.posix.getuid() or
+        final_stat.mode & std.posix.S.IFMT != std.posix.S.IFREG or
+        final_stat.mode & 0o777 != 0o600)
+        return error.InvalidFinalEvidenceMode;
+    const final_file = try std.fs.openFileAbsolute(final_path, .{ .mode = .read_only });
+    defer final_file.close();
+    const final_json = try final_file.readToEndAlloc(
+        allocator,
+        generated.limits.control_json_bytes,
+    );
+    defer allocator.free(final_json);
+    const FinalProjection = struct {
+        state: []const u8,
+        waitObserved: bool,
+        survivors: []const std.json.Value,
+        errors: []const std.json.Value,
+    };
+    var parsed_final = try std.json.parseFromSlice(FinalProjection, allocator, final_json, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_final.deinit();
+    // terminateTree reaps first; false here does not mean the provider survived.
+    if (!std.mem.eql(u8, parsed_final.value.state, "terminated") or
+        parsed_final.value.waitObserved or
+        parsed_final.value.survivors.len != 0 or
+        parsed_final.value.errors.len != 0)
+        return error.InvalidFinalEvidence;
+}
+
+fn runCreateBroker(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    spec: []const u8,
+    locator: broker.Locator,
+    created_writer: std.fs.File,
+) !void {
+    var runtime = try broker.Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry: broker.Registry = .{};
+    var launcher = try session_host.ProductionHostLauncher.init(allocator, root);
+    defer launcher.deinit();
+    var backend = broker.ProductionBackend.init(
+        allocator,
+        &runtime,
+        &registry,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
     const broker_backend = backend.backend();
     switch (broker_backend.call(
         allocator,
@@ -157,85 +299,13 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         generated.wire_schema.created_payload,
         created,
     )) return error.InvalidCreatedResponse;
+    try created_writer.writeAll(created);
+}
 
-    const CreatedProjection = struct {
-        created: bool,
-        inspection: struct {
-            presence: []const u8,
-            complete: bool,
-            hostPid: i32,
-            providerRoot: struct { pid: i32 },
-        },
-    };
-    var parsed_created = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
-        .ignore_unknown_fields = true,
-    });
-    defer parsed_created.deinit();
-    if (!parsed_created.value.created or
-        !std.mem.eql(u8, parsed_created.value.inspection.presence, "present") or
-        parsed_created.value.inspection.hostPid == c.getpid() or
-        parsed_created.value.inspection.providerRoot.pid == c.getpid() or
-        parsed_created.value.inspection.providerRoot.pid == parsed_created.value.inspection.hostPid)
-        return error.ProductionHostCanaryFailed;
-
-    const self_executable = try std.fs.selfExePathAlloc(allocator);
-    defer allocator.free(self_executable);
-    const build_id = try executableBuildHash(allocator, self_executable);
-    defer allocator.free(build_id);
-    var recovered = broker.RecoveredRegistry.init(allocator);
-    defer recovered.deinit();
-    var connector = broker.WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
-    defer connector.deinit();
-    try recovered.recover(&runtime, 3, connector.connector());
-
-    const lookup = recovered.registry.lookup(locator) orelse
-        return error.AdoptedHostMissing;
-    switch (lookup) {
-        .entry => {},
-        .failure => return error.HostAdoptionFailed,
-    }
-    if (recovered.registry.terminate(locator, .{
-        .mode = "immediate",
-        .reason = "real host golden completed",
-        .request_id = "req_018f1e90-7b5a-7cc0-8000-0000000000f4",
-    }) != .terminated) return error.HostTerminationFailed;
-
-    const final_path = try std.fs.path.join(allocator, &.{
-        root,
-        "runtime/sessiond/hosts",
-        session_id,
-        "final.json",
-    });
-    defer allocator.free(final_path);
-    const final_stat = try std.posix.fstatat(
-        std.posix.AT.FDCWD,
-        final_path,
-        std.posix.AT.SYMLINK_NOFOLLOW,
-    );
-    if (final_stat.uid != std.posix.getuid() or
-        final_stat.mode & std.posix.S.IFMT != std.posix.S.IFREG or
-        final_stat.mode & 0o777 != 0o600)
-        return error.InvalidFinalEvidenceMode;
-    const final_file = try std.fs.openFileAbsolute(final_path, .{ .mode = .read_only });
-    defer final_file.close();
-    const final_json = try final_file.readToEndAlloc(
-        allocator,
-        generated.limits.control_json_bytes,
-    );
-    defer allocator.free(final_json);
-    const FinalProjection = struct {
-        state: []const u8,
-        waitObserved: bool,
-        survivors: []const std.json.Value,
-    };
-    var parsed_final = try std.json.parseFromSlice(FinalProjection, allocator, final_json, .{
-        .ignore_unknown_fields = true,
-    });
-    defer parsed_final.deinit();
-    if (!std.mem.eql(u8, parsed_final.value.state, "terminated") or
-        !parsed_final.value.waitObserved or
-        parsed_final.value.survivors.len != 0)
-        return error.InvalidFinalEvidence;
+fn setCloseOnExec(fd: std.posix.fd_t) !void {
+    const flags = c.fcntl(fd, c.F_GETFD);
+    if (flags < 0 or c.fcntl(fd, c.F_SETFD, flags | c.FD_CLOEXEC) < 0)
+        return error.PipeCloseOnExecFailed;
 }
 
 fn requestHeader(type_code: u16, payload_length: usize) protocol.Header {
