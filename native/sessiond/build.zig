@@ -34,6 +34,26 @@ pub fn build(b: *std.Build) void {
     const run_broker_tests = b.addRunArtifact(broker_tests);
     test_step.dependOn(&run_broker_tests.step);
 
+    // WP4 Part A: standalone input arbiter + process inspector (no broker/PTY).
+    const input_arbiter_module = b.createModule(.{
+        .root_source_file = b.path("src/input_arbiter.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const input_arbiter_tests = b.addTest(.{ .root_module = input_arbiter_module });
+    const run_input_arbiter_tests = b.addRunArtifact(input_arbiter_tests);
+    test_step.dependOn(&run_input_arbiter_tests.step);
+
+    const process_inspector_module = b.createModule(.{
+        .root_source_file = b.path("src/process_inspector.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    const process_inspector_tests = b.addTest(.{ .root_module = process_inspector_module });
+    const run_process_inspector_tests = b.addRunArtifact(process_inspector_tests);
+    test_step.dependOn(&run_process_inspector_tests.step);
+
     const stub_module = b.createModule(.{
         .root_source_file = b.path("test/stub_host.zig"),
         .target = target,
