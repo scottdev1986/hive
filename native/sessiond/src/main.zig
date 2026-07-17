@@ -19,7 +19,7 @@ pub fn main() !void {
     if (std.mem.eql(u8, role, "serve")) {
         var launcher = try session_host.ProductionHostLauncher.init(allocator, hive_home);
         defer launcher.deinit();
-        try broker.serveWithLauncher(allocator, hive_home, launcher.launcher());
+        try broker.serve(allocator, hive_home, launcher.launcher());
     } else if (std.mem.eql(u8, role, "host")) {
         try session_host.runHostRole(allocator, hive_home);
     } else {

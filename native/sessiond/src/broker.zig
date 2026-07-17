@@ -2866,24 +2866,10 @@ pub const StartupBackend = struct {
 
 /// Runs the shipped broker role. WP4 replaces only the host side of the
 /// lifecycle transport; this process never opens or retains a PTY master.
-pub fn serve(allocator: std.mem.Allocator, hive_home: []const u8) !void {
-    return serveWithOptionalLauncher(allocator, hive_home, null);
-}
-
-/// Compatibility seam for main to inject the session_host-owned production
-/// launcher without introducing a broker -> session_host import.
-pub fn serveWithLauncher(
+pub fn serve(
     allocator: std.mem.Allocator,
     hive_home: []const u8,
     launcher: HostLauncher,
-) !void {
-    return serveWithOptionalLauncher(allocator, hive_home, launcher);
-}
-
-fn serveWithOptionalLauncher(
-    allocator: std.mem.Allocator,
-    hive_home: []const u8,
-    launcher: ?HostLauncher,
 ) !void {
     var runtime = try Runtime.open(allocator, hive_home);
     defer runtime.deinit();
@@ -2895,13 +2881,14 @@ fn serveWithOptionalLauncher(
     var recovery_wire = WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
     defer recovery_wire.deinit();
     try recovered.recover(&runtime, timer.read(), recovery_wire.connector());
-    var startup_backend: StartupBackend = .{};
-    var production_backend: ?ProductionBackend = if (launcher) |value|
-        ProductionBackend.init(allocator, &runtime, &recovered.registry, value)
-    else
-        null;
-    defer if (production_backend) |*backend| backend.deinit();
-    const backend = if (production_backend) |*value| value.backend() else startup_backend.backend();
+    var production_backend = ProductionBackend.init(
+        allocator,
+        &runtime,
+        &recovered.registry,
+        launcher,
+    );
+    defer production_backend.deinit();
+    const backend = production_backend.backend();
     while (true) {
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = runtime.server.stream.handle,

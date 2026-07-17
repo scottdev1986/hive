@@ -1737,8 +1737,15 @@ pub const ProductionHostLauncher = struct {
 
         switch (decision) {
             .admitted => {
-                defer stream.close();
-                acceptPendingRegistration(stream, client.pending_header) catch return false;
+                acceptPendingRegistration(stream, client.pending_header) catch {
+                    stream.close();
+                    killAndWait(client.host_pid);
+                    _ = self.clients.orderedRemove(index);
+                    client.deinit();
+                    self.allocator.destroy(client);
+                    return false;
+                };
+                stream.close();
                 return true;
             },
             .rejected => |code| {
@@ -3716,6 +3723,100 @@ test "HostLauncher positive control observes failed same-role exec" {
     const wait_status: u32 = @bitCast(status);
     try std.testing.expect(std.posix.W.IFEXITED(wait_status));
     try std.testing.expectEqual(@as(u32, 127), std.posix.W.EXITSTATUS(wait_status));
+}
+
+test "admitted HOST_REGISTER write failure reaps and removes the launch client" {
+    var sockets = try socketPair();
+    var pending_stream_open = true;
+    defer {
+        if (pending_stream_open) sockets[0].close();
+    }
+    defer sockets[1].close();
+    const no_sigpipe: c_int = 1;
+    if (c.setsockopt(
+        sockets[0].handle,
+        c.SOL_SOCKET,
+        c.SO_NOSIGPIPE,
+        &no_sigpipe,
+        @sizeOf(c_int),
+    ) != 0 or c.shutdown(sockets[0].handle, c.SHUT_WR) != 0)
+        return error.SocketWriteFailureUnavailable;
+
+    const pid = c.fork();
+    if (pid < 0) return error.HostForkFailed;
+    if (pid == 0) {
+        sockets[0].close();
+        sockets[1].close();
+        c._exit(0);
+    }
+    var child_reaped = false;
+    defer if (!child_reaped) killAndWait(@intCast(pid));
+
+    var expiry_storage: [24]u8 = undefined;
+    var registration = fixtureRegistration();
+    registration.record.host_pid = @intCast(pid);
+    registration.expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        generated.limits.visibility_expiry_ms,
+    );
+    const payload = try encodeHostRegister(std.testing.allocator, registration);
+    defer std.testing.allocator.free(payload);
+    var parsed = try parseRegistration(std.testing.allocator, payload);
+    var parsed_owned = true;
+    defer if (parsed_owned) parsed.deinit(std.testing.allocator);
+
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var wire = try broker.WireHostClient.init(
+        std.testing.allocator,
+        temporary.dir,
+        "/tmp/not-used-host.sock",
+        .{ .device = 1, .inode = 2, .owner_uid = std.posix.getuid(), .mode = 0o600 },
+        parsed.registration.record,
+        "broker-build-a",
+    );
+    var wire_owned = true;
+    defer if (wire_owned) wire.deinit();
+
+    var launcher: ProductionHostLauncher = .{
+        .allocator = std.testing.allocator,
+        .canonical_home = try std.testing.allocator.dupe(u8, "/tmp"),
+    };
+    defer launcher.deinit();
+    const client = try std.testing.allocator.create(LaunchClient);
+    client.* = .{
+        .allocator = std.testing.allocator,
+        .parsed = parsed,
+        .wire = wire,
+        .host_pid = @intCast(pid),
+        .pending_id = 1,
+        .pending_stream = sockets[0],
+        .pending_header = .{
+            .minor = generated.protocol_minor,
+            .type_code = generated.frame_type.host_register,
+            .flags = 0,
+            .payload_length = 0,
+            .request_id = 2,
+            .stream_seq = 0,
+        },
+    };
+    try launcher.clients.append(std.testing.allocator, client);
+    parsed_owned = false;
+    wire_owned = false;
+    pending_stream_open = false;
+
+    try std.testing.expect(!try launcher.finalizeOne(1, .admitted));
+    var status: c_int = 0;
+    var waited = c.waitpid(pid, &status, c.WNOHANG);
+    var attempts: u8 = 0;
+    while (waited == 0 and attempts < 100) : (attempts += 1) {
+        std.Thread.sleep(std.time.ns_per_ms);
+        waited = c.waitpid(pid, &status, c.WNOHANG);
+    }
+    if (waited == pid or (waited < 0 and std.posix.errno(waited) == .CHILD))
+        child_reaped = true;
+    try std.testing.expect(waited < 0 and std.posix.errno(waited) == .CHILD);
+    try std.testing.expectEqual(@as(usize, 0), launcher.clients.items.len);
 }
 
 test "HostLauncher child closes broker descriptors above inherited fd 3" {
