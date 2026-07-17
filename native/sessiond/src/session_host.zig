@@ -2803,7 +2803,8 @@ pub fn runHostRole(
     try setControlTimeout(control.handle);
     const control_file: std.fs.File = .{ .handle = control.handle };
     var boot = try readBootMessage(allocator, control_file.deprecatedReader());
-    defer boot.deinit(allocator);
+    var boot_owned = true;
+    defer if (boot_owned) boot.deinit(allocator);
     if (!protocol.validateControlPayload(
         allocator,
         generated.wire_schema.create_begin_payload,
@@ -2811,6 +2812,9 @@ pub fn runHostRole(
     )) return error.InvalidCreateSpec;
     var spec = try std.json.parseFromSlice(WireCreateSpec, allocator, boot.spec_json, .{
         .ignore_unknown_fields = true,
+        // The boot envelope is scrubbed once its input and adoption secret
+        // have been transferred into their live owners.
+        .allocate = .alloc_always,
     });
     defer spec.deinit();
     if (spec.value.schemaVersion != 1) return error.InvalidCreateSpec;
@@ -2979,6 +2983,8 @@ pub fn runHostRole(
         .directory = runtime.directory,
         .arbiter = &arbiter,
     });
+    boot.deinit(allocator);
+    boot_owned = false;
     errdefer if (!core.terminated) {
         const response = core.terminateBound(.immediate, "HOST_START_FAILED") catch null;
         if (response) |bytes| allocator.free(bytes);
