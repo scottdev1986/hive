@@ -518,6 +518,7 @@ pub fn writeFinalExclusive(
         .mode = 0o600,
         .exclusive = true,
     });
+    errdefer directory.deleteFile("final.json") catch {};
     defer file.close();
     try file.chmod(0o600);
     try file.writeAll(json);
@@ -1186,12 +1187,19 @@ const SpawnedHost = struct {
     stream: std.net.Stream,
 };
 
+fn closeHostInheritedDescriptors(descriptor_limit: c_int) void {
+    var fd: c_int = inherited_control_fd + 1;
+    while (fd < descriptor_limit) : (fd += 1) _ = c.close(fd);
+}
+
 fn spawnHostProcess(allocator: std.mem.Allocator, executable: []const u8) !SpawnedHost {
     if (!std.fs.path.isAbsolute(executable)) return error.InvalidHostExecutable;
     const executable_z = try allocator.dupeZ(u8, executable);
     defer allocator.free(executable_z);
     const role_z = try allocator.dupeZ(u8, "host");
     defer allocator.free(role_z);
+    const descriptor_limit = c.getdtablesize();
+    if (descriptor_limit <= inherited_control_fd) return error.InvalidDescriptorLimit;
 
     var sockets: [2]c_int = .{ -1, -1 };
     if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
@@ -1213,6 +1221,9 @@ fn spawnHostProcess(allocator: std.mem.Allocator, executable: []const u8) !Spawn
         if (descriptor_flags < 0 or
             c.fcntl(inherited_control_fd, c.F_SETFD, descriptor_flags & ~c.FD_CLOEXEC) < 0)
             c._exit(126);
+        // The host inherits exactly stdio plus fd 3. Retaining the broker's
+        // listener or lock descriptors would prevent clean crash recovery.
+        closeHostInheritedDescriptors(descriptor_limit);
         const argv = [_:null]?[*:0]const u8{ executable_z.ptr, role_z.ptr };
         _ = c.execve(executable_z.ptr, @ptrCast(&argv), @ptrCast(std.c.environ));
         c._exit(127);
@@ -1577,6 +1588,8 @@ pub const ProductionHostLauncher = struct {
             build_id,
         );
         errdefer wire.deinit();
+        const created_payload = try allocator.dupe(u8, parsed.created_payload);
+        errdefer allocator.free(created_payload);
 
         const client = try self.allocator.create(LaunchClient);
         errdefer self.allocator.destroy(client);
@@ -1591,7 +1604,7 @@ pub const ProductionHostLauncher = struct {
         return .{
             .record = client.parsed.registration.record,
             .record_json = client.parsed.record_json,
-            .created_payload = try allocator.dupe(u8, client.parsed.created_payload),
+            .created_payload = created_payload,
             .host = client.control(),
         };
     }
@@ -3251,6 +3264,40 @@ test "HostLauncher positive control observes failed same-role exec" {
     const wait_status: u32 = @bitCast(status);
     try std.testing.expect(std.posix.W.IFEXITED(wait_status));
     try std.testing.expectEqual(@as(u32, 127), std.posix.W.EXITSTATUS(wait_status));
+}
+
+test "HostLauncher child closes broker descriptors above inherited fd 3" {
+    var pipe_fds: [2]c_int = undefined;
+    if (c.pipe(&pipe_fds) != 0) return error.PipeFailed;
+    defer _ = c.close(pipe_fds[0]);
+    var write_fd = pipe_fds[1];
+    defer {
+        if (write_fd >= 0) _ = c.close(write_fd);
+    }
+    if (write_fd <= inherited_control_fd) {
+        const duplicate = c.fcntl(write_fd, c.F_DUPFD, inherited_control_fd + 1);
+        if (duplicate < 0) return error.DescriptorDuplicateFailed;
+        _ = c.close(write_fd);
+        write_fd = duplicate;
+    }
+    const pid = c.fork();
+    if (pid < 0) return error.HostForkFailed;
+    if (pid == 0) {
+        _ = c.close(pipe_fds[0]);
+        closeHostInheritedDescriptors(c.getdtablesize());
+        const byte: u8 = 1;
+        const wrote = c.write(write_fd, &byte, 1);
+        c._exit(if (wrote < 0 and std.posix.errno(wrote) == .BADF) 0 else 1);
+    }
+    _ = c.close(write_fd);
+    write_fd = -1;
+    var status: c_int = 0;
+    if (c.waitpid(pid, &status, 0) != pid) return error.ChildWaitFailed;
+    const wait_status: u32 = @bitCast(status);
+    try std.testing.expect(std.posix.W.IFEXITED(wait_status));
+    try std.testing.expectEqual(@as(u32, 0), std.posix.W.EXITSTATUS(wait_status));
+    var byte: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(isize, 0), c.read(pipe_fds[0], &byte, 1));
 }
 
 fn adoptionChallenge(
