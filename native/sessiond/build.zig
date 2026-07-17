@@ -72,6 +72,19 @@ pub fn build(b: *std.Build) void {
     const run_terminal_state_tests = b.addRunArtifact(terminal_state_tests);
     test_step.dependOn(&run_terminal_state_tests.step);
 
+    // WP4-B Track β: PTY host leaf (integrates process_inspector for spawn snapshot).
+    const pty_host_module = b.createModule(.{
+        .root_source_file = b.path("src/pty_host.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    pty_host_module.addImport("process_inspector", process_inspector_module);
+    const pty_host_tests = b.addTest(.{ .root_module = pty_host_module });
+    // util (openpty) needs -lutil on some platforms; on macOS it's in libSystem.
+    const run_pty_host_tests = b.addRunArtifact(pty_host_tests);
+    test_step.dependOn(&run_pty_host_tests.step);
+
     const stub_module = b.createModule(.{
         .root_source_file = b.path("test/stub_host.zig"),
         .target = target,
