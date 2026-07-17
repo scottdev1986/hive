@@ -43,10 +43,11 @@ extern "c" fn openpty(
 pub const cells_per_dimension_min: u32 = 1;
 pub const cells_per_dimension_max: u32 = 1_000;
 pub const active_cells_max: u32 = 250_000;
-/// §18 stream chunk bound (write-queue atomic acceptance unit ceiling).
+/// §18 stream chunk bound (maximum bytes in one PTY drain write).
 pub const stream_chunk_max_bytes: usize = 64 * 1024;
-/// Write-queue capacity (bytes pending drain to the PTY master).
-pub const write_queue_cap_bytes: usize = 1024 * 1024;
+/// Write-queue capacity: the §22 maximum encoded automation transaction
+/// (1 MiB body * 4 worst-case expansion + 256 bytes framing).
+pub const write_queue_cap_bytes: usize = (1024 * 1024) * 4 + 256;
 
 pub const Error = error{
     GeometryOutOfRange,
@@ -200,6 +201,14 @@ pub const PtyHost = struct {
         const argv_owned = try dupeArgv(self.allocator, spec.argv);
         defer freeArgv(self.allocator, argv_owned);
 
+        // Build a complete C envp before fork for the same reason. A null spec
+        // inherits environ; a non-null (including empty) spec is passed exactly.
+        const envp_owned: ?ArgvOwned = if (spec.envp) |envp|
+            try dupeArgv(self.allocator, envp)
+        else
+            null;
+        defer if (envp_owned) |owned| freeArgv(self.allocator, owned);
+
         const cwd_z: ?[:0]u8 = if (spec.cwd) |cwd|
             self.allocator.dupeZ(u8, cwd) catch return error.Internal
         else
@@ -241,11 +250,12 @@ pub const PtyHost = struct {
             if (cwd_z) |dir| {
                 if (c.chdir(dir.ptr) != 0) childBarrierFail(exec_pipe[1], 125);
             }
-            // Inherit parent environment (sessiond sets the child's env at host
-            // composition time via the spawn wrapper when needed).
             const file: [*:0]const u8 = argv_owned.storage[0].ptr;
             const argv_c: [*c]const [*c]u8 = @ptrCast(argv_owned.ptrs);
-            const env_c: [*c]const [*c]u8 = @ptrCast(std.c.environ);
+            const env_c: [*c]const [*c]u8 = if (envp_owned) |owned|
+                @ptrCast(owned.ptrs)
+            else
+                @ptrCast(std.c.environ);
             _ = c.execve(file, argv_c, env_c);
             // execve failed — write errno to the barrier pipe, then exit.
             childBarrierFail(exec_pipe[1], 127);
@@ -369,8 +379,8 @@ pub const PtyHost = struct {
     /// Either the whole range is queued or nothing is (no partial acceptance).
     pub fn writeAccept(self: *PtyHost, bytes: []const u8) Error!ByteRange {
         try self.requireOpen();
-        if (bytes.len > stream_chunk_max_bytes) return error.PayloadTooLarge;
-        if (self.write_queue.items.len + bytes.len > write_queue_cap_bytes)
+        if (bytes.len > write_queue_cap_bytes) return error.PayloadTooLarge;
+        if (bytes.len > write_queue_cap_bytes - self.write_queue.items.len)
             return error.QueueFull;
         const start = self.input_seq + self.write_queue.items.len;
         self.write_queue.appendSlice(self.allocator, bytes) catch return error.Internal;
@@ -382,7 +392,8 @@ pub const PtyHost = struct {
     pub fn writeDrain(self: *PtyHost) Error!usize {
         try self.requireOpen();
         if (self.write_queue.items.len == 0) return 0;
-        const n = posix.write(self.master_fd, self.write_queue.items) catch |err| switch (err) {
+        const chunk = self.write_queue.items[0..@min(self.write_queue.items.len, stream_chunk_max_bytes)];
+        const n = posix.write(self.master_fd, chunk) catch |err| switch (err) {
             error.WouldBlock => return 0,
             error.BrokenPipe, error.ConnectionResetByPeer => return error.Closed,
             else => return error.IoFailed,
@@ -726,6 +737,44 @@ test "spawn cat: readback proves pid/pgid/start-token/executable" {
     }
 }
 
+test "spawn passes the spec environment to the child" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    const env_name = "HIVE_PTY_HOST_SPEC_ENV_7F3C91";
+    const env_value = "spec-environment-positive-control";
+    try testing.expect(std.posix.getenv(env_name) == null);
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    _ = try host.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            "printf %s \"$HIVE_PTY_HOST_SPEC_ENV_7F3C91\"",
+        },
+        .envp = &[_][]const u8{
+            "HIVE_PTY_HOST_SPEC_ENV_7F3C91=spec-environment-positive-control",
+        },
+        .geometry = defaultGeometry(),
+    });
+
+    var got: std.ArrayList(u8) = .{};
+    defer got.deinit(testing.allocator);
+    var attempts: usize = 0;
+    while (attempts < 200 and got.items.len < env_value.len) : (attempts += 1) {
+        const chunk = host.readAvailable() catch |err| switch (err) {
+            error.Closed => break,
+            else => return err,
+        };
+        if (chunk.bytes.len > 0)
+            try got.appendSlice(testing.allocator, chunk.bytes)
+        else
+            std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    try testing.expectEqualStrings(env_value, got.items);
+    try testing.expect(std.posix.getenv(env_name) == null);
+}
+
 test "spawn rejects invalid geometry before opening PTY" {
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
@@ -752,8 +801,8 @@ test "write-queue atomic acceptance: whole range or nothing" {
     const b = try host.writeAccept(" world");
     try testing.expectEqual(@as(u64, 5), b.start);
 
-    // Oversized chunk rejected without partial accept.
-    const big = try testing.allocator.alloc(u8, stream_chunk_max_bytes + 1);
+    // A transaction larger than the queue is rejected without partial accept.
+    const big = try testing.allocator.alloc(u8, write_queue_cap_bytes + 1);
     defer testing.allocator.free(big);
     @memset(big, 'x');
     const before_len = host.write_queue.items.len;

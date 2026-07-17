@@ -85,6 +85,17 @@ pub fn build(b: *std.Build) void {
     const run_pty_host_tests = b.addRunArtifact(pty_host_tests);
     test_step.dependOn(&run_pty_host_tests.step);
 
+    const input_arbiter_pty_host_module = b.createModule(.{
+        .root_source_file = b.path("test/input-arbiter-pty-host.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    input_arbiter_pty_host_module.addImport("input_arbiter", input_arbiter_module);
+    input_arbiter_pty_host_module.addImport("pty_host", pty_host_module);
+    const input_arbiter_pty_host_tests = b.addTest(.{ .root_module = input_arbiter_pty_host_module });
+    const run_input_arbiter_pty_host_tests = b.addRunArtifact(input_arbiter_pty_host_tests);
+    test_step.dependOn(&run_input_arbiter_pty_host_tests.step);
+
     const stub_module = b.createModule(.{
         .root_source_file = b.path("test/stub_host.zig"),
         .target = target,
