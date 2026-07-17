@@ -1,8 +1,10 @@
 const std = @import("std");
 const broker = @import("broker");
 const c = @cImport({
+    @cInclude("signal.h");
     @cInclude("sys/socket.h");
     @cInclude("sys/stat.h");
+    @cInclude("sys/wait.h");
     @cInclude("unistd.h");
 });
 
@@ -427,6 +429,7 @@ const WireStubServer = struct {
     server: *std.net.Server,
     record: *const broker.HostRecord,
     secret: [32]u8,
+    expected_peer_pid: i32 = 0,
     expiry_storage: [24]u8 = undefined,
     failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
@@ -450,7 +453,8 @@ const WireStubServer = struct {
         const accepted = try self.server.accept();
         defer accepted.stream.close();
         const observed = try broker.inspectPeer(accepted.stream.handle);
-        if (observed.uid != std.posix.getuid() or observed.pid != c.getpid())
+        const expected_peer_pid = if (self.expected_peer_pid == 0) c.getpid() else self.expected_peer_pid;
+        if (observed.uid != std.posix.getuid() or observed.pid != expected_peer_pid)
             return error.InvalidBrokerPeer;
         const file: std.fs.File = .{ .handle = accepted.stream.handle };
         const reader = file.deprecatedReader();
@@ -753,6 +757,97 @@ test "TERMINATED response does not prove the still-live host exited" {
     _ = try broker.inspectProcess(record.host_pid);
     thread.join();
     try std.testing.expect(!server.failed.load(.acquire));
+}
+
+test "broker observes TERMINATED when the exact host exits after 500ms" {
+    var root_storage: [48]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/h{x}", .{std.crypto.random.int(u32)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+    const session_id = "ses_018f1e90-7b5a-7cc0-8000-000000000001";
+    var host_directory = try runtime.openHostDirectory(session_id, true);
+    defer host_directory.close();
+    const socket_path = try std.fs.path.join(std.testing.allocator, &.{
+        root, "runtime/sessiond/hosts", session_id, "host.sock",
+    });
+    defer std.testing.allocator.free(socket_path);
+    const socket_path_z = try std.testing.allocator.dupeZ(u8, socket_path);
+    defer std.testing.allocator.free(socket_path_z);
+
+    var record = fixtureRecord(15 * std.time.ns_per_s);
+    const broker_pid = c.getpid();
+    const ready_pipe = try std.posix.pipe();
+    defer std.posix.close(ready_pipe[0]);
+    const child_pid = try std.posix.fork();
+    if (child_pid == 0) {
+        std.posix.close(ready_pipe[0]);
+        const address = std.net.Address.initUnix(socket_path) catch std.posix.exit(125);
+        var listener = address.listen(.{}) catch std.posix.exit(125);
+        if (c.chmod(socket_path_z.ptr, 0o600) != 0) std.posix.exit(125);
+        _ = std.posix.write(ready_pipe[1], "1") catch std.posix.exit(125);
+        std.posix.close(ready_pipe[1]);
+        var server: WireStubServer = .{
+            .server = &listener,
+            .record = &record,
+            .secret = @splat(0x5a),
+            .expected_peer_pid = broker_pid,
+        };
+        server.serveOne(broker.generated.frame_type.terminate) catch std.posix.exit(125);
+        std.Thread.sleep(500 * std.time.ns_per_ms);
+        std.posix.exit(0);
+    }
+    std.posix.close(ready_pipe[1]);
+    const Reaper = struct {
+        fn run(pid: i32) void {
+            var status: c_int = 0;
+            _ = c.waitpid(pid, &status, 0);
+        }
+    };
+    const reaper = try std.Thread.spawn(.{}, Reaper.run, .{child_pid});
+    defer reaper.join();
+    defer {
+        var status: c_int = 0;
+        if (c.waitpid(child_pid, &status, c.WNOHANG) == 0) {
+            _ = c.kill(child_pid, c.SIGKILL);
+            _ = c.waitpid(child_pid, &status, 0);
+        }
+    }
+
+    var ready: [1]u8 = undefined;
+    if (try std.posix.read(ready_pipe[0], &ready) != 1) return error.StubHostNotReady;
+    const stat = try std.posix.fstatat(host_directory.fd, "host.sock", std.posix.AT.SYMLINK_NOFOLLOW);
+
+    const process = try broker.inspectProcess(child_pid);
+    var start_token_storage: [64]u8 = undefined;
+    record.host_pid = child_pid;
+    record.host_start_token = try broker.formatStartToken(process.start_token, &start_token_storage);
+    record.expected_executable = hostExecutable();
+    var client = try broker.WireHostClient.init(
+        std.testing.allocator,
+        host_directory,
+        socket_path,
+        .{
+            .device = @intCast(stat.dev),
+            .inode = @intCast(stat.ino),
+            .owner_uid = @intCast(stat.uid),
+            .mode = @intCast(stat.mode & 0o777),
+        },
+        record,
+        "broker-build",
+    );
+    defer client.deinit();
+    var registry: broker.Registry = .{};
+    try std.testing.expect(registry.register(record, client.control()) == null);
+    try std.testing.expectEqual(broker.TerminationState.terminated, registry.terminate(
+        record.locator,
+        .{
+            .mode = "graceful",
+            .reason = "terminal closed",
+            .request_id = "req_018f1e90-7b5a-7cc0-8000-000000000004",
+        },
+    ));
 }
 
 test "wire host control rejects a locator before connecting" {

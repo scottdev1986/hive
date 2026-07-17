@@ -102,7 +102,7 @@ pub fn observeExactProcess(pid: i32, expected_start_token: []const u8) ExactProc
     return if (std.posix.errno(rc) == .SRCH) .absent else .unknown;
 }
 
-const host_exit_observation_timeout_ns = 250 * std.time.ns_per_ms;
+const host_exit_observation_timeout_ns = generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms;
 const host_exit_poll_interval_ns = 5 * std.time.ns_per_ms;
 
 pub fn waitForExactProcessAbsence(pid: i32, expected_start_token: []const u8) bool {
