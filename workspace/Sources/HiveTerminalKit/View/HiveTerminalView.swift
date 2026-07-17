@@ -20,8 +20,16 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var lastTitle: String = ""
     public private(set) var lastPwd: String = ""
 
-    public let engine: ManualSurfaceEngine
-    public let applicator: OutputRangeApplicator
+    private var engineStorage: ManualSurfaceEngine?
+    private var applicatorStorage: OutputRangeApplicator?
+    public var engine: ManualSurfaceEngine {
+        guard let engineStorage else { preconditionFailure("terminal surface is not initialized") }
+        return engineStorage
+    }
+    public var applicator: OutputRangeApplicator {
+        guard let applicatorStorage else { preconditionFailure("terminal applicator is not initialized") }
+        return applicatorStorage
+    }
     public private(set) var attachClient: AttachReplayClient?
 
     public var onUserClose: (() -> Void)?
@@ -33,27 +41,65 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public var testingAllowFocusSteal = false
     public private(set) var drawScheduledCount = 0
     public private(set) var resizeFramesSent = 0
+    public private(set) var reportedGeometry: TerminalGeometry?
+    public private(set) var appliedContentScale = NSSize(width: 1, height: 1)
+    public private(set) var appliedDisplayID: UInt32?
+    public private(set) var appliedOcclusionVisible: Bool?
 
     private var viewerId: String
     private var resizeWorkItem: DispatchWorkItem?
     private var drawWorkItem: DispatchWorkItem?
+    private var renderHostView: NSView?
+    private var windowObservers: [NSObjectProtocol] = []
     private let resizeQuiescence: TimeInterval = 0.100
     // internal (not private): HiveTerminalView+Input.swift (gate 8) reads/writes these.
     var markedText: NSAttributedString?
     var pendingAuthoringHeld = false
 
     public init(frame frameRect: NSRect, engine: ManualSurfaceEngine, viewerId: String = "viewer-local") {
-        self.engine = engine
+        self.engineStorage = engine
         self.viewerId = viewerId
-        self.applicator = OutputRangeApplicator(engine: engine)
+        self.applicatorStorage = OutputRangeApplicator(engine: engine)
         super.init(frame: frameRect)
         wantsLayer = true
         wireBridgeEvents()
     }
 
+    /// Creates the production view and binds Ghostty's renderer to an
+    /// edge-to-edge AppKit host owned by this view.
+    public init(frame frameRect: NSRect, viewerId: String = "viewer-local") throws {
+        self.viewerId = viewerId
+        super.init(frame: frameRect)
+        wantsLayer = true
+
+        let renderHost = NSView(frame: bounds)
+        renderHost.autoresizingMask = [.width, .height]
+        addSubview(renderHost)
+        renderHostView = renderHost
+
+        let backingSize = convertToBacking(bounds.size)
+        let widthPx = UInt32(max(1, Int(backingSize.width)))
+        let heightPx = UInt32(max(1, Int(backingSize.height)))
+        let engine = try GhosttyBridgeFactory.makeManualSurface(
+            hostView: renderHost,
+            widthPx: widthPx,
+            heightPx: heightPx
+        )
+        engineStorage = engine
+        applicatorStorage = OutputRangeApplicator(engine: engine)
+        wireBridgeEvents()
+        synchronizeRenderingState()
+    }
+
     @available(*, unavailable)
     required init?(coder: NSCoder) {
         fatalError("init(coder:) is not supported")
+    }
+
+    deinit {
+        drawWorkItem?.cancel()
+        resizeWorkItem?.cancel()
+        removeWindowObservers()
     }
 
     /// Wire §23 bridge events: INVALIDATE → render; CLOSE_REQUEST → terminate seam (M9).
@@ -96,15 +142,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             guard let self else { return }
             self.drawScheduledCount += 1
             self.engine.draw()
-            self.needsDisplay = true
         }
         drawWorkItem = work
         DispatchQueue.main.async(execute: work)
-    }
-
-    public override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
-        engine.draw()
     }
 
     // MARK: - Attach
@@ -202,6 +242,90 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         }
     }
 
+    // MARK: - AppKit renderer lifecycle
+
+    public override func viewWillMove(toWindow newWindow: NSWindow?) {
+        removeWindowObservers()
+        super.viewWillMove(toWindow: newWindow)
+        guard let newWindow else { return }
+
+        let center = NotificationCenter.default
+        windowObservers = [
+            center.addObserver(
+                forName: NSWindow.didChangeScreenNotification,
+                object: newWindow,
+                queue: .main
+            ) { [weak self] _ in
+                self?.synchronizeRenderingState()
+            },
+            center.addObserver(
+                forName: NSWindow.didChangeOcclusionStateNotification,
+                object: newWindow,
+                queue: .main
+            ) { [weak self] _ in
+                self?.synchronizeOcclusion()
+            },
+        ]
+    }
+
+    public override func viewDidMoveToWindow() {
+        super.viewDidMoveToWindow()
+        synchronizeRenderingState()
+    }
+
+    public override func viewDidChangeBackingProperties() {
+        super.viewDidChangeBackingProperties()
+        synchronizeRenderingState()
+    }
+
+    var ghosttyRenderingLayer: CALayer? {
+        renderHostView?.layer
+    }
+
+    private func synchronizeRenderingState() {
+        let backingSize = convertToBacking(bounds.size)
+        let fallbackScale = window?.backingScaleFactor ?? 1
+        let xScale = bounds.width > 0 ? backingSize.width / bounds.width : fallbackScale
+        let yScale = bounds.height > 0 ? backingSize.height / bounds.height : fallbackScale
+        appliedContentScale = NSSize(width: xScale, height: yScale)
+
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        ghosttyRenderingLayer?.contentsScale = fallbackScale
+        CATransaction.commit()
+
+        if let surface = engineStorage?.surfaceHandle {
+            ghostty_surface_set_content_scale(surface, xScale, yScale)
+            synchronizeDisplayID(surface: surface)
+        }
+        synchronizeOcclusion()
+        scheduleResizeIfNeeded()
+    }
+
+    private func synchronizeDisplayID(surface: ghostty_surface_t) {
+        guard
+            let screen = window?.screen,
+            let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
+        else { return }
+        let displayID = number.uint32Value
+        ghostty_surface_set_display_id(surface, displayID)
+        appliedDisplayID = displayID
+    }
+
+    private func synchronizeOcclusion() {
+        guard let surface = engineStorage?.surfaceHandle else { return }
+        let visible = window?.occlusionState.contains(.visible) ?? false
+        guard appliedOcclusionVisible != visible else { return }
+        ghostty_surface_set_occlusion(surface, visible)
+        appliedOcclusionVisible = visible
+    }
+
+    private func removeWindowObservers() {
+        let center = NotificationCenter.default
+        windowObservers.forEach(center.removeObserver)
+        windowObservers.removeAll()
+    }
+
     // MARK: - Geometry / RESIZE (M10)
 
     public override func layout() {
@@ -215,12 +339,12 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     private func scheduleResizeIfNeeded() {
-        let scale = window?.backingScaleFactor ?? 1
-        let width = max(0, Int(bounds.width * scale))
-        let height = max(0, Int(bounds.height * scale))
+        resizeWorkItem?.cancel()
+        let backingSize = convertToBacking(bounds.size)
+        let width = max(0, Int(backingSize.width))
+        let height = max(0, Int(backingSize.height))
         guard width > 0, height > 0 else { return }
 
-        resizeWorkItem?.cancel()
         let work = DispatchWorkItem { [weak self] in
             self?.commitResize(widthPx: UInt32(width), heightPx: UInt32(height))
         }
@@ -229,22 +353,33 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     private func commitResize(widthPx: UInt32, heightPx: UInt32) {
-        guard binding != nil else { return }
         guard widthPx > 0, heightPx > 0 else { return }
         engine.setSize(widthPx: widthPx, heightPx: heightPx)
-        // Cell geometry estimate for wire RESIZE (actual cells from surface when available).
-        let cols = max(1, Int(widthPx / 10))
-        let rows = max(1, Int(heightPx / 20))
+        guard let surface = engine.surfaceHandle else { return }
+
+        let size = ghostty_surface_size(surface)
+        guard
+            size.columns > 0,
+            size.rows > 0,
+            size.width_px > 0,
+            size.height_px > 0,
+            size.cell_width_px > 0,
+            size.cell_height_px > 0
+        else {
+            reportedGeometry = nil
+            return
+        }
         let geometry = TerminalGeometry(
-            columns: cols,
-            rows: rows,
-            widthPx: Int(widthPx),
-            heightPx: Int(heightPx),
-            cellWidthPx: Double(widthPx) / Double(cols),
-            cellHeightPx: Double(heightPx) / Double(rows)
+            columns: Int(size.columns),
+            rows: Int(size.rows),
+            widthPx: Int(size.width_px),
+            heightPx: Int(size.height_px),
+            cellWidthPx: Double(size.cell_width_px),
+            cellHeightPx: Double(size.cell_height_px)
         )
-        if let client = attachClient {
-            try? client.sendResize(geometry)
+        reportedGeometry = geometry
+        if binding != nil, let client = attachClient {
+            guard (try? client.sendResize(geometry)) != nil else { return }
             resizeFramesSent += 1
         }
     }
@@ -252,8 +387,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     // MARK: - Close
 
     public func userClose() {
+        drawWorkItem?.cancel()
+        resizeWorkItem?.cancel()
         onUserClose?()
         engine.free()
+        if let renderHostView {
+            renderHostView.layer = nil
+            renderHostView.wantsLayer = false
+        }
         binding = nil
         applicator.clearBinding()
         setSurfaceState(.exited(evidence: "user-close"))
