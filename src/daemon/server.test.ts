@@ -129,6 +129,7 @@ test("managed daemon shutdown reaps the orchestrator session", async () => {
   const db = new HiveDatabase(join(home, "managed-stop-root.db"));
   const tmux = new FakeDaemonTmux();
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmux,
@@ -146,6 +147,7 @@ test("accepted selection CAS writes the ordinary preference; rejected and unrela
   const db = new HiveDatabase(":memory:");
   const persisted: unknown[] = [];
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     selectionPreferences: {
@@ -195,6 +197,7 @@ test("accepted selection CAS writes the ordinary preference; rejected and unrela
 test("a shared selection failure is explicit about the already-saved local policy", async () => {
   const db = new HiveDatabase(":memory:");
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     selectionPreferences: {
@@ -233,6 +236,7 @@ test("agent kill refuses when a live session's process roots are unreadable", as
   const tmux = new FakeDaemonTmux();
   tmux.sessions.add("hive-maya");
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmux,
@@ -281,6 +285,7 @@ test("agent kill refuses when tmux reports success but leaves the session", asyn
   }();
   tmux.sessions.add("hive-maya");
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmux,
@@ -326,6 +331,7 @@ test("managed shutdown refuses to exit after an agent teardown probe fails", asy
   tmux.sessions.add("hive-maya");
   tmux.sessions.add(orchestratorTmuxSession());
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmux,
@@ -354,6 +360,7 @@ test("managed shutdown refuses unreadable orchestrator process roots", async () 
   const tmux = new FakeDaemonTmux();
   tmux.sessions.add(orchestratorTmuxSession());
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmux,
@@ -495,6 +502,7 @@ describe("HiveDaemon HTTP server", () => {
       () => new Date(timestamp),
     );
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -547,6 +555,7 @@ describe("HiveDaemon HTTP server", () => {
       () => new Date(timestamp),
     );
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -622,6 +631,7 @@ describe("HiveDaemon HTTP server", () => {
     const tmux = new FakeDaemonTmux();
     const spawner = new RestartingSpawner();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -676,6 +686,7 @@ describe("HiveDaemon HTTP server", () => {
     const spawner = new ReservingFailureSpawner();
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -727,6 +738,7 @@ describe("HiveDaemon HTTP server", () => {
       }
     }
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StuckRestartSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -774,6 +786,7 @@ describe("HiveDaemon HTTP server", () => {
     const tmux = new FakeDaemonTmux();
     const spawner = new RestartingSpawner();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -827,6 +840,7 @@ describe("HiveDaemon HTTP server", () => {
     tmux.sessions.add("hive-maya");
     const spawner = new RestartingSpawner();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -897,6 +911,7 @@ describe("HiveDaemon HTTP server", () => {
     tmux.sessions.add("hive-maya");
     const spawner = new RestartingSpawner();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux,
@@ -968,6 +983,7 @@ describe("HiveDaemon HTTP server", () => {
     });
     quota.markStarted(reservation.id);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -1026,6 +1042,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -1124,6 +1141,7 @@ describe("HiveDaemon HTTP server", () => {
       stderr: "ignore",
     });
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -1195,6 +1213,7 @@ describe("HiveDaemon HTTP server", () => {
       stderr: "ignore",
     });
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -1243,6 +1262,7 @@ describe("HiveDaemon HTTP server", () => {
     );
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new FailingRestartSpawner(
         "Insufficient quota for recorded codex/gpt-5-codex; no model fallback",
@@ -1281,6 +1301,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "capability-land.db"));
     const landed: string[] = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new RestartingSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -1324,6 +1345,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "read-only-land.db"));
     const landed: string[] = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -1352,7 +1374,12 @@ describe("HiveDaemon HTTP server", () => {
     const lease = await updater.acquireLease("update");
     const db = new HiveDatabase(join(home, "spawn-mutation-daemon.db"));
     const spawner = new StubSpawner();
-    const daemon = new HiveDaemon({ db, spawner, machineMutations: daemonMutations });
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner,
+      machineMutations: daemonMutations,
+    });
     const transport = new StreamableHTTPClientTransport(
       new URL("http://hive/mcp"),
       { fetch: actingAs(daemon, "operator") },
@@ -1391,6 +1418,7 @@ describe("HiveDaemon HTTP server", () => {
       finishLanding = resolve;
     });
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       machineMutations: daemonMutations,
@@ -1425,6 +1453,7 @@ describe("HiveDaemon HTTP server", () => {
   test("only approval requests block agents and enter the approval queue", async () => {
     const db = new HiveDatabase(join(home, "events.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -1513,7 +1542,11 @@ describe("HiveDaemon HTTP server", () => {
   test("health reports an unreadable database instead of inventing ok", async () => {
     const path = join(home, "health-corrupt.db");
     const db = new HiveDatabase(path);
-    const daemon = new HiveDaemon({ db, spawner: new StubSpawner() });
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+    });
     db.database.close();
     await Bun.write(path, "not a sqlite database");
     (db as unknown as { database: Database }).database =
@@ -1532,7 +1565,11 @@ describe("HiveDaemon HTTP server", () => {
 
   test("health surfaces a failed maintenance run", async () => {
     const db = new HiveDatabase(join(home, "health-maintenance.db"));
-    const daemon = new HiveDaemon({ db, spawner: new StubSpawner() });
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+    });
     (daemon as unknown as { reconcileAgents(): Promise<never> })
       .reconcileAgents = () => Promise.reject(new Error("measured sweep failure"));
     try {
@@ -1558,6 +1595,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "notification-delivery.db"));
     const tmux = new SilentTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: tmux,
@@ -1597,6 +1635,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "permission-dialog.db"));
     const tmux = new SilentTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: tmux,
@@ -1638,6 +1677,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "idle-notification.db"));
     const tmux = new SilentTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: tmux,
@@ -1667,6 +1707,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "permission-cleared.db"));
     const tmux = new SilentTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: tmux,
@@ -1692,6 +1733,7 @@ describe("HiveDaemon HTTP server", () => {
     const daemonTmux = new FakeDaemonTmux();
     const removedWorktrees: Array<[string, string]> = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmuxSender: tmux,
@@ -1988,6 +2030,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "compact-results.db"));
     const spawner = new StubSpawner();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner,
       tmux: new FakeDaemonTmux(),
@@ -2085,6 +2128,7 @@ describe("HiveDaemon HTTP server", () => {
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2138,6 +2182,7 @@ describe("HiveDaemon HTTP server", () => {
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2188,6 +2233,7 @@ describe("HiveDaemon HTTP server", () => {
     // whose tail they never read.
     const db = new HiveDatabase(join(home, "approval-kinds.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -2274,6 +2320,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "stranded.db"));
     const removed: Array<[string, boolean]> = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2375,6 +2422,7 @@ describe("HiveDaemon HTTP server", () => {
 
     const db = new HiveDatabase(join(home, "discard-real-git.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2422,6 +2470,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "stranded-error.db"));
     const removed: string[] = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2463,6 +2512,7 @@ describe("HiveDaemon HTTP server", () => {
   test("hook events capture the tool session id and a completed turn rearms the resume budget", async () => {
     const db = new HiveDatabase(join(home, "session-capture.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2509,6 +2559,7 @@ describe("HiveDaemon HTTP server", () => {
   test("a read-only agent reaches working without becoming control-paused", async () => {
     const db = new HiveDatabase(join(home, "reader-lifecycle.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2547,6 +2598,7 @@ describe("HiveDaemon HTTP server", () => {
       stderr: "ignore",
     });
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2582,6 +2634,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "recover-mcp.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       // This embedded daemon is driven through an in-memory MCP transport and
@@ -2641,6 +2694,7 @@ describe("HiveDaemon HTTP server", () => {
   test("the /recover endpoint sweeps and reports over HTTP for the CLI", async () => {
     const db = new HiveDatabase(join(home, "recover-http.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2670,6 +2724,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "reconcile.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2699,6 +2754,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "reconcile-spawning.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2725,6 +2781,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "reconcile-inflight.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2745,6 +2802,7 @@ describe("HiveDaemon HTTP server", () => {
   test("the telemetry sweep updates context% and revives a notify-blind codex agent", async () => {
     const db = new HiveDatabase(join(home, "telemetry-sweep.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -2799,6 +2857,7 @@ describe("HiveDaemon HTTP server", () => {
     const db = new HiveDatabase(join(home, "reconcile-stuck.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -2857,6 +2916,7 @@ describe("HiveDaemon HTTP server", () => {
     });
     quota.markStarted(decision.reservation.id);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -2888,6 +2948,7 @@ describe("HiveDaemon HTTP server", () => {
   test("hive_spawn returns a tool error for a failed verdict", async () => {
     const db = new HiveDatabase(join(home, "failed-spawn.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new FailedSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -2932,6 +2993,7 @@ describe("HiveDaemon HTTP server", () => {
   test("hive_spawn returns a tool error for an unverified stuck verdict", async () => {
     const db = new HiveDatabase(join(home, "stuck-spawn.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StuckSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -2967,6 +3029,7 @@ describe("HiveDaemon HTTP server", () => {
   test("rolls back event state when approval insertion fails", async () => {
     const db = new HiveDatabase(join(home, "event-transaction.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -3017,6 +3080,7 @@ describe("resource watchdog", () => {
     const sender = new SilentTmuxSender(db);
     const killed: number[] = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: sender,
@@ -3088,6 +3152,7 @@ describe("resource watchdog", () => {
     });
     const db = new HiveDatabase(":memory:");
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -3188,6 +3253,7 @@ describe("the model an agent is actually running", () => {
     const worktreePath = mkdtempSync(join(tmpdir(), "hive-zoe-"));
     const observed: Array<{ model: string }> = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       // The real transcript parser, pointed at this test's home rather than the
@@ -3255,6 +3321,7 @@ describe("the model an agent is actually running", () => {
   test("a statusline report lands Claude's own occupancy figure on the agent row", async () => {
     const db = new HiveDatabase(join(home, "statusline-context-pct.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       quota: {
@@ -3319,6 +3386,7 @@ describe("the model an agent is actually running", () => {
     const worktreePath = mkdtempSync(join(tmpdir(), "hive-lucas-"));
     const observed: string[] = [];
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       telemetryReaders: {
@@ -3389,6 +3457,7 @@ describe("the model an agent is actually running", () => {
     );
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -3476,6 +3545,7 @@ describe("an unobservable agent reads unknown, never 0", () => {
   test("telemetry that returns null clears a stale number instead of leaving it standing", async () => {
     const db = new HiveDatabase(join(home, "unknown-context.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3539,6 +3609,7 @@ describe("an unobservable agent reads unknown, never 0", () => {
     // The transcript grows between sweeps, the way a live session's does.
     let residentTokens = 90_000;
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3589,6 +3660,7 @@ describe("delivery reconciliation runs in maintenance", () => {
     const db = new HiveDatabase(join(home, "reconcile-agent.db"));
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux,
@@ -3631,6 +3703,7 @@ describe("delivery reconciliation runs in maintenance", () => {
     // messages stuck in "injected" were addressed to the orchestrator.
     const db = new HiveDatabase(join(home, "reconcile-root.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3661,6 +3734,7 @@ describe("delivery reconciliation runs in maintenance", () => {
   test("hook events under queen/orchestrator/case variants store one canonical root identity", async () => {
     const db = new HiveDatabase(join(home, "root-event-canonical.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3710,6 +3784,7 @@ describe("delivery reconciliation runs in maintenance", () => {
   test("status provenance includes pre-rename from=orchestrator root instructions", async () => {
     const db = new HiveDatabase(join(home, "root-status-legacy-from.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3762,6 +3837,7 @@ describe("delivery reconciliation runs in maintenance", () => {
   test("a message that never reached a turn is surfaced once, and the alert never surfaces itself", async () => {
     const db = new HiveDatabase(join(home, "reconcile-stalled.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3808,6 +3884,7 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
   test("a completed turn settles the row to idle and lands the vendor's context reading", async () => {
     const db = new HiveDatabase(join(home, "grok-turn.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3850,6 +3927,7 @@ describe("a grok agent's turn is observed from its session artifacts", () => {
   test("a streaming turn is working, and an unreadable session stays unknown", async () => {
     const db = new HiveDatabase(join(home, "grok-streaming.db"));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
@@ -3913,6 +3991,7 @@ describe("landed is not live", () => {
   ): Promise<void> {
     const db = new HiveDatabase(join(home, dbName));
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new RootUnavailableTmuxSender(db),

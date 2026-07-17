@@ -739,6 +739,7 @@ describe("quota persistence and reservations", () => {
       writeRevoked: false,
     });
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: { async spawn() { throw new Error("unused"); } },
       tmuxSender: { async sendMessage() {} },
@@ -1086,6 +1087,7 @@ describe("quota telemetry and alerts", () => {
       () => new Date("2026-07-09T12:00:00.000Z"),
     );
     new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: { async spawn() { throw new Error("unused"); } },
       tmuxSender: sender,

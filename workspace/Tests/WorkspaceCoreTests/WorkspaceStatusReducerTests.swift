@@ -5,12 +5,32 @@ import XCTest
 
 final class WorkspaceStatusReducerTests: XCTestCase {
     private struct Corpus: Decodable {
+        struct CanonicalizationFixture: Decodable {
+            let name: String
+            let entities: [WorkspaceStatusSnapshot.Entity]
+            let canonical: String
+            let sha256: String
+        }
         struct Scenario: Decodable {
             let name: String
             let events: [WorkspaceStatusEvent]
             let prefixes: [WorkspaceStatusProjection]
         }
+        let canonicalization: [CanonicalizationFixture]
         let scenarios: [Scenario]
+    }
+
+    func testCanonicalSnapshotDigestsUseUTF16CodeUnitKeyOrder() throws {
+        let corpus = try JSONDecoder().decode(
+            Corpus.self,
+            from: fixture("reducer-parity-corpus"))
+        for fixture in corpus.canonicalization {
+            let canonical = try workspaceCanonicalJSON(fixture.entities)
+            XCTAssertEqual(canonical, fixture.canonical, fixture.name)
+            let digest = SHA256.hash(data: Data(canonical.utf8))
+                .map { String(format: "%02x", $0) }.joined()
+            XCTAssertEqual(digest, fixture.sha256, fixture.name)
+        }
     }
 
     private func fixture(_ name: String) throws -> Data {
@@ -38,15 +58,11 @@ final class WorkspaceStatusReducerTests: XCTestCase {
         let entities = [WorkspaceStatusSnapshot.Entity(
             kind: "agent",
             id: "agent-fixture",
-            generation: 1,
+            generation: nil,
             entityRevision: "2",
             projection: ["kind": .string("status.turn")])]
-        let data = try JSONEncoder().encode(entities)
-        let object = try JSONSerialization.jsonObject(with: data)
-        let canonical = try JSONSerialization.data(
-            withJSONObject: object,
-            options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed])
-        let digest = SHA256.hash(data: canonical)
+        let canonical = try workspaceCanonicalJSON(entities)
+        let digest = SHA256.hash(data: Data(canonical.utf8))
             .map { String(format: "%02x", $0) }.joined()
         let snapshot = WorkspaceStatusSnapshot(
             instanceId: "instance-fixture",
@@ -115,7 +131,7 @@ final class WorkspaceStatusReducerTests: XCTestCase {
             WorkspaceStatusEvent(
                 eventId: id,
                 seq: "1",
-                entity: .init(kind: "agent", id: "agent-fixture", generation: 1),
+                entity: .init(kind: "agent", id: "agent-fixture", generation: nil),
                 entityRevision: "1",
                 occurredAt: "2026-07-16T12:00:00.000Z",
                 kind: kind,

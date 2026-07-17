@@ -5,6 +5,12 @@ import type { AgentRecord } from "../schemas";
 import type { CaptureResult, SessionLocator } from "./session-host/contract";
 import { HiveDatabase } from "./db";
 import { HiveDaemon } from "./server";
+import type { StatusIncarnationGenerationSource } from "./status-generation";
+import {
+  emptyStatusProjection,
+  reconcileStatusSnapshot,
+  reduceStatusEvent,
+} from "./status-events";
 import { StatusStore } from "./status-store";
 
 const AT = "2026-07-16T12:00:00.000Z";
@@ -79,12 +85,23 @@ async function callTool(
   }
 }
 
-const harness = () => {
+const fakeGenerationSource: StatusIncarnationGenerationSource = {
+  async currentForAgent(agentId) {
+    return agentId === "agent-maya"
+      ? { kind: "available", generation: 1 }
+      : { kind: "unavailable", reason: "SESSION_LOCATOR_UNAVAILABLE" };
+  },
+};
+
+const harness = (
+  generationSource: StatusIncarnationGenerationSource | null = fakeGenerationSource,
+) => {
   const db = new HiveDatabase(":memory:");
   db.insertAgent(agent());
   let captureCalls = 0;
   let daemon!: HiveDaemon;
   daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: { async spawn() { return agent("spawned"); } },
     repoRoot: "/tmp/hive-status-test",
@@ -98,6 +115,9 @@ const harness = () => {
       sessionId === SESSION_ID && generation === 1
         ? { ...locator, instanceId: daemon.status.instanceId }
         : null,
+    ...(generationSource === null
+      ? {}
+      : { statusIncarnationGenerationSource: generationSource }),
     resourceRunners: { orphans: null },
   });
   return { daemon, db, captureCalls: () => captureCalls };
@@ -112,6 +132,7 @@ describe("WP7 MCP status tools", () => {
     statusStore.openAssignment(failed.id, failed.createdAt);
     statusStore.closeAssignment(failed.id, AT);
     new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       statusStore,
       spawner: { async spawn() { return agent("spawned"); } },
@@ -136,6 +157,28 @@ describe("WP7 MCP status tools", () => {
     }));
   });
 
+  test("keeps one agent entity across live, snapshot, and resumed reduction", async () => {
+    const { daemon } = harness();
+    await daemon.processEvent({
+      kind: "turn-start",
+      agentName: "maya",
+      timestamp: AT,
+      toolSessionId: "tool-fixture",
+    });
+    let state = reconcileStatusSnapshot(
+      emptyStatusProjection(),
+      await daemon.status.fetchSnapshot(),
+    );
+    await daemon.processEvent({
+      kind: "turn-end",
+      agentName: "maya",
+      timestamp: "2026-07-16T12:00:01.000Z",
+      toolSessionId: "tool-fixture",
+    });
+    state = reduceStatusEvent(state, daemon.status.listEvents().at(-1)!);
+    expect(Object.keys(state.entities)).toEqual(["agent:agent-maya"]);
+  });
+
   test("binds status to the authenticated subject and rejects generation spoofing", async () => {
     const { daemon, db } = harness();
     const token = daemon.capabilities.mint("maya", "reader", { epoch: 0 }).token;
@@ -153,6 +196,15 @@ describe("WP7 MCP status tools", () => {
     };
     const accepted = await callTool(daemon, token, "hive_update_status", valid);
     expect(accepted.isError).not.toBeTrue();
+    expect(daemon.status.listEvents().at(-1)?.data.binding).toEqual({
+      agentId: "agent-maya",
+      incarnationGeneration: 1,
+      role: "reader",
+      instanceId: daemon.status.instanceId,
+      capabilityEpoch: 0,
+      issuer: "hive-daemon",
+      session: null,
+    });
     expect(db.getAgentByName("maya")?.status).toBe("working");
     expect(db.listApprovals()).toHaveLength(0);
 
@@ -163,6 +215,25 @@ describe("WP7 MCP status tools", () => {
     });
     expect(spoofed.isError).toBeTrue();
     expect(JSON.stringify(spoofed.content)).toContain("STATUS_ASSIGNMENT_MISMATCH");
+  });
+
+  test("fails closed with a typed error while the persisted locator source is unavailable", async () => {
+    const { daemon } = harness(null);
+    const token = daemon.capabilities.mint("maya", "reader", { epoch: 0 }).token;
+    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const result = await callTool(daemon, token, "hive_update_status", {
+      requestId: "req_018f1e90-7b5a-7cc0-8000-000000000099",
+      assignmentId: assignment.assignmentId,
+      assignmentGeneration: assignment.assignmentGeneration,
+      phase: "testing",
+      summary: "Must not report without an incarnation binding",
+      blocker: null,
+      evidenceRefs: [],
+      freshForSeconds: 120,
+    });
+    expect(result.isError).toBeTrue();
+    expect(JSON.stringify(result.content)).toContain("STATUS_INCARNATION_UNAVAILABLE");
+    expect(daemon.status.listEvents()).toHaveLength(0);
   });
 
   test("fails closed without content=true and audits authorized text without content", async () => {
@@ -218,6 +289,7 @@ describe("WP7 MCP status tools", () => {
       subject: { kind: "agent", agentId: "agent-zara" },
     });
     scoped = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: { async spawn() { return agent("spawned"); } },
       repoRoot: "/tmp/hive-status-operator-test",

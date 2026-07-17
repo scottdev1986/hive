@@ -1,4 +1,5 @@
 import { describe, expect, test } from "bun:test";
+import { HiveUpdateStatusInputSchema } from "../schemas/status-envelope";
 import { HiveDatabase } from "./db";
 import { verifyWorkspaceSnapshot } from "./status-events";
 import {
@@ -19,6 +20,7 @@ describe("StatusStore", () => {
     expect(() => store.appendAgentReport({
       subject: "maya",
       agentId: "agent-fixture",
+      incarnationGeneration: 7,
       role: "writer",
       capabilityEpoch: 0,
       toolSessionId: null,
@@ -38,6 +40,7 @@ describe("StatusStore", () => {
     expect(() => store.appendAgentReport({
       subject: "maya",
       agentId: "agent-fixture",
+      incarnationGeneration: 7,
       role: "writer",
       capabilityEpoch: 0,
       toolSessionId: null,
@@ -59,6 +62,7 @@ describe("StatusStore", () => {
     const actor = {
       subject: "maya",
       agentId: "agent-fixture",
+      incarnationGeneration: 7,
       role: "reader" as const,
       capabilityEpoch: 4,
       toolSessionId: "tool-fixture",
@@ -85,15 +89,19 @@ describe("StatusStore", () => {
     const report = store.listEvents()[0]!;
     expect(report.data.binding).toEqual({
       agentId: "agent-fixture",
+      incarnationGeneration: 7,
       role: "reader",
       instanceId: "instance-fixture",
       capabilityEpoch: 4,
       issuer: "hive-daemon",
       session: "tool-fixture",
     });
-    expect(report.data).not.toHaveProperty("taskState");
-    expect(report.data).not.toHaveProperty("approval");
-    expect(report.data).not.toHaveProperty("landState");
+    expect(HiveUpdateStatusInputSchema.safeParse({
+      ...input,
+      taskState: "complete",
+      approval: "approved",
+      landState: "landed",
+    }).success).toBeFalse();
   });
 
   test("builds verifiable snapshots and redacted terminal-content audit events", async () => {
@@ -111,6 +119,7 @@ describe("StatusStore", () => {
     expect(audit.data).toEqual({
       reader: "maya",
       subject: "agent-fixture",
+      sessionGeneration: 1,
       rowCount: 3,
       reason: "capability:fixture",
     });

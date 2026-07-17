@@ -97,6 +97,7 @@ describe("memory MCP tools", () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
       tmux: new NoopTmux(),
@@ -132,6 +133,7 @@ describe("memory MCP tools", () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
       tmux: new NoopTmux(),
@@ -248,6 +250,7 @@ describe("memory MCP tools", () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
       tmux: new NoopTmux(),
@@ -299,6 +302,7 @@ describe("memory MCP tools", () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
       tmux: new NoopTmux(),
@@ -345,6 +349,7 @@ describe("memory MCP tools", () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
       tmux: new NoopTmux(),
@@ -388,6 +393,7 @@ describe("memory MCP tools", () => {
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
     tempRoots.push(repoRoot);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
       tmux: new NoopTmux(),
@@ -466,6 +472,7 @@ describe("memory MCP tools", () => {
     // ~/.hive/hive.db (here, under the temp HIVE_HOME), matching what a
     // real process restart looks like.
     const daemonA = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       tmux: new NoopTmux(),
       repoRoot,
@@ -502,6 +509,7 @@ describe("memory MCP tools", () => {
     rawDb.close();
 
     const daemonB = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       tmux: new NoopTmux(),
       repoRoot,

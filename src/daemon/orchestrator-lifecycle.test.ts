@@ -113,6 +113,7 @@ describe("event-driven orchestrator lifecycle", () => {
     const db = new HiveDatabase(join(home, "idle.db"));
     const sender = new RecordingSender();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmuxSender: sender,
@@ -416,7 +417,11 @@ describe("event-driven orchestrator lifecycle", () => {
 
   test("fetches compact active status only when explicitly requested", async () => {
     const db = new HiveDatabase(join(home, "status-on-demand.db"));
-    const daemon = new HiveDaemon({ db, spawner: unusedSpawner });
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: unusedSpawner,
+    });
     db.insertAgent(agent({
       taskDescription: `Active ${"detail ".repeat(100)}`,
     }));

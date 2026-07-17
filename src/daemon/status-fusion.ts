@@ -58,7 +58,7 @@ export type StatusSourceDetail = Readonly<{
 
 export type FusedAgentStatus = Readonly<{
   agentId: string;
-  generation: number;
+  incarnationGeneration: number | null;
   revision: string;
   sessionState: StatusField<SessionState> | null;
   turnState: StatusField<TurnState> | null;
@@ -161,14 +161,26 @@ const choose = <T>(
 const belongsToAgent = (
   event: WorkspaceEventV2,
   agentId: string,
-  generation: number,
+  incarnationGeneration: number | null,
 ): boolean => {
-  if (
-    event.entity.kind === "agent" && event.entity.id === agentId &&
-    (event.entity.generation === undefined || event.entity.generation === generation)
-  ) return true;
-  return event.data.agentId === agentId &&
-    (event.data.generation === undefined || event.data.generation === generation);
+  if (event.entity.kind === "agent" && event.entity.id === agentId) {
+    const binding = event.data.binding;
+    const reportGeneration = typeof binding === "object" && binding !== null &&
+        "incarnationGeneration" in binding &&
+        typeof binding.incarnationGeneration === "number"
+      ? binding.incarnationGeneration
+      : undefined;
+    return incarnationGeneration === null || reportGeneration === undefined ||
+      reportGeneration === incarnationGeneration;
+  }
+  if (event.data.agentId !== agentId) return false;
+  const eventGeneration = event.entity.kind === "session"
+    ? event.entity.generation
+    : typeof event.data.incarnationGeneration === "number"
+      ? event.data.incarnationGeneration
+      : undefined;
+  return incarnationGeneration === null || eventGeneration === undefined ||
+    eventGeneration === incarnationGeneration;
 };
 
 const reportFrom = (
@@ -216,11 +228,11 @@ const reportFrom = (
 
 export function fuseAgentStatus(
   allEvents: readonly WorkspaceEventV2[],
-  identity: Readonly<{ agentId: string; generation: number }>,
+  identity: Readonly<{ agentId: string; incarnationGeneration: number | null }>,
   now: Date,
 ): FusedAgentStatus {
   const events = allEvents.filter((event) =>
-    belongsToAgent(event, identity.agentId, identity.generation)
+    belongsToAgent(event, identity.agentId, identity.incarnationGeneration)
   );
   const session: Candidate<SessionState>[] = [];
   const turn: Candidate<TurnState>[] = [];
@@ -305,7 +317,7 @@ export function fuseAgentStatus(
   );
   return {
     agentId: identity.agentId,
-    generation: identity.generation,
+    incarnationGeneration: identity.incarnationGeneration,
     revision,
     sessionState,
     turnState,

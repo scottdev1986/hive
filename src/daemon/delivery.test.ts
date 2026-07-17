@@ -246,6 +246,7 @@ describe("MessageDelivery", () => {
     const db = new HiveDatabase(join(home, "deferred.db"));
     const tmux = new SubmittingTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmuxSender: tmux,
@@ -282,6 +283,7 @@ describe("MessageDelivery", () => {
     const db = new HiveDatabase(join(home, "urgent-boundary.db"));
     const tmux = new RecordingTmuxSender();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmuxSender: tmux,
@@ -435,6 +437,7 @@ describe("MessageDelivery", () => {
     const db = new HiveDatabase(join(home, "register-and-wake.db"));
     const tmux = new SubmittingTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmuxSender: tmux,
@@ -672,6 +675,7 @@ describe("MessageDelivery", () => {
     const db = new HiveDatabase(join(home, "orchestrator-to-working.db"));
     const tmux = new SubmittingTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmuxSender: tmux,
@@ -765,6 +769,7 @@ describe("MessageDelivery", () => {
     const db = new HiveDatabase(join(home, "flush-failure.db"));
     const tmux = new FailingTmuxSender(db);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmuxSender: tmux,
@@ -1501,6 +1506,7 @@ describe("a live idle agent hears", () => {
     const sessions = new FakeTmux();
     sessions.sessions.add("hive-cesar");
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmux: sessions,
@@ -1560,6 +1566,7 @@ describe("a live idle agent hears", () => {
     const sessions = new FakeTmux();
     sessions.sessions.add("hive-cesar");
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
       tmux: sessions,

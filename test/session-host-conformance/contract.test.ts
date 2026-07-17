@@ -55,13 +55,13 @@ describe("terminal foundation WP0 contracts", () => {
   test("Swift and TypeScript agree after every valid, invalid, and reducer prefix", async () => {
     const evidence = await runConformance();
     expect(evidence).toEqual({
-      validCases: 53,
+      validCases: 55,
       invalidCases: 59,
       validHeaders: 2,
       ignoredHeaders: 2,
       invalidHeaders: 7,
-      reducerScenarios: 10,
-      reducerPrefixes: 25,
+      reducerScenarios: 12,
+      reducerPrefixes: 27,
       zig: "generated-uncompiled-wp1",
     });
   }, 30_000);

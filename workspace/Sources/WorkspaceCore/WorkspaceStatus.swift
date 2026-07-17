@@ -1,4 +1,5 @@
 import CryptoKit
+import CoreFoundation
 import Foundation
 
 public enum WorkspaceJSONValue: Codable, Equatable {
@@ -174,17 +175,51 @@ public enum WorkspaceStatusReducerError: Error, Equatable {
     case snapshotHighWaterRegressed
 }
 
-private func workspaceCanonicalJSON<T: Encodable>(_ value: T) throws -> String {
-    let encoded = try JSONEncoder().encode(value)
-    let object = try JSONSerialization.jsonObject(with: encoded)
-    let canonical = try JSONSerialization.data(
-        withJSONObject: object,
-        options: [.sortedKeys, .withoutEscapingSlashes, .fragmentsAllowed])
-    return String(decoding: canonical, as: UTF8.self)
+private func workspaceJSONScalar(_ value: Any) throws -> String {
+    let data = try JSONSerialization.data(
+        withJSONObject: value,
+        options: [.withoutEscapingSlashes, .fragmentsAllowed])
+    return String(decoding: data, as: UTF8.self)
+}
+
+private func workspaceCanonicalValue(_ value: Any) throws -> String {
+    if value is NSNull { return "null" }
+    if let number = value as? NSNumber {
+        if CFGetTypeID(number) == CFBooleanGetTypeID() {
+            return number.boolValue ? "true" : "false"
+        }
+        return try workspaceJSONScalar(number)
+    }
+    if let string = value as? String { return try workspaceJSONScalar(string) }
+    if let array = value as? [Any] {
+        return "[" + (try array.map(workspaceCanonicalValue)).joined(separator: ",") + "]"
+    }
+    if let object = value as? [String: Any] {
+        let keys = object.keys.sorted {
+            $0.utf16.lexicographicallyPrecedes($1.utf16)
+        }
+        let fields = try keys.map { key in
+            try workspaceJSONScalar(key) + ":" + workspaceCanonicalValue(object[key]!)
+        }
+        return "{" + fields.joined(separator: ",") + "}"
+    }
+    throw EncodingError.invalidValue(
+        value,
+        EncodingError.Context(codingPath: [], debugDescription: "unsupported JSON value"))
+}
+
+func workspaceCanonicalJSON<T: Encodable>(_ value: T) throws -> String {
+    let encoder = JSONEncoder()
+    encoder.outputFormatting = [.withoutEscapingSlashes]
+    let encoded = try encoder.encode(value)
+    let object = try JSONSerialization.jsonObject(with: encoded, options: .fragmentsAllowed)
+    return try workspaceCanonicalValue(object)
 }
 
 private func workspaceEntityKey(kind: String, id: String, generation: Int?) -> String {
-    "\(kind):\(id):\(generation.map(String.init) ?? "-")"
+    kind == "agent"
+        ? "agent:\(id)"
+        : "\(kind):\(id):\(generation.map(String.init) ?? "-")"
 }
 
 public enum WorkspaceStatusReducer {

@@ -449,8 +449,7 @@
         "seq": "2",
         "entity": {
           "kind": "agent",
-          "id": "agent-fixture",
-          "generation": 3
+          "id": "agent-fixture"
         },
         "entityRevision": "2",
         "occurredAt": "2026-07-16T12:00:00.000Z",
@@ -541,7 +540,6 @@
           {
             "kind": "agent",
             "id": "agent-fixture",
-            "generation": 3,
             "entityRevision": "2",
             "projection": {
               "turnState": "working"
@@ -582,6 +580,58 @@
         "issuedAt": "2026-07-16T12:00:00.000Z",
         "expiresAt": "2026-07-17T12:00:00.000Z",
         "revokedAt": null
+      }
+    },
+    {
+      "name": "workspace event code-unit case ordering",
+      "schema": "workspaceEventV2",
+      "value": {
+        "schemaVersion": 2,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-000000000009",
+        "seq": "3",
+        "entity": {
+          "kind": "agent",
+          "id": "agent-case-order"
+        },
+        "entityRevision": "1",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "kind": "agent.status-reported",
+        "source": {
+          "kind": "agent-report",
+          "id": "agent-case-order",
+          "observedAt": "2026-07-16T12:00:00.000Z",
+          "confidence": "authoritative"
+        },
+        "data": {
+          "B": "upper",
+          "a": "lower"
+        }
+      }
+    },
+    {
+      "name": "workspace event code-unit numeric ordering",
+      "schema": "workspaceEventV2",
+      "value": {
+        "schemaVersion": 2,
+        "eventId": "evt_018f1e90-7b5a-7cc0-8000-00000000000a",
+        "seq": "4",
+        "entity": {
+          "kind": "agent",
+          "id": "agent-numeric-order"
+        },
+        "entityRevision": "1",
+        "occurredAt": "2026-07-16T12:00:00.000Z",
+        "kind": "agent.status-reported",
+        "source": {
+          "kind": "agent-report",
+          "id": "agent-numeric-order",
+          "observedAt": "2026-07-16T12:00:00.000Z",
+          "confidence": "authoritative"
+        },
+        "data": {
+          "a10": "ten",
+          "a9": "nine"
+        }
       }
     },
     {
@@ -1980,8 +2030,7 @@
         "seq": "2",
         "entity": {
           "kind": "agent",
-          "id": "agent-fixture",
-          "generation": 3
+          "id": "agent-fixture"
         },
         "entityRevision": "2",
         "occurredAt": "2026-07-16T12:00:00.000Z",
@@ -2101,7 +2150,6 @@
           {
             "kind": "agent",
             "id": "agent-fixture",
-            "generation": 3,
             "entityRevision": "2",
             "projection": {
               "turnState": "working"

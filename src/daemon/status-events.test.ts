@@ -28,7 +28,7 @@ const event = (seq: string, revision = seq): WorkspaceEventV2 => ({
   schemaVersion: 2,
   eventId: `evt_018f1e90-7b5a-7cc0-8000-${seq.padStart(12, "0")}`,
   seq,
-  entity: { kind: "agent", id: "agent-fixture", generation: 1 },
+  entity: { kind: "agent", id: "agent-fixture" },
   entityRevision: revision,
   occurredAt: "2026-07-16T12:00:00.000Z",
   kind: "status.turn",
@@ -45,7 +45,6 @@ const snapshot = (seq: string) => {
   const entities = [{
     kind: "agent",
     id: "agent-fixture",
-    generation: 1,
     entityRevision: seq,
     projection: { kind: "status.turn", data: { value: "working" } },
   }];
@@ -110,7 +109,24 @@ describe("status event reduction", () => {
   test("keeps the unlanded sessiond broker behind the typed adapter seam", () => {
     const { schemaVersion: _, eventId: __, seq: ___, entityRevision: ____, ...adapted } = event("1");
     const adapter = new FakeSessionStatusSourceAdapter(() => adapted);
-    const sessionEvent = { kind: "fixture" } as SessionEvent;
+    const sessionEvent: SessionEvent = {
+      schemaVersion: 1,
+      eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000099",
+      eventSeq: "1",
+      locator: {
+        schemaVersion: 1,
+        instanceId: "instance-fixture",
+        subject: { kind: "agent", agentId: "agent-fixture" },
+        generation: 1,
+        sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000098",
+        hostKind: "sessiond",
+        engineBuildId: "engine-fixture",
+      },
+      kind: "session.heartbeat",
+      revision: "1",
+      occurredAt: "2026-07-16T12:00:00.000Z",
+      data: {},
+    };
     expect(adapter.adapt(sessionEvent)).toBe(adapted as WorkspaceStatusSourceEvent);
   });
 });

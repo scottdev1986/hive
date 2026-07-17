@@ -57,6 +57,7 @@ async function bootDaemon(): Promise<{ daemon: HiveDaemon; repoRoot: string }> {
   const repoRoot = await mkdtemp(join(tmpdir(), "hive-graph-locate-repo-"));
   tempRoots.push(repoRoot);
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
     db: new HiveDatabase(":memory:"),
     tmux: new NoopTmux(),

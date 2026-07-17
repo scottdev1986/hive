@@ -16,14 +16,14 @@ final class SessionProtocolFixtureTests: XCTestCase {
         let wire = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: fixture("session-protocol-corpus")) as? [String: Any])
-        XCTAssertEqual((wire["valid"] as? [Any])?.count, 53)
+        XCTAssertEqual((wire["valid"] as? [Any])?.count, 55)
         XCTAssertEqual((wire["invalid"] as? [Any])?.count, 59)
 
         let reducer = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: fixture("reducer-parity-corpus")) as? [String: Any])
         let scenarios = try XCTUnwrap(reducer["scenarios"] as? [[String: Any]])
-        XCTAssertEqual(scenarios.count, 10)
+        XCTAssertEqual(scenarios.count, 12)
 
         let gap = try XCTUnwrap(scenarios.first { ($0["name"] as? String) == "sequence-gap" })
         let prefixes = try XCTUnwrap(gap["prefixes"] as? [[String: Any]])

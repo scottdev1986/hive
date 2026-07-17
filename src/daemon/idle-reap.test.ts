@@ -118,6 +118,7 @@ function reapDaemon(overrides: {
   const removedWorktrees: Array<[string, string]> = [];
   const tmux = new FakeDaemonTmux();
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmuxSender: new SilentTmuxSender(db),
@@ -175,6 +176,7 @@ describe("idle-agent reap sweep", () => {
     const db = new HiveDatabase(":memory:");
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -404,6 +406,7 @@ describe("idle-agent reap sweep", () => {
     const db = new HiveDatabase(":memory:");
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),
@@ -432,6 +435,7 @@ describe("idle-agent reap sweep", () => {
     const db = new HiveDatabase(":memory:");
     const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
       tmuxSender: new SilentTmuxSender(db),

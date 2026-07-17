@@ -201,6 +201,7 @@ export async function runDaemon(): Promise<void> {
   // missed it because they use BunTmuxSender, which does forward.
   const tmuxSender = new BunTmuxSender(sessions);
   daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner,
     statusStore,

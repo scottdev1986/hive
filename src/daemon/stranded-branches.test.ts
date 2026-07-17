@@ -82,6 +82,7 @@ function strandedDaemon(branches: UnmergedBranch[] = [DAVID_BRANCH]) {
   const removedWorktrees: string[] = [];
   const tmux = new FakeDaemonTmux();
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
     tmuxSender: new SilentTmuxSender(db),

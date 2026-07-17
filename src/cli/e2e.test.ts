@@ -105,6 +105,7 @@ describe("CLI-to-daemon smoke", () => {
     let daemon: HiveDaemon | null = null;
     try {
       daemon = new HiveDaemon({
+        statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
         db,
         spawner,
         tmuxSender: tmux,

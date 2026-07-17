@@ -133,6 +133,7 @@ const quota = new QuotaService(
 const tmux = new FakeTmux();
 tmux.addSession(orchestratorTmuxSession());
 const daemon = new HiveDaemon({
+  statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
   db,
   repoRoot,
   port: 0,

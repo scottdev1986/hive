@@ -81,6 +81,7 @@ function harness(
   const readiness: LandReadiness = options.readiness ??
     { pending: null, rebased: null };
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner,
     repoRoot: "/tmp/hive-auth-noop",

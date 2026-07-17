@@ -34,9 +34,11 @@ export function canonicalJson(value: unknown): string {
   return `{${entries.join(",")}}`;
 }
 
-const entityKey = (
+export const statusEntityKey = (
   entity: WorkspaceEventV2["entity"],
-): string => `${entity.kind}:${entity.id}:${entity.generation ?? "-"}`;
+): string => entity.kind === "agent"
+  ? `agent:${entity.id}`
+  : `${entity.kind}:${entity.id}:${entity.generation ?? "-"}`;
 
 export function reduceStatusEvent(
   state: StatusReducerProjection,
@@ -54,7 +56,7 @@ export function reduceStatusEvent(
   }
 
   const seen = { ...state.seen, [event.eventId]: encoded };
-  const key = entityKey(event.entity);
+  const key = statusEntityKey(event.entity);
   const existing = state.entities[key] as { entityRevision?: string } | undefined;
   const entities = existing !== undefined &&
       BigInt(event.entityRevision) < BigInt(existing.entityRevision ?? "0")
@@ -107,7 +109,7 @@ export function reconcileStatusSnapshot(
 ): StatusReducerProjection {
   const snapshot = verifyWorkspaceSnapshot(value, state.highWaterSeq);
   const entities = Object.fromEntries(snapshot.entities.map((entity) => [
-    entityKey(entity),
+    statusEntityKey(entity),
     { ...entity.projection, entityRevision: entity.entityRevision },
   ]));
   return {

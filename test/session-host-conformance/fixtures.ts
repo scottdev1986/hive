@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import {
   FRAME_FLAGS,
   FRAME_HEADER,
@@ -338,7 +339,7 @@ const validCases: readonly WireCorpusCase[] = [
       schemaVersion: 2,
       eventId: FIXTURE_IDS.events[1],
       seq: "2",
-      entity: { kind: "agent", id: "agent-fixture", generation: 3 },
+      entity: { kind: "agent", id: "agent-fixture" },
       entityRevision: "2",
       occurredAt: FIXTURE_TIME,
       kind: "agent.status-reported",
@@ -402,7 +403,6 @@ const validCases: readonly WireCorpusCase[] = [
       entities: [{
         kind: "agent",
         id: "agent-fixture",
-        generation: 3,
         entityRevision: "2",
         projection: { turnState: "working" },
       }],
@@ -435,6 +435,46 @@ const validCases: readonly WireCorpusCase[] = [
       issuedAt: FIXTURE_TIME,
       expiresAt: "2026-07-17T12:00:00.000Z",
       revokedAt: null,
+    },
+  },
+  {
+    name: "workspace event code-unit case ordering",
+    schema: "workspaceEventV2",
+    value: {
+      schemaVersion: 2,
+      eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000009",
+      seq: "3",
+      entity: { kind: "agent", id: "agent-case-order" },
+      entityRevision: "1",
+      occurredAt: FIXTURE_TIME,
+      kind: "agent.status-reported",
+      source: {
+        kind: "agent-report",
+        id: "agent-case-order",
+        observedAt: FIXTURE_TIME,
+        confidence: "authoritative",
+      },
+      data: { B: "upper", a: "lower" },
+    },
+  },
+  {
+    name: "workspace event code-unit numeric ordering",
+    schema: "workspaceEventV2",
+    value: {
+      schemaVersion: 2,
+      eventId: "evt_018f1e90-7b5a-7cc0-8000-00000000000a",
+      seq: "4",
+      entity: { kind: "agent", id: "agent-numeric-order" },
+      entityRevision: "1",
+      occurredAt: FIXTURE_TIME,
+      kind: "agent.status-reported",
+      source: {
+        kind: "agent-report",
+        id: "agent-numeric-order",
+        observedAt: FIXTURE_TIME,
+        confidence: "authoritative",
+      },
+      data: { a10: "ten", a9: "nine" },
     },
   },
   { name: "HELLO viewer grant", schema: "helloPayload", value: fixtureHello },
@@ -700,7 +740,7 @@ const baseReducerEvents: readonly WorkspaceEventV2[] = [
     schemaVersion: 2,
     eventId: FIXTURE_IDS.events[0],
     seq: "1",
-    entity: { kind: "agent", id: "agent-fixture", generation: 3 },
+    entity: { kind: "agent", id: "agent-fixture" },
     entityRevision: "1",
     occurredAt: FIXTURE_TIME,
     kind: "agent.status-reported",
@@ -711,7 +751,7 @@ const baseReducerEvents: readonly WorkspaceEventV2[] = [
     schemaVersion: 2,
     eventId: FIXTURE_IDS.events[1],
     seq: "2",
-    entity: { kind: "agent", id: "agent-fixture", generation: 3 },
+    entity: { kind: "agent", id: "agent-fixture" },
     entityRevision: "2",
     occurredAt: "2026-07-16T12:00:01.000Z",
     kind: "agent.status-reported",
@@ -751,11 +791,11 @@ const prefixesFor = (events: readonly WorkspaceEventV2[]) => {
 // These four edge-scenario goldens are deliberately independent literals.
 // Do not derive them with reduceWorkspaceEvent: that would make parity tautological.
 const HAND_AUTHORED_PLANNING_EVENT =
-  '{"data":{"phase":"planning","summary":"Reading contracts"},"entity":{"generation":3,"id":"agent-fixture","kind":"agent"},"entityRevision":"1","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000005","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:00.000Z","schemaVersion":2,"seq":"1","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:00.000Z"}}';
+  '{"data":{"phase":"planning","summary":"Reading contracts"},"entity":{"id":"agent-fixture","kind":"agent"},"entityRevision":"1","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000005","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:00.000Z","schemaVersion":2,"seq":"1","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:00.000Z"}}';
 const HAND_AUTHORED_LOWER_FIRST_EVENT =
-  '{"data":{"phase":"testing","summary":"Checking parity"},"entity":{"generation":3,"id":"agent-fixture","kind":"agent"},"entityRevision":"2","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000005","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:01.000Z","schemaVersion":2,"seq":"1","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:01.000Z"}}';
+  '{"data":{"phase":"testing","summary":"Checking parity"},"entity":{"id":"agent-fixture","kind":"agent"},"entityRevision":"2","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000005","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:01.000Z","schemaVersion":2,"seq":"1","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:01.000Z"}}';
 const HAND_AUTHORED_LOWER_SECOND_EVENT =
-  '{"data":{"phase":"planning","summary":"Reading contracts"},"entity":{"generation":3,"id":"agent-fixture","kind":"agent"},"entityRevision":"1","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000006","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:00.000Z","schemaVersion":2,"seq":"2","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:00.000Z"}}';
+  '{"data":{"phase":"planning","summary":"Reading contracts"},"entity":{"id":"agent-fixture","kind":"agent"},"entityRevision":"1","eventId":"evt_018f1e90-7b5a-7cc0-8000-000000000006","kind":"agent.status-reported","occurredAt":"2026-07-16T12:00:00.000Z","schemaVersion":2,"seq":"2","source":{"confidence":"authoritative","id":"agent-fixture:3","kind":"agent-report","observedAt":"2026-07-16T12:00:00.000Z"}}';
 
 const HAND_AUTHORED_PLANNING_PREFIX: ReducerProjection = {
   highWaterSeq: "1",
@@ -763,7 +803,7 @@ const HAND_AUTHORED_PLANNING_PREFIX: ReducerProjection = {
   recovery: null,
   corruption: null,
   entities: {
-    "agent:agent-fixture:3": {
+    "agent:agent-fixture": {
       entityRevision: "1",
       eventId: FIXTURE_IDS.events[0],
       kind: "agent.status-reported",
@@ -786,7 +826,7 @@ const HAND_AUTHORED_LOWER_FIRST_PREFIX: ReducerProjection = {
   recovery: null,
   corruption: null,
   entities: {
-    "agent:agent-fixture:3": {
+    "agent:agent-fixture": {
       entityRevision: "2",
       eventId: FIXTURE_IDS.events[0],
       kind: "agent.status-reported",
@@ -809,7 +849,7 @@ const HAND_AUTHORED_LOWER_SECOND_PREFIX: ReducerProjection = {
   recovery: null,
   corruption: null,
   entities: {
-    "agent:agent-fixture:3": {
+    "agent:agent-fixture": {
       entityRevision: "2",
       eventId: FIXTURE_IDS.events[0],
       kind: "agent.status-reported",
@@ -835,7 +875,7 @@ const HAND_AUTHORED_CONFLICT_PREFIX: ReducerProjection = {
   recovery: null,
   corruption: `conflicting duplicate ${FIXTURE_IDS.events[0]}`,
   entities: {
-    "agent:agent-fixture:3": {
+    "agent:agent-fixture": {
       entityRevision: "1",
       eventId: FIXTURE_IDS.events[0],
       kind: "agent.status-reported",
@@ -880,6 +920,16 @@ export function buildReducerCorpus() {
     { ...baseReducerEvents[0]!, data: { phase: "complete" } },
   ];
   const gap = [{ ...baseReducerEvents[0]!, seq: "2" }];
+  const caseOrdering = [{
+    ...baseReducerEvents[0]!,
+    eventId: "evt_018f1e90-7b5a-7cc0-8000-000000000009",
+    data: { B: "upper", a: "lower" },
+  }];
+  const numericOrdering = [{
+    ...baseReducerEvents[0]!,
+    eventId: "evt_018f1e90-7b5a-7cc0-8000-00000000000a",
+    data: { a10: "ten", a9: "nine" },
+  }];
   const edgeScenarios = [
     {
       name: "identical-duplicate",
@@ -901,6 +951,47 @@ export function buildReducerCorpus() {
       events: gap,
       prefixes: [HAND_AUTHORED_GAP_PREFIX],
     },
+    {
+      name: "code-unit-case-ordering",
+      events: caseOrdering,
+      prefixes: prefixesFor(caseOrdering),
+    },
+    {
+      name: "code-unit-numeric-ordering",
+      events: numericOrdering,
+      prefixes: prefixesFor(numericOrdering),
+    },
   ];
-  return { schemaVersion: 1, scenarios: [...permutationScenarios, ...edgeScenarios] };
+  const canonicalization = [
+    {
+      name: "code-unit-case-ordering",
+      entities: [{
+        kind: "agent",
+        id: "agent-case-order",
+        entityRevision: "1",
+        projection: { B: "upper", a: "lower" },
+      }],
+    },
+    {
+      name: "code-unit-numeric-ordering",
+      entities: [{
+        kind: "agent",
+        id: "agent-numeric-order",
+        entityRevision: "1",
+        projection: { a10: "ten", a9: "nine" },
+      }],
+    },
+  ].map((fixture) => {
+    const canonical = canonicalJson(fixture.entities);
+    return {
+      ...fixture,
+      canonical,
+      sha256: createHash("sha256").update(canonical).digest("hex"),
+    };
+  });
+  return {
+    schemaVersion: 1,
+    canonicalization,
+    scenarios: [...permutationScenarios, ...edgeScenarios],
+  };
 }

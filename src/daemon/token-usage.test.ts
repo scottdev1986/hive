@@ -367,6 +367,7 @@ describe("TokenUsageStore", () => {
     const db = new HiveDatabase(":memory:");
     const tokenUsage = new TokenUsageStore(db, []);
     const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       tokenUsage,
       repoRoot: "/tmp/hive-token-api",

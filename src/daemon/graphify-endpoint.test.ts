@@ -25,6 +25,7 @@ function repo(): string {
 function harness(options: { withService?: boolean } = {}): HiveDaemon {
   const root = repo();
   return new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db: new HiveDatabase(":memory:"),
     spawner: {
       spawn: async () => {

@@ -57,6 +57,7 @@ import {
   ORCHESTRATOR_NAME,
   canonicalOrchestratorName,
   isOrchestratorName,
+  isTerminalAgentStatus,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
   StatuslineReportSchema,
@@ -80,6 +81,11 @@ import {
   type Role,
 } from "./capabilities";
 import { StatusStore } from "./status-store";
+import {
+  StatusIncarnationUnavailableError,
+  unavailableStatusIncarnationGenerationSource,
+  type StatusIncarnationGenerationSource,
+} from "./status-generation";
 import type { SessionHost, SessionLocator } from "./session-host/contract";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
@@ -436,6 +442,7 @@ export interface HiveDaemonOptions {
     sessionId: string,
     generation: number,
   ) => Promise<SessionLocator | null>;
+  statusIncarnationGenerationSource: StatusIncarnationGenerationSource;
   tmuxSender?: TmuxSender;
   tmux?: TmuxSessionHost | TmuxEngine;
   recovery?: {
@@ -560,6 +567,9 @@ function toolResult(value: unknown, key: string, note?: string | null) {
 }
 
 export class HiveDaemon {
+  static readonly statusGenerationUnavailable =
+    unavailableStatusIncarnationGenerationSource;
+
   readonly db: HiveDatabase;
   readonly delivery: MessageDelivery;
   readonly spawner: Spawner;
@@ -644,6 +654,8 @@ export class HiveDaemon {
   private readonly resolveSessionLocator: NonNullable<
     HiveDaemonOptions["resolveSessionLocator"]
   > | null;
+  private readonly statusIncarnationGenerationSource:
+    StatusIncarnationGenerationSource;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
@@ -652,7 +664,7 @@ export class HiveDaemon {
     this.status = options.statusStore ?? new StatusStore(this.db, hiveInstanceSuffix());
     for (const agent of this.db.listAgents()) {
       if (
-        !["done", "dead", "failed"].includes(agent.status) &&
+        !isTerminalAgentStatus(agent.status) &&
         !this.status.hasAssignmentHistory(agent.id)
       ) {
         this.status.openAssignment(agent.id, agent.createdAt);
@@ -662,6 +674,8 @@ export class HiveDaemon {
     this.spawner = options.spawner;
     this.sessionHost = options.sessionHost ?? null;
     this.resolveSessionLocator = options.resolveSessionLocator ?? null;
+    this.statusIncarnationGenerationSource =
+      options.statusIncarnationGenerationSource;
     this.capabilities = new CapabilityStore(this.db, (name) => {
       const record = this.db.getAgentByName(name);
       return record === null ? null : {
@@ -3417,10 +3431,16 @@ export class HiveDaemon {
       if (agent === null) {
         throw new Error(`No live agent is bound to ${capability.subject}`);
       }
+      const incarnation = await this.statusIncarnationGenerationSource
+        .currentForAgent(agent.id);
+      if (incarnation.kind === "unavailable") {
+        throw new StatusIncarnationUnavailableError(incarnation.reason);
+      }
       return toolResult(this.status.appendAgentReport({
         subject: capability.subject,
         agentId: agent.id,
         role: capability.role,
+        incarnationGeneration: incarnation.generation,
         capabilityEpoch: capability.epoch,
         toolSessionId: agent.toolSessionId ?? null,
       }, input, new Date()), "statusReport");
@@ -4103,6 +4123,8 @@ class UnavailableSpawner implements Spawner {
 
 if (import.meta.main) {
   const daemon = startDaemon({
+    statusIncarnationGenerationSource:
+      HiveDaemon.statusGenerationUnavailable,
     spawner: new UnavailableSpawner(),
     manageLifecycle: true,
   });

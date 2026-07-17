@@ -12,7 +12,11 @@ import {
 } from "../schemas/status-envelope";
 import type { Role } from "./capabilities";
 import type { HiveDatabase } from "./db";
-import { canonicalJson, type WorkspaceStatusEventSource } from "./status-events";
+import {
+  canonicalJson,
+  statusEntityKey,
+  type WorkspaceStatusEventSource,
+} from "./status-events";
 import type { WorkspaceStatusSourceEvent } from "./status-events";
 import { fuseAgentStatus } from "./status-fusion";
 
@@ -166,6 +170,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
       subject: string;
       agentId: string;
       role: Role;
+      incarnationGeneration: number;
       capabilityEpoch: number;
       toolSessionId: string | null;
     }>,
@@ -185,8 +190,10 @@ export class StatusStore implements WorkspaceStatusEventSource {
       }
 
       const assignment = this.currentAssignment(actor.agentId);
-      // The literal binding came from this incarnation's spawn prompt. Exact
-      // matching prevents a stale predecessor from reporting for its successor.
+      // Three axes stay separate: incarnationGeneration comes from the live
+      // authenticated SessionLocator, capabilityEpoch rotates authority, and
+      // assignmentGeneration is the prompt literal validated against this row.
+      // Exact matching stops a stale predecessor reporting for its successor.
       if (
         assignment === null || assignment.assignmentId !== input.assignmentId ||
         assignment.assignmentGeneration !== input.assignmentGeneration
@@ -225,6 +232,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
           freshUntil: expiresAt,
           binding: {
             agentId: actor.agentId,
+            incarnationGeneration: actor.incarnationGeneration,
             role: actor.role,
             instanceId: this.instanceId,
             capabilityEpoch: actor.capabilityEpoch,
@@ -236,7 +244,10 @@ export class StatusStore implements WorkspaceStatusEventSource {
       const events = this.listEventsForAgent(actor.agentId);
       const currentConflicts = fuseAgentStatus(
         events,
-        { agentId: actor.agentId, generation: Number(assignment.assignmentGeneration) },
+        {
+          agentId: actor.agentId,
+          incarnationGeneration: actor.incarnationGeneration,
+        },
         now,
       ).conflicts;
       const value: StatusReportResult = {
@@ -276,7 +287,6 @@ export class StatusStore implements WorkspaceStatusEventSource {
       entity: {
         kind: "agent",
         id: input.subjectAgentId,
-        generation: input.subjectGeneration,
       },
       occurredAt: input.observedAt,
       kind: "terminal.content-observed",
@@ -289,6 +299,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
       data: {
         reader: input.reader,
         subject: input.subjectAgentId,
+        sessionGeneration: input.subjectGeneration,
         rowCount: input.rowCount,
         reason: input.reason,
       },
@@ -349,29 +360,37 @@ export class StatusStore implements WorkspaceStatusEventSource {
 
   async fetchSnapshot(): Promise<WorkspaceSnapshotV2> {
     const events = this.listEvents();
-    const agents = new Map<string, number>();
+    const agents = new Set<string>();
     for (const event of events) {
       const agentId = event.entity.kind === "agent"
         ? event.entity.id
         : typeof event.data.agentId === "string" ? event.data.agentId : null;
-      if (agentId !== null) {
-        const generation = event.entity.kind === "agent"
-          ? event.entity.generation
-          : typeof event.data.generation === "number" ? event.data.generation : undefined;
-        agents.set(agentId, Math.max(agents.get(agentId) ?? 1, generation ?? 1));
-      }
+      if (agentId !== null) agents.add(agentId);
     }
     const createdAt = new Date().toISOString();
-    const entities = [...agents].map(([agentId, generation]) => {
+    const entities = [...agents].map((agentId) => {
+      const incarnationGeneration = [...events].reverse().map((event) => {
+        const binding = event.data.binding;
+        if (
+          event.entity.kind === "agent" && event.entity.id === agentId &&
+          typeof binding === "object" && binding !== null &&
+          "incarnationGeneration" in binding &&
+          typeof binding.incarnationGeneration === "number"
+        ) return binding.incarnationGeneration;
+        if (
+          event.entity.kind === "session" && event.data.agentId === agentId &&
+          event.entity.generation !== undefined
+        ) return event.entity.generation;
+        return null;
+      }).find((generation) => generation !== null) ?? null;
       const projection = fuseAgentStatus(
         events,
-        { agentId, generation },
+        { agentId, incarnationGeneration },
         new Date(createdAt),
       );
       return {
         kind: "agent",
         id: agentId,
-        generation,
         entityRevision: projection.revision,
         projection: JSON.parse(JSON.stringify(projection)) as Record<string, unknown>,
       };
@@ -393,7 +412,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
     event: Omit<WorkspaceEventV2, "schemaVersion" | "eventId" | "seq" | "entityRevision">,
   ): WorkspaceEventV2 {
     const seq = this.nextCounter("instance-seq");
-    const key = `${event.entity.kind}:${event.entity.id}:${event.entity.generation ?? "-"}`;
+    const key = statusEntityKey(event.entity);
     const entityRevision = this.nextCounter(`entity:${key}`);
     const value = WorkspaceEventV2Schema.parse({
       ...event,

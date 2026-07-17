@@ -14,15 +14,17 @@ const event = (
   schemaVersion: 2,
   eventId: `evt_018f1e90-7b5a-7cc0-8000-${String(index).padStart(12, "0")}`,
   seq: String(index),
-  entity: { kind: "agent", id: "agent-fixture", generation: 1 },
+  entity: sourceKind === "sessiond"
+    ? { kind: "session", id: "session-fixture", generation: 1 }
+    : { kind: "agent", id: "agent-fixture" },
   entityRevision: String(index),
   occurredAt: observedAt,
   kind,
   source: { kind: sourceKind, id: `${sourceKind}-fixture`, observedAt, confidence },
-  data,
+  data: sourceKind === "sessiond" ? { agentId: "agent-fixture", ...data } : data,
 });
 
-const identity = { agentId: "agent-fixture", generation: 1 } as const;
+const identity = { agentId: "agent-fixture", incarnationGeneration: 1 } as const;
 
 describe("status fusion", () => {
   test("applies field authority, field freshness, and descriptive-report conflicts", () => {

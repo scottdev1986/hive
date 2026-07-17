@@ -34,6 +34,7 @@ function harness(options: { withControl?: boolean } = {}): {
 } {
   const control = new FakeControl();
   const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db: new HiveDatabase(":memory:"),
     spawner: {
       spawn: async () => {

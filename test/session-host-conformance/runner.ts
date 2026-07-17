@@ -1,4 +1,5 @@
 #!/usr/bin/env bun
+import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
 import { WorkspaceEventV2Schema } from "../../src/schemas/status-envelope";
 import {
@@ -14,6 +15,7 @@ import { GENERATED_FILES, WIRE_SCHEMA_CATALOG } from "./generate";
 
 type ConformanceReport = Readonly<{
   validEncodings: Readonly<Record<string, string>>;
+  canonicalDigests: Readonly<Record<string, string>>;
   invalidRejected: readonly string[];
   validHeaders: readonly string[];
   ignoredHeaders: readonly string[];
@@ -34,12 +36,15 @@ export function runTypeScriptConformance(
   reducerCorpus: ReducerCorpus = buildReducerCorpus(),
 ): ConformanceReport {
   const validEncodings: Record<string, string> = {};
+  const canonicalDigests: Record<string, string> = {};
   const invalidRejected: string[] = [];
   for (const item of corpus.valid) {
     const schema = WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
     const result = schema.safeParse(item.value);
     if (!result.success) throw new Error(`TypeScript rejected valid case ${item.name}: ${result.error.message}`);
-    validEncodings[item.name] = canonicalJson(result.data);
+    const canonical = canonicalJson(result.data);
+    validEncodings[item.name] = canonical;
+    canonicalDigests[item.name] = createHash("sha256").update(canonical).digest("hex");
   }
   for (const item of corpus.invalid) {
     const schema = WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
@@ -93,7 +98,15 @@ export function runTypeScriptConformance(
     reducerPrefixes[scenario.name] = prefixes;
   }
 
-  return { validEncodings, invalidRejected, validHeaders, ignoredHeaders, invalidHeaders, reducerPrefixes };
+  return {
+    validEncodings,
+    canonicalDigests,
+    invalidRejected,
+    validHeaders,
+    ignoredHeaders,
+    invalidHeaders,
+    reducerPrefixes,
+  };
 }
 
 export async function runSwiftConformance(): Promise<ConformanceReport> {
@@ -125,6 +138,14 @@ export async function runConformance() {
     JSON.parse(reducerBytes) as unknown as ReducerCorpus,
   );
   const swift = await runSwiftConformance();
+  for (const name of [
+    "workspace event code-unit case ordering",
+    "workspace event code-unit numeric ordering",
+  ]) {
+    if (typescript.canonicalDigests[name] !== swift.canonicalDigests[name]) {
+      throw new Error(`Swift and TypeScript canonical digest differ: ${name}`);
+    }
+  }
   const typescriptJson = canonicalJson(typescript);
   const swiftJson = canonicalJson(swift);
   if (typescriptJson !== swiftJson) {
