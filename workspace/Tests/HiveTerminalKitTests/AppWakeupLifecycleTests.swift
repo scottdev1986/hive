@@ -128,13 +128,23 @@ final class AppWakeupLifecycleTests: XCTestCase {
     /// The race the first version of this suite didn't cover: a tick
     /// genuinely IN FLIGHT (not "free happened first, then a wakeup
     /// arrives") concurrent with a free requested from another thread.
-    /// `tickOverride` sleeps mid-tick to hold the main queue's current
-    /// work item open; `free()` is dispatched from a background thread so
-    /// its `DispatchQueue.main.sync` genuinely queues behind it instead of
-    /// racing inline. If tick/free serialization ever regresses (e.g. back
-    /// to copy-pointer-then-unlock-then-call), this observes free
-    /// completing (or the app pointer going nil) WHILE the tick is still
-    /// recorded as running, and fails.
+    ///
+    /// Second-pass fix (cross-vendor review 2026-07-17): the first version
+    /// used `wait(for: [tickStarted])` — an `XCTestExpectation` fulfilled
+    /// *inside* the same `DispatchQueue.main.async`-dispatched closure that
+    /// then calls `Thread.sleep`. That doesn't work: `wait(for:)` can only
+    /// notice a fulfillment by servicing the main run loop, and it can't
+    /// service the run loop while that very closure is still running
+    /// (synchronous work on a thread isn't preemptible by the run loop it's
+    /// blocking). So `wait(for: [tickStarted])` silently waited for the
+    /// ENTIRE closure — sleep included — to finish before returning, and
+    /// free() was dispatched only after the tick had already ended. This
+    /// version signals "tick started" via a `DispatchSemaphore` waited on
+    /// from a background thread instead: a semaphore wake-up is a kernel
+    /// primitive, not a run-loop notification, so it fires the moment
+    /// `signal()` runs on main regardless of what that closure does next.
+    /// `free()` is then dispatched from that SAME background thread while
+    /// main is still genuinely inside the tick's sleep.
     func testFreeWaitsForInFlightTickToFinishBeforeFreeing() throws {
         let surface = try makeSurface()
         guard let owner = surface.appOwner else {
@@ -148,51 +158,59 @@ final class AppWakeupLifecycleTests: XCTestCase {
             eventsLock.lock(); events.append(event); eventsLock.unlock()
         }
 
-        let tickStarted = expectation(description: "tick started")
-        // Ghostty's own internals can call wakeup_cb spontaneously (see
-        // testWakeupTrampolineActuallyInvokesTick...), so more than one
-        // start/end pair may legitimately be recorded before or after the
-        // one this test deliberately triggers.
-        tickStarted.assertForOverFulfill = false
+        let tickStartedSemaphore = DispatchSemaphore(value: 0)
         owner.wakeupContext.tickOverride = { _ in
             record("tick-start")
-            tickStarted.fulfill()
+            tickStartedSemaphore.signal()
             Thread.sleep(forTimeInterval: 0.2)
             record("tick-end")
         }
 
+        let raceCompleted = expectation(description: "tick/free race sequence completed")
         DispatchQueue.global().async {
+            // Trigger the tick asynchronously onto main.
             ghosttyAppWakeupTrampoline(context)
-        }
-        wait(for: [tickStarted], timeout: 2.0)
 
-        // Correct teardown order (surface, then owning app) even under
-        // race conditions — freeing the app first leaves the surface
-        // referencing a dead app and hangs/crashes independent of the
-        // wakeup/tick race this test targets.
-        let freeCompleted = expectation(description: "free completed")
-        DispatchQueue.global().async {
+            // Block THIS background thread (not main, not the test's own
+            // thread) until the tick has genuinely started on main and is
+            // now inside its 0.2s sleep.
+            guard tickStartedSemaphore.wait(timeout: .now() + 2) == .success else {
+                record("tick-start-timeout")
+                raceCompleted.fulfill()
+                return
+            }
+
+            // Request free while the tick is still in flight. Correct
+            // teardown order (surface, then owning app) even under race
+            // conditions — freeing the app first leaves the surface
+            // referencing a dead app and hangs/crashes independent of the
+            // wakeup/tick race this test targets.
+            record("free-dispatch")
             surface.free()
             owner.free()
-            freeCompleted.fulfill()
+            record("free-completed")
+            raceCompleted.fulfill()
         }
-        wait(for: [freeCompleted], timeout: 2.0)
+        wait(for: [raceCompleted], timeout: 3.0)
 
         eventsLock.lock()
         let recorded = events
         eventsLock.unlock()
-        // Ordering property, not an exact transcript (spontaneous extra
-        // ticks are legitimate — see above): every tick that started must
-        // have finished, and the log must not end mid-tick. If tick/free
-        // serialization ever regresses, free() can complete while the
-        // main-queue tick closure is still inside its sleep, and this
-        // observes the log ending on "tick-start" instead of "tick-end".
-        XCTAssertFalse(recorded.isEmpty, "expected at least the deliberately-triggered tick to be recorded")
-        XCTAssertEqual(recorded.last, "tick-end",
-                       "free() must not complete while a tick is still in flight — recorded \(recorded)")
-        let starts = recorded.filter { $0 == "tick-start" }.count
-        let ends = recorded.filter { $0 == "tick-end" }.count
-        XCTAssertEqual(starts, ends, "every tick that started must have finished before free completed — recorded \(recorded)")
+
+        XCTAssertTrue(recorded.contains("free-dispatch"), "free must have been attempted — recorded \(recorded)")
+        XCTAssertTrue(recorded.contains("free-completed"), "free must have completed — recorded \(recorded)")
+        guard let tickEndIndex = recorded.firstIndex(of: "tick-end"),
+              let freeCompletedIndex = recorded.firstIndex(of: "free-completed") else {
+            return XCTFail("expected both tick-end and free-completed — recorded \(recorded)")
+        }
+        // The actual serialization property: free() must not complete
+        // until the in-flight tick has fully finished. If tick/free
+        // serialization regresses (e.g. back to copy-pointer-then-unlock-
+        // then-call, or freeIfNeeded running inline off-queue), free
+        // completes almost immediately after "free-dispatch" — well
+        // before "tick-end" — and this goes RED.
+        XCTAssertLessThan(tickEndIndex, freeCompletedIndex,
+                          "free() completed before the in-flight tick finished — recorded \(recorded)")
 
         // And the trampoline is now a safe no-op — no further ticks recorded.
         var tickCountAfterFree = 0

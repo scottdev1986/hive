@@ -275,6 +275,18 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
 /// wakeup before then) and the free body is guaranteed to run at most
 /// once (first caller wins; `freed` is checked and set atomically under
 /// `lock` before either the app pointer is cleared or the C frees run).
+///
+/// INVARIANT (cross-vendor review 2026-07-17, second pass): the ONLY
+/// `ghostty_app_tick` call anywhere in this module is the one inside
+/// `scheduleTick`'s `runOnMain` closure below. `GhosttyAppOwner` used to
+/// also expose a public `tick()` that called `ghostty_app_tick(app)`
+/// directly — off-queue and ungated, reachable even after `free()` had
+/// already run. It had zero callers, so it was removed rather than routed
+/// through the guard: the safest ungated API is no API. If a tick needs
+/// triggering from outside `wakeup_cb`, add a method that calls THIS
+/// class's `scheduleTick` (or a variant of it), never a bare
+/// `ghostty_app_tick(app)`. `grep -rn ghostty_app_tick` in Sources/ should
+/// only ever find the one call site below plus doc comments.
 public final class GhosttyAppWakeupContext: @unchecked Sendable {
     private var app: ghostty_app_t?
     private var freed = false
@@ -371,10 +383,6 @@ public final class GhosttyAppOwner {
             ghostty_app_free(app)
             ghostty_config_free(config)
         }
-    }
-
-    public func tick() {
-        ghostty_app_tick(app)
     }
 }
 
