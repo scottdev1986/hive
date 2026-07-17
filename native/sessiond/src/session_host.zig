@@ -2629,10 +2629,16 @@ fn environmentStrings(
     var iterator = object.iterator();
     var index: usize = 0;
     while (iterator.next()) |entry| : (index += 1) {
+        if (entry.key_ptr.*.len == 0 or
+            std.mem.indexOfScalar(u8, entry.key_ptr.*, '=') != null or
+            std.mem.indexOfScalar(u8, entry.key_ptr.*, 0) != null)
+            return error.InvalidEnvironment;
         const item = switch (entry.value_ptr.*) {
             .string => |item| item,
             else => return error.InvalidEnvironment,
         };
+        if (std.mem.indexOfScalar(u8, item, 0) != null)
+            return error.InvalidEnvironment;
         result[index] = try std.fmt.allocPrint(
             allocator,
             "{s}={s}",
@@ -2640,6 +2646,21 @@ fn environmentStrings(
         );
     }
     return result;
+}
+
+fn validateSpawnStrings(
+    cwd: []const u8,
+    expected_executable: []const u8,
+    argv: []const []const u8,
+) !void {
+    if (argv.len == 0 or !std.fs.path.isAbsolute(cwd) or
+        std.mem.indexOfScalar(u8, cwd, 0) != null or
+        std.mem.indexOfScalar(u8, expected_executable, 0) != null)
+        return error.InvalidCreateSpec;
+    for (argv) |argument| {
+        if (std.mem.indexOfScalar(u8, argument, 0) != null)
+            return error.InvalidCreateSpec;
+    }
 }
 
 fn verifyWorkspaceIdentity(pid: i32, start_token: []const u8) !void {
@@ -2787,9 +2808,12 @@ pub fn runHostRole(
         .ignore_unknown_fields = true,
     });
     defer spec.deinit();
-    if (spec.value.schemaVersion != 1 or spec.value.argv.len == 0 or
-        !std.fs.path.isAbsolute(spec.value.cwd))
-        return error.InvalidCreateSpec;
+    if (spec.value.schemaVersion != 1) return error.InvalidCreateSpec;
+    try validateSpawnStrings(
+        spec.value.cwd,
+        spec.value.expectedExecutable,
+        spec.value.argv,
+    );
     try verifyWorkspaceIdentity(
         spec.value.visibility.workspacePid,
         spec.value.visibility.workspaceStartToken,
@@ -3004,6 +3028,57 @@ test "accepted broker sockets cannot outlive the visibility deadline" {
         error.VisibilityExpired,
         leaseBoundControlTimeoutMs(lease, lease.expires_mono_ns),
     );
+}
+
+test "spawn strings reject C ABI truncation with a valid control" {
+    const valid_argv = [_][]const u8{ "/bin/sh", "-c" };
+    try validateSpawnStrings("/tmp", "/bin/sh", &valid_argv);
+
+    const invalid_argv = [_][]const u8{"/bin/sh\x00ignored"};
+    try std.testing.expectError(
+        error.InvalidCreateSpec,
+        validateSpawnStrings("/tmp", "/bin/sh", &invalid_argv),
+    );
+    try std.testing.expectError(
+        error.InvalidCreateSpec,
+        validateSpawnStrings("/tmp\x00ignored", "/bin/sh", &valid_argv),
+    );
+}
+
+test "environment strings reject ambiguous execve entries with a valid control" {
+    var valid = try std.json.parseFromSlice(
+        std.json.Value,
+        std.testing.allocator,
+        "{\"KEY\":\"value\"}",
+        .{},
+    );
+    defer valid.deinit();
+    var valid_arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer valid_arena.deinit();
+    const entries = try environmentStrings(valid_arena.allocator(), valid.value);
+    try std.testing.expectEqual(@as(usize, 1), entries.len);
+    try std.testing.expectEqualStrings("KEY=value", entries[0]);
+
+    const invalid_json = [_][]const u8{
+        "{\"\":\"value\"}",
+        "{\"BAD=KEY\":\"value\"}",
+        "{\"KEY\":\"before\\u0000after\"}",
+    };
+    for (invalid_json) |source| {
+        var parsed = try std.json.parseFromSlice(
+            std.json.Value,
+            std.testing.allocator,
+            source,
+            .{},
+        );
+        defer parsed.deinit();
+        var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+        defer arena.deinit();
+        try std.testing.expectError(
+            error.InvalidEnvironment,
+            environmentStrings(arena.allocator(), parsed.value),
+        );
+    }
 }
 
 test "bridge export is copied into the caller Zig allocator" {
