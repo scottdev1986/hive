@@ -136,6 +136,25 @@ pub fn build(b: *std.Build) void {
     const run_session_host_tests = b.addRunArtifact(session_host_tests);
     test_step.dependOn(&run_session_host_tests.step);
 
+    const real_host_golden_module = b.createModule(.{
+        .root_source_file = b.path("test/real-host-golden.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    real_host_golden_module.addImport("broker", broker_module);
+    real_host_golden_module.addImport("session_protocol_generated", generated);
+    real_host_golden_module.addImport("process_inspector", process_inspector_module);
+    real_host_golden_module.addImport("protocol", test_module);
+    real_host_golden_module.addImport("session_host", session_host_module);
+    const real_host_golden = b.addExecutable(.{
+        .name = "sessiond-real-host-golden",
+        .root_module = real_host_golden_module,
+    });
+    real_host_golden.linkLibrary(ghostty_vt);
+    const run_real_host_golden = b.addRunArtifact(real_host_golden);
+    test_step.dependOn(&run_real_host_golden.step);
+
     const stub_module = b.createModule(.{
         .root_source_file = b.path("test/stub_host.zig"),
         .target = target,

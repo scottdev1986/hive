@@ -1485,6 +1485,14 @@ pub const HostRuntime = struct {
             else => return err,
         };
         errdefer connection.stream.close();
+        // The listener is nonblocking so the PTY/lease loop can make
+        // progress. Darwin propagates that state to accepted descriptors;
+        // broker RPCs use the generated SO_RCVTIMEO bound and must block
+        // while a complete frame arrives.
+        const flags = c.fcntl(connection.stream.handle, c.F_GETFL);
+        if (flags < 0 or
+            c.fcntl(connection.stream.handle, c.F_SETFL, flags & ~@as(c_int, c.O_NONBLOCK)) < 0)
+            return error.SocketBlockingFailed;
         if (!std.meta.eql(
             self.socket_evidence,
             try socketEvidenceAt(self.directory, "host.sock"),
