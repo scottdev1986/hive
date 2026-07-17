@@ -1457,6 +1457,14 @@ pub const HostLaunchReadback = struct {
     record_json: []const u8,
     created_payload: []u8,
     host: HostControl,
+    pending: PendingRegistration,
+};
+
+pub const PendingRegistration = u64;
+
+pub const HostLaunchDecision = union(enum) {
+    admitted,
+    rejected: protocol.WireError,
 };
 
 pub const HostLauncher = struct {
@@ -1468,7 +1476,9 @@ pub const HostLauncher = struct {
         []const u8,
         []const u8,
         [32]u8,
+        u64,
     ) ?HostLaunchReadback,
+    finalize_fn: *const fn (*anyopaque, PendingRegistration, HostLaunchDecision) bool,
 
     /// Starts the exact executable in host role and transfers spec, initial
     /// input, and the secret only over its inherited control fd.
@@ -1479,6 +1489,7 @@ pub const HostLauncher = struct {
         spec_json: []const u8,
         initial_input: []const u8,
         adoption_secret: [32]u8,
+        broker_now_ns: u64,
     ) ?HostLaunchReadback {
         return self.launch_fn(
             self.context,
@@ -1487,7 +1498,18 @@ pub const HostLauncher = struct {
             spec_json,
             initial_input,
             adoption_secret,
+            broker_now_ns,
         );
+    }
+
+    /// Consumes a pending registration exactly once. The broker-relative
+    /// launch timestamp is never an input to this decision.
+    pub fn finalize(
+        self: HostLauncher,
+        pending: PendingRegistration,
+        decision: HostLaunchDecision,
+    ) bool {
+        return self.finalize_fn(self.context, pending, decision);
     }
 };
 
@@ -1673,6 +1695,26 @@ pub const Registry = struct {
         }
         entry.record.state = .exited;
         return .terminated;
+    }
+
+    fn rollbackAdmission(self: *Registry, locator: Locator) void {
+        var request_id_storage: [40]u8 = undefined;
+        const request_id = taggedUuidV7(&request_id_storage, "req_") catch
+            "req_018f1e90-7b5a-7cc0-8000-000000000000";
+        if (self.terminate(locator, .{
+            .mode = "immediate",
+            .reason = "host registration acceptance failed",
+            .request_id = request_id,
+        }) == .terminated) return;
+
+        const result = self.lookup(locator) orelse return;
+        const entry = switch (result) {
+            .entry => |entry| entry,
+            .failure => return,
+        };
+        entry.record.state = .unknown;
+        entry.quarantined = true;
+        self.enumeration_complete = false;
     }
 
     pub fn expireVisibility(self: *Registry, now_ns: u64) usize {
@@ -1991,6 +2033,7 @@ pub fn recordJsonMatches(allocator: std.mem.Allocator, record: HostRecord, json:
         executableBuildHash: []const u8,
         engineBuildId: []const u8,
         protocol: MatchProtocol,
+        socketRelativePath: []const u8,
         geometry: DiskGeometry,
         state: []const u8,
         visibility: MatchVisibility,
@@ -2017,6 +2060,7 @@ pub fn recordJsonMatches(allocator: std.mem.Allocator, record: HostRecord, json:
         std.mem.eql(u8, value.expectedExecutable, record.expected_executable) and
         std.mem.eql(u8, value.executableBuildHash, record.executable_build_hash) and
         std.mem.eql(u8, value.engineBuildId, record.engine_build_id) and
+        std.mem.eql(u8, value.socketRelativePath, "host.sock") and
         std.mem.eql(u8, value.state, @tagName(record.state)) and
         std.mem.eql(u8, value.visibility.state, @tagName(record.visibility.state)) and
         std.mem.eql(u8, value.visibility.workspaceSessionId, record.visibility.workspace_session_id) and
@@ -2024,6 +2068,23 @@ pub fn recordJsonMatches(allocator: std.mem.Allocator, record: HostRecord, json:
             record.visibility.open_terminal_revision and
         (std.fmt.parseInt(u64, value.outputSeq, 10) catch return false) == record.output_seq and
         (std.fmt.parseInt(u64, value.checkpointSeq, 10) catch return false) == record.checkpoint_seq;
+}
+
+pub const LaunchHostResult = struct {
+    failure: ?protocol.Failure,
+    created_payload: ?[]u8,
+};
+
+fn rejectLaunchedHost(
+    launcher: HostLauncher,
+    pending: PendingRegistration,
+    failure: protocol.Failure,
+) LaunchHostResult {
+    if (!launcher.finalize(pending, .{ .rejected = failure.code })) return .{
+        .failure = .{ .code = .in_doubt, .close_connection = false },
+        .created_payload = null,
+    };
+    return .{ .failure = failure, .created_payload = null };
 }
 
 pub fn launchHost(
@@ -2036,7 +2097,7 @@ pub fn launchHost(
     committed_sha256: [32]u8,
     now_ns: u64,
     launcher: HostLauncher,
-) !struct { failure: ?protocol.Failure, created_payload: ?[]u8 } {
+) !LaunchHostResult {
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.create_begin_payload, spec_json))
         return .{ .failure = .{ .code = .malformed_frame, .close_connection = false }, .created_payload = null };
     const VisibilityBinding = struct { workspaceSessionId: []const u8, openTerminalRevision: []const u8 };
@@ -2089,14 +2150,19 @@ pub fn launchHost(
         spec_json,
         initial_input,
         adoption_secret,
+        now_ns,
     ) orelse return .{
         .failure = .{ .code = .verification_unknown, .close_connection = false },
         .created_payload = null,
     };
     var retain_created_payload = false;
     defer if (!retain_created_payload) allocator.free(readback.created_payload);
-    if (!sameLocator(readback.record.locator, expected_locator))
-        return .{ .failure = .{ .code = .generation_mismatch, .close_connection = false }, .created_payload = null };
+    if (!sameLocator(readback.record.locator, expected_locator)) return rejectLaunchedHost(
+        launcher,
+        readback.pending,
+        .{ .code = .generation_mismatch, .close_connection = false },
+    );
+    const lease_remaining_ns = readback.record.visibility.expires_mono_ns;
     if (readback.record.state != .live or readback.record.visibility.state != .attaching or
         !std.mem.eql(
             u8,
@@ -2104,18 +2170,49 @@ pub fn launchHost(
             spec.value.visibility.workspaceSessionId,
         ) or
         readback.record.visibility.open_terminal_revision != initial_revision or
-        readback.record.visibility.expires_mono_ns != attaching_expiry)
-        return .{ .failure = .{ .code = .verification_unknown, .close_connection = false }, .created_payload = null };
+        lease_remaining_ns == 0 or
+        lease_remaining_ns > generated.limits.visibility_expiry_ms * std.time.ns_per_ms)
+        return rejectLaunchedHost(
+            launcher,
+            readback.pending,
+            .{ .code = .verification_unknown, .close_connection = false },
+        );
     if (!protocol.validateControlPayload(
         allocator,
         generated.wire_schema.created_payload,
         readback.created_payload,
-    )) return .{ .failure = .{ .code = .verification_unknown, .close_connection = false }, .created_payload = null };
-    if (!recordJsonMatches(allocator, readback.record, readback.record_json))
-        return .{ .failure = .{ .code = .verification_unknown, .close_connection = false }, .created_payload = null };
-    try writeRecordAtomic(allocator, host_directory, readback.record_json);
-    if (registry.register(readback.record, readback.host)) |failure|
-        return .{ .failure = failure, .created_payload = null };
+    )) return rejectLaunchedHost(
+        launcher,
+        readback.pending,
+        .{ .code = .verification_unknown, .close_connection = false },
+    );
+    if (!recordJsonMatches(allocator, readback.record, readback.record_json)) return rejectLaunchedHost(
+        launcher,
+        readback.pending,
+        .{ .code = .verification_unknown, .close_connection = false },
+    );
+    writeRecordAtomic(allocator, host_directory, readback.record_json) catch |err| return rejectLaunchedHost(
+        launcher,
+        readback.pending,
+        .{
+            .code = if (err == error.OutOfMemory) .resource_exhausted else .in_doubt,
+            .close_connection = false,
+        },
+    );
+    var admitted_record = readback.record;
+    admitted_record.visibility.expires_mono_ns = attaching_expiry;
+    if (registry.register(admitted_record, readback.host)) |failure| return rejectLaunchedHost(
+        launcher,
+        readback.pending,
+        failure,
+    );
+    if (!launcher.finalize(readback.pending, .admitted)) {
+        registry.rollbackAdmission(admitted_record.locator);
+        return .{
+            .failure = .{ .code = .in_doubt, .close_connection = false },
+            .created_payload = null,
+        };
+    }
     retain_created_payload = true;
     return .{ .failure = null, .created_payload = readback.created_payload };
 }
@@ -2128,15 +2225,16 @@ pub const BackendResult = union(enum) {
 
 pub const BrokerBackend = struct {
     context: *anyopaque,
-    call_fn: *const fn (*anyopaque, std.mem.Allocator, u16, []const u8) BackendResult,
+    call_fn: *const fn (*anyopaque, std.mem.Allocator, protocol.Header, []const u8, u64) BackendResult,
 
     pub fn call(
         self: BrokerBackend,
         allocator: std.mem.Allocator,
-        type_code: u16,
+        header: protocol.Header,
         payload: []const u8,
+        now_ns: u64,
     ) BackendResult {
-        return self.call_fn(self.context, allocator, type_code, payload);
+        return self.call_fn(self.context, allocator, header, payload, now_ns);
     }
 };
 
@@ -2237,7 +2335,7 @@ pub fn dispatchFrame(
     if (schema) |name| if (!protocol.validateControlPayload(allocator, name, frame.payload))
         return .{ .failure = .{ .code = .malformed_frame, .close_connection = false } };
 
-    const backend_result = backend.call(allocator, frame.header.type_code, frame.payload);
+    const backend_result = backend.call(allocator, frame.header, frame.payload, now_ns);
     const response_type = expectedResponseType(frame.header.type_code);
     return switch (backend_result) {
         .failure => |failure| .{ .failure = failure },
@@ -2358,6 +2456,99 @@ fn validPong(
         protocol.decodePingPong(allocator, frame.payload) != null;
 }
 
+pub fn serveAuthenticatedFrames(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    timer: *std.time.Timer,
+    selected_minor: u8,
+    backend: BrokerBackend,
+) !void {
+    const file: std.fs.File = .{ .handle = stream.handle };
+    const reader = file.deprecatedReader();
+    var liveness: protocol.Liveness = .{ .last_activity_ns = timer.read() };
+    var outstanding_ping: ?u64 = null;
+    var next_ping_request_id: u64 = 1;
+    while (true) {
+        var poll_fds = [_]std.posix.pollfd{.{
+            .fd = stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = try std.posix.poll(&poll_fds, @intCast(generated.limits.connection_ping_interval_ms));
+        if (ready == 0) {
+            const now_ns = timer.read();
+            if (!liveness.pingDue(now_ns)) continue;
+            var payload_storage: [96]u8 = undefined;
+            const payload = try protocol.encodePingPong(&payload_storage, now_ns);
+            try protocol.writeFrame(stream, .{
+                .minor = selected_minor,
+                .type_code = generated.frame_type.ping,
+                .flags = 0,
+                .payload_length = @intCast(payload.len),
+                .request_id = next_ping_request_id,
+                .stream_seq = 0,
+            }, payload);
+            outstanding_ping = next_ping_request_id;
+            next_ping_request_id +%= 1;
+            if (next_ping_request_id == 0) next_ping_request_id = 1;
+            liveness.sentPing(now_ns);
+            if (liveness.shouldDetach()) return;
+            continue;
+        }
+        if (poll_fds[0].revents & std.posix.POLL.IN == 0) return;
+
+        const read = protocol.readFrameForRange(
+            allocator,
+            reader,
+            selected_minor,
+            selected_minor,
+        ) catch return;
+        switch (read) {
+            .failure => |failure| {
+                if (failure.request_id != 0) try writeFailure(allocator, stream, .{
+                    .minor = selected_minor,
+                    .type_code = generated.frame_type.@"error",
+                    .flags = 0,
+                    .payload_length = 0,
+                    .request_id = failure.request_id,
+                    .stream_seq = 0,
+                }, failure);
+                if (failure.close_connection) return;
+            },
+            .ignored_optional => continue,
+            .frame => |frame| {
+                defer frame.deinit(allocator);
+                const now_ns = timer.read();
+                if (frame.header.type_code == generated.frame_type.pong) {
+                    if (!validPong(allocator, frame, outstanding_ping)) {
+                        try writeFailure(allocator, stream, frame.header, .{
+                            .code = .malformed_frame,
+                            .close_connection = true,
+                        });
+                        return;
+                    }
+                    outstanding_ping = null;
+                    liveness.receivedPong(now_ns);
+                    continue;
+                }
+                if (liveness.unanswered_pings == 0) liveness.last_activity_ns = now_ns;
+                const result = dispatchFrame(allocator, frame, now_ns, backend);
+                switch (result) {
+                    .no_response => {},
+                    .response => |response| {
+                        defer response.deinit(allocator);
+                        try protocol.writeFrame(stream, response.header, response.payload);
+                    },
+                    .failure => |failure| {
+                        try writeFailure(allocator, stream, frame.header, failure);
+                        if (failure.close_connection) return;
+                    },
+                }
+            },
+        }
+    }
+}
+
 fn serveDaemonConnection(
     allocator: std.mem.Allocator,
     runtime: *Runtime,
@@ -2446,107 +2637,171 @@ fn serveDaemonConnection(
         timer.read(),
         selected_minor,
     );
-
-    var liveness: protocol.Liveness = .{ .last_activity_ns = timer.read() };
-    var outstanding_ping: ?u64 = null;
-    var next_ping_request_id: u64 = 1;
-    while (true) {
-        var poll_fds = [_]std.posix.pollfd{.{
-            .fd = stream.handle,
-            .events = std.posix.POLL.IN,
-            .revents = 0,
-        }};
-        const ready = try std.posix.poll(&poll_fds, @intCast(generated.limits.connection_ping_interval_ms));
-        if (ready == 0) {
-            const now_ns = timer.read();
-            if (!liveness.pingDue(now_ns)) continue;
-            var payload_storage: [96]u8 = undefined;
-            const payload = try protocol.encodePingPong(&payload_storage, now_ns);
-            try protocol.writeFrame(stream, .{
-                .minor = selected_minor,
-                .type_code = generated.frame_type.ping,
-                .flags = 0,
-                .payload_length = @intCast(payload.len),
-                .request_id = next_ping_request_id,
-                .stream_seq = 0,
-            }, payload);
-            outstanding_ping = next_ping_request_id;
-            next_ping_request_id +%= 1;
-            if (next_ping_request_id == 0) next_ping_request_id = 1;
-            liveness.sentPing(now_ns);
-            if (liveness.shouldDetach()) return;
-            continue;
-        }
-        if (poll_fds[0].revents & std.posix.POLL.IN == 0) return;
-
-        const read = protocol.readFrameForRange(
-            allocator,
-            reader,
-            selected_minor,
-            selected_minor,
-        ) catch return;
-        switch (read) {
-            .failure => |failure| {
-                if (failure.request_id != 0) try writeFailure(allocator, stream, .{
-                    .minor = selected_minor,
-                    .type_code = generated.frame_type.@"error",
-                    .flags = 0,
-                    .payload_length = 0,
-                    .request_id = failure.request_id,
-                    .stream_seq = 0,
-                }, failure);
-                if (failure.close_connection) return;
-            },
-            .ignored_optional => continue,
-            .frame => |frame| {
-                defer frame.deinit(allocator);
-                const now_ns = timer.read();
-                if (frame.header.type_code == generated.frame_type.pong) {
-                    if (!validPong(allocator, frame, outstanding_ping)) {
-                        try writeFailure(allocator, stream, frame.header, .{
-                            .code = .malformed_frame,
-                            .close_connection = true,
-                        });
-                        return;
-                    }
-                    outstanding_ping = null;
-                    liveness.receivedPong(now_ns);
-                    continue;
-                }
-                if (liveness.unanswered_pings == 0) liveness.last_activity_ns = now_ns;
-                const result = dispatchFrame(allocator, frame, now_ns, backend);
-                switch (result) {
-                    .no_response => {},
-                    .response => |response| {
-                        defer response.deinit(allocator);
-                        try protocol.writeFrame(stream, response.header, response.payload);
-                    },
-                    .failure => |failure| {
-                        try writeFailure(allocator, stream, frame.header, failure);
-                        if (failure.close_connection) return;
-                    },
-                }
-            },
-        }
-    }
+    try serveAuthenticatedFrames(allocator, stream, timer, selected_minor, backend);
 }
 
-const StartupBackend = struct {
-    fn backend(self: *StartupBackend) BrokerBackend {
+const CreateTransaction = struct {
+    spec_json: []u8,
+    initial_input: std.ArrayList(u8) = .{},
+
+    fn deinit(self: *CreateTransaction, allocator: std.mem.Allocator) void {
+        allocator.free(self.spec_json);
+        self.initial_input.deinit(allocator);
+    }
+};
+
+pub const ProductionBackend = struct {
+    allocator: std.mem.Allocator,
+    runtime: *Runtime,
+    registry: *Registry,
+    launcher: HostLauncher,
+    create: ?CreateTransaction = null,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        runtime: *Runtime,
+        registry: *Registry,
+        launcher: HostLauncher,
+    ) ProductionBackend {
+        return .{
+            .allocator = allocator,
+            .runtime = runtime,
+            .registry = registry,
+            .launcher = launcher,
+        };
+    }
+
+    pub fn deinit(self: *ProductionBackend) void {
+        if (self.create) |*transaction| transaction.deinit(self.allocator);
+        self.create = null;
+    }
+
+    pub fn backend(self: *ProductionBackend) BrokerBackend {
         return .{ .context = self, .call_fn = call };
     }
 
-    fn call(context: *anyopaque, allocator: std.mem.Allocator, type_code: u16, payload: []const u8) BackendResult {
+    fn failure(code: protocol.WireError) BackendResult {
+        return .{ .failure = .{ .code = code, .close_connection = false } };
+    }
+
+    fn call(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        header: protocol.Header,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const self: *ProductionBackend = @ptrCast(@alignCast(context));
+        if (header.type_code == generated.frame_type.create_begin) return self.begin(payload);
+        if (header.type_code == generated.frame_type.create_input) return self.input(header, payload);
+        if (header.type_code == generated.frame_type.create_commit)
+            return self.commit(allocator, payload, now_ns);
+        return failure(.not_found);
+    }
+
+    fn begin(self: *ProductionBackend, payload: []const u8) BackendResult {
+        if (self.create) |*transaction| transaction.deinit(self.allocator);
+        self.create = null;
+        const spec_json = self.allocator.dupe(u8, payload) catch
+            return failure(.resource_exhausted);
+        self.create = .{ .spec_json = spec_json };
+        return .no_response;
+    }
+
+    fn input(
+        self: *ProductionBackend,
+        header: protocol.Header,
+        payload: []const u8,
+    ) BackendResult {
+        const transaction = if (self.create) |*value| value else return failure(.not_ready);
+        if (header.stream_seq != @as(u64, @intCast(transaction.initial_input.items.len)))
+            return failure(.malformed_frame);
+        const new_length = std.math.add(usize, transaction.initial_input.items.len, payload.len) catch
+            return failure(.payload_too_large);
+        if (new_length > generated.limits.automated_message_bytes)
+            return failure(.payload_too_large);
+        transaction.initial_input.appendSlice(self.allocator, payload) catch
+            return failure(.resource_exhausted);
+        return .no_response;
+    }
+
+    fn commit(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const transaction_ref = if (self.create) |*value| value else return failure(.not_ready);
+        const Commit = struct {
+            schemaVersion: u8,
+            totalLength: usize,
+            sha256: []const u8,
+        };
+        var parsed_commit = std.json.parseFromSlice(Commit, allocator, payload, .{}) catch
+            return failure(.malformed_frame);
+        defer parsed_commit.deinit();
+        if (parsed_commit.value.schemaVersion != 1 or
+            parsed_commit.value.totalLength != transaction_ref.initial_input.items.len)
+            return failure(.malformed_frame);
+        var committed_sha256: [32]u8 = undefined;
+        _ = std.fmt.hexToBytes(&committed_sha256, parsed_commit.value.sha256) catch
+            return failure(.malformed_frame);
+
+        const SpecProjection = struct { locator: DiskLocator };
+        var parsed_spec = std.json.parseFromSlice(
+            SpecProjection,
+            allocator,
+            transaction_ref.spec_json,
+            .{ .ignore_unknown_fields = true },
+        ) catch return failure(.malformed_frame);
+        defer parsed_spec.deinit();
+        _ = locatorFromDisk(parsed_spec.value.locator) catch return failure(.malformed_frame);
+
+        var transaction = self.create.?;
+        self.create = null;
+        defer transaction.deinit(self.allocator);
+        const result = launchHost(
+            allocator,
+            self.runtime,
+            self.registry,
+            parsed_spec.value.locator.sessionId,
+            transaction.spec_json,
+            transaction.initial_input.items,
+            committed_sha256,
+            now_ns,
+            self.launcher,
+        ) catch |err| return failure(switch (err) {
+            error.OutOfMemory => .resource_exhausted,
+            else => .in_doubt,
+        });
+        if (result.failure) |launch_failure| return .{ .failure = launch_failure };
+        return .{ .response = result.created_payload orelse return failure(.internal) };
+    }
+};
+
+pub const StartupBackend = struct {
+    pub fn backend(self: *StartupBackend) BrokerBackend {
+        return .{ .context = self, .call_fn = call };
+    }
+
+    fn call(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        header: protocol.Header,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
         _ = context;
         _ = payload;
-        if (type_code == generated.frame_type.list) {
+        _ = now_ns;
+        if (header.type_code == generated.frame_type.list) {
             const listed = allocator.dupe(u8, "{\"schemaVersion\":1,\"entries\":[],\"complete\":false}") catch
                 return .{ .failure = .{ .code = .resource_exhausted, .close_connection = false } };
             return .{ .response = listed };
         }
-        if (type_code == generated.frame_type.create_begin or
-            type_code == generated.frame_type.create_input or
-            type_code == generated.frame_type.create_commit)
+        if (header.type_code == generated.frame_type.create_begin or
+            header.type_code == generated.frame_type.create_input or
+            header.type_code == generated.frame_type.create_commit)
             return .{ .failure = .{ .code = .not_ready, .close_connection = false } };
         return .{ .failure = .{
             .code = .not_found,
@@ -2558,6 +2813,24 @@ const StartupBackend = struct {
 /// Runs the shipped broker role. WP4 replaces only the host side of the
 /// lifecycle transport; this process never opens or retains a PTY master.
 pub fn serve(allocator: std.mem.Allocator, hive_home: []const u8) !void {
+    return serveWithOptionalLauncher(allocator, hive_home, null);
+}
+
+/// Compatibility seam for main to inject the session_host-owned production
+/// launcher without introducing a broker -> session_host import.
+pub fn serveWithLauncher(
+    allocator: std.mem.Allocator,
+    hive_home: []const u8,
+    launcher: HostLauncher,
+) !void {
+    return serveWithOptionalLauncher(allocator, hive_home, launcher);
+}
+
+fn serveWithOptionalLauncher(
+    allocator: std.mem.Allocator,
+    hive_home: []const u8,
+    launcher: ?HostLauncher,
+) !void {
     var runtime = try Runtime.open(allocator, hive_home);
     defer runtime.deinit();
     const build_id = try executableBuildId(allocator);
@@ -2568,7 +2841,13 @@ pub fn serve(allocator: std.mem.Allocator, hive_home: []const u8) !void {
     var recovery_wire = WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
     defer recovery_wire.deinit();
     try recovered.recover(&runtime, timer.read(), recovery_wire.connector());
-    var backend: StartupBackend = .{};
+    var startup_backend: StartupBackend = .{};
+    var production_backend: ?ProductionBackend = if (launcher) |value|
+        ProductionBackend.init(allocator, &runtime, &recovered.registry, value)
+    else
+        null;
+    defer if (production_backend) |*backend| backend.deinit();
+    const backend = if (production_backend) |*value| value.backend() else startup_backend.backend();
     while (true) {
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = runtime.server.stream.handle,
@@ -2600,7 +2879,7 @@ pub fn serve(allocator: std.mem.Allocator, hive_home: []const u8) !void {
             &accepted.peer,
             build_id,
             &timer,
-            backend.backend(),
+            backend,
         ) catch continue;
     }
 }
@@ -2680,10 +2959,17 @@ const TestBackend = struct {
         return .{ .context = self, .call_fn = call };
     }
 
-    fn call(context: *anyopaque, allocator: std.mem.Allocator, type_code: u16, payload: []const u8) BackendResult {
+    fn call(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        header: protocol.Header,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
         _ = allocator;
-        _ = type_code;
+        _ = header;
         _ = payload;
+        _ = now_ns;
         const self: *TestBackend = @ptrCast(@alignCast(context));
         self.calls += 1;
         return .no_response;

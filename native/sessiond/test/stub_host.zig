@@ -1,6 +1,7 @@
 const std = @import("std");
 const broker = @import("broker");
 const c = @cImport({
+    @cInclude("sys/socket.h");
     @cInclude("sys/stat.h");
     @cInclude("unistd.h");
 });
@@ -128,6 +129,19 @@ fn fixtureRecord(expires_ns: u64) broker.HostRecord {
     };
 }
 
+fn fixtureCreateRecord(lease_remaining_ns: u64) broker.HostRecord {
+    var record = fixtureRecord(lease_remaining_ns);
+    record.locator.instance_id = "hive-fixture";
+    record.locator.subject = .{ .agent = "agent-fixture" };
+    record.locator.engine_build_id = "engine-fixture";
+    record.expected_executable = "/usr/local/bin/codex";
+    record.executable_build_hash = "executable-build-fixture";
+    record.engine_build_id = "engine-fixture";
+    record.visibility.state = .attaching;
+    record.visibility.workspace_session_id = "workspace-fixture";
+    return record;
+}
+
 fn fixtureReadback(record: broker.HostRecord) broker.AdoptionReadback {
     return .{
         .locator = record.locator,
@@ -167,12 +181,26 @@ const LaunchDouble = struct {
     record_json: []const u8,
     created_payload: []const u8,
     host: broker.HostControl,
+    runtime: ?*broker.Runtime = null,
+    registry: ?*broker.Registry = null,
+    pending: broker.PendingRegistration = 1,
+    pending_live: bool = true,
+    finalize_succeeds: bool = true,
     called: bool = false,
     executable_was_absolute: bool = false,
     secret_was_nonzero: bool = false,
+    identity_was_real: bool = false,
+    admission_observed: bool = false,
+    rejected: ?broker.protocol.WireError = null,
+    rejected_teardown: bool = false,
+    expected_initial_input: []const u8 = "",
 
     fn launcher(self: *LaunchDouble) broker.HostLauncher {
-        return .{ .context = self, .launch_fn = launch };
+        return .{
+            .context = self,
+            .launch_fn = launch,
+            .finalize_fn = finalize,
+        };
     }
 
     fn launch(
@@ -182,20 +210,115 @@ const LaunchDouble = struct {
         spec_json: []const u8,
         initial_input: []const u8,
         secret: [32]u8,
+        broker_now_ns: u64,
     ) ?broker.HostLaunchReadback {
+        _ = broker_now_ns;
         const self: *LaunchDouble = @ptrCast(@alignCast(context));
         self.called = true;
         self.executable_was_absolute = std.fs.path.isAbsolute(executable);
         self.secret_was_nonzero = !std.mem.allEqual(u8, &secret, 0);
-        if (spec_json.len == 0 or initial_input.len != 0) return null;
+        const process = broker.inspectProcess(c.getpid()) catch return null;
+        var start_token_storage: [64]u8 = undefined;
+        const start_token = broker.formatStartToken(process.start_token, &start_token_storage) catch return null;
+        self.identity_was_real = self.record.host_pid == process.pid and
+            std.mem.eql(u8, self.record.host_start_token, start_token);
+        if (spec_json.len == 0 or !std.mem.eql(u8, initial_input, self.expected_initial_input)) return null;
         return .{
             .record = self.record,
             .record_json = self.record_json,
             .created_payload = allocator.dupe(u8, self.created_payload) catch return null,
             .host = self.host,
+            .pending = self.pending,
         };
     }
+
+    fn finalize(
+        context: *anyopaque,
+        pending: broker.PendingRegistration,
+        decision: broker.HostLaunchDecision,
+    ) bool {
+        const self: *LaunchDouble = @ptrCast(@alignCast(context));
+        if (!self.pending_live or pending != self.pending) return false;
+        self.pending_live = false;
+        switch (decision) {
+            .admitted => if (self.registry) |registry| {
+                self.admission_observed = registry.lookup(self.record.locator).? == .entry;
+            },
+            .rejected => |failure| {
+                self.rejected = failure;
+                if (self.runtime) |runtime| {
+                    var hosts = runtime.directory.openDir("hosts", .{ .no_follow = true }) catch return false;
+                    defer hosts.close();
+                    hosts.deleteTree(self.record.locator.session_id) catch return false;
+                }
+                self.rejected_teardown = true;
+            },
+        }
+        return self.finalize_succeeds;
+    }
 };
+
+const ServedBackendHarness = struct {
+    stream: std.net.Stream,
+    timer: *std.time.Timer,
+    backend: broker.BrokerBackend,
+    failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    fn run(self: *ServedBackendHarness) void {
+        defer self.stream.close();
+        broker.serveAuthenticatedFrames(
+            std.heap.page_allocator,
+            self.stream,
+            self.timer,
+            broker.generated.protocol_minor,
+            self.backend,
+        ) catch self.failed.store(true, .release);
+    }
+};
+
+fn writeCreateFrame(
+    stream: std.net.Stream,
+    type_code: u16,
+    request_id: u64,
+    stream_seq: u64,
+    payload: []const u8,
+) !void {
+    try broker.protocol.writeFrame(stream, .{
+        .minor = broker.generated.protocol_minor,
+        .type_code = type_code,
+        .flags = if (type_code == broker.generated.frame_type.create_input)
+            broker.generated.frame_flag.content_sensitive
+        else
+            0,
+        .payload_length = @intCast(payload.len),
+        .request_id = request_id,
+        .stream_seq = stream_seq,
+    }, payload);
+}
+
+fn dispatchCreateFrame(
+    backend: broker.BrokerBackend,
+    type_code: u16,
+    request_id: u64,
+    stream_seq: u64,
+    payload: []const u8,
+    now_ns: u64,
+) broker.DispatchResult {
+    return broker.dispatchFrame(std.testing.allocator, .{
+        .header = .{
+            .minor = broker.generated.protocol_minor,
+            .type_code = type_code,
+            .flags = if (type_code == broker.generated.frame_type.create_input)
+                broker.generated.frame_flag.content_sensitive
+            else
+                0,
+            .payload_length = @intCast(payload.len),
+            .request_id = request_id,
+            .stream_seq = stream_seq,
+        },
+        .payload = @constCast(payload),
+    }, now_ns, backend);
+}
 
 const RecoveryDouble = struct {
     host: StubHost,
@@ -700,8 +823,7 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
     record.engine_build_id = "engine-fixture";
     record.visibility.state = .attaching;
     record.visibility.workspace_session_id = "workspace-fixture";
-    record.visibility.expires_mono_ns = 1 * std.time.ns_per_s +
-        broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
+    record.visibility.expires_mono_ns = broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
     try std.testing.expect(broker.recordJsonMatches(std.testing.allocator, record, record_json));
     var launch_host = fixtureHost(record);
     var launcher: LaunchDouble = .{
@@ -730,7 +852,12 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
     defer std.testing.allocator.free(created_payload);
     try std.testing.expect(launcher.executable_was_absolute);
     try std.testing.expect(launcher.secret_was_nonzero);
-    try std.testing.expect(registry.lookup(record.locator).?.entry.record.state == .live);
+    const admitted = registry.lookup(record.locator).?.entry.record;
+    try std.testing.expect(admitted.state == .live);
+    try std.testing.expectEqual(
+        1 * std.time.ns_per_s + broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
+        admitted.visibility.expires_mono_ns,
+    );
 
     var rejected_path_storage: [96]u8 = undefined;
     const rejected_root = try std.fmt.bufPrint(
@@ -773,6 +900,376 @@ test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
         broker.protocol.WireError.not_found,
         rejected_registry.lookup(rejected_record.locator).?.failure.code,
     );
+}
+
+test "production CREATE reaches CREATED only after Registry admission" {
+    const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);
+    defer std.testing.allocator.free(spec);
+    const created = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.created_payload);
+    defer std.testing.allocator.free(created);
+    const commit =
+        \\{"schemaVersion":1,"totalLength":5,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
+    ;
+
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-create-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+
+    const process = try broker.inspectProcess(c.getpid());
+    var start_token_storage: [64]u8 = undefined;
+    const start_token = try broker.formatStartToken(process.start_token, &start_token_storage);
+    var record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
+    record.host_pid = process.pid;
+    record.host_start_token = start_token;
+    var expiry_storage: [24]u8 = undefined;
+    const expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        broker.generated.limits.visibility_expiry_ms,
+    );
+    const record_json = try recordJsonForTest(std.testing.allocator, record, expires_at);
+    defer std.testing.allocator.free(record_json);
+    var host = fixtureHost(record);
+    var registry: broker.Registry = .{};
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = record_json,
+        .created_payload = created,
+        .host = host.control(),
+        .runtime = &runtime,
+        .registry = &registry,
+        .expected_initial_input = "hello",
+    };
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    var timer = try std.time.Timer.start();
+    var harness: ServedBackendHarness = .{
+        .stream = .{ .handle = sockets[1] },
+        .timer = &timer,
+        .backend = backend.backend(),
+    };
+    const thread = try std.Thread.spawn(.{}, ServedBackendHarness.run, .{&harness});
+    try writeCreateFrame(client, broker.generated.frame_type.create_begin, 10, 0, spec);
+    try writeCreateFrame(client, broker.generated.frame_type.create_input, 10, 0, "he");
+    try writeCreateFrame(client, broker.generated.frame_type.create_input, 10, 2, "llo");
+    try writeCreateFrame(client, broker.generated.frame_type.create_commit, 10, 0, commit);
+    const file: std.fs.File = .{ .handle = client.handle };
+    const committed_read = try broker.protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    const committed = committed_read.frame;
+    defer committed.deinit(std.testing.allocator);
+    try std.testing.expectEqual(broker.generated.frame_type.created, committed.header.type_code);
+    try std.testing.expectEqual(@as(u64, 10), committed.header.request_id);
+    client.close();
+    thread.join();
+    try std.testing.expect(!harness.failed.load(.acquire));
+    try std.testing.expect(launcher.called);
+    try std.testing.expect(launcher.identity_was_real);
+    try std.testing.expect(launcher.admission_observed);
+    try std.testing.expect(!launcher.pending_live);
+    try std.testing.expect(registry.lookup(record.locator).? == .entry);
+
+    var startup_sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &startup_sockets) != 0)
+        return error.SocketPairFailed;
+    var startup_client: std.net.Stream = .{ .handle = startup_sockets[0] };
+    var startup_timer = try std.time.Timer.start();
+    var startup_backend: broker.StartupBackend = .{};
+    var startup_harness: ServedBackendHarness = .{
+        .stream = .{ .handle = startup_sockets[1] },
+        .timer = &startup_timer,
+        .backend = startup_backend.backend(),
+    };
+    const startup_thread = try std.Thread.spawn(.{}, ServedBackendHarness.run, .{&startup_harness});
+    try writeCreateFrame(startup_client, broker.generated.frame_type.create_begin, 11, 0, spec);
+    const startup_file: std.fs.File = .{ .handle = startup_client.handle };
+    const refused_read = try broker.protocol.readFrame(
+        std.testing.allocator,
+        startup_file.deprecatedReader(),
+    );
+    const refused = refused_read.frame;
+    defer refused.deinit(std.testing.allocator);
+    try std.testing.expectEqual(broker.generated.frame_type.@"error", refused.header.type_code);
+    const ErrorPayload = struct { code: []const u8 };
+    var refused_payload = try std.json.parseFromSlice(
+        ErrorPayload,
+        std.testing.allocator,
+        refused.payload,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer refused_payload.deinit();
+    try std.testing.expectEqualStrings("NOT_READY", refused_payload.value.code);
+    startup_client.close();
+    startup_thread.join();
+    try std.testing.expect(!startup_harness.failed.load(.acquire));
+}
+
+test "pre-admission CREATE rejection leaves Registry empty and tears down" {
+    const now_ns = 1 * std.time.ns_per_s;
+    const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);
+    defer std.testing.allocator.free(spec);
+    const created = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.created_payload);
+    defer std.testing.allocator.free(created);
+    const commit =
+        \\{"schemaVersion":1,"totalLength":5,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
+    ;
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-reject-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+
+    var record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
+    record.locator.generation += 1;
+    var expiry_storage: [24]u8 = undefined;
+    const expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        broker.generated.limits.visibility_expiry_ms,
+    );
+    const record_json = try recordJsonForTest(std.testing.allocator, record, expires_at);
+    defer std.testing.allocator.free(record_json);
+    var host = fixtureHost(record);
+    var registry: broker.Registry = .{};
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = record_json,
+        .created_payload = created,
+        .host = host.control(),
+        .runtime = &runtime,
+        .registry = &registry,
+        .expected_initial_input = "hello",
+    };
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_begin,
+        20,
+        0,
+        spec,
+        now_ns,
+    ) == .no_response);
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_input,
+        20,
+        0,
+        "hello",
+        now_ns,
+    ) == .no_response);
+    const rejected = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_commit,
+        20,
+        0,
+        commit,
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.generation_mismatch, rejected.failure.code);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.generation_mismatch,
+        launcher.rejected.?,
+    );
+    try std.testing.expect(launcher.rejected_teardown);
+    try std.testing.expect(!launcher.pending_live);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.not_found,
+        registry.lookup(record.locator).?.failure.code,
+    );
+    try std.testing.expectError(
+        error.FileNotFound,
+        runtime.openHostDirectory(record.locator.session_id, false),
+    );
+}
+
+test "post-admission finalize failure suppresses CREATED and quarantines unknown exit" {
+    const now_ns = 1 * std.time.ns_per_s;
+    const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);
+    defer std.testing.allocator.free(spec);
+    const created = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.created_payload);
+    defer std.testing.allocator.free(created);
+    const commit =
+        \\{"schemaVersion":1,"totalLength":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
+    ;
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-finalize-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+
+    const record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
+    var expiry_storage: [24]u8 = undefined;
+    const expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        broker.generated.limits.visibility_expiry_ms,
+    );
+    const record_json = try recordJsonForTest(std.testing.allocator, record, expires_at);
+    defer std.testing.allocator.free(record_json);
+    var host = fixtureHost(record);
+    host.termination = .{
+        .pty_closed = false,
+        .host_exited = false,
+        .verification_complete = false,
+        .survivor_count = 0,
+    };
+    var registry: broker.Registry = .{};
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = record_json,
+        .created_payload = created,
+        .host = host.control(),
+        .registry = &registry,
+        .finalize_succeeds = false,
+    };
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_begin,
+        30,
+        0,
+        spec,
+        now_ns,
+    ) == .no_response);
+    const failed = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_commit,
+        30,
+        0,
+        commit,
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.in_doubt, failed.failure.code);
+    try std.testing.expect(launcher.admission_observed);
+    try std.testing.expect(!launcher.pending_live);
+    try std.testing.expect(host.terminated);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.verification_unknown,
+        registry.lookup(record.locator).?.failure.code,
+    );
+    var inspections: [1]broker.Inspection = undefined;
+    const listed = registry.list(record.locator.instance_id, &inspections);
+    try std.testing.expect(!listed.complete);
+    try std.testing.expectEqual(@as(usize, 1), listed.entries.len);
+    try std.testing.expectEqual(.unknown, listed.entries[0].presence);
+}
+
+test "production CREATE rejects ordering length and digest before launch" {
+    const now_ns = 1 * std.time.ns_per_s;
+    const spec = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.create_begin_payload);
+    defer std.testing.allocator.free(spec);
+    const wrong_length =
+        \\{"schemaVersion":1,"totalLength":4,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
+    ;
+    const wrong_digest =
+        \\{"schemaVersion":1,"totalLength":5,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}
+    ;
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-controls-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+    const record = fixtureCreateRecord(broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms);
+    var host = fixtureHost(record);
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = "not reached",
+        .created_payload = "not reached",
+        .host = host.control(),
+    };
+    var registry: broker.Registry = .{};
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_begin,
+        40,
+        0,
+        spec,
+        now_ns,
+    ) == .no_response);
+    const out_of_order = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_input,
+        40,
+        1,
+        "he",
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.malformed_frame, out_of_order.failure.code);
+    try std.testing.expect(!launcher.called);
+    try std.testing.expect(registry.lookup(record.locator).?.failure.code == .not_found);
+    try std.testing.expect(dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_input,
+        40,
+        0,
+        "hello",
+        now_ns,
+    ) == .no_response);
+    const length_rejected = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_commit,
+        40,
+        0,
+        wrong_length,
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.malformed_frame, length_rejected.failure.code);
+    try std.testing.expect(!launcher.called);
+    try std.testing.expect(registry.lookup(record.locator).?.failure.code == .not_found);
+    const digest_rejected = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_commit,
+        40,
+        0,
+        wrong_digest,
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.malformed_frame, digest_rejected.failure.code);
+    try std.testing.expect(!launcher.called);
+    try std.testing.expect(registry.lookup(record.locator).?.failure.code == .not_found);
+    const recommit = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.create_commit,
+        40,
+        0,
+        wrong_digest,
+        now_ns,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.not_ready, recommit.failure.code);
 }
 
 test "visibility expiry terminates through the host double with positive readback" {
