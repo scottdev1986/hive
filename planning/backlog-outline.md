@@ -11,7 +11,7 @@ external research drives, code and design docs are reference not truth; external
 - **STORY-001 Gut ALL tmux terminal code** — planning/story-001-gut-tmux.md
 - **STORY-002 Complete removal of agent TUI code (SwiftTerm/tmux-attach hosting path)** — planning/story-002-remove-agent-tui.md
 
-Sequencing resolution (explicit): both are specified FIRST and execute at the **Removal Gate** — the replacement host+renderer live-proven (launch/attach/type/resize/scroll/close-with-verified-termination/reconnect with a real vendor TUI). Hard cut, no dual-host canary, no renderer flag, no compat writes. Every M1 build story exists to reach that gate; the two removals then complete M1. You cannot remove the process host that runs agents before its replacement runs agents — so its replacement running agents is the gate, and nothing else unblocks execution.
+Sequencing resolution (explicit): both are specified FIRST and execute at the **Removal Gate** — the replacement host+renderer live-proven across the FULL vendor matrix (real Claude Code, Codex, AND Grok interactive TUIs: launch/type/resize-SIGWINCH/scroll/close with authoritative waitpid reap evidence/restart+reconnect/process-tree containment/100MiB-class backpressure with no loss/crash survival; atlas second opinion, adopted — any failing cell blocks execution). Hard cut, no dual-host canary, no renderer flag, no compat writes. The matrix uses M1's qualification harness launching vendor TUIs manually; it does not depend on M2's spawn/belief/status pipeline. Every M1 build story exists to reach that gate; the two removals then complete M1. You cannot remove the process host that runs agents before its replacement runs agents — so its replacement running agents is the gate, and nothing else unblocks execution.
 
 Standing decision (applies to several stories): sessiond (~10.3K LOC Zig), HiveTerminalKit (~2.2K LOC Swift), vendored Ghostty, ADRs 0001/0002, and conformance-test IDs already exist in-tree, but HiveTerminalKit is imported only by its own tests — nothing user-facing runs it. Per the hard principles this code is NOT presumed correct: each M1 story QUALIFIES the existing artifact against external conformance sources and keeps it only if it passes live; rewrite is the fallback, not the default. (Open question Q4 asks queen/user to confirm this stance.)
 
@@ -99,7 +99,7 @@ Exit = every Split Horizon feature-ledger row (A run awareness/hierarchy, B term
 
 ## Open questions / user decisions (surfaced, not decided)
 
-Q1 Board access: gh token lacks `project` scope — user must run `gh auth refresh -s project` (or supply a PAT). Blocks all board writes.
+Q1 Board access: RESOLVED — `project` scope granted mid-session; read+write confirmed, stories created on the board.
 Q2 Where does the gutted state land: main immediately at the M1 cut (the fleet's running production Hive keeps its old binary until M2?), or a long-lived integration branch until M2? Affects Hive-develops-Hive during the gap. My recommendation: integration branch until M2 exit, then one landing — but this is the user's call.
 Q3 STORY-002 interpretation: confirm "agent TUI code" = SwiftTerm/tmux-attach hosting path (my primary reading), not the CLI status-text emitters.
 Q4 Confirm the qualify-don't-presume stance on in-tree sessiond/HiveTerminalKit (vs. mandated from-scratch rewrite).

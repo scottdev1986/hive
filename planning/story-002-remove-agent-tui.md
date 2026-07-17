@@ -10,7 +10,7 @@ Hive does not render an agent TUI of its own: the vendor TUIs (Claude Code, Code
 
 ## Sequencing
 
-Same Removal Gate as STORY-001, renderer edition: executes when HiveTerminalKit's `HiveTerminalView` (manual-I/O Ghostty surface attached to sessiond) renders a live vendor-TUI session inside the Workspace pane with input, resize, scroll, selection, copy, IME, and close/teardown proven live. Hard cut: no `terminal_renderer=swiftterm|ghostty` flag, no per-pane fallback.
+Same Removal Gate as STORY-001, renderer edition: executes when HiveTerminalKit's `HiveTerminalView` (manual-I/O Ghostty surface attached to sessiond) renders live vendor-TUI sessions inside the Workspace pane with input, resize, scroll, selection, copy, IME, and close/teardown proven live — across the full vendor matrix (real Claude Code, Codex, AND Grok interactive TUIs; atlas second opinion, adopted). Hard cut: no `terminal_renderer=swiftterm|ghostty` flag, no per-pane fallback. The in-tree HiveTerminalKit is an implementation candidate, not evidence — the gate measures live behavior, never code presence.
 
 ## Scope — removal inventory (verified by repo survey 2026-07-17; re-verify at execution)
 
@@ -36,10 +36,11 @@ Same Removal Gate as STORY-001, renderer edition: executes when HiveTerminalKit'
 
 ## External documentation
 
-- libghostty embedding + libghostty-vt: https://ghostty.org/docs and the pinned upstream commit under `vendor/ghostty` (ADR-0002 governs the patch budget for the manual-I/O seam).
-- VT conformance: xterm ctlseqs (invisible-island.net/xterm/ctlseqs/ctlseqs.html), vttest, kitty keyboard protocol (sw.kovidgoyal.net/kitty/keyboard-protocol/), alternate-screen semantics — the fidelity floor in DoD-3.
-- Apple AppKit text input / NSTextInputClient (IME correctness) and accessibility (VoiceOver) documentation — the native affordances the replacement must keep.
-- Atlas citation pack (R2) folds in before execution.
+Verified by atlas 2026-07-17 (official sources):
+- libghostty embedding: https://ghostty.org/docs/about and https://github.com/ghostty-org/ghostty (emulation precedence: standards → xterm → popular terminals). Upstream header caveat — embedding API "not general-purpose yet," sole consumer is the Ghostty macOS app: https://github.com/ghostty-org/ghostty/blob/main/include/ghostty.h — pin commit, Hive-owned adapter, ABI/behavior gates (ADR-0002 governs the patch budget). libghostty-vt (API unstable): https://libghostty.tip.ghostty.org/ . Reference consumer ghostling is a demo, never production proof: https://github.com/ghostty-org/ghostling
+- VT conformance (the fidelity floor in DoD-3): ECMA-48 (https://ecma-international.org/publications-and-standards/standards/ecma-48/), xterm ctlseqs incl. alt-screen 1049, bracketed paste, mouse tracking (https://invisible-island.net/xterm/ctlseqs/ctlseqs.html), vttest executable corpus — record exact test/version/results, not "looks right" (https://invisible-island.net/vttest/), kitty keyboard protocol (https://sw.kovidgoyal.net/kitty/keyboard-protocol/).
+- AppKit IME contract — marked text, insertion, command dispatch, character coordinates: https://developer.apple.com/documentation/AppKit/NSTextInputClient
+- AppKit accessibility — custom-drawn terminal content needs accessibility elements + live VoiceOver/Accessibility Inspector proof: https://developer.apple.com/documentation/accessibility/integrating-accessibility-into-your-app
 
 ## Out of scope
 

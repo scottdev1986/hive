@@ -13,7 +13,7 @@ The tmux stack is the old process host and terminal transport for every Hive age
 You cannot remove the process host that runs agents before its replacement runs agents. Resolution:
 
 - **Backlog order:** this story is #1. It is fully specified now so every M1 story builds toward its gate, not toward coexistence.
-- **Execution order:** this story executes at the **Removal Gate** — the moment the replacement host (sessiond + `SessionHost` backend + HiveTerminalKit renderer) is **live-proven**: launch, attach, type, resize, scroll, close-with-verified-termination, and bounded reconnect/replay, demonstrated with a real vendor TUI (any one vendor suffices for the gate; all three are M2).
+- **Execution order:** this story executes at the **Removal Gate** — the replacement host (sessiond + `SessionHost` backend + HiveTerminalKit renderer) is **live-proven across the full vendor matrix** (atlas second opinion, adopted): real Claude Code, Codex, AND Grok interactive TUIs each exercised live in the new host; daemon restart + renderer reconnect; PTY resize/SIGWINCH; EOF/exit with authoritative `waitpid` reap evidence (kevent EVFILT_PROC is notification, not proof); process-tree containment; sustained-output backpressure (100 MiB class) with no byte loss; crash survival with bounded replay. If ANY matrix cell fails, this story cannot execute. (The matrix needs only the M1 qualification harness launching vendor TUIs manually — not M2's spawn/belief/status pipeline.)
 - **Hard cut, not canary:** there is NO dual-host flag, NO `terminal_host=tmux|sessiond` admission ramp, NO compatibility writes, NO quarantined tmux bridge. The reference design doc (terminal-stack-transition, phases T2/T6/T7) prescribes a gradual dual-host canary for a production migration; this rebuild explicitly overrides that with a single cut on a dev build. Between now and the gate, tmux code is frozen — no new callers, no fixes except fleet-critical.
 - Everything in M1 between now and the gate exists solely to make this cut safe.
 
@@ -48,10 +48,11 @@ You cannot remove the process host that runs agents before its replacement runs 
 
 ## External documentation (story must be executed against these, not repo memory)
 
-- tmux(1) manual — server/session/pane model, `send-keys`, `capture-pane`, control mode: the exact surface being excised. https://man.openbsd.org/tmux.1
-- POSIX/macOS PTY lifecycle the replacement owns instead: `posix_openpt(3)`, `openpty(3)`/`forkpty(3)` (Apple man pages), `kevent(2)` `EVFILT_PROC` for positive child-exit readback.
-- libghostty / libghostty-vt embedding surface (renderer + VT state the replacement uses): https://ghostty.org/docs (and pinned `vendor/ghostty` upstream commit docs).
-- Citation pack being verified and expanded by atlas (R2) — fold in before execution.
+Verified by atlas 2026-07-17 (official sources; local binaries agree):
+- tmux(1) manual — server/client/session/window/pane lifetime model and command contracts; enumerate every responsibility being replaced, not just UI calls. https://man.openbsd.org/tmux.1
+- tmux official wiki — send-keys/capture-pane semantics being removed: https://github.com/tmux/tmux/wiki/Advanced-Use ; control-mode responsibilities (verify no hidden orchestration dependency remains): https://github.com/tmux/tmux/wiki/Control-Mode
+- macOS PTY/process lifecycle the replacement owns instead: openpty/login_tty/forkpty (https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/openpty.3.html and current mirror https://keith.github.io/xcode-man-pages/openpty.3.html), posix_openpt lifecycle (https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man3/posix_openpt.3.html), termios/job control (https://keith.github.io/xcode-man-pages/termios.4.html), kevent EVFILT_PROC as notification only (https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/kevent.2.html), waitpid as the authoritative exit/reap evidence (https://developer.apple.com/library/archive/documentation/System/Conceptual/ManPages_iPhoneOS/man2/waitpid.2.html), execve fd/controlling-tty inheritance + KERN_ARGMAX/E2BIG — query the limit at runtime, never bake it (https://keith.github.io/xcode-man-pages/execve.2.html).
+- libghostty embedding surface: https://ghostty.org/docs/about ; upstream header caveat — the embedding API is "not general-purpose yet" (sole consumer: the Ghostty macOS app), so pin the commit, wrap behind a Hive-owned adapter, gate on ABI/behavior tests, never promise a stable upstream ABI: https://github.com/ghostty-org/ghostty/blob/main/include/ghostty.h ; libghostty-vt (API unstable): https://libghostty.tip.ghostty.org/
 
 ## Out of scope
 
