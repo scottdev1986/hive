@@ -8,24 +8,16 @@ import {
  * WP8 early slice — provider adapter manifests and readiness/receipt evidence
  * types for terminal-stack-transition.html §25 / TG4.
  *
- * Scope (this package only):
- * - versioned adapter manifests
- * - readiness / receipt evidence collection
- * - TG4 fixture corpus targets
+ * Scope: versioned manifests, readiness/receipt evidence collection, TG4 corpus.
+ * Out of scope (typed seams only): sessiond arbiter, delivery scheduling,
+ * communication ledger, status fusion.
  *
- * Explicit seams (NOT implemented here — later WP4/WP7/full WP8):
- * - sessiond input arbiter
- * - delivery scheduling / injection
- * - communication ledger
- * - status fusion
- *
- * Never invent evidence meanings, timeouts, or states beyond §25 and the
- * landed receipt ladder in message-envelope.ts / session-protocol.ts.
+ * Rule: every claim carries prerequisites or degrades to a lower rung / unknown.
+ * Never invent evidence meanings above what is proven.
  */
 
 export const PROVIDER_SURFACE_IDS = TERMINAL_PROVIDER_ADAPTERS;
 export type ProviderSurfaceId = (typeof PROVIDER_SURFACE_IDS)[number];
-
 export const ProviderSurfaceIdSchema = z.enum(PROVIDER_SURFACE_IDS);
 
 /** §25 terminal evidence ladder (landed in message-envelope). */
@@ -34,10 +26,10 @@ export type TerminalReceiptLevel = (typeof TERMINAL_RECEIPT_LEVELS)[number];
 export const TerminalReceiptLevelSchema = z.enum(TERMINAL_RECEIPT_LEVELS);
 
 /**
- * Readiness classification derived from observed provider surfaces only.
- * Unknown/unclassified modals map to blocked-unknown — never ready (§25, §18).
- * evidence-absent is "no" (missing/misspelled key), not a negative claim.
- * capability-absent means this surface cannot produce the evidence class at all.
+ * Readiness classification from observed provider surfaces only.
+ * Unknown/unclassified modals → blocked-unknown, never ready (§25, §18).
+ * evidence-absent = missing/misspelled key ("no"), not a negative claim.
+ * capability-absent = this surface cannot produce the evidence class.
  */
 export const READINESS_EVIDENCE_KINDS = [
   "ready",
@@ -54,11 +46,12 @@ export type ReadinessEvidenceKind = (typeof READINESS_EVIDENCE_KINDS)[number];
 export const ReadinessEvidenceKindSchema = z.enum(READINESS_EVIDENCE_KINDS);
 
 /**
- * Receipt classification from a provider observation after an injection attempt.
- * transport-written is a sessiond/native-endpoint fact — provider hooks alone
- * do not prove it. provider-observed requires a matching boundary after attempt
- * under the same provider session. attempt-in-doubt when the proof boundary was
- * lost. Absent/capability fields never invent a receipt.
+ * Receipt ladder plus honest non-levels.
+ * provider-observed requires a matching committed attempt (id + session +
+ * after-injection time). attempt-in-doubt requires a committed attempt whose
+ * proof boundary was lost. Without attempt context, receipt stays evidence-absent
+ * (ceiling is transport-written only when sessiond/native commit is proven
+ * elsewhere — this collector does not invent it).
  */
 export const RECEIPT_EVIDENCE_KINDS = [
   ...TERMINAL_RECEIPT_LEVELS,
@@ -68,7 +61,6 @@ export const RECEIPT_EVIDENCE_KINDS = [
 export type ReceiptEvidenceKind = (typeof RECEIPT_EVIDENCE_KINDS)[number];
 export const ReceiptEvidenceKindSchema = z.enum(RECEIPT_EVIDENCE_KINDS);
 
-/** Exact meanings for the §25 ladder — mirrors message-envelope / design. */
 export const TERMINAL_EVIDENCE_CONTRACTS = {
   "transport-written": {
     means:
@@ -115,35 +107,46 @@ export const WP8_OUT_OF_SCOPE_SEAMS = {
   },
 } as const;
 
+/** Non-empty source citation list required on every grounded claim. */
+export const SourceCitationsSchema = z.array(z.string().min(1)).min(1);
+export type SourceCitations = z.infer<typeof SourceCitationsSchema>;
+
+/** Wrap any value that must carry grounding citations. */
+export function citedSchema<T extends z.ZodType>(valueSchema: T) {
+  return z.strictObject({
+    value: valueSchema,
+    sourceCitations: SourceCitationsSchema,
+  });
+}
+
+/**
+ * Pinned supported binary version range (§25 version-support panel).
+ * Outside the range: interactive may run, automatic features whose evidence
+ * changed are disabled until classified.
+ */
 export const VersionRangeSchema = z.strictObject({
-  /** Versions measured in-repo against live CLIs (tests/comments). */
-  measured: z.array(z.string().min(1)).min(1),
-  /**
-   * How an unknown version is treated at launch. §25: may run interactively if
-   * containment is safe, but automatic delivery/status features whose evidence
-   * changed are disabled. Adapters today probe via --version; they do not hard
-   * reject unknown versions at spawn.
-   */
+  /** Inclusive lower bound of supported automatic-delivery range. */
+  supportedMin: z.string().min(1),
+  /** Inclusive upper bound of supported automatic-delivery range. */
+  supportedMax: z.string().min(1),
+  /** In-repo measured examples that established the pin. */
+  measuredExamples: z.array(z.string().min(1)).min(1),
   unknownVersionPolicy: z.literal(
     "interactive-ok-automatic-features-disabled-until-classified",
   ),
-  /** Probe argv that prints version and exits (non-billable). */
   versionProbeArgv: z.array(z.string().min(1)).min(1),
+  sourceCitations: SourceCitationsSchema,
 });
 
 export const LaunchArgvContractSchema = z.strictObject({
-  /** Binary token or absolute path slot. */
   executable: z.string().min(1),
-  /** Documented argv shape; not a full template engine. */
   spawnShape: z.array(z.string().min(1)).min(1),
   resumeShape: z.array(z.string().min(1)).min(1),
-  /** Source file:line citations grounding each claim in existing adapters. */
-  sourceCitations: z.array(z.string().min(1)).min(1),
+  sourceCitations: SourceCitationsSchema,
 });
 
 export const EventSchemaIdentifierSchema = z.strictObject({
   id: z.string().min(1),
-  /** Provider-native name when different from Hive kind. */
   providerName: z.string().min(1),
   role: z.enum([
     "session-start",
@@ -158,67 +161,67 @@ export const EventSchemaIdentifierSchema = z.strictObject({
     "transcript-activity",
   ]),
   available: z.boolean(),
-  sourceCitations: z.array(z.string().min(1)).min(1),
+  sourceCitations: SourceCitationsSchema,
 });
 
 export const CancelSubmitEncodingSchema = z.strictObject({
   submit: z.strictObject({
     encoding: z.string().min(1),
     available: z.boolean(),
-    sourceCitations: z.array(z.string().min(1)).min(1),
+    sourceCitations: SourceCitationsSchema,
   }),
   cancel: z.strictObject({
     encoding: z.string().min(1),
     available: z.boolean(),
-    sourceCitations: z.array(z.string().min(1)).min(1),
+    sourceCitations: SourceCitationsSchema,
   }),
 });
 
 export const NativeEndpointAvailabilitySchema = z.strictObject({
   available: z.boolean(),
   endpoints: z.array(z.string().min(1)),
-  sourceCitations: z.array(z.string().min(1)).min(1),
-  /** Honest absence note when available is false. */
+  sourceCitations: SourceCitationsSchema,
   note: z.string().min(1).optional(),
 });
 
 export const ProviderManifestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   surface: ProviderSurfaceIdSchema,
-  /** TG4 fixture set name for this surface. */
-  fixtureSet: z.string().min(1),
+  fixtureSet: citedSchema(z.string().min(1)),
   versionRange: VersionRangeSchema,
   launchArgv: LaunchArgvContractSchema,
   eventSchemas: z.array(EventSchemaIdentifierSchema).min(1),
-  readinessStates: z.array(ReadinessEvidenceKindSchema).min(1),
+  readinessStates: citedSchema(z.array(ReadinessEvidenceKindSchema).min(1)),
   cancelSubmit: CancelSubmitEncodingSchema,
   nativeEndpoint: NativeEndpointAvailabilitySchema,
-  /**
-   * Strongest automatic receipt this surface can prove when green.
-   * Grounded in PROVIDER_ADAPTER_CONTRACTS / §25 table.
-   */
-  strongestAutomaticReceipt: TerminalReceiptLevelSchema,
-  /**
-   * When true, unknown notification/modal types block automated delivery
-   * until classified (§25).
-   */
-  unknownModalBlocksDelivery: z.literal(true),
-  /** Hooks or structured surfaces that do not exist on this adapter. */
-  capabilityAbsences: z.array(z.string().min(1)),
-  /** Pointers to seams left for later packages. */
+  strongestAutomaticReceipt: citedSchema(TerminalReceiptLevelSchema),
+  unknownModalBlocksDelivery: citedSchema(z.literal(true)),
+  capabilityAbsences: citedSchema(z.array(z.string().min(1))),
   laterSeams: z.array(z.string().min(1)).min(1),
 });
 export type ProviderManifest = z.infer<typeof ProviderManifestSchema>;
+
+/**
+ * Matching attempt required for provider-observed / attempt-in-doubt (§25).
+ * Absent or incomplete attempt context caps receipt below those levels.
+ */
+export const AttemptContextSchema = z.strictObject({
+  attemptId: z.string().min(1),
+  /** Transport or native endpoint has committed this attempt. */
+  committed: z.boolean(),
+  /** Exact provider session the attempt targeted. */
+  providerSessionId: z.string().min(1),
+  /** RFC3339 timestamp of commit; observation must be after this for receipt. */
+  committedAt: z.string().min(1),
+});
+export type AttemptContext = z.infer<typeof AttemptContextSchema>;
 
 export const ProviderEvidenceResultSchema = z.strictObject({
   surface: ProviderSurfaceIdSchema,
   readiness: ReadinessEvidenceKindSchema,
   receipt: ReceiptEvidenceKindSchema,
-  /** Field/event path that produced this classification. */
   observedPath: z.string().min(1),
-  /** What this evidence means; never a delivery decision. */
   means: z.string().min(1),
-  /** Claims this evidence must not be stretched into. */
   excludes: z.array(z.string().min(1)),
 });
 export type ProviderEvidenceResult = z.infer<typeof ProviderEvidenceResultSchema>;
@@ -244,6 +247,8 @@ export const ProviderConformanceReportSchema = z.strictObject({
   schemaVersion: z.literal(1),
   generatedFor: z.literal("WP8-early-slice-TG4"),
   designRefs: z.array(z.string().min(1)).min(1),
+  /** How rows were derived — must name the collector. */
+  derivedFrom: z.string().min(1),
   surfaces: z.array(
     z.strictObject({
       surface: ProviderSurfaceIdSchema,
@@ -252,6 +257,8 @@ export const ProviderConformanceReportSchema = z.strictObject({
           kind: ReadinessEvidenceKindSchema,
           status: ConformanceLevelStatusSchema,
           evidence: z.string().min(1),
+          /** Observation path that produced this kind, if provable. */
+          collectorPath: z.string().min(1).nullable(),
         }),
       ),
       receipt: z.array(
@@ -259,6 +266,7 @@ export const ProviderConformanceReportSchema = z.strictObject({
           level: TerminalReceiptLevelSchema,
           status: ConformanceLevelStatusSchema,
           evidence: z.string().min(1),
+          collectorPath: z.string().min(1).nullable(),
         }),
       ),
     }),
