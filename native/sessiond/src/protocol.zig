@@ -57,8 +57,12 @@ comptime {
         @compileError("generated frame header width is inconsistent");
 }
 
-fn malformed() HeaderResult {
-    return .{ .failure = .{ .code = .malformed_frame, .close_connection = true } };
+fn malformed(request_id: u64) HeaderResult {
+    return .{ .failure = .{
+        .code = .malformed_frame,
+        .close_connection = true,
+        .request_id = request_id,
+    } };
 }
 
 fn knownType(type_code: u16) bool {
@@ -124,15 +128,13 @@ fn unsolicitedType(type_code: u16) bool {
     return type_code == generated.frame_type.event or type_code == generated.frame_type.output;
 }
 
-pub fn validateHeader(bytes: *const [generated.frame_header_bytes]u8) HeaderResult {
+pub fn validateHeaderForRange(
+    bytes: *const [generated.frame_header_bytes]u8,
+    min_minor: u8,
+    max_minor: u8,
+) HeaderResult {
     if (!std.mem.eql(u8, bytes[0..generated.frame_magic.len], generated.frame_magic))
-        return malformed();
-    if (bytes[major_offset] != generated.protocol_major) {
-        return .{ .failure = .{ .code = .protocol_mismatch, .close_connection = true } };
-    }
-    if (bytes[minor_offset] != generated.protocol_minor) {
-        return .{ .failure = .{ .code = .protocol_mismatch, .close_connection = true } };
-    }
+        return malformed(0);
 
     const type_code = std.mem.readInt(u16, bytes[type_offset..flags_offset], .big);
     const flags = std.mem.readInt(u16, bytes[flags_offset..reserved_offset], .big);
@@ -141,7 +143,22 @@ pub fn validateHeader(bytes: *const [generated.frame_header_bytes]u8) HeaderResu
     const request_id = std.mem.readInt(u64, bytes[request_id_offset..stream_seq_offset], .big);
     const stream_seq = std.mem.readInt(u64, bytes[stream_seq_offset..generated.frame_header_bytes], .big);
 
-    if (reserved != 0 or flags & ~generated.frame_allowed_flags != 0) return malformed();
+    if (bytes[major_offset] != generated.protocol_major) {
+        return .{ .failure = .{
+            .code = .protocol_mismatch,
+            .close_connection = true,
+            .request_id = request_id,
+        } };
+    }
+    if (bytes[minor_offset] < min_minor or bytes[minor_offset] > max_minor) {
+        return .{ .failure = .{
+            .code = .protocol_mismatch,
+            .close_connection = true,
+            .request_id = request_id,
+        } };
+    }
+
+    if (reserved != 0 or flags & ~generated.frame_allowed_flags != 0) return malformed(request_id);
 
     const header: Header = .{
         .minor = bytes[minor_offset],
@@ -154,11 +171,16 @@ pub fn validateHeader(bytes: *const [generated.frame_header_bytes]u8) HeaderResu
 
     if (!knownType(type_code)) {
         if (payload_length > generated.limits.control_json_bytes) {
-            return .{ .failure = .{ .code = .frame_too_large, .close_connection = true } };
+            return .{ .failure = .{
+                .code = .frame_too_large,
+                .close_connection = true,
+                .request_id = request_id,
+            } };
         }
-        if (stream_seq != 0 or request_id == 0) return malformed();
+        if (stream_seq != 0) return malformed(request_id);
         if (type_code & generated.frame_optional_type_bit != 0)
             return .{ .ignored_optional = header };
+        if (request_id == 0) return malformed(request_id);
         return .{ .failure = .{
             .code = .unsupported_frame,
             .close_connection = false,
@@ -171,16 +193,28 @@ pub fn validateHeader(bytes: *const [generated.frame_header_bytes]u8) HeaderResu
     else
         generated.limits.control_json_bytes;
     if (payload_length > cap) {
-        return .{ .failure = .{ .code = .frame_too_large, .close_connection = true } };
+        return .{ .failure = .{
+            .code = .frame_too_large,
+            .close_connection = true,
+            .request_id = request_id,
+        } };
     }
 
-    if (!rawByteType(type_code) and stream_seq != 0) return malformed();
-    if (flags & generated.frame_flag.response != 0 and request_id == 0) return malformed();
+    if (!rawByteType(type_code) and stream_seq != 0) return malformed(request_id);
+    if (flags & generated.frame_flag.response != 0 and request_id == 0) return malformed(request_id);
     if (unsolicitedType(type_code)) {
-        if (request_id != 0) return malformed();
-    } else if (request_id == 0) return malformed();
+        if (request_id != 0) return malformed(request_id);
+    } else if (request_id == 0) return malformed(request_id);
 
     return .{ .header = header };
+}
+
+pub fn validateHeader(bytes: *const [generated.frame_header_bytes]u8) HeaderResult {
+    return validateHeaderForRange(bytes, generated.protocol_min_minor, generated.protocol_max_minor);
+}
+
+pub fn minorSupported(minor: u8) bool {
+    return minor >= generated.protocol_min_minor and minor <= generated.protocol_max_minor;
 }
 
 pub fn encodeHeader(header: Header) ?[generated.frame_header_bytes]u8 {
@@ -211,13 +245,18 @@ fn discard(reader: anytype, count: usize) !void {
 
 /// Reads exactly one fixed header, validates it, and only then allocates.
 /// Validation failures consume no payload and never scan for a later magic.
-pub fn readFrame(allocator: std.mem.Allocator, reader: anytype) !ReadResult {
+pub fn readFrameForRange(
+    allocator: std.mem.Allocator,
+    reader: anytype,
+    min_minor: u8,
+    max_minor: u8,
+) !ReadResult {
     var storage: [generated.frame_header_bytes]u8 = undefined;
     reader.readNoEof(&storage) catch {
         return .{ .failure = .{ .code = .malformed_frame, .close_connection = true } };
     };
 
-    return switch (validateHeader(&storage)) {
+    return switch (validateHeaderForRange(&storage, min_minor, max_minor)) {
         .failure => |failure| blk: {
             if (!failure.close_connection and failure.request_id != 0) {
                 discard(reader, std.mem.readInt(
@@ -246,6 +285,15 @@ pub fn readFrame(allocator: std.mem.Allocator, reader: anytype) !ReadResult {
             break :blk .{ .frame = .{ .header = header, .payload = payload } };
         },
     };
+}
+
+pub fn readFrame(allocator: std.mem.Allocator, reader: anytype) !ReadResult {
+    return readFrameForRange(
+        allocator,
+        reader,
+        generated.protocol_min_minor,
+        generated.protocol_max_minor,
+    );
 }
 
 pub fn writeFrame(writer: anytype, header: Header, payload: []const u8) !void {
@@ -665,13 +713,42 @@ test "fixed header round trip and strict semantics" {
     bad = bytes;
     bad[flags_offset] = 0x10;
     try std.testing.expectEqual(WireError.malformed_frame, validateHeader(&bad).failure.code);
+
+    bad = bytes;
+    bad[major_offset] +%= 1;
+    try std.testing.expectEqual(WireError.protocol_mismatch, validateHeader(&bad).failure.code);
+    try std.testing.expectEqual(@as(u64, 42), validateHeader(&bad).failure.request_id);
+
+    bad = bytes;
+    std.mem.writeInt(
+        u32,
+        bad[payload_length_offset..request_id_offset],
+        generated.limits.control_json_bytes + 1,
+        .big,
+    );
+    try std.testing.expectEqual(WireError.frame_too_large, validateHeader(&bad).failure.code);
+    try std.testing.expectEqual(@as(u64, 42), validateHeader(&bad).failure.request_id);
 }
 
-test "generated malformed corpus fails closed" {
+test "generated header corpus matches valid ignored and invalid outcomes" {
     const allocator = std.testing.allocator;
     var corpus = try std.json.parseFromSlice(std.json.Value, allocator, generated.wire_corpus_fixture, .{});
     defer corpus.deinit();
     const headers = objectField(corpus.value, "frameHeaders") orelse return error.TestUnexpectedResult;
+    const valid = objectField(headers, "valid") orelse return error.TestUnexpectedResult;
+    for (valid.array.items) |item| {
+        const hex = objectField(item, "hex") orelse return error.TestUnexpectedResult;
+        var storage: [generated.frame_header_bytes]u8 = undefined;
+        _ = try std.fmt.hexToBytes(&storage, hex.string);
+        try std.testing.expect(validateHeader(&storage) == .header);
+    }
+    const ignored = objectField(headers, "ignored") orelse return error.TestUnexpectedResult;
+    for (ignored.array.items) |item| {
+        const hex = objectField(item, "hex") orelse return error.TestUnexpectedResult;
+        var storage: [generated.frame_header_bytes]u8 = undefined;
+        _ = try std.fmt.hexToBytes(&storage, hex.string);
+        try std.testing.expect(validateHeader(&storage) == .ignored_optional);
+    }
     const invalid = objectField(headers, "invalid") orelse return error.TestUnexpectedResult;
     for (invalid.array.items) |item| {
         const hex = objectField(item, "hex") orelse return error.TestUnexpectedResult;
@@ -716,13 +793,18 @@ test "unsupported required frame is consumed once and remains correlated" {
     try std.testing.expectEqual(generated.frame_type.ping, next.frame.header.type_code);
 }
 
-test "header mutation corpus never allocates before validation" {
+test "header mutation failures never allocate before validation" {
     const valid = encodeHeader(headerFor(generated.frame_type.hello, 0, 1, 0)).?;
     var byte_index: usize = 0;
     while (byte_index < valid.len) : (byte_index += 1) {
         var mutated = valid;
         mutated[byte_index] ^= 0xff;
-        _ = validateHeader(&mutated);
+        const validation = validateHeader(&mutated);
+        if (validation != .failure) continue;
+        var stream = std.io.fixedBufferStream(&mutated);
+        const read = try readFrame(std.testing.failing_allocator, stream.reader());
+        try std.testing.expectEqual(validation.failure.code, read.failure.code);
+        try std.testing.expectEqual(generated.frame_header_bytes, stream.pos);
     }
 }
 

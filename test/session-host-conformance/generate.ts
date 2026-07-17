@@ -12,6 +12,7 @@ import {
   INPUT_EVIDENCE_LEVELS,
   RAW_BYTE_FRAME_TYPES,
   SESSION_PROTOCOL_CONTRACT,
+  SESSION_PROTOCOL_MINOR_RANGE,
   SESSION_PROTOCOL_VERSION,
   SESSION_WIRE_SCHEMAS,
   TERMINAL_LIMITS,
@@ -84,6 +85,8 @@ import Foundation
 enum SessionProtocolGenerated {
     static let protocolMajor: UInt8 = ${SESSION_PROTOCOL_VERSION.major}
     static let protocolMinor: UInt8 = ${SESSION_PROTOCOL_VERSION.minor}
+    static let protocolMinMinor: UInt8 = ${SESSION_PROTOCOL_MINOR_RANGE.min}
+    static let protocolMaxMinor: UInt8 = ${SESSION_PROTOCOL_MINOR_RANGE.max}
     static let headerBytes = ${FRAME_HEADER.bytes}
     static let optionalTypeBit: UInt16 = 0x${FRAME_HEADER.optionalTypeBit.toString(16)}
     static let magic: [UInt8] = [${FRAME_HEADER.magicBytes.join(", ")}]
@@ -301,6 +304,10 @@ func parseHeader(_ bytes: [UInt8]) throws -> [String: Any]? {
     if bytes[4] != SessionProtocolGenerated.protocolMajor {
         throw ContractFailure.message("PROTOCOL_MISMATCH")
     }
+    if bytes[5] < SessionProtocolGenerated.protocolMinMinor ||
+       bytes[5] > SessionProtocolGenerated.protocolMaxMinor {
+        throw ContractFailure.message("PROTOCOL_MISMATCH")
+    }
     let code = readU16(bytes, 6)
     let flags = readU16(bytes, 8)
     if flags & ~SessionProtocolGenerated.allowedFlags != 0 || readU16(bytes, 10) != 0 {
@@ -499,6 +506,8 @@ function renderZig(): string {
 
 pub const protocol_major: u8 = ${SESSION_PROTOCOL_VERSION.major};
 pub const protocol_minor: u8 = ${SESSION_PROTOCOL_VERSION.minor};
+pub const protocol_min_minor: u8 = ${SESSION_PROTOCOL_MINOR_RANGE.min};
+pub const protocol_max_minor: u8 = ${SESSION_PROTOCOL_MINOR_RANGE.max};
 pub const frame_header_bytes: usize = ${FRAME_HEADER.bytes};
 pub const frame_magic = "${FRAME_HEADER.magic}";
 pub const frame_optional_type_bit: u16 = 0x${FRAME_HEADER.optionalTypeBit.toString(16).padStart(4, "0")};

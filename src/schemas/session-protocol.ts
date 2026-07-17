@@ -2,6 +2,10 @@ import { z } from "zod";
 import type * as SessionHostContract from "../daemon/session-host/contract";
 
 export const SESSION_PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
+export const SESSION_PROTOCOL_MINOR_RANGE = {
+  min: SESSION_PROTOCOL_VERSION.minor,
+  max: SESSION_PROTOCOL_VERSION.minor,
+} as const;
 
 export const SESSION_PROTOCOL_PATHS = {
   ghosttyVendor: "vendor/ghostty/",
@@ -535,6 +539,7 @@ export const InputReceiptSchema = z.strictObject({
 export const TerminationRequestSchema = z.strictObject({
   mode: z.enum(["graceful", "immediate"]),
   reason: z.string().min(1),
+  /** Domain idempotency key (`req_…`), distinct from the uint64 frame-header correlation requestId. */
   requestId: domainUuidV7Schema("req"),
 }).readonly();
 export const TerminationResultSchema = z.strictObject({
@@ -739,6 +744,8 @@ export const HostAdoptPayloadSchema = z.union([
     executableBuildHash: z.string().min(1),
     /** §21 adoption compares the engine build. */
     engineBuildId: z.string().min(1),
+    /** §21 adoption compares the host-selected protocol, not the broker's offered constants. */
+    protocol: SelectedProtocolSchema,
     /** §21 adoption compares the process root. */
     processRoot: ProcessRootSchema,
     /** §21 adoption compares the output sequence. */

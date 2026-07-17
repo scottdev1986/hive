@@ -5,6 +5,8 @@ import Foundation
 enum SessionProtocolGenerated {
     static let protocolMajor: UInt8 = 1
     static let protocolMinor: UInt8 = 0
+    static let protocolMinMinor: UInt8 = 0
+    static let protocolMaxMinor: UInt8 = 0
     static let headerBytes = 32
     static let optionalTypeBit: UInt16 = 0x8000
     static let magic: [UInt8] = [72, 86, 84, 49]
@@ -259,6 +261,10 @@ func parseHeader(_ bytes: [UInt8]) throws -> [String: Any]? {
         throw ContractFailure.message("MALFORMED_FRAME")
     }
     if bytes[4] != SessionProtocolGenerated.protocolMajor {
+        throw ContractFailure.message("PROTOCOL_MISMATCH")
+    }
+    if bytes[5] < SessionProtocolGenerated.protocolMinMinor ||
+       bytes[5] > SessionProtocolGenerated.protocolMaxMinor {
         throw ContractFailure.message("PROTOCOL_MISMATCH")
     }
     let code = readU16(bytes, 6)

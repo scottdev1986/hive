@@ -1071,6 +1071,26 @@
               "type": "string",
               "minLength": 1
             },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minor"
+              ],
+              "additionalProperties": false
+            },
             "processRoot": {
               "type": "object",
               "properties": {
@@ -1150,6 +1170,7 @@
             "executable",
             "executableBuildHash",
             "engineBuildId",
+            "protocol",
             "processRoot",
             "outputSeq",
             "checkpointSeq",

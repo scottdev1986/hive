@@ -1272,6 +1272,10 @@
         "executable": "/usr/local/bin/codex",
         "executableBuildHash": "executable-build-fixture",
         "engineBuildId": "engine-fixture",
+        "protocol": {
+          "major": 1,
+          "minor": 0
+        },
         "processRoot": {
           "pid": 4101,
           "startToken": "4101:123457",
@@ -2842,6 +2846,10 @@
       {
         "name": "unknown optional frame",
         "hex": "48565431010080010000000000000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "unsolicited unknown optional frame",
+        "hex": "4856543101008001000000000000008000000000000000000000000000000000"
       }
     ],
     "invalid": [
@@ -2854,6 +2862,11 @@
         "name": "major mismatch",
         "error": "PROTOCOL_MISMATCH",
         "hex": "48565431020000010000000000000080000000000000002a0000000000000000"
+      },
+      {
+        "name": "minor mismatch",
+        "error": "PROTOCOL_MISMATCH",
+        "hex": "48565431010100010000000000000080000000000000002a0000000000000000"
       },
       {
         "name": "reserved bits",

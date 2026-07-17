@@ -68,6 +68,22 @@ const StubHost = struct {
     }
 };
 
+/// WP4 test double: models the host-owned §21 lease clock by writing immutable
+/// final evidence after the broker deliberately starves an unreadable record.
+const LeaseStarvationHostDouble = struct {
+    fn expire(directory: std.fs.Dir) !void {
+        var final = try directory.createFile("final.json", .{
+            .mode = 0o600,
+            .exclusive = true,
+        });
+        defer final.close();
+        try final.chmod(0o600);
+        try final.writeAll("{\"state\":\"terminated\",\"survivors\":[]}");
+        try final.sync();
+        try std.posix.fsync(directory.fd);
+    }
+};
+
 fn sameLocator(left: broker.Locator, right: broker.Locator) bool {
     return left.generation == right.generation and
         std.mem.eql(u8, left.instance_id, right.instance_id) and
@@ -150,6 +166,7 @@ const LaunchDouble = struct {
     record: broker.HostRecord,
     record_json: []const u8,
     created_payload: []const u8,
+    host: broker.HostControl,
     called: bool = false,
     executable_was_absolute: bool = false,
     secret_was_nonzero: bool = false,
@@ -175,6 +192,7 @@ const LaunchDouble = struct {
             .record = self.record,
             .record_json = self.record_json,
             .created_payload = allocator.dupe(u8, self.created_payload) catch return null,
+            .host = self.host,
         };
     }
 };
@@ -222,10 +240,61 @@ fn wireLocatorValue(allocator: std.mem.Allocator, locator: broker.Locator) !std.
     return .{ .object = value };
 }
 
+fn recordJsonForTest(
+    allocator: std.mem.Allocator,
+    record: broker.HostRecord,
+    expires_at: []const u8,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var output_storage: [32]u8 = undefined;
+    var checkpoint_storage: [32]u8 = undefined;
+    var revision_storage: [32]u8 = undefined;
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = try wireLocatorValue(arena.allocator(), record.locator),
+        .hostPid = record.host_pid,
+        .hostStartToken = record.host_start_token,
+        .processRoot = .{
+            .pid = record.process_root.pid,
+            .startToken = record.process_root.start_token,
+            .processGroupId = record.process_root.process_group_id,
+        },
+        .expectedExecutable = record.expected_executable,
+        .executableBuildHash = record.executable_build_hash,
+        .engineBuildId = record.engine_build_id,
+        .protocol = .{ .major = record.protocol_major, .minor = record.protocol_minor },
+        .socketRelativePath = "host.sock",
+        .geometry = .{
+            .columns = record.geometry.columns,
+            .rows = record.geometry.rows,
+            .widthPx = record.geometry.width_px,
+            .heightPx = record.geometry.height_px,
+            .cellWidthPx = record.geometry.cell_width_px,
+            .cellHeightPx = record.geometry.cell_height_px,
+        },
+        .createdAt = "2026-07-16T12:00:00.000Z",
+        .state = @tagName(record.state),
+        .visibility = .{
+            .state = @tagName(record.visibility.state),
+            .workspaceSessionId = record.visibility.workspace_session_id,
+            .openTerminalRevision = try std.fmt.bufPrint(
+                &revision_storage,
+                "{d}",
+                .{record.visibility.open_terminal_revision},
+            ),
+            .expiresAt = expires_at,
+        },
+        .outputSeq = try std.fmt.bufPrint(&output_storage, "{d}", .{record.output_seq}),
+        .checkpointSeq = try std.fmt.bufPrint(&checkpoint_storage, "{d}", .{record.checkpoint_seq}),
+    }, .{});
+}
+
 const WireStubServer = struct {
     server: *std.net.Server,
     record: *const broker.HostRecord,
     secret: [32]u8,
+    expiry_storage: [24]u8 = undefined,
     failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     fn threadMain(self: *WireStubServer) void {
@@ -364,6 +433,10 @@ const WireStubServer = struct {
                 .executable = self.record.expected_executable,
                 .executableBuildHash = self.record.executable_build_hash,
                 .engineBuildId = self.record.engine_build_id,
+                .protocol = .{
+                    .major = self.record.protocol_major,
+                    .minor = self.record.protocol_minor,
+                },
                 .processRoot = .{
                     .pid = self.record.process_root.pid,
                     .startToken = self.record.process_root.start_token,
@@ -375,7 +448,10 @@ const WireStubServer = struct {
                     .state = "visible",
                     .workspaceSessionId = self.record.visibility.workspace_session_id,
                     .openTerminalRevision = "7",
-                    .expiresAt = "2099-01-01T00:00:00.000Z",
+                    .expiresAt = try broker.wallDeadline(
+                        &self.expiry_storage,
+                        broker.generated.limits.visibility_expiry_ms,
+                    ),
                 },
             }, .{});
         } else if (expected_type == broker.generated.frame_type.grant_register)
@@ -413,7 +489,7 @@ test "security corpus rejects replay stale generation and foreign instance" {
     var grant_hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("raw-token", &grant_hash, .{});
     const operations = [_][]const u8{ "view", "human-input", "resize" };
-    try std.testing.expect(registry.register(record) == null);
+    try std.testing.expect(registry.register(record, host.control()) == null);
     try std.testing.expect(registry.registerGrant(
         record.locator,
         grant_hash,
@@ -421,7 +497,6 @@ test "security corpus rejects replay stale generation and foreign instance" {
         &operations,
         record.geometry,
         now,
-        host.control(),
     ) == null);
     try std.testing.expectEqualDeep(grant_hash, host.grant_hash.?);
     try std.testing.expectEqualStrings("viewer-a", host.grant_viewer_id.?);
@@ -432,7 +507,6 @@ test "security corpus rejects replay stale generation and foreign instance" {
         &operations,
         record.geometry,
         now,
-        host.control(),
     ).?.code);
     try std.testing.expect(registry.consumeGrant(record.locator, "raw-token", now) == null);
     try std.testing.expectEqual(broker.protocol.WireError.unauthenticated, registry.consumeGrant(record.locator, "raw-token", now).?.code);
@@ -447,20 +521,30 @@ test "security corpus rejects replay stale generation and foreign instance" {
     wrong_subject.subject = .{ .agent = "agent-b" };
     try std.testing.expectEqual(broker.protocol.WireError.generation_mismatch, registry.lookup(wrong_subject).?.failure.code);
     try std.testing.expectEqual(broker.protocol.WireError.generation_mismatch, registry.renewVisibility(record.locator, "workspace-a", 6, now).?.code);
+
+    var starting = record;
+    starting.locator.session_id = "ses_018f1e90-7b5a-7cc0-8000-000000000011";
+    starting.state = .starting;
+    var starting_host = fixtureHost(starting);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.not_ready,
+        registry.register(starting, starting_host.control()).?.code,
+    );
 }
 
-test "real host wire carries HELLO adoption grant registration and termination over UDS" {
+test "disk recovery uses real host wire and publishes the challenged lease" {
     var root_storage: [48]u8 = undefined;
-    const root = try std.fmt.bufPrint(&root_storage, "/tmp/hw-{x}", .{std.crypto.random.int(u64)});
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/h{x}", .{std.crypto.random.int(u32)});
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
-    var root_directory = try std.fs.openDirAbsolute(root, .{});
-    defer root_directory.close();
-    try root_directory.makeDir("host");
-    var host_directory = try root_directory.openDir("host", .{ .iterate = true });
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+    const session_id = "ses_018f1e90-7b5a-7cc0-8000-000000000001";
+    var host_directory = try runtime.openHostDirectory(session_id, true);
     defer host_directory.close();
-    try host_directory.chmod(0o700);
-    const socket_path = try std.fs.path.join(std.testing.allocator, &.{ root, "host", "host.sock" });
+    const socket_path = try std.fs.path.join(std.testing.allocator, &.{
+        root, "runtime/sessiond/hosts", session_id, "host.sock",
+    });
     defer std.testing.allocator.free(socket_path);
     const address = try std.net.Address.initUnix(socket_path);
     var listener = try address.listen(.{});
@@ -469,12 +553,7 @@ test "real host wire carries HELLO adoption grant registration and termination o
     defer std.testing.allocator.free(socket_path_z);
     if (c.chmod(socket_path_z.ptr, 0o600) != 0) return error.SocketModeFailed;
     const stat = try std.posix.fstatat(host_directory.fd, "host.sock", std.posix.AT.SYMLINK_NOFOLLOW);
-    const socket: broker.SocketEvidence = .{
-        .device = @intCast(stat.dev),
-        .inode = @intCast(stat.ino),
-        .owner_uid = @intCast(stat.uid),
-        .mode = @intCast(stat.mode & 0o777),
-    };
+    _ = stat;
 
     const process = try broker.inspectProcess(c.getpid());
     var start_token_storage: [64]u8 = undefined;
@@ -487,7 +566,15 @@ test "real host wire carries HELLO adoption grant registration and termination o
     record.executable_build_hash = "host-build";
     record.engine_build_id = "engine-a";
     record.locator.engine_build_id = "engine-a";
-    const secret: [32]u8 = @splat(0x5a);
+    const secret = try broker.createAdoptionSecret(host_directory);
+    var expiry_storage: [24]u8 = undefined;
+    const expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        broker.generated.limits.visibility_expiry_ms,
+    );
+    const record_json = try recordJsonForTest(std.testing.allocator, record, expires_at);
+    defer std.testing.allocator.free(record_json);
+    try broker.writeRecordAtomic(std.testing.allocator, host_directory, record_json);
     var server: WireStubServer = .{
         .server = &listener,
         .record = &record,
@@ -495,48 +582,74 @@ test "real host wire carries HELLO adoption grant registration and termination o
     };
     const thread = try std.Thread.spawn(.{}, WireStubServer.threadMain, .{&server});
 
-    var client = try broker.WireHostClient.init(
+    var wire = broker.WireRecoveryConnector.init(
         std.testing.allocator,
-        host_directory,
-        socket_path,
-        socket,
-        record,
+        runtime.canonical_home,
         "broker-build",
     );
-    defer client.deinit();
-    var registry: broker.Registry = .{};
-    try std.testing.expect(registry.recoverCandidate(
-        record,
-        secret,
-        socket,
-        socket,
-        now,
-        client.control(),
+    defer wire.deinit();
+    var recovered = broker.RecoveredRegistry.init(std.testing.allocator);
+    defer recovered.deinit();
+    try recovered.recover(&runtime, now, wire.connector());
+    try std.testing.expect(recovered.registry.renewVisibility(
+        record.locator,
+        record.visibility.workspace_session_id,
+        record.visibility.open_terminal_revision + 1,
+        now + std.time.ns_per_ms,
     ) == null);
 
     var grant_hash: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash("wire-token", &grant_hash, .{});
     const operations = [_][]const u8{ "view", "human-input", "resize" };
-    try std.testing.expect(registry.registerGrant(
+    try std.testing.expect(recovered.registry.registerGrant(
         record.locator,
         grant_hash,
         "viewer-wire",
         &operations,
         record.geometry,
         now,
-        client.control(),
     ) == null);
-    try std.testing.expectEqual(broker.TerminationState.terminated, registry.terminate(
+    try std.testing.expectEqual(broker.TerminationState.terminated, recovered.registry.terminate(
         record.locator,
         .{
             .mode = "graceful",
             .reason = "terminal closed",
             .request_id = "req_018f1e90-7b5a-7cc0-8000-000000000004",
         },
-        client.control(),
     ));
     thread.join();
     try std.testing.expect(!server.failed.load(.acquire));
+}
+
+test "wire host control rejects a locator before connecting" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const record = fixtureRecord(30 * std.time.ns_per_s);
+    var client = try broker.WireHostClient.init(
+        std.testing.allocator,
+        temporary.dir,
+        "/tmp/nonexistent-hive-host.sock",
+        .{ .device = 1, .inode = 2, .owner_uid = std.posix.getuid(), .mode = 0o600 },
+        record,
+        "broker-build",
+    );
+    defer client.deinit();
+    var wrong = record.locator;
+    wrong.generation += 1;
+    const operations = [_][]const u8{"view"};
+    try std.testing.expect(!client.control().registerGrant(wrong, .{
+        .hash = @splat(0x11),
+        .viewer_id = "viewer",
+        .operations = &operations,
+        .geometry = record.geometry,
+        .registered_mono_ns = 1,
+        .expires_mono_ns = 2,
+    }));
+    try std.testing.expect(!client.control().terminate(wrong, .{
+        .mode = "immediate",
+        .reason = "wrong locator",
+        .request_id = "req_018f1e90-7b5a-7cc0-8000-000000000004",
+    }).verification_complete);
 }
 
 test "broker launch passes the exact executable and secret then publishes only validated readback" {
@@ -575,10 +688,12 @@ test "broker launch passes the exact executable and secret then publishes only v
     record.visibility.workspace_session_id = "workspace-fixture";
     record.visibility.expires_mono_ns = 31 * std.time.ns_per_s;
     try std.testing.expect(broker.recordJsonMatches(std.testing.allocator, record, record_json));
+    var launch_host = fixtureHost(record);
     var launcher: LaunchDouble = .{
         .record = record,
         .record_json = record_json,
         .created_payload = created,
+        .host = launch_host.control(),
     };
     var registry: broker.Registry = .{};
     var digest: [32]u8 = undefined;
@@ -608,8 +723,8 @@ test "visibility expiry terminates through the host double with positive readbac
     const record = fixtureRecord(expiry);
     var host = fixtureHost(record);
     var registry: broker.Registry = .{};
-    try std.testing.expect(registry.register(record) == null);
-    try std.testing.expectEqual(@as(usize, 1), registry.expireVisibility(expiry, host.control()));
+    try std.testing.expect(registry.register(record, host.control()) == null);
+    try std.testing.expectEqual(@as(usize, 1), registry.expireVisibility(expiry));
     try std.testing.expect(host.terminated);
 
     var inspections: [2]broker.Inspection = undefined;
@@ -617,6 +732,33 @@ test "visibility expiry terminates through the host double with positive readbac
     try std.testing.expect(list.complete);
     try std.testing.expectEqual(@as(usize, 1), list.entries.len);
     try std.testing.expectEqual(.exited, list.entries[0].presence);
+}
+
+test "registry routes each grant and expiry to its locator-bound host" {
+    const expiry: u64 = 15 * std.time.ns_per_s;
+    const first_record = fixtureRecord(expiry);
+    var second_record = fixtureRecord(expiry);
+    second_record.locator.session_id = "ses_018f1e90-7b5a-7cc0-8000-000000000011";
+    var first_host = fixtureHost(first_record);
+    var second_host = fixtureHost(second_record);
+    var registry: broker.Registry = .{};
+    try std.testing.expect(registry.register(first_record, first_host.control()) == null);
+    try std.testing.expect(registry.register(second_record, second_host.control()) == null);
+    var grant_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("second-host-token", &grant_hash, .{});
+    const operations = [_][]const u8{"view"};
+    try std.testing.expect(registry.registerGrant(
+        second_record.locator,
+        grant_hash,
+        "viewer-b",
+        &operations,
+        second_record.geometry,
+        1,
+    ) == null);
+    try std.testing.expect(first_host.grant_hash == null);
+    try std.testing.expectEqualDeep(grant_hash, second_host.grant_hash.?);
+    try std.testing.expectEqual(@as(usize, 2), registry.expireVisibility(expiry));
+    try std.testing.expect(first_host.terminated and second_host.terminated);
 }
 
 test "restart adoption publishes only challenge verified visible hosts" {
@@ -652,6 +794,21 @@ test "restart adoption publishes only challenge verified visible hosts" {
     var stale_host = fixtureHost(stale_record);
     var stale_registry: broker.Registry = .{};
     try std.testing.expectEqual(broker.protocol.WireError.verification_unknown, stale_registry.recoverCandidate(stale_record, stale_host.secret, socket, socket, now, stale_host.control()).?.code);
+
+    var wrong_protocol_host = fixtureHost(record);
+    wrong_protocol_host.readback.protocol_minor +%= 1;
+    var wrong_protocol_registry: broker.Registry = .{};
+    try std.testing.expectEqual(
+        broker.protocol.WireError.verification_unknown,
+        wrong_protocol_registry.recoverCandidate(
+            record,
+            wrong_protocol_host.secret,
+            socket,
+            socket,
+            now,
+            wrong_protocol_host.control(),
+        ).?.code,
+    );
 }
 
 test "restart walks private records then publishes only challenged hosts" {
@@ -709,17 +866,79 @@ test "restart walks private records then publishes only challenged hosts" {
     try std.testing.expectEqual(.present, list.entries[0].presence);
 }
 
+test "unparseable directories stay routed off and verify only host final evidence" {
+    var root_storage: [48]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/uq{x}", .{std.crypto.random.int(u32)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+    const exited_id = "ses_018f1e90-7b5a-7cc0-8000-000000000001";
+    const unknown_id = "ses_018f1e90-7b5a-7cc0-8000-000000000011";
+    var exited_directory = try runtime.openHostDirectory(exited_id, true);
+    defer exited_directory.close();
+    var unknown_directory = try runtime.openHostDirectory(unknown_id, true);
+    defer unknown_directory.close();
+    for ([_]std.fs.Dir{ exited_directory, unknown_directory }) |directory| {
+        var record = try directory.createFile("record.json", .{ .mode = 0o600 });
+        defer record.close();
+        try record.chmod(0o600);
+        try record.writeAll("{\"schemaVersion\":1}");
+        try record.sync();
+    }
+
+    const connector_host = fixtureHost(fixtureRecord(1));
+    var connector: RecoveryDouble = .{
+        .host = connector_host,
+        .socket = .{ .device = 1, .inode = 1, .owner_uid = std.posix.getuid(), .mode = 0o600 },
+    };
+    var recovered = broker.RecoveredRegistry.init(std.testing.allocator);
+    defer recovered.deinit();
+    const now: u64 = 1 * std.time.ns_per_s;
+    try recovered.recover(&runtime, now, connector.connector());
+    var before_storage: [4]broker.Inspection = undefined;
+    const before = recovered.registry.list("instance-a", &before_storage);
+    try std.testing.expect(!before.complete);
+    try std.testing.expectEqual(@as(usize, 2), before.entries.len);
+    for (before.entries) |entry| {
+        try std.testing.expect(entry.locator == null);
+        try std.testing.expectEqual(.unknown, entry.presence);
+        try std.testing.expect(entry.operator_attention);
+    }
+
+    try LeaseStarvationHostDouble.expire(exited_directory);
+    const verify_at = now + broker.quarantineVerificationDelayNs();
+    recovered.verifyDirectoryQuarantines(&runtime, verify_at);
+    var after_storage: [4]broker.Inspection = undefined;
+    const after = recovered.registry.list("instance-a", &after_storage);
+    try std.testing.expect(!after.complete);
+    var saw_exited = false;
+    var saw_unknown = false;
+    for (after.entries) |entry| {
+        if (std.mem.eql(u8, entry.session_id, exited_id)) {
+            try std.testing.expectEqual(.exited, entry.presence);
+            try std.testing.expect(!entry.operator_attention);
+            saw_exited = true;
+        } else if (std.mem.eql(u8, entry.session_id, unknown_id)) {
+            try std.testing.expectEqual(.unknown, entry.presence);
+            try std.testing.expect(entry.operator_attention);
+            saw_unknown = true;
+        }
+    }
+    try std.testing.expect(saw_exited and saw_unknown);
+}
+
 test "unknown terminate readback never reports success" {
     const record = fixtureRecord(30 * std.time.ns_per_s);
     var host = fixtureHost(record);
     host.termination.verification_complete = false;
     var registry: broker.Registry = .{};
-    try std.testing.expect(registry.register(record) == null);
+    try std.testing.expect(registry.register(record, host.control()) == null);
     try std.testing.expectEqual(broker.TerminationState.unknown, registry.terminate(record.locator, .{
         .mode = "immediate",
         .reason = "test",
         .request_id = "req_018f1e90-7b5a-7cc0-8000-000000000004",
-    }, host.control()));
+    }));
 }
 
 test "runtime refuses a substituted broker socket" {
@@ -772,6 +991,12 @@ test "host records validate canonically and replace atomically at mode 0600" {
     defer temporary.cleanup();
     const record = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.host_record_v1);
     defer std.testing.allocator.free(record);
+    try broker.writeRecordAtomic(std.testing.allocator, temporary.dir, record);
+    var stale_temporary = try temporary.dir.createFile("record.json.new", .{
+        .mode = 0o600,
+        .exclusive = true,
+    });
+    stale_temporary.close();
     try broker.writeRecordAtomic(std.testing.allocator, temporary.dir, record);
     const stat = try std.posix.fstatat(temporary.dir.fd, "record.json", std.posix.AT.SYMLINK_NOFOLLOW);
     try std.testing.expectEqual(@as(std.posix.mode_t, 0o600), stat.mode & 0o777);

@@ -187,8 +187,7 @@ pub fn verifyDaemonHello(hello: DaemonHello, expected: DaemonHandshake) ?protoco
     if (!std.mem.eql(u8, hello.instanceId, expected.instanceId) or
         !std.mem.eql(u8, hello.daemonControl.instanceId, expected.instanceId))
         return .{ .code = .instance_mismatch, .close_connection = true };
-    if (hello.protocol.major != generated.protocol_major or
-        hello.protocol.minMinor > generated.protocol_minor or hello.protocol.maxMinor < generated.protocol_minor or
+    if (selectProtocolMinor(hello.protocol) == null or
         hello.daemonControl.wireProtocol.min != expected.wireProtocol.min or
         hello.daemonControl.wireProtocol.max != expected.wireProtocol.max)
         return .{ .code = .protocol_mismatch, .close_connection = true };
@@ -202,6 +201,14 @@ pub fn verifyDaemonHello(hello: DaemonHello, expected: DaemonHandshake) ?protoco
         !equalOptionalString(hello.daemonControl.repoFamilyKey, expected.repoFamilyKey))
         return .{ .code = .forbidden, .close_connection = true };
     return null;
+}
+
+pub fn selectProtocolMinor(client: SessionProtocolRange) ?u8 {
+    if (client.major != generated.protocol_major or client.minMinor > client.maxMinor)
+        return null;
+    const selected = @min(client.maxMinor, generated.protocol_max_minor);
+    if (selected < client.minMinor or selected < generated.protocol_min_minor) return null;
+    return selected;
 }
 
 pub fn parseDaemonHello(allocator: std.mem.Allocator, payload: []const u8) !std.json.Parsed(DaemonHello) {
@@ -469,13 +476,23 @@ pub fn writeRecordAtomic(
 ) !void {
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.host_record_v1, json))
         return error.InvalidHostRecord;
-    var file = try host_directory.createFile("record.json.new", .{ .mode = 0o600, .truncate = true, .exclusive = true });
-    errdefer host_directory.deleteFile("record.json.new") catch {};
+    var temporary_name_storage: [48]u8 = undefined;
+    const temporary_name = try std.fmt.bufPrint(
+        &temporary_name_storage,
+        "record.json.new.{x}",
+        .{std.crypto.random.int(u64)},
+    );
+    var file = try host_directory.createFile(temporary_name, .{
+        .mode = 0o600,
+        .truncate = true,
+        .exclusive = true,
+    });
+    errdefer host_directory.deleteFile(temporary_name) catch {};
     defer file.close();
     try file.chmod(0o600);
     try file.writeAll(json);
     try file.sync();
-    try host_directory.rename("record.json.new", "record.json");
+    try host_directory.rename(temporary_name, "record.json");
     try std.posix.fsync(host_directory.fd);
 }
 
@@ -723,6 +740,18 @@ pub fn verifySocket(expected: SocketEvidence, observed: SocketEvidence) ?protoco
     return null;
 }
 
+fn verifyPostConnectSocket(
+    expected: SocketEvidence,
+    before: SocketEvidence,
+    after: SocketEvidence,
+) ?protocol.Failure {
+    if (verifySocket(expected, before)) |failure| return failure;
+    if (verifySocket(expected, after)) |failure| return failure;
+    if (!std.meta.eql(before, after))
+        return .{ .code = .unauthenticated, .close_connection = true };
+    return null;
+}
+
 pub const AdoptionReadback = struct {
     locator: Locator,
     host_pid: i32,
@@ -758,6 +787,7 @@ pub const GrantRegistration = struct {
     viewer_id: []const u8,
     operations: []const []const u8,
     geometry: Geometry,
+    registered_mono_ns: u64,
     expires_mono_ns: u64,
 };
 
@@ -797,6 +827,7 @@ const WireAdoptionReadback = struct {
     executable: []const u8,
     executableBuildHash: []const u8,
     engineBuildId: []const u8,
+    protocol: DiskProtocol,
     processRoot: DiskProcessRoot,
     outputSeq: []const u8,
     checkpointSeq: []const u8,
@@ -832,7 +863,7 @@ fn locatorJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.json.Va
     return .{ .object = value };
 }
 
-fn wallDeadline(output: []u8, additional_ms: u64) ![]const u8 {
+pub fn wallDeadline(output: []u8, additional_ms: u64) ![]const u8 {
     const now_ms = std.time.milliTimestamp();
     if (now_ms < 0) return error.InvalidTimestamp;
     const deadline_ms = std.math.add(u64, @intCast(now_ms), additional_ms) catch
@@ -850,6 +881,47 @@ fn wallDeadline(output: []u8, additional_ms: u64) ![]const u8 {
         day_seconds.getSecondsIntoMinute(),
         deadline_ms % std.time.ms_per_s,
     });
+}
+
+fn leapYearsThrough(year: u64) u64 {
+    return year / 4 - year / 100 + year / 400;
+}
+
+fn wallTimestampMillis(value: []const u8) !u64 {
+    if (value.len != 24 or value[4] != '-' or value[7] != '-' or value[10] != 'T' or
+        value[13] != ':' or value[16] != ':' or value[19] != '.' or value[23] != 'Z')
+        return error.InvalidTimestamp;
+    const year = try std.fmt.parseInt(u64, value[0..4], 10);
+    const month = try std.fmt.parseInt(u8, value[5..7], 10);
+    const day = try std.fmt.parseInt(u8, value[8..10], 10);
+    const hour = try std.fmt.parseInt(u8, value[11..13], 10);
+    const minute = try std.fmt.parseInt(u8, value[14..16], 10);
+    const second = try std.fmt.parseInt(u8, value[17..19], 10);
+    const millisecond = try std.fmt.parseInt(u16, value[20..23], 10);
+    if (year < 1970 or month == 0 or month > 12 or day == 0 or hour > 23 or
+        minute > 59 or second > 59)
+        return error.InvalidTimestamp;
+    const leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0);
+    const month_days = [_]u8{ 31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
+    if (day > month_days[month - 1]) return error.InvalidTimestamp;
+    var days = (year - 1970) * 365 + leapYearsThrough(year - 1) - leapYearsThrough(1969);
+    for (month_days[0 .. month - 1]) |count| days += count;
+    days += day - 1;
+    const seconds = try std.math.add(
+        u64,
+        try std.math.mul(u64, days, std.time.s_per_day),
+        @as(u64, hour) * std.time.s_per_hour + @as(u64, minute) * std.time.s_per_min + second,
+    );
+    return try std.math.add(u64, try std.math.mul(u64, seconds, std.time.ms_per_s), millisecond);
+}
+
+fn wallExpiryToMonotonic(value: []const u8, now_ns: u64, maximum_ms: u64) !u64 {
+    const deadline_ms = try wallTimestampMillis(value);
+    const wall_now = std.time.milliTimestamp();
+    if (wall_now < 0 or deadline_ms <= @as(u64, @intCast(wall_now))) return error.Expired;
+    const remaining_ms = deadline_ms - @as(u64, @intCast(wall_now));
+    if (remaining_ms > maximum_ms) return error.InvalidTimestamp;
+    return try std.math.add(u64, now_ns, try std.math.mul(u64, remaining_ms, std.time.ns_per_ms));
 }
 
 /// Production broker-side implementation of the WP4 seam. Every operation
@@ -960,7 +1032,8 @@ pub const WireHostClient = struct {
         const peer = try inspectPeer(stream.handle);
         try self.verifyPeer(&peer);
         const after = try socketEvidence(self.directory);
-        if (verifySocket(self.expected_socket, after) != null) return error.SocketSubstitution;
+        if (verifyPostConnectSocket(self.expected_socket, before, after) != null)
+            return error.SocketSubstitution;
 
         const hello = try std.json.Stringify.valueAlloc(self.allocator, .{
             .schemaVersion = @as(u8, 1),
@@ -1025,6 +1098,7 @@ pub const WireHostClient = struct {
         secret: [32]u8,
         now_ns: u64,
     ) !AdoptionReadback {
+        if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
         const secret_hex = std.fmt.bytesToHex(secret, .lower);
@@ -1062,8 +1136,8 @@ pub const WireHostClient = struct {
             .executable = try arena.dupe(u8, parsed.value.executable),
             .executable_build_hash = try arena.dupe(u8, parsed.value.executableBuildHash),
             .engine_build_id = try arena.dupe(u8, parsed.value.engineBuildId),
-            .protocol_major = generated.protocol_major,
-            .protocol_minor = generated.protocol_minor,
+            .protocol_major = parsed.value.protocol.major,
+            .protocol_minor = parsed.value.protocol.minor,
             .process_root = .{
                 .pid = parsed.value.processRoot.pid,
                 .start_token = try arena.dupe(u8, parsed.value.processRoot.startToken),
@@ -1071,8 +1145,6 @@ pub const WireHostClient = struct {
             },
             .output_seq = try std.fmt.parseInt(u64, parsed.value.outputSeq, 10),
             .checkpoint_seq = try std.fmt.parseInt(u64, parsed.value.checkpointSeq, 10),
-            // The host's state is authoritative at challenge time. The broker
-            // grants no wall-clock-derived extension; Workspace must renew.
             .visibility = .{
                 .state = std.meta.stringToEnum(@FieldType(Visibility, "state"), parsed.value.visibility.state) orelse
                     return error.InvalidHostResponse,
@@ -1082,13 +1154,19 @@ pub const WireHostClient = struct {
                     parsed.value.visibility.openTerminalRevision,
                     10,
                 ),
-                .expires_mono_ns = try std.math.add(u64, now_ns, 1),
+                .expires_mono_ns = try wallExpiryToMonotonic(
+                    parsed.value.visibility.expiresAt,
+                    now_ns,
+                    generated.limits.visibility_expiry_ms,
+                ),
             },
         };
     }
 
     fn registerGrant(self: *WireHostClient, locator: Locator, grant: GrantRegistration) !bool {
-        _ = locator;
+        if (!sameLocator(locator, self.expected_record.locator) or
+            grant.expires_mono_ns <= grant.registered_mono_ns)
+            return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
         const hash_hex = std.fmt.bytesToHex(grant.hash, .lower);
@@ -1097,7 +1175,7 @@ pub const WireHostClient = struct {
         var deadline_storage: [24]u8 = undefined;
         const deadline = try wallDeadline(
             &deadline_storage,
-            generated.limits.attach_grant_timeout_ms,
+            (grant.expires_mono_ns - grant.registered_mono_ns) / std.time.ns_per_ms,
         );
         const payload = try std.json.Stringify.valueAlloc(payload_arena.allocator(), .{
             .schemaVersion = @as(u8, 1),
@@ -1141,6 +1219,7 @@ pub const WireHostClient = struct {
         locator: Locator,
         command: TerminationCommand,
     ) !TerminationReadback {
+        if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
         const payload = try std.json.Stringify.valueAlloc(payload_arena.allocator(), .{
@@ -1172,6 +1251,8 @@ pub const WireHostClient = struct {
         defer parsed.deinit();
         const response_locator = try locatorFromDisk(parsed.value.locator);
         if (!sameLocator(locator, response_locator)) return error.InvalidHostResponse;
+        // TODO(WP4): map the real host's per-root exit and survivor evidence
+        // into TerminationReadback without synthesizing proof from state alone.
         if (std.mem.eql(u8, parsed.value.state, "terminated") and
             parsed.value.survivors.len == 0 and parsed.value.errors.len == 0)
             return .{
@@ -1330,6 +1411,7 @@ pub const HostLaunchReadback = struct {
     record: HostRecord,
     record_json: []const u8,
     created_payload: []u8,
+    host: HostControl,
 };
 
 pub const HostLauncher = struct {
@@ -1372,14 +1454,17 @@ const Grant = struct {
 
 const Entry = struct {
     record: HostRecord,
+    host: ?HostControl,
     quarantined: bool = false,
     grants: [generated.limits.viewers_per_generation]?Grant = @splat(null),
 };
 
 pub const Inspection = struct {
-    locator: Locator,
+    locator: ?Locator,
+    session_id: []const u8,
     presence: enum { present, exited, unknown },
     complete: bool,
+    operator_attention: bool = false,
 };
 
 pub const ListResult = struct {
@@ -1394,6 +1479,7 @@ pub const LookupResult = union(enum) {
 
 pub const Registry = struct {
     entries: [generated.limits.live_sessions_per_hive_home]?Entry = @splat(null),
+    directory_quarantines: [generated.limits.live_sessions_per_hive_home]?DirectoryQuarantine = @splat(null),
     enumeration_complete: bool = true,
 
     pub fn hasCapacity(self: *const Registry) bool {
@@ -1401,13 +1487,15 @@ pub const Registry = struct {
         return false;
     }
 
-    pub fn register(self: *Registry, record: HostRecord) ?protocol.Failure {
+    pub fn register(self: *Registry, record: HostRecord, host: HostControl) ?protocol.Failure {
+        if (record.state != .live)
+            return .{ .code = .not_ready, .close_connection = false };
         if (self.lookup(record.locator)) |result| switch (result) {
             .entry => return .{ .code = .already_exists, .close_connection = false },
             .failure => |failure| if (failure.code != .not_found) return failure,
         };
         for (&self.entries) |*slot| if (slot.* == null) {
-            slot.* = .{ .record = record };
+            slot.* = .{ .record = record, .host = host };
             return null;
         };
         return .{ .code = .capacity_exceeded, .close_connection = false };
@@ -1467,7 +1555,6 @@ pub const Registry = struct {
         operations: []const []const u8,
         geometry: Geometry,
         now_ns: u64,
-        host: HostControl,
     ) ?protocol.Failure {
         const result = self.lookup(locator) orelse return .{ .code = .not_found, .close_connection = false };
         const entry = switch (result) {
@@ -1487,11 +1574,12 @@ pub const Registry = struct {
                 return .{ .code = .already_exists, .close_connection = false };
         };
         for (&entry.grants) |*slot| if (slot.* == null or slot.*.?.used or slot.*.?.expires_mono_ns <= now_ns) {
-            if (!host.registerGrant(locator, .{
+            if (!entry.host.?.registerGrant(locator, .{
                 .hash = grant_hash,
                 .viewer_id = viewer_id,
                 .operations = operations,
                 .geometry = geometry,
+                .registered_mono_ns = now_ns,
                 .expires_mono_ns = expires_ns,
             }))
                 return .{ .code = .verification_unknown, .close_connection = false };
@@ -1526,14 +1614,13 @@ pub const Registry = struct {
         self: *Registry,
         locator: Locator,
         command: TerminationCommand,
-        host: HostControl,
     ) TerminationState {
         const result = self.lookup(locator) orelse return .unknown;
         const entry = switch (result) {
             .failure => return .unknown,
             .entry => |entry| entry,
         };
-        const readback = host.terminate(locator, command);
+        const readback = entry.host.?.terminate(locator, command);
         if (readback.survivor_count != 0) return .survivors;
         if (!readback.verification_complete or !readback.pty_closed or !readback.host_exited) {
             entry.record.state = .unknown;
@@ -1543,7 +1630,7 @@ pub const Registry = struct {
         return .terminated;
     }
 
-    pub fn expireVisibility(self: *Registry, now_ns: u64, host: HostControl) usize {
+    pub fn expireVisibility(self: *Registry, now_ns: u64) usize {
         var expired: usize = 0;
         for (&self.entries) |*slot| if (slot.*) |*entry| {
             if (entry.record.state != .live or entry.record.visibility.state == .expired or
@@ -1559,7 +1646,7 @@ pub const Registry = struct {
                 .mode = "graceful",
                 .reason = "visibility lease expired",
                 .request_id = request_id,
-            }, host);
+            });
             expired += 1;
         };
         return expired;
@@ -1579,7 +1666,9 @@ pub const Registry = struct {
             return self.quarantine(record, .{ .code = .unauthenticated, .close_connection = true });
         if (!adoptionMatches(record, readback, now_ns))
             return self.quarantine(record, .{ .code = .verification_unknown, .close_connection = true });
-        return self.register(record);
+        var adopted = record;
+        adopted.visibility = readback.visibility;
+        return self.register(adopted, host);
     }
 
     fn quarantine(self: *Registry, record: HostRecord, failure: protocol.Failure) protocol.Failure {
@@ -1587,7 +1676,7 @@ pub const Registry = struct {
         for (&self.entries) |*slot| if (slot.* == null) {
             var unknown = record;
             unknown.state = .unknown;
-            slot.* = .{ .record = unknown, .quarantined = true };
+            slot.* = .{ .record = unknown, .host = null, .quarantined = true };
             break;
         };
         return failure;
@@ -1602,22 +1691,89 @@ pub const Registry = struct {
                 complete = false;
                 break;
             }
+            var directory_evidence: ?*DirectoryQuarantine = null;
+            for (&self.directory_quarantines) |*directory_slot| if (directory_slot.*) |*candidate| {
+                if (std.mem.eql(u8, candidate.session_id, entry.record.locator.session_id)) {
+                    directory_evidence = candidate;
+                    break;
+                }
+            };
             output[count] = .{
                 .locator = entry.record.locator,
-                .presence = if (entry.quarantined or entry.record.state == .unknown)
+                .session_id = entry.record.locator.session_id,
+                .presence = if (directory_evidence != null and
+                    directory_evidence.?.final_evidence_sha256 != null)
+                    .exited
+                else if (entry.quarantined or entry.record.state == .unknown)
                     .unknown
                 else if (entry.record.state == .exited)
                     .exited
                 else
                     .present,
                 .complete = !entry.quarantined and entry.record.state != .unknown,
+                .operator_attention = if (directory_evidence) |evidence|
+                    evidence.final_state != .terminated or evidence.survivor_count != 0
+                else
+                    entry.quarantined or entry.record.state == .unknown,
             };
             if (!output[count].complete) complete = false;
             count += 1;
         };
+        for (&self.directory_quarantines) |*slot| if (slot.*) |*directory_quarantine| {
+            var duplicates_parsed_entry = false;
+            for (&self.entries) |entry_slot| if (entry_slot) |entry| {
+                if (std.mem.eql(u8, entry.record.locator.session_id, directory_quarantine.session_id)) {
+                    duplicates_parsed_entry = true;
+                    break;
+                }
+            };
+            if (duplicates_parsed_entry) continue;
+            if (count == output.len) {
+                complete = false;
+                break;
+            }
+            output[count] = .{
+                .locator = null,
+                .session_id = directory_quarantine.session_id,
+                .presence = if (directory_quarantine.final_evidence_sha256 == null) .unknown else .exited,
+                .complete = false,
+                .operator_attention = directory_quarantine.final_state != .terminated or
+                    directory_quarantine.survivor_count != 0,
+            };
+            complete = false;
+            count += 1;
+        };
         return .{ .entries = output[0..count], .complete = complete };
     }
+
+    fn quarantineDirectory(self: *Registry, session_id: []const u8, verify_after_ns: u64) void {
+        self.enumeration_complete = false;
+        for (&self.directory_quarantines) |*slot| {
+            if (slot.*) |*existing| {
+                if (std.mem.eql(u8, existing.session_id, session_id)) return;
+                continue;
+            }
+            slot.* = .{ .session_id = session_id, .verify_after_ns = verify_after_ns };
+            return;
+        }
+    }
 };
+
+const DirectoryQuarantine = struct {
+    const FinalState = enum { terminated, survivors, unknown };
+
+    session_id: []const u8,
+    verify_after_ns: u64,
+    final_evidence_sha256: ?[32]u8 = null,
+    final_state: ?FinalState = null,
+    survivor_count: usize = 0,
+};
+
+const host_graceful_stop_bound_ms: u64 = 2 * std.time.ms_per_s + 2 * std.time.ms_per_s;
+
+pub fn quarantineVerificationDelayNs() u64 {
+    return (generated.limits.visibility_expiry_ms + host_graceful_stop_bound_ms) * std.time.ns_per_ms;
+}
 
 pub const RecoveredRegistry = struct {
     arena: std.heap.ArenaAllocator,
@@ -1642,14 +1798,91 @@ pub const RecoveredRegistry = struct {
         defer hosts.close();
         var iterator = hosts.iterate();
         while (try iterator.next()) |entry| {
-            if (entry.kind != .directory or !protocol.validSessionId(entry.name)) {
+            if (entry.kind != .directory) {
                 self.registry.enumeration_complete = false;
                 continue;
             }
+            const owned_name = try self.arena.allocator().dupe(u8, entry.name);
+            if (!protocol.validSessionId(entry.name)) {
+                try self.addDirectoryQuarantine(owned_name, now_ns);
+                continue;
+            }
             self.recoverOne(runtime, entry.name, now_ns, connector) catch {
-                self.registry.enumeration_complete = false;
+                try self.addDirectoryQuarantine(owned_name, now_ns);
             };
         }
+    }
+
+    fn addDirectoryQuarantine(self: *RecoveredRegistry, session_id: []const u8, now_ns: u64) !void {
+        const verify_after_ns = try std.math.add(
+            u64,
+            now_ns,
+            quarantineVerificationDelayNs(),
+        );
+        self.registry.quarantineDirectory(session_id, verify_after_ns);
+    }
+
+    /// §21 crash invariant: an unparseable host receives no renewals and must
+    /// self-terminate on its own lease. The broker verifies final.json after
+    /// the lease plus graceful-stop bound; absence remains explicit unknown.
+    pub fn verifyDirectoryQuarantines(
+        self: *RecoveredRegistry,
+        runtime: *Runtime,
+        now_ns: u64,
+    ) void {
+        for (&self.registry.directory_quarantines) |*slot| if (slot.*) |*directory_quarantine| {
+            if (directory_quarantine.final_evidence_sha256 != null or now_ns < directory_quarantine.verify_after_ns)
+                continue;
+            var hosts = runtime.directory.openDir("hosts", .{ .no_follow = true }) catch continue;
+            defer hosts.close();
+            var directory = hosts.openDir(directory_quarantine.session_id, .{ .no_follow = true }) catch continue;
+            defer directory.close();
+            const directory_stat = std.posix.fstat(directory.fd) catch continue;
+            if (directory_stat.uid != std.posix.getuid() or
+                directory_stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR or
+                directory_stat.mode & 0o777 != 0o700)
+                continue;
+            const stat = std.posix.fstatat(
+                directory.fd,
+                "final.json",
+                std.posix.AT.SYMLINK_NOFOLLOW,
+            ) catch continue;
+            if (stat.uid != std.posix.getuid() or stat.mode & std.posix.S.IFMT != std.posix.S.IFREG or
+                stat.mode & 0o777 != 0o600)
+                continue;
+            const contents = readOwnedFileAt(
+                self.arena.allocator(),
+                directory,
+                "final.json",
+                generated.limits.control_json_bytes,
+            ) catch continue;
+            var parsed = std.json.parseFromSlice(
+                std.json.Value,
+                self.arena.allocator(),
+                contents,
+                .{},
+            ) catch continue;
+            defer parsed.deinit();
+            const object = switch (parsed.value) {
+                .object => |object| object,
+                else => continue,
+            };
+            const state = object.get("state") orelse continue;
+            const survivors = object.get("survivors") orelse continue;
+            if (state != .string or survivors != .array) continue;
+            if (!std.mem.eql(u8, state.string, "terminated") and
+                !std.mem.eql(u8, state.string, "survivors") and
+                !std.mem.eql(u8, state.string, "unknown"))
+                continue;
+            var digest: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(contents, &digest, .{});
+            directory_quarantine.final_evidence_sha256 = digest;
+            directory_quarantine.final_state = std.meta.stringToEnum(
+                DirectoryQuarantine.FinalState,
+                state.string,
+            ).?;
+            directory_quarantine.survivor_count = survivors.array.items.len;
+        };
     }
 
     fn recoverOne(
@@ -1675,6 +1908,7 @@ pub const RecoveredRegistry = struct {
         });
         const record = try hostRecordFromDisk(disk);
         if (!std.mem.eql(u8, record.locator.session_id, session_id)) return error.InvalidHostRecord;
+        if (record.state != .live) return error.InvalidHostRecord;
         const expected_socket = try socketEvidence(directory);
         const secret = try readAdoptionSecret(directory);
         const channel = connector.connect(directory, record, expected_socket) orelse {
@@ -1682,16 +1916,16 @@ pub const RecoveredRegistry = struct {
                 record,
                 .{ .code = .verification_unknown, .close_connection = true },
             );
-            return;
+            return error.RecoveryQuarantined;
         };
-        _ = self.registry.recoverCandidate(
+        if (self.registry.recoverCandidate(
             record,
             secret,
             expected_socket,
             channel.observed_socket,
             now_ns,
             channel.host,
-        );
+        ) != null) return error.RecoveryQuarantined;
     }
 };
 
@@ -1818,7 +2052,7 @@ pub fn launchHost(
     defer if (!retain_created_payload) allocator.free(readback.created_payload);
     if (!sameLocator(readback.record.locator, expected_locator))
         return .{ .failure = .{ .code = .generation_mismatch, .close_connection = false }, .created_payload = null };
-    if (readback.record.visibility.state != .attaching or
+    if (readback.record.state != .live or readback.record.visibility.state != .attaching or
         !std.mem.eql(
             u8,
             readback.record.visibility.workspace_session_id,
@@ -1835,7 +2069,7 @@ pub fn launchHost(
     if (!recordJsonMatches(allocator, readback.record, readback.record_json))
         return .{ .failure = .{ .code = .verification_unknown, .close_connection = false }, .created_payload = null };
     try writeRecordAtomic(allocator, host_directory, readback.record_json);
-    if (registry.register(readback.record)) |failure|
+    if (registry.register(readback.record, readback.host)) |failure|
         return .{ .failure = failure, .created_payload = null };
     retain_created_payload = true;
     return .{ .failure = null, .created_payload = readback.created_payload };
@@ -1915,7 +2149,7 @@ fn expectedResponseType(type_code: u16) ?u16 {
 
 fn responseHeader(request: protocol.Header, type_code: u16, payload_len: usize) protocol.Header {
     return .{
-        .minor = generated.protocol_minor,
+        .minor = request.minor,
         .type_code = type_code,
         .flags = generated.frame_flag.response | generated.frame_flag.final,
         .payload_length = @intCast(payload_len),
@@ -2008,6 +2242,7 @@ fn writeWelcome(
     instance_id: []const u8,
     build_id: []const u8,
     server_epoch: u64,
+    selected_minor: u8,
 ) !void {
     var connection_storage: [32]u8 = undefined;
     var epoch_storage: [32]u8 = undefined;
@@ -2015,7 +2250,7 @@ fn writeWelcome(
     const epoch = try std.fmt.bufPrint(&epoch_storage, "{d}", .{server_epoch});
     const welcome = .{
         .schemaVersion = @as(u8, 1),
-        .protocol = .{ .major = generated.protocol_major, .minor = generated.protocol_minor },
+        .protocol = .{ .major = generated.protocol_major, .minor = selected_minor },
         .instanceId = instance_id,
         .endpointRole = "broker",
         .buildId = build_id,
@@ -2033,7 +2268,9 @@ fn writeWelcome(
     defer allocator.free(payload);
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.welcome_payload, payload))
         return error.InvalidWelcome;
-    try protocol.writeFrame(stream, responseHeader(request, generated.frame_type.welcome, payload.len), payload);
+    var header = responseHeader(request, generated.frame_type.welcome, payload.len);
+    header.minor = selected_minor;
+    try protocol.writeFrame(stream, header, payload);
 }
 
 fn writeFailure(
@@ -2055,7 +2292,7 @@ fn writeFailure(
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.error_payload, payload))
         return error.InvalidErrorPayload;
     const header: protocol.Header = .{
-        .minor = generated.protocol_minor,
+        .minor = if (protocol.minorSupported(request.minor)) request.minor else generated.protocol_max_minor,
         .type_code = generated.frame_type.@"error",
         .flags = generated.frame_flag.response | generated.frame_flag.final | generated.frame_flag.error_flag,
         .payload_length = @intCast(payload.len),
@@ -2091,14 +2328,41 @@ fn serveDaemonConnection(
     const first = try protocol.readFrame(allocator, reader);
     const hello_frame = switch (first) {
         .frame => |frame| frame,
-        else => return error.InvalidHelloFrame,
+        .failure => |failure| {
+            if (failure.request_id != 0) try writeFailure(allocator, stream, .{
+                .minor = generated.protocol_max_minor,
+                .type_code = generated.frame_type.hello,
+                .flags = 0,
+                .payload_length = 0,
+                .request_id = failure.request_id,
+                .stream_seq = 0,
+            }, failure);
+            return;
+        },
+        .ignored_optional => return,
     };
     defer hello_frame.deinit(allocator);
     var handshake_state: protocol.Handshake = .{};
-    if (handshake_state.accept(hello_frame.header) != null) return error.InvalidHelloFrame;
+    if (handshake_state.accept(hello_frame.header)) |failure| {
+        try writeFailure(allocator, stream, hello_frame.header, failure);
+        return;
+    }
 
-    var hello = try parseDaemonHello(allocator, hello_frame.payload);
+    var hello = parseDaemonHello(allocator, hello_frame.payload) catch {
+        try writeFailure(allocator, stream, hello_frame.header, .{
+            .code = .malformed_frame,
+            .close_connection = true,
+        });
+        return;
+    };
     defer hello.deinit();
+    const selected_minor = selectProtocolMinor(hello.value.protocol) orelse {
+        try writeFailure(allocator, stream, hello_frame.header, .{
+            .code = .protocol_mismatch,
+            .close_connection = true,
+        });
+        return;
+    };
     var daemon_lock = try loadDaemonLock(allocator, runtime.canonical_home);
     defer daemon_lock.deinit();
     var daemon_handshake = try loadDaemonHandshake(allocator, runtime.canonical_home);
@@ -2134,6 +2398,7 @@ fn serveDaemonConnection(
         daemon_handshake.value.instanceId,
         build_id,
         timer.read(),
+        selected_minor,
     );
 
     var liveness: protocol.Liveness = .{ .last_activity_ns = timer.read() };
@@ -2152,7 +2417,7 @@ fn serveDaemonConnection(
             var payload_storage: [96]u8 = undefined;
             const payload = try protocol.encodePingPong(&payload_storage, now_ns);
             try protocol.writeFrame(stream, .{
-                .minor = generated.protocol_minor,
+                .minor = selected_minor,
                 .type_code = generated.frame_type.ping,
                 .flags = 0,
                 .payload_length = @intCast(payload.len),
@@ -2168,11 +2433,16 @@ fn serveDaemonConnection(
         }
         if (poll_fds[0].revents & std.posix.POLL.IN == 0) return;
 
-        const read = protocol.readFrame(allocator, reader) catch return;
+        const read = protocol.readFrameForRange(
+            allocator,
+            reader,
+            selected_minor,
+            selected_minor,
+        ) catch return;
         switch (read) {
             .failure => |failure| {
                 if (failure.request_id != 0) try writeFailure(allocator, stream, .{
-                    .minor = generated.protocol_minor,
+                    .minor = selected_minor,
                     .type_code = generated.frame_type.@"error",
                     .flags = 0,
                     .payload_length = 0,
@@ -2254,7 +2524,28 @@ pub fn serve(allocator: std.mem.Allocator, hive_home: []const u8) !void {
     try recovered.recover(&runtime, timer.read(), recovery_wire.connector());
     var backend: StartupBackend = .{};
     while (true) {
-        var accepted = runtime.acceptAuthenticatedPeer() catch continue;
+        var poll_fds = [_]std.posix.pollfd{.{
+            .fd = runtime.server.stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = try std.posix.poll(
+            &poll_fds,
+            @intCast(generated.limits.visibility_renewal_ms),
+        );
+        recovered.verifyDirectoryQuarantines(&runtime, timer.read());
+        if (ready == 0) continue;
+        if (poll_fds[0].revents & std.posix.POLL.IN == 0) return error.BrokerSocketUnavailable;
+        var accepted = runtime.acceptAuthenticatedPeer() catch |err| switch (err) {
+            error.SocketSubstitution => {
+                std.log.err("broker socket substitution detected; refusing further service", .{});
+                return err;
+            },
+            else => {
+                std.log.err("broker accept failed closed: {s}", .{@errorName(err)});
+                continue;
+            },
+        };
         defer accepted.stream.close();
         serveDaemonConnection(
             allocator,
@@ -2329,6 +2620,11 @@ test "daemon HELLO matches all six existing handshake identities" {
     hello.value.daemonControl.identityKey = "project-a";
     hello.value.daemonControl.schemaEpoch = 2;
     try std.testing.expectEqual(protocol.WireError.protocol_mismatch, verifyDaemonHello(hello.value, expected).?.code);
+    try std.testing.expect(selectProtocolMinor(.{
+        .major = generated.protocol_major,
+        .minMinor = generated.protocol_max_minor + 1,
+        .maxMinor = generated.protocol_max_minor + 1,
+    }) == null);
 }
 
 const TestBackend = struct {
@@ -2347,6 +2643,69 @@ const TestBackend = struct {
         return .no_response;
     }
 };
+
+const DaemonWireHarness = struct {
+    runtime: *Runtime,
+    stream: std.net.Stream,
+    observed: *const ObservedPeer,
+    timer: *std.time.Timer,
+    failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
+
+    fn run(self: *DaemonWireHarness) void {
+        defer self.stream.close();
+        var backend: StartupBackend = .{};
+        serveDaemonConnection(
+            std.heap.page_allocator,
+            self.runtime,
+            self.stream,
+            self.observed,
+            "test-build",
+            self.timer,
+            backend.backend(),
+        ) catch self.failed.store(true, .release);
+    }
+};
+
+test "daemon UDS returns a correlated typed header failure before closing" {
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var runtime: Runtime = undefined;
+    var observed: ObservedPeer = undefined;
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+
+    var malformed_header = protocol.encodeHeader(.{
+        .minor = generated.protocol_minor,
+        .type_code = generated.frame_type.hello,
+        .flags = 0,
+        .payload_length = 0,
+        .request_id = 73,
+        .stream_seq = 0,
+    }).?;
+    malformed_header[4] = generated.protocol_major + 1;
+    try client.writeAll(&malformed_header);
+    const file: std.fs.File = .{ .handle = client.handle };
+    const response = try protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    defer response.frame.deinit(std.testing.allocator);
+    try std.testing.expectEqual(generated.frame_type.@"error", response.frame.header.type_code);
+    try std.testing.expectEqual(@as(u64, 73), response.frame.header.request_id);
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.error_payload,
+        response.frame.payload,
+    ));
+    thread.join();
+    try std.testing.expect(!harness.failed.load(.acquire));
+}
 
 test "broker dispatcher validates projections and handles PING without lifecycle authority" {
     var backend: TestBackend = .{};
@@ -2435,4 +2794,8 @@ test "socket substitution fails closed" {
     var substituted = expected;
     substituted.inode = 3;
     try std.testing.expectEqual(protocol.WireError.unauthenticated, verifySocket(expected, substituted).?.code);
+    try std.testing.expectEqual(
+        protocol.WireError.unauthenticated,
+        verifyPostConnectSocket(expected, expected, substituted).?.code,
+    );
 }

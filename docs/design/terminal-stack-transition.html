@@ -1129,12 +1129,13 @@ type ErrorPayloadV1 = { schemaVersion: 1; code: WireErrorCode; message: string; 
 type PingPongPayloadV1 = { schemaVersion: 1; monoNanos: string };
 type HostRegisterPayloadV1 = { schemaVersion: 1; record: Pick&lt;HostRecordV1,
   "locator" | "hostPid" | "hostStartToken" | "processRoot" | "expectedExecutable" |
-  "executableBuildHash" | "engineBuildId" | "protocol" | "geometry" | "state" | "outputSeq" | "checkpointSeq"&gt; }
+  "executableBuildHash" | "engineBuildId" | "protocol" | "geometry" | "state" | "visibility" | "outputSeq" | "checkpointSeq"&gt; }
   | { schemaVersion: 1; accepted: true };
 type HostAdoptPayloadV1 = { schemaVersion: 1; adoptionSecretHex: string; expectedLocator: SessionLocator;
   brokerBuildId: string; protocol: { major: 1; minor: number }; operation: "adopt" }
   | { schemaVersion: 1; locator: SessionLocator; hostPid: number; hostStartToken: string;
-      executable: string; executableBuildHash: string; engineBuildId: string; processRoot: HostRecordV1["processRoot"];
+      executable: string; executableBuildHash: string; engineBuildId: string; protocol: HostRecordV1["protocol"];
+      processRoot: HostRecordV1["processRoot"];
       outputSeq: string; checkpointSeq: string; visibility: HostRecordV1["visibility"] };
 type GrantRegisterPayloadV1 = { schemaVersion: 1; grantTokenSha256: string; viewerId: string;
   operations: ("view" | "human-input" | "resize")[]; expiresAt: string; geometry: TerminalGeometry }
@@ -1157,6 +1158,8 @@ type AttachGrantPayloadV1 = { schemaVersion: 1 } &amp; AttachGrant;
 type HostAttachPayloadV1 = { schemaVersion: 1; locator: SessionLocator; token: string;
   geometry: TerminalGeometry; afterSeq: string };
 // Response postconditions are the §19 operation-table rows; request correlation remains in the frame header.
+// For a same-major HELLO, the server selects min(client.maxMinor, server.maxMinor) and refuses
+// PROTOCOL_MISMATCH when that selection is below either peer's minMinor; later headers use the selection.
 
 The 32-byte adoption secret is 64 lowercase hexadecimal characters. The 256-bit grant hash is
 "sha256:" followed by 64 lowercase hexadecimal characters. Control payloads never carry raw binary.</pre>

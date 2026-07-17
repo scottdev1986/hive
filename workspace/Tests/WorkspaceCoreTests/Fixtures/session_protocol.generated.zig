@@ -3,6 +3,8 @@
 
 pub const protocol_major: u8 = 1;
 pub const protocol_minor: u8 = 0;
+pub const protocol_min_minor: u8 = 0;
+pub const protocol_max_minor: u8 = 0;
 pub const frame_header_bytes: usize = 32;
 pub const frame_magic = "HVT1";
 pub const frame_optional_type_bit: u16 = 0x8000;

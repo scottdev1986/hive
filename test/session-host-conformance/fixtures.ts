@@ -3,6 +3,7 @@ import {
   FRAME_HEADER,
   FRAME_TYPES,
   RAW_BYTE_FRAME_TYPES,
+  SESSION_PROTOCOL_MINOR_RANGE,
   SESSION_PROTOCOL_VERSION,
   TERMINAL_LIMITS,
   type FrameTypeName,
@@ -420,6 +421,7 @@ const validCases: readonly WireCorpusCase[] = [
       executable: fixtureHostRecord.expectedExecutable,
       executableBuildHash: fixtureHostRecord.executableBuildHash,
       engineBuildId: fixtureHostRecord.engineBuildId,
+      protocol: fixtureHostRecord.protocol,
       processRoot: fixtureHostRecord.processRoot,
       outputSeq: fixtureHostRecord.outputSeq,
       checkpointSeq: fixtureHostRecord.checkpointSeq,
@@ -537,6 +539,10 @@ export function parseFrameHeader(bytes: Uint8Array): FrameHeaderFields | null {
   if (view.getUint8(FRAME_HEADER.offsets.major) !== SESSION_PROTOCOL_VERSION.major) {
     throw new Error("PROTOCOL_MISMATCH");
   }
+  const minor = view.getUint8(FRAME_HEADER.offsets.minor);
+  if (minor < SESSION_PROTOCOL_MINOR_RANGE.min || minor > SESSION_PROTOCOL_MINOR_RANGE.max) {
+    throw new Error("PROTOCOL_MISMATCH");
+  }
   const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
   const entry = Object.entries(FRAME_TYPES).find(([, code]) => code === typeCode);
   const flags = view.getUint16(FRAME_HEADER.offsets.flags);
@@ -597,6 +603,8 @@ export function buildWireCorpus() {
   const oversized = encodeFrameHeader({ ...output, payloadLength: TERMINAL_LIMITS.streamChunkBytes + 1 });
   const optionalUnknown = helloBytes.slice();
   new DataView(optionalUnknown.buffer).setUint16(FRAME_HEADER.offsets.type, 0x8001);
+  const unsolicitedOptionalUnknown = optionalUnknown.slice();
+  new DataView(unsolicitedOptionalUnknown.buffer).setBigUint64(FRAME_HEADER.offsets.requestId, 0n);
   const mandatoryUnknown = helloBytes.slice();
   new DataView(mandatoryUnknown.buffer).setUint16(FRAME_HEADER.offsets.type, 0x7000);
   return {
@@ -610,10 +618,12 @@ export function buildWireCorpus() {
       ],
       ignored: [
         { name: "unknown optional frame", hex: toHex(optionalUnknown) },
+        { name: "unsolicited unknown optional frame", hex: toHex(unsolicitedOptionalUnknown) },
       ],
       invalid: [
         { name: "bad magic", error: "MALFORMED_FRAME", hex: toHex(mutateHeader(helloBytes, 0, 0)) },
         { name: "major mismatch", error: "PROTOCOL_MISMATCH", hex: toHex(mutateHeader(helloBytes, FRAME_HEADER.offsets.major, 2)) },
+        { name: "minor mismatch", error: "PROTOCOL_MISMATCH", hex: toHex(mutateHeader(helloBytes, FRAME_HEADER.offsets.minor, SESSION_PROTOCOL_MINOR_RANGE.max + 1)) },
         { name: "reserved bits", error: "MALFORMED_FRAME", hex: toHex(badReserved) },
         { name: "unknown flags", error: "MALFORMED_FRAME", hex: toHex(badFlags) },
         { name: "oversized raw chunk", error: "FRAME_TOO_LARGE", hex: toHex(oversized) },
