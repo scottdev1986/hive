@@ -96,6 +96,29 @@ echo "building universal GhosttyKit.xcframework"
 )
 /usr/bin/ditto "$WORK/macos/GhosttyKit.xcframework" "$OUT/GhosttyKit.xcframework"
 
+# Ghostty's own xcframework build names the macOS static library without a
+# "lib" prefix (the iOS slices already use "libghostty-internal-fat.a").
+# swift-package-manager's binaryTarget requires the "lib" prefix to link the
+# archive into a final product (executable/xctest bundle) — SwiftPM accepts
+# the unprefixed name for building a single library target, then fails only
+# at the final test-bundle link with "unexpected binary name ... Static
+# libraries should be prefixed with lib". Rename in place and repoint the
+# xcframework's own manifest so every consumer sees a valid archive name.
+mac_plist="$OUT/GhosttyKit.xcframework/Info.plist"
+mac_index=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries" "$mac_plist" \
+  | /usr/bin/awk '
+      /Dict {/ { idx++ }
+      /LibraryIdentifier = macos-arm64_x86_64/ { print idx - 1; found=1 }
+      END { if (!found) exit 1 }
+    ')
+mac_slice="$OUT/GhosttyKit.xcframework/macos-arm64_x86_64"
+mac_lib="$mac_slice/ghostty-internal.a"
+if [[ -f "$mac_lib" ]]; then
+  /bin/mv "$mac_lib" "$mac_slice/libghostty-internal.a"
+  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:BinaryPath libghostty-internal.a" "$mac_plist"
+  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:LibraryPath libghostty-internal.a" "$mac_plist"
+fi
+
 for target in aarch64:arm64 x86_64:x86_64; do
   zig_arch=${target%%:*}
   hive_arch=${target#*:}
@@ -136,7 +159,7 @@ if [[ ! -f "$OUT/notices/ghostty/LICENSE" ]]; then
   exit 1
 fi
 
-mac_library="$OUT/GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a"
+mac_library="$OUT/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a"
 /usr/bin/nm -gUj "$mac_library" | /usr/bin/sed 's/^_//' | LC_ALL=C /usr/bin/sort -u >"$OUT/symbols/ghostty-all.exports"
 if [[ "$(lock_value ghostty.symbolListSha256)" != "REQUIRED_BEFORE_TG1_PRODUCTION" ]]; then
   "$ROOT/scripts/check-ghostty-abi.sh" "$mac_library"

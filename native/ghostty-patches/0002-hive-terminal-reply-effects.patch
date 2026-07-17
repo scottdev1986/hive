@@ -1,0 +1,88 @@
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index d107ef8..19d2888 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -23,6 +23,7 @@ const CoreApp = @import("../App.zig");
+ const CoreInspector = @import("../inspector/main.zig").Inspector;
+ const CoreSurface = @import("../Surface.zig");
+ const configpkg = @import("../config.zig");
++const build_config = @import("../build_config.zig");
+ const Config = configpkg.Config;
+ const String = @import("../main_c.zig").String;
+ 
+@@ -1064,13 +1065,13 @@ const HiveManual = struct {
+             .bell = &bell,
+             .clipboard_write = &clipboardWrite,
+             .color_scheme = null,
+-            .device_attributes = null,
+-            .enquiry = null,
+-            .size = null,
++            .device_attributes = &deviceAttributes,
++            .enquiry = &enquiry,
++            .size = &sizeReport,
+             .title_changed = &titleChanged,
+             .pwd_changed = &pwdChanged,
+-            .write_pty = null,
+-            .xtversion = null,
++            .write_pty = &writePty,
++            .xtversion = &xtversion,
+         };
+         return .{
+             .surface = surface,
+@@ -1123,6 +1124,56 @@ const HiveManual = struct {
+         return .denied;
+     }
+ 
++    /// Routes a terminal-generated reply through the same single ordered
++    /// write callback used for host-originated input (HiveManual has no
++    /// child PTY, so this is the only channel toward the host). Mirrors
++    /// termio.backend.Backend.queueWrite's `.manual` case so replies and
++    /// input share one path and one ordering guarantee.
++    fn writePty(handler: *terminal.TerminalStream.Handler, data: [:0]const u8) void {
++        const self = fromHandler(handler);
++        switch (self.surface.core_surface.io.backend) {
++            .manual => |manual| manual.callback(manual.context, data.ptr, data.len),
++            .exec => {},
++        }
++    }
++
++    /// DA1/DA2 values match termio/stream_handler.zig's exec-mode
++    /// reportDeviceAttributes exactly (same pinned Ghostty build): VT220
++    /// level 2 conformance, ANSI color, no clipboard feature (52) because
++    /// clipboardWrite above always denies.
++    fn deviceAttributes(handler: *terminal.TerminalStream.Handler) terminal.device_attributes.Attributes {
++        _ = handler;
++        return .{ .secondary = .{ .firmware_version = 10 } };
++    }
++
++    /// Matches Ghostty's own `enquiry-response` config default (""),
++    /// which reportEnquiry treats as no reply.
++    fn enquiry(handler: *terminal.TerminalStream.Handler) []const u8 {
++        _ = handler;
++        return "";
++    }
++
++    /// Matches termio/stream_handler.zig's reportXtversion: identify as
++    /// the pinned Ghostty engine build, not the libghostty-vt default.
++    fn xtversion(handler: *terminal.TerminalStream.Handler) []const u8 {
++        _ = handler;
++        return "ghostty " ++ build_config.version_string;
++    }
++
++    /// Reports the surface's real cell geometry (never guessed) for
++    /// XTWINOPS size queries (CSI 14/16/18 t).
++    fn sizeReport(handler: *terminal.TerminalStream.Handler) ?terminal.size_report.Size {
++        const self = fromHandler(handler);
++        const grid = self.surface.core_surface.size.grid();
++        const cell = self.surface.core_surface.size.cell;
++        return .{
++            .rows = grid.rows,
++            .columns = grid.columns,
++            .cell_width = cell.width,
++            .cell_height = cell.height,
++        };
++    }
++
+     fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
+         const alloc = self.surface.app.core_app.alloc;
+         switch (self.output_ranges.classify(bytes, stream_seq)) {
