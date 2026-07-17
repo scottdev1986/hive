@@ -15,6 +15,10 @@ const input = @import("../input.zig");
 const internal_os = @import("../os/main.zig");
 const renderer = @import("../renderer.zig");
 const terminal = @import("../terminal/main.zig");
+const clipboard = @import("../terminal/clipboard.zig");
+const c_terminal = @import("../terminal/c/terminal.zig");
+const GhosttyResult = @import("../terminal/c/result.zig").Result;
+const hive_checkpoint = @import("../hive_checkpoint.zig");
 const CoreApp = @import("../App.zig");
 const CoreInspector = @import("../inspector/main.zig").Inspector;
 const CoreSurface = @import("../Surface.zig");
@@ -23,6 +27,31 @@ const Config = configpkg.Config;
 const String = @import("../main_c.zig").String;
 
 const log = std.log.scoped(.embedded_window);
+
+const HiveEventKind = enum(c_int) {
+    invalidate = 1,
+    title = 2,
+    pwd = 3,
+    bell = 4,
+    clipboard_denied = 5,
+    close_request = 6,
+};
+
+const HiveEvent = extern struct {
+    type: HiveEventKind,
+    bytes: ?[*]const u8,
+    length: usize,
+};
+
+const HiveWriteFn = *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void;
+const HiveEventFn = *const fn (?*anyopaque, *const HiveEvent) callconv(.c) void;
+
+const HiveManualInit = struct {
+    event: HiveEventFn,
+    event_context: ?*anyopaque,
+};
+
+threadlocal var hive_manual_init: ?HiveManualInit = null;
 
 pub const resourcesDir = internal_os.resourcesDir;
 
@@ -270,6 +299,17 @@ pub const App = struct {
         comptime action: apprt.Action.Key,
         value: apprt.Action.Value(action),
     ) !bool {
+        if (comptime action == .close_window) switch (target) {
+            .app => {},
+            .surface => |core| {
+                const surface: *Surface = @fieldParentPtr("core_surface", core);
+                if (surface.hive_manual) |manual| {
+                    manual.emit(.close_request, "");
+                    return true;
+                }
+            },
+        };
+
         // Special case certain actions before they are sent to the
         // embedded apprt.
         self.performPreAction(target, action, value);
@@ -416,6 +456,7 @@ pub const Surface = struct {
     size: apprt.SurfaceSize,
     cursor_pos: apprt.CursorPos,
     inspector: ?*Inspector = null,
+    hive_manual: ?*HiveManual = null,
 
     /// The current title of the surface. The embedded apprt saves this so
     /// that getTitle works without the implementer needing to save it.
@@ -476,6 +517,7 @@ pub const Surface = struct {
             },
             .size = .{ .width = 800, .height = 600 },
             .cursor_pos = .{ .x = -1, .y = -1 },
+            .hive_manual = null,
         };
 
         // Add ourselves to the list of surfaces on the app.
@@ -586,6 +628,14 @@ pub const Surface = struct {
         );
         errdefer self.core_surface.deinit();
 
+        if (hive_manual_init) |manual_init| {
+            const manual = try app.core_app.alloc.create(HiveManual);
+            errdefer app.core_app.alloc.destroy(manual);
+            manual.* = try .init(self, manual_init);
+            errdefer manual.deinit();
+            self.hive_manual = manual;
+        }
+
         // If our options requested a specific font-size, set that.
         if (opts.font_size != 0) {
             var font_size = self.core_surface.font_size;
@@ -597,6 +647,12 @@ pub const Surface = struct {
     pub fn deinit(self: *Surface) void {
         // Shut down our inspector
         self.freeInspector();
+
+        if (self.hive_manual) |manual| {
+            manual.deinit();
+            self.app.core_app.alloc.destroy(manual);
+            self.hive_manual = null;
+        }
 
         // Free our title
         if (self.title) |v| self.app.core_app.alloc.free(v);
@@ -639,6 +695,10 @@ pub const Surface = struct {
     }
 
     pub fn close(self: *const Surface, process_alive: bool) void {
+        if (self.hive_manual) |manual| {
+            manual.emit(.close_request, "");
+            return;
+        }
         const func = self.app.opts.close_surface orelse {
             log.info("runtime embedder does not support closing a surface", .{});
             return;
@@ -986,6 +1046,154 @@ pub const Surface = struct {
     fn cursorPosToPixels(self: *const Surface, pos: apprt.CursorPos) !apprt.CursorPos {
         const scale = try self.getContentScale();
         return .{ .x = pos.x * scale.x, .y = pos.y * scale.y };
+    }
+};
+
+const HiveManual = struct {
+    surface: *Surface,
+    event: HiveEventFn,
+    event_context: ?*anyopaque,
+    stream: terminal.TerminalStream,
+    pending: std.ArrayList(u8) = .empty,
+    checkpoint_valid: bool = true,
+    output_ranges: hive_checkpoint.OutputRangeLedger = .{},
+
+    fn init(surface: *Surface, opts: HiveManualInit) !HiveManual {
+        var handler = surface.core_surface.io.terminal.vtHandler();
+        handler.effects = .{
+            .bell = &bell,
+            .clipboard_write = &clipboardWrite,
+            .color_scheme = null,
+            .device_attributes = null,
+            .enquiry = null,
+            .size = null,
+            .title_changed = &titleChanged,
+            .pwd_changed = &pwdChanged,
+            .write_pty = null,
+            .xtversion = null,
+        };
+        return .{
+            .surface = surface,
+            .event = opts.event,
+            .event_context = opts.event_context,
+            .stream = .initAlloc(surface.app.core_app.alloc, handler),
+        };
+    }
+
+    fn deinit(self: *HiveManual) void {
+        const alloc = self.surface.app.core_app.alloc;
+        self.stream.deinit();
+        self.pending.deinit(alloc);
+        self.output_ranges.deinit(alloc);
+    }
+
+    fn fromHandler(handler: *terminal.TerminalStream.Handler) *HiveManual {
+        const stream: *terminal.TerminalStream = @fieldParentPtr("handler", handler);
+        return @fieldParentPtr("stream", stream);
+    }
+
+    fn emit(self: *const HiveManual, event_type: HiveEventKind, bytes: []const u8) void {
+        const event: HiveEvent = .{
+            .type = event_type,
+            .bytes = if (bytes.len == 0) null else bytes.ptr,
+            .length = bytes.len,
+        };
+        self.event(self.event_context, &event);
+    }
+
+    fn bell(handler: *terminal.TerminalStream.Handler) void {
+        fromHandler(handler).emit(.bell, "");
+    }
+
+    fn titleChanged(handler: *terminal.TerminalStream.Handler) void {
+        const self = fromHandler(handler);
+        self.emit(.title, handler.terminal.getTitle() orelse "");
+    }
+
+    fn pwdChanged(handler: *terminal.TerminalStream.Handler) void {
+        const self = fromHandler(handler);
+        self.emit(.pwd, handler.terminal.getPwd() orelse "");
+    }
+
+    fn clipboardWrite(
+        handler: *terminal.TerminalStream.Handler,
+        _: clipboard.Write,
+    ) clipboard.WriteResult {
+        fromHandler(handler).emit(.clipboard_denied, "");
+        return .denied;
+    }
+
+    fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
+        const alloc = self.surface.app.core_app.alloc;
+        switch (self.output_ranges.classify(bytes, stream_seq)) {
+            .duplicate => return .success,
+            .invalid => return .invalid_value,
+            .accept => {},
+        }
+        self.pending.ensureUnusedCapacity(alloc, bytes.len) catch
+            return .out_of_memory;
+        self.output_ranges.commit(alloc, bytes, stream_seq) catch
+            return .out_of_memory;
+
+        const mutex = self.surface.core_surface.renderer_state.mutex;
+        mutex.lock();
+        hive_checkpoint.feed(
+            &self.stream,
+            &self.pending,
+            alloc,
+            &self.checkpoint_valid,
+            bytes,
+        );
+        self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+        mutex.unlock();
+        self.surface.core_surface.io.renderer_wakeup.notify() catch {};
+        self.emit(.invalidate, "");
+        return .success;
+    }
+
+    fn restore(self: *HiveManual, payload: []const u8, through_seq: u64) GhosttyResult {
+        const alloc = self.surface.app.core_app.alloc;
+        var snapshot = hive_checkpoint.decode(alloc, payload) catch |err| return switch (err) {
+            error.OutOfMemory => .out_of_memory,
+            error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+        };
+        var snapshot_owned = true;
+        defer if (snapshot_owned) snapshot.deinit(alloc);
+
+        var stream = hive_checkpoint.restoreStream(
+            &snapshot.terminal,
+            snapshot.handler,
+            snapshot.pending,
+            .readonly,
+        ) catch |err| return switch (err) {
+            error.OutOfMemory => .out_of_memory,
+            error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+        };
+        var stream_owned = true;
+        defer if (stream_owned) stream.deinit();
+        stream.handler.effects = self.stream.handler.effects;
+
+        const mutex = self.surface.core_surface.renderer_state.mutex;
+        mutex.lock();
+        self.stream.deinit();
+        self.pending.deinit(alloc);
+        self.surface.core_surface.io.terminal.deinit(alloc);
+        self.surface.core_surface.io.terminal = snapshot.terminal;
+        stream.handler.terminal = &self.surface.core_surface.io.terminal;
+        self.stream = stream;
+        self.pending = .{ .items = snapshot.pending, .capacity = snapshot.pending.len };
+        self.checkpoint_valid = true;
+        self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+        mutex.unlock();
+
+        self.output_ranges.reset(through_seq);
+        snapshot_owned = false;
+        stream_owned = false;
+        self.surface.core_surface.io.renderer_wakeup.notify() catch {};
+        self.emit(.title, self.surface.core_surface.io.terminal.getTitle() orelse "");
+        self.emit(.pwd, self.surface.core_surface.io.terminal.getPwd() orelse "");
+        self.emit(.invalidate, "");
+        return .success;
     }
 };
 
@@ -1548,6 +1756,90 @@ pub const CAPI = struct {
             log.err("error initializing surface err={}", .{err});
             return null;
         };
+    }
+
+    export fn hive_ghostty_engine_build_id_v1() [*:0]const u8 {
+        return c_terminal.engine_build_id();
+    }
+
+    export fn hive_ghostty_surface_new_manual_v1(
+        app_: ?*App,
+        opts_: ?*const apprt.Surface.Options,
+        write_: ?HiveWriteFn,
+        write_context: ?*anyopaque,
+        event_: ?HiveEventFn,
+        event_context: ?*anyopaque,
+    ) ?*Surface {
+        const app = app_ orelse return null;
+        const opts = opts_ orelse return null;
+        const write = write_ orelse return null;
+        const event = event_ orelse return null;
+        if (CoreSurface.hive_manual_backend != null or hive_manual_init != null)
+            return null;
+
+        CoreSurface.hive_manual_backend = .{
+            .context = write_context,
+            .callback = write,
+        };
+        hive_manual_init = .{
+            .event = event,
+            .event_context = event_context,
+        };
+        defer {
+            CoreSurface.hive_manual_backend = null;
+            hive_manual_init = null;
+        }
+        return app.newSurface(opts.*) catch null;
+    }
+
+    export fn hive_ghostty_surface_process_output_v1(
+        surface_: ?*Surface,
+        bytes_: ?[*]const u8,
+        length: usize,
+        stream_seq: u64,
+    ) GhosttyResult {
+        const surface = surface_ orelse return .invalid_value;
+        const manual = surface.hive_manual orelse return .invalid_value;
+        // An output range must carry bytes; null is invalid for every length.
+        const bytes = if (bytes_) |ptr| ptr[0..length] else return .invalid_value;
+        return manual.process(bytes, stream_seq);
+    }
+
+    export fn hive_ghostty_surface_restore_checkpoint_v1(
+        surface_: ?*Surface,
+        payload_: ?[*]const u8,
+        length: usize,
+        through_seq: u64,
+    ) GhosttyResult {
+        const surface = surface_ orelse return .invalid_value;
+        const manual = surface.hive_manual orelse return .invalid_value;
+        // A checkpoint is never empty; null is invalid for every length.
+        const payload = if (payload_) |ptr| ptr[0..length] else return .invalid_value;
+        return manual.restore(payload, through_seq);
+    }
+
+    export fn hive_ghostty_terminal_checkpoint_export_v1(
+        terminal_: c_terminal.Terminal,
+        alloc_fn: ?c_terminal.CheckpointAllocFn,
+        context: ?*anyopaque,
+        out_payload: ?*?[*]u8,
+        out_length: ?*usize,
+    ) GhosttyResult {
+        return c_terminal.checkpoint_export(
+            terminal_,
+            alloc_fn,
+            context,
+            out_payload,
+            out_length,
+        );
+    }
+
+    export fn hive_ghostty_terminal_checkpoint_import_v1(
+        terminal_: c_terminal.Terminal,
+        payload: ?[*]const u8,
+        length: usize,
+    ) GhosttyResult {
+        return c_terminal.checkpoint_import(terminal_, payload, length);
     }
 
     fn surface_new_(

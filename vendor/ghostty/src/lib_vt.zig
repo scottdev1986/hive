@@ -18,6 +18,8 @@ const builtin = @import("builtin");
 // parts of `terminal` that are not ready for public consumption
 // or are too Ghostty-internal.
 const terminal = @import("terminal/main.zig");
+const hive_checkpoint = @import("hive_checkpoint.zig");
+const hive_terminal_c = @import("terminal/c/terminal.zig");
 
 /// System interface for the terminal package.
 ///
@@ -88,6 +90,10 @@ pub const Mode = modes.Mode;
 pub const ModePacked = modes.ModePacked;
 pub const ModifyKeyFormat = terminal.ModifyKeyFormat;
 pub const ProtectedMode = terminal.ProtectedMode;
+
+comptime {
+    _ = hive_checkpoint;
+}
 pub const StatusLineType = terminal.StatusLineType;
 pub const StatusDisplay = terminal.StatusDisplay;
 pub const EraseDisplay = terminal.EraseDisplay;
@@ -267,6 +273,9 @@ comptime {
         @export(&c.terminal_mode_set, .{ .name = "ghostty_terminal_mode_set" });
         @export(&c.terminal_get, .{ .name = "ghostty_terminal_get" });
         @export(&c.terminal_get_multi, .{ .name = "ghostty_terminal_get_multi" });
+        @export(&hive_terminal_c.engine_build_id, .{ .name = "hive_ghostty_engine_build_id_v1" });
+        @export(&hive_terminal_c.checkpoint_export, .{ .name = "hive_ghostty_terminal_checkpoint_export_v1" });
+        @export(&hive_terminal_c.checkpoint_import, .{ .name = "hive_ghostty_terminal_checkpoint_import_v1" });
         @export(&c.terminal_select_word, .{ .name = "ghostty_terminal_select_word" });
         @export(&c.terminal_select_word_between, .{ .name = "ghostty_terminal_select_word_between" });
         @export(&c.terminal_select_line, .{ .name = "ghostty_terminal_select_line" });

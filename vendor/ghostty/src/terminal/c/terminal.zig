@@ -26,6 +26,7 @@ const style_c = @import("style.zig");
 const color = @import("../color.zig");
 const clipboard = @import("../clipboard.zig");
 const Result = @import("result.zig").Result;
+const hive_checkpoint = @import("../../hive_checkpoint.zig");
 
 const Handler = @import("../stream_terminal.zig").Handler;
 
@@ -37,6 +38,8 @@ const log = std.log.scoped(.terminal_c);
 const TerminalWrapper = struct {
     terminal: *ZigTerminal,
     stream: Stream,
+    checkpoint_pending: std.ArrayList(u8) = .empty,
+    checkpoint_valid: bool = true,
     effects: Effects = .{},
     tracked_grid_refs: std.AutoArrayHashMapUnmanaged(*grid_ref_tracked_c.TrackedGridRef, void) = .{},
 };
@@ -353,6 +356,17 @@ fn new_(
 
     // Setup our stream with trampolines always installed so that
     // setting C callbacks at any time takes effect immediately.
+    const handler = checkpointHandler(t);
+
+    wrapper.* = .{
+        .terminal = t,
+        .stream = .initAlloc(alloc, handler),
+    };
+
+    return wrapper;
+}
+
+fn checkpointHandler(t: *ZigTerminal) Stream.Handler {
     var handler: Stream.Handler = t.vtHandler();
     handler.effects = .{
         .write_pty = &Effects.writePtyTrampoline,
@@ -366,13 +380,7 @@ fn new_(
         .size = &Effects.sizeTrampoline,
         .clipboard_write = &Effects.clipboardWriteTrampoline,
     };
-
-    wrapper.* = .{
-        .terminal = t,
-        .stream = .initAlloc(alloc, handler),
-    };
-
-    return wrapper;
+    return handler;
 }
 
 pub fn vt_write(
@@ -381,7 +389,106 @@ pub fn vt_write(
     len: usize,
 ) callconv(lib.calling_conv) void {
     const wrapper = terminal_ orelse return;
-    wrapper.stream.nextSlice(ptr[0..len]);
+    hive_checkpoint.feed(
+        &wrapper.stream,
+        &wrapper.checkpoint_pending,
+        wrapper.terminal.gpa(),
+        &wrapper.checkpoint_valid,
+        ptr[0..len],
+    );
+}
+
+pub const CheckpointAllocFn = *const fn (
+    ?*anyopaque,
+    usize,
+    usize,
+) callconv(lib.calling_conv) ?*anyopaque;
+
+pub fn engine_build_id() callconv(lib.calling_conv) [*:0]const u8 {
+    return hive_checkpoint.buildIdHex();
+}
+
+pub fn checkpoint_export(
+    terminal_: Terminal,
+    alloc_fn_: ?CheckpointAllocFn,
+    context: ?*anyopaque,
+    out_payload_: ?*?[*]u8,
+    out_length_: ?*usize,
+) callconv(lib.calling_conv) Result {
+    const out_payload = out_payload_ orelse return .invalid_value;
+    const out_length = out_length_ orelse return .invalid_value;
+    out_payload.* = null;
+    out_length.* = 0;
+    const wrapper = terminal_ orelse return .invalid_value;
+    const alloc_fn = alloc_fn_ orelse return .invalid_value;
+    if (!wrapper.checkpoint_valid) return .out_of_memory;
+
+    const alloc = wrapper.terminal.gpa();
+    const payload = hive_checkpoint.encode(
+        alloc,
+        wrapper.terminal,
+        &wrapper.stream,
+        wrapper.checkpoint_pending.items,
+    ) catch |err| return switch (err) {
+        error.OutOfMemory => .out_of_memory,
+        error.CheckpointTooLarge => .out_of_space,
+        error.InvalidCheckpoint => .invalid_value,
+    };
+    defer alloc.free(payload);
+    const memory = alloc_fn(context, payload.len, 1) orelse
+        return .out_of_memory;
+    const result: [*]u8 = @ptrCast(memory);
+    @memcpy(result[0..payload.len], payload);
+    out_payload.* = result;
+    out_length.* = payload.len;
+    return .success;
+}
+
+pub fn checkpoint_import(
+    terminal_: Terminal,
+    payload_: ?[*]const u8,
+    length: usize,
+) callconv(lib.calling_conv) Result {
+    const wrapper = terminal_ orelse return .invalid_value;
+    // A checkpoint is never empty; null is invalid for every length.
+    const payload = if (payload_) |ptr| ptr[0..length] else return .invalid_value;
+    const alloc = wrapper.terminal.gpa();
+    var snapshot = hive_checkpoint.decode(alloc, payload) catch |err| return switch (err) {
+        error.OutOfMemory => .out_of_memory,
+        error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+    };
+    var snapshot_owned = true;
+    defer if (snapshot_owned) snapshot.deinit(alloc);
+
+    var stream = hive_checkpoint.restoreStream(
+        &snapshot.terminal,
+        snapshot.handler,
+        snapshot.pending,
+        .readonly,
+    ) catch |err| return switch (err) {
+        error.OutOfMemory => .out_of_memory,
+        error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+    };
+    var stream_owned = true;
+    defer if (stream_owned) stream.deinit();
+    stream.handler.effects = checkpointHandler(&snapshot.terminal).effects;
+
+    const t = wrapper.terminal;
+    for (wrapper.tracked_grid_refs.keys()) |ref| ref.terminal = null;
+    wrapper.stream.deinit();
+    wrapper.checkpoint_pending.deinit(alloc);
+    t.deinit(alloc);
+    t.* = snapshot.terminal;
+    stream.handler.terminal = t;
+    wrapper.stream = stream;
+    wrapper.checkpoint_pending = .{
+        .items = snapshot.pending,
+        .capacity = snapshot.pending.len,
+    };
+    wrapper.checkpoint_valid = true;
+    snapshot_owned = false;
+    stream_owned = false;
+    return .success;
 }
 
 pub fn compression_activity(
@@ -981,6 +1088,7 @@ pub fn free(terminal_: Terminal) callconv(lib.calling_conv) void {
     for (wrapper.tracked_grid_refs.keys()) |ref| ref.terminal = null;
     wrapper.tracked_grid_refs.deinit(alloc);
     wrapper.stream.deinit();
+    wrapper.checkpoint_pending.deinit(alloc);
     t.deinit(alloc);
     alloc.destroy(t);
     alloc.destroy(wrapper);
@@ -3393,6 +3501,100 @@ test "resize pixel overflow saturates" {
     const zt = t.?.terminal;
     try testing.expectEqual(std.math.maxInt(u32), zt.width_px);
     try testing.expectEqual(std.math.maxInt(u32), zt.height_px);
+}
+
+test "checkpoint C ABI uses caller allocator and rejects malformed payload" {
+    const AllocState = struct {
+        memory: ?[]u8 = null,
+        calls: usize = 0,
+
+        fn alloc(
+            context: ?*anyopaque,
+            length: usize,
+            alignment: usize,
+        ) callconv(lib.calling_conv) ?*anyopaque {
+            const self: *@This() = @ptrCast(@alignCast(context orelse return null));
+            if (alignment != 1 or self.memory != null) return null;
+            self.memory = testing.allocator.alloc(u8, length) catch return null;
+            self.calls += 1;
+            return self.memory.?.ptr;
+        }
+    };
+
+    const build_id = std.mem.span(engine_build_id());
+    try testing.expectEqual(@as(usize, 64), build_id.len);
+    for (build_id) |byte| try testing.expect(std.ascii.isHex(byte));
+
+    var source: Terminal = null;
+    try testing.expectEqual(Result.success, new(
+        &lib.alloc.test_allocator,
+        &source,
+        .{ .cols = 20, .rows = 5, .max_scrollback = 10_000 },
+    ));
+    defer free(source);
+    const source_bytes = "before\r\n\x1b]2;saved\x07\x1b[31";
+    vt_write(source, source_bytes, source_bytes.len);
+
+    var payload: ?[*]u8 = @ptrFromInt(1);
+    var length: usize = 99;
+    try testing.expectEqual(
+        Result.invalid_value,
+        checkpoint_export(null, &AllocState.alloc, null, &payload, &length),
+    );
+    try testing.expectEqual(@as(?[*]u8, null), payload);
+    try testing.expectEqual(@as(usize, 0), length);
+
+    var state: AllocState = .{};
+    try testing.expectEqual(
+        Result.success,
+        checkpoint_export(source, &AllocState.alloc, &state, &payload, &length),
+    );
+    defer testing.allocator.free(state.memory.?);
+    try testing.expectEqual(@as(usize, 1), state.calls);
+    try testing.expect(length > 0);
+
+    var restored: Terminal = null;
+    try testing.expectEqual(Result.success, new(
+        &lib.alloc.test_allocator,
+        &restored,
+        .{ .cols = 20, .rows = 5, .max_scrollback = 0 },
+    ));
+    defer free(restored);
+    vt_write(restored, "sentinel", 8);
+
+    for (0..length) |truncated| {
+        try testing.expectEqual(
+            Result.invalid_value,
+            checkpoint_import(restored, payload, truncated),
+        );
+    }
+
+    const first = payload.?[0];
+    payload.?[0] ^= 0xff;
+    try testing.expectEqual(
+        Result.invalid_value,
+        checkpoint_import(restored, payload, length),
+    );
+    const unchanged = try restored.?.terminal.plainString(testing.allocator);
+    defer testing.allocator.free(unchanged);
+    try testing.expectEqualStrings("sentinel", unchanged);
+
+    payload.?[0] = first;
+    try testing.expectEqual(
+        Result.success,
+        checkpoint_import(restored, payload, length),
+    );
+    vt_write(source, "mred", 4);
+    vt_write(restored, "mred", 4);
+    const expected = try source.?.terminal.plainString(testing.allocator);
+    defer testing.allocator.free(expected);
+    const actual = try restored.?.terminal.plainString(testing.allocator);
+    defer testing.allocator.free(actual);
+    try testing.expectEqualStrings(expected, actual);
+    try testing.expectEqualStrings(
+        source.?.terminal.getTitle().?,
+        restored.?.terminal.getTitle().?,
+    );
 }
 
 test "resize disables synchronized output" {

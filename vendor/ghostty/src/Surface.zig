@@ -54,6 +54,10 @@ pub const min_window_height_cells: u32 = 4;
 /// given time. `activate_key_table` calls after this are ignored.
 const max_active_key_tables = 8;
 
+/// Set only while the embedded C runtime constructs a main-thread-confined
+/// Hive surface. The value is consumed synchronously by init.
+pub threadlocal var hive_manual_backend: ?termio.backend.Manual = null;
+
 /// Unique ID used to identify this surface for IPC purposes. It is
 /// exposed to the commands running in surfaces as the environment variable
 /// GHOSTTY_SURFACE_ID. It must not be zero as zero is used to incicate a null
@@ -645,37 +649,46 @@ pub fn init(
             std.fmt.bufPrint(&buf, "0x{x:0>16}", .{self.id}) catch unreachable,
         );
 
-        // Initialize our IO backend
-        var io_exec = try termio.Exec.init(alloc, .{
-            .command = command,
-            .env = env,
-            .env_override = config.env,
-            .shell_integration = config.@"shell-integration",
-            .shell_integration_features = config.@"shell-integration-features",
-            .cursor_blink = config.@"cursor-style-blink",
-            .working_directory = if (config.@"working-directory") |wd| wd.value() else null,
-            .resources_dir = global_state.resources_dir.host(),
-            .term = config.term,
-            .rt_pre_exec_info = .init(config),
-            .rt_post_fork_info = .init(config),
-        });
-        errdefer io_exec.deinit();
-
         // Initialize our IO mailbox
         var io_mailbox = try termio.Mailbox.initSPSC(alloc);
         errdefer io_mailbox.deinit(alloc);
+
+        const backend: termio.Backend = if (hive_manual_backend) |manual|
+            .{ .manual = manual }
+        else backend: {
+            var io_exec = try termio.Exec.init(alloc, .{
+                .command = command,
+                .env = env,
+                .env_override = config.env,
+                .shell_integration = config.@"shell-integration",
+                .shell_integration_features = config.@"shell-integration-features",
+                .cursor_blink = config.@"cursor-style-blink",
+                .working_directory = if (config.@"working-directory") |wd| wd.value() else null,
+                .resources_dir = global_state.resources_dir.host(),
+                .term = config.term,
+                .rt_pre_exec_info = .init(config),
+                .rt_post_fork_info = .init(config),
+            });
+            errdefer io_exec.deinit();
+            break :backend .{ .exec = io_exec };
+        };
 
         try termio.Termio.init(&self.io, alloc, .{
             .size = size,
             .full_config = config,
             .config = try termio.Termio.DerivedConfig.init(alloc, config),
-            .backend = .{ .exec = io_exec },
+            .backend = backend,
             .mailbox = io_mailbox,
             .renderer_state = &self.renderer_state,
             .renderer_wakeup = render_thread.wakeup,
             .renderer_mailbox = render_thread.mailbox,
             .surface_mailbox = .{ .surface = self, .app = app_mailbox },
         });
+        if (hive_manual_backend != null) {
+            if (self.io.thread_enter_state) |state| state.destroy();
+            self.io.thread_enter_state = null;
+            env.deinit();
+        }
     }
     // Outside the block, IO has now taken ownership of our temporary state
     // so we can just defer this and not the subcomponents.
@@ -1313,6 +1326,7 @@ fn childExitedAbnormally(
     // Build up our command for the error message
     const command = try std.mem.join(alloc, " ", switch (self.io.backend) {
         .exec => |*exec| exec.subprocess.args,
+        .manual => unreachable,
     });
     const runtime_str = try std.fmt.allocPrint(alloc, "{d} ms", .{info.runtime_ms});
 
