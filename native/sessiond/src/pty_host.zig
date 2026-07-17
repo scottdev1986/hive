@@ -201,12 +201,25 @@ pub const PtyHost = struct {
             null;
         defer if (cwd_z) |z| self.allocator.free(z);
 
+        // R1: CLOEXEC exec-barrier pipe — real evidence of the exec transition.
+        // Write end is FD_CLOEXEC: successful execve auto-closes it → parent reads EOF;
+        // failed execve → child write()s errno then _exit (async-signal-safe).
+        var exec_pipe: [2]c_int = .{ -1, -1 };
+        if (c.pipe(&exec_pipe) != 0) return error.SpawnFailed;
+        errdefer {
+            if (exec_pipe[0] >= 0) _ = c.close(exec_pipe[0]);
+            if (exec_pipe[1] >= 0) _ = c.close(exec_pipe[1]);
+        }
+        const wfd_flags = c.fcntl(exec_pipe[1], c.F_GETFD);
+        if (wfd_flags >= 0) _ = c.fcntl(exec_pipe[1], c.F_SETFD, wfd_flags | c.FD_CLOEXEC);
+
         const pid = c.fork();
         if (pid < 0) return error.SpawnFailed;
 
         if (pid == 0) {
             // ── child: async-signal-safe only ──────────────────────────────
             _ = c.close(master);
+            _ = c.close(exec_pipe[0]); // close read end; keep write end for barrier
             // New session; slave becomes controlling terminal.
             _ = c.setsid();
             _ = c.ioctl(slave, c.TIOCSCTTY, @as(c_int, 0));
@@ -224,12 +237,19 @@ pub const PtyHost = struct {
             const argv_c: [*c]const [*c]u8 = @ptrCast(argv_owned.ptrs);
             const env_c: [*c]const [*c]u8 = @ptrCast(std.c.environ);
             _ = c.execve(file, argv_c, env_c);
+            // execve failed — write errno to the barrier pipe, then exit.
+            // write() and _exit are async-signal-safe.
+            const e: c_int = std.c._errno().*;
+            _ = c.write(exec_pipe[1], @ptrCast(&e), @sizeOf(c_int));
             c._exit(127);
         }
 
         // ── parent ─────────────────────────────────────────────────────────
         _ = c.close(slave);
         slave = -1; // disarm errdefer for slave (B1)
+        _ = c.close(exec_pipe[1]);
+        exec_pipe[1] = -1; // only the read end remains for the barrier
+
         // CLOEXEC on master so later execs in the host don't leak it.
         const flags = c.fcntl(master, c.F_GETFD);
         if (flags >= 0) _ = c.fcntl(master, c.F_SETFD, flags | c.FD_CLOEXEC);
@@ -247,32 +267,51 @@ pub const PtyHost = struct {
         self.input_seq = 0;
         self.write_queue.clearRetainingCapacity();
 
-        // Start-token + identity AT spawn — never invent without observation.
-        // B2: path match is the VERDICT (exec succeeded), not just a break
-        // condition. A .present without post-exec path is the pre-exec image or
-        // a failed-exec _exit(127) zombie — not a successful spawn.
-        const want_name = std.fs.path.basename(spec.argv[0]);
+        // R1: barrier read — EOF (0) ⇒ exec succeeded; sizeof(c_int) ⇒ exec failed.
+        var exec_errno: c_int = 0;
+        const barrier_n = c.read(exec_pipe[0], @ptrCast(&exec_errno), @sizeOf(c_int));
+        _ = c.close(exec_pipe[0]);
+        exec_pipe[0] = -1;
+        if (barrier_n < 0) {
+            self.forceKillChild();
+            self.closeMaster();
+            self.spawned = false;
+            return error.SpawnFailed;
+        }
+        if (barrier_n == @sizeOf(c_int)) {
+            // Child reported execve failure with errno — not a live provider.
+            self.forceKillChild();
+            self.closeMaster();
+            self.spawned = false;
+            return error.ExecFailed;
+        }
+        if (barrier_n != 0) {
+            self.forceKillChild();
+            self.closeMaster();
+            self.spawned = false;
+            return error.SpawnFailed;
+        }
+        // barrier_n == 0: write end closed by successful execve (CLOEXEC).
+
+        // Identity tuple from process_inspector — record whatever proc_pidpath
+        // returns WITHOUT gating liveness on a basename match (shebang shims
+        // resolve to node/sh/etc.; path match was the R1 false-negative).
         var identity: process_inspector.ProcessIdentity = undefined;
-        var matched = false;
+        var observed = false;
         var attempts: usize = 0;
         while (attempts < 100) : (attempts += 1) {
             switch (process_inspector.observeProcess(self.pid)) {
                 .present => |id| {
-                    if (id.executable_len > 0 and
-                        std.mem.indexOf(u8, id.executablePath(), want_name) != null)
-                    {
-                        identity = id;
-                        matched = true;
-                        break;
-                    }
+                    identity = id;
+                    observed = true;
+                    break;
                 },
                 .absent, .unobservable => {},
             }
             std.Thread.sleep(2 * std.time.ns_per_ms);
         }
-        if (!matched) {
-            // Positive post-exec evidence failed — tear down; never report a false spawn.
-            // master/slave locals are -1; closeMaster owns the master fd (no double-close).
+        if (!observed) {
+            // Exec succeeded per pipe but identity unreadable — fail closed.
             self.forceKillChild();
             self.closeMaster();
             self.spawned = false;
@@ -536,8 +575,8 @@ test "spawn cat: readback proves pid/pgid/start-token/executable" {
     try testing.expect(rb.pgid != 0);
     try testing.expect(rb.start_token.seconds > 0 or rb.start_token.microseconds > 0);
     try testing.expect(rb.executable_len > 0);
-    // Resolved path contains cat (proc_pidpath; may be /bin/cat or a firmlink).
-    try testing.expect(std.mem.indexOf(u8, rb.executablePath(), "cat") != null);
+    // Executable is whatever proc_pidpath reports (not basename-matched).
+    try testing.expect(rb.executable_len > 0);
     try testing.expect(rb.geometry.eql(defaultGeometry()));
     // Live observation — not invented.
     switch (process_inspector.observeProcess(rb.pid)) {
@@ -826,23 +865,55 @@ test "100 MiB ordered read digest (SLO-04 seed)" {
     try testing.expectEqualSlices(u8, &expected, &got);
 }
 
-// B2 + B1 positive control: spawn of a NONEXISTENT binary must NOT return a
-// SpawnReadback claiming a live child (acting≠being). Also drives the
-// IdentityUnavailable teardown path (fd errdefer disarm / no double-close).
-test "negative spawn: nonexistent binary returns IdentityUnavailable" {
+// Exec-barrier: nonexistent binary → child write()s errno → ExecFailed.
+// Must NOT return a SpawnReadback claiming a live child (acting≠being).
+test "negative spawn: nonexistent binary returns ExecFailed" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    // Unique path that cannot exist.
     const missing = "/tmp/hive-pty-host-no-such-binary-9f3c2e1a";
-    try testing.expectError(error.IdentityUnavailable, host.spawn(.{
+    try testing.expectError(error.ExecFailed, host.spawn(.{
         .argv = &[_][]const u8{missing},
         .geometry = defaultGeometry(),
     }));
-    // No live claim left on the host after failed spawn.
     try testing.expect(!host.spawned);
     try testing.expect(host.master_fd < 0);
     try testing.expect(host.pid <= 0);
+}
+
+// R1 positive control: shebang/shim whose RESOLVED image ≠ argv[0] basename
+// must still SUCCEED. Old basename-match code wrongly SIGKILLed these.
+test "R1: shebang shim spawn succeeds when resolved image != argv basename" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    // Wrapper named "provider-shim" that execs /bin/cat — resolved image is cat.
+    const shim_name = "provider-shim";
+    {
+        const f = try tmp.dir.createFile(shim_name, .{ .mode = 0o755 });
+        defer f.close();
+        try f.writeAll("#!/bin/sh\nexec /bin/cat \"$@\"\n");
+    }
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const abs = try tmp.dir.realpath(shim_name, &path_buf);
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    const rb = try host.spawn(.{
+        .argv = &[_][]const u8{abs},
+        .geometry = defaultGeometry(),
+    });
+    // THE ASSERTION THAT FAILS AGAINST BASENAME-MATCH CODE:
+    // want_name would be "provider-shim" but proc_pidpath is ".../sh" or ".../cat".
+    try testing.expect(host.spawned);
+    try testing.expect(rb.pid > 1);
+    try testing.expect(rb.start_token.seconds > 0 or rb.start_token.microseconds > 0);
+    // Live child — not IdentityUnavailable / SIGKILL.
+    switch (process_inspector.observeProcess(rb.pid)) {
+        .present => {},
+        .absent, .unobservable => return error.TestUnexpectedResult,
+    }
 }
 
 test "successful spawn still has post-exec identity evidence" {
@@ -854,6 +925,6 @@ test "successful spawn still has post-exec identity evidence" {
         .geometry = defaultGeometry(),
     });
     try testing.expect(rb.start_token.seconds != 0 or rb.start_token.microseconds != 0);
-    try testing.expect(std.mem.indexOf(u8, rb.executablePath(), "echo") != null);
+    try testing.expect(rb.executable_len > 0);
     _ = host.waitExit(true) catch {};
 }
