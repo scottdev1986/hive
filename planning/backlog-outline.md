@@ -1,7 +1,7 @@
 # Hive rebuild — milestone-structured backlog outline
 
 Lead planner: astrid · drafted 2026-07-17 · board: github.com/users/scottdev1986/projects/11 (write access pending `project` scope)
-Reviewed by: atlas (sequencing guardrail + vendor belief-injection finding folded in)
+Reviewed by: atlas (sequencing guardrail + vendor belief-injection finding + full R3 second opinion folded in: P0-1 contract audit → new story M1-A0; P0-2 M1/M2 ownership boundary; P0-3 atomic cut; P0-4 old-build pre-cut drain; P1 behavioral scope; tightened dependency edges; 3-way approval matrix; Q2 revised to main-at-cut + bootstrap binary)
 
 Every story below inherits the HARD PRINCIPLES (stated in each story's DoD when written):
 external research drives, code and design docs are reference not truth; external citations required on every terminal/agent story; gut-then-rebuild, no legacy shims; parallel wherever safe; paired SPEC + doc-cleanup task, docs describe behavior/contracts never file paths or line numbers; production-grade; project-agnostic (works on any repo, any stack); LIVE PROOF to close; UI (split-horizon) last and only consumes proven features.
@@ -23,9 +23,12 @@ Exit: open the dev build → a blank native terminal that looks excellent; creat
 
 Parallel tracks (∥ = concurrent):
 
+**M1/M2 ownership boundary (atlas R3 P0-2, adopted):** M1 owns generic command launch, PTY byte I/O, locator/lifecycle/recovery, and a neutral test fixture — vendor binaries are launched MANUALLY for terminal qualification. M2 owns provider launch profiles, silent beliefs, approval semantics, authenticated status, and control-message receipt. M2 provider-profile work may develop once A2 exists but closes only after the cut.
+
 **Track A — session host (Zig/daemon)**
-- A1 Qualify sessiond against external conformance: PTY lifecycle (posix_openpt/openpty/forkpty, kevent EVFILT_PROC), crash/adoption/termination matrices, bounded journal + replay. Sources: Apple man pages, ghostty libghostty-vt docs, conformance-test-ids.json (reference).
-- A2 `sessiond-host.ts` — the production `SessionHost` backend speaking the sessiond protocol; daemon wiring (server, delivery, teardown, recovery) behind the existing neutral contract.
+- A0 Terminal-host contract audit & freeze (atlas R3 P0-1): the current `SessionHost` contract is not neutral (Hive identity, provider enum, worktree/grant/Workspace policy, tmux hostKind baked in). Re-derive the boundary from external PTY/session behavior: host accepts opaque session identity + argv/cwd/env/fds/geometry, exposes byte I/O/resize/attach/replay/inspect/exit/reap; all Hive policy lives above the seam. Output: externally-validated minimal protocol/contract FREEZE — the thing A2 builds against.
+- A1 Qualify sessiond against external conformance: PTY lifecycle (posix_openpt/openpty/forkpty, kevent EVFILT_PROC notification vs waitpid evidence), crash/adoption/termination matrices, bounded journal + replay. Sources: Apple man pages, ghostty libghostty-vt docs, conformance-test-ids.json (reference). May split: contract-freeze-facing minimum first (unblocks A2), deep qualification continues in parallel.
+- A2 `sessiond-host.ts` — the production `SessionHost` backend speaking the sessiond protocol; daemon wiring (server, delivery, teardown, recovery) behind the A0-frozen contract — never against today's unproven contract.
 - A3 Input arbiter live-proof: one ordered write path, human input claim acquired synchronously, no automation timeout steal (invariants I3/I4).
 - A4 Close/reconnect semantics live-proof: visibility lease, renderer crash → bounded replay; Workspace quit → verified termination of every provider tree (I2).
 
@@ -39,9 +42,9 @@ Parallel tracks (∥ = concurrent):
 - C2 Packaging: signed, notarized, self-contained universal build; clean-machine install with tmux absent (I9).
 
 **Cut**
-- STORY-001 + STORY-002 execute (Removal Gate reached) → M1 exit proof recorded.
+- STORY-001 + STORY-002 execute as ONE atomic merge train (Removal Gate reached); full matrix re-run on the post-deletion tree → M1 exit proof recorded. Pre-cut drain performed by the OLD/bootstrap build (refuse cut while any legacy session survives; dev DB/runtime state archived + destructively reset — tmux identity rows are not migrated).
 
-Dependencies: A2 needs A1; B2 needs B1 and A2; cut needs A3/A4/B2/B3; C1/C2 anytime after B1.
+Dependency edges (tightened per atlas R3): A0→A1(min freeze)→A2 → A3; A2+B1→B2; A2+B2→A4 (host-only crash proofs may run earlier); A2+A3+A4+B1+B2→B3; B2→C1 close (design exploration earlier); B1+A2+B2→C2 integrated packaging, clean-machine acceptance closes only on the cut tree; A3+A4+B2+B3+C1+C2 → atomic cut → re-run B3+C2+matrix → M1 exit. Max parallelism: A0/A1 ∥ B1 ∥ C1-exploration; early starts allowed, closes gated.
 
 ---
 
@@ -54,12 +57,14 @@ Exit: for each of claude code / codex / grok × {normal, yolo}: agent boots insi
   - claude: `--append-system-prompt-file <0600 file>` (interactive-mode confirmed; code.claude.com/docs/en/cli-usage#system-prompt-flags). Normal `--permission-mode default`; yolo `--dangerously-skip-permissions` (permission-modes doc).
   - codex: `developer_instructions` via ephemeral 0600 `$CODEX_HOME/<name>.config.toml` + `--profile <name>` (not AGENTS.md, not model_instructions_file which REPLACES base instructions; developers.openai.com/codex/config-reference + config-advanced). Normal `-a on-request -s workspace-write`; yolo `--yolo`.
   - grok (research RESOLVED): `--rules` (alias `--append-system-prompt`) appends to system prompt, carried in ACP initialize metadata, not transcript-visible (docs.x.ai/build/cli/reference, modes-and-commands; xai-org/grok-build source). Never `--system-prompt-override` (replaces xAI base prompt). Normal: explicit `--permission-mode default` + explicit sandbox (sandbox default is OFF); yolo `--always-approve`/`--yolo`. Caveat: argv visible via `ps` — belief in argv is silent-in-TUI but not process-inspection-private; if that matters (Q6), use ACP initialize metadata or upstream a file surface.
-  - Live proof (all vendors, from atlas): unique nonce in belief; capture ALL PTY bytes and assert nonce never renders; neutral first prompt elicits belief-dependent behavior or an authenticated status call carrying the nonce; normal-mode run produces a real approval state on a harmless write+shell, yolo run executes without one. Green exit ≠ proof.
+  - **Approval modes are a 3-way matrix, not normal/yolo (atlas R3, adopted):** approval and sandbox are independent dimensions; run {manual, sandboxed-autonomous, unsafe-bypass} per vendor where supported, naming unsupported distinctions explicitly. Claude: manual `--permission-mode default` / eligible auto `--permission-mode auto` / unsafe `--dangerously-skip-permissions`. Codex: `-a on-request -s workspace-write` / `-a never -s workspace-write` / `--yolo`. Grok: `--permission-mode default` + explicit sandbox / `--always-approve` + explicit restrictive sandbox / approval bypass with sandbox off (macOS child-network caveat stands). The brief's "yolo" maps to unsafe-bypass; sandboxed-autonomous is added coverage.
+  - Grok exception to "0600 files over argv": no `--rules-file` exists — belief rides argv (ps-visible) or the ACP initialize-metadata path (Q6). "Carried in ACP metadata" is evidence/inference, NOT a vendor secrecy guarantee — the raw-PTY nonce proof remains the authority.
+  - Live proof (all vendors, from atlas): unique nonce in belief; capture ALL PTY bytes and assert nonce never renders; neutral first prompt elicits belief-dependent behavior or an authenticated status call carrying the nonce; manual-mode run produces a real approval state on a harmless write+shell, autonomous/bypass runs execute without one. Green exit ≠ proof. Pin vendor versions in evidence.
 - **S2.3 Status pipeline**: StatusEnvelope v2 (source/freshness/confidence), `hive_update_status`, statusline-fact ingestion on the new spine; live agent demonstrates EVERY current status promise (working/idle/approval/paused/stuck/done/failed/unknown) observed end-to-end; terminal pixels are never status truth (I6).
 - **S2.4 Message delivery over the new spine**: normal/steer/urgent/critical delivered through the sessiond arbiter per-vendor with measured receipt; truthful degradation stated per vendor (flat queen→workers policy only; hierarchy comes in M4).
 - **S2.5 Vendor-TUI terminal conformance**: alt-screen, kitty keyboard, mouse reports, bracketed paste, OSC 52 — per-vendor corpus runs inside the new terminal.
 
-Dependencies: all need the M1 cut; per-vendor stories are mutually ∥; S2.3/S2.4 ∥ with S2.1 after A2 exists.
+Dependencies (contradiction resolved per atlas R3 P0-2): M2 story DEVELOPMENT may start once M1-A2 exists; M2 story CLOSURE requires the M1 cut (post-deletion tree). Per-vendor stories mutually ∥; S2.3/S2.4 ∥ with the vendor stories.
 
 ---
 
@@ -100,7 +105,7 @@ Exit = every Split Horizon feature-ledger row (A run awareness/hierarchy, B term
 ## Open questions / user decisions (surfaced, not decided)
 
 Q1 Board access: RESOLVED — `project` scope granted mid-session; read+write confirmed, stories created on the board.
-Q2 Where does the gutted state land: main immediately at the M1 cut (the fleet's running production Hive keeps its old binary until M2?), or a long-lived integration branch until M2? Affects Hive-develops-Hive during the gap. My recommendation: integration branch until M2 exit, then one landing — but this is the user's call.
+Q2 Where does the gutted state land — JOINT RECOMMENDATION REVISED (atlas R3, I concur): **main at the M1 cut + isolated bootstrap binary**, NOT a long-lived integration branch. Precedent: self-hosting toolchains preserve the last known-good TOOL as a bootstrap artifact, not old source in the new mainline (Rust stage0: rustc-dev-guide.rust-lang.org/building/bootstrapping/what-bootstrapping-does.html; Go GOROOT_BOOTSTRAP: go.dev/doc/install/source; GitHub Flow on main-as-definitive: docs.github.com/en/get-started/using-github/github-flow). Concrete rule: after post-cut tests/matrix pass, land the cut on main; keep a checksummed OLD Hive release running from a separate binary with its own HIVE_HOME/DB/socket/ports and no access to new runtime state, used only to orchestrate M2 development; never auto-deploy the M1 binary to production. If old/new runtime state cannot be isolated, that is a blocker to solve first; only then fall back to a time-boxed, continuously-rebased integration branch with identical CI. Awaiting user/queen ratification.
 Q3 STORY-002 interpretation: confirm "agent TUI code" = SwiftTerm/tmux-attach hosting path (my primary reading), not the CLI status-text emitters.
 Q4 Confirm the qualify-don't-presume stance on in-tree sessiond/HiveTerminalKit (vs. mandated from-scratch rewrite).
 Q5 M1 "beautiful" bar: propose design checklist + engineer screenshot review as the acceptance mechanism — who signs off?
