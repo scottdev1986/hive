@@ -9,6 +9,7 @@ export * from "./message-envelope";
 export * from "./quota";
 export * from "./routing-derivation";
 export * from "./routing-policy";
+export * from "./provider-manifest";
 export * from "./session-protocol";
 export * from "./status-envelope";
 export * from "./token-usage";
