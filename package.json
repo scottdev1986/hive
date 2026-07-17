@@ -14,6 +14,9 @@
     "test": "bun test && bun run test:sessiond",
     "test:sessiond": "native/sessiond/test.sh",
     "dev": "bun run src/cli.ts",
+    "bootstrap:install": "bootstrap/hive-bootstrap install",
+    "bootstrap:verify": "bootstrap/hive-bootstrap verify",
+    "bootstrap:proof": "bun run bootstrap/prove-isolation.ts",
     "build:release": "bun run src/release/build.ts",
     "release:plan": "bun run src/release/plan-cli.ts"
   },
