@@ -1033,7 +1033,6 @@ fn parseLocator(arena: std.mem.Allocator, wire: WireLocator) !broker.Locator {
 fn parseRegistration(
     allocator: std.mem.Allocator,
     payload: []const u8,
-    expected_expiry_ns: u64,
 ) !ParsedRegistration {
     if (!protocol.validateControlPayload(
         allocator,
@@ -1050,7 +1049,10 @@ fn parseRegistration(
     errdefer arena.deinit();
     const a = arena.allocator();
     const wire = parsed.value.record;
-    _ = try validatedHostLeaseRemaining(wire.visibility.expiresAt);
+    // HostLaunchReadback uses this field as a validated remaining duration.
+    // The broker replaces it with its own absolute monotonic deadline only
+    // after Registry admission.
+    const lease_remaining_ns = try validatedHostLeaseRemaining(wire.visibility.expiresAt);
     var registration: HostRegistration = .{
         .record = .{
             .locator = try parseLocator(a, wire.locator),
@@ -1085,7 +1087,7 @@ fn parseRegistration(
                     wire.visibility.openTerminalRevision,
                     10,
                 ),
-                .expires_mono_ns = expected_expiry_ns,
+                .expires_mono_ns = lease_remaining_ns,
             },
             .output_seq = try std.fmt.parseInt(u64, wire.outputSeq, 10),
             .checkpoint_seq = try std.fmt.parseInt(u64, wire.checkpointSeq, 10),
@@ -1110,9 +1112,8 @@ fn parseRegistration(
     };
 }
 
-/// Launcher-side registration exchange. `expected_expiry_ns` is in the
-/// broker timer domain; the host independently enforces its own 15-second
-/// monotonic deadline.
+/// Launcher-side registration exchange. The host independently enforces its
+/// own 15-second monotonic deadline.
 const PendingRegistrationReadback = struct {
     parsed: ParsedRegistration,
     request_header: protocol.Header,
@@ -1126,7 +1127,6 @@ fn beginInheritedRegistration(
     adoption_secret: [32]u8,
     broker_build_id: []const u8,
     instance_id: []const u8,
-    expected_expiry_ns: u64,
 ) !PendingRegistrationReadback {
     try writeBootMessage(stream, spec_json, initial_input, adoption_secret);
     const hello = try std.json.Stringify.valueAlloc(allocator, .{
@@ -1181,7 +1181,7 @@ fn beginInheritedRegistration(
     if (register_frame.header.type_code != generated.frame_type.host_register or
         register_frame.header.flags != 0)
         return error.InvalidHostRegister;
-    var result = try parseRegistration(allocator, register_frame.payload, expected_expiry_ns);
+    var result = try parseRegistration(allocator, register_frame.payload);
     errdefer result.deinit(allocator);
     if (!std.mem.eql(u8, result.registration.record.locator.instance_id, instance_id) or
         !std.mem.eql(u8, result.registration.record.executable_build_hash, welcome.value.buildId) or
@@ -1217,7 +1217,6 @@ pub fn completeInheritedRegistration(
     adoption_secret: [32]u8,
     broker_build_id: []const u8,
     instance_id: []const u8,
-    expected_expiry_ns: u64,
 ) !ParsedRegistration {
     var pending = try beginInheritedRegistration(
         allocator,
@@ -1227,7 +1226,6 @@ pub fn completeInheritedRegistration(
         adoption_secret,
         broker_build_id,
         instance_id,
-        expected_expiry_ns,
     );
     errdefer pending.parsed.deinit(allocator);
     try acceptPendingRegistration(stream, pending.request_header);
@@ -1302,6 +1300,22 @@ fn killAndWait(pid: i32) void {
             .CHILD => return,
             else => return,
         }
+    }
+}
+
+fn waitForChildExit(pid: i32, timeout_ns: u64) bool {
+    var timer = std.time.Timer.start() catch return false;
+    while (true) {
+        var status: c_int = 0;
+        const waited = c.waitpid(pid, &status, c.WNOHANG);
+        if (waited == pid) return true;
+        if (waited < 0) switch (std.posix.errno(waited)) {
+            .INTR => continue,
+            .CHILD => return true,
+            else => return false,
+        };
+        if (timer.read() >= timeout_ns) return false;
+        std.Thread.sleep(std.time.ns_per_ms);
     }
 }
 
@@ -1498,8 +1512,16 @@ const LaunchClient = struct {
     allocator: std.mem.Allocator,
     parsed: ParsedRegistration,
     wire: broker.WireHostClient,
+    host_pid: i32,
+    pending_id: ?broker.PendingRegistration,
+    pending_stream: ?std.net.Stream,
+    pending_header: protocol.Header,
 
     fn deinit(self: *LaunchClient) void {
+        if (self.pending_stream) |stream| {
+            stream.close();
+            killAndWait(self.host_pid);
+        }
         // Closing broker control must not kill a successfully registered host.
         // The host's independent visibility lease owns broker-crash cleanup.
         self.wire.deinit();
@@ -1518,18 +1540,16 @@ const LaunchClient = struct {
 pub const ProductionHostLauncher = struct {
     allocator: std.mem.Allocator,
     canonical_home: []u8,
-    expected_expiry_ns: u64,
+    next_pending_id: broker.PendingRegistration = 1,
     clients: std.ArrayList(*LaunchClient) = .{},
 
     pub fn init(
         allocator: std.mem.Allocator,
         hive_home: []const u8,
-        expected_expiry_ns: u64,
     ) !ProductionHostLauncher {
         return .{
             .allocator = allocator,
             .canonical_home = try std.fs.cwd().realpathAlloc(allocator, hive_home),
-            .expected_expiry_ns = expected_expiry_ns,
         };
     }
 
@@ -1544,7 +1564,11 @@ pub const ProductionHostLauncher = struct {
     }
 
     pub fn launcher(self: *ProductionHostLauncher) broker.HostLauncher {
-        return .{ .context = self, .launch_fn = launchCallback };
+        return .{
+            .context = self,
+            .launch_fn = launchCallback,
+            .finalize_fn = finalizeCallback,
+        };
     }
 
     fn launchCallback(
@@ -1554,7 +1578,11 @@ pub const ProductionHostLauncher = struct {
         spec_json: []const u8,
         initial_input: []const u8,
         adoption_secret: [32]u8,
+        broker_now_ns: u64,
     ) ?broker.HostLaunchReadback {
+        // This value is intentionally non-authoritative in the host process's
+        // independent monotonic clock domain.
+        _ = broker_now_ns;
         const self: *ProductionHostLauncher = @ptrCast(@alignCast(context));
         return self.launchOne(
             allocator,
@@ -1590,9 +1618,10 @@ pub const ProductionHostLauncher = struct {
         var child = try spawnHostProcess(allocator, executable);
         var child_owned = true;
         errdefer if (child_owned) killAndWait(child.pid);
-        defer child.stream.close();
+        var stream_owned = true;
+        errdefer if (stream_owned) child.stream.close();
         try setControlTimeout(child.stream.handle);
-        var parsed = try completeInheritedRegistration(
+        var pending = try beginInheritedRegistration(
             allocator,
             child.stream,
             spec_json,
@@ -1600,17 +1629,16 @@ pub const ProductionHostLauncher = struct {
             adoption_secret,
             build_id,
             instance_id,
-            self.expected_expiry_ns,
         );
         var parsed_owned = true;
-        errdefer if (parsed_owned) parsed.deinit(allocator);
-        if (parsed.registration.record.host_pid != child.pid or
-            !std.mem.eql(u8, parsed.registration.record.locator.session_id, spec.value.locator.sessionId))
+        errdefer if (parsed_owned) pending.parsed.deinit(allocator);
+        if (pending.parsed.registration.record.host_pid != child.pid or
+            !std.mem.eql(u8, pending.parsed.registration.record.locator.session_id, spec.value.locator.sessionId))
             return error.HostIdentityMismatch;
         const observed = try broker.inspectProcess(child.pid);
         var token_storage: [64]u8 = undefined;
         const token = try broker.formatStartToken(observed.start_token, &token_storage);
-        if (!std.mem.eql(u8, token, parsed.registration.record.host_start_token) or
+        if (!std.mem.eql(u8, token, pending.parsed.registration.record.host_start_token) or
             !std.mem.eql(u8, observed.executablePath(), executable))
             return error.HostIdentityMismatch;
 
@@ -1636,29 +1664,96 @@ pub const ProductionHostLauncher = struct {
             host_directory,
             socket_path,
             socket_evidence,
-            parsed.registration.record,
+            pending.parsed.registration.record,
             build_id,
         );
         errdefer wire.deinit();
-        const created_payload = try allocator.dupe(u8, parsed.created_payload);
+        const created_payload = try allocator.dupe(u8, pending.parsed.created_payload);
         errdefer allocator.free(created_payload);
+
+        const pending_id = self.next_pending_id;
+        self.next_pending_id = std.math.add(
+            broker.PendingRegistration,
+            pending_id,
+            1,
+        ) catch return error.PendingRegistrationExhausted;
 
         const client = try self.allocator.create(LaunchClient);
         errdefer self.allocator.destroy(client);
         client.* = .{
             .allocator = allocator,
-            .parsed = parsed,
+            .parsed = pending.parsed,
             .wire = wire,
+            .host_pid = child.pid,
+            .pending_id = pending_id,
+            .pending_stream = child.stream,
+            .pending_header = pending.request_header,
         };
         try self.clients.append(self.allocator, client);
         parsed_owned = false;
         child_owned = false;
+        stream_owned = false;
         return .{
             .record = client.parsed.registration.record,
             .record_json = client.parsed.record_json,
             .created_payload = created_payload,
             .host = client.control(),
+            .pending = pending_id,
         };
+    }
+
+    fn finalizeCallback(
+        context: *anyopaque,
+        pending: broker.PendingRegistration,
+        decision: broker.HostLaunchDecision,
+    ) bool {
+        const self: *ProductionHostLauncher = @ptrCast(@alignCast(context));
+        return self.finalizeOne(pending, decision) catch false;
+    }
+
+    fn finalizeOne(
+        self: *ProductionHostLauncher,
+        pending: broker.PendingRegistration,
+        decision: broker.HostLaunchDecision,
+    ) !bool {
+        var index: usize = 0;
+        while (index < self.clients.items.len) : (index += 1) {
+            if (self.clients.items[index].pending_id == pending) break;
+        }
+        if (index == self.clients.items.len) return false;
+        const client = self.clients.items[index];
+        const stream = client.pending_stream orelse return false;
+        client.pending_id = null;
+        client.pending_stream = null;
+
+        switch (decision) {
+            .admitted => {
+                defer stream.close();
+                acceptPendingRegistration(stream, client.pending_header) catch return false;
+                return true;
+            },
+            .rejected => |code| {
+                const wrote_rejection = blk: {
+                    writeHostFailure(
+                        client.allocator,
+                        stream,
+                        client.pending_header,
+                        code,
+                    ) catch break :blk false;
+                    break :blk true;
+                };
+                stream.close();
+                const exited_cleanly = waitForChildExit(
+                    client.host_pid,
+                    generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms,
+                );
+                if (!exited_cleanly) killAndWait(client.host_pid);
+                _ = self.clients.orderedRemove(index);
+                client.deinit();
+                self.allocator.destroy(client);
+                return wrote_rejection and exited_cleanly;
+            },
+        }
     }
 };
 
@@ -3541,7 +3636,6 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
         secret,
         "broker-build-a",
         "instance-a",
-        15 * std.time.ns_per_s,
     );
     defer parsed.deinit(std.testing.allocator);
     thread.join();
@@ -3555,9 +3649,10 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
         fixtureRegistration().record.locator.session_id,
         parsed.registration.record.locator.session_id,
     );
-    try std.testing.expectEqual(
-        @as(u64, 15 * std.time.ns_per_s),
-        parsed.registration.record.visibility.expires_mono_ns,
+    try std.testing.expect(
+        parsed.registration.record.visibility.expires_mono_ns > 0 and
+            parsed.registration.record.visibility.expires_mono_ns <=
+                generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
     );
 }
 
@@ -3589,7 +3684,6 @@ test "pending HOST_REGISTER remains unpublished after a typed rejection" {
         @splat(0x6b),
         "broker-build-a",
         "instance-a",
-        15 * std.time.ns_per_s,
     );
     defer pending.parsed.deinit(std.testing.allocator);
     try writeHostFailure(
