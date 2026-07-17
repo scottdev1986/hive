@@ -786,6 +786,7 @@ const WireHello = struct {
     instanceId: []const u8,
     protocol: struct { major: u8, minMinor: u8, maxMinor: u8 },
     clientRole: []const u8,
+    grantToken: ?[]const u8 = null,
 };
 
 const WireWelcome = struct {
@@ -2304,15 +2305,30 @@ pub const HostCore = struct {
     }
 };
 
-/// Serves one authenticated broker RPC on an already-accepted host.sock
-/// connection. Kernel identity is captured before HELLO; broker JSON claims
-/// are used only as cross-checks. The broker opens one connection per RPC.
-pub fn serveHostConnection(
+const ExpectedPeerRole = enum { broker, viewer };
+
+const AcceptedHello = struct {
+    allocator: std.mem.Allocator,
+    build_id: []u8,
+    grant_token: ?[]u8,
+
+    fn deinit(self: *AcceptedHello) void {
+        self.allocator.free(self.build_id);
+        if (self.grant_token) |token| {
+            std.crypto.secureZero(u8, token);
+            self.allocator.free(token);
+        }
+        self.* = undefined;
+    }
+};
+
+fn acceptHostHello(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
     now_ns: u64,
-) !void {
+    expected_role: ExpectedPeerRole,
+) !?AcceptedHello {
     const peer = try broker.inspectPeer(stream.handle);
     if (peer.uid != std.posix.getuid() or
         peer.gid != @as(u32, @intCast(c.getgid())))
@@ -2328,13 +2344,8 @@ pub fn serveHostConnection(
             hello_frame.payload,
         ))
     {
-        try writeHostFailure(
-            allocator,
-            stream,
-            hello_frame.header,
-            .malformed_frame,
-        );
-        return;
+        try writeHostFailure(allocator, stream, hello_frame.header, .malformed_frame);
+        return null;
     }
     var hello = try std.json.parseFromSlice(WireHello, allocator, hello_frame.payload, .{
         .ignore_unknown_fields = true,
@@ -2343,19 +2354,32 @@ pub fn serveHostConnection(
     if (hello.value.protocol.major != generated.protocol_major or
         hello.value.protocol.minMinor > generated.protocol_minor or
         hello.value.protocol.maxMinor < generated.protocol_minor or
-        !std.mem.eql(u8, hello.value.buildId, core.broker_build_id))
+        (expected_role == .broker and
+            !std.mem.eql(u8, hello.value.buildId, core.broker_build_id)))
     {
         try writeHostFailure(allocator, stream, hello_frame.header, .protocol_mismatch);
-        return;
+        return null;
     }
     if (!std.mem.eql(u8, hello.value.instanceId, core.registration.record.locator.instance_id)) {
         try writeHostFailure(allocator, stream, hello_frame.header, .instance_mismatch);
-        return;
+        return null;
     }
-    if (!std.mem.eql(u8, hello.value.clientRole, "broker")) {
+    if (!std.mem.eql(u8, hello.value.clientRole, @tagName(expected_role)) or
+        (expected_role == .viewer and hello.value.grantToken == null))
+    {
         try writeHostFailure(allocator, stream, hello_frame.header, .forbidden);
-        return;
+        return null;
     }
+    const build_id = try allocator.dupe(u8, hello.value.buildId);
+    errdefer allocator.free(build_id);
+    const grant_token = if (hello.value.grantToken) |token|
+        try allocator.dupe(u8, token)
+    else
+        null;
+    errdefer if (grant_token) |token| {
+        std.crypto.secureZero(u8, token);
+        allocator.free(token);
+    };
     try writeHostWelcome(
         allocator,
         stream,
@@ -2364,6 +2388,51 @@ pub fn serveHostConnection(
         core.registration.record.executable_build_hash,
         now_ns,
     );
+    return .{
+        .allocator = allocator,
+        .build_id = build_id,
+        .grant_token = grant_token,
+    };
+}
+
+/// Authenticates the existing generated viewer HELLO and consumes the existing
+/// generated HOST_ATTACH request. The caller retains the stream and begins the
+/// snapshot/output sequence once those generated payload contracts exist.
+pub fn authorizeViewerConnection(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    core: *HostCore,
+    now_ns: u64,
+) !ViewerAuthorization {
+    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .viewer)) orelse
+        return error.ViewerHandshakeRefused;
+    defer hello.deinit();
+    var request = try readRequiredFrame(allocator, stream);
+    defer request.deinit(allocator);
+    if (request.header.flags != 0 or
+        request.header.type_code != generated.frame_type.host_attach)
+    {
+        try writeHostFailure(allocator, stream, request.header, .malformed_frame);
+        return error.InvalidHostAttach;
+    }
+    return core.authorizeViewerAttach(
+        request.payload,
+        hello.grant_token.?,
+        now_ns,
+    );
+}
+
+/// Serves one authenticated broker RPC on an already-accepted host.sock
+/// connection. Kernel identity is captured before HELLO; broker JSON claims
+/// are used only as cross-checks. The broker opens one connection per RPC.
+pub fn serveHostConnection(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    core: *HostCore,
+    now_ns: u64,
+) !void {
+    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .broker)) orelse return;
+    defer hello.deinit();
 
     var request = try readRequiredFrame(allocator, stream);
     defer request.deinit(allocator);
@@ -2375,7 +2444,7 @@ pub fn serveHostConnection(
         generated.frame_type.host_adopt => {
             const response = core.adopt(
                 request.payload,
-                hello.value.buildId,
+                hello.build_id,
                 now_ns,
             ) catch |err| {
                 try writeHostFailure(
@@ -3441,6 +3510,54 @@ fn hostAttachPayload(
     return std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = root }, .{});
 }
 
+const ViewerConnectionThread = struct {
+    stream: std.net.Stream,
+    core: *HostCore,
+    now_ns: u64,
+    authorization: ?ViewerAuthorization = null,
+    failure: ?anyerror = null,
+
+    fn run(self: *@This()) void {
+        self.authorization = authorizeViewerConnection(
+            std.heap.c_allocator,
+            self.stream,
+            self.core,
+            self.now_ns,
+        ) catch |err| {
+            self.failure = err;
+            return;
+        };
+    }
+};
+
+fn writeTestViewerHello(
+    stream: std.net.Stream,
+    registration: HostRegistration,
+    token: []const u8,
+) !void {
+    const hello = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .buildId = "viewer-build-a",
+        .instanceId = registration.record.locator.instance_id,
+        .protocol = .{
+            .major = generated.protocol_major,
+            .minMinor = generated.protocol_minor,
+            .maxMinor = generated.protocol_minor,
+        },
+        .clientRole = "viewer",
+        .grantToken = token,
+    }, .{});
+    defer std.testing.allocator.free(hello);
+    try protocol.writeFrame(stream, .{
+        .minor = generated.protocol_minor,
+        .type_code = generated.frame_type.hello,
+        .flags = 0,
+        .payload_length = @intCast(hello.len),
+        .request_id = 1,
+        .stream_seq = 0,
+    }, hello);
+}
+
 test "HOST_ATTACH consumes an exact one-use viewer grant" {
     const token = "viewer-capability-a";
     var token_hash: [32]u8 = undefined;
@@ -3489,6 +3606,58 @@ test "HOST_ATTACH consumes an exact one-use viewer grant" {
         error.InvalidViewerGrant,
         core.authorizeViewerAttach(attach_payload, token, 3_000),
     );
+}
+
+test "viewer wire authenticates HELLO and validates HOST_ATTACH before streaming" {
+    const token = "viewer-capability-wire-a";
+    var token_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(token, &token_hash, .{});
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.heap.c_allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    const registration_payload = try grantRegistrationPayload(
+        std.testing.allocator,
+        token_hash,
+        generated.limits.attach_grant_timeout_ms,
+    );
+    defer std.testing.allocator.free(registration_payload);
+    const accepted = try core.registerGrant(registration_payload, 2_000);
+    defer std.heap.c_allocator.free(accepted);
+
+    var sockets = try socketPair();
+    defer sockets[0].close();
+    defer sockets[1].close();
+    var server: ViewerConnectionThread = .{
+        .stream = sockets[1],
+        .core = &core,
+        .now_ns = 3_000,
+    };
+    const thread = try std.Thread.spawn(.{}, ViewerConnectionThread.run, .{&server});
+    errdefer thread.join();
+    errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+    try writeTestViewerHello(sockets[0], registration, token);
+    try readTestWelcome(sockets[0]);
+    const attach = try hostAttachPayload(
+        std.testing.allocator,
+        registration.record.locator,
+        token,
+    );
+    defer std.testing.allocator.free(attach);
+    try writeTestHostRequest(sockets[0], generated.frame_type.host_attach, attach);
+    thread.join();
+
+    try std.testing.expect(server.failure == null);
+    var authorization = &(server.authorization orelse return error.MissingViewerAuthorization);
+    defer authorization.deinit(std.heap.c_allocator);
+    try std.testing.expectEqualStrings("viewer-a", authorization.viewer_id);
+    try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
 }
 
 test "host.sock GRANT_REGISTER stores only the one-use hash" {
