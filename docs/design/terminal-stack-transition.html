@@ -1028,6 +1028,7 @@ export type InputReceipt = Readonly&lt;{
   evidenceAt: string; diagnosticId: string | null;
 }&gt;;
 export type TerminationRequest = Readonly&lt;{
+  // Domain idempotency key (`req_…`), distinct from the §20 header correlation requestId.
   mode: "graceful" | "immediate"; reason: string; requestId: string;
 }&gt;;
 export type TerminationResult = Readonly&lt;{

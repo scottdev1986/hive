@@ -2329,6 +2329,7 @@ fn serveDaemonConnection(
     const hello_frame = switch (first) {
         .frame => |frame| frame,
         .failure => |failure| {
+            // Bad magic has no correlatable v1 header, so a zero id intentionally gets a bare FIN.
             if (failure.request_id != 0) try writeFailure(allocator, stream, .{
                 .minor = generated.protocol_max_minor,
                 .type_code = generated.frame_type.hello,
@@ -2703,6 +2704,15 @@ test "daemon UDS returns a correlated typed header failure before closing" {
         generated.wire_schema.error_payload,
         response.frame.payload,
     ));
+    const ErrorPayload = struct { code: []const u8 };
+    var error_payload = try std.json.parseFromSlice(ErrorPayload, std.testing.allocator, response.frame.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer error_payload.deinit();
+    var code_storage: [64]u8 = undefined;
+    const tag = @tagName(protocol.WireError.protocol_mismatch);
+    const expected_code = std.ascii.upperString(code_storage[0..tag.len], tag);
+    try std.testing.expectEqualStrings(expected_code, error_payload.value.code);
     thread.join();
     try std.testing.expect(!harness.failed.load(.acquire));
 }
@@ -2794,8 +2804,35 @@ test "socket substitution fails closed" {
     var substituted = expected;
     substituted.inode = 3;
     try std.testing.expectEqual(protocol.WireError.unauthenticated, verifySocket(expected, substituted).?.code);
+}
+
+test "post-connect socket guard rejects a substituted filesystem socket" {
+    var root_storage: [48]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/hs{x}", .{std.crypto.random.int(u32)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var directory = try std.fs.openDirAbsolute(root, .{});
+    defer directory.close();
+    const socket_path = try std.fs.path.join(std.testing.allocator, &.{ root, "host.sock" });
+    defer std.testing.allocator.free(socket_path);
+    const socket_path_z = try std.testing.allocator.dupeZ(u8, socket_path);
+    defer std.testing.allocator.free(socket_path_z);
+    const address = try std.net.Address.initUnix(socket_path);
+
+    var original = try address.listen(.{});
+    defer original.deinit();
+    if (c.chmod(socket_path_z.ptr, 0o600) != 0) return error.SocketModeFailed;
+    const before = try socketEvidenceAt(directory, "host.sock");
+
+    try directory.deleteFile("host.sock");
+    var replacement = try address.listen(.{});
+    defer replacement.deinit();
+    if (c.chmod(socket_path_z.ptr, 0o600) != 0) return error.SocketModeFailed;
+    const after = try socketEvidenceAt(directory, "host.sock");
+
+    try std.testing.expect(!std.meta.eql(before, after));
     try std.testing.expectEqual(
         protocol.WireError.unauthenticated,
-        verifyPostConnectSocket(expected, expected, substituted).?.code,
+        verifyPostConnectSocket(before, before, after).?.code,
     );
 }
