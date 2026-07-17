@@ -16,11 +16,17 @@ import HiveGhosttyC
 /// classification returns before touching parser state, pending buffer,
 /// or the renderer mutex — failures cannot poison later calls.
 final class OrderedOutputEngineTests: XCTestCase {
+    /// Fails loudly rather than XCTSkip: this is the story's mandated
+    /// LIVE-PROOF gate, so a run where every test silently skips must not
+    /// report as "N tests, 0 failures" (matches the fix applied to
+    /// TerminalReplyCorpusTests/AppWakeupLifecycleTests after cross-vendor
+    /// review 2026-07-17 caught exactly this failure mode).
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
             return try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         } catch {
-            throw XCTSkip("manual surface unavailable in this environment: \(error)")
+            XCTFail("real manual surface required for gate 5 live proof, got: \(error)")
+            throw error
         }
     }
 
