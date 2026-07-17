@@ -52,6 +52,7 @@ pub fn write(
         return error.InitialInputTooLarge;
 
     var header: [header_bytes]u8 = @splat(0);
+    defer std.crypto.secureZero(u8, header[16..48]);
     @memcpy(header[0..magic.len], magic);
     std.mem.writeInt(u32, header[4..8], @intCast(spec_json.len), .big);
     std.mem.writeInt(u32, header[8..12], @intCast(initial_input.len), .big);
@@ -63,6 +64,7 @@ pub fn write(
 
 pub fn read(allocator: std.mem.Allocator, reader: anytype) !Message {
     var header: [header_bytes]u8 = undefined;
+    defer std.crypto.secureZero(u8, header[16..48]);
     try reader.readNoEof(&header);
     if (!std.mem.eql(u8, header[0..magic.len], magic) or
         !std.mem.allEqual(u8, header[12..16], 0))
