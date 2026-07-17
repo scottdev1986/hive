@@ -4,9 +4,126 @@ const pty_host = @import("pty_host");
 const c = @cImport({
     @cInclude("errno.h");
     @cInclude("fcntl.h");
+    @cInclude("sys/event.h");
     @cInclude("sys/ioctl.h");
+    @cInclude("sys/time.h");
+    @cInclude("sys/wait.h");
     @cInclude("unistd.h");
 });
+
+test "pending A1/A: replacement starts as foreground session leader on one PTY" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    var host = try pty_host.PtyHost.init(std.testing.allocator);
+    defer host.deinit();
+    const outcome = try host.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            "result=0; set -- $(/bin/stty size <&0); [ -t 0 ] && [ -t 1 ] && [ -t 2 ] || result=81; [ \"$1\" = 37 ] && [ \"$2\" = 111 ] || result=84; /bin/sleep 0.2; exit \"$result\"",
+        },
+        .envp = &[_][]const u8{},
+        .geometry = .{ .columns = 111, .rows = 37, .width_px = 1776, .height_px = 999 },
+    });
+    const readback = switch (outcome) {
+        .running => |running| running,
+        .exec_failed => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(readback.pid, readback.session);
+    try std.testing.expectEqual(readback.pid, readback.pgid);
+    var foreground_pgid: c_int = -1;
+    try std.testing.expectEqual(
+        @as(c_int, 0),
+        c.ioctl(host.master_fd, c.TIOCGPGRP, &foreground_pgid),
+    );
+    try std.testing.expectEqual(@as(c_int, readback.pgid), foreground_pgid);
+    const active = try host.waitExit(false);
+    try std.testing.expectEqual(pty_host.ReapAuthority.direct_parent, active.authority);
+    try std.testing.expectEqual(pty_host.ExitState.running, active.state);
+    try std.testing.expect(!active.reaped);
+    var exit = active;
+    for (0..200) |_| {
+        exit = try host.waitExit(false);
+        if (exit.reaped) break;
+        if (host.readAvailable()) |chunk| {
+            _ = chunk;
+        } else |_| {}
+        std.Thread.sleep(5 * std.time.ns_per_ms);
+    }
+    try std.testing.expect(exit.reaped);
+    try std.testing.expectEqual(@as(?u8, 0), exit.exit_code);
+}
+
+test "pending A1/F: EVFILT_PROC exit notification is followed by waitpid evidence" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    try std.testing.expect(@hasDecl(pty_host, "ReapAuthority"));
+    try std.testing.expect(@hasDecl(pty_host, "ExitState"));
+    var host = try pty_host.PtyHost.init(std.testing.allocator);
+    defer host.deinit();
+    const outcome = try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "/bin/sleep 0.2; exit 23" },
+        .envp = &[_][]const u8{},
+        .geometry = .{ .columns = 80, .rows = 24 },
+    });
+    switch (outcome) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+
+    const queue = c.kqueue();
+    try std.testing.expect(queue >= 0);
+    defer _ = c.close(queue);
+    var change: c.struct_kevent = .{
+        .ident = @intCast(host.pid),
+        .filter = @intCast(c.EVFILT_PROC),
+        .flags = @intCast(c.EV_ADD | c.EV_ONESHOT),
+        .fflags = @intCast(c.NOTE_EXIT),
+        .data = 0,
+        .udata = null,
+    };
+    var event: c.struct_kevent = undefined;
+    var timeout: c.struct_timespec = .{ .tv_sec = 2, .tv_nsec = 0 };
+    try std.testing.expectEqual(
+        @as(c_int, 1),
+        c.kevent(queue, &change, 1, &event, 1, &timeout),
+    );
+    try std.testing.expectEqual(@as(i16, @intCast(c.EVFILT_PROC)), event.filter);
+    try std.testing.expect(event.fflags & @as(u32, @intCast(c.NOTE_EXIT)) != 0);
+
+    const exit = try host.waitExit(true);
+    try std.testing.expectEqual(pty_host.ReapAuthority.direct_parent, exit.authority);
+    try std.testing.expectEqual(pty_host.ExitState.exited, exit.state);
+    try std.testing.expect(exit.reaped);
+    try std.testing.expectEqual(@as(?u8, 23), exit.exit_code);
+}
+
+test "pending A1/F: lost parent wait authority is unknown rather than fabricated exit" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    var host = try pty_host.PtyHost.init(std.testing.allocator);
+    defer host.deinit();
+    const outcome = try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "/bin/sleep 0.2; exit 29" },
+        .envp = &[_][]const u8{},
+        .geometry = .{ .columns = 80, .rows = 24 },
+    });
+    switch (outcome) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+    var stolen_status: c_int = 0;
+    try std.testing.expectEqual(
+        host.pid,
+        @as(i32, @intCast(c.waitpid(host.pid, &stolen_status, 0))),
+    );
+    const exit = try host.waitExit(false);
+    try std.testing.expectEqual(pty_host.ReapAuthority.unavailable, exit.authority);
+    try std.testing.expectEqual(pty_host.ExitState.unknown, exit.state);
+    try std.testing.expect(!exit.reaped);
+    try std.testing.expect(exit.exit_code == null);
+    host.pid = -1;
+}
 
 test "pending A1/B: launch failures carry layer and OS code evidence" {
     try std.testing.expect(@hasDecl(pty_host, "LaunchFailureEvidence"));

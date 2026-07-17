@@ -1894,6 +1894,87 @@ const ProviderTermination = struct {
     }
 };
 
+/// Routes root-child waits through PtyHost so tree termination cannot consume
+/// the wait status without recording it in the terminal-host exit evidence.
+const ProviderTerminationPlatform = struct {
+    delegate: process_inspector.Platform,
+    pty: *pty_host.PtyHost,
+    root_pid: i32,
+    root_exit: ?pty_host.ExitEvidence = null,
+
+    fn platform(self: *ProviderTerminationPlatform) process_inspector.Platform {
+        return .{
+            .context = self,
+            .monoNowFn = monoNow,
+            .sleepFn = sleep,
+            .killFn = kill,
+            .observeFn = observe,
+            .waitNoHangFn = waitNoHang,
+            .listChildrenFn = listChildren,
+        };
+    }
+
+    fn monoNow(context: *anyopaque) u64 {
+        const self: *ProviderTerminationPlatform = @ptrCast(@alignCast(context));
+        return self.delegate.monoNow();
+    }
+
+    fn sleep(context: *anyopaque, ns: u64) void {
+        const self: *ProviderTerminationPlatform = @ptrCast(@alignCast(context));
+        self.delegate.sleep(ns);
+    }
+
+    fn kill(context: *anyopaque, pid: i32, signal: i32) bool {
+        const self: *ProviderTerminationPlatform = @ptrCast(@alignCast(context));
+        return self.delegate.kill(pid, signal);
+    }
+
+    fn observe(context: *anyopaque, pid: i32) process_inspector.ObserveResult {
+        const self: *ProviderTerminationPlatform = @ptrCast(@alignCast(context));
+        return self.delegate.observe(pid);
+    }
+
+    fn waitNoHang(context: *anyopaque, pid: i32) bool {
+        const self: *ProviderTerminationPlatform = @ptrCast(@alignCast(context));
+        if (pid != self.root_pid) return self.delegate.waitNoHang(pid);
+        if (self.root_exit) |exit| {
+            if (exit.reaped) return true;
+        }
+        const exit = self.pty.waitExit(false) catch {
+            self.root_exit = .{
+                .authority = .unavailable,
+                .state = .unknown,
+                .reaped = false,
+            };
+            return false;
+        };
+        self.root_exit = exit;
+        return exit.reaped;
+    }
+
+    fn listChildren(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        pid: i32,
+    ) anyerror![]i32 {
+        const self: *ProviderTerminationPlatform = @ptrCast(@alignCast(context));
+        return self.delegate.listChildren(allocator, pid);
+    }
+
+    fn finishExit(self: *ProviderTerminationPlatform, hang: bool) pty_host.ExitEvidence {
+        if (self.root_exit) |exit| {
+            if (exit.reaped) return exit;
+        }
+        const exit = self.pty.waitExit(hang) catch return .{
+            .authority = .unavailable,
+            .state = .unknown,
+            .reaped = false,
+        };
+        self.root_exit = exit;
+        return exit;
+    }
+};
+
 fn deliverGracefulAction(binding: TerminationBinding) !void {
     const bytes = binding.graceful_action orelse return;
     if (bytes.len == 0) return;
@@ -1940,9 +2021,14 @@ fn terminateProvider(
             graceful_action_error = @errorName(err);
         };
     }
-    var platform = process_inspector.RealPlatform.init();
+    var real_platform = process_inspector.RealPlatform.init();
+    var termination_platform: ProviderTerminationPlatform = .{
+        .delegate = real_platform.platform(),
+        .pty = binding.pty,
+        .root_pid = root.pid,
+    };
     var tree = try process_inspector.terminateTree(
-        platform.platform(),
+        termination_platform.platform(),
         allocator,
         root.pid,
         try parseStartToken(root.start_token),
@@ -1950,9 +2036,7 @@ fn terminateProvider(
     );
     errdefer tree.deinit(allocator);
     binding.pty.closeMaster();
-    const exit: pty_host.ExitEvidence = binding.pty.waitExit(false) catch .{
-        .reaped = false,
-    };
+    const exit = termination_platform.finishExit(tree.state == .terminated);
     return .{
         .tree = tree,
         .exit = exit,
@@ -4654,6 +4738,7 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
     );
     defer std.testing.allocator.free(final);
     try std.testing.expect(std.mem.indexOf(u8, final, "\"state\":\"terminated\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, final, "\"waitObserved\":true") != null);
     try std.testing.expect(std.mem.indexOf(u8, final, "\"outputSeq\":\"0\"") != null);
     try std.testing.expect(switch (process_inspector.observeProcess(sentinel)) {
         .present => true,

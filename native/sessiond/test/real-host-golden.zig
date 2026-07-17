@@ -232,9 +232,10 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .ignore_unknown_fields = true,
     });
     defer parsed_final.deinit();
-    // terminateTree reaps first; false here does not mean the provider survived.
+    // The PTY owner records the direct-child wait status even when tree
+    // termination triggers the wait.
     if (!std.mem.eql(u8, parsed_final.value.state, "terminated") or
-        parsed_final.value.waitObserved or
+        !parsed_final.value.waitObserved or
         parsed_final.value.survivors.len != 0 or
         parsed_final.value.errors.len != 0)
         return error.InvalidFinalEvidence;

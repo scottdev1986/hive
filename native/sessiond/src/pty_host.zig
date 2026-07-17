@@ -154,7 +154,20 @@ pub const ReadChunk = struct {
     bytes: []const u8,
 };
 
+pub const ReapAuthority = enum {
+    direct_parent,
+    unavailable,
+};
+
+pub const ExitState = enum {
+    running,
+    exited,
+    unknown,
+};
+
 pub const ExitEvidence = struct {
+    authority: ReapAuthority = .unavailable,
+    state: ExitState = .unknown,
     /// waitpid reaped this host-owned child.
     reaped: bool,
     exit_code: ?u8 = null,
@@ -575,13 +588,25 @@ pub const PtyHost = struct {
         if (self.pid <= 0) return error.NotSpawned;
         var status: c_int = 0;
         const flags: c_int = if (hang) 0 else c.WNOHANG;
-        const rc = c.waitpid(self.pid, &status, flags);
-        if (rc == 0) return .{ .reaped = false };
+        const rc = while (true) {
+            const waited = c.waitpid(self.pid, &status, flags);
+            if (waited < 0 and std.posix.errno(waited) == .INTR) continue;
+            break waited;
+        };
+        if (rc == 0) return .{
+            .authority = .direct_parent,
+            .state = .running,
+            .reaped = false,
+        };
         if (rc < 0) {
             const e: std.posix.E = @enumFromInt(std.c._errno().*);
             if (e == .CHILD) {
-                // Already reaped elsewhere — not positive evidence we can claim.
-                return .{ .reaped = false };
+                // Already reaped elsewhere or no longer our child: authority lost.
+                return .{
+                    .authority = .unavailable,
+                    .state = .unknown,
+                    .reaped = false,
+                };
             }
             return error.IoFailed;
         }
@@ -589,17 +614,25 @@ pub const PtyHost = struct {
         const st: u32 = @bitCast(status);
         if (posix.W.IFEXITED(st)) {
             return .{
+                .authority = .direct_parent,
+                .state = .exited,
                 .reaped = true,
                 .exit_code = @intCast(posix.W.EXITSTATUS(st)),
             };
         }
         if (posix.W.IFSIGNALED(st)) {
             return .{
+                .authority = .direct_parent,
+                .state = .exited,
                 .reaped = true,
                 .term_signal = @intCast(posix.W.TERMSIG(st)),
             };
         }
-        return .{ .reaped = true };
+        return .{
+            .authority = .direct_parent,
+            .state = .exited,
+            .reaped = true,
+        };
     }
 
     fn requireOpen(self: *const PtyHost) Error!void {
