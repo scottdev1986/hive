@@ -128,7 +128,9 @@ export type TmuxTerminationOutcome = Readonly<{
  * sequence, retained exit record, host start token, input arbiter, or event
  * journal. Input ownership is therefore the observation-only `UNKNOWN` value,
  * never coerced to the arbiter's `FREE` state; other unavailable fields use
- * their explicit sentinels and inspections remain incomplete. The in-process
+ * their explicit sentinels and inspections remain incomplete. Degraded
+ * visibility uses the schema-safe `tmux-degraded` workspace and `0` revision
+ * sentinels; neither is observed identity or revision evidence. The in-process
  * event stream is ordered but not durable
  * and emits no fabricated heartbeats. A transport failure becomes `unknown`,
  * never an absent/exited result. Live sessions without a persisted exact
@@ -885,8 +887,8 @@ export class TmuxSessionHost implements SessionHost {
       resources: {},
       visibility: {
         state: viewerCount > 0 ? "visible" : "attaching",
-        workspaceSessionId: "",
-        openTerminalRevision: "",
+        workspaceSessionId: "tmux-degraded",
+        openTerminalRevision: "0",
         expiresAt: "1970-01-01T00:00:00.000Z",
       },
       exit: null,

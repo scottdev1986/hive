@@ -15,7 +15,7 @@ async function productionTypescript(directory: string): Promise<string[]> {
 }
 
 describe("tmux adapter boundary", () => {
-  test("production tmux calls stay inside the adapter and SessionHost", async () => {
+  test("blocks known direct tmux call forms outside the adapter and SessionHost", async () => {
     const sourceRoot = join(import.meta.dir, "..");
     const allowed = new Set([
       "adapters/tmux.ts",
@@ -32,7 +32,39 @@ describe("tmux adapter boundary", () => {
         "['\"]\\s*,\\s*['\"](?:-L|new-|has-|kill-|capture-|send-|list-|display-|resize-|load-|paste-|set-)",
       ].join(""),
     );
+    const directTmuxSpawn = new RegExp(
+      [
+        "\\b(?:spawn|spawnSync|execFile|execFileSync)\\s*\\(\\s*['\"]",
+        "tm",
+        "ux",
+        "['\"]",
+      ].join(""),
+    );
+    const directTmuxShell = new RegExp(
+      [
+        "(?:\\b(?:exec|execSync)\\s*\\(\\s*['\"`]\\s*|(?:Bun\\.)?\\$\\s*`\\s*)",
+        "tm",
+        "ux",
+        "(?:\\s|['\"`])",
+      ].join(""),
+    );
+    const tmuxViaShellSpawn = new RegExp(
+      [
+        "\\b(?:Bun\\.)?(?:spawn|spawnSync)\\s*\\(\\s*(?:\\[\\s*)?['\"](?:/bin/)?(?:sh|bash|zsh)['\"]",
+        "[\\s\\S]{0,300}['\"]-l?c['\"][\\s\\S]{0,300}['\"]\\s*",
+        "tm",
+        "ux",
+        "(?:\\s|['\"])",
+      ].join(""),
+    );
     const violations: string[] = [];
+
+    expect(directTmuxSpawn.test('spawn("tmux", ["list-sessions"])')).toBe(true);
+    expect(directTmuxShell.test('exec("tmux list-sessions")')).toBe(true);
+    expect(directTmuxShell.test('Bun.$`tmux list-sessions`')).toBe(true);
+    expect(tmuxViaShellSpawn.test(
+      'spawn("sh", ["-c", "tmux list-sessions"])',
+    )).toBe(true);
 
     for (const path of await productionTypescript(sourceRoot)) {
       const name = relative(sourceRoot, path);
@@ -40,8 +72,13 @@ describe("tmux adapter boundary", () => {
       const source = await readFile(path, "utf8");
       if (adapterImport.test(source)) violations.push(`${name}: imports tmux adapter`);
       if (rawTmuxArgv.test(source)) violations.push(`${name}: constructs raw tmux argv`);
+      if (directTmuxSpawn.test(source)) violations.push(`${name}: spawns tmux directly`);
+      if (directTmuxShell.test(source)) violations.push(`${name}: invokes tmux in a shell string`);
+      if (tmuxViaShellSpawn.test(source)) violations.push(`${name}: invokes tmux through a shell`);
     }
 
+    // This lexical tripwire cannot catch computed executable names, dynamically
+    // assembled shell strings, or wrappers/aliases that invoke tmux indirectly.
     expect(violations).toEqual([]);
   });
 });

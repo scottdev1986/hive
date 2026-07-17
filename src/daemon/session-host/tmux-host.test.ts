@@ -96,6 +96,11 @@ describe("TmuxSessionHost", () => {
       complete: false,
       executableVerified: false,
     }));
+    expect(created.inspection.input).toEqual({
+      state: "UNKNOWN",
+      ownerViewerId: null,
+      claimId: null,
+    });
 
     const capture = await host.capture(locator, {
       include: "visible-text",
@@ -143,6 +148,30 @@ describe("TmuxSessionHost", () => {
     });
     expect(terminated.state).toBe("terminated");
     expect((await host.inspect(locator)).presence).toBe("lost");
+  });
+
+  test("preserves a tmux transport failure as unknown presence", async () => {
+    const host = new TmuxSessionHost({
+      adapter: {
+        hasSession: async () => {
+          throw new Error("tmux socket unavailable");
+        },
+        newSession: async () => {},
+        capturePane: async () => "",
+      },
+    });
+    const locator = mintTmuxSessionLocator(
+      "instance-a",
+      { kind: "agent", agentId: "agent-maya" },
+      1,
+    );
+    host.bind(locator, "hive-maya");
+
+    expect(await host.inspect(locator)).toEqual(expect.objectContaining({
+      presence: "unknown",
+      complete: false,
+      diagnosticIds: ["TMUX_TRANSPORT_UNKNOWN"],
+    }));
   });
 
   test("marks tmux-only attach and visibility semantics as degraded evidence", async () => {

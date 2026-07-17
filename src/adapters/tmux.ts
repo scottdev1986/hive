@@ -436,35 +436,3 @@ export class TmuxAdapter {
       : sessions;
   }
 }
-
-export const hasSession = (
-  session: string,
-  socketName?: string,
-): Promise<boolean> => new TmuxAdapter(socketName).hasSession(session);
-
-export const newSession = (
-  name: string,
-  cwd: string,
-  command: string,
-  socketName?: string,
-): Promise<void> => new TmuxAdapter(socketName).newSession(name, cwd, command);
-
-export const sendKeys = (
-  session: string,
-  text: string,
-  socketName?: string,
-): Promise<void> => new TmuxAdapter(socketName).sendKeys(session, text);
-
-export const capturePane = (
-  session: string,
-  socketName?: string,
-): Promise<string> => new TmuxAdapter(socketName).capturePane(session);
-
-export const killSession = (
-  session: string,
-  options: KillSessionOptions = {},
-  socketName?: string,
-): Promise<void> => new TmuxAdapter(socketName).killSession(session, options);
-
-export const listSessions = (socketName?: string): Promise<string[]> =>
-  new TmuxAdapter(socketName).listSessions();
