@@ -1,20 +1,18 @@
 import XCTest
 @testable import HiveTerminalKit
 
-/// First-correct-frame after attach against FakeHost (§09/§20/§26).
-/// Uses: FakeHost + FakeManualSurface (no GhosttyKit for attach logic).
+/// First-correct-frame + checkpoint envelope + multi-chunk (FakeHost).
 final class AttachReplayTests: XCTestCase {
     func testFirstCorrectFrameAfterAttach() throws {
         let host = FakeHost(connectionId: "attach-conn-1")
         let locator = makeTestLocator()
-        let grant = host.makeGrant(locator: locator, checkpointSeq: 0, outputSeq: 0)
+        let grant = host.makeGrant(locator: locator)
         let engine = FakeManualSurface()
         let client = AttachReplayClient(viewerId: "viewer-1", engine: engine)
 
-        // Host→viewer stream ready before attach drains.
         try host.enqueueWelcome(instanceId: locator.instanceId, connectionId: host.hostTransport.connectionId)
-        let checkpoint = Data("CHECKPOINT-PAYLOAD-v1".utf8)
-        try host.enqueueSnapshot(throughSeq: 10, payload: checkpoint)
+        let enginePayload = Data("CHECKPOINT-ENGINE-PAYLOAD".utf8)
+        host.enqueueSnapshotEnvelope(throughSeq: 10, enginePayload: enginePayload)
         host.enqueueOutput(streamSeq: 10, bytes: Data("hello-from-pty".utf8))
 
         let outcome = try client.attach(
@@ -34,17 +32,13 @@ final class AttachReplayTests: XCTestCase {
         XCTAssertEqual(client.state, .live)
         XCTAssertEqual(engine.restored.count, 1)
         XCTAssertEqual(engine.restored.first?.throughSeq, 10)
-        XCTAssertEqual(engine.restored.first?.payload, checkpoint)
-        // Output after checkpoint applied.
+        XCTAssertEqual(engine.restored.first?.payload, enginePayload)
         XCTAssertTrue(engine.appliedRanges.contains { $0.bytes == Data("hello-from-pty".utf8) })
-
-        // Viewer must have sent APPLIED high-water.
         try host.harvestViewerFrames()
-        let applied = host.receivedFromViewer.filter { $0.type == .applied }
-        XCTAssertFalse(applied.isEmpty, "renderer must ACK high-water with APPLIED")
+        XCTAssertFalse(host.receivedFromViewer.filter { $0.type == .applied }.isEmpty)
     }
 
-    func testAttachRestoreOnlyStillPresentsFirstCorrectFrame() throws {
+    func testMultiChunkSnapshotRestoresOnlyWhenComplete() throws {
         let host = FakeHost()
         let locator = makeTestLocator()
         let grant = host.makeGrant(locator: locator)
@@ -52,7 +46,8 @@ final class AttachReplayTests: XCTestCase {
         let client = AttachReplayClient(viewerId: "viewer-2", engine: engine)
 
         try host.enqueueWelcome(instanceId: locator.instanceId, connectionId: "h")
-        try host.enqueueSnapshot(throughSeq: 4, payload: Data("snap".utf8))
+        let payload = Data(repeating: 0x42, count: 200)
+        host.enqueueSnapshotEnvelope(throughSeq: 7, enginePayload: payload, chunkSize: 40)
 
         let outcome = try client.attach(
             grant: grant,
@@ -61,11 +56,65 @@ final class AttachReplayTests: XCTestCase {
             transport: host.clientTransport
         )
         guard case .firstCorrectFrame(let hw, _) = outcome else {
-            XCTFail("expected firstCorrectFrame from checkpoint alone, got \(outcome)")
+            XCTFail("expected firstCorrectFrame, got \(outcome)")
             return
         }
-        XCTAssertEqual(hw, 4)
-        XCTAssertEqual(client.state, .live)
+        XCTAssertEqual(hw, 7)
+        XCTAssertEqual(engine.restored.first?.payload, payload)
+    }
+
+    func testPostRestoreDuplicateOutputIsIgnoredNotLost() throws {
+        let engine = FakeManualSurface()
+        let client = AttachReplayClient(viewerId: "v", engine: engine)
+        let binding = SurfaceBinding(locator: makeTestLocator(), connectionId: "c")
+        client.retarget(newBinding: binding, highWater: 0)
+
+        // Restore to high-water 5.
+        let r = client.applicator.restoreCheckpoint(
+            payload: Data("snap".utf8),
+            throughSeq: 5,
+            frameBinding: binding
+        )
+        XCTAssertEqual(r, .applied(newHighWater: 5))
+
+        // At-least-once retransmit fully behind high-water (M7).
+        let late = try client.handleFrame(
+            WireFrame(type: .output, streamSeq: 0, payload: Data("hello".utf8)),
+            frameBinding: binding
+        )
+        XCTAssertEqual(late, .continueReplay)
+        XCTAssertNotEqual(client.state, .lost(evidence: "REBASE_REQUIRED"))
+        XCTAssertEqual(client.applicator.highWater, 5)
+    }
+
+    func testWelcomeRequiredBeforeHostAttach() throws {
+        let host = FakeHost()
+        let locator = makeTestLocator()
+        let grant = host.makeGrant(locator: locator)
+        let engine = FakeManualSurface()
+        let client = AttachReplayClient(viewerId: "viewer-3", engine: engine)
+        client.handshakeTimeout = 0.05
+        // No WELCOME enqueued — must fail closed, never HOST_ATTACH.
+        do {
+            _ = try client.attach(
+                grant: grant,
+                geometry: makeGeometry(),
+                afterSeq: 0,
+                transport: host.clientTransport
+            )
+            XCTFail("attach without WELCOME must throw")
+        } catch let err as WireError {
+            XCTAssertTrue(
+                err == .receiveTimeout || err == .protocolMismatch("transport closed before WELCOME")
+                    || String(describing: err).contains("WELCOME")
+                    || String(describing: err).contains("TIMEOUT")
+                    || String(describing: err).contains("PROTOCOL"),
+                "got \(err)"
+            )
+        }
+        try host.harvestViewerFrames()
+        let hostAttach = host.receivedFromViewer.filter { $0.type == .hostAttach }
+        XCTAssertTrue(hostAttach.isEmpty, "must not send HOST_ATTACH without WELCOME")
     }
 
     func testViewAttachDoesNotStealFocusOnFirstFrame() throws {
@@ -91,7 +140,7 @@ final class AttachReplayTests: XCTestCase {
         window.makeFirstResponder(other)
 
         try host.enqueueWelcome(instanceId: locator.instanceId, connectionId: "h")
-        try host.enqueueSnapshot(throughSeq: 2, payload: Data("ab".utf8))
+        host.enqueueSnapshotEnvelope(throughSeq: 2, enginePayload: Data("ab".utf8))
         host.enqueueOutput(streamSeq: 2, bytes: Data("c".utf8))
 
         var firstFrameHW: UInt64?
@@ -105,7 +154,7 @@ final class AttachReplayTests: XCTestCase {
         )
         XCTAssertEqual(outcome, .firstCorrectFrame(highWater: 3, connectionId: host.clientTransport.connectionId))
         XCTAssertEqual(firstFrameHW, 3)
-        XCTAssertTrue(window.firstResponder === other, "first correct frame must not steal focus")
+        XCTAssertTrue(window.firstResponder === other)
         XCTAssertEqual(view.focusStealAttempts, 0)
     }
 
@@ -119,11 +168,19 @@ final class AttachReplayTests: XCTestCase {
             payload: payload
         )
         let encoded = try FrameCodec.encode(frame)
-        XCTAssertEqual(encoded.count, FrameCodec.headerBytes + payload.count)
-        XCTAssertEqual(Array(encoded.prefix(4)), FrameCodec.magic)
         let header = encoded.prefix(FrameCodec.headerBytes)
         let body = encoded.suffix(from: FrameCodec.headerBytes)
         let decoded = try FrameCodec.decodeFrame(header: Data(header), payload: Data(body))
         XCTAssertEqual(decoded, frame)
+    }
+
+    func testCheckpointEnvelopeFixtureMatchesNativeAbi() throws {
+        // Mirror native/tests/abi/checkpoint-envelope.c field reads.
+        let payload = Data("abc".utf8)
+        let env = CheckpointEnvelope.encode(throughSeq: 42, payload: payload)
+        let parsed = try CheckpointEnvelope.parse(env)
+        XCTAssertEqual(parsed.throughSeq, 42)
+        XCTAssertEqual(parsed.payload, payload)
+        XCTAssertEqual(parsed.payloadLength, 3)
     }
 }

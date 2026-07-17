@@ -18,6 +18,8 @@ public enum OutputApplyResult: Equatable, Sendable {
 /// - duplicate-equal ranges are ignored
 /// - gap or digest conflict → rebase required (never invent fill)
 /// - a frame whose binding does not match the surface is **never** applied
+/// - at-least-once retransmit fully behind high-water is ignored (M7), unless
+///   a stored digest conflicts
 public final class OutputRangeApplicator {
     public private(set) var binding: SurfaceBinding?
     public private(set) var highWater: UInt64 = 0
@@ -64,16 +66,21 @@ public final class OutputRangeApplicator {
         }
 
         let digest = sha256(bytes)
+        let end = streamSeq + UInt64(bytes.count)
+
         if let prior = committedDigests[streamSeq], prior.length == bytes.count {
             if prior.digest == digest {
                 return .duplicateIgnored
             }
             return .digestConflictRebaseRequired
         }
-        if streamSeq + UInt64(bytes.count) <= highWater {
-            // Fully behind without exact match → treat as conflict/stale.
-            return .digestConflictRebaseRequired
+
+        // Fully behind exclusive high-water: at-least-once retransmit (M7).
+        // Ignore unless we have a conflicting stored digest (handled above).
+        if end <= highWater {
+            return .duplicateIgnored
         }
+
         if streamSeq != highWater {
             return .gapRebaseRequired
         }
@@ -81,19 +88,15 @@ public final class OutputRangeApplicator {
         let result = engine.processOutput(bytes: bytes, streamSeq: streamSeq)
         switch result {
         case .success:
-            // Engine may treat duplicate-equal as success without advancing.
             if engine.throughSeq > highWater {
                 highWater = engine.throughSeq
                 committedDigests[streamSeq] = (bytes.count, digest)
                 lastAppliedDigest = digest
                 return .applied(newHighWater: highWater)
             }
-            // Duplicate equal path via engine
             committedDigests[streamSeq] = (bytes.count, digest)
             return .duplicateIgnored
         case .invalidValue:
-            // Distinguish gap vs digest by our pre-checks; engine invalid after
-            // accept checks → digest/conflict.
             return .digestConflictRebaseRequired
         default:
             return .engineError(result)
@@ -101,6 +104,8 @@ public final class OutputRangeApplicator {
     }
 
     /// Apply checkpoint restore for the bound surface, then set high-water.
+    /// Clears committed digests (engine ledger also resets); post-restore
+    /// retransmits fully behind high-water are ignored (M7).
     public func restoreCheckpoint(
         payload: Data,
         throughSeq: UInt64,

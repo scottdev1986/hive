@@ -2,11 +2,6 @@ import Foundation
 @testable import HiveTerminalKit
 
 /// Mock §20-wire host for L2 tests (NOT the real WP4 host).
-///
-/// Pre-queues the host→viewer stream a viewer expects after HOST_ATTACH:
-/// WELCOME → SNAPSHOT_BEGIN/BYTES → OUTPUT… and records viewer→host frames.
-///
-/// Uses: FakeHost only (no GhosttyKit.xcframework).
 final class FakeHost {
     let hostTransport: InMemoryHostTransport
     let clientTransport: InMemoryHostTransport
@@ -21,10 +16,15 @@ final class FakeHost {
         hostTransport = pair.host
     }
 
-    /// Drain any frames the viewer already sent (HELLO / HOST_ATTACH / APPLIED).
     func harvestViewerFrames() throws {
-        while let frame = try hostTransport.receive() {
-            receivedFromViewer.append(frame)
+        // Drain host side without blocking forever.
+        while true {
+            do {
+                guard let frame = try hostTransport.receive(timeout: 0.01) else { break }
+                receivedFromViewer.append(frame)
+            } catch WireError.receiveTimeout {
+                break
+            }
         }
     }
 
@@ -48,49 +48,59 @@ final class FakeHost {
         try enqueueJSON(.welcome, object: payload, flags: [.response, .final], requestId: 1)
     }
 
-    /// SNAPSHOT_BEGIN metadata + SNAPSHOT_BYTES opaque payload (§20).
-    func enqueueSnapshot(throughSeq: UInt64, payload: Data, payloadSha256Hex: String? = nil) throws {
-        let digest = payloadSha256Hex ?? sha256(payload).map { String(format: "%02x", $0) }.joined()
-        let begin: [String: Any] = [
-            "schemaVersion": 1,
-            "throughSeq": String(throughSeq),
-            "payloadLength": payload.count,
-            "payloadSha256": digest,
-        ]
-        try enqueueJSON(.snapshotBegin, object: begin)
-        let frame = WireFrame(
-            type: .snapshotBytes,
-            flags: [.final, .contentSensitive],
-            requestId: 0,
-            streamSeq: 0,
-            payload: payload
+    /// SNAPSHOT as HVTCP001 envelope bytes (may be multi-chunk).
+    func enqueueSnapshotEnvelope(throughSeq: UInt64, enginePayload: Data, chunkSize: Int? = nil) {
+        let envelope = CheckpointEnvelope.encode(
+            throughSeq: throughSeq,
+            payload: enginePayload
         )
-        clientTransport.enqueueInbound(frame)
+        clientTransport.enqueueInbound(
+            WireFrame(type: .snapshotBegin, payload: Data())
+        )
+        if let chunkSize, chunkSize > 0 {
+            var offset = 0
+            while offset < envelope.count {
+                let end = min(offset + chunkSize, envelope.count)
+                clientTransport.enqueueInbound(
+                    WireFrame(
+                        type: .snapshotBytes,
+                        flags: [.contentSensitive],
+                        streamSeq: UInt64(offset),
+                        payload: envelope.subdata(in: offset..<end)
+                    )
+                )
+                offset = end
+            }
+        } else {
+            clientTransport.enqueueInbound(
+                WireFrame(
+                    type: .snapshotBytes,
+                    flags: [.final, .contentSensitive],
+                    payload: envelope
+                )
+            )
+        }
     }
 
     func enqueueOutput(streamSeq: UInt64, bytes: Data) {
-        let frame = WireFrame(
-            type: .output,
-            flags: [.contentSensitive],
-            requestId: 0,
-            streamSeq: streamSeq,
-            payload: bytes
+        clientTransport.enqueueInbound(
+            WireFrame(type: .output, flags: [.contentSensitive], streamSeq: streamSeq, payload: bytes)
         )
-        clientTransport.enqueueInbound(frame)
     }
 
     func makeGrant(
         locator: SessionLocator,
         token: String = "grant-token-test",
         checkpointSeq: UInt64 = 0,
-        outputSeq: UInt64 = 0
+        outputSeq: UInt64 = 0,
+        engineBuildId: String? = nil
     ) -> AttachGrant {
         AttachGrant(
             locator: locator,
             endpoint: "unix:fake-host",
             token: token,
             expiresAt: "2099-01-01T00:00:00.000Z",
-            engineBuildId: locator.engineBuildId ?? "engine-test",
+            engineBuildId: engineBuildId ?? locator.engineBuildId ?? "engine-test",
             checkpointSeq: checkpointSeq,
             outputSeq: outputSeq,
             operations: ["view", "human-input", "resize"]

@@ -1,0 +1,4 @@
+module HiveGhosttyC {
+    header "hive_ghostty_bridge.h"
+    export *
+}

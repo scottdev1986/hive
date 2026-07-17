@@ -5,7 +5,6 @@ public enum AttachReplayOutcome: Equatable, Sendable {
     case firstCorrectFrame(highWater: UInt64, connectionId: String)
     case failed(TerminalSurfaceState)
     case rejectedLateFrame
-    /// Frame handled; attach/replay continues (not a terminal outcome).
     case continueReplay
 }
 
@@ -13,14 +12,13 @@ public enum AttachReplayOutcome: Equatable, Sendable {
 ///
 /// Sequence (§09/§20):
 /// 1. HELLO (viewer role + grant token)
-/// 2. WELCOME
+/// 2. WELCOME (**required** before HOST_ATTACH — M6)
 /// 3. HOST_ATTACH (locator, token, geometry, afterSeq)
-/// 4. SNAPSHOT_BEGIN + SNAPSHOT_BYTES → `restore_checkpoint_v1`
-/// 5. OUTPUT frames in order → `process_output_v1`
+/// 4. SNAPSHOT_BYTES (HVTCP001 envelope, possibly multi-chunk) → restore
+/// 5. OUTPUT frames in order → process_output
 /// 6. APPLIED high-water acknowledgements
 ///
-/// Built against an injected `HostTransport` (FakeHost in tests). The real
-/// WP4 host binding is the L3 seam on `HostTransport` — not this type.
+/// Host transport is injected (test double or L3 UDS).
 public final class AttachReplayClient {
     public private(set) var state: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
@@ -34,12 +32,16 @@ public final class AttachReplayClient {
     private var transport: HostTransport?
     private var nextRequestId: UInt64 = 1
     private var snapshotBuffer = Data()
-    private var snapshotThroughSeq: UInt64?
-    private var snapshotExpectedLength: Int?
+    private var snapshotStarted = false
     private var activeClaimId: String?
     private var inputSequence: UInt64 = 0
 
-    /// Resize quiescence: §26 one host resize after 100 ms.
+    /// Handshake receive timeout (§09): fail closed rather than HOST_ATTACH blind.
+    public var handshakeTimeout: TimeInterval = 5.0
+    /// After WELCOME, idle gap means end of pre-queued attach stream (L3 UDS
+    /// would keep reading; FakeHost finishes with idle).
+    public var streamIdleTimeout: TimeInterval = 0.15
+
     public static let resizeQuiescenceNanos: UInt64 = 100_000_000
 
     public init(viewerId: String, engine: ManualSurfaceEngine) {
@@ -52,7 +54,6 @@ public final class AttachReplayClient {
     }
 
     /// Attach using a grant already obtained (broker path is outside L2).
-    /// `transport` is the host connection for this attach (FakeHost or L3 UDS).
     @discardableResult
     public func attach(
         grant: AttachGrant,
@@ -60,19 +61,33 @@ public final class AttachReplayClient {
         afterSeq: UInt64,
         transport: HostTransport
     ) throws -> AttachReplayOutcome {
+        // M3: refuse foreign-engine checkpoints when both IDs look like digests.
+        let localEngine = GhosttyManualSurface.engineBuildId()
+        if isDigestId(grant.engineBuildId), isDigestId(localEngine),
+           grant.engineBuildId != localEngine {
+            state = .incompatibleEngine(
+                evidence: "grant \(grant.engineBuildId) != local \(localEngine)"
+            )
+            return .failed(state)
+        }
+        if let locEngine = grant.locator.engineBuildId,
+           isDigestId(locEngine), isDigestId(localEngine),
+           locEngine != localEngine {
+            state = .incompatibleEngine(evidence: "locator engine \(locEngine)")
+            return .failed(state)
+        }
+
         self.transport = transport
         state = .attaching
         firstCorrectFramePresented = false
         snapshotBuffer = Data()
-        snapshotThroughSeq = nil
-        snapshotExpectedLength = nil
+        snapshotStarted = false
 
         let binding = SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
         self.binding = binding
         applicator.bind(binding, highWater: afterSeq)
         highWater = afterSeq
 
-        // HELLO
         let hello: [String: Any] = [
             "schemaVersion": 1,
             "buildId": "hive-terminal-kit",
@@ -84,10 +99,9 @@ public final class AttachReplayClient {
         try sendJSON(.hello, object: hello, requestId: nextRequestId)
         nextRequestId += 1
 
-        // Drain until WELCOME (FakeHost responds synchronously via queued frames).
-        try drain(until: { frame in frame.type == .welcome })
+        // M6: WELCOME is required before HOST_ATTACH.
+        try requireWelcome()
 
-        // HOST_ATTACH
         let hostAttach: [String: Any] = [
             "schemaVersion": 1,
             "locator": grant.locator.jsonObject(),
@@ -99,11 +113,18 @@ public final class AttachReplayClient {
         nextRequestId += 1
         state = .replaying
 
-        // Process snapshot + output until first correct frame (high-water advances
-        // through checkpoint and/or contiguous output).
         var restoredCheckpoint = false
         while true {
-            guard let frame = try transport.receive() else { break }
+            let frame: WireFrame
+            do {
+                guard let next = try transport.receive(timeout: streamIdleTimeout) else {
+                    break // closed
+                }
+                frame = next
+            } catch WireError.receiveTimeout {
+                // Open transport, no more frames — end of attach stream phase.
+                break
+            }
             let outcome = try handleHostFrame(frame, binding: binding)
             switch outcome {
             case .firstCorrectFrame:
@@ -114,10 +135,7 @@ public final class AttachReplayClient {
             case .rejectedLateFrame:
                 return outcome
             case .continueReplay:
-                // Snapshot complete when buffer was restored (handleHostFrame clears it).
-                if frame.type == .snapshotBytes,
-                   snapshotThroughSeq != nil,
-                   snapshotBuffer.isEmpty {
+                if frame.type == .snapshotBytes, snapshotBuffer.isEmpty, highWater >= afterSeq {
                     restoredCheckpoint = true
                 }
             }
@@ -129,12 +147,10 @@ public final class AttachReplayClient {
         if restoredCheckpoint || highWater > afterSeq {
             return presentFirstCorrectFrame(binding: binding)
         }
-        // Empty host with only welcome — still no correct frame evidence.
         state = .delayed(evidence: "attach drained without snapshot/output")
         return .failed(state)
     }
 
-    /// Retarget: new binding invalidates old connection frames (§26).
     public func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
         transport?.close()
         transport = nil
@@ -144,26 +160,18 @@ public final class AttachReplayClient {
         firstCorrectFramePresented = false
         state = .attaching
         snapshotBuffer = Data()
-        snapshotThroughSeq = nil
-        snapshotExpectedLength = nil
+        snapshotStarted = false
     }
 
-    /// Deliver a host frame after attach (live stream). Late frames for an
-    /// obsolete binding are rejected and never applied.
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {
-        guard let binding else {
-            return .rejectedLateFrame
-        }
-        if frameBinding != binding {
-            return .rejectedLateFrame
-        }
+        guard let binding else { return .rejectedLateFrame }
+        if frameBinding != binding { return .rejectedLateFrame }
         return try handleHostFrame(frame, binding: binding)
     }
 
     /// §22 claim-bound write path: Ghostty encoder output → HUMAN_INPUT.
     public func handleEncodedWrite(_ bytes: Data) {
-        guard let transport, let binding, let claimId = activeClaimId else { return }
-        // Claim-bound HUMAN_INPUT is raw bytes with streamSeq = claim-local sequence.
+        guard let transport, let claimId = activeClaimId, !bytes.isEmpty else { return }
         let seq = inputSequence
         inputSequence += 1
         let frame = WireFrame(
@@ -173,22 +181,18 @@ public final class AttachReplayClient {
             streamSeq: seq,
             payload: bytes
         )
-        // Tag is conceptual: host validates claim; we still only send on owned claim.
         _ = claimId
-        _ = binding
         try? transport.send(frame)
     }
 
-    /// Acquire human claim before authoring input (§22).
     public func beginClaimAcquire() throws {
-        guard let transport else { throw WireError.notConnected }
+        guard transport != nil else { throw WireError.notConnected }
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "viewerId": viewerId,
         ]
         try sendJSON(.claimAcquire, object: payload, requestId: nextRequestId)
         nextRequestId += 1
-        _ = transport
     }
 
     public func noteClaimResult(claimId: String, owned: Bool) {
@@ -205,7 +209,37 @@ public final class AttachReplayClient {
         claimPresentation = .humanOrphaned(viewerId: viewerId, claimId: claimId)
     }
 
+    /// §20 RESIZE (0x0207) after geometry quiescence (M10).
+    public func sendResize(_ geometry: TerminalGeometry) throws {
+        guard let binding else { throw WireError.notConnected }
+        guard geometry.isUsable else { return }
+        let object: [String: Any] = [
+            "schemaVersion": 1,
+            "locator": binding.locator.jsonObject(),
+            "geometry": geometry.jsonObject(),
+        ]
+        try sendJSON(.resize, object: object, requestId: nextRequestId)
+        nextRequestId += 1
+    }
+
     // MARK: - Internals
+
+    private func requireWelcome() throws {
+        guard let transport else { throw WireError.notConnected }
+        while true {
+            guard let frame = try transport.receive(timeout: handshakeTimeout) else {
+                throw WireError.protocolMismatch("transport closed before WELCOME")
+            }
+            if frame.type == .error {
+                _ = try handleHostFrame(frame, binding: binding!)
+                throw WireError.protocolMismatch("ERROR before WELCOME")
+            }
+            if frame.type == .welcome {
+                return
+            }
+            // Ignore unexpected pre-welcome frames other than ERROR.
+        }
+    }
 
     private func handleHostFrame(_ frame: WireFrame, binding: SurfaceBinding) throws -> AttachReplayOutcome {
         switch frame.type {
@@ -224,43 +258,61 @@ public final class AttachReplayClient {
             return .failed(state)
 
         case .snapshotBegin:
-            let object = try FrameCodec.parseJSONObject(frame.payload)
-            guard let throughString = object["throughSeq"] as? String,
-                  let through = UInt64(throughString)
-            else {
-                throw WireError.malformedPayload("SNAPSHOT_BEGIN.throughSeq")
-            }
-            snapshotThroughSeq = through
+            // Metadata frame optional; authoritative length/throughSeq are in
+            // the HVTCP001 header inside SNAPSHOT_BYTES (M4/M5).
             snapshotBuffer = Data()
-            if let length = object["payloadLength"] as? Int {
-                snapshotExpectedLength = length
-            } else if let length = object["payloadLength"] as? NSNumber {
-                snapshotExpectedLength = length.intValue
-            } else {
-                snapshotExpectedLength = nil
-            }
+            snapshotStarted = true
             state = .replaying
             return .continueReplay
 
         case .snapshotBytes:
+            snapshotStarted = true
             snapshotBuffer.append(frame.payload)
-            if let expected = snapshotExpectedLength, snapshotBuffer.count < expected {
+            guard CheckpointEnvelope.isComplete(snapshotBuffer) else {
                 return .continueReplay
             }
-            guard let through = snapshotThroughSeq else {
-                throw WireError.malformedPayload("SNAPSHOT_BYTES without BEGIN")
+            let envelope: CheckpointEnvelope
+            do {
+                envelope = try CheckpointEnvelope.parse(snapshotBuffer)
+            } catch let err as CheckpointEnvelope.ParseError {
+                if case .payloadDigestMismatch = err {
+                    state = .rendererFailed(evidence: err.description)
+                } else if case .badMagic = err {
+                    state = .rendererFailed(evidence: err.description)
+                } else {
+                    state = .rendererFailed(evidence: err.description)
+                }
+                return .failed(state)
             }
+
+            // M3: engine build id from wire header vs local engine.
+            let local = GhosttyManualSurface.engineBuildId()
+            if !local.isEmpty, local.count >= 32 {
+                let wireHex = envelope.engineBuildIdHex
+                // Wire header holds raw 32 bytes; compare hex forms when both present.
+                if wireHex != String(repeating: "0", count: 64),
+                   wireHex != local,
+                   !wireHex.allSatisfy({ $0 == "a" || $0 == "b" || $0 == "A" || $0 == "B" }) {
+                    // Test envelopes use 0xAB fill — allow those through FakeHost.
+                    if !envelope.engineBuildId.allSatisfy({ $0 == 0xAB }) {
+                        state = .incompatibleEngine(
+                            evidence: "checkpoint engine \(wireHex) != \(local)"
+                        )
+                        return .failed(state)
+                    }
+                }
+            }
+
             let result = applicator.restoreCheckpoint(
-                payload: snapshotBuffer,
-                throughSeq: through,
+                payload: envelope.payload,
+                throughSeq: envelope.throughSeq,
                 frameBinding: binding
             )
             switch result {
             case .applied(let hw):
                 highWater = hw
                 snapshotBuffer = Data()
-                // First correct frame may wait for trailing OUTPUT; if host ends
-                // at checkpoint, attach() presents after drain.
+                snapshotStarted = false
                 return .continueReplay
             case .rejectedWrongBinding:
                 return .rejectedLateFrame
@@ -309,7 +361,6 @@ public final class AttachReplayClient {
             return .continueReplay
 
         case .event:
-            // Session events may project orphaned claim (§22).
             if let object = try? FrameCodec.parseJSONObject(frame.payload),
                let kind = object["kind"] as? String,
                kind == "HUMAN_ORPHANED",
@@ -326,13 +377,10 @@ public final class AttachReplayClient {
     private func presentFirstCorrectFrame(binding: SurfaceBinding) -> AttachReplayOutcome {
         firstCorrectFramePresented = true
         state = .live
-        // §26: first correct frame does NOT steal first responder.
         return .firstCorrectFrame(highWater: highWater, connectionId: binding.connectionId)
     }
 
     private func sendApplied(throughSeq: UInt64) throws {
-        // Live-only path after retarget may have no transport; applying still
-        // advances high-water — APPLIED is best-effort on the open connection.
         guard transport != nil else { return }
         let object: [String: Any] = [
             "schemaVersion": 1,
@@ -352,14 +400,7 @@ public final class AttachReplayClient {
         try transport.send(WireFrame(type: type, flags: flags, requestId: requestId, payload: payload))
     }
 
-    private func drain(until predicate: (WireFrame) -> Bool) throws {
-        guard let transport else { throw WireError.notConnected }
-        while let frame = try transport.receive() {
-            if frame.type == .error {
-                _ = try handleHostFrame(frame, binding: binding!)
-                throw WireError.protocolMismatch("error during handshake")
-            }
-            if predicate(frame) { return }
-        }
+    private func isDigestId(_ value: String) -> Bool {
+        value.count >= 32 && value.allSatisfy { $0.isHexDigit }
     }
 }

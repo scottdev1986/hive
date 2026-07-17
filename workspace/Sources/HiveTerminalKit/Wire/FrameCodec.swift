@@ -66,6 +66,7 @@ public enum WireError: Error, Equatable, CustomStringConvertible {
     case rebaseRequired(String)
     case notConnected
     case closed
+    case receiveTimeout
 
     public var description: String {
         switch self {
@@ -78,6 +79,7 @@ public enum WireError: Error, Equatable, CustomStringConvertible {
         case .rebaseRequired(let m): return "REBASE_REQUIRED: \(m)"
         case .notConnected: return "NOT_CONNECTED"
         case .closed: return "CLOSED"
+        case .receiveTimeout: return "RECEIVE_TIMEOUT"
         }
     }
 }

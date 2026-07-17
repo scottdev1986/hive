@@ -2,10 +2,8 @@
 import PackageDescription
 
 /// GhosttyKit.xcframework is a **build output**, not checked in.
-/// Produce it with `scripts/build-ghosttykit.sh` from the repo root, then:
-///   ln -sfn ../.cache/native/artifacts/ghostty-<commit>-zig-<sha>/GhosttyKit.xcframework \
-///     workspace/Vendor/GhosttyKit.xcframework
-/// The path below is the stable SPM binary-target location.
+/// Produce it with `scripts/build-ghosttykit.sh` from the repo root, then materialize:
+///   workspace/Vendor/GhosttyKit.xcframework  (libghostty.a + Headers; see build notes)
 let ghosttyKitPath = "Vendor/GhosttyKit.xcframework"
 
 let package = Package(
@@ -29,15 +27,24 @@ let package = Package(
     ],
     targets: [
         .target(name: "WorkspaceCore"),
-        // WP5 L0–L2: Ghostty manual-I/O surface wrapper (binary is offline-built).
+        // WP5 L0: GhosttyKit binary (offline-built) + authoritative C ABI header target.
         .binaryTarget(
             name: "GhosttyKit",
             path: ghosttyKitPath
+        ),
+        // Imports native/include/hive_ghostty_bridge.h so trampoline signatures
+        // are compile-checked against the DOC/ABI header (M1).
+        .target(
+            name: "HiveGhosttyC",
+            dependencies: ["GhosttyKit"],
+            path: "Sources/HiveGhosttyC",
+            publicHeadersPath: "include"
         ),
         .target(
             name: "HiveTerminalKit",
             dependencies: [
                 "GhosttyKit",
+                "HiveGhosttyC",
             ],
             path: "Sources/HiveTerminalKit",
             linkerSettings: [
@@ -76,7 +83,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HiveTerminalKitTests",
-            dependencies: ["HiveTerminalKit"]
+            dependencies: ["HiveTerminalKit", "HiveGhosttyC"]
         ),
     ]
 )

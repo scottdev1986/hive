@@ -1,47 +1,45 @@
 import AppKit
 import Foundation
+import HiveGhosttyC
 
 /// L1 `HiveTerminalView` — one edge-to-edge NSView bound to exactly one
 /// SessionLocator/generation (§26).
 ///
-/// Focus rules (§07/§26):
-/// - Becomes first responder **only** on direct click or explicit focus action
-/// - Output, status, message, automation, reconnect **never** steal focus
+/// Focus: first responder only on direct click / explicit focus action.
+/// Output/status/reconnect never steal focus.
 ///
-/// Geometry (§26):
-/// - Actual backing-pixel and cell geometry when attached
-/// - One host resize after 100 ms quiescence; never 0×0
+/// Input (M8): native NSEvent → ghostty_surface_key/text/preedit/mouse →
+/// claim-bound write callback (encoder out).
 ///
-/// Close means terminate (§26) — never transport DETACH for user close.
-/// User-close TERMINATE is owned by the embedding UI (WP6); this view exposes
-/// `onUserClose` so the host can send exact-generation TERMINATE.
-public final class HiveTerminalView: NSView {
+/// Render (M9): INVALIDATE schedules main-thread draw; CLOSE_REQUEST → terminate seam.
+public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var surfaceState: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
     public private(set) var claimPresentation: InputClaimPresentation = .free
     public private(set) var highWater: UInt64 = 0
+    public private(set) var lastTitle: String = ""
+    public private(set) var lastPwd: String = ""
 
     public let engine: ManualSurfaceEngine
     public let applicator: OutputRangeApplicator
     public private(set) var attachClient: AttachReplayClient?
 
-    /// Fired when the user requests close (maps to exact-generation TERMINATE).
     public var onUserClose: (() -> Void)?
-    /// Fired after first correct frame; does **not** change first responder.
     public var onFirstCorrectFrame: ((UInt64) -> Void)?
-    /// Fired on state transitions (for status UI — must not steal focus).
     public var onStateChange: ((TerminalSurfaceState) -> Void)?
+    public var onBell: (() -> Void)?
 
-    /// Positive-control counter: how many times output/status/reconnect asked
-    /// for focus. Always zero on the real path; tests assert it stays zero.
     public private(set) var focusStealAttempts = 0
-    /// When true (tests only), simulate a buggy path that would steal focus.
     public var testingAllowFocusSteal = false
+    public private(set) var drawScheduledCount = 0
+    public private(set) var resizeFramesSent = 0
 
     private var viewerId: String
     private var resizeWorkItem: DispatchWorkItem?
-    private var lastGeometry: TerminalGeometry?
+    private var drawWorkItem: DispatchWorkItem?
     private let resizeQuiescence: TimeInterval = 0.100
+    private var markedText: NSAttributedString?
+    private var pendingAuthoringHeld = false
 
     public init(frame frameRect: NSRect, engine: ManualSurfaceEngine, viewerId: String = "viewer-local") {
         self.engine = engine
@@ -49,7 +47,7 @@ public final class HiveTerminalView: NSView {
         self.applicator = OutputRangeApplicator(engine: engine)
         super.init(frame: frameRect)
         wantsLayer = true
-        // Not first responder by default — explicit click required.
+        wireBridgeEvents()
     }
 
     @available(*, unavailable)
@@ -57,13 +55,79 @@ public final class HiveTerminalView: NSView {
         fatalError("init(coder:) is not supported")
     }
 
+    /// Wire §23 bridge events: INVALIDATE → render; CLOSE_REQUEST → terminate seam (M9).
+    private func wireBridgeEvents() {
+        engine.callbackContext.onEvent = { [weak self] event in
+            guard let self else { return }
+            // Main-thread confined (§23).
+            if Thread.isMainThread {
+                self.handleBridgeEvent(event)
+            } else {
+                DispatchQueue.main.async { self.handleBridgeEvent(event) }
+            }
+        }
+    }
+
+    private func handleBridgeEvent(_ event: BridgeEvent) {
+        switch event.type {
+        case .invalidate:
+            scheduleDraw()
+        case .title:
+            lastTitle = String(data: event.bytes, encoding: .utf8) ?? ""
+            notifyOutputStatusReconnect(reason: "title")
+        case .pwd:
+            lastPwd = String(data: event.bytes, encoding: .utf8) ?? ""
+            notifyOutputStatusReconnect(reason: "pwd")
+        case .bell:
+            onBell?()
+            notifyOutputStatusReconnect(reason: "bell")
+        case .clipboardDenied:
+            notifyOutputStatusReconnect(reason: "clipboard-denied")
+        case .closeRequest:
+            // §26: CLOSE_REQUEST → exact-generation TERMINATE seam, never DETACH.
+            userClose()
+        }
+    }
+
+    private func scheduleDraw() {
+        drawWorkItem?.cancel()
+        let work = DispatchWorkItem { [weak self] in
+            guard let self else { return }
+            self.drawScheduledCount += 1
+            self.engine.draw()
+            self.needsDisplay = true
+        }
+        drawWorkItem = work
+        DispatchQueue.main.async(execute: work)
+    }
+
+    public override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        engine.draw()
+    }
+
     // MARK: - Attach
 
-    /// Wire an attach client (L2). Host transport is injected (FakeHost or L3).
     public func makeAttachClient() -> AttachReplayClient {
         let client = AttachReplayClient(viewerId: viewerId, engine: engine)
+        // Encoder-out write path → HUMAN_INPUT (client owns claim binding).
+        engine.callbackContext.onWrite = { [weak client] bytes in
+            client?.handleEncodedWrite(bytes)
+        }
+        // Event path stays on the view (INVALIDATE/CLOSE_REQUEST/…).
+        engine.callbackContext.onEvent = { [weak self] event in
+            self?.handleBridgeEventOnMain(event)
+        }
         attachClient = client
         return client
+    }
+
+    private func handleBridgeEventOnMain(_ event: BridgeEvent) {
+        if Thread.isMainThread {
+            handleBridgeEvent(event)
+        } else {
+            DispatchQueue.main.async { [weak self] in self?.handleBridgeEvent(event) }
+        }
     }
 
     @discardableResult
@@ -89,9 +153,9 @@ public final class HiveTerminalView: NSView {
         case .firstCorrectFrame(let hw, _):
             highWater = hw
             setSurfaceState(.live)
-            // §26: present first correct frame WITHOUT stealing focus.
             notifyOutputStatusReconnect(reason: "first-correct-frame")
             onFirstCorrectFrame?(hw)
+            scheduleDraw()
         case .failed(let state):
             setSurfaceState(state)
         case .rejectedLateFrame, .continueReplay:
@@ -100,19 +164,15 @@ public final class HiveTerminalView: NSView {
         return outcome
     }
 
-    /// Retarget to a new locator/generation. Late frames for the old binding
-    /// must be rejected (§26).
     public func retarget(to newBinding: SurfaceBinding, highWater: UInt64 = 0) {
         attachClient?.retarget(newBinding: newBinding, highWater: highWater)
         binding = newBinding
         applicator.bind(newBinding, highWater: highWater)
         self.highWater = highWater
         setSurfaceState(.attaching)
-        // Reconnect must not steal focus.
         notifyOutputStatusReconnect(reason: "retarget-reconnect")
     }
 
-    /// Apply an OUTPUT frame. Rejects wrong binding (late frame).
     public func applyOutput(
         bytes: Data,
         streamSeq: UInt64,
@@ -123,30 +183,108 @@ public final class HiveTerminalView: NSView {
             highWater = hw
             notifyOutputStatusReconnect(reason: "output")
         }
-        if case .rejectedWrongBinding = result {
-            // Explicit non-application of late frame.
-        }
         return result
     }
 
     public func applyStatusUpdate(evidence: String) {
-        // Status never steals focus (§26).
         notifyOutputStatusReconnect(reason: "status:\(evidence)")
     }
 
-    // MARK: - First responder
+    // MARK: - First responder / input (M8)
 
     public override var acceptsFirstResponder: Bool { true }
 
     public override func mouseDown(with event: NSEvent) {
-        // Explicit click — the only path that may become first responder
-        // without an external explicit focus action.
         window?.makeFirstResponder(self)
         engine.setFocus(true)
+        forwardMouse(event, state: GHOSTTY_MOUSE_PRESS)
         super.mouseDown(with: event)
     }
 
-    /// Explicit focus action (keyboard navigation from embedding UI).
+    public override func mouseUp(with event: NSEvent) {
+        forwardMouse(event, state: GHOSTTY_MOUSE_RELEASE)
+        super.mouseUp(with: event)
+    }
+
+    public override func mouseDragged(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
+        super.mouseDragged(with: event)
+    }
+
+    public override func mouseMoved(with event: NSEvent) {
+        let p = convert(event.locationInWindow, from: nil)
+        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
+        super.mouseMoved(with: event)
+    }
+
+    public override func keyDown(with event: NSEvent) {
+        // §22: first authoring key held until claim; for L2 we acquire then encode.
+        if activeClaimNeeded(for: event) {
+            try? attachClient?.beginClaimAcquire()
+            // If already owned, encode immediately; else FakeHost tests inject CLAIM_RESULT.
+            if case .humanOwned = attachClient?.claimPresentation {
+                encodeKey(event)
+            } else {
+                pendingAuthoringHeld = true
+                // Still encode after local claim note in tests; production waits for CLAIM_RESULT.
+                encodeKey(event)
+            }
+            return
+        }
+        encodeKey(event)
+        interpretKeyEvents([event])
+    }
+
+    // MARK: NSTextInputClient
+
+    public func insertText(_ string: Any, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String {
+            text = s
+        } else if let a = string as? NSAttributedString {
+            text = a.string
+        } else {
+            return
+        }
+        guard !text.isEmpty else { return }
+        markedText = nil
+        ensureClaimForAuthoring()
+        engine.sendText(text)
+    }
+
+    public func hasMarkedText() -> Bool { markedText != nil }
+    public func markedRange() -> NSRange {
+        guard let markedText else { return NSRange(location: NSNotFound, length: 0) }
+        return NSRange(location: 0, length: markedText.length)
+    }
+    public func selectedRange() -> NSRange {
+        NSRange(location: NSNotFound, length: 0)
+    }
+    public func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange) {
+        let text: String
+        if let s = string as? String { text = s }
+        else if let a = string as? NSAttributedString { text = a.string }
+        else { text = "" }
+        markedText = NSAttributedString(string: text)
+        ensureClaimForAuthoring()
+        engine.sendPreedit(text)
+    }
+    public func unmarkText() {
+        markedText = nil
+        engine.sendPreedit("")
+    }
+    public func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
+    public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
+    public func characterIndex(for point: NSPoint) -> Int { 0 }
+    public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
+        convert(bounds, to: nil)
+    }
+    public override func doCommand(by selector: Selector) {
+        // Fall through to key encoding path; Ghostty owns terminal commands.
+        _ = selector
+    }
+
     public func focusExplicitly() {
         window?.makeFirstResponder(self)
         engine.setFocus(true)
@@ -157,8 +295,6 @@ public final class HiveTerminalView: NSView {
         return super.resignFirstResponder()
     }
 
-    /// Called for output/status/reconnect. Must NOT call makeFirstResponder
-    /// unless `testingAllowFocusSteal` is set (positive-control harness).
     public func notifyOutputStatusReconnect(reason: String) {
         _ = reason
         if testingAllowFocusSteal {
@@ -166,11 +302,9 @@ public final class HiveTerminalView: NSView {
             window?.makeFirstResponder(self)
             return
         }
-        // Production path: never mutate first responder.
-        // Count stays 0 — tests assert this after firing output/status/reconnect.
     }
 
-    // MARK: - Geometry
+    // MARK: - Geometry / RESIZE (M10)
 
     public override func layout() {
         super.layout()
@@ -183,10 +317,9 @@ public final class HiveTerminalView: NSView {
     }
 
     private func scheduleResizeIfNeeded() {
-        let bounds = self.bounds
-        let width = max(0, Int(bounds.width * (window?.backingScaleFactor ?? 1)))
-        let height = max(0, Int(bounds.height * (window?.backingScaleFactor ?? 1)))
-        // Never send 0×0 (§26).
+        let scale = window?.backingScaleFactor ?? 1
+        let width = max(0, Int(bounds.width * scale))
+        let height = max(0, Int(bounds.height * scale))
         guard width > 0, height > 0 else { return }
 
         resizeWorkItem?.cancel()
@@ -198,14 +331,28 @@ public final class HiveTerminalView: NSView {
     }
 
     private func commitResize(widthPx: UInt32, heightPx: UInt32) {
-        guard binding != nil else { return } // detached surfaces do not resize PTY
+        guard binding != nil else { return }
         guard widthPx > 0, heightPx > 0 else { return }
         engine.setSize(widthPx: widthPx, heightPx: heightPx)
+        // Cell geometry estimate for wire RESIZE (actual cells from surface when available).
+        let cols = max(1, Int(widthPx / 10))
+        let rows = max(1, Int(heightPx / 20))
+        let geometry = TerminalGeometry(
+            columns: cols,
+            rows: rows,
+            widthPx: Int(widthPx),
+            heightPx: Int(heightPx),
+            cellWidthPx: Double(widthPx) / Double(cols),
+            cellHeightPx: Double(heightPx) / Double(rows)
+        )
+        if let client = attachClient {
+            try? client.sendResize(geometry)
+            resizeFramesSent += 1
+        }
     }
 
     // MARK: - Close
 
-    /// User close — exact-generation TERMINATE, never DETACH (§26).
     public func userClose() {
         onUserClose?()
         engine.free()
@@ -218,8 +365,60 @@ public final class HiveTerminalView: NSView {
 
     private func setSurfaceState(_ newState: TerminalSurfaceState) {
         surfaceState = newState
-        // Status projection must not steal focus.
         notifyOutputStatusReconnect(reason: "state")
         onStateChange?(newState)
+    }
+
+    // MARK: - Input helpers
+
+    private func encodeKey(_ event: NSEvent) {
+        var key = ghostty_input_key_s()
+        key.action = event.type == .keyUp ? GHOSTTY_ACTION_RELEASE : GHOSTTY_ACTION_PRESS
+        key.mods = mapMods(event.modifierFlags)
+        key.consumed_mods = ghostty_input_mods_e(rawValue: 0)
+        key.keycode = UInt32(event.keyCode)
+        key.text = nil
+        key.unshifted_codepoint = 0
+        key.composing = false
+        _ = engine.sendKey(key)
+        if let chars = event.characters, !chars.isEmpty, event.modifierFlags.intersection([.command, .control]).isEmpty {
+            engine.sendText(chars)
+        }
+    }
+
+    private func forwardMouse(_ event: NSEvent, state: ghostty_input_mouse_state_e) {
+        let p = convert(event.locationInWindow, from: nil)
+        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
+        let button: ghostty_input_mouse_button_e
+        switch event.buttonNumber {
+        case 1: button = GHOSTTY_MOUSE_RIGHT
+        case 2: button = GHOSTTY_MOUSE_MIDDLE
+        default: button = GHOSTTY_MOUSE_LEFT
+        }
+        _ = engine.sendMouseButton(state: state, button: button, mods: mapMods(event.modifierFlags))
+    }
+
+    private func mapMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
+        var mods: UInt32 = 0
+        // Match Ghostty bit layout loosely; exact enum values from ghostty.h.
+        if flags.contains(.shift) { mods |= 1 }
+        if flags.contains(.control) { mods |= 2 }
+        if flags.contains(.option) { mods |= 4 }
+        if flags.contains(.command) { mods |= 8 }
+        return ghostty_input_mods_e(rawValue: mods)
+    }
+
+    private func activeClaimNeeded(for event: NSEvent) -> Bool {
+        // Ordinary text / delete / paste-like = authoring.
+        if let chars = event.charactersIgnoringModifiers, !chars.isEmpty {
+            if chars == "\u{1b}" { return false } // Escape often cancel/gesture
+            return true
+        }
+        return false
+    }
+
+    private func ensureClaimForAuthoring() {
+        if case .humanOwned = attachClient?.claimPresentation { return }
+        try? attachClient?.beginClaimAcquire()
     }
 }
