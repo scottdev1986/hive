@@ -2889,10 +2889,12 @@ fn serveWithOptionalLauncher(
 }
 
 fn adoptionMatches(record: HostRecord, readback: AdoptionReadback, now_ns: u64) bool {
+    var executable_storage: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
+    const expected_executable = std.fs.selfExePath(&executable_storage) catch return false;
     return sameLocator(record.locator, readback.locator) and
         record.host_pid == readback.host_pid and
         std.mem.eql(u8, record.host_start_token, readback.host_start_token) and
-        std.mem.eql(u8, record.expected_executable, readback.executable) and
+        std.mem.eql(u8, expected_executable, readback.executable) and
         std.mem.eql(u8, record.executable_build_hash, readback.executable_build_hash) and
         std.mem.eql(u8, record.engine_build_id, readback.engine_build_id) and
         record.protocol_major == readback.protocol_major and record.protocol_minor == readback.protocol_minor and

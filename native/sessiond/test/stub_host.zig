@@ -142,12 +142,22 @@ fn fixtureCreateRecord(lease_remaining_ns: u64) broker.HostRecord {
     return record;
 }
 
+fn hostExecutable() []const u8 {
+    const Self = struct {
+        var storage: [std.fs.max_path_bytes]u8 = undefined;
+        var path: ?[]const u8 = null;
+    };
+    if (Self.path == null)
+        Self.path = std.fs.selfExePath(&Self.storage) catch @panic("host self executable unavailable");
+    return Self.path.?;
+}
+
 fn fixtureReadback(record: broker.HostRecord) broker.AdoptionReadback {
     return .{
         .locator = record.locator,
         .host_pid = record.host_pid,
         .host_start_token = record.host_start_token,
-        .executable = record.expected_executable,
+        .executable = hostExecutable(),
         .executable_build_hash = record.executable_build_hash,
         .engine_build_id = record.engine_build_id,
         .protocol_major = record.protocol_major,
@@ -553,7 +563,7 @@ const WireStubServer = struct {
                 .locator = try wireLocatorValue(payload_allocator, self.record.locator),
                 .hostPid = self.record.host_pid,
                 .hostStartToken = self.record.host_start_token,
-                .executable = self.record.expected_executable,
+                .executable = hostExecutable(),
                 .executableBuildHash = self.record.executable_build_hash,
                 .engineBuildId = self.record.engine_build_id,
                 .protocol = .{
@@ -1361,6 +1371,49 @@ test "restart adoption publishes only challenge verified visible hosts" {
             socket,
             now,
             wrong_protocol_host.control(),
+        ).?.code,
+    );
+}
+
+test "restart adoption authenticates the host self executable, not the provider executable" {
+    const now: u64 = 10 * std.time.ns_per_s;
+    var record = fixtureRecord(now + 15 * std.time.ns_per_s);
+    record.expected_executable = "/usr/bin/provider-fixture";
+    const socket: broker.SocketEvidence = .{
+        .device = 1,
+        .inode = 2,
+        .owner_uid = std.posix.getuid(),
+        .mode = 0o600,
+    };
+
+    var conforming_host = fixtureHost(record);
+    try std.testing.expect(!std.mem.eql(
+        u8,
+        conforming_host.readback.executable,
+        record.expected_executable,
+    ));
+    var adopted: broker.Registry = .{};
+    try std.testing.expect(adopted.recoverCandidate(
+        record,
+        conforming_host.secret,
+        socket,
+        socket,
+        now,
+        conforming_host.control(),
+    ) == null);
+
+    var wrong_host = fixtureHost(record);
+    wrong_host.readback.executable = "/not/hive-sessiond";
+    var rejected: broker.Registry = .{};
+    try std.testing.expectEqual(
+        broker.protocol.WireError.verification_unknown,
+        rejected.recoverCandidate(
+            record,
+            wrong_host.secret,
+            socket,
+            socket,
+            now,
+            wrong_host.control(),
         ).?.code,
     );
 }
