@@ -436,6 +436,8 @@ pub fn snapshotTree(
 
     var last_incomplete = false;
     var last_root_missing = false;
+    // Previous pass was clean root_missing (for stable-absence detection; N1).
+    var prev_clean_absent = false;
 
     while (true) {
         const pass = collectTree(platform, allocator, root_pid, expected_root_token) catch return error.InspectionFailed;
@@ -445,6 +447,7 @@ pub fn snapshotTree(
         sortIdentities(pass.members);
 
         if (prev) |p| {
+            // Stable live tree: two complete matching passes.
             if (!pass.root_missing and !pass.incomplete and identitiesMatch(p, pass.members)) {
                 allocator.free(p);
                 prev = null;
@@ -455,27 +458,37 @@ pub fn snapshotTree(
                     .incomplete = false,
                 };
             }
+            // N1: stable absence — two consecutive clean root_missing passes.
+            // (Must not require !root_missing on the live path; otherwise absence
+            // can never stabilize and M1's rootEvidence terminated path is dead.)
+            if (pass.root_missing and !pass.incomplete and prev_clean_absent and
+                p.len == 0 and pass.members.len == 0)
+            {
+                allocator.free(p);
+                prev = null;
+                return .{
+                    .status = .stable,
+                    .members = pass.members,
+                    .root_missing = true,
+                    .incomplete = false,
+                };
+            }
             allocator.free(p);
         }
+        prev_clean_absent = pass.root_missing and !pass.incomplete and pass.members.len == 0;
         prev = pass.members;
-
-        // Stable empty tree: root absent on two consecutive passes.
-        if (pass.root_missing and !pass.incomplete and prev != null) {
-            // Two passes both root_missing with empty members → stable absence.
-            // (prev was set to this pass; we need two empties — handled below.)
-        }
 
         if (platform.monoNow() >= deadline) break;
         // Brief yield so the tree can settle; still bounded by the deadline.
         platform.sleep(5 * std.time.ns_per_ms);
     }
 
-    // Deadline expired without two matching complete passes → explicit UNKNOWN
-    // when incomplete; a clean root_missing empty set is still incomplete=false.
+    // Deadline expired without two matching complete passes → explicit UNKNOWN.
+    // (A changing-but-complete tree lands here: incomplete=false, status=unknown.)
     const members = prev orelse try allocator.alloc(ProcessIdentity, 0);
     prev = null;
     return .{
-        .status = if (last_incomplete or !last_root_missing) .unknown else .unknown,
+        .status = .unknown,
         .members = members,
         .root_missing = last_root_missing,
         .incomplete = last_incomplete,
@@ -574,9 +587,11 @@ pub fn terminateTree(
     errdefer results.deinit(allocator);
 
     var any_survivor = false;
-    // M1: incomplete tree forces unknown; root_missing alone does NOT — a
-    // genuinely absent root reports terminated when absence is evidenced.
-    var any_unknown = snap.incomplete;
+    // N1: incomplete OR never-stabilized snapshot (status=.unknown) forces
+    // overall unknown — a changing-but-complete tree must not report terminated.
+    // M1 preserved: stable + root_missing + empty members → rootEvidence path
+    // (absent root with real absence evidence → terminated).
+    var any_unknown = snap.incomplete or snap.status == .unknown;
 
     for (ordered) |m| {
         const outcome = revalidate(platform, m);
@@ -633,10 +648,9 @@ fn rootEvidence(
 
 const testing = std.testing;
 
-fn realPlatform() struct { holder: RealPlatform, p: Platform } {
-    var holder = RealPlatform.init();
-    return .{ .holder = holder, .p = holder.platform() };
-}
+// N3: do not add a realPlatform() helper that returns Platform with context
+// pointing at a stack-local RealPlatform — that is use-after-return. Call sites
+// must use `var rp = RealPlatform.init(); rp.platform()`.
 
 /// Spawn `sleep 60` in a new session; returns pid. Caller must reap/kill.
 fn spawnSleepChild() !i32 {
@@ -1175,6 +1189,119 @@ test "M1: absent root with empty tree reports terminated not unknown" {
     defer result.deinit(testing.allocator);
     try testing.expectEqual(TerminationState.terminated, result.state);
     try testing.expectEqual(@as(usize, 0), result.members.len);
+}
+
+// N1 POSITIVE CONTROL: a changing-but-complete tree (root live, every pass
+// complete, membership differs between passes) MUST report .unknown — never
+// .terminated. Against the regression (`any_unknown = snap.incomplete` only)
+// this yields .terminated and FAIL.
+test "N1 positive control: changing-but-complete tree is unknown not terminated" {
+    const ChangingTree = struct {
+        root: ProcessIdentity,
+        child_a: ProcessIdentity,
+        child_b: ProcessIdentity,
+        now: u64 = 0,
+        pass: u32 = 0,
+
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+        fn monoNow(ctx: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            // Advance past the 250ms deadline after a few snapshot iterations.
+            self.now += 80 * std.time.ns_per_ms;
+            return self.now;
+        }
+        fn sleep(_: *anyopaque, _: u64) void {}
+        fn kill(_: *anyopaque, _: i32, _: i32) bool {
+            return true;
+        }
+        fn observe(ctx: *anyopaque, pid: i32) ObserveResult {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (pid == self.root.pid) return .{ .present = self.root };
+            if (pid == self.child_a.pid) return .{ .present = self.child_a };
+            if (pid == self.child_b.pid) return .{ .present = self.child_b };
+            return .absent;
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            // Pretend reaped after kill so members look terminated — the overall
+            // state must STILL be unknown because the snapshot never stabilized.
+            return true;
+        }
+        fn listChildren(ctx: *anyopaque, allocator: std.mem.Allocator, pid: i32) ![]i32 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (pid != self.root.pid) return try allocator.alloc(i32, 0);
+            // Alternate membership each list call so consecutive full passes differ.
+            self.pass += 1;
+            const out = try allocator.alloc(i32, 1);
+            out[0] = if (self.pass % 2 == 1) self.child_a.pid else self.child_b.pid;
+            return out;
+        }
+    };
+
+    var sim = ChangingTree{
+        .root = .{
+            .pid = 5000,
+            .start_token = .{ .seconds = 1, .microseconds = 0 },
+            .parent = 1,
+            .pgid = 5000,
+            .session = 5000,
+            .depth = 0,
+        },
+        .child_a = .{
+            .pid = 5001,
+            .start_token = .{ .seconds = 2, .microseconds = 0 },
+            .parent = 5000,
+            .pgid = 5000,
+            .session = 5000,
+            .depth = 1,
+        },
+        .child_b = .{
+            .pid = 5002,
+            .start_token = .{ .seconds = 3, .microseconds = 0 },
+            .parent = 5000,
+            .pgid = 5000,
+            .session = 5000,
+            .depth = 1,
+        },
+    };
+
+    var result = try terminateTree(
+        sim.platform(),
+        testing.allocator,
+        5000,
+        sim.root.start_token,
+        .immediate,
+    );
+    defer result.deinit(testing.allocator);
+
+    // Snapshot never stabilized → status unknown.
+    try testing.expectEqual(SnapshotStatus.unknown, result.snapshot_status);
+    // THE ASSERTION THAT FAILS AGAINST THE N1 REGRESSION:
+    try testing.expectEqual(TerminationState.unknown, result.state);
+    try testing.expect(result.state != .terminated);
+}
+
+// Cheap follow-up: exercise real errno branch in observeProcess (not just the
+// Platform seam). launchd (pid 1) is not same-user readable → unobservable.
+test "observeProcess pid 1 is unobservable not absent (real errno branch)" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+    const result = observeProcess(1);
+    // Must not collapse EPERM-class failure to absent (which would unearn
+    // wait-or-absence termination for unreadable processes).
+    try testing.expect(result == .unobservable or result == .present);
+    // On a normal developer Mac, pid 1 is unobservable to non-root; if present
+    // (e.g. elevated test), that is still not .absent — both accept. Fail only
+    // if we wrongly report .absent for a guaranteed-existing system pid.
+    try testing.expect(result != .absent);
 }
 
 test "inspection constants match §21" {

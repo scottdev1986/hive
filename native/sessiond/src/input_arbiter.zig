@@ -127,6 +127,8 @@ pub const Error = error{
     GenerationMismatch,
     Closed,
     Internal,
+    /// Sink rejected the write after the ledger secured a committed entry (N2).
+    SinkWriteFailed,
 };
 
 pub const ByteRange = struct {
@@ -136,7 +138,8 @@ pub const ByteRange = struct {
 
 pub const TransactionResult = struct {
     evidence: EvidenceLevel,
-    byte_range: ByteRange,
+    /// null when evidence is committed-not-written (planned only; not a written claim).
+    byte_range: ?ByteRange,
     /// Borrowed pointer into the arbiter's ledger entry; valid until the
     /// arbiter is deinited or the ledger entry is removed. Callers must NOT free.
     result_label: []const u8,
@@ -150,9 +153,15 @@ const LedgerEntry = struct {
     epoch: u64,
     message_id: []u8,
     transaction_id: []u8,
-    byte_range: ByteRange,
+    /// Set only after the sink accepts the complete range (written claim).
+    byte_range: ?ByteRange,
+    /// Planned write offset reserved at commit; not a written claim (N2).
+    planned_start: u64,
+    planned_len: usize,
     evidence: EvidenceLevel,
     result_label: []u8,
+    /// Encoded PTY bytes retained until written or cancelled (for sink retry).
+    encoded: ?[]u8,
 
     fn deinit(self: *LedgerEntry, allocator: std.mem.Allocator) void {
         allocator.free(self.idempotency_key);
@@ -160,6 +169,10 @@ const LedgerEntry = struct {
         allocator.free(self.message_id);
         allocator.free(self.transaction_id);
         allocator.free(self.result_label);
+        if (self.encoded) |buf| {
+            std.crypto.secureZero(u8, buf);
+            allocator.free(buf);
+        }
         self.* = undefined;
     }
 };
@@ -477,6 +490,11 @@ pub const InputArbiter = struct {
         // Issue a new claim to one viewer at the prior sequence. Do not replay
         // acknowledged bytes (human_records retained for dedup of unacked? —
         // acknowledged bytes stay in the write high-water; sequence continues).
+        //
+        // B2 note: on alloc failure below we remain HUMAN_ORPHANED with both
+        // claim fields null. That is sound — orphan protects the draft/sequence
+        // high-water, not the claim id strings; operator resume/discard are
+        // null-safe (resume re-issues ids; discard does not read claim_id).
         if (self.owner_viewer_id) |old| {
             self.allocator.free(old);
             self.owner_viewer_id = null;
@@ -514,10 +532,12 @@ pub const InputArbiter = struct {
 
         var encoded: std.ArrayList(u8) = .{};
         defer {
-            // M3: zero encoder plaintext before release.
-            if (encoded.items.len > 0) std.crypto.secureZero(u8, encoded.items);
+            // M3/N4: zero capacity (not just items.len) before release.
+            if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
             encoded.deinit(self.allocator);
         }
+        // N4: pre-size so encode does not realloc and free an un-zeroed buffer.
+        encoded.ensureTotalCapacity(self.allocator, 64) catch return error.Internal;
         self.cancel_encoder.encode(self.allocator, &encoded) catch {
             // A failed cancel remains orphaned (§22).
             return error.Internal;
@@ -556,6 +576,9 @@ pub const InputArbiter = struct {
             .terminating, .closed => return error.Closed,
         }
         if (begin.expected_len > automated_message_max_bytes) return error.PayloadTooLarge;
+
+        // N2: a committed-not-written entry is still in-flight — no new automation.
+        if (self.hasPendingUnwritten()) return error.InputBusy;
 
         // Idempotent: identical key+digest returns stored result path on commit;
         // reserve still creates a buffering state only if no conflict.
@@ -614,19 +637,22 @@ pub const InputArbiter = struct {
     ) Error!TransactionResult {
         try self.requireLive();
 
-        // Cancellation after COMMIT returns the stored result; also covers
-        // pure re-delivery of an already-committed idempotency key.
+        // Idempotent re-delivery / sink-write retry (N2).
         if (self.findLedger(idempotency_key)) |entry| {
             if (!std.mem.eql(u8, &entry.digest, &expected_digest) or
                 entry.epoch != capability_epoch or
                 !std.mem.eql(u8, entry.locator, locator) or
                 !std.mem.eql(u8, entry.message_id, message_id))
                 return error.Malformed;
-            return .{
-                .evidence = entry.evidence,
-                .byte_range = entry.byte_range,
-                .result_label = entry.result_label,
-            };
+            if (entry.evidence == .written) {
+                return .{
+                    .evidence = entry.evidence,
+                    .byte_range = entry.byte_range,
+                    .result_label = entry.result_label,
+                };
+            }
+            // committed-not-written: re-attempt the sink write once.
+            return try self.retryPendingWrite(entry);
         }
 
         if (self.state != .automation_buffering) return error.NotReady;
@@ -654,26 +680,35 @@ pub const InputArbiter = struct {
         hasher.final(&got);
         if (!std.mem.eql(u8, &got, &expected_digest)) return error.Malformed;
 
-        // Through AUTOMATION_COMMITTED then FREE.
+        // Through AUTOMATION_COMMITTED.
         self.state = .automation_committed;
 
         var encoded: std.ArrayList(u8) = .{};
         defer {
-            // M3: zero encoder plaintext output (same class as self.buffer).
-            if (encoded.items.len > 0) std.crypto.secureZero(u8, encoded.items);
+            // N4: zero the full allocation (capacity), not just items.len, so a
+            // realloc path cannot leave plaintext in a freed old buffer — we
+            // also ensureTotalCapacity first so encode does not realloc.
+            if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
             encoded.deinit(self.allocator);
         }
+        // N4: pre-size for body + submit slack so encoder appends do not realloc.
+        const encode_cap = self.buffer_len + 16;
+        encoded.ensureTotalCapacity(self.allocator, encode_cap) catch {
+            self.state = .automation_buffering;
+            return error.Internal;
+        };
         self.encoder.encode(self.allocator, self.buffer[0..self.buffer_len], submit, &encoded) catch {
             self.state = .automation_buffering;
             return error.Internal;
         };
 
-        // M4: secure the ledger entry BEFORE the sink write so a bookkeeping
-        // failure after a successful PTY write cannot leave the transaction
-        // unrecorded (retry would re-encode and write a second time).
+        // M4/N2: ledger BEFORE sink write. byte_range stays null until written;
+        // planned_start/len + retained encoded support honest retry.
         const planned_start = self.write_high_water;
-        const planned_end = planned_start + encoded.items.len;
-        const range = ByteRange{ .start = planned_start, .end_exclusive = planned_end };
+        const encoded_owned = self.allocator.dupe(u8, encoded.items) catch {
+            self.state = .automation_buffering;
+            return error.Internal;
+        };
 
         const entry = buildLedgerEntry(
             self.allocator,
@@ -683,12 +718,17 @@ pub const InputArbiter = struct {
             capability_epoch,
             message_id,
             transaction_id,
-            range,
+            planned_start,
+            encoded_owned.len,
+            encoded_owned,
             .committed,
         ) catch {
+            std.crypto.secureZero(u8, encoded_owned);
+            self.allocator.free(encoded_owned);
             self.state = .automation_buffering;
             return error.Internal;
         };
+        // buildLedgerEntry took ownership of encoded_owned on success.
         self.ledger.append(self.allocator, entry) catch {
             var doomed = entry;
             doomed.deinit(self.allocator);
@@ -697,39 +737,39 @@ pub const InputArbiter = struct {
         };
         const ledger_idx = self.ledger.items.len - 1;
 
-        // Sink write after ledger is secured.
-        self.sink.write(encoded.items) catch {
-            // Ledger retained → commit retry is idempotent (no second write).
-            self.zeroAndFreeAutomationBuffers();
-            self.state = .free;
-            return .{
-                .evidence = self.ledger.items[ledger_idx].evidence,
-                .byte_range = self.ledger.items[ledger_idx].byte_range,
-                .result_label = self.ledger.items[ledger_idx].result_label,
-            };
-        };
-        self.write_high_water = planned_end;
-        self.ledger.items[ledger_idx].evidence = .written;
-
+        // Plaintext body no longer needed; keep only the encoded ledger copy.
         self.zeroAndFreeAutomationBuffers();
-        self.state = .free;
 
-        return .{
-            .evidence = .written,
-            .byte_range = range,
-            .result_label = self.ledger.items[ledger_idx].result_label,
+        // Sink write after ledger is secured.
+        const pending = &self.ledger.items[ledger_idx];
+        self.sink.write(pending.encoded.?) catch {
+            // N2: typed failure; evidence stays .committed; do NOT return Ok.
+            // high_water not advanced; pending blocks new automation until
+            // retry-to-written or cancel.
+            self.state = .free; // human paths free; automation gated by hasPendingUnwritten
+            return error.SinkWriteFailed;
         };
+        return self.markWritten(pending);
     }
 
-    /// Cancellation before COMMIT writes nothing; after COMMIT returns stored result.
+    /// Cancellation before COMMIT writes nothing; after COMMIT returns stored
+    /// result. For committed-not-written, also drops the encoded pending so a
+    /// new automation transaction may begin (N2 explicit cancel).
     pub fn automationCancel(self: *InputArbiter, idempotency_key: []const u8) Error!?TransactionResult {
         try self.requireLive();
         if (self.findLedger(idempotency_key)) |entry| {
-            return .{
+            const result = TransactionResult{
                 .evidence = entry.evidence,
                 .byte_range = entry.byte_range,
                 .result_label = entry.result_label,
             };
+            // Drop pending write payload so single-writer is released.
+            if (entry.encoded) |buf| {
+                std.crypto.secureZero(u8, buf);
+                self.allocator.free(buf);
+                entry.encoded = null;
+            }
+            return result;
         }
         if (self.state != .automation_buffering) return error.NotReady;
         if (self.idempotency_key == null or !std.mem.eql(u8, self.idempotency_key.?, idempotency_key))
@@ -738,6 +778,49 @@ pub const InputArbiter = struct {
         self.zeroAndFreeAutomationBuffers();
         self.state = .free;
         return null;
+    }
+
+    fn hasPendingUnwritten(self: *const InputArbiter) bool {
+        for (self.ledger.items) |entry| {
+            if (entry.evidence == .committed and entry.encoded != null) return true;
+        }
+        return false;
+    }
+
+    fn retryPendingWrite(self: *InputArbiter, entry: *LedgerEntry) Error!TransactionResult {
+        if (entry.evidence == .written) {
+            return .{
+                .evidence = .written,
+                .byte_range = entry.byte_range,
+                .result_label = entry.result_label,
+            };
+        }
+        const bytes = entry.encoded orelse return error.Internal;
+        self.sink.write(bytes) catch return error.SinkWriteFailed;
+        return self.markWritten(entry);
+    }
+
+    fn markWritten(self: *InputArbiter, entry: *LedgerEntry) Error!TransactionResult {
+        const start = entry.planned_start;
+        // Only advance high-water if this planned range is still at the tip
+        // (no intervening writes). Planned ranges start at high_water at commit.
+        if (self.write_high_water == start) {
+            self.write_high_water = start + entry.planned_len;
+        }
+        const range = ByteRange{ .start = start, .end_exclusive = start + entry.planned_len };
+        entry.byte_range = range;
+        entry.evidence = .written;
+        if (entry.encoded) |buf| {
+            std.crypto.secureZero(u8, buf);
+            self.allocator.free(buf);
+            entry.encoded = null;
+        }
+        self.state = .free;
+        return .{
+            .evidence = .written,
+            .byte_range = range,
+            .result_label = entry.result_label,
+        };
     }
 
     // ── any live → TERMINATING → CLOSED ─────────────────────────────────────
@@ -821,7 +904,7 @@ pub const InputArbiter = struct {
     }
 };
 
-/// Build a fully-owned ledger entry; on any dupe failure frees prior fields.
+/// Build a fully-owned ledger entry; takes ownership of `encoded` on success.
 fn buildLedgerEntry(
     allocator: std.mem.Allocator,
     idempotency_key: []const u8,
@@ -830,7 +913,9 @@ fn buildLedgerEntry(
     epoch: u64,
     message_id: []const u8,
     transaction_id: []const u8,
-    byte_range: ByteRange,
+    planned_start: u64,
+    planned_len: usize,
+    encoded: []u8,
     evidence: EvidenceLevel,
 ) error{OutOfMemory}!LedgerEntry {
     const key_owned = try allocator.dupe(u8, idempotency_key);
@@ -849,9 +934,12 @@ fn buildLedgerEntry(
         .epoch = epoch,
         .message_id = msg_owned,
         .transaction_id = txn_owned,
-        .byte_range = byte_range,
+        .byte_range = null,
+        .planned_start = planned_start,
+        .planned_len = planned_len,
         .evidence = evidence,
         .result_label = label,
+        .encoded = encoded,
     };
 }
 
@@ -1198,8 +1286,8 @@ test "automation idempotent: commit twice returns stored result, no second write
         "ses_1",
         .none,
     );
-    try std.testing.expectEqual(first.byte_range.start, second.byte_range.start);
-    try std.testing.expectEqual(first.byte_range.end_exclusive, second.byte_range.end_exclusive);
+    try std.testing.expectEqual(first.byte_range.?.start, second.byte_range.?.start);
+    try std.testing.expectEqual(first.byte_range.?.end_exclusive, second.byte_range.?.end_exclusive);
     try std.testing.expectEqualStrings("once", sink.writes.items);
 }
 
@@ -1503,7 +1591,9 @@ test "M8: claimRelease records submit vs cancel kind distinctly" {
     try std.testing.expectEqualStrings("\r\x03", sink.writes.items);
 }
 
-test "M4: ledger secured before write — commit retry does not double-write" {
+// N2: sink fail → typed error + evidence .committed; retry writes exactly once;
+// no double-write; no new-txn while pending.
+test "N2: sink write failure is typed; retry writes once; blocks new automation" {
     var sink = MockSink{ .allocator = std.testing.allocator };
     defer sink.deinit();
     var arb = makeArbiter(&sink);
@@ -1524,9 +1614,8 @@ test "M4: ledger secured before write — commit retry does not double-write" {
         .submit = .none,
     });
     _ = try arb.automationChunk(0, body);
-    // Force sink failure on first write after ledger is secured.
     sink.fail_next = true;
-    const first = try arb.automationCommit(
+    try std.testing.expectError(error.SinkWriteFailed, arb.automationCommit(
         "txn_m4",
         "idemp_m4",
         body.len,
@@ -1536,12 +1625,28 @@ test "M4: ledger secured before write — commit retry does not double-write" {
         "msg_m4",
         "ses_m4",
         .none,
-    );
-    // Ledger retained even though write failed.
+    ));
     try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
-    try std.testing.expectEqual(EvidenceLevel.committed, first.evidence);
+    const entry = arb.findLedger("idemp_m4").?;
+    try std.testing.expectEqual(EvidenceLevel.committed, entry.evidence);
+    try std.testing.expect(entry.byte_range == null); // planned only, not written claim
+    try std.testing.expect(entry.encoded != null);
 
-    // Retry must return stored result and NOT write again.
+    // New automation blocked while pending unwritten.
+    try std.testing.expectError(error.InputBusy, arb.automationBegin(.{
+        .transaction_id = "txn_other",
+        .idempotency_key = "idemp_other",
+        .expected_len = 1,
+        .expected_digest = sha256("x"),
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_o",
+        .locator = "ses_o",
+        .provider_strategy = "p",
+        .submit = .none,
+    }));
+
+    // Retry re-attempts sink write exactly once → written.
     const second = try arb.automationCommit(
         "txn_m4",
         "idemp_m4",
@@ -1553,8 +1658,24 @@ test "M4: ledger secured before write — commit retry does not double-write" {
         "ses_m4",
         .none,
     );
-    try std.testing.expectEqual(first.byte_range.start, second.byte_range.start);
-    try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+    try std.testing.expectEqual(EvidenceLevel.written, second.evidence);
+    try std.testing.expect(second.byte_range != null);
+    try std.testing.expectEqualStrings("once-only", sink.writes.items);
+
+    // Further commit is pure idempotent return — no second write.
+    const third = try arb.automationCommit(
+        "txn_m4",
+        "idemp_m4",
+        body.len,
+        dig,
+        1,
+        1,
+        "msg_m4",
+        "ses_m4",
+        .none,
+    );
+    try std.testing.expectEqual(EvidenceLevel.written, third.evidence);
+    try std.testing.expectEqualStrings("once-only", sink.writes.items);
 }
 
 // B2 POSITIVE CONTROL: allocator failure during operatorResume must not leave
