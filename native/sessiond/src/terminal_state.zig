@@ -754,7 +754,7 @@ pub const TerminalState = struct {
         }
     }
 
-    /// Persist journal.bin (mode 0600 expected by caller on directory).
+    /// Persist journal.bin atomically with mode 0600 on the file itself.
     pub fn persistJournal(self: *const TerminalState, dir: std.fs.Dir) Error!void {
         // Layout: 16-byte prefix (start_seq u64 BE + end_seq u64 BE) + raw bytes.
         var prefix: [16]u8 = undefined;
@@ -778,8 +778,16 @@ fn writeAtomic(dir: std.fs.Dir, name: []const u8, bytes: []const u8) Error!void 
     const tmp_name = std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{name}) catch
         return error.Internal;
 
-    const file = dir.createFile(tmp_name, .{ .truncate = true }) catch return error.IoFailed;
+    const fd = std.posix.openat(dir.fd, tmp_name, .{
+        .ACCMODE = .WRONLY,
+        .CREAT = true,
+        .TRUNC = true,
+        .NOFOLLOW = true,
+        .CLOEXEC = true,
+    }, 0o600) catch return error.IoFailed;
+    const file: std.fs.File = .{ .handle = fd };
     defer file.close();
+    file.chmod(0o600) catch return error.IoFailed;
     file.writeAll(bytes) catch return error.IoFailed;
     file.sync() catch return error.IoFailed; // data durable
     dir.rename(tmp_name, name) catch return error.IoFailed;
@@ -1427,8 +1435,16 @@ test "persistCheckpoints atomic write + re-parse envelope" {
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
+    const previous_umask = std.c.umask(0o022);
+    defer _ = std.c.umask(previous_umask);
+
     try s.ts.persistCheckpoints(tmp.dir);
     try s.ts.persistJournal(tmp.dir);
+
+    const checkpoint_stat = try std.posix.fstatat(tmp.dir.fd, "checkpoint-0.bin", std.posix.AT.SYMLINK_NOFOLLOW);
+    try testing.expectEqual(@as(std.c.mode_t, 0o600), checkpoint_stat.mode & 0o777);
+    const journal_stat = try std.posix.fstatat(tmp.dir.fd, "journal.bin", std.posix.AT.SYMLINK_NOFOLLOW);
+    try testing.expectEqual(@as(std.c.mode_t, 0o600), journal_stat.mode & 0o777);
 
     const file = try tmp.dir.readFileAlloc(testing.allocator, "checkpoint-0.bin", checkpoint_max_bytes + header_bytes);
     defer testing.allocator.free(file);
@@ -1440,6 +1456,27 @@ test "persistCheckpoints atomic write + re-parse envelope" {
     defer testing.allocator.free(bad);
     bad[0] = 'Z';
     try testing.expectError(error.WrongMagic, parseEnvelope(bad));
+}
+
+test "persistJournal does not follow a symlink at the temporary path" {
+    var s = try makeState();
+    defer s.deinit();
+    try s.ts.feedOutput("secret");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    {
+        var sentinel = try tmp.dir.createFile("sentinel", .{ .mode = 0o600 });
+        defer sentinel.close();
+        try sentinel.writeAll("unchanged");
+    }
+    try tmp.dir.symLink("sentinel", "journal.bin.tmp", .{});
+
+    try testing.expectError(error.IoFailed, s.ts.persistJournal(tmp.dir));
+    const contents = try tmp.dir.readFileAlloc(testing.allocator, "sentinel", 32);
+    defer testing.allocator.free(contents);
+    try testing.expectEqualStrings("unchanged", contents);
 }
 
 test "restore refuses when reconnect_available is false (no mostly-restored)" {

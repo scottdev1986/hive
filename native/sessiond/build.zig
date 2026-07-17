@@ -65,6 +65,7 @@ pub fn build(b: *std.Build) void {
         .root_source_file = b.path("src/terminal_state.zig"),
         .target = target,
         .optimize = optimize,
+        .link_libc = true,
     });
     terminal_state_module.addImport("session_protocol_generated", generated);
     terminal_state_module.addImport("hvtcp001_header", hvtcp001_fixture);
