@@ -195,6 +195,8 @@ private func workspaceCanonicalValue(_ value: Any) throws -> String {
         return "[" + (try array.map(workspaceCanonicalValue)).joined(separator: ",") + "]"
     }
     if let object = value as? [String: Any] {
+        // Load-bearing: String < uses canonical-equivalence ordering and can
+        // diverge on non-BMP keys while an ASCII-only corpus still passes.
         let keys = object.keys.sorted {
             $0.utf16.lexicographicallyPrecedes($1.utf16)
         }

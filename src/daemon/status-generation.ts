@@ -1,3 +1,5 @@
+import type { AgentRecord } from "../schemas";
+
 export type StatusIncarnationGenerationResult =
   | Readonly<{ kind: "available"; generation: number }>
   | Readonly<{
@@ -7,6 +9,21 @@ export type StatusIncarnationGenerationResult =
 
 export interface StatusIncarnationGenerationSource {
   currentForAgent(agentId: string): Promise<StatusIncarnationGenerationResult>;
+}
+
+export function agentRecordStatusIncarnationGenerationSource(
+  getAgentById: (
+    agentId: string,
+  ) => Pick<AgentRecord, "sessionLocator"> | null,
+): StatusIncarnationGenerationSource {
+  return {
+    async currentForAgent(agentId) {
+      const locator = getAgentById(agentId)?.sessionLocator;
+      return locator === undefined
+        ? { kind: "unavailable", reason: "SESSION_LOCATOR_UNAVAILABLE" }
+        : { kind: "available", generation: locator.generation };
+    },
+  };
 }
 
 export const unavailableStatusIncarnationGenerationSource:

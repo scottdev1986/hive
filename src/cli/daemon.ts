@@ -20,6 +20,7 @@ import {
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { StatusStore } from "../daemon/status-store";
+import { agentRecordStatusIncarnationGenerationSource } from "../daemon/status-generation";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
@@ -201,7 +202,10 @@ export async function runDaemon(): Promise<void> {
   // missed it because they use BunTmuxSender, which does forward.
   const tmuxSender = new BunTmuxSender(sessions);
   daemon = new HiveDaemon({
-    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    statusIncarnationGenerationSource:
+      agentRecordStatusIncarnationGenerationSource((agentId) =>
+        db.getAgentById(agentId)
+      ),
     db,
     spawner,
     statusStore,

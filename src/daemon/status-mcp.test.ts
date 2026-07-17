@@ -5,7 +5,10 @@ import type { AgentRecord } from "../schemas";
 import type { CaptureResult, SessionLocator } from "./session-host/contract";
 import { HiveDatabase } from "./db";
 import { HiveDaemon } from "./server";
-import type { StatusIncarnationGenerationSource } from "./status-generation";
+import {
+  agentRecordStatusIncarnationGenerationSource,
+  type StatusIncarnationGenerationSource,
+} from "./status-generation";
 import {
   emptyStatusProjection,
   reconcileStatusSnapshot,
@@ -124,6 +127,27 @@ const harness = (
 };
 
 describe("WP7 MCP status tools", () => {
+  test("reads incarnation generation from the persisted agent locator", async () => {
+    const db = new HiveDatabase(":memory:");
+    db.insertAgent(agent());
+    const source = agentRecordStatusIncarnationGenerationSource((agentId) =>
+      db.getAgentById(agentId)
+    );
+
+    expect(await source.currentForAgent("agent-maya")).toEqual({
+      kind: "available",
+      generation: 1,
+    });
+    expect(
+      await agentRecordStatusIncarnationGenerationSource(() => ({}))
+        .currentForAgent("agent-maya"),
+    ).toEqual({
+      kind: "unavailable",
+      reason: "SESSION_LOCATOR_UNAVAILABLE",
+    });
+    db.close();
+  });
+
   test("does not resurrect a closed failed-admission Assignment on restart", () => {
     const db = new HiveDatabase(":memory:");
     const failed = { ...agent(), status: "stuck" as const };
