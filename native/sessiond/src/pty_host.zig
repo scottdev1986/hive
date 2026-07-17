@@ -267,9 +267,17 @@ pub const PtyHost = struct {
             self.forceKillChildWithPid(@intCast(pid));
             return error.SpawnFailed;
         }
-        // Non-blocking master for the read loop.
+        // L2: O_NONBLOCK is required for readAvailable's would-block contract
+        // (same hard-fail pattern as R4 CLOEXEC).
         const fl = c.fcntl(master, c.F_GETFL);
-        if (fl >= 0) _ = c.fcntl(master, c.F_SETFL, fl | c.O_NONBLOCK);
+        if (fl < 0) {
+            self.forceKillChildWithPid(@intCast(pid));
+            return error.SpawnFailed;
+        }
+        if (c.fcntl(master, c.F_SETFL, fl | c.O_NONBLOCK) < 0) {
+            self.forceKillChildWithPid(@intCast(pid));
+            return error.SpawnFailed;
+        }
 
         self.master_fd = master;
         master = -1; // ownership transferred to self; disarm errdefer (B1)
@@ -487,20 +495,41 @@ const BarrierResult = enum { success, exec_failed, spawn_failed, timeout };
 
 /// Parent-side barrier: poll with bound (R5), read with EINTR retry (R3).
 /// EOF ⇒ success; 4-byte errno ⇒ exec_failed.
+/// M1: deadline is monotonic — EINTR must not reset the full timeout budget
+/// (SIGCHLD from other children is common in sessiond).
 fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
-    // Wait until readable/HUP or timeout.
+    const started = std.time.Instant.now() catch {
+        // No monotonic clock: fall back to a single non-retrying poll.
+        return readExecBarrierOnce(read_fd, timeout_ms);
+    };
+    const budget_ns: u64 = @as(u64, @intCast(timeout_ms)) * std.time.ns_per_ms;
+
+    // Wait until readable/HUP or deadline.
     while (true) {
+        const now = std.time.Instant.now() catch return .spawn_failed;
+        const elapsed = now.since(started);
+        if (elapsed >= budget_ns) return .timeout;
+        const remaining_ns = budget_ns - elapsed;
+        const remaining_ms: c_int = @intCast(@min(remaining_ns / std.time.ns_per_ms, std.math.maxInt(c_int)));
+        // poll(0) is a non-blocking poll; use at least 1ms if any budget remains.
+        const slice_ms: c_int = if (remaining_ms == 0) 1 else remaining_ms;
+
         var pfd: c.struct_pollfd = .{
             .fd = read_fd,
             .events = c.POLLIN,
             .revents = 0,
         };
-        const pr = c.poll(&pfd, 1, timeout_ms);
+        const pr = c.poll(&pfd, 1, slice_ms);
         if (pr < 0) {
-            if (std.c._errno().* == c.EINTR) continue;
+            if (std.c._errno().* == c.EINTR) continue; // M1: retry with remaining budget
             return .spawn_failed;
         }
-        if (pr == 0) return .timeout;
+        if (pr == 0) {
+            // Timed out this slice — check deadline (may be true timeout).
+            const now2 = std.time.Instant.now() catch return .timeout;
+            if (now2.since(started) >= budget_ns) return .timeout;
+            continue;
+        }
         break;
     }
 
@@ -522,6 +551,22 @@ fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
     return .exec_failed;
 }
 
+fn readExecBarrierOnce(read_fd: c_int, timeout_ms: c_int) BarrierResult {
+    var pfd: c.struct_pollfd = .{
+        .fd = read_fd,
+        .events = c.POLLIN,
+        .revents = 0,
+    };
+    const pr = c.poll(&pfd, 1, timeout_ms);
+    if (pr < 0) return .spawn_failed;
+    if (pr == 0) return .timeout;
+    var buf: [@sizeOf(c_int)]u8 = undefined;
+    const n = c.read(read_fd, &buf, buf.len);
+    if (n == 0) return .success;
+    if (n == @sizeOf(c_int)) return .exec_failed;
+    return .spawn_failed;
+}
+
 /// Child-side: report errno on the barrier (EINTR-retried), then _exit.
 /// write() and _exit are async-signal-safe. 4-byte write is ≤ PIPE_BUF atomic.
 fn childBarrierFail(write_fd: c_int, exit_code: u8) noreturn {
@@ -532,7 +577,13 @@ fn childBarrierFail(write_fd: c_int, exit_code: u8) noreturn {
         const n = c.write(write_fd, @ptrCast(bytes + sent), @sizeOf(c_int) - sent);
         if (n < 0) {
             if (std.c._errno().* == c.EINTR) continue;
-            break; // parent will timeout rather than see false EOF-as-success
+            // L1: a blocking write with the parent still holding the read end can
+            // only fail with EINTR in practice (which we retry). EPIPE needs the
+            // parent's read end closed; EAGAIN needs O_NONBLOCK. This break is
+            // defensive/unreachable under our fd setup — then _exit closes the
+            // write end and the parent would see EOF/.success. We still _exit
+            // (must not hang the child); do not claim the parent times out.
+            break;
         }
         if (n == 0) break;
         sent += @intCast(n);
