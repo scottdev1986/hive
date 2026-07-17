@@ -153,14 +153,18 @@ const LedgerEntry = struct {
     epoch: u64,
     message_id: []u8,
     transaction_id: []u8,
-    /// Set only after the sink accepts the complete range (written claim).
+    /// Host write-queue owned range (P3 / §22:1348 committed). Populated at
+    /// entry creation with the planned range; evidence stays .committed until
+    /// the sink accepts the bytes (.written).
     byte_range: ?ByteRange,
-    /// Planned write offset reserved at commit; not a written claim (N2).
+    /// Planned write offset reserved at commit (same as byte_range.start when set).
     planned_start: u64,
     planned_len: usize,
     evidence: EvidenceLevel,
     result_label: []u8,
-    /// Encoded PTY bytes retained until written or cancelled (for sink retry).
+    /// Encoded PTY bytes retained until written/cancel/disconnect/exit (sink retry).
+    /// §22:1337 durable key fields do not include this; it is ephemeral retry state
+    /// and MUST be zeroed on commit-success, cancel, disconnect, and exit (P1).
     encoded: ?[]u8,
 
     fn deinit(self: *LedgerEntry, allocator: std.mem.Allocator) void {
@@ -187,6 +191,15 @@ const HumanSeqRecord = struct {
 
 /// §18 automated message cap: 1 MiB.
 pub const automated_message_max_bytes: usize = 1024 * 1024;
+/// Fixed-cap encode bound: worst-case C0-safe expansion + framing/submit slack (P4 / §22:1338).
+/// Encoders must stay within this; excess fails without realloc. Non-core-dump memory
+/// where available is an open WP4-B item (§22:1338).
+pub const encoded_expansion_factor: usize = 4;
+pub const encoded_framing_slack: usize = 256;
+
+fn encodedCapacityForBody(body_len: usize) usize {
+    return body_len * encoded_expansion_factor + encoded_framing_slack;
+}
 
 pub const InputArbiter = struct {
     allocator: std.mem.Allocator,
@@ -444,12 +457,17 @@ pub const InputArbiter = struct {
     pub fn viewerDisconnect(self: *InputArbiter) Error!void {
         try self.requireLive();
         if (self.state != .human_owned) {
-            // L3: §22 lists disconnect as a plaintext-zeroing trigger. An open
-            // automation buffer holds plaintext — zero it even though the claim
-            // state is not human-owned.
+            // L3/P1: §22 lists disconnect as a plaintext-zeroing trigger.
             if (self.state == .automation_buffering) {
                 self.zeroAndFreeAutomationBuffers();
                 self.state = .free;
+                return;
+            }
+            // P1: pending-unwritten hold retains entry.encoded plaintext — zero
+            // it, then terminate (lease/disconnect of a held automation txn).
+            if (self.state == .automation_committed) {
+                self.zeroLedgerEncoded();
+                try self.terminate();
                 return;
             }
             if (self.state == .free) return;
@@ -691,8 +709,9 @@ pub const InputArbiter = struct {
             if (encoded.capacity > 0) std.crypto.secureZero(u8, encoded.allocatedSlice());
             encoded.deinit(self.allocator);
         }
-        // N4: pre-size for body + submit slack so encoder appends do not realloc.
-        const encode_cap = self.buffer_len + 16;
+        // P4/N4: fixed-cap encode buffer (worst-case expansion). Capacity is set
+        // once so the encoder must not force realloc of an un-zeroed old buffer.
+        const encode_cap = encodedCapacityForBody(self.buffer_len);
         encoded.ensureTotalCapacity(self.allocator, encode_cap) catch {
             self.state = .automation_buffering;
             return error.Internal;
@@ -701,9 +720,14 @@ pub const InputArbiter = struct {
             self.state = .automation_buffering;
             return error.Internal;
         };
+        if (encoded.items.len > encode_cap) {
+            // Encoder produced more than the fixed-cap bound. Fail closed.
+            self.state = .automation_buffering;
+            return error.PayloadTooLarge;
+        }
 
-        // M4/N2: ledger BEFORE sink write. byte_range stays null until written;
-        // planned_start/len + retained encoded support honest retry.
+        // M4/N2: ledger BEFORE sink write. P3: byte_range = planned range at
+        // creation under .committed (§22:1348 queue owns the range; not kernel).
         const planned_start = self.write_high_water;
         const encoded_owned = self.allocator.dupe(u8, encoded.items) catch {
             self.state = .automation_buffering;
@@ -762,8 +786,8 @@ pub const InputArbiter = struct {
     }
 
     /// Cancellation before COMMIT writes nothing; after COMMIT returns stored
-    /// result (§22). For committed-not-written, drops the retained encoded
-    /// pending and releases the hold to FREE so a new automation may begin.
+    /// result (§22). For the held pending-unwritten entry only, drops encoded
+    /// and releases AUTOMATION_COMMITTED → FREE.
     pub fn automationCancel(self: *InputArbiter, idempotency_key: []const u8) Error!?TransactionResult {
         try self.requireLive();
         if (self.findLedger(idempotency_key)) |entry| {
@@ -772,16 +796,18 @@ pub const InputArbiter = struct {
                 .byte_range = entry.byte_range,
                 .result_label = entry.result_label,
             };
-            // Explicit cancel of committed-not-written (N2 constraint #2b):
-            // must not be blocked by a pure stored-result short-circuit that
-            // leaves the hold in place — drop encoded so the hold ends.
+            // P2: only release the hold when THIS entry is the pending-unwritten
+            // txn (encoded != null). A stale cancel of an old completed key must
+            // not wipe an unrelated in-flight buffering txn.
+            const was_pending = entry.encoded != null;
             if (entry.encoded) |buf| {
                 std.crypto.secureZero(u8, buf);
                 self.allocator.free(buf);
                 entry.encoded = null;
             }
-            if (self.state == .automation_committed or self.state == .automation_buffering) {
-                self.zeroAndFreeAutomationBuffers();
+            if (was_pending) {
+                // Pending entry always implies .automation_committed (pre-append
+                // failures reset to buffering WITHOUT a ledger entry).
                 self.state = .free;
             }
             return result;
@@ -848,6 +874,9 @@ pub const InputArbiter = struct {
         if (self.state == .closed) return;
         self.state = .terminating;
         // Finish cancellation policy: drop open automation, zero plaintext.
+        // P1/§22:1338 EXIT: ledger may outlive termination for durable fields,
+        // but entry.encoded is ephemeral retry plaintext — zero it now.
+        self.zeroLedgerEncoded();
         self.zeroAndFreeAutomationBuffers();
         self.clearClaim();
         self.sink.close();
@@ -921,6 +950,17 @@ pub const InputArbiter = struct {
         }
         return null;
     }
+
+    /// Zero+null every ledger encoded buffer (§22 disconnect/exit zeroing; P1).
+    fn zeroLedgerEncoded(self: *InputArbiter) void {
+        for (self.ledger.items) |*entry| {
+            if (entry.encoded) |buf| {
+                std.crypto.secureZero(u8, buf);
+                self.allocator.free(buf);
+                entry.encoded = null;
+            }
+        }
+    }
 };
 
 /// Build a fully-owned ledger entry; takes ownership of `encoded` on success.
@@ -946,6 +986,9 @@ fn buildLedgerEntry(
     const txn_owned = try allocator.dupe(u8, transaction_id);
     errdefer allocator.free(txn_owned);
     const label = try allocator.dupe(u8, "written");
+    // P3: populate byte_range at creation with the planned range under .committed
+    // (§22:1348 — queue owns the contiguous range; not kernel-consumed).
+    const range = ByteRange{ .start = planned_start, .end_exclusive = planned_start + planned_len };
     return .{
         .idempotency_key = key_owned,
         .digest = digest,
@@ -953,7 +996,7 @@ fn buildLedgerEntry(
         .epoch = epoch,
         .message_id = msg_owned,
         .transaction_id = txn_owned,
-        .byte_range = null,
+        .byte_range = range,
         .planned_start = planned_start,
         .planned_len = planned_len,
         .evidence = evidence,
@@ -1650,7 +1693,9 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
     try std.testing.expectEqual(State.automation_committed, arb.currentState());
     const entry = arb.findLedger("idemp_m4").?;
     try std.testing.expectEqual(EvidenceLevel.committed, entry.evidence);
-    try std.testing.expect(entry.byte_range == null); // planned only
+    // P3: byte_range populated at creation with planned range under .committed.
+    try std.testing.expect(entry.byte_range != null);
+    try std.testing.expectEqual(entry.planned_start, entry.byte_range.?.start);
     try std.testing.expect(entry.encoded != null); // content retained for retry
     const high_water = arb.write_high_water;
 
@@ -1703,6 +1748,111 @@ test "N2: sink write failure is typed; retry writes once; blocks new automation"
     );
     try std.testing.expectEqual(EvidenceLevel.written, third.evidence);
     try std.testing.expectEqualStrings("once-only", sink.writes.items);
+}
+
+// P1 positive control: disconnect while pending-unwritten zeros ledger.encoded.
+test "P1: disconnect while pending-unwritten zeros retained plaintext" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const body = "secret-pending-write";
+    const dig = sha256(body);
+    try arb.automationBegin(.{
+        .transaction_id = "txn_p1",
+        .idempotency_key = "idemp_p1",
+        .expected_len = body.len,
+        .expected_digest = dig,
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_p1",
+        .locator = "ses_p1",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, body);
+    sink.fail_next = true;
+    try std.testing.expectError(error.SinkWriteFailed, arb.automationCommit(
+        "txn_p1",
+        "idemp_p1",
+        body.len,
+        dig,
+        1,
+        1,
+        "msg_p1",
+        "ses_p1",
+        .none,
+    ));
+    try std.testing.expectEqual(State.automation_committed, arb.currentState());
+    try std.testing.expect(arb.findLedger("idemp_p1").?.encoded != null);
+    try arb.viewerDisconnect();
+    try std.testing.expectEqual(State.closed, arb.currentState());
+    // THE ASSERTION: retained plaintext zeroed (not left for deinit-only).
+    try std.testing.expect(arb.findLedger("idemp_p1").?.encoded == null);
+}
+
+// P2 positive control: stale cancel of completed A must not destroy buffering B.
+test "P2: cancel completed A while B buffers leaves B intact" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const body_a = "alpha";
+    const dig_a = sha256(body_a);
+    try arb.automationBegin(.{
+        .transaction_id = "txn_a",
+        .idempotency_key = "idemp_a",
+        .expected_len = body_a.len,
+        .expected_digest = dig_a,
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_a",
+        .locator = "ses_a",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, body_a);
+    _ = try arb.automationCommit(
+        "txn_a",
+        "idemp_a",
+        body_a.len,
+        dig_a,
+        1,
+        1,
+        "msg_a",
+        "ses_a",
+        .none,
+    );
+    try std.testing.expectEqual(State.free, arb.currentState());
+
+    const body_b = "bravo-in-flight";
+    const dig_b = sha256(body_b);
+    try arb.automationBegin(.{
+        .transaction_id = "txn_b",
+        .idempotency_key = "idemp_b",
+        .expected_len = body_b.len,
+        .expected_digest = dig_b,
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_b",
+        .locator = "ses_b",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, body_b);
+    try std.testing.expectEqual(State.automation_buffering, arb.currentState());
+    try std.testing.expect(arb.buffer_len == body_b.len);
+
+    // Stale cancel of A returns stored result and must NOT wipe B.
+    const cancelled = try arb.automationCancel("idemp_a");
+    try std.testing.expect(cancelled != null);
+    try std.testing.expectEqual(EvidenceLevel.written, cancelled.?.evidence);
+    // THE ASSERTION THAT FAILS AGAINST UNFIXED P2:
+    try std.testing.expectEqual(State.automation_buffering, arb.currentState());
+    try std.testing.expectEqual(body_b.len, arb.buffer_len);
+    try std.testing.expectEqualStrings(body_b, arb.buffer[0..arb.buffer_len]);
 }
 
 test "N2: cancel of committed-not-written releases hold to FREE" {

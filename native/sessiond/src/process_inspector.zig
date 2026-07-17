@@ -1290,17 +1290,14 @@ test "N1 positive control: changing-but-complete tree is unknown not terminated"
     try testing.expect(result.state != .terminated);
 }
 
-// Cheap follow-up: exercise real errno branch in observeProcess (not just the
-// Platform seam). launchd (pid 1) is not same-user readable → unobservable.
+// B1 real errno branch: launchd (pid 1) is not same-user readable → unobservable.
+// Must assert .unobservable (not merely "not absent") so the EPERM/other leg is closed.
 test "observeProcess pid 1 is unobservable not absent (real errno branch)" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     const result = observeProcess(1);
-    // Must not collapse EPERM-class failure to absent (which would unearn
-    // wait-or-absence termination for unreadable processes).
-    try testing.expect(result == .unobservable or result == .present);
-    // On a normal developer Mac, pid 1 is unobservable to non-root; if present
-    // (e.g. elevated test), that is still not .absent — both accept. Fail only
-    // if we wrongly report .absent for a guaranteed-existing system pid.
+    // Elevated root can sometimes read pid 1; skip rather than weaken the assert.
+    if (result == .present) return error.SkipZigTest;
+    try testing.expectEqual(ObserveResult.unobservable, result);
     try testing.expect(result != .absent);
 }
 
