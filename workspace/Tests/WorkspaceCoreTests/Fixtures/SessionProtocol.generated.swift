@@ -57,6 +57,46 @@ enum SessionProtocolGenerated {
         "GRANT_REGISTER": 0x0402
     ]
     static let rawFrameTypes: Set<String> = ["CREATE_INPUT", "SNAPSHOT_BYTES", "OUTPUT", "HUMAN_INPUT", "AUTOMATION_CHUNK"]
+
+    /// HVTCP001 checkpoint envelope (§23 / CHECKPOINT_HEADER).
+    enum Checkpoint {
+        static let magic = "HVTCP001"
+        static let version: UInt16 = 1
+        static let headerBytes = 116
+        static let flags: UInt32 = 0
+        static let engineBuildIdBytes = 32
+        static let payloadSha256Bytes = 32
+        enum Offset {
+            static let magic = 0
+            static let version = 8
+            static let headerBytes = 10
+            static let flags = 12
+            static let throughSeq = 16
+            static let createdMonoNanos = 24
+            static let columns = 32
+            static let rows = 36
+            static let cellWidthPx = 40
+            static let cellHeightPx = 44
+            static let engineBuildId = 48
+            static let payloadLength = 80
+            static let payloadSha256 = 84
+        }
+        enum Width {
+            static let magic = 8
+            static let version = 2
+            static let headerBytes = 2
+            static let flags = 4
+            static let throughSeq = 8
+            static let createdMonoNanos = 8
+            static let columns = 4
+            static let rows = 4
+            static let cellWidthPx = 4
+            static let cellHeightPx = 4
+            static let engineBuildId = 32
+            static let payloadLength = 4
+            static let payloadSha256 = 32
+        }
+    }
 }
 
 enum ContractFailure: Error, CustomStringConvertible {

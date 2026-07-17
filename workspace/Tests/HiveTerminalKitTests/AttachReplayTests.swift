@@ -175,7 +175,8 @@ final class AttachReplayTests: XCTestCase {
     }
 
     func testCheckpointEnvelopeFixtureMatchesNativeAbi() throws {
-        // Mirror native/tests/abi/checkpoint-envelope.c field reads.
+        // Mirror native/tests/abi/checkpoint-envelope.c field reads via generated offsets.
+        let off = CheckpointEnvelope.FieldOffset.self
         let payload = Data("abc".utf8)
         let engineHex = GhosttyManualSurface.engineBuildId()
         var engineRaw = Data()
@@ -191,6 +192,13 @@ final class AttachReplayTests: XCTestCase {
             payload: payload,
             engineBuildId: Data(engineRaw.prefix(32))
         )
+        // Positive control: header fields land at SessionProtocolGenerated.Checkpoint.Offset.
+        XCTAssertEqual(String(data: env.subdata(in: off.magic..<(off.magic + 8)), encoding: .utf8), "HVTCP001")
+        XCTAssertEqual(readU16BE(env, off.version), CheckpointEnvelope.version)
+        XCTAssertEqual(readU16BE(env, off.headerBytes), UInt16(CheckpointEnvelope.headerBytes))
+        XCTAssertEqual(readU32BE(env, off.flags), CheckpointEnvelope.flags)
+        XCTAssertEqual(readU64BE(env, off.throughSeq), 42)
+        XCTAssertEqual(readU32BE(env, off.payloadLength), 3)
         let parsed = try CheckpointEnvelope.parse(env)
         XCTAssertEqual(parsed.throughSeq, 42)
         XCTAssertEqual(parsed.payload, payload)
@@ -198,6 +206,58 @@ final class AttachReplayTests: XCTestCase {
         XCTAssertEqual(parsed.engineBuildIdHex, engineHex.prefix(64).lowercased() == engineHex.lowercased()
             ? engineHex.lowercased()
             : parsed.engineBuildIdHex)
+    }
+
+    /// A4 drift guard: consumer FieldOffset aliases the generated projection.
+    /// Deliberately mismatching SessionProtocolGenerated.Checkpoint.Offset without
+    /// updating this alias would fail to compile; these asserts lock the wire values.
+    func testCheckpointEnvelopeOffsetsMatchGeneratedProjection() {
+        let off = CheckpointEnvelope.FieldOffset.self
+        let gen = SessionProtocolGenerated.Checkpoint.Offset.self
+        XCTAssertEqual(off.magic, gen.magic)
+        XCTAssertEqual(off.version, gen.version)
+        XCTAssertEqual(off.headerBytes, gen.headerBytes)
+        XCTAssertEqual(off.flags, gen.flags)
+        XCTAssertEqual(off.throughSeq, gen.throughSeq)
+        XCTAssertEqual(off.createdMonoNanos, gen.createdMonoNanos)
+        XCTAssertEqual(off.columns, gen.columns)
+        XCTAssertEqual(off.rows, gen.rows)
+        XCTAssertEqual(off.cellWidthPx, gen.cellWidthPx)
+        XCTAssertEqual(off.cellHeightPx, gen.cellHeightPx)
+        XCTAssertEqual(off.engineBuildId, gen.engineBuildId)
+        XCTAssertEqual(off.payloadLength, gen.payloadLength)
+        XCTAssertEqual(off.payloadSha256, gen.payloadSha256)
+        // Wire values (positive control against HVTCP001 table).
+        XCTAssertEqual(off.magic, 0)
+        XCTAssertEqual(off.version, 8)
+        XCTAssertEqual(off.headerBytes, 10)
+        XCTAssertEqual(off.flags, 12)
+        XCTAssertEqual(off.throughSeq, 16)
+        XCTAssertEqual(off.createdMonoNanos, 24)
+        XCTAssertEqual(off.columns, 32)
+        XCTAssertEqual(off.rows, 36)
+        XCTAssertEqual(off.cellWidthPx, 40)
+        XCTAssertEqual(off.cellHeightPx, 44)
+        XCTAssertEqual(off.engineBuildId, 48)
+        XCTAssertEqual(off.payloadLength, 80)
+        XCTAssertEqual(off.payloadSha256, 84)
+        XCTAssertEqual(
+            off.payloadSha256 + SessionProtocolGenerated.Checkpoint.payloadSha256Bytes,
+            CheckpointEnvelope.headerBytes
+        )
+    }
+
+    private func readU16BE(_ data: Data, _ offset: Int) -> UInt16 {
+        (UInt16(data[offset]) << 8) | UInt16(data[offset + 1])
+    }
+    private func readU32BE(_ data: Data, _ offset: Int) -> UInt32 {
+        (UInt32(data[offset]) << 24) | (UInt32(data[offset + 1]) << 16) |
+            (UInt32(data[offset + 2]) << 8) | UInt32(data[offset + 3])
+    }
+    private func readU64BE(_ data: Data, _ offset: Int) -> UInt64 {
+        var v: UInt64 = 0
+        for i in 0..<8 { v = (v << 8) | UInt64(data[offset + i]) }
+        return v
     }
 
     func testForeignEngineCheckpointRejected() throws {

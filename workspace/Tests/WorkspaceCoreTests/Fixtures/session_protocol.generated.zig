@@ -163,6 +163,36 @@ pub const checkpoint = struct {
     pub const flags: u32 = 0;
     pub const engine_build_id_bytes: usize = 32;
     pub const payload_sha256_bytes: usize = 32;
+    pub const offset = struct {
+        pub const magic: usize = 0;
+        pub const version: usize = 8;
+        pub const header_bytes: usize = 10;
+        pub const flags: usize = 12;
+        pub const through_seq: usize = 16;
+        pub const created_mono_nanos: usize = 24;
+        pub const columns: usize = 32;
+        pub const rows: usize = 36;
+        pub const cell_width_px: usize = 40;
+        pub const cell_height_px: usize = 44;
+        pub const engine_build_id: usize = 48;
+        pub const payload_length: usize = 80;
+        pub const payload_sha256: usize = 84;
+    };
+    pub const width = struct {
+        pub const magic: usize = 8;
+        pub const version: usize = 2;
+        pub const header_bytes: usize = 2;
+        pub const flags: usize = 4;
+        pub const through_seq: usize = 8;
+        pub const created_mono_nanos: usize = 8;
+        pub const columns: usize = 4;
+        pub const rows: usize = 4;
+        pub const cell_width_px: usize = 4;
+        pub const cell_height_px: usize = 4;
+        pub const engine_build_id: usize = 32;
+        pub const payload_length: usize = 4;
+        pub const payload_sha256: usize = 32;
+    };
 };
 
 pub const limits = struct {

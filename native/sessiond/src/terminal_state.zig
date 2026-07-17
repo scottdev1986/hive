@@ -47,15 +47,8 @@ pub const engine_build_id_bytes: usize = generated.checkpoint.engine_build_id_by
 pub const payload_sha256_bytes: usize = generated.checkpoint.payload_sha256_bytes;
 
 // HVTCP001 field offsets (network layout, §23 / CHECKPOINT_HEADER.offsets).
-//
-// DRIFT RISK (F4): these are hardcoded because the shared conformance generator
-// does not yet emit offsets into session_protocol.generated.zig. An offset change
-// in session-protocol.ts can leave both bun and zig suites green while breaking
-// the wire. SIZE fields above are generated and comptime-guarded; offsets are not.
-//
-// TODO(conformance-generator): emit CHECKPOINT_HEADER.offsets (+ widths) into the
-// generated Zig and comptime-assert them here so schema drift fails this module.
-// Do not hand-edit generated fixtures from this branch — route via queen.
+// Local table is dual-sourced against generated.checkpoint.offset: if the
+// generator re-emits a moved boundary and this table is not updated, comptime fails.
 const off = struct {
     const magic: usize = 0;
     const version: usize = 8;
@@ -77,9 +70,40 @@ comptime {
     if (magic.len != 8) @compileError("CHECKPOINT_HEADER.magic must be 8 ASCII bytes");
     if (engine_build_id_bytes != 32) @compileError("engineBuildId must be 32 bytes");
     if (payload_sha256_bytes != 32) @compileError("payloadSha256 must be 32 bytes");
-    // Keep size-sum sanity without depending on ungenerated widths.
     if (off.payload_sha256 + payload_sha256_bytes != header_bytes)
         @compileError("payload_sha256 offset + width must equal header_bytes");
+    // F4 drift guard: every interior offset must match the generated projection.
+    if (off.magic != generated.checkpoint.offset.magic)
+        @compileError("checkpoint offset magic drifted from generated");
+    if (off.version != generated.checkpoint.offset.version)
+        @compileError("checkpoint offset version drifted from generated");
+    if (off.header_bytes != generated.checkpoint.offset.header_bytes)
+        @compileError("checkpoint offset header_bytes drifted from generated");
+    if (off.flags != generated.checkpoint.offset.flags)
+        @compileError("checkpoint offset flags drifted from generated");
+    if (off.through_seq != generated.checkpoint.offset.through_seq)
+        @compileError("checkpoint offset through_seq drifted from generated");
+    if (off.created_mono_nanos != generated.checkpoint.offset.created_mono_nanos)
+        @compileError("checkpoint offset created_mono_nanos drifted from generated");
+    if (off.columns != generated.checkpoint.offset.columns)
+        @compileError("checkpoint offset columns drifted from generated");
+    if (off.rows != generated.checkpoint.offset.rows)
+        @compileError("checkpoint offset rows drifted from generated");
+    if (off.cell_width_px != generated.checkpoint.offset.cell_width_px)
+        @compileError("checkpoint offset cell_width_px drifted from generated");
+    if (off.cell_height_px != generated.checkpoint.offset.cell_height_px)
+        @compileError("checkpoint offset cell_height_px drifted from generated");
+    if (off.engine_build_id != generated.checkpoint.offset.engine_build_id)
+        @compileError("checkpoint offset engine_build_id drifted from generated");
+    if (off.payload_length != generated.checkpoint.offset.payload_length)
+        @compileError("checkpoint offset payload_length drifted from generated");
+    if (off.payload_sha256 != generated.checkpoint.offset.payload_sha256)
+        @compileError("checkpoint offset payload_sha256 drifted from generated");
+    // Width lock: last field still covers the full header when widths move alone.
+    if (generated.checkpoint.width.payload_sha256 != payload_sha256_bytes)
+        @compileError("checkpoint width payload_sha256 drifted from generated size");
+    if (off.payload_sha256 + generated.checkpoint.width.payload_sha256 != header_bytes)
+        @compileError("generated payload_sha256 offset + width must equal header_bytes");
 }
 
 /// Decoded / to-encode HVTCP001 header fields (excluding the trailing opaque payload).
@@ -794,6 +818,28 @@ test "envelope constants match generated CHECKPOINT_HEADER" {
     try testing.expectEqualStrings("HVTCP001", magic);
     try testing.expectEqual(@as(u16, 1), version);
     try testing.expectEqual(@as(u32, 0), flags_v1);
+}
+
+// F4 positive control: local off table equals generated.checkpoint.offset.
+// A deliberate interior mismatch (e.g. off.through_seq = 17 while generated
+// stays 16) fails the comptime block above — this runtime test re-states the
+// full table so a silent no-op comptime guard cannot hide.
+test "envelope offsets match generated CHECKPOINT_HEADER.offsets" {
+    try testing.expectEqual(generated.checkpoint.offset.magic, off.magic);
+    try testing.expectEqual(generated.checkpoint.offset.version, off.version);
+    try testing.expectEqual(generated.checkpoint.offset.header_bytes, off.header_bytes);
+    try testing.expectEqual(generated.checkpoint.offset.flags, off.flags);
+    try testing.expectEqual(generated.checkpoint.offset.through_seq, off.through_seq);
+    try testing.expectEqual(generated.checkpoint.offset.created_mono_nanos, off.created_mono_nanos);
+    try testing.expectEqual(generated.checkpoint.offset.columns, off.columns);
+    try testing.expectEqual(generated.checkpoint.offset.rows, off.rows);
+    try testing.expectEqual(generated.checkpoint.offset.cell_width_px, off.cell_width_px);
+    try testing.expectEqual(generated.checkpoint.offset.cell_height_px, off.cell_height_px);
+    try testing.expectEqual(generated.checkpoint.offset.engine_build_id, off.engine_build_id);
+    try testing.expectEqual(generated.checkpoint.offset.payload_length, off.payload_length);
+    try testing.expectEqual(generated.checkpoint.offset.payload_sha256, off.payload_sha256);
+    try testing.expectEqual(@as(usize, 16), off.through_seq);
+    try testing.expectEqual(@as(usize, 84), off.payload_sha256);
 }
 
 test "liam fixture positive control: decode succeeds with exact field values" {

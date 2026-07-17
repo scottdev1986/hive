@@ -4,13 +4,20 @@ import CryptoKit
 /// §20/§23 wire checkpoint envelope: 116-byte `HVTCP001` header + opaque payload.
 ///
 /// Authority: docs/design/terminal-stack-transition.html §23 checkpoint table
-/// and `native/tests/abi/checkpoint-envelope.c` fixture. The opaque payload is
-/// what `hive_ghostty_surface_restore_checkpoint_v1` consumes (engine format).
+/// and `CHECKPOINT_HEADER` in `src/schemas/session-protocol.ts` (projected into
+/// `SessionProtocol.generated.swift` as `SessionProtocolGenerated.Checkpoint`).
+/// The opaque payload is what `hive_ghostty_surface_restore_checkpoint_v1`
+/// consumes (engine format).
 public struct CheckpointEnvelope: Equatable, Sendable {
-    public static let headerBytes = 116
-    public static let magic = "HVTCP001"
-    public static let version: UInt16 = 1
-    public static let headerBytesField: UInt16 = 116
+    public static let headerBytes = SessionProtocolGenerated.Checkpoint.headerBytes
+    public static let magic = SessionProtocolGenerated.Checkpoint.magic
+    public static let version: UInt16 = SessionProtocolGenerated.Checkpoint.version
+    public static let headerBytesField: UInt16 = UInt16(SessionProtocolGenerated.Checkpoint.headerBytes)
+    public static let flags: UInt32 = SessionProtocolGenerated.Checkpoint.flags
+
+    /// HVTCP001 field offsets — sourced from the generated projection
+    /// (`SessionProtocolGenerated.Checkpoint.Offset`). Do not hardcode elsewhere.
+    public typealias FieldOffset = SessionProtocolGenerated.Checkpoint.Offset
 
     public var throughSeq: UInt64
     public var createdMonoNanos: UInt64
@@ -58,22 +65,24 @@ public struct CheckpointEnvelope: Equatable, Sendable {
             throw ParseError.tooShort(data.count)
         }
         let magicBytes = Data(magic.utf8)
-        guard data.prefix(8) == magicBytes else { throw ParseError.badMagic }
-        let version = readU16(data, 8)
+        guard Data(data[FieldOffset.magic..<(FieldOffset.magic + 8)]) == magicBytes else {
+            throw ParseError.badMagic
+        }
+        let version = readU16(data, FieldOffset.version)
         guard version == Self.version else { throw ParseError.badVersion(version) }
-        let hdr = readU16(data, 10)
+        let hdr = readU16(data, FieldOffset.headerBytes)
         guard hdr == headerBytesField else { throw ParseError.badHeaderBytes(hdr) }
-        let flags = readU32(data, 12)
-        guard flags == 0 else { throw ParseError.badFlags(flags) }
-        let throughSeq = readU64(data, 16)
-        let created = readU64(data, 24)
-        let columns = readU32(data, 32)
-        let rows = readU32(data, 36)
-        let cellW = readU32(data, 40)
-        let cellH = readU32(data, 44)
-        let engineId = Data(data[48..<80])
-        let payloadLength = readU32(data, 80)
-        let digest = Data(data[84..<116])
+        let flags = readU32(data, FieldOffset.flags)
+        guard flags == Self.flags else { throw ParseError.badFlags(flags) }
+        let throughSeq = readU64(data, FieldOffset.throughSeq)
+        let created = readU64(data, FieldOffset.createdMonoNanos)
+        let columns = readU32(data, FieldOffset.columns)
+        let rows = readU32(data, FieldOffset.rows)
+        let cellW = readU32(data, FieldOffset.cellWidthPx)
+        let cellH = readU32(data, FieldOffset.cellHeightPx)
+        let engineId = Data(data[FieldOffset.engineBuildId..<(FieldOffset.engineBuildId + SessionProtocolGenerated.Checkpoint.engineBuildIdBytes)])
+        let payloadLength = readU32(data, FieldOffset.payloadLength)
+        let digest = Data(data[FieldOffset.payloadSha256..<(FieldOffset.payloadSha256 + SessionProtocolGenerated.Checkpoint.payloadSha256Bytes)])
         let need = headerBytes + Int(payloadLength)
         guard data.count >= need else {
             throw ParseError.incompletePayload(have: data.count - headerBytes, need: Int(payloadLength))
@@ -98,14 +107,14 @@ public struct CheckpointEnvelope: Equatable, Sendable {
     /// True when accumulated bytes contain a full header+payload.
     public static func isComplete(_ data: Data) -> Bool {
         guard data.count >= headerBytes else { return false }
-        let payloadLength = Int(readU32(data, 80))
+        let payloadLength = Int(readU32(data, FieldOffset.payloadLength))
         return data.count >= headerBytes + payloadLength
     }
 
     /// How many total bytes (header+payload) are required once the header is present.
     public static func requiredTotalBytes(_ data: Data) -> Int? {
         guard data.count >= headerBytes else { return nil }
-        return headerBytes + Int(readU32(data, 80))
+        return headerBytes + Int(readU32(data, FieldOffset.payloadLength))
     }
 
     /// Build a wire envelope. Callers (including FakeHost) must pass the real
@@ -118,22 +127,30 @@ public struct CheckpointEnvelope: Equatable, Sendable {
         rows: UInt32 = 24
     ) -> Data {
         var out = Data(count: headerBytes + payload.count)
-        out.replaceSubrange(0..<8, with: Data(magic.utf8))
-        writeU16(version, into: &out, at: 8)
-        writeU16(headerBytesField, into: &out, at: 10)
-        writeU32(0, into: &out, at: 12)
-        writeU64(throughSeq, into: &out, at: 16)
-        writeU64(0, into: &out, at: 24)
-        writeU32(columns, into: &out, at: 32)
-        writeU32(rows, into: &out, at: 36)
-        writeU32(0, into: &out, at: 40)
-        writeU32(0, into: &out, at: 44)
+        out.replaceSubrange(FieldOffset.magic..<(FieldOffset.magic + 8), with: Data(magic.utf8))
+        writeU16(version, into: &out, at: FieldOffset.version)
+        writeU16(headerBytesField, into: &out, at: FieldOffset.headerBytes)
+        writeU32(flags, into: &out, at: FieldOffset.flags)
+        writeU64(throughSeq, into: &out, at: FieldOffset.throughSeq)
+        writeU64(0, into: &out, at: FieldOffset.createdMonoNanos)
+        writeU32(columns, into: &out, at: FieldOffset.columns)
+        writeU32(rows, into: &out, at: FieldOffset.rows)
+        writeU32(0, into: &out, at: FieldOffset.cellWidthPx)
+        writeU32(0, into: &out, at: FieldOffset.cellHeightPx)
         var engine = engineBuildId
-        if engine.count < 32 { engine.append(Data(repeating: 0, count: 32 - engine.count)) }
-        out.replaceSubrange(48..<80, with: engine.prefix(32))
-        writeU32(UInt32(payload.count), into: &out, at: 80)
+        let engineBytes = SessionProtocolGenerated.Checkpoint.engineBuildIdBytes
+        if engine.count < engineBytes { engine.append(Data(repeating: 0, count: engineBytes - engine.count)) }
+        out.replaceSubrange(
+            FieldOffset.engineBuildId..<(FieldOffset.engineBuildId + engineBytes),
+            with: engine.prefix(engineBytes)
+        )
+        writeU32(UInt32(payload.count), into: &out, at: FieldOffset.payloadLength)
         let digest = Data(SHA256.hash(data: payload))
-        out.replaceSubrange(84..<116, with: digest)
+        let shaBytes = SessionProtocolGenerated.Checkpoint.payloadSha256Bytes
+        out.replaceSubrange(
+            FieldOffset.payloadSha256..<(FieldOffset.payloadSha256 + shaBytes),
+            with: digest
+        )
         if !payload.isEmpty {
             out.replaceSubrange(headerBytes..<(headerBytes + payload.count), with: payload)
         }
