@@ -70,6 +70,10 @@ pub const Geometry = struct {
         // Active-cell product; use u64 to avoid overflow before the check.
         const active: u64 = @as(u64, self.columns) * @as(u64, self.rows);
         if (active > active_cells_max) return error.GeometryOutOfRange;
+        // §19 positive pixel sizes when set; zero is legitimate (§18: no viewer
+        // has established pixels yet). Upper bound is winsize u16 capacity (M2).
+        if (self.width_px > std.math.maxInt(u16) or self.height_px > std.math.maxInt(u16))
+            return error.GeometryOutOfRange;
     }
 
     pub fn eql(self: Geometry, other: Geometry) bool {
@@ -173,9 +177,11 @@ pub const PtyHost = struct {
         // openpty allocates the pair; winsize applied after.
         if (openpty(&master, &slave, null, null, null) != 0)
             return error.SpawnFailed;
+        // B1: errdefer skips fds set to -1 so manual close + errdefer never double-close
+        // a recycled descriptor number in multithreaded sessiond.
         errdefer {
-            _ = c.close(master);
-            _ = c.close(slave);
+            if (master >= 0) _ = c.close(master);
+            if (slave >= 0) _ = c.close(slave);
         }
 
         const ws = winsizeFromGeometry(spec.geometry);
@@ -223,6 +229,7 @@ pub const PtyHost = struct {
 
         // ── parent ─────────────────────────────────────────────────────────
         _ = c.close(slave);
+        slave = -1; // disarm errdefer for slave (B1)
         // CLOEXEC on master so later execs in the host don't leak it.
         const flags = c.fcntl(master, c.F_GETFD);
         if (flags >= 0) _ = c.fcntl(master, c.F_SETFD, flags | c.FD_CLOEXEC);
@@ -231,6 +238,7 @@ pub const PtyHost = struct {
         if (fl >= 0) _ = c.fcntl(master, c.F_SETFL, fl | c.O_NONBLOCK);
 
         self.master_fd = master;
+        master = -1; // ownership transferred to self; disarm errdefer (B1)
         self.pid = @intCast(pid);
         self.geometry = spec.geometry;
         self.spawned = true;
@@ -240,29 +248,31 @@ pub const PtyHost = struct {
         self.write_queue.clearRetainingCapacity();
 
         // Start-token + identity AT spawn — never invent without observation.
-        // Wait until the child is present AND post-exec (pidpath reflects argv[0]),
-        // not the pre-exec test binary that briefly owns the pid.
+        // B2: path match is the VERDICT (exec succeeded), not just a break
+        // condition. A .present without post-exec path is the pre-exec image or
+        // a failed-exec _exit(127) zombie — not a successful spawn.
         const want_name = std.fs.path.basename(spec.argv[0]);
         var identity: process_inspector.ProcessIdentity = undefined;
-        var got = false;
+        var matched = false;
         var attempts: usize = 0;
         while (attempts < 100) : (attempts += 1) {
             switch (process_inspector.observeProcess(self.pid)) {
                 .present => |id| {
-                    identity = id;
-                    got = true;
-                    // Prefer post-exec path; start-token is stable across exec on Darwin
-                    // for the same pid but path updates after execve.
                     if (id.executable_len > 0 and
                         std.mem.indexOf(u8, id.executablePath(), want_name) != null)
+                    {
+                        identity = id;
+                        matched = true;
                         break;
+                    }
                 },
                 .absent, .unobservable => {},
             }
             std.Thread.sleep(2 * std.time.ns_per_ms);
         }
-        if (!got) {
-            // Positive evidence failed — tear down; never report a false spawn.
+        if (!matched) {
+            // Positive post-exec evidence failed — tear down; never report a false spawn.
+            // master/slave locals are -1; closeMaster owns the master fd (no double-close).
             self.forceKillChild();
             self.closeMaster();
             self.spawned = false;
@@ -462,12 +472,15 @@ const ArgvOwned = struct {
 
 fn dupeArgv(allocator: std.mem.Allocator, items: []const []const u8) Error!ArgvOwned {
     const storage = allocator.alloc([:0]u8, items.len) catch return error.Internal;
+    // M1: free only the initialized prefix — storage is uninit until each dupeZ.
+    var initialized: usize = 0;
     errdefer {
-        for (storage) |s| allocator.free(s);
+        for (storage[0..initialized]) |s| allocator.free(s);
         allocator.free(storage);
     }
     for (items, 0..) |item, i| {
         storage[i] = allocator.dupeZ(u8, item) catch return error.Internal;
+        initialized += 1;
     }
     const ptrs = allocator.allocSentinel(?[*:0]const u8, items.len, null) catch return error.Internal;
     for (storage, 0..) |s, i| ptrs[i] = s.ptr;
@@ -498,6 +511,14 @@ test "geometry bounds: valid accepted, out-of-range rejected" {
     try testing.expectError(error.GeometryOutOfRange, (Geometry{ .columns = 1001, .rows = 24 }).validate());
     try testing.expectError(error.GeometryOutOfRange, (Geometry{ .columns = 500, .rows = 501 }).validate()); // 250500 > 250000
     try (Geometry{ .columns = 500, .rows = 500 }).validate(); // exactly 250000
+    // M2: zero pixels ok; above u16 panics/truncates in winsizeFromGeometry.
+    try (Geometry{ .columns = 80, .rows = 24, .width_px = 0, .height_px = 0 }).validate();
+    try testing.expectError(error.GeometryOutOfRange, (Geometry{
+        .columns = 80,
+        .rows = 24,
+        .width_px = @as(u32, std.math.maxInt(u16)) + 1,
+        .height_px = 0,
+    }).validate());
 }
 
 test "spawn cat: readback proves pid/pgid/start-token/executable" {
@@ -612,7 +633,6 @@ test "resize enforces geometry bounds" {
 /// Read all PTY output until quiet, optionally dropping one chunk (canary).
 fn readAllDigest(
     host: *PtyHost,
-    allocator: std.mem.Allocator,
     drop_chunk_index: ?usize,
 ) !struct { digest: [32]u8, total: u64 } {
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -636,7 +656,6 @@ fn readAllDigest(
         }
         // else: DROP — canary path deliberately omits this chunk from the digest.
         chunk_i += 1;
-        _ = allocator;
     }
     var digest: [32]u8 = undefined;
     hasher.final(&digest);
@@ -688,7 +707,7 @@ test "ordered read digest: 1 MiB fixture round-trip" {
     var expected: [32]u8 = undefined;
     expected_hasher.final(&expected);
 
-    const got = try readAllDigest(&host, testing.allocator, null);
+    const got = try readAllDigest(&host, null);
     try testing.expectEqual(@as(u64, 1024 * 1024), got.total);
     try testing.expectEqualSlices(u8, &expected, &got.digest);
 }
@@ -721,7 +740,7 @@ test "DROP-A-CHUNK canary: harness FAILS when a chunk is dropped" {
         .geometry = defaultGeometry(),
     });
 
-    const full = try readAllDigest(&host, testing.allocator, null);
+    const full = try readAllDigest(&host, null);
 
     // Re-spawn for the drop path.
     var host2 = try PtyHost.init(testing.allocator);
@@ -730,7 +749,7 @@ test "DROP-A-CHUNK canary: harness FAILS when a chunk is dropped" {
         .argv = &[_][]const u8{ "/bin/cat", abs },
         .geometry = defaultGeometry(),
     });
-    const dropped = try readAllDigest(&host2, testing.allocator, 0);
+    const dropped = try readAllDigest(&host2, 0);
 
     // Canary: digests MUST differ when a chunk is dropped.
     try testing.expect(!std.mem.eql(u8, &full.digest, &dropped.digest));
@@ -807,11 +826,26 @@ test "100 MiB ordered read digest (SLO-04 seed)" {
     try testing.expectEqualSlices(u8, &expected, &got);
 }
 
-test "never report spawn without identity evidence — observe fail tears down" {
-    // Structural: IdentityUnavailable path is exercised by the observe loop
-    // failing; we cannot easily inject without Platform, but we assert the
-    // public contract that a successful spawn always has a non-zero token
-    // and matching live observe (acting≠being).
+// B2 + B1 positive control: spawn of a NONEXISTENT binary must NOT return a
+// SpawnReadback claiming a live child (acting≠being). Also drives the
+// IdentityUnavailable teardown path (fd errdefer disarm / no double-close).
+test "negative spawn: nonexistent binary returns IdentityUnavailable" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    // Unique path that cannot exist.
+    const missing = "/tmp/hive-pty-host-no-such-binary-9f3c2e1a";
+    try testing.expectError(error.IdentityUnavailable, host.spawn(.{
+        .argv = &[_][]const u8{missing},
+        .geometry = defaultGeometry(),
+    }));
+    // No live claim left on the host after failed spawn.
+    try testing.expect(!host.spawned);
+    try testing.expect(host.master_fd < 0);
+    try testing.expect(host.pid <= 0);
+}
+
+test "successful spawn still has post-exec identity evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
@@ -820,6 +854,6 @@ test "never report spawn without identity evidence — observe fail tears down" 
         .geometry = defaultGeometry(),
     });
     try testing.expect(rb.start_token.seconds != 0 or rb.start_token.microseconds != 0);
-    // Wait for echo to finish naturally.
+    try testing.expect(std.mem.indexOf(u8, rb.executablePath(), "echo") != null);
     _ = host.waitExit(true) catch {};
 }
