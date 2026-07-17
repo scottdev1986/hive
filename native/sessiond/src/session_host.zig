@@ -275,11 +275,16 @@ pub const RealVtEngine = struct {
     ) callconv(.c) void {
         const self: *RealVtEngine = @ptrCast(@alignCast(userdata orelse return));
         const bytes = data[0..length];
-        self.effects.appendSlice(self.allocator, bytes) catch {
-            self.effect_failed = true;
+        if (self.effect_sink) |sink| {
+            sink.write(bytes) catch {
+                self.effect_failed = true;
+            };
             return;
-        };
-        if (self.effect_sink) |sink| sink.write(bytes) catch {
+        }
+        // Fresh verification engines retain effects for TG2 comparison. The
+        // live engine delivers them directly to the bounded PTY queue instead
+        // of retaining a second, session-lifetime copy.
+        self.effects.appendSlice(self.allocator, bytes) catch {
             self.effect_failed = true;
         };
     }
@@ -3107,6 +3112,34 @@ test "bridge export is copied into the caller Zig allocator" {
     try std.testing.expect(fixture.freed);
     try std.testing.expectEqualSlices(u8, &fixture.bytes, copied);
     try std.testing.expect(@intFromPtr(copied.ptr) != @intFromPtr(&fixture.bytes));
+}
+
+test "live VT effects use only the bounded PTY sink with an audit control" {
+    const Recorder = struct {
+        bytes: std.ArrayList(u8) = .{},
+
+        fn write(context: *anyopaque, bytes: []const u8) !void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            try self.bytes.appendSlice(std.testing.allocator, bytes);
+        }
+    };
+    var recorder: Recorder = .{};
+    defer recorder.bytes.deinit(std.testing.allocator);
+    const live = try RealVtEngine.create(std.testing.allocator, 80, 24, .{
+        .context = &recorder,
+        .writeFn = Recorder.write,
+    });
+    defer live.engine().deinit();
+    const reply = "terminal-reply";
+    RealVtEngine.writePtyCallback(live.terminal, live, reply.ptr, reply.len);
+    try std.testing.expectEqualStrings(reply, recorder.bytes.items);
+    try std.testing.expectEqual(@as(usize, 0), live.effects.items.len);
+    try std.testing.expect(!live.effect_failed);
+
+    const audit = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    defer audit.engine().deinit();
+    RealVtEngine.writePtyCallback(audit.terminal, audit, reply.ptr, reply.len);
+    try std.testing.expectEqualStrings(reply, audit.effects.items);
 }
 
 test "real libghostty-vt export is copied and TerminalState is sole engine owner" {
