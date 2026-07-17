@@ -29,7 +29,8 @@ final class InputEncodingTests: XCTestCase {
         characters: String,
         charactersIgnoringModifiers: String? = nil,
         modifierFlags: NSEvent.ModifierFlags = [],
-        keyCode: UInt16 = 0
+        keyCode: UInt16 = 0,
+        isARepeat: Bool = false
     ) -> NSEvent {
         NSEvent.keyEvent(
             with: type,
@@ -40,6 +41,21 @@ final class InputEncodingTests: XCTestCase {
             context: nil,
             characters: characters,
             charactersIgnoringModifiers: charactersIgnoringModifiers ?? characters,
+            isARepeat: isARepeat,
+            keyCode: keyCode
+        )!
+    }
+
+    private func makeFlagsChangedEvent(modifierFlags: NSEvent.ModifierFlags, keyCode: UInt16) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .flagsChanged,
+            location: .zero,
+            modifierFlags: modifierFlags,
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "",
+            charactersIgnoringModifiers: "",
             isARepeat: false,
             keyCode: keyCode
         )!
@@ -206,4 +222,132 @@ final class InputEncodingTests: XCTestCase {
         // precision multiplier already covered by testScrollModsEncodes*.
         XCTAssertNotEqual(engine.scrollsSent[0].y, 0, "a real scroll delta must reach the engine")
     }
+
+    // MARK: keyUp (was never wired at all)
+
+    func testKeyUpSendsReleaseAction() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        // Pre-B1 snapshot had no keyUp override, so GHOSTTY_ACTION_RELEASE
+        // was dead code — encodeKey was only ever reachable from keyDown.
+        let event = makeKeyEvent(type: .keyUp, characters: "x", keyCode: 7)
+        terminal.keyUp(with: event)
+
+        XCTAssertEqual(engine.keysSentDetail.count, 1, "keyUp must reach the engine at all")
+        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_RELEASE)
+    }
+
+    // MARK: isARepeat (pre-B1 always sent PRESS)
+
+    func testRepeatedKeyDownSendsRepeatActionNotPress() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        let fresh = makeKeyEvent(characters: "x", keyCode: 7, isARepeat: false)
+        terminal.encodeKey(fresh)
+        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_PRESS)
+
+        let repeated = makeKeyEvent(characters: "x", keyCode: 7, isARepeat: true)
+        terminal.encodeKey(repeated)
+        XCTAssertEqual(engine.keysSentDetail[1].action, GHOSTTY_ACTION_REPEAT,
+                       "a held/repeating key must report GHOSTTY_ACTION_REPEAT, not PRESS again")
+    }
+
+    // MARK: flagsChanged (bare modifier press/release never reached the terminal)
+
+    func testFlagsChangedSendsPressWhenTheCorrectSideModifierBecomesActive() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        // keyCode 0x38 = left shift. Real device-mask bit for LEFT shift
+        // isn't NX_DEVICERSHIFTKEYMASK (that's the right-side mask) — for
+        // the left side, real Ghostty's `default: sidePressed = true`
+        // branch applies, matching flagsChanged's switch above.
+        let event = makeFlagsChangedEvent(modifierFlags: [.shift], keyCode: 0x38)
+        terminal.flagsChanged(with: event)
+
+        XCTAssertEqual(engine.keysSentDetail.count, 1,
+                       "pre-B1 snapshot had no flagsChanged override — a bare modifier press/release never reached the terminal")
+        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_PRESS)
+    }
+
+    func testFlagsChangedSendsReleaseWhenTheModifierClears() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        // No .shift in modifierFlags: the key that generated this
+        // flagsChanged event was released.
+        let event = makeFlagsChangedEvent(modifierFlags: [], keyCode: 0x38)
+        terminal.flagsChanged(with: event)
+
+        XCTAssertEqual(engine.keysSentDetail.count, 1)
+        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_RELEASE)
+    }
+
+    func testFlagsChangedIgnoresUnmappedKeyCodes() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        // A keyCode outside the switch's cases (mapped modifiers only) —
+        // real Ghostty's flagsChanged returns early, sends nothing.
+        let event = makeFlagsChangedEvent(modifierFlags: [], keyCode: 0xFF)
+        terminal.flagsChanged(with: event)
+
+        XCTAssertTrue(engine.keysSentDetail.isEmpty)
+    }
+
+    // MARK: firstRect (was a hardcoded view-bounds placeholder)
+
+    func testFirstRectFallsBackToViewBoundsWithoutARealSurface() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+
+        // FakeManualSurface.surfaceHandle is always nil, matching "no real
+        // engine backing this view" — must not crash, must return a valid
+        // (if degenerate) rect.
+        let rect = terminal.firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+        XCTAssertTrue(rect.width.isFinite && rect.height.isFinite)
+    }
+
+    func testFirstRectQueriesRealSurfaceIMEPointNotJustViewBounds() throws {
+        let surface: GhosttyManualSurface
+        do {
+            surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        } catch {
+            throw XCTSkip("manual surface unavailable in this environment: \(error)")
+        }
+        defer { surface.free() }
+        let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
+
+        // Pre-B1 snapshot always returned convert(bounds, to: nil) — the
+        // entire view, width/height 400x300 — regardless of cursor
+        // position. A real ghostty_surface_ime_point call returns a
+        // cell-sized (or default) rect, not the whole view.
+        let rect = terminal.firstRect(forCharacterRange: NSRange(location: 0, length: 0), actualRange: nil)
+        XCTAssertTrue(rect.width.isFinite && rect.height.isFinite && !rect.width.isNaN && !rect.height.isNaN)
+        XCTAssertFalse(rect.width == 400 && rect.height == 300,
+                       "must not just be the old hardcoded whole-view-bounds placeholder")
+    }
+
+    // MARK: Kitty keyboard protocol byte golden — NOT YET DONE, see below
+
+    // Attempted: enable Kitty disambiguate mode via CSI > 1 u
+    // (terminal/stream.zig ~2147-2157), send shift+Return through the real
+    // encodeKey path, and assert the write callback matches Ghostty's own
+    // key encoder test fixture (input/key_encode.zig "kitty: shift+enter
+    // emits CSI u" — \x1b[13;2u). The CSI > 1 u enable sequence parses
+    // successfully (processOutput returns .success, throughSeq advances by
+    // the full 5 bytes), but the subsequent sendKey call — even reproduced
+    // with a hand-built ghostty_input_key_s bypassing encodeKey entirely,
+    // and even with Kitty mode NOT enabled at all as a baseline — produces
+    // ZERO writes for a special key (Enter, keycode 36) with mods=shift
+    // and text=nil, while an unmodified printable key (text="x", no mods)
+    // reliably produces exactly one write. Something beyond correct
+    // mods/keycode/action/text fields gates the write for this
+    // combination, and it wasn't isolated within a reasonable debugging
+    // budget — deferred to the same fresh-agent split as the full
+    // IME/composition choreography rather than shipping a guessed fix or
+    // grinding further. See M1-B1 story notes / queen coordination
+    // 2026-07-17 for the handoff.
 }

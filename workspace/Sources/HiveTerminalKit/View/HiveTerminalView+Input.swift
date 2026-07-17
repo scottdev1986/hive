@@ -98,6 +98,56 @@ extension HiveTerminalView {
         interpretKeyEvents([event])
     }
 
+    /// Pre-B1 snapshot had no keyUp override at all — GHOSTTY_ACTION_RELEASE
+    /// was dead code inside encodeKey, since encodeKey was only ever called
+    /// from keyDown. Real Ghostty's keyUp is simple (no IME choreography,
+    /// unlike keyDown): `keyAction(GHOSTTY_ACTION_RELEASE, event: event)`.
+    public override func keyUp(with event: NSEvent) {
+        encodeKey(event, action: GHOSTTY_ACTION_RELEASE)
+    }
+
+    /// Pre-B1 snapshot had no flagsChanged override — a bare modifier
+    /// press/release (Shift alone, Option alone, ...) with no accompanying
+    /// character never reached the terminal at all. Exact port of Surface
+    /// View's flagsChanged (SurfaceView_AppKit.swift ~1405-1450): maps the
+    /// specific modifier keyCode to its GHOSTTY_MODS_* bit, skips while
+    /// composing (an IME grabbing modifier state mid-composition shouldn't
+    /// also be encoded as a terminal key event), and determines press vs.
+    /// release by checking whether the CORRECT side's NX_DEVICE*KEYMASK bit
+    /// is set — e.g. releasing right-shift while left-shift is still held
+    /// must report a release (mods.rawValue & mod != 0 alone can't tell
+    /// which side is still down).
+    public override func flagsChanged(with event: NSEvent) {
+        let mod: UInt32
+        switch event.keyCode {
+        case 0x39: mod = GHOSTTY_MODS_CAPS.rawValue
+        case 0x38, 0x3C: mod = GHOSTTY_MODS_SHIFT.rawValue
+        case 0x3B, 0x3E: mod = GHOSTTY_MODS_CTRL.rawValue
+        case 0x3A, 0x3D: mod = GHOSTTY_MODS_ALT.rawValue
+        case 0x37, 0x36: mod = GHOSTTY_MODS_SUPER.rawValue
+        default: return
+        }
+
+        if hasMarkedText() { return }
+
+        let mods = mapMods(event.modifierFlags)
+
+        var action = GHOSTTY_ACTION_RELEASE
+        if mods.rawValue & mod != 0 {
+            let sidePressed: Bool
+            switch event.keyCode {
+            case 0x3C: sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERSHIFTKEYMASK) != 0
+            case 0x3E: sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCTLKEYMASK) != 0
+            case 0x3D: sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERALTKEYMASK) != 0
+            case 0x36: sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCMDKEYMASK) != 0
+            default: sidePressed = true
+            }
+            if sidePressed { action = GHOSTTY_ACTION_PRESS }
+        }
+
+        encodeKey(event, action: action)
+    }
+
     // MARK: NSTextInputClient
 
     public func insertText(_ string: Any, replacementRange: NSRange) {
@@ -146,8 +196,36 @@ extension HiveTerminalView {
     public func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
     public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? { nil }
     public func characterIndex(for point: NSPoint) -> Int { 0 }
+    /// Real IME insertion-point positioning via ghostty_surface_ime_point,
+    /// matching Surface View's core firstRect exactly (coordinate
+    /// conversion: Ghostty reports top-left-origin points, AppKit is
+    /// bottom-left-origin, so y flips within this view's frame before
+    /// converting to window coordinates). Pre-B1 snapshot always returned
+    /// the whole view's bounds, so every IME candidate window/composition
+    /// popover rendered in the same wrong place regardless of cursor
+    /// position — "placeholder IME ranges" was as much about this as about
+    /// markedRange/selectedRange.
+    ///
+    /// Not ported: Surface View's QuickLook-vs-IME disambiguation (checks
+    /// range against selectedRange(), reads the live selection via
+    /// ghostty_surface_read_selection for the QuickLook case) and its
+    /// dictation-microphone-indicator width-zero special case — this view
+    /// doesn't implement quickLook(with:), so that branch is dead code
+    /// here; the width-zero case is a narrow accessibility-dictation UI
+    /// detail, not a defect this gate's "placeholder IME ranges" names.
     public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        convert(bounds, to: nil)
+        guard let handle = engine.surfaceHandle else {
+            return convert(bounds, to: nil)
+        }
+
+        var x: Double = 0
+        var y: Double = 0
+        var width: Double = 0
+        var height: Double = 0
+        ghostty_surface_ime_point(handle, &x, &y, &width, &height)
+
+        let viewRect = NSRect(x: x, y: frame.size.height - y, width: width, height: height)
+        return convert(viewRect, to: nil)
     }
     public override func doCommand(by selector: Selector) {
         // Fall through to key encoding path; Ghostty owns terminal commands.
@@ -196,9 +274,23 @@ extension HiveTerminalView {
     /// platform-native table the real macOS app's own apprt uses) that
     /// this is correct, not the "raw macOS keyCode" defect it first looked
     /// like from the header's W3C-code-derived enum comments alone.
-    func encodeKey(_ event: NSEvent) {
+    ///
+    /// `action` lets keyUp/flagsChanged supply their own explicit action
+    /// (matching keyAction's `_ action: ghostty_input_action_e` parameter)
+    /// instead of deriving one from event.type — flagsChanged events are
+    /// neither .keyDown nor .keyUp, so they can't use the default
+    /// derivation at all. When action is nil (the keyDown path), a real
+    /// pre-B1 gap: repeats were never distinguished from fresh presses
+    /// (event.isARepeat was ignored), always sending GHOSTTY_ACTION_PRESS.
+    func encodeKey(_ event: NSEvent, action explicitAction: ghostty_input_action_e? = nil) {
         var key = ghostty_input_key_s()
-        key.action = event.type == .keyUp ? GHOSTTY_ACTION_RELEASE : GHOSTTY_ACTION_PRESS
+        if let explicitAction {
+            key.action = explicitAction
+        } else if event.type == .keyUp {
+            key.action = GHOSTTY_ACTION_RELEASE
+        } else {
+            key.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
+        }
         key.keycode = UInt32(event.keyCode)
         key.composing = false
 
@@ -212,7 +304,12 @@ extension HiveTerminalView {
             key.unshifted_codepoint = codepoint.value
         }
 
-        if let chars = event.characters, !chars.isEmpty,
+        // event.characters is only a valid property for .keyDown/.keyUp —
+        // NSEvent raises NSInternalInconsistencyException if it's read on a
+        // .flagsChanged event, which never carries text anyway (real
+        // Ghostty's flagsChanged calls keyAction with no text: argument).
+        if event.type == .keyDown || event.type == .keyUp,
+           let chars = event.characters, !chars.isEmpty,
            let firstByte = chars.utf8.first, firstByte >= 0x20 {
             chars.withCString { ptr in
                 key.text = ptr
