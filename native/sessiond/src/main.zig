@@ -1,5 +1,6 @@
 const std = @import("std");
 const broker = @import("broker");
+const session_host = @import("session_host");
 
 pub fn main() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -10,12 +11,16 @@ pub fn main() !void {
     _ = args.next();
     const role = args.next() orelse return error.MissingRole;
     if (args.next() != null) return error.UnexpectedArgument;
-    if (!std.mem.eql(u8, role, "serve")) return error.UnsupportedRole;
-
     const hive_home = std.process.getEnvVarOwned(allocator, "HIVE_HOME") catch |err| switch (err) {
         error.EnvironmentVariableNotFound => return error.MissingHiveHome,
         else => return err,
     };
     defer allocator.free(hive_home);
-    try broker.serve(allocator, hive_home);
+    if (std.mem.eql(u8, role, "serve")) {
+        try broker.serve(allocator, hive_home);
+    } else if (std.mem.eql(u8, role, "host")) {
+        try session_host.runHostRole(allocator, hive_home);
+    } else {
+        return error.UnsupportedRole;
+    }
 }

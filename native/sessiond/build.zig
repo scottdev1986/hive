@@ -3,6 +3,13 @@ const std = @import("std");
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
+    const ghostty = b.dependency("ghostty", .{
+        .target = target,
+        .optimize = optimize,
+        .@"emit-lib-vt" = true,
+        .@"emit-xcframework" = false,
+    });
+    const ghostty_vt = ghostty.artifact("ghostty-vt-static");
 
     const generated = b.createModule(.{
         .root_source_file = b.path("../../workspace/Tests/WorkspaceCoreTests/Fixtures/session_protocol.generated.zig"),
@@ -108,6 +115,26 @@ pub fn build(b: *std.Build) void {
     const run_input_arbiter_pty_host_tests = b.addRunArtifact(input_arbiter_pty_host_tests);
     test_step.dependOn(&run_input_arbiter_pty_host_tests.step);
 
+    const session_host_module = b.createModule(.{
+        .root_source_file = b.path("src/session_host.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    session_host_module.addImport("broker", broker_module);
+    session_host_module.addImport("session_protocol_generated", generated);
+    session_host_module.addImport("protocol", test_module);
+    session_host_module.addImport("input_arbiter", input_arbiter_module);
+    session_host_module.addImport("process_inspector", process_inspector_module);
+    session_host_module.addImport("pty_host", pty_host_module);
+    session_host_module.addImport("terminal_state", terminal_state_module);
+    session_host_module.addIncludePath(ghostty.path("include"));
+    session_host_module.addIncludePath(b.path("../include"));
+    const session_host_tests = b.addTest(.{ .root_module = session_host_module });
+    session_host_tests.linkLibrary(ghostty_vt);
+    const run_session_host_tests = b.addRunArtifact(session_host_tests);
+    test_step.dependOn(&run_session_host_tests.step);
+
     const stub_module = b.createModule(.{
         .root_source_file = b.path("test/stub_host.zig"),
         .target = target,
@@ -141,9 +168,11 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     executable_module.addImport("broker", broker_module);
+    executable_module.addImport("session_host", session_host_module);
     const executable = b.addExecutable(.{
         .name = "hive-sessiond",
         .root_module = executable_module,
     });
+    executable.linkLibrary(ghostty_vt);
     b.installArtifact(executable);
 }
