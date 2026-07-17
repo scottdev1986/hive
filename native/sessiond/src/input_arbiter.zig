@@ -164,7 +164,7 @@ const LedgerEntry = struct {
     result_label: []u8,
     /// Encoded PTY bytes retained until written/cancel/disconnect/exit (sink retry).
     /// §22:1337 durable key fields do not include this; it is ephemeral retry state
-    /// and MUST be zeroed on commit-success, cancel, disconnect, and exit (P1).
+    /// and MUST be zeroed on commit, cancel, disconnect, and exit (§22:1338 / P1).
     encoded: ?[]u8,
 
     fn deinit(self: *LedgerEntry, allocator: std.mem.Allocator) void {
@@ -761,11 +761,11 @@ pub const InputArbiter = struct {
         };
         const ledger_idx = self.ledger.items.len - 1;
 
-        // Plaintext body is done after encode — §22 zeroing on commit of the
-        // body buffer is fine here. The encoder output is RETAINED in the
-        // ledger for sink retry; a failed write is NOT a §22 zeroing trigger
-        // (those are commit-success / cancel / disconnect / exit), so we must
-        // not free `entry.encoded` on SinkWriteFailed (N2 constraint #1).
+        // Body buffer zeroed here after encode (commit path). Encoded bytes are
+        // RETAINED in the ledger for sink retry while held — still plaintext and
+        // still under §22:1338 (zeroed on commit when the write succeeds, and on
+        // cancel / disconnect / exit). Do not free entry.encoded on SinkWriteFailed
+        // alone (retry needs it); do zero it on the four triggers.
         self.zeroAndFreeAutomationBuffers();
 
         // Sink write after ledger is secured.
