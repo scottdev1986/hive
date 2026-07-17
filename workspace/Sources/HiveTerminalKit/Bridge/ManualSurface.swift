@@ -119,16 +119,19 @@ public final class FakeManualSurface: ManualSurfaceEngine {
 
 /// Real L0 wrapper over the six §23 `_v1` symbols + stock surface APIs.
 ///
-/// ## Ownership (M2)
-/// This type **retains** `callbackContext` for the life of the C surface and
-/// frees the C surface in `deinit`/`free()` **before** the context can drop.
-/// The C surface holds an unowned pointer into `callbackContext`; the context
-/// must outlive every C callback.
+/// ## Ownership (M2 / SF1)
+/// This type **retains** `callbackContext`, `appOwner`, and `hostView` for the
+/// life of the C surface and frees the C surface in `deinit`/`free()` **before**
+/// those objects can drop. The C surface holds unowned pointers into
+/// `callbackContext` and the host `NSView`; both must outlive every C callback
+/// and Metal draw.
 public final class GhosttyManualSurface: ManualSurfaceEngine {
     public let callbackContext: BridgeCallbackContext
     public private(set) var throughSeq: UInt64 = 0
     public private(set) var surfaceHandle: ghostty_surface_t?
 
+    /// Strong host view so the C `nsview` pointer never dangles (SF1).
+    public let hostView: NSView?
     /// App retained so the surface stays valid (app owns surface lifetime tree).
     private let appOwner: GhosttyAppOwner?
     private var ownsSurface: Bool
@@ -136,11 +139,13 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     public init(
         surface: ghostty_surface_t,
         callbackContext: BridgeCallbackContext,
+        hostView: NSView? = nil,
         appOwner: GhosttyAppOwner? = nil,
         ownsSurface: Bool = true
     ) {
         self.surfaceHandle = surface
         self.callbackContext = callbackContext
+        self.hostView = hostView
         self.appOwner = appOwner
         self.ownsSurface = ownsSurface
     }
@@ -357,21 +362,19 @@ public enum GhosttyBridgeFactory {
         return GhosttyManualSurface(
             surface: surface,
             callbackContext: callbackContext,
+            hostView: hostView,
             appOwner: owner,
             ownsSurface: true
         )
     }
 
-    /// Convenience for tests: allocates a retained host view owned by the surface's
-    /// process for the duration of the test (view is not retained by the surface
-    /// — callers must keep `hostView` alive while the surface lives).
+    /// Convenience for tests: host view is retained by the returned surface (SF1).
     public static func makeManualSurfaceForTesting(
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480
-    ) throws -> (surface: GhosttyManualSurface, hostView: NSView) {
+    ) throws -> GhosttyManualSurface {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
-        let surface = try makeManualSurface(hostView: host, widthPx: widthPx, heightPx: heightPx)
-        return (surface, host)
+        return try makeManualSurface(hostView: host, widthPx: widthPx, heightPx: heightPx)
     }
 }
 

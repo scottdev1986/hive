@@ -7,6 +7,9 @@ final class FakeHost {
     let clientTransport: InMemoryHostTransport
     private(set) var receivedFromViewer: [WireFrame] = []
 
+    /// Real local engine id from GhosttyKit — production gate fails closed without it.
+    let localEngineBuildId: String
+
     init(connectionId: String = "fake-host-conn") {
         let pair = InMemoryHostTransport.makePair(
             clientId: "fake-client-\(connectionId)",
@@ -14,10 +17,14 @@ final class FakeHost {
         )
         clientTransport = pair.client
         hostTransport = pair.host
+        localEngineBuildId = GhosttyManualSurface.engineBuildId()
+        precondition(
+            !localEngineBuildId.isEmpty,
+            "FakeHost requires hive_ghostty_engine_build_id_v1 (GhosttyKit linked)"
+        )
     }
 
     func harvestViewerFrames() throws {
-        // Drain host side without blocking forever.
         while true {
             do {
                 guard let frame = try hostTransport.receive(timeout: 0.01) else { break }
@@ -28,14 +35,14 @@ final class FakeHost {
         }
     }
 
-    func enqueueWelcome(instanceId: String, connectionId: String, engineBuildId: String = "engine-test") throws {
+    func enqueueWelcome(instanceId: String, connectionId: String) throws {
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "protocol": ["major": 1, "minor": 0],
             "instanceId": instanceId,
             "endpointRole": "host",
             "buildId": "fake-host",
-            "engineBuildId": engineBuildId,
+            "engineBuildId": localEngineBuildId,
             "connectionId": connectionId,
             "serverEpoch": "1",
             "limits": [
@@ -49,10 +56,12 @@ final class FakeHost {
     }
 
     /// SNAPSHOT as HVTCP001 envelope bytes (may be multi-chunk).
+    /// Engine id is the real local digest — exercises the production gate (MF2).
     func enqueueSnapshotEnvelope(throughSeq: UInt64, enginePayload: Data, chunkSize: Int? = nil) {
         let envelope = CheckpointEnvelope.encode(
             throughSeq: throughSeq,
-            payload: enginePayload
+            payload: enginePayload,
+            engineBuildId: localEngineRawBytes()
         )
         clientTransport.enqueueInbound(
             WireFrame(type: .snapshotBegin, payload: Data())
@@ -92,19 +101,45 @@ final class FakeHost {
         locator: SessionLocator,
         token: String = "grant-token-test",
         checkpointSeq: UInt64 = 0,
-        outputSeq: UInt64 = 0,
-        engineBuildId: String? = nil
+        outputSeq: UInt64 = 0
     ) -> AttachGrant {
-        AttachGrant(
-            locator: locator,
+        // Locator engine id must match grant/local for the fail-closed gate.
+        let pinned = SessionLocator(
+            schemaVersion: locator.schemaVersion,
+            instanceId: locator.instanceId,
+            subjectKind: locator.subjectKind,
+            agentId: locator.agentId,
+            generation: locator.generation,
+            sessionId: locator.sessionId,
+            hostKind: locator.hostKind,
+            engineBuildId: localEngineBuildId
+        )
+        return AttachGrant(
+            locator: pinned,
             endpoint: "unix:fake-host",
             token: token,
             expiresAt: "2099-01-01T00:00:00.000Z",
-            engineBuildId: engineBuildId ?? locator.engineBuildId ?? "engine-test",
+            engineBuildId: localEngineBuildId,
             checkpointSeq: checkpointSeq,
             outputSeq: outputSeq,
             operations: ["view", "human-input", "resize"]
         )
+    }
+
+    private func localEngineRawBytes() -> Data {
+        // engineBuildId_v1 is lowercase hex; wire header stores raw 32 bytes.
+        let hex = localEngineBuildId
+        var data = Data()
+        data.reserveCapacity(32)
+        var i = hex.startIndex
+        while i < hex.endIndex {
+            let j = hex.index(i, offsetBy: 2, limitedBy: hex.endIndex) ?? hex.endIndex
+            let byte = UInt8(hex[i..<j], radix: 16) ?? 0
+            data.append(byte)
+            i = j
+        }
+        while data.count < 32 { data.append(0) }
+        return Data(data.prefix(32))
     }
 
     private func enqueueJSON(
@@ -128,7 +163,7 @@ func makeTestLocator(generation: Int = 1, sessionSuffix: String = "aaaaaaaa-7bbb
         generation: generation,
         sessionId: "ses_\(sessionSuffix)",
         hostKind: "sessiond",
-        engineBuildId: "engine-test"
+        engineBuildId: GhosttyManualSurface.engineBuildId()
     )
 }
 

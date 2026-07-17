@@ -32,8 +32,10 @@ let package = Package(
             name: "GhosttyKit",
             path: ghosttyKitPath
         ),
-        // Imports native/include/hive_ghostty_bridge.h so trampoline signatures
-        // are compile-checked against the DOC/ABI header (M1).
+        // C ABI surface for the six _v1 symbols. `include/hive_ghostty_bridge.h` is a
+        // symlink to repo-root `native/include/hive_ghostty_bridge.h` (one file pins
+        // both halves — same pattern as Fixtures sharing the daemon wire doc).
+        // HeaderParityTests fails closed if that link ever becomes a drifting fork.
         .target(
             name: "HiveGhosttyC",
             dependencies: ["GhosttyKit"],

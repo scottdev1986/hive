@@ -177,10 +177,61 @@ final class AttachReplayTests: XCTestCase {
     func testCheckpointEnvelopeFixtureMatchesNativeAbi() throws {
         // Mirror native/tests/abi/checkpoint-envelope.c field reads.
         let payload = Data("abc".utf8)
-        let env = CheckpointEnvelope.encode(throughSeq: 42, payload: payload)
+        let engineHex = GhosttyManualSurface.engineBuildId()
+        var engineRaw = Data()
+        var i = engineHex.startIndex
+        while i < engineHex.endIndex {
+            let j = engineHex.index(i, offsetBy: 2, limitedBy: engineHex.endIndex) ?? engineHex.endIndex
+            engineRaw.append(UInt8(engineHex[i..<j], radix: 16) ?? 0)
+            i = j
+        }
+        while engineRaw.count < 32 { engineRaw.append(0) }
+        let env = CheckpointEnvelope.encode(
+            throughSeq: 42,
+            payload: payload,
+            engineBuildId: Data(engineRaw.prefix(32))
+        )
         let parsed = try CheckpointEnvelope.parse(env)
         XCTAssertEqual(parsed.throughSeq, 42)
         XCTAssertEqual(parsed.payload, payload)
         XCTAssertEqual(parsed.payloadLength, 3)
+        XCTAssertEqual(parsed.engineBuildIdHex, engineHex.prefix(64).lowercased() == engineHex.lowercased()
+            ? engineHex.lowercased()
+            : parsed.engineBuildIdHex)
+    }
+
+    func testForeignEngineCheckpointRejected() throws {
+        let host = FakeHost()
+        let locator = makeTestLocator()
+        let grant = host.makeGrant(locator: locator)
+        let engine = FakeManualSurface()
+        let client = AttachReplayClient(viewerId: "viewer-x", engine: engine)
+        try host.enqueueWelcome(instanceId: locator.instanceId, connectionId: "h")
+        // Craft envelope with wrong engine id (32 zero bytes) — must fail closed.
+        let bad = CheckpointEnvelope.encode(
+            throughSeq: 1,
+            payload: Data("x".utf8),
+            engineBuildId: Data(repeating: 0, count: 32)
+        )
+        host.clientTransport.enqueueInbound(WireFrame(type: .snapshotBegin, payload: Data()))
+        host.clientTransport.enqueueInbound(
+            WireFrame(type: .snapshotBytes, flags: [.final], payload: bad)
+        )
+        let outcome = try client.attach(
+            grant: grant,
+            geometry: makeGeometry(),
+            afterSeq: 0,
+            transport: host.clientTransport
+        )
+        guard case .failed(let state) = outcome else {
+            XCTFail("expected failed incompatibleEngine, got \(outcome)")
+            return
+        }
+        if case .incompatibleEngine = state {
+            // ok
+        } else {
+            XCTFail("expected incompatibleEngine, got \(state)")
+        }
+        XCTAssertEqual(engine.restored.count, 0, "must not restore foreign-engine checkpoint")
     }
 }

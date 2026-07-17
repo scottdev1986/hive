@@ -61,18 +61,19 @@ public final class AttachReplayClient {
         afterSeq: UInt64,
         transport: HostTransport
     ) throws -> AttachReplayOutcome {
-        // M3: refuse foreign-engine checkpoints when both IDs look like digests.
+        // M3: fail CLOSED — never restore when local engine id is unknown or mismatched.
         let localEngine = GhosttyManualSurface.engineBuildId()
-        if isDigestId(grant.engineBuildId), isDigestId(localEngine),
-           grant.engineBuildId != localEngine {
+        if localEngine.isEmpty {
+            state = .incompatibleEngine(evidence: "local engine build id unavailable")
+            return .failed(state)
+        }
+        if grant.engineBuildId != localEngine {
             state = .incompatibleEngine(
                 evidence: "grant \(grant.engineBuildId) != local \(localEngine)"
             )
             return .failed(state)
         }
-        if let locEngine = grant.locator.engineBuildId,
-           isDigestId(locEngine), isDigestId(localEngine),
-           locEngine != localEngine {
+        if let locEngine = grant.locator.engineBuildId, locEngine != localEngine {
             state = .incompatibleEngine(evidence: "locator engine \(locEngine)")
             return .failed(state)
         }
@@ -285,22 +286,18 @@ public final class AttachReplayClient {
                 return .failed(state)
             }
 
-            // M3: engine build id from wire header vs local engine.
+            // M3: fail CLOSED — wire engineBuildId must equal local engine (no test sentinels).
             let local = GhosttyManualSurface.engineBuildId()
-            if !local.isEmpty, local.count >= 32 {
-                let wireHex = envelope.engineBuildIdHex
-                // Wire header holds raw 32 bytes; compare hex forms when both present.
-                if wireHex != String(repeating: "0", count: 64),
-                   wireHex != local,
-                   !wireHex.allSatisfy({ $0 == "a" || $0 == "b" || $0 == "A" || $0 == "B" }) {
-                    // Test envelopes use 0xAB fill — allow those through FakeHost.
-                    if !envelope.engineBuildId.allSatisfy({ $0 == 0xAB }) {
-                        state = .incompatibleEngine(
-                            evidence: "checkpoint engine \(wireHex) != \(local)"
-                        )
-                        return .failed(state)
-                    }
-                }
+            if local.isEmpty {
+                state = .incompatibleEngine(evidence: "local engine build id unavailable")
+                return .failed(state)
+            }
+            let wireHex = envelope.engineBuildIdHex
+            if wireHex != local {
+                state = .incompatibleEngine(
+                    evidence: "checkpoint engine \(wireHex) != \(local)"
+                )
+                return .failed(state)
             }
 
             let result = applicator.restoreCheckpoint(
@@ -400,7 +397,4 @@ public final class AttachReplayClient {
         try transport.send(WireFrame(type: type, flags: flags, requestId: requestId, payload: payload))
     }
 
-    private func isDigestId(_ value: String) -> Bool {
-        value.count >= 32 && value.allSatisfy { $0.isHexDigit }
     }
-}

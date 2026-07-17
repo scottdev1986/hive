@@ -17,10 +17,7 @@ final class CallbackDisciplineTests: XCTestCase {
         ptr[0] = 0x48; ptr[1] = 0x69; ptr[2] = 0x76; ptr[3] = 0x65 // Hive
         let original = Data(bytes: ptr, count: n)
 
-        // Call through the real C-typed trampoline.
         hiveBridgeWriteTrampoline(ctx.unownedContextPointer, UnsafePointer(ptr), n)
-
-        // Mutate the SAME address the trampoline saw (would poison a retained pointer).
         ptr.update(repeating: 0xFF, count: n)
 
         XCTAssertEqual(observed, original, "copy must survive same-address overwrite")
@@ -46,7 +43,6 @@ final class CallbackDisciplineTests: XCTestCase {
             length: n
         )
         hiveBridgeEventTrampoline(ctx.unownedContextPointer, &event)
-
         ptr.update(repeating: 0xFF, count: n)
 
         XCTAssertEqual(observed?.type, .pwd)
@@ -55,8 +51,6 @@ final class CallbackDisciplineTests: XCTestCase {
     }
 
     func testRetainedPointerWouldFail_afterSameStorageOverwrite() {
-        // Positive control for the failure mode: if a handler retained the raw
-        // pointer, reading after update(repeating:) yields 0xFF bytes.
         let n = 4
         let ptr = UnsafeMutablePointer<UInt8>.allocate(capacity: n)
         defer { ptr.deallocate() }
@@ -64,7 +58,6 @@ final class CallbackDisciplineTests: XCTestCase {
 
         let retainedPointer: UnsafePointer<UInt8> = UnsafePointer(ptr)
         let retainedLength = n
-        // Bad path: "return" without copying.
         ptr.update(repeating: 0xFF, count: n)
 
         let whatRetainedSees = Data(bytes: retainedPointer, count: retainedLength)
@@ -72,7 +65,6 @@ final class CallbackDisciplineTests: XCTestCase {
                        "positive control: retained pointer observes mutated storage")
         XCTAssertNotEqual(whatRetainedSees, Data([0x01, 0x02, 0x03, 0x04]))
 
-        // Disciplined path still wins:
         let ctx = BridgeCallbackContext()
         var copy: Data?
         ctx.onWrite = { copy = $0 }
@@ -82,33 +74,10 @@ final class CallbackDisciplineTests: XCTestCase {
         XCTAssertEqual(copy, Data([0x01, 0x02, 0x03, 0x04]))
     }
 
-    func testCallbacksAreNonReentrant_preconditionFires() {
+    /// SF3: renames the old misnamed test — verifies enter()/leave() arm and clear
+    /// `isInCallback` around a trampoline (does not trap on re-entry).
+    func testInCallbackFlagArmedDuringTrampolineAndClearedAfter() {
         let ctx = BridgeCallbackContext()
-        var hitInner = false
-        ctx.onWrite = { _ in
-            // Re-enter the same context while still in the outer callback.
-            do {
-                try NSException.catching {
-                    ctx.handleWrite(bytes: nil, length: 0)
-                }
-            } catch {
-                hitInner = true
-            }
-        }
-
-        // precondition failure is a fatalError/trap in debug — use a nested
-        // flag path that exercises enter() via expecting the process trap is
-        // not ideal in XCTest. Instead: verify isInCallback is true during
-        // outer, and that a second enter would trip by checking the flag
-        // before re-entry attempt with a separate mechanism.
-
-        // Safer approach: call handleWrite and inside onWrite assert isInCallback,
-        // then call enter path via expecting Swift precondition — use
-        // `XCTExpectFailure` is not available for precondition.
-        //
-        // Exercise: during outer callback, isInCallback == true; attempting
-        // re-entry is documented as precondition. We validate the guard is
-        // armed by checking isInCallback during the outer call.
         var sawInCallback = false
         ctx.onWrite = { _ in
             sawInCallback = ctx.isInCallback
@@ -119,14 +88,11 @@ final class CallbackDisciplineTests: XCTestCase {
         }
         XCTAssertTrue(sawInCallback, "enter() must arm inCallback during trampoline")
         XCTAssertFalse(ctx.isInCallback, "leave() must clear after return")
-        _ = hitInner
     }
 
     func testEventTrampolineABI_isTwoParamStructPointer() {
-        // Compile-time: hiveBridgeEventTrampoline is hive_ghostty_event_fn.
         let fn: hive_ghostty_event_fn = hiveBridgeEventTrampoline
         XCTAssertNotNil(fn)
-        // Runtime: a correctly shaped event is delivered.
         let ctx = BridgeCallbackContext()
         var got = false
         ctx.onEvent = { e in
@@ -139,13 +105,5 @@ final class CallbackDisciplineTests: XCTestCase {
         )
         fn(ctx.unownedContextPointer, &event)
         XCTAssertTrue(got)
-    }
-}
-
-// Minimal NSException bridge for optional re-entry experiments (unused when
-// precondition traps). Kept for documentation of the re-entry positive control.
-private enum NSException {
-    static func catching(_ body: () -> Void) throws {
-        body()
     }
 }

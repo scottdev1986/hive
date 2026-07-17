@@ -1,5 +1,15 @@
-/* Minimal GhosttyResult/GhosttyTerminal for hive_ghostty_bridge.h.
- * ABI matches libghostty-vt types.h (result.zig enum(c_int)). */
+/**
+ * @file types.h
+ * Minimal GhosttyResult / GhosttyTerminal for hive_ghostty_bridge.h.
+ *
+ * Values are the libghostty-vt ABI (result.zig / ghostty/vt/types.h):
+ *   GHOSTTY_SUCCESS=0, OUT_OF_MEMORY=-1, INVALID_VALUE=-2,
+ *   OUT_OF_SPACE=-3, NO_VALUE=-4.
+ *
+ * HeaderParityTests asserts these constants equal the real libghostty-vt
+ * types.h when the offline GhosttyKit artifact is present — do not invent
+ * new result codes here.
+ */
 #ifndef GHOSTTY_VT_TYPES_H
 #define GHOSTTY_VT_TYPES_H
 #include <stdint.h>

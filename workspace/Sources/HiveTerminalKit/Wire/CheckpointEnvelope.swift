@@ -108,11 +108,12 @@ public struct CheckpointEnvelope: Equatable, Sendable {
         return headerBytes + Int(readU32(data, 80))
     }
 
-    /// Build a test envelope (FakeHost).
+    /// Build a wire envelope. Callers (including FakeHost) must pass the real
+    /// local engine build id — no default test sentinel (MF2).
     public static func encode(
         throughSeq: UInt64,
         payload: Data,
-        engineBuildId: Data = Data(repeating: 0xAB, count: 32),
+        engineBuildId: Data,
         columns: UInt32 = 80,
         rows: UInt32 = 24
     ) -> Data {
