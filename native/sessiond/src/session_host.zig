@@ -2676,6 +2676,14 @@ fn validateSpawnStrings(
     }
 }
 
+fn geometryFixed16_16(value: f64) !u32 {
+    const scale = 65_536.0;
+    const maximum = @as(f64, @floatFromInt(std.math.maxInt(u32))) / scale;
+    if (!std.math.isFinite(value) or value <= 0 or value > maximum)
+        return error.InvalidGeometry;
+    return @intFromFloat(value * scale);
+}
+
 fn verifyWorkspaceIdentity(pid: i32, start_token: []const u8) !void {
     const identity = switch (process_inspector.observeProcess(pid)) {
         .present => |identity| identity,
@@ -2893,8 +2901,8 @@ pub fn runHostRole(
         .{
             .columns = spec.value.geometry.columns,
             .rows = spec.value.geometry.rows,
-            .cell_width_px_16_16 = @intFromFloat(spec.value.geometry.cellWidthPx * 65536.0),
-            .cell_height_px_16_16 = @intFromFloat(spec.value.geometry.cellHeightPx * 65536.0),
+            .cell_width_px_16_16 = try geometryFixed16_16(spec.value.geometry.cellWidthPx),
+            .cell_height_px_16_16 = try geometryFixed16_16(spec.value.geometry.cellHeightPx),
         },
     );
     defer state.deinit();
@@ -3084,6 +3092,21 @@ test "spawn strings reject C ABI truncation with a valid control" {
     try std.testing.expectError(
         error.InvalidCreateSpec,
         validateSpawnStrings("/tmp\x00ignored", "/bin/sh", &valid_argv),
+    );
+}
+
+test "terminal cell metrics fail closed before 16.16 conversion" {
+    try std.testing.expectEqual(
+        @as(u32, 10 << 16),
+        try geometryFixed16_16(10),
+    );
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        geometryFixed16_16(100_000),
+    );
+    try std.testing.expectError(
+        error.InvalidGeometry,
+        geometryFixed16_16(0),
     );
 }
 
