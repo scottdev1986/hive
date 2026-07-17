@@ -27,6 +27,22 @@ OVERLAY=$("$ROOT/scripts/prepare-zig-xcode-overlay.sh")
 PATH="$ROOT/scripts/zig-runner-tools:$PATH"
 export PATH
 
+# Liam's HVTCP001 C fixture + Zig shared binary must agree (F5 dual-source lock).
+ABI_TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-sessiond-abi.XXXXXX")
+trap 'rm -rf "$ABI_TMP"' EXIT HUP INT TERM
+/usr/bin/clang -std=c11 -Wall -Wextra -Werror -o "$ABI_TMP/checkpoint-envelope" \
+  "$ROOT/native/tests/abi/checkpoint-envelope.c"
+HVTCP001_FIXTURE_PATH="$ROOT/native/tests/abi/hvtcp001-header.bin" \
+  "$ABI_TMP/checkpoint-envelope"
+# header-standalone needs Ghostty headers (syntax-only ABI check).
+if [ -f "$ROOT/vendor/ghostty/include/ghostty.h" ]; then
+  env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
+    /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories \
+    -fsyntax-only \
+    -I "$ROOT/native/include" -isystem "$ROOT/vendor/ghostty/include" \
+    "$ROOT/native/tests/abi/header-standalone.c"
+fi
+
 cd "$ROOT/native/sessiond"
 "$ZIG" build --global-cache-dir "$CACHE/zig-global" \
   test identity-probe install -Dtarget="$TARGET" --sysroot "$OVERLAY"

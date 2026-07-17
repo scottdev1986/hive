@@ -55,12 +55,19 @@ pub fn build(b: *std.Build) void {
     test_step.dependOn(&run_process_inspector_tests.step);
 
     // WP4-B Track γ: headless VT + journal/checkpoint (export-double testable pre-TG2).
+    // Shared HVTCP001 fixture lives under native/tests/abi (C + Zig dual-source lock).
+    const hvtcp001_fixture = b.createModule(.{
+        .root_source_file = b.path("../tests/abi/hvtcp001_header.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
     const terminal_state_module = b.createModule(.{
         .root_source_file = b.path("src/terminal_state.zig"),
         .target = target,
         .optimize = optimize,
     });
     terminal_state_module.addImport("session_protocol_generated", generated);
+    terminal_state_module.addImport("hvtcp001_header", hvtcp001_fixture);
     const terminal_state_tests = b.addTest(.{ .root_module = terminal_state_module });
     const run_terminal_state_tests = b.addRunArtifact(terminal_state_tests);
     test_step.dependOn(&run_terminal_state_tests.step);

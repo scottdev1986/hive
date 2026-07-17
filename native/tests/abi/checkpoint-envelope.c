@@ -1,4 +1,6 @@
 #include <stdint.h>
+#include <stdio.h>
+#include <stdlib.h>
 #include <string.h>
 
 static const uint8_t fixture[] =
@@ -55,5 +57,21 @@ int main(void) {
   if (read_be32(fixture + 80) != 3U) return 13;
   if (memcmp(fixture + 84, payload_sha256, sizeof(payload_sha256)) != 0)
     return 14;
+
+  /* Dual-source lock: when HVTCP001_FIXTURE_PATH is set, the on-disk 116-byte
+   * fixture (consumed by Zig @embedFile) must match this C static array byte
+   * for byte — otherwise Zig and C can drift while both suites stay green. */
+  const char *path = getenv("HVTCP001_FIXTURE_PATH");
+  if (path != NULL) {
+    FILE *file = fopen(path, "rb");
+    if (file == NULL) return 20;
+    uint8_t disk[116];
+    const size_t n = fread(disk, 1U, sizeof(disk), file);
+    int trailing = fgetc(file);
+    fclose(file);
+    if (n != sizeof(disk)) return 21;
+    if (trailing != EOF) return 22;
+    if (memcmp(disk, fixture, sizeof(disk)) != 0) return 23;
+  }
   return 0;
 }
