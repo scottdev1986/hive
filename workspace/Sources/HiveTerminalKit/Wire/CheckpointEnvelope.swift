@@ -5,7 +5,7 @@ import CryptoKit
 ///
 /// Authority: docs/design/terminal-stack-transition.html §23 checkpoint table
 /// and `CHECKPOINT_HEADER` in `src/schemas/session-protocol.ts` (projected into
-/// `SessionProtocol.generated.swift` as `SessionProtocolGenerated.Checkpoint`).
+/// `CheckpointHeader.generated.swift` as `SessionProtocolGenerated.Checkpoint`).
 /// The opaque payload is what `hive_ghostty_surface_restore_checkpoint_v1`
 /// consumes (engine format).
 public struct CheckpointEnvelope: Equatable, Sendable {

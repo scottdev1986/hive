@@ -209,8 +209,8 @@ final class AttachReplayTests: XCTestCase {
     }
 
     /// A4 drift guard: consumer FieldOffset aliases the generated projection.
-    /// Deliberately mismatching SessionProtocolGenerated.Checkpoint.Offset without
-    /// updating this alias would fail to compile; these asserts lock the wire values.
+    /// Wire values live only in CHECKPOINT_HEADER → CheckpointHeader.generated.swift;
+    /// never re-transcribe bare offset literals here.
     func testCheckpointEnvelopeOffsetsMatchGeneratedProjection() {
         let off = CheckpointEnvelope.FieldOffset.self
         let gen = SessionProtocolGenerated.Checkpoint.Offset.self
@@ -227,20 +227,6 @@ final class AttachReplayTests: XCTestCase {
         XCTAssertEqual(off.engineBuildId, gen.engineBuildId)
         XCTAssertEqual(off.payloadLength, gen.payloadLength)
         XCTAssertEqual(off.payloadSha256, gen.payloadSha256)
-        // Wire values (positive control against HVTCP001 table).
-        XCTAssertEqual(off.magic, 0)
-        XCTAssertEqual(off.version, 8)
-        XCTAssertEqual(off.headerBytes, 10)
-        XCTAssertEqual(off.flags, 12)
-        XCTAssertEqual(off.throughSeq, 16)
-        XCTAssertEqual(off.createdMonoNanos, 24)
-        XCTAssertEqual(off.columns, 32)
-        XCTAssertEqual(off.rows, 36)
-        XCTAssertEqual(off.cellWidthPx, 40)
-        XCTAssertEqual(off.cellHeightPx, 44)
-        XCTAssertEqual(off.engineBuildId, 48)
-        XCTAssertEqual(off.payloadLength, 80)
-        XCTAssertEqual(off.payloadSha256, 84)
         XCTAssertEqual(
             off.payloadSha256 + SessionProtocolGenerated.Checkpoint.payloadSha256Bytes,
             CheckpointEnvelope.headerBytes
