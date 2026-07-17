@@ -133,7 +133,9 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     /// Strong host view so the C `nsview` pointer never dangles (SF1).
     public let hostView: NSView?
     /// App retained so the surface stays valid (app owns surface lifetime tree).
-    private let appOwner: GhosttyAppOwner?
+    /// internal (not private): gate 3 lifecycle tests reach the real
+    /// GhosttyAppOwner/GhosttyAppWakeupContext via @testable import.
+    let appOwner: GhosttyAppOwner?
     private var ownsSurface: Bool
 
     public init(
@@ -249,15 +251,72 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     }
 }
 
+/// Backs `ghostty_runtime_config_s.wakeup_cb`/`userdata` (gate 3, M1-B1).
+///
+/// ghostty.h: "Callback called to wakeup the event loop. This should
+/// trigger a full tick of the app loop" and `ghostty_app_tick`: "should be
+/// called whenever the wakeup callback is invoked." The pre-B1 snapshot's
+/// wakeup_cb was a no-op, so any Ghostty-internal async work that depends
+/// on a later tick to complete silently never did.
+///
+/// `app` is set only after `ghostty_app_new` succeeds (nothing can call
+/// wakeup before then) and cleared before `ghostty_app_free`, so a wakeup
+/// racing free either sees the real app or a no-op — never a freed handle.
+/// `ghostty_app_tick` touches AppKit/Metal-adjacent app state, so ticks are
+/// marshaled onto the main thread like every other surface entry point.
+public final class GhosttyAppWakeupContext: @unchecked Sendable {
+    private var app: ghostty_app_t?
+    private let lock = NSLock()
+
+    fileprivate func bind(_ app: ghostty_app_t) {
+        lock.lock(); self.app = app; lock.unlock()
+    }
+
+    fileprivate func unbind() {
+        lock.lock(); self.app = nil; lock.unlock()
+    }
+
+    fileprivate func scheduleTick() {
+        let tick = { [weak self] in
+            guard let self else { return }
+            self.lock.lock()
+            let app = self.app
+            self.lock.unlock()
+            guard let app else { return }
+            ghostty_app_tick(app)
+        }
+        if Thread.isMainThread {
+            tick()
+        } else {
+            DispatchQueue.main.async(execute: tick)
+        }
+    }
+
+    public var unownedContextPointer: UnsafeMutableRawPointer {
+        Unmanaged.passUnretained(self).toOpaque()
+    }
+}
+
+/// Trampoline matching `ghostty_runtime_wakeup_cb` exactly.
+public let ghosttyAppWakeupTrampoline: ghostty_runtime_wakeup_cb = { userdata in
+    guard let userdata else { return }
+    let ctx = Unmanaged<GhosttyAppWakeupContext>.fromOpaque(userdata).takeUnretainedValue()
+    ctx.scheduleTick()
+}
+
 /// Owns a Ghostty app + config for manual surface creation (M2).
 public final class GhosttyAppOwner {
     public let app: ghostty_app_t
     public let config: ghostty_config_t
+    /// internal (not private): gate 3 lifecycle tests drive wakeup_cb directly.
+    let wakeupContext: GhosttyAppWakeupContext
     private var freed = false
 
-    fileprivate init(app: ghostty_app_t, config: ghostty_config_t) {
+    fileprivate init(app: ghostty_app_t, config: ghostty_config_t, wakeupContext: GhosttyAppWakeupContext) {
         self.app = app
         self.config = config
+        self.wakeupContext = wakeupContext
+        wakeupContext.bind(app)
     }
 
     deinit {
@@ -267,6 +326,7 @@ public final class GhosttyAppOwner {
     public func free() {
         guard !freed else { return }
         freed = true
+        wakeupContext.unbind()
         ghostty_app_free(app)
         ghostty_config_free(config)
     }
@@ -311,10 +371,11 @@ public enum GhosttyBridgeFactory {
         guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
         ghostty_config_finalize(config)
 
+        let wakeupContext = GhosttyAppWakeupContext()
         var runtime = ghostty_runtime_config_s(
-            userdata: nil,
+            userdata: wakeupContext.unownedContextPointer,
             supports_selection_clipboard: false,
-            wakeup_cb: { _ in },
+            wakeup_cb: ghosttyAppWakeupTrampoline,
             action_cb: { _, _, _ in false },
             read_clipboard_cb: { _, _, _ in false },
             confirm_read_clipboard_cb: { _, _, _, _ in },
@@ -326,7 +387,7 @@ public enum GhosttyBridgeFactory {
             ghostty_config_free(config)
             throw FactoryError.appFailed
         }
-        let owner = GhosttyAppOwner(app: app, config: config)
+        let owner = GhosttyAppOwner(app: app, config: config, wakeupContext: wakeupContext)
 
         var surfaceConfig = ghostty_surface_config_new()
         surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
