@@ -1,3 +1,5 @@
 .build/
 .swiftpm/
 *.xcodeproj
+# GhosttyKit.xcframework is produced by scripts/build-ghosttykit.sh (not checked in).
+Vendor/GhosttyKit.xcframework

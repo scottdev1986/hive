@@ -1,12 +1,20 @@
 // swift-tools-version:5.10
 import PackageDescription
 
+/// GhosttyKit.xcframework is a **build output**, not checked in.
+/// Produce it with `scripts/build-ghosttykit.sh` from the repo root, then:
+///   ln -sfn ../.cache/native/artifacts/ghostty-<commit>-zig-<sha>/GhosttyKit.xcframework \
+///     workspace/Vendor/GhosttyKit.xcframework
+/// The path below is the stable SPM binary-target location.
+let ghosttyKitPath = "Vendor/GhosttyKit.xcframework"
+
 let package = Package(
     name: "HiveWorkspace",
     platforms: [.macOS(.v14)],
     products: [
         .executable(name: "HiveWorkspace", targets: ["HiveWorkspace"]),
         .library(name: "WorkspaceCore", targets: ["WorkspaceCore"]),
+        .library(name: "HiveTerminalKit", targets: ["HiveTerminalKit"]),
     ],
     dependencies: [
         // Provides LocalProcessTerminalView, the AppKit terminal view that
@@ -21,6 +29,28 @@ let package = Package(
     ],
     targets: [
         .target(name: "WorkspaceCore"),
+        // WP5 L0–L2: Ghostty manual-I/O surface wrapper (binary is offline-built).
+        .binaryTarget(
+            name: "GhosttyKit",
+            path: ghosttyKitPath
+        ),
+        .target(
+            name: "HiveTerminalKit",
+            dependencies: [
+                "GhosttyKit",
+            ],
+            path: "Sources/HiveTerminalKit",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Metal"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("IOKit"),
+                .linkedLibrary("c++"),
+            ]
+        ),
         .executableTarget(
             name: "HiveWorkspace",
             dependencies: [
@@ -43,6 +73,10 @@ let package = Package(
         .testTarget(
             name: "HiveWorkspaceTests",
             dependencies: ["HiveWorkspace", "WorkspaceCore"]
+        ),
+        .testTarget(
+            name: "HiveTerminalKitTests",
+            dependencies: ["HiveTerminalKit"]
         ),
     ]
 )
