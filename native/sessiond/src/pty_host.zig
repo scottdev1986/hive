@@ -56,10 +56,24 @@ pub const Error = error{
     NotSpawned,
     Closed,
     SpawnFailed,
-    ExecFailed,
+    StaleResizeRevision,
     IdentityUnavailable,
     IoFailed,
     Internal,
+};
+
+pub const LaunchFailureLayer = enum(c_int) {
+    command,
+    working_directory,
+    environment,
+    descriptor_transfer,
+    terminal_setup,
+    exec_transition,
+};
+
+pub const LaunchFailureEvidence = extern struct {
+    layer: LaunchFailureLayer,
+    os_code: c_int,
 };
 
 pub const Geometry = struct {
@@ -88,12 +102,21 @@ pub const Geometry = struct {
     }
 };
 
+pub const DescriptorMapping = struct {
+    /// The caller retains ownership. The child receives a duplicate only.
+    source_fd: posix.fd_t,
+    /// Standard streams remain bound to the PTY and cannot be remapped.
+    target_fd: posix.fd_t,
+};
+
 pub const SpawnSpec = struct {
     /// Absolute or PATH-resolved argv[0] identity expected after exec.
     argv: []const []const u8,
     cwd: ?[]const u8 = null,
     /// If null, child inherits the parent environment.
     envp: ?[]const []const u8 = null,
+    /// Only these explicitly transferred descriptors survive exec.
+    descriptor_map: []const DescriptorMapping = &.{},
     geometry: Geometry,
 };
 
@@ -112,6 +135,11 @@ pub const SpawnReadback = struct {
     pub fn executablePath(self: *const SpawnReadback) []const u8 {
         return self.executable[0..self.executable_len];
     }
+};
+
+pub const SpawnOutcome = union(enum) {
+    running: SpawnReadback,
+    exec_failed: LaunchFailureEvidence,
 };
 
 pub const ByteRange = struct {
@@ -133,6 +161,12 @@ pub const ExitEvidence = struct {
     term_signal: ?i32 = null,
 };
 
+pub const ResizeReceipt = struct {
+    revision: u64,
+    ordered_at: u64,
+    readback: Geometry,
+};
+
 pub const PtyHost = struct {
     allocator: std.mem.Allocator,
     master_fd: posix.fd_t = -1,
@@ -145,6 +179,8 @@ pub const PtyHost = struct {
     output_seq: u64 = 0,
     /// Exclusive next PTY-input byte offset owned by the write queue / written.
     input_seq: u64 = 0,
+    operation_sequence: u64 = 0,
+    resize_revision: u64 = 0,
     write_queue: std.ArrayList(u8) = .{},
     read_buf: []u8 = &[_]u8{},
     closed: bool = false,
@@ -173,10 +209,52 @@ pub const PtyHost = struct {
 
     /// Create PTY, fork/exec child (async-signal-safe child path), capture
     /// start-token + process group with process_inspector observation.
-    pub fn spawn(self: *PtyHost, spec: SpawnSpec) Error!SpawnReadback {
+    pub fn spawn(self: *PtyHost, spec: SpawnSpec) Error!SpawnOutcome {
         if (self.spawned) return error.Internal;
         try spec.geometry.validate();
-        if (spec.argv.len == 0) return error.SpawnFailed;
+        if (spec.argv.len == 0) return .{ .exec_failed = .{
+            .layer = .command,
+            .os_code = c.EINVAL,
+        } };
+
+        const descriptor_limit = c.getdtablesize();
+        if (descriptor_limit <= 3) return error.SpawnFailed;
+        var max_target: c_int = 2;
+        for (spec.descriptor_map, 0..) |mapping, i| {
+            if (mapping.target_fd < 3 or mapping.target_fd >= descriptor_limit)
+                return .{ .exec_failed = .{
+                    .layer = .descriptor_transfer,
+                    .os_code = c.EINVAL,
+                } };
+            for (spec.descriptor_map[0..i]) |prior| {
+                if (prior.target_fd == mapping.target_fd)
+                    return .{ .exec_failed = .{
+                        .layer = .descriptor_transfer,
+                        .os_code = c.EINVAL,
+                    } };
+            }
+            max_target = @max(max_target, mapping.target_fd);
+        }
+        const private_fd_min = max_target + 1;
+        const prepared = self.allocator.alloc(PreparedDescriptorMapping, spec.descriptor_map.len) catch
+            return error.Internal;
+        defer self.allocator.free(prepared);
+        var prepared_count: usize = 0;
+        defer {
+            for (prepared[0..prepared_count]) |mapping| _ = c.close(mapping.source_fd);
+        }
+        for (spec.descriptor_map) |mapping| {
+            const duplicate = c.fcntl(mapping.source_fd, c.F_DUPFD_CLOEXEC, private_fd_min);
+            if (duplicate < 0) return .{ .exec_failed = .{
+                .layer = .descriptor_transfer,
+                .os_code = std.c._errno().*,
+            } };
+            prepared[prepared_count] = .{
+                .source_fd = duplicate,
+                .target_fd = mapping.target_fd,
+            };
+            prepared_count += 1;
+        }
 
         var master: c_int = -1;
         var slave: c_int = -1;
@@ -224,6 +302,12 @@ pub const PtyHost = struct {
             if (exec_pipe[0] >= 0) _ = c.close(exec_pipe[0]);
             if (exec_pipe[1] >= 0) _ = c.close(exec_pipe[1]);
         }
+        // Keep the barrier above every declared target so descriptor transfer
+        // cannot overwrite it in the child.
+        const barrier_write = c.fcntl(exec_pipe[1], c.F_DUPFD_CLOEXEC, private_fd_min);
+        if (barrier_write < 0) return error.SpawnFailed;
+        _ = c.close(exec_pipe[1]);
+        exec_pipe[1] = barrier_write;
         // R4: CLOEXEC setup must not silently no-op — the barrier depends on it.
         const wfd_flags = c.fcntl(exec_pipe[1], c.F_GETFD);
         if (wfd_flags < 0) return error.SpawnFailed;
@@ -238,17 +322,32 @@ pub const PtyHost = struct {
             _ = c.close(master);
             _ = c.close(exec_pipe[0]); // close read end; keep write end for barrier
             // New session; slave becomes controlling terminal.
-            _ = c.setsid();
-            _ = c.ioctl(slave, c.TIOCSCTTY, @as(c_int, 0));
-            _ = c.ioctl(slave, c.TIOCSWINSZ, &ws);
+            if (c.setsid() < 0) childBarrierFail(exec_pipe[1], .terminal_setup, 126);
+            if (c.ioctl(slave, c.TIOCSCTTY, @as(c_int, 0)) != 0)
+                childBarrierFail(exec_pipe[1], .terminal_setup, 126);
+            if (c.ioctl(slave, c.TIOCSWINSZ, &ws) != 0)
+                childBarrierFail(exec_pipe[1], .terminal_setup, 126);
             // R2: every pre-exec failure reports through the barrier — never bare
             // _exit, which looks like EOF/success to the parent.
-            if (c.dup2(slave, posix.STDIN_FILENO) < 0) childBarrierFail(exec_pipe[1], 126);
-            if (c.dup2(slave, posix.STDOUT_FILENO) < 0) childBarrierFail(exec_pipe[1], 126);
-            if (c.dup2(slave, posix.STDERR_FILENO) < 0) childBarrierFail(exec_pipe[1], 126);
+            if (c.dup2(slave, posix.STDIN_FILENO) < 0)
+                childBarrierFail(exec_pipe[1], .descriptor_transfer, 126);
+            if (c.dup2(slave, posix.STDOUT_FILENO) < 0)
+                childBarrierFail(exec_pipe[1], .descriptor_transfer, 126);
+            if (c.dup2(slave, posix.STDERR_FILENO) < 0)
+                childBarrierFail(exec_pipe[1], .descriptor_transfer, 126);
             if (slave > 2) _ = c.close(slave);
+            for (prepared) |mapping| {
+                if (c.dup2(mapping.source_fd, mapping.target_fd) < 0)
+                    childBarrierFail(exec_pipe[1], .descriptor_transfer, 126);
+            }
+            closeUndeclaredDescriptors(
+                descriptor_limit,
+                exec_pipe[1],
+                spec.descriptor_map,
+            );
             if (cwd_z) |dir| {
-                if (c.chdir(dir.ptr) != 0) childBarrierFail(exec_pipe[1], 125);
+                if (c.chdir(dir.ptr) != 0)
+                    childBarrierFail(exec_pipe[1], .working_directory, 125);
             }
             const file: [*:0]const u8 = argv_owned.storage[0].ptr;
             const argv_c: [*c]const [*c]u8 = @ptrCast(argv_owned.ptrs);
@@ -258,7 +357,7 @@ pub const PtyHost = struct {
                 @ptrCast(std.c.environ);
             _ = c.execve(file, argv_c, env_c);
             // execve failed — write errno to the barrier pipe, then exit.
-            childBarrierFail(exec_pipe[1], 127);
+            childBarrierFail(exec_pipe[1], .exec_transition, 127);
         }
 
         // ── parent ─────────────────────────────────────────────────────────
@@ -297,6 +396,8 @@ pub const PtyHost = struct {
         self.closed = false;
         self.output_seq = 0;
         self.input_seq = 0;
+        self.operation_sequence = 0;
+        self.resize_revision = 0;
         self.write_queue.clearRetainingCapacity();
 
         // R1/R3/R5: barrier wait — poll with timeout; read retries EINTR.
@@ -306,11 +407,11 @@ pub const PtyHost = struct {
         exec_pipe[0] = -1;
         switch (barrier) {
             .success => {},
-            .exec_failed => {
+            .exec_failed => |failure| {
                 self.forceKillChild();
                 self.closeMaster();
                 self.spawned = false;
-                return error.ExecFailed;
+                return .{ .exec_failed = failure };
             },
             .spawn_failed, .timeout => {
                 self.forceKillChild();
@@ -359,20 +460,37 @@ pub const PtyHost = struct {
         ) catch {
             // Snapshot failure does not undo a live spawn with identity evidence,
             // but readback reports unknown completeness.
-            return makeReadback(self, identity, .unknown);
+            return .{ .running = makeReadback(self, identity, .unknown) };
         };
         defer snap.deinit(self.allocator);
 
-        return makeReadback(self, identity, snap.status);
+        return .{ .running = makeReadback(self, identity, snap.status) };
     }
 
-    pub fn resize(self: *PtyHost, geometry: Geometry) Error!void {
+    pub fn resize(self: *PtyHost, geometry: Geometry, revision: u64) Error!ResizeReceipt {
         try self.requireOpen();
         try geometry.validate();
+        if (revision == 0 or revision <= self.resize_revision)
+            return error.StaleResizeRevision;
+        const ordered_at = std.math.add(u64, self.operation_sequence, 1) catch
+            return error.Internal;
+        // Input accepted before this call reaches the PTY before the resize.
+        try self.writeDrainAll();
         const ws = winsizeFromGeometry(geometry);
         if (c.ioctl(self.master_fd, c.TIOCSWINSZ, &ws) != 0)
             return error.IoFailed;
-        self.geometry = geometry;
+        var applied: c.struct_winsize = undefined;
+        if (c.ioctl(self.master_fd, c.TIOCGWINSZ, &applied) != 0)
+            return error.IoFailed;
+        const readback = geometryFromWinsize(applied);
+        self.geometry = readback;
+        self.resize_revision = revision;
+        self.operation_sequence = ordered_at;
+        return .{
+            .revision = revision,
+            .ordered_at = ordered_at,
+            .readback = readback,
+        };
     }
 
     /// Atomically accept one contiguous write range into the ordered queue.
@@ -382,8 +500,11 @@ pub const PtyHost = struct {
         if (bytes.len > write_queue_cap_bytes) return error.PayloadTooLarge;
         if (bytes.len > write_queue_cap_bytes - self.write_queue.items.len)
             return error.QueueFull;
+        const ordered_at = std.math.add(u64, self.operation_sequence, 1) catch
+            return error.Internal;
         const start = self.input_seq + self.write_queue.items.len;
         self.write_queue.appendSlice(self.allocator, bytes) catch return error.Internal;
+        self.operation_sequence = ordered_at;
         return .{ .start = start, .end_exclusive = start + bytes.len };
     }
 
@@ -502,10 +623,20 @@ pub const PtyHost = struct {
     }
 };
 
-const BarrierResult = enum { success, exec_failed, spawn_failed, timeout };
+const PreparedDescriptorMapping = struct {
+    source_fd: c_int,
+    target_fd: c_int,
+};
+
+const BarrierResult = union(enum) {
+    success,
+    exec_failed: LaunchFailureEvidence,
+    spawn_failed,
+    timeout,
+};
 
 /// Parent-side barrier: poll with bound (R5), read with EINTR retry (R3).
-/// EOF ⇒ success; 4-byte errno ⇒ exec_failed.
+/// EOF ⇒ success; a complete typed evidence frame ⇒ exec_failed.
 /// M1: deadline is monotonic — EINTR must not reset the full timeout budget
 /// (SIGCHLD from other children is common in sessiond).
 fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
@@ -544,7 +675,7 @@ fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
         break;
     }
 
-    var buf: [@sizeOf(c_int)]u8 = undefined;
+    var buf: [@sizeOf(LaunchFailureEvidence)]u8 = undefined;
     var filled: usize = 0;
     while (filled < buf.len) {
         const n = c.read(read_fd, buf[filled..].ptr, buf.len - filled);
@@ -559,7 +690,9 @@ fn readExecBarrier(read_fd: c_int, timeout_ms: c_int) BarrierResult {
         }
         filled += @intCast(n);
     }
-    return .exec_failed;
+    var failure: LaunchFailureEvidence = undefined;
+    @memcpy(std.mem.asBytes(&failure), &buf);
+    return .{ .exec_failed = failure };
 }
 
 fn readExecBarrierOnce(read_fd: c_int, timeout_ms: c_int) BarrierResult {
@@ -571,21 +704,32 @@ fn readExecBarrierOnce(read_fd: c_int, timeout_ms: c_int) BarrierResult {
     const pr = c.poll(&pfd, 1, timeout_ms);
     if (pr < 0) return .spawn_failed;
     if (pr == 0) return .timeout;
-    var buf: [@sizeOf(c_int)]u8 = undefined;
+    var buf: [@sizeOf(LaunchFailureEvidence)]u8 = undefined;
     const n = c.read(read_fd, &buf, buf.len);
     if (n == 0) return .success;
-    if (n == @sizeOf(c_int)) return .exec_failed;
+    if (n == @sizeOf(LaunchFailureEvidence)) {
+        var failure: LaunchFailureEvidence = undefined;
+        @memcpy(std.mem.asBytes(&failure), &buf);
+        return .{ .exec_failed = failure };
+    }
     return .spawn_failed;
 }
 
 /// Child-side: report errno on the barrier (EINTR-retried), then _exit.
-/// write() and _exit are async-signal-safe. 4-byte write is ≤ PIPE_BUF atomic.
-fn childBarrierFail(write_fd: c_int, exit_code: u8) noreturn {
-    var e: c_int = std.c._errno().*;
+/// write() and _exit are async-signal-safe. The evidence frame is ≤ PIPE_BUF.
+fn childBarrierFail(
+    write_fd: c_int,
+    layer: LaunchFailureLayer,
+    exit_code: u8,
+) noreturn {
+    var failure: LaunchFailureEvidence = .{
+        .layer = layer,
+        .os_code = std.c._errno().*,
+    };
     var sent: usize = 0;
-    const bytes: [*]const u8 = @ptrCast(&e);
-    while (sent < @sizeOf(c_int)) {
-        const n = c.write(write_fd, @ptrCast(bytes + sent), @sizeOf(c_int) - sent);
+    const bytes = std.mem.asBytes(&failure);
+    while (sent < bytes.len) {
+        const n = c.write(write_fd, bytes[sent..].ptr, bytes.len - sent);
         if (n < 0) {
             if (std.c._errno().* == c.EINTR) continue;
             // L1: a blocking write with the parent still holding the read end can
@@ -602,12 +746,40 @@ fn childBarrierFail(write_fd: c_int, exit_code: u8) noreturn {
     c._exit(exit_code);
 }
 
+fn closeUndeclaredDescriptors(
+    descriptor_limit: c_int,
+    barrier_fd: c_int,
+    descriptor_map: []const DescriptorMapping,
+) void {
+    var fd: c_int = 3;
+    while (fd < descriptor_limit) : (fd += 1) {
+        if (fd == barrier_fd) continue;
+        var declared = false;
+        for (descriptor_map) |mapping| {
+            if (fd == mapping.target_fd) {
+                declared = true;
+                break;
+            }
+        }
+        if (!declared) _ = c.close(fd);
+    }
+}
+
 fn winsizeFromGeometry(g: Geometry) c.struct_winsize {
     return .{
         .ws_row = @intCast(g.rows),
         .ws_col = @intCast(g.columns),
         .ws_xpixel = @intCast(g.width_px),
         .ws_ypixel = @intCast(g.height_px),
+    };
+}
+
+fn geometryFromWinsize(ws: c.struct_winsize) Geometry {
+    return .{
+        .columns = ws.ws_col,
+        .rows = ws.ws_row,
+        .width_px = ws.ws_xpixel,
+        .height_px = ws.ws_ypixel,
     };
 }
 
@@ -678,6 +850,20 @@ fn defaultGeometry() Geometry {
     return .{ .columns = 80, .rows = 24 };
 }
 
+fn expectRunning(outcome: SpawnOutcome) !SpawnReadback {
+    return switch (outcome) {
+        .running => |readback| readback,
+        .exec_failed => error.TestUnexpectedResult,
+    };
+}
+
+fn expectExecFailed(outcome: SpawnOutcome) !LaunchFailureEvidence {
+    return switch (outcome) {
+        .running => error.TestUnexpectedResult,
+        .exec_failed => |failure| failure,
+    };
+}
+
 test "geometry bounds: valid accepted, out-of-range rejected" {
     try defaultGeometry().validate();
     try testing.expectError(error.GeometryOutOfRange, (Geometry{ .columns = 0, .rows = 24 }).validate());
@@ -700,10 +886,10 @@ test "spawn cat: readback proves pid/pgid/start-token/executable" {
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
 
-    const rb = try host.spawn(.{
-        .argv = &[_][]const u8{ "/bin/cat" },
+    const rb = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
         .geometry = defaultGeometry(),
-    });
+    }));
 
     try testing.expect(rb.pid > 1);
     try testing.expect(rb.pgid != 0);
@@ -746,7 +932,7 @@ test "spawn passes the spec environment to the child" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{
             "/bin/sh",
             "-c",
@@ -756,7 +942,7 @@ test "spawn passes the spec environment to the child" {
             "HIVE_PTY_HOST_SPEC_ENV_7F3C91=spec-environment-positive-control",
         },
         .geometry = defaultGeometry(),
-    });
+    }));
 
     var got: std.ArrayList(u8) = .{};
     defer got.deinit(testing.allocator);
@@ -790,10 +976,10 @@ test "write-queue atomic acceptance: whole range or nothing" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{"/bin/cat"},
         .geometry = defaultGeometry(),
-    });
+    }));
 
     const a = try host.writeAccept("hello");
     try testing.expectEqual(@as(u64, 0), a.start);
@@ -832,13 +1018,14 @@ test "resize enforces geometry bounds" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{"/bin/cat"},
         .geometry = defaultGeometry(),
-    });
-    try host.resize(.{ .columns = 120, .rows = 40 });
+    }));
+    const receipt = try host.resize(.{ .columns = 120, .rows = 40 }, 1);
     try testing.expectEqual(@as(u32, 120), host.geometry.columns);
-    try testing.expectError(error.GeometryOutOfRange, host.resize(.{ .columns = 2000, .rows = 40 }));
+    try testing.expect(receipt.readback.eql(host.geometry));
+    try testing.expectError(error.GeometryOutOfRange, host.resize(.{ .columns = 2000, .rows = 40 }, 2));
 }
 
 /// Read all PTY output until quiet, optionally dropping one chunk (canary).
@@ -898,10 +1085,10 @@ test "ordered read digest: 1 MiB fixture round-trip" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{ "/bin/cat", abs },
         .geometry = defaultGeometry(),
-    });
+    }));
 
     // Expected digest of the file content.
     var expected_hasher = std.crypto.hash.sha2.Sha256.init(.{});
@@ -946,20 +1133,20 @@ test "DROP-A-CHUNK canary: harness FAILS when a chunk is dropped" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{ "/bin/cat", abs },
         .geometry = defaultGeometry(),
-    });
+    }));
 
     const full = try readAllDigest(&host, null);
 
     // Re-spawn for the drop path.
     var host2 = try PtyHost.init(testing.allocator);
     defer host2.deinit();
-    _ = try host2.spawn(.{
+    _ = try expectRunning(try host2.spawn(.{
         .argv = &[_][]const u8{ "/bin/cat", abs },
         .geometry = defaultGeometry(),
-    });
+    }));
     const dropped = try readAllDigest(&host2, 0);
 
     // Canary: digests MUST differ when a chunk is dropped.
@@ -1009,10 +1196,10 @@ test "100 MiB ordered read digest (SLO-04 seed)" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    _ = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{ "/bin/cat", abs },
         .geometry = defaultGeometry(),
-    });
+    }));
 
     var hasher = std.crypto.hash.sha2.Sha256.init(.{});
     var total: u64 = 0;
@@ -1037,17 +1224,19 @@ test "100 MiB ordered read digest (SLO-04 seed)" {
     try testing.expectEqualSlices(u8, &expected, &got);
 }
 
-// Exec-barrier: nonexistent binary → child write()s errno → ExecFailed.
+// Exec-barrier: nonexistent binary → child write()s typed errno evidence.
 // Must NOT return a SpawnReadback claiming a live child (acting≠being).
-test "negative spawn: nonexistent binary returns ExecFailed" {
+test "negative spawn: nonexistent binary returns typed exec evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
     const missing = "/tmp/hive-pty-host-no-such-binary-9f3c2e1a";
-    try testing.expectError(error.ExecFailed, host.spawn(.{
+    const failure = try expectExecFailed(try host.spawn(.{
         .argv = &[_][]const u8{missing},
         .geometry = defaultGeometry(),
     }));
+    try testing.expectEqual(LaunchFailureLayer.exec_transition, failure.layer);
+    try testing.expectEqual(@as(c_int, c.ENOENT), failure.os_code);
     try testing.expect(!host.spawned);
     try testing.expect(host.master_fd < 0);
     try testing.expect(host.pid <= 0);
@@ -1055,15 +1244,17 @@ test "negative spawn: nonexistent binary returns ExecFailed" {
 
 // R2 positive control: bad cwd → chdir fails → barrier reports failure.
 // Old bare _exit(125) looked like EOF/success and returned a live zombie readback.
-test "R2: bad cwd returns ExecFailed not live-child readback" {
+test "R2: bad cwd returns typed failure not live-child readback" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    try testing.expectError(error.ExecFailed, host.spawn(.{
+    const failure = try expectExecFailed(try host.spawn(.{
         .argv = &[_][]const u8{"/bin/cat"},
         .cwd = "/nonexistent-dir-hive-pty-host-r2-9f3c",
         .geometry = defaultGeometry(),
     }));
+    try testing.expectEqual(LaunchFailureLayer.working_directory, failure.layer);
+    try testing.expectEqual(@as(c_int, c.ENOENT), failure.os_code);
     try testing.expect(!host.spawned);
     try testing.expect(host.master_fd < 0);
     try testing.expect(host.pid <= 0);
@@ -1088,10 +1279,10 @@ test "R1: shebang shim spawn succeeds when resolved image != argv basename" {
 
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    const rb = try host.spawn(.{
+    const rb = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{abs},
         .geometry = defaultGeometry(),
-    });
+    }));
     // THE ASSERTION THAT FAILS AGAINST BASENAME-MATCH CODE:
     // want_name would be "provider-shim" but proc_pidpath is ".../sh" or ".../cat".
     try testing.expect(host.spawned);
@@ -1108,10 +1299,10 @@ test "successful spawn still has post-exec identity evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
     var host = try PtyHost.init(testing.allocator);
     defer host.deinit();
-    const rb = try host.spawn(.{
+    const rb = try expectRunning(try host.spawn(.{
         .argv = &[_][]const u8{ "/bin/echo", "ping" },
         .geometry = defaultGeometry(),
-    });
+    }));
     try testing.expect(rb.start_token.seconds != 0 or rb.start_token.microseconds != 0);
     try testing.expect(rb.executable_len > 0);
     _ = host.waitExit(true) catch {};

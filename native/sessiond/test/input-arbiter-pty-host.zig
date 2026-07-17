@@ -96,7 +96,7 @@ test "full 1 MiB automation transaction is atomically queued and drained in orde
 
     var host = try pty_host.PtyHost.init(allocator);
     defer host.deinit();
-    _ = try host.spawn(.{
+    const outcome = try host.spawn(.{
         .argv = &[_][]const u8{
             "/bin/sh",
             "-c",
@@ -106,6 +106,10 @@ test "full 1 MiB automation transaction is atomically queued and drained in orde
         },
         .geometry = .{ .columns = 80, .rows = 24 },
     });
+    switch (outcome) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
 
     var body = try allocator.alloc(u8, input_arbiter.automated_message_max_bytes);
     defer allocator.free(body);

@@ -3032,7 +3032,7 @@ pub fn runHostRole(
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
     const envp = try environmentStrings(a, spec.value.environment);
-    const spawn = try pty.spawn(.{
+    const spawn_outcome = try pty.spawn(.{
         .argv = spec.value.argv,
         .cwd = spec.value.cwd,
         .envp = envp,
@@ -3043,6 +3043,16 @@ pub fn runHostRole(
             .height_px = spec.value.geometry.heightPx,
         },
     });
+    const spawn = switch (spawn_outcome) {
+        .running => |readback| readback,
+        .exec_failed => |failure| {
+            std.log.err("provider exec failed at {s}: errno={d}", .{
+                @tagName(failure.layer),
+                failure.os_code,
+            });
+            return error.ProviderExecFailed;
+        },
+    };
     var sink: PtyQueueSink = .{ .pty = &pty };
     const real_engine = try RealVtEngine.create(
         allocator,
@@ -4531,10 +4541,14 @@ fn bindTestProvider(
     directory: std.fs.Dir,
 ) !void {
     const argv = [_][]const u8{ "/bin/sleep", "60" };
-    const readback = try pty.spawn(.{
+    const outcome = try pty.spawn(.{
         .argv = &argv,
         .geometry = .{ .columns = 80, .rows = 24, .width_px = 800, .height_px = 480 },
     });
+    const readback = switch (outcome) {
+        .running => |value| value,
+        .exec_failed => return error.TestUnexpectedResult,
+    };
     var token_storage: [64]u8 = undefined;
     const token = try readback.start_token.format(&token_storage);
     core.registration.record.process_root = .{
@@ -4550,10 +4564,14 @@ test "optional provider graceful action reaches the PTY without fabricated bytes
     defer temporary.cleanup();
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
-    _ = try pty.spawn(.{
+    const outcome = try pty.spawn(.{
         .argv = &[_][]const u8{"/bin/cat"},
         .geometry = .{ .columns = 80, .rows = 24, .width_px = 800, .height_px = 480 },
     });
+    switch (outcome) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
     const action = "explicit-provider-graceful-action\n";
     try deliverGracefulAction(.{
         .pty = &pty,

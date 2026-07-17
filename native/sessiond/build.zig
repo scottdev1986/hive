@@ -104,9 +104,8 @@ pub fn build(b: *std.Build) void {
     const run_pty_host_tests = b.addRunArtifact(pty_host_tests);
     test_step.dependOn(&run_pty_host_tests.step);
 
-    // Intentionally red until A1 qualifies the real host against the frozen
-    // neutral boundary. Kept separate so an expected gap never fabricates a
-    // failure in the ordinary green suite.
+    // A1 contract-freeze-facing real-host discriminators. Keep the named step
+    // for focused qualification and include it in the ordinary native suite.
     const pending_a1_module = b.createModule(.{
         .root_source_file = b.path("test/pending-a1-contract.zig"),
         .target = target,
@@ -118,9 +117,10 @@ pub fn build(b: *std.Build) void {
     const run_pending_a1_tests = b.addRunArtifact(pending_a1_tests);
     const pending_a1_step = b.step(
         "pending-a1-contract",
-        "Run intentionally red real-sessiond contract discriminators",
+        "Run real-sessiond contract discriminators",
     );
     pending_a1_step.dependOn(&run_pending_a1_tests.step);
+    test_step.dependOn(&run_pending_a1_tests.step);
 
     const input_arbiter_pty_host_module = b.createModule(.{
         .root_source_file = b.path("test/input-arbiter-pty-host.zig"),
