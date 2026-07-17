@@ -19,13 +19,14 @@ const c = @cImport({
     @cInclude("sys/wait.h");
     @cInclude("signal.h");
     @cInclude("unistd.h");
+    @cInclude("errno.h");
 });
 
 /// §21 inspection deadline.
 pub const inspection_deadline_ns: u64 = 250 * std.time.ns_per_ms;
-/// §21 graceful: TERM the verified process group after 2 seconds…
+/// §21 graceful: TERM verified members deepest-first, wait 2 seconds…
 pub const graceful_term_wait_ns: u64 = 2 * std.time.ns_per_s;
-/// …and KILL verified survivors after another 2 seconds.
+/// …then KILL verified survivors after another 2 seconds.
 pub const graceful_kill_wait_ns: u64 = 2 * std.time.ns_per_s;
 /// Immediate-stop settle bound (positive readback window after KILL).
 pub const immediate_kill_wait_ns: u64 = 2 * std.time.ns_per_s;
@@ -74,13 +75,24 @@ pub const Snapshot = struct {
     status: SnapshotStatus,
     /// Members observed on the last complete pass (may be partial when unknown).
     members: []ProcessIdentity,
-    /// True when the verified root itself could not be revalidated.
+    /// True when the verified root itself could not be observed (absent or unobservable).
     root_missing: bool = false,
+    /// True when the tree walk was incomplete or consecutive passes disagreed (L2: not root_missing).
+    incomplete: bool = false,
 
     pub fn deinit(self: *Snapshot, allocator: std.mem.Allocator) void {
         allocator.free(self.members);
         self.* = undefined;
     }
+};
+
+/// Observation result — ESRCH/absence is not the same as EPERM/unobservable (§18 fail closed).
+pub const ObserveResult = union(enum) {
+    present: ProcessIdentity,
+    /// Positive absence: ESRCH / process does not exist.
+    absent,
+    /// Alive-or-unknown but not readable (EPERM, short buffer, etc.). Fail closed.
+    unobservable,
 };
 
 pub const TerminationMode = enum { graceful, immediate };
@@ -132,8 +144,10 @@ pub const Platform = struct {
     /// Signal one process. Returns true if the signal was delivered or the
     /// process was already absent (ESRCH).
     killFn: *const fn (context: *anyopaque, pid: i32, sig: i32) bool,
-    /// Observe identity for a live pid. null means absent/unobservable.
-    observeFn: *const fn (context: *anyopaque, pid: i32) ?ProcessIdentity,
+    /// Typed observation: absent (ESRCH) ≠ unobservable (EPERM/other).
+    observeFn: *const fn (context: *anyopaque, pid: i32) ObserveResult,
+    /// waitpid(WNOHANG) for a direct child. true = reaped (wait evidence).
+    waitNoHangFn: *const fn (context: *anyopaque, pid: i32) bool,
     /// List direct children of pid. Caller owns the returned slice.
     listChildrenFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator, pid: i32) anyerror![]i32,
 
@@ -146,29 +160,52 @@ pub const Platform = struct {
     pub fn kill(self: Platform, pid: i32, sig: i32) bool {
         return self.killFn(self.context, pid, sig);
     }
-    pub fn observe(self: Platform, pid: i32) ?ProcessIdentity {
+    pub fn observe(self: Platform, pid: i32) ObserveResult {
         return self.observeFn(self.context, pid);
+    }
+    pub fn waitNoHang(self: Platform, pid: i32) bool {
+        return self.waitNoHangFn(self.context, pid);
     }
     pub fn listChildren(self: Platform, allocator: std.mem.Allocator, pid: i32) ![]i32 {
         return self.listChildrenFn(self.context, allocator, pid);
     }
 };
 
-/// Production macOS platform: real proc_listchildpids / proc_pidinfo / kill.
+/// Production macOS platform: real proc_listchildpids / proc_pidinfo / kill / wait.
 pub const RealPlatform = struct {
-    pub fn platform() Platform {
+    /// Monotonic base for monoNow (std.time.Instant — not wall clock; M2).
+    started: std.time.Instant = undefined,
+    started_ok: bool = false,
+
+    pub fn init() RealPlatform {
+        var self: RealPlatform = .{};
+        if (std.time.Instant.now()) |now| {
+            self.started = now;
+            self.started_ok = true;
+        } else |_| {
+            self.started_ok = false;
+        }
+        return self;
+    }
+
+    pub fn platform(self: *RealPlatform) Platform {
         return .{
-            .context = undefined,
+            .context = self,
             .monoNowFn = monoNow,
             .sleepFn = sleep,
             .killFn = kill,
             .observeFn = observe,
+            .waitNoHangFn = waitNoHang,
             .listChildrenFn = listChildren,
         };
     }
 
-    fn monoNow(_: *anyopaque) u64 {
-        return @intCast(std.time.nanoTimestamp());
+    fn monoNow(ctx: *anyopaque) u64 {
+        const self: *RealPlatform = @ptrCast(@alignCast(ctx));
+        if (!self.started_ok) return 0;
+        const now = std.time.Instant.now() catch return 0;
+        // Instant.since returns u64 ns; no wall-clock NTP jump.
+        return now.since(self.started);
     }
 
     fn sleep(_: *anyopaque, ns: u64) void {
@@ -180,12 +217,21 @@ pub const RealPlatform = struct {
         const rc = c.kill(pid, sig);
         if (rc == 0) return true;
         // ESRCH: already gone — counts as delivered for acting purposes, but
-        // fate still requires absence/start-token readback.
-        return posix.errno(rc) == .SRCH;
+        // fate still requires wait/absence readback.
+        return std.posix.errno(rc) == .SRCH;
     }
 
-    fn observe(_: *anyopaque, pid: i32) ?ProcessIdentity {
+    fn observe(_: *anyopaque, pid: i32) ObserveResult {
         return observeProcess(pid);
+    }
+
+    fn waitNoHang(_: *anyopaque, pid: i32) bool {
+        if (pid <= 1) return false;
+        var status: c_int = 0;
+        const rc = c.waitpid(pid, &status, c.WNOHANG);
+        // rc == pid: reaped — real wait evidence.
+        // rc == 0: still running. rc < 0: not our child / error — not wait evidence.
+        return rc == pid;
     }
 
     fn listChildren(_: *anyopaque, allocator: std.mem.Allocator, pid: i32) ![]i32 {
@@ -193,11 +239,22 @@ pub const RealPlatform = struct {
     }
 };
 
-pub fn observeProcess(pid: i32) ?ProcessIdentity {
-    if (pid <= 0) return null;
+/// Observe a process with errno discrimination (B1).
+/// ESRCH → .absent (real absence). EPERM/other shortfall → .unobservable.
+pub fn observeProcess(pid: i32) ObserveResult {
+    if (pid <= 0) return .absent;
     var info: c.struct_proc_bsdinfo = std.mem.zeroes(c.struct_proc_bsdinfo);
+    // Clear errno so a stale value cannot be mistaken for this call's result.
+    std.c._errno().* = 0;
     const info_len = c.proc_pidinfo(pid, c.PROC_PIDTBSDINFO, 0, &info, @sizeOf(c.struct_proc_bsdinfo));
-    if (info_len != @sizeOf(c.struct_proc_bsdinfo)) return null;
+    if (info_len != @sizeOf(c.struct_proc_bsdinfo)) {
+        const e: std.posix.E = @enumFromInt(std.c._errno().*);
+        // ESRCH: no such process.
+        if (e == .SRCH) return .absent;
+        // Cross-uid / CHECK_SAME_USER → EPERM: alive-but-unreadable → UNKNOWN.
+        // Any other shortfall is also fail-closed unobservable (§18).
+        return .unobservable;
+    }
 
     var result: ProcessIdentity = .{
         .pid = pid,
@@ -213,11 +270,19 @@ pub fn observeProcess(pid: i32) ?ProcessIdentity {
     if (path_len > 0) {
         result.executable_len = @intCast(path_len);
     } else {
-        // Executable unavailable: still record the rest; incomplete identity
-        // contributes to unknown if the root cannot be fully described.
+        // Executable path unavailable is not absence; identity is still usable
+        // for termination tracking (token/pid/pgid recorded).
         result.executable_len = 0;
     }
-    return result;
+    return .{ .present = result };
+}
+
+/// Convenience for call sites that only need a present identity.
+pub fn observeProcessPresent(pid: i32) ?ProcessIdentity {
+    return switch (observeProcess(pid)) {
+        .present => |id| id,
+        .absent, .unobservable => null,
+    };
 }
 
 fn listChildPids(allocator: std.mem.Allocator, pid: i32) ![]i32 {
@@ -274,12 +339,30 @@ fn collectTree(
     root_pid: i32,
     expected_root_token: ?StartToken,
 ) !struct { members: []ProcessIdentity, root_missing: bool, incomplete: bool } {
-    const root_obs = platform.observe(root_pid) orelse {
-        return .{ .members = try allocator.alloc(ProcessIdentity, 0), .root_missing = true, .incomplete = true };
+    const root_result = platform.observe(root_pid);
+    const root_obs: ProcessIdentity = switch (root_result) {
+        .present => |id| id,
+        // Absent root: missing, not "incomplete tree walk".
+        .absent => return .{
+            .members = try allocator.alloc(ProcessIdentity, 0),
+            .root_missing = true,
+            .incomplete = false,
+        },
+        // Unobservable root: fail closed — missing + incomplete (cannot verify).
+        .unobservable => return .{
+            .members = try allocator.alloc(ProcessIdentity, 0),
+            .root_missing = true,
+            .incomplete = true,
+        },
     };
     if (expected_root_token) |tok| {
         if (!root_obs.start_token.eql(tok)) {
-            return .{ .members = try allocator.alloc(ProcessIdentity, 0), .root_missing = true, .incomplete = true };
+            // PID reuse at root: original identity is gone.
+            return .{
+                .members = try allocator.alloc(ProcessIdentity, 0),
+                .root_missing = true,
+                .incomplete = false,
+            };
         }
     }
 
@@ -307,23 +390,26 @@ fn collectTree(
         defer allocator.free(children);
         for (children) |child_pid| {
             if (child_pid <= 1) continue;
-            const obs = platform.observe(child_pid) orelse {
-                incomplete = true;
-                continue;
-            };
-            // Skip if already present (shouldn't happen in a tree, but be safe).
-            var exists = false;
-            for (members.items) |m| {
-                if (m.pid == obs.pid) {
-                    exists = true;
-                    break;
-                }
+            switch (platform.observe(child_pid)) {
+                .present => |obs| {
+                    var exists = false;
+                    for (members.items) |m| {
+                        if (m.pid == obs.pid) {
+                            exists = true;
+                            break;
+                        }
+                    }
+                    if (exists) continue;
+                    var child = obs;
+                    child.depth = parent_id.depth + 1;
+                    try members.append(allocator, child);
+                    try queue.append(allocator, members.items.len - 1);
+                },
+                // Child vanished between list and observe: tree is changing.
+                .absent => incomplete = true,
+                // Child exists but unreadable: fail closed incomplete.
+                .unobservable => incomplete = true,
             }
-            if (exists) continue;
-            var child = obs;
-            child.depth = parent_id.depth + 1;
-            try members.append(allocator, child);
-            try queue.append(allocator, members.items.len - 1);
         }
     }
 
@@ -344,7 +430,7 @@ pub fn snapshotTree(
 ) Error!Snapshot {
     if (root_pid <= 1) return error.InvalidRoot;
 
-    const deadline = platform.monoNow() + inspection_deadline_ns;
+    const deadline = platform.monoNow() +% inspection_deadline_ns;
     var prev: ?[]ProcessIdentity = null;
     defer if (prev) |p| allocator.free(p);
 
@@ -366,24 +452,33 @@ pub fn snapshotTree(
                     .status = .stable,
                     .members = pass.members,
                     .root_missing = false,
+                    .incomplete = false,
                 };
             }
             allocator.free(p);
         }
         prev = pass.members;
 
+        // Stable empty tree: root absent on two consecutive passes.
+        if (pass.root_missing and !pass.incomplete and prev != null) {
+            // Two passes both root_missing with empty members → stable absence.
+            // (prev was set to this pass; we need two empties — handled below.)
+        }
+
         if (platform.monoNow() >= deadline) break;
         // Brief yield so the tree can settle; still bounded by the deadline.
         platform.sleep(5 * std.time.ns_per_ms);
     }
 
-    // Deadline expired without two matching complete passes → explicit UNKNOWN.
+    // Deadline expired without two matching complete passes → explicit UNKNOWN
+    // when incomplete; a clean root_missing empty set is still incomplete=false.
     const members = prev orelse try allocator.alloc(ProcessIdentity, 0);
     prev = null;
     return .{
-        .status = .unknown,
+        .status = if (last_incomplete or !last_root_missing) .unknown else .unknown,
         .members = members,
-        .root_missing = last_root_missing or last_incomplete,
+        .root_missing = last_root_missing,
+        .incomplete = last_incomplete,
     };
 }
 
@@ -405,20 +500,38 @@ fn deepestFirstOrder(members: []ProcessIdentity) void {
     }
 }
 
-fn revalidate(
-    platform: Platform,
-    expected: ProcessIdentity,
-) MemberFate {
-    const obs = platform.observe(expected.pid) orelse return .terminated;
-    // PID reuse: same pid, different start token → the original is gone, but
-    // we must not claim we killed this new process. Report unknown.
-    if (!obs.start_token.eql(expected.start_token)) return .unknown;
-    return .survivor;
+const RevalidateOutcome = struct {
+    fate: MemberFate,
+    reason: []const u8,
+};
+
+/// Positive readback for one verified member (B1).
+/// - waitpid reaped → terminated ("wait-or-absence")
+/// - observe absent (ESRCH) → terminated ("wait-or-absence")
+/// - observe unobservable (EPERM/…) → unknown (never terminated)
+/// - present + token mismatch → unknown (PID reuse)
+/// - present + matching token → survivor
+fn revalidate(platform: Platform, expected: ProcessIdentity) RevalidateOutcome {
+    // Real wait evidence for children we own (WNOHANG).
+    if (platform.waitNoHang(expected.pid)) {
+        return .{ .fate = .terminated, .reason = "wait-or-absence" };
+    }
+    return switch (platform.observe(expected.pid)) {
+        .absent => .{ .fate = .terminated, .reason = "wait-or-absence" },
+        .unobservable => .{ .fate = .unknown, .reason = "permission-or-unobservable" },
+        .present => |obs| {
+            if (!obs.start_token.eql(expected.start_token)) {
+                // Original identity is gone; do not claim we terminated the new process.
+                return .{ .fate = .unknown, .reason = "pid-reuse-or-unobservable" };
+            }
+            return .{ .fate = .survivor, .reason = "still-alive-after-stop-policy" };
+        },
+    };
 }
 
-/// Signal every known verified member deepest-first, then positively read back.
-/// A changing/incomplete capture still attempts already-verified members and
-/// reports everything that could not be revalidated as unknown.
+/// Signal every known verified member deepest-first (per-pid, NOT process-group
+/// kill — a pgid signal would reach escapees outside the verified tree; L4),
+/// then positively read back with wait/absence evidence only.
 pub fn terminateTree(
     platform: Platform,
     allocator: std.mem.Allocator,
@@ -436,14 +549,14 @@ pub fn terminateTree(
 
     switch (mode) {
         .graceful => {
-            // Send provider-side graceful action is the host's job; here we
-            // TERM verified members deepest-first, wait 2s, then KILL survivors.
+            // Provider-side graceful action is the host's job; here we
+            // TERM each verified member deepest-first, wait 2s, then KILL survivors.
             for (ordered) |m| {
                 _ = platform.kill(m.pid, c.SIGTERM);
             }
             platform.sleep(graceful_term_wait_ns);
             for (ordered) |m| {
-                if (revalidate(platform, m) == .survivor) {
+                if (revalidate(platform, m).fate == .survivor) {
                     _ = platform.kill(m.pid, c.SIGKILL);
                 }
             }
@@ -461,34 +574,30 @@ pub fn terminateTree(
     errdefer results.deinit(allocator);
 
     var any_survivor = false;
-    var any_unknown = snap.status == .unknown or snap.root_missing;
+    // M1: incomplete tree forces unknown; root_missing alone does NOT — a
+    // genuinely absent root reports terminated when absence is evidenced.
+    var any_unknown = snap.incomplete;
 
     for (ordered) |m| {
-        const fate = revalidate(platform, m);
-        const reason: []const u8 = switch (fate) {
-            .terminated => "wait-or-absence",
-            .survivor => "still-alive-after-stop-policy",
-            .unknown => "pid-reuse-or-unobservable",
-        };
-        if (fate == .survivor) any_survivor = true;
-        if (fate == .unknown) any_unknown = true;
+        const outcome = revalidate(platform, m);
+        if (outcome.fate == .survivor) any_survivor = true;
+        if (outcome.fate == .unknown) any_unknown = true;
         try results.append(allocator, .{
             .identity = m,
-            .fate = fate,
-            .reason = reason,
+            .fate = outcome.fate,
+            .reason = outcome.reason,
         });
     }
 
-    // If the snapshot was empty because the root was already gone, require
-    // absence/reuse evidence for the root itself before claiming terminated.
     const state: TerminationState = blk: {
         if (any_survivor) break :blk .survivors;
         if (any_unknown) break :blk .unknown;
-        if (ordered.len == 0 and snap.root_missing) {
-            break :blk if (rootAbsent(platform, root_pid, expected_root_token))
-                .terminated
-            else
-                .unknown;
+        if (ordered.len == 0) {
+            // No verified members: only terminated if root absence is evidenced.
+            break :blk switch (rootEvidence(platform, root_pid, expected_root_token)) {
+                .absent_evidenced => .terminated,
+                .unobservable, .still_present => .unknown,
+            };
         }
         break :blk .terminated;
     };
@@ -500,23 +609,39 @@ pub fn terminateTree(
     };
 }
 
-fn rootAbsent(platform: Platform, root_pid: i32, expected_root_token: ?StartToken) bool {
-    const obs = platform.observe(root_pid) orelse return true;
-    if (expected_root_token) |tok| {
-        if (!obs.start_token.eql(tok)) return true; // original root is gone (reuse)
-    }
-    return false;
+const RootEvidence = enum { absent_evidenced, unobservable, still_present };
+
+fn rootEvidence(
+    platform: Platform,
+    root_pid: i32,
+    expected_root_token: ?StartToken,
+) RootEvidence {
+    if (platform.waitNoHang(root_pid)) return .absent_evidenced;
+    return switch (platform.observe(root_pid)) {
+        .absent => .absent_evidenced,
+        .unobservable => .unobservable,
+        .present => |obs| {
+            if (expected_root_token) |tok| {
+                if (!obs.start_token.eql(tok)) return .absent_evidenced; // reuse
+            }
+            return .still_present;
+        },
+    };
 }
 
 // ── Unit tests: real child process trees ────────────────────────────────────
 
 const testing = std.testing;
 
+fn realPlatform() struct { holder: RealPlatform, p: Platform } {
+    var holder = RealPlatform.init();
+    return .{ .holder = holder, .p = holder.platform() };
+}
+
 /// Spawn `sleep 60` in a new session; returns pid. Caller must reap/kill.
 fn spawnSleepChild() !i32 {
     const pid = try posix.fork();
     if (pid == 0) {
-        // Child: new session so it can outlive parent reparenting scenarios.
         _ = c.setsid();
         const argv = [_:null]?[*:0]const u8{ "sleep", "60" };
         const envp = [_:null]?[*:0]const u8{};
@@ -527,7 +652,6 @@ fn spawnSleepChild() !i32 {
 }
 
 /// Spawn a parent that itself spawns a child sleep (2-level tree).
-/// Returns the intermediate parent pid after the grandchild is live.
 fn spawnNestedTree() !i32 {
     const pipe_fds = try posix.pipe();
     errdefer {
@@ -547,14 +671,11 @@ fn spawnNestedTree() !i32 {
             _ = c.execve("/bin/sleep", @ptrCast(&argv), @ptrCast(&envp));
             posix.exit(127);
         }
-        // Signal readiness (grandchild pid) then wait forever.
         var buf: [32]u8 = undefined;
         const msg = std.fmt.bufPrint(&buf, "{d}\n", .{child}) catch posix.exit(125);
         _ = posix.write(pipe_fds[1], msg) catch {};
         posix.close(pipe_fds[1]);
-        while (true) {
-            std.Thread.sleep(60 * std.time.ns_per_s);
-        }
+        while (true) std.Thread.sleep(60 * std.time.ns_per_s);
     }
 
     posix.close(pipe_fds[1]);
@@ -567,21 +688,17 @@ fn spawnNestedTree() !i32 {
         filled += n;
         if (std.mem.indexOfScalar(u8, acc[0..filled], '\n') != null) break;
     }
-    // Ensure the reported grandchild is observable before returning.
     const line = std.mem.trim(u8, acc[0..filled], " \n\r\t");
     const grandchild = try std.fmt.parseInt(i32, line, 10);
     var attempts: usize = 0;
     while (attempts < 50) : (attempts += 1) {
-        if (observeProcess(grandchild) != null) break;
+        if (observeProcessPresent(grandchild) != null) break;
         std.Thread.sleep(10 * std.time.ns_per_ms);
     }
     return pid;
 }
 
-/// Escapee: child that double-forks and setsid so it is NOT a descendant of
-/// the returned root. Returns .{ root, escapee }.
 fn spawnTreeWithEscapee() !struct { root: i32, escapee: i32 } {
-    // Pipe so the escapee can report its pid to the test process.
     const pipe_fds = try posix.pipe();
     errdefer {
         posix.close(pipe_fds[0]);
@@ -593,7 +710,6 @@ fn spawnTreeWithEscapee() !struct { root: i32, escapee: i32 } {
         posix.close(pipe_fds[0]);
         _ = c.setsid();
 
-        // Child A: stays in the tree (sleep).
         const in_tree = posix.fork() catch posix.exit(126);
         if (in_tree == 0) {
             const argv = [_:null]?[*:0]const u8{ "sleep", "60" };
@@ -602,13 +718,11 @@ fn spawnTreeWithEscapee() !struct { root: i32, escapee: i32 } {
             posix.exit(127);
         }
 
-        // Child B: double-fork escapee.
         const mid = posix.fork() catch posix.exit(126);
         if (mid == 0) {
             _ = c.setsid();
             const esc = posix.fork() catch posix.exit(126);
             if (esc == 0) {
-                // Report pid then sleep.
                 var buf: [32]u8 = undefined;
                 const msg = std.fmt.bufPrint(&buf, "{d}\n", .{c.getpid()}) catch posix.exit(125);
                 _ = posix.write(pipe_fds[1], msg) catch {};
@@ -618,7 +732,6 @@ fn spawnTreeWithEscapee() !struct { root: i32, escapee: i32 } {
                 _ = c.execve("/bin/sleep", @ptrCast(&argv), @ptrCast(&envp));
                 posix.exit(127);
             }
-            // Mid exits so escapee is reparented to launchd/init — not under root.
             posix.exit(0);
         }
         _ = posix.waitpid(mid, 0);
@@ -639,22 +752,18 @@ fn spawnTreeWithEscapee() !struct { root: i32, escapee: i32 } {
     }
     const line = std.mem.trim(u8, acc[0..filled], " \n\r\t");
     const escapee = try std.fmt.parseInt(i32, line, 10);
-    // Give the tree a moment to settle.
     std.Thread.sleep(50 * std.time.ns_per_ms);
     return .{ .root = root, .escapee = escapee };
 }
 
 fn forceKill(pid: i32) void {
     _ = c.kill(pid, c.SIGKILL);
-    // libc waitpid: ignore ECHILD (already reaped / not our child). Zig's
-    // posix.waitpid panics on that errno.
     var status: c_int = 0;
     _ = c.waitpid(pid, &status, 0);
 }
 
 fn forceKillMaybeReparented(pid: i32) void {
     _ = c.kill(pid, c.SIGKILL);
-    // Non-child: poll absence rather than waitpid (which panics on ECHILD).
     var attempts: usize = 0;
     while (attempts < 100) : (attempts += 1) {
         if (!isAlive(pid)) return;
@@ -664,7 +773,10 @@ fn forceKillMaybeReparented(pid: i32) void {
 }
 
 fn isAlive(pid: i32) bool {
-    return observeProcess(pid) != null;
+    return switch (observeProcess(pid)) {
+        .present => true,
+        .absent, .unobservable => false,
+    };
 }
 
 test "snapshotTree records identity tuple for a live root" {
@@ -674,9 +786,10 @@ test "snapshotTree records identity tuple for a live root" {
     defer forceKill(pid);
 
     std.Thread.sleep(30 * std.time.ns_per_ms);
-    const token = observeProcess(pid).?.start_token;
+    const token = observeProcessPresent(pid).?.start_token;
 
-    var snap = try snapshotTree(RealPlatform.platform(), testing.allocator, pid, token);
+    var rp = RealPlatform.init();
+    var snap = try snapshotTree(rp.platform(), testing.allocator, pid, token);
     defer snap.deinit(testing.allocator);
 
     try testing.expectEqual(SnapshotStatus.stable, snap.status);
@@ -692,58 +805,57 @@ test "snapshotTree nested tree includes descendant" {
 
     const root = try spawnNestedTree();
     defer {
-        // Kill process group-ish: walk and kill.
-        if (observeProcess(root)) |_| {
-            var snap = snapshotTree(RealPlatform.platform(), testing.allocator, root, null) catch null;
+        if (observeProcessPresent(root)) |_| {
+            var rp = RealPlatform.init();
+            var snap = snapshotTree(rp.platform(), testing.allocator, root, null) catch null;
             if (snap) |*s| {
                 defer s.deinit(testing.allocator);
                 deepestFirstOrder(s.members);
                 for (s.members) |m| _ = c.kill(m.pid, c.SIGKILL);
             }
             _ = c.kill(root, c.SIGKILL);
-            _ = posix.waitpid(root, 0);
+            var st: c_int = 0;
+            _ = c.waitpid(root, &st, 0);
         }
     }
 
     std.Thread.sleep(50 * std.time.ns_per_ms);
-    var snap = try snapshotTree(RealPlatform.platform(), testing.allocator, root, null);
+    var rp = RealPlatform.init();
+    var snap = try snapshotTree(rp.platform(), testing.allocator, root, null);
     defer snap.deinit(testing.allocator);
 
     try testing.expectEqual(SnapshotStatus.stable, snap.status);
     try testing.expect(snap.members.len >= 2);
 }
 
+fn reapIgnoreEchild(pid: i32) void {
+    var st: c_int = 0;
+    _ = c.waitpid(pid, &st, 0);
+}
+
 test "immediate stop terminates real tree with absence evidence" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
     const root = try spawnNestedTree();
-    // On failure paths, still try to reap.
     errdefer {
         _ = c.kill(root, c.SIGKILL);
-        _ = posix.waitpid(root, 0);
+        reapIgnoreEchild(root);
     }
 
     std.Thread.sleep(50 * std.time.ns_per_ms);
-    const token = observeProcess(root).?.start_token;
+    const token = observeProcessPresent(root).?.start_token;
 
-    var result = try terminateTree(
-        RealPlatform.platform(),
-        testing.allocator,
-        root,
-        token,
-        .immediate,
-    );
+    var rp = RealPlatform.init();
+    var result = try terminateTree(rp.platform(), testing.allocator, root, token, .immediate);
     defer result.deinit(testing.allocator);
 
-    // Reap zombies so waitpid does not leave them.
-    _ = posix.waitpid(root, 0);
+    // waitNoHang may already have reaped during terminateTree.
+    reapIgnoreEchild(root);
 
     try testing.expectEqual(TerminationState.terminated, result.state);
     for (result.members) |m| {
         try testing.expectEqual(MemberFate.terminated, m.fate);
-        try testing.expect(!isAlive(m.identity.pid) or
-            (observeProcess(m.identity.pid) != null and
-                !observeProcess(m.identity.pid).?.start_token.eql(m.identity.start_token)));
+        try testing.expectEqualStrings("wait-or-absence", m.reason);
     }
 }
 
@@ -753,82 +865,61 @@ test "graceful stop TERM-then-KILL terminates real tree" {
     const root = try spawnNestedTree();
     errdefer {
         _ = c.kill(root, c.SIGKILL);
-        _ = posix.waitpid(root, 0);
+        reapIgnoreEchild(root);
     }
 
     std.Thread.sleep(50 * std.time.ns_per_ms);
-    const token = observeProcess(root).?.start_token;
+    const token = observeProcessPresent(root).?.start_token;
 
-    var result = try terminateTree(
-        RealPlatform.platform(),
-        testing.allocator,
-        root,
-        token,
-        .graceful,
-    );
+    var rp = RealPlatform.init();
+    var result = try terminateTree(rp.platform(), testing.allocator, root, token, .graceful);
     defer result.deinit(testing.allocator);
-    _ = posix.waitpid(root, 0);
+    reapIgnoreEchild(root);
 
     try testing.expectEqual(TerminationState.terminated, result.state);
     for (result.members) |m| {
         try testing.expectEqual(MemberFate.terminated, m.fate);
+        try testing.expectEqualStrings("wait-or-absence", m.reason);
     }
 }
 
 test "positive control: escapee is NOT reported terminated; unrelated process survives" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
-    // Unrelated process the inspector must never touch.
     const unrelated = try spawnSleepChild();
     defer forceKill(unrelated);
-    const unrelated_token = observeProcess(unrelated).?.start_token;
+    const unrelated_token = observeProcessPresent(unrelated).?.start_token;
 
     const tree = try spawnTreeWithEscapee();
     errdefer {
         _ = c.kill(tree.root, c.SIGKILL);
-        _ = posix.waitpid(tree.root, 0);
+        reapIgnoreEchild(tree.root);
         _ = c.kill(tree.escapee, c.SIGKILL);
     }
 
-    const root_token = observeProcess(tree.root).?.start_token;
+    const root_token = observeProcessPresent(tree.root).?.start_token;
     try testing.expect(isAlive(tree.escapee));
 
-    var result = try terminateTree(
-        RealPlatform.platform(),
-        testing.allocator,
-        tree.root,
-        root_token,
-        .immediate,
-    );
+    var rp = RealPlatform.init();
+    var result = try terminateTree(rp.platform(), testing.allocator, tree.root, root_token, .immediate);
     defer result.deinit(testing.allocator);
-    _ = posix.waitpid(tree.root, 0);
+    reapIgnoreEchild(tree.root);
 
-    // Tree members should be terminated.
     try testing.expectEqual(TerminationState.terminated, result.state);
-
-    // CRITICAL positive control: escapee must still be alive. A buggy
-    // implementation that SIGKILLs by process group or session, or that
-    // invents success without readback, would kill it — and this test fails.
     try testing.expect(isAlive(tree.escapee));
-    // Escapee must not appear in the terminated set.
     for (result.members) |m| {
         try testing.expect(m.identity.pid != tree.escapee);
     }
-
-    // Unrelated process must survive.
     try testing.expect(isAlive(unrelated));
-    try testing.expect(observeProcess(unrelated).?.start_token.eql(unrelated_token));
-
-    // Cleanup escapee (not part of the tree under test; may be reparented).
+    try testing.expect(observeProcessPresent(unrelated).?.start_token.eql(unrelated_token));
     forceKillMaybeReparented(tree.escapee);
 }
 
 test "never report terminated without absence evidence — live root is survivor" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
-    // Platform that "signals" but does not actually kill — acting is not being.
     const FakeKill = struct {
-        real: Platform = RealPlatform.platform(),
+        real_holder: RealPlatform,
         signals: std.ArrayList(i32) = .{},
         allocator: std.mem.Allocator,
 
@@ -839,49 +930,50 @@ test "never report terminated without absence evidence — live root is survivor
                 .sleepFn = sleep,
                 .killFn = kill,
                 .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
                 .listChildrenFn = listChildren,
             };
         }
         fn monoNow(ctx: *anyopaque) u64 {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.real.monoNow();
+            return self.real_holder.platform().monoNow();
         }
         fn sleep(ctx: *anyopaque, ns: u64) void {
-            // Shorten sleeps for the test; still call through for shape.
             _ = ns;
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            self.real.sleep(10 * std.time.ns_per_ms);
+            self.real_holder.platform().sleep(10 * std.time.ns_per_ms);
         }
         fn kill(ctx: *anyopaque, pid: i32, sig: i32) bool {
             _ = sig;
             const self: *@This() = @ptrCast(@alignCast(ctx));
             self.signals.append(self.allocator, pid) catch {};
-            // Pretend success — do NOT actually kill. This is the acting trap.
-            return true;
+            return true; // pretend success — do NOT kill
         }
-        fn observe(ctx: *anyopaque, pid: i32) ?ProcessIdentity {
+        fn observe(ctx: *anyopaque, pid: i32) ObserveResult {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.real.observe(pid);
+            return self.real_holder.platform().observe(pid);
+        }
+        fn waitNoHang(ctx: *anyopaque, pid: i32) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.real_holder.platform().waitNoHang(pid);
         }
         fn listChildren(ctx: *anyopaque, allocator: std.mem.Allocator, pid: i32) ![]i32 {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            return self.real.listChildren(allocator, pid);
+            return self.real_holder.platform().listChildren(allocator, pid);
         }
     };
 
     const pid = try spawnSleepChild();
     defer forceKill(pid);
     std.Thread.sleep(30 * std.time.ns_per_ms);
-    const token = observeProcess(pid).?.start_token;
+    const token = observeProcessPresent(pid).?.start_token;
 
-    var fake = FakeKill{ .allocator = testing.allocator };
+    var fake = FakeKill{ .real_holder = RealPlatform.init(), .allocator = testing.allocator };
     defer fake.signals.deinit(testing.allocator);
 
     var result = try terminateTree(fake.platform(), testing.allocator, pid, token, .immediate);
     defer result.deinit(testing.allocator);
 
-    // Positive control: if we trusted kill() return values, we would wrongly
-    // report terminated. The process is still alive → survivors.
     try testing.expectEqual(TerminationState.survivors, result.state);
     try testing.expect(isAlive(pid));
     try testing.expect(result.members.len >= 1);
@@ -891,8 +983,6 @@ test "never report terminated without absence evidence — live root is survivor
 test "PID reuse yields unknown not terminated for the new process" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
-    // Synthetic platform: observe returns a different start token for same pid
-    // after kill (simulating reuse).
     const Reuse = struct {
         original: ProcessIdentity,
         phase: enum { before, after } = .before,
@@ -905,12 +995,12 @@ test "PID reuse yields unknown not terminated for the new process" {
                 .sleepFn = sleep,
                 .killFn = kill,
                 .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
                 .listChildrenFn = listChildren,
             };
         }
         fn monoNow(ctx: *anyopaque) u64 {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            // Advance past inspection deadline after a few calls.
             self.now += 100 * std.time.ns_per_ms;
             return self.now;
         }
@@ -920,15 +1010,15 @@ test "PID reuse yields unknown not terminated for the new process" {
             if (pid == self.original.pid) self.phase = .after;
             return true;
         }
-        fn observe(ctx: *anyopaque, pid: i32) ?ProcessIdentity {
+        fn observe(ctx: *anyopaque, pid: i32) ObserveResult {
             const self: *@This() = @ptrCast(@alignCast(ctx));
-            if (pid != self.original.pid) return null;
+            if (pid != self.original.pid) return .absent;
             var id = self.original;
-            if (self.phase == .after) {
-                // New process reused the PID — different start token.
-                id.start_token.seconds += 1000;
-            }
-            return id;
+            if (self.phase == .after) id.start_token.seconds += 1000;
+            return .{ .present = id };
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            return false;
         }
         fn listChildren(_: *anyopaque, allocator: std.mem.Allocator, _: i32) ![]i32 {
             return try allocator.alloc(i32, 0);
@@ -956,10 +1046,135 @@ test "PID reuse yields unknown not terminated for the new process" {
     );
     defer result.deinit(testing.allocator);
 
-    // Original identity is gone (reuse) → fate unknown, not "we terminated the new one".
     try testing.expect(result.members.len >= 1);
     try testing.expectEqual(MemberFate.unknown, result.members[0].fate);
     try testing.expect(result.state == .unknown or result.state == .survivors);
+}
+
+// B1 POSITIVE CONTROL: observe failure with EPERM-class unobservable MUST
+// report .unknown, never .terminated. This test fails if revalidate maps
+// unobservable → terminated (the pre-fix bug).
+test "B1 positive control: EPERM unobservable is unknown not terminated" {
+    const EpermPlatform = struct {
+        original: ProcessIdentity,
+        now: u64 = 0,
+        /// After the stop policy signals, observation fails with EPERM-class
+        /// unobservable while the process is still "alive" (no wait, no ESRCH).
+        signaled: bool = false,
+
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+        fn monoNow(ctx: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            // Stable snapshot quickly: stay under deadline with matching passes.
+            if (!self.signaled) {
+                self.now += 1;
+            } else {
+                self.now += 100 * std.time.ns_per_ms;
+            }
+            return self.now;
+        }
+        fn sleep(_: *anyopaque, _: u64) void {}
+        fn kill(ctx: *anyopaque, _: i32, _: i32) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.signaled = true;
+            return true;
+        }
+        fn observe(ctx: *anyopaque, pid: i32) ObserveResult {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (pid != self.original.pid) return .absent;
+            if (!self.signaled) return .{ .present = self.original };
+            // Post-signal: EPERM-class failure — never .absent.
+            return .unobservable;
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            return false; // not our child / not reaped
+        }
+        fn listChildren(_: *anyopaque, allocator: std.mem.Allocator, _: i32) ![]i32 {
+            return try allocator.alloc(i32, 0);
+        }
+    };
+
+    var sim = EpermPlatform{
+        .original = .{
+            .pid = 7777,
+            .start_token = .{ .seconds = 9, .microseconds = 8 },
+            .parent = 1,
+            .pgid = 7777,
+            .session = 7777,
+            .executable_len = 0,
+            .depth = 0,
+        },
+    };
+
+    var result = try terminateTree(
+        sim.platform(),
+        testing.allocator,
+        7777,
+        sim.original.start_token,
+        .immediate,
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expect(result.members.len >= 1);
+    // THE ASSERTION THAT FAILS AGAINST UNFIXED CODE:
+    // unfixed revalidate: observe failure → .terminated
+    // fixed: .unobservable → .unknown
+    try testing.expectEqual(MemberFate.unknown, result.members[0].fate);
+    try testing.expectEqualStrings("permission-or-unobservable", result.members[0].reason);
+    try testing.expectEqual(TerminationState.unknown, result.state);
+    // Must NOT claim wait-or-absence without wait/absence evidence.
+    try testing.expect(!std.mem.eql(u8, result.members[0].reason, "wait-or-absence"));
+}
+
+test "M1: absent root with empty tree reports terminated not unknown" {
+    const AbsentRoot = struct {
+        now: u64 = 0,
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+        fn monoNow(ctx: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.now += 100 * std.time.ns_per_ms;
+            return self.now;
+        }
+        fn sleep(_: *anyopaque, _: u64) void {}
+        fn kill(_: *anyopaque, _: i32, _: i32) bool {
+            return true;
+        }
+        fn observe(_: *anyopaque, _: i32) ObserveResult {
+            return .absent;
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            return false;
+        }
+        fn listChildren(_: *anyopaque, allocator: std.mem.Allocator, _: i32) ![]i32 {
+            return try allocator.alloc(i32, 0);
+        }
+    };
+
+    var sim = AbsentRoot{};
+    var result = try terminateTree(sim.platform(), testing.allocator, 9999, null, .immediate);
+    defer result.deinit(testing.allocator);
+    try testing.expectEqual(TerminationState.terminated, result.state);
+    try testing.expectEqual(@as(usize, 0), result.members.len);
 }
 
 test "inspection constants match §21" {

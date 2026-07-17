@@ -75,10 +75,12 @@ pub const WriteSink = struct {
 
 /// Injected encoder: turns verified automation body + submit into PTY bytes.
 /// Isolation tests pass an identity/mock encoder; host composition owns VT.
+/// `allocator` is the arbiter's allocator — WP4-B must use it for `out` growth (M6).
 pub const Encoder = struct {
     context: *anyopaque,
     encodeFn: *const fn (
         context: *anyopaque,
+        allocator: std.mem.Allocator,
         body: []const u8,
         submit: SubmitAction,
         out: *std.ArrayList(u8),
@@ -86,21 +88,30 @@ pub const Encoder = struct {
 
     pub fn encode(
         self: Encoder,
+        allocator: std.mem.Allocator,
         body: []const u8,
         submit: SubmitAction,
         out: *std.ArrayList(u8),
     ) anyerror!void {
-        return self.encodeFn(self.context, body, submit, out);
+        return self.encodeFn(self.context, allocator, body, submit, out);
     }
 };
 
 /// Provider-specific cancel encoding for operator discard while orphaned.
 pub const CancelEncoder = struct {
     context: *anyopaque,
-    encodeFn: *const fn (context: *anyopaque, out: *std.ArrayList(u8)) anyerror!void,
+    encodeFn: *const fn (
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+    ) anyerror!void,
 
-    pub fn encode(self: CancelEncoder, out: *std.ArrayList(u8)) anyerror!void {
-        return self.encodeFn(self.context, out);
+    pub fn encode(
+        self: CancelEncoder,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+    ) anyerror!void {
+        return self.encodeFn(self.context, allocator, out);
     }
 };
 
@@ -126,7 +137,8 @@ pub const ByteRange = struct {
 pub const TransactionResult = struct {
     evidence: EvidenceLevel,
     byte_range: ByteRange,
-    /// Owned copy of the stored write result label (e.g. "written").
+    /// Borrowed pointer into the arbiter's ledger entry; valid until the
+    /// arbiter is deinited or the ledger entry is removed. Callers must NOT free.
     result_label: []const u8,
 };
 
@@ -156,6 +168,8 @@ const HumanSeqRecord = struct {
     sequence: u64,
     digest: [32]u8,
     byte_range: ByteRange,
+    /// Original evidence at first acceptance — dedup must not downgrade (L1).
+    evidence: EvidenceLevel,
 };
 
 /// §18 automated message cap: 1 MiB.
@@ -199,7 +213,15 @@ pub const InputArbiter = struct {
 
     /// Injected visibility-lease currency. Human claim never times out into FREE;
     /// orphan survival requires this to remain true (§22).
+    /// Structural invariant (no timed unlock): this module has no clock, timer,
+    /// Thread, or sleep — only an injected boolean lease flag and explicit
+    /// onVisibilityLeaseExpired. Orphan→FREE is never automatic.
     lease_current: bool = true,
+
+    /// Last CLAIM_RELEASE kind (submit vs cancel). Encoding is supplied by the
+    /// host/provider adapter via `encoded_release`; the arbiter records the
+    /// distinction for inspection (§22 table separates the two effects; M8).
+    last_release_kind: ?ReleaseKind = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -333,11 +355,11 @@ pub const InputArbiter = struct {
             !std.mem.eql(u8, self.claim_id.?, claim_id))
             return error.HumanOwned;
 
-        // Deduplicate by sequence+digest.
+        // Deduplicate by sequence+digest; return stored original evidence (L1).
         for (self.human_records.items) |rec| {
             if (rec.sequence == sequence) {
                 if (!std.mem.eql(u8, &rec.digest, &digest)) return error.Malformed;
-                return .{ .evidence = .committed, .byte_range = rec.byte_range, .duplicate = true };
+                return .{ .evidence = rec.evidence, .byte_range = rec.byte_range, .duplicate = true };
             }
         }
         if (sequence != self.next_input_seq) return error.Malformed;
@@ -350,16 +372,17 @@ pub const InputArbiter = struct {
         if (!std.mem.eql(u8, &got, &digest)) return error.Malformed;
 
         const range = self.enqueueAndWrite(encoded) catch return error.Internal;
+        const evidence: EvidenceLevel = .written;
         self.human_records.append(self.allocator, .{
             .sequence = sequence,
             .digest = digest,
             .byte_range = range,
+            .evidence = evidence,
         }) catch return error.Internal;
         self.last_acked_seq = sequence;
         self.next_input_seq = sequence + 1;
-        // ACK only after the host write queue owns the bytes → committed; if
-        // the sink accepted them, evidence is written.
-        return .{ .evidence = .written, .byte_range = range, .duplicate = false };
+        // ACK only after the host write queue owns the bytes; sink accepted → written.
+        return .{ .evidence = evidence, .byte_range = range, .duplicate = false };
     }
 
     // ── HUMAN_OWNED + CLAIM_RELEASE ─────────────────────────────────────────
@@ -387,12 +410,17 @@ pub const InputArbiter = struct {
 
         // Release only after all prior claim bytes and the encoded submit/cancel
         // bytes are accepted by the ordered write queue.
+        //
+        // M8: `kind` is the §22 submit vs cancel distinction. The provider
+        // adapter (host composition) chooses the encoded bytes for that kind
+        // (Return/newline vs Escape/^C/Control-U); this module records the kind
+        // and orders the write — it does not re-encode or collapse the two.
         const range = if (encoded_release.len > 0)
             self.enqueueAndWrite(encoded_release) catch return error.Internal
         else
             ByteRange{ .start = self.write_high_water, .end_exclusive = self.write_high_water };
 
-        _ = kind;
+        self.last_release_kind = kind;
         self.clearClaim();
         self.state = .free;
         return range;
@@ -403,8 +431,15 @@ pub const InputArbiter = struct {
     pub fn viewerDisconnect(self: *InputArbiter) Error!void {
         try self.requireLive();
         if (self.state != .human_owned) {
-            // Disconnect of a non-owner is a no-op for claim state.
-            if (self.state == .free or self.state == .automation_buffering) return;
+            // L3: §22 lists disconnect as a plaintext-zeroing trigger. An open
+            // automation buffer holds plaintext — zero it even though the claim
+            // state is not human-owned.
+            if (self.state == .automation_buffering) {
+                self.zeroAndFreeAutomationBuffers();
+                self.state = .free;
+                return;
+            }
+            if (self.state == .free) return;
             if (self.state == .human_orphaned) return;
             return error.InputBusy;
         }
@@ -437,18 +472,27 @@ pub const InputArbiter = struct {
             return error.Closed;
         }
 
+        // B2: never leave a field holding a freed pointer. Free + null first,
+        // then allocate both new ids, then install — errdefer covers both.
         // Issue a new claim to one viewer at the prior sequence. Do not replay
-        // acknowledged bytes.
-        if (self.owner_viewer_id) |old| self.allocator.free(old);
-        if (self.claim_id) |old| self.allocator.free(old);
-        self.owner_viewer_id = self.allocator.dupe(u8, viewer_id) catch return error.Internal;
-        errdefer {
-            if (self.owner_viewer_id) |v| {
-                self.allocator.free(v);
-                self.owner_viewer_id = null;
-            }
+        // acknowledged bytes (human_records retained for dedup of unacked? —
+        // acknowledged bytes stay in the write high-water; sequence continues).
+        if (self.owner_viewer_id) |old| {
+            self.allocator.free(old);
+            self.owner_viewer_id = null;
         }
-        self.claim_id = self.allocator.dupe(u8, new_claim_id) catch return error.Internal;
+        if (self.claim_id) |old| {
+            self.allocator.free(old);
+            self.claim_id = null;
+        }
+
+        const owned_viewer = self.allocator.dupe(u8, viewer_id) catch return error.Internal;
+        errdefer self.allocator.free(owned_viewer);
+        const owned_claim = self.allocator.dupe(u8, new_claim_id) catch return error.Internal;
+        // Both allocations succeeded; install. No field held a freed pointer
+        // at any failure point above.
+        self.owner_viewer_id = owned_viewer;
+        self.claim_id = owned_claim;
         self.state = .human_owned;
         return .{
             .claim_id = self.claim_id.?,
@@ -469,8 +513,12 @@ pub const InputArbiter = struct {
         }
 
         var encoded: std.ArrayList(u8) = .{};
-        defer encoded.deinit(self.allocator);
-        self.cancel_encoder.encode(&encoded) catch {
+        defer {
+            // M3: zero encoder plaintext before release.
+            if (encoded.items.len > 0) std.crypto.secureZero(u8, encoded.items);
+            encoded.deinit(self.allocator);
+        }
+        self.cancel_encoder.encode(self.allocator, &encoded) catch {
             // A failed cancel remains orphaned (§22).
             return error.Internal;
         };
@@ -610,50 +658,66 @@ pub const InputArbiter = struct {
         self.state = .automation_committed;
 
         var encoded: std.ArrayList(u8) = .{};
-        defer encoded.deinit(self.allocator);
-        self.encoder.encode(self.buffer[0..self.buffer_len], submit, &encoded) catch {
+        defer {
+            // M3: zero encoder plaintext output (same class as self.buffer).
+            if (encoded.items.len > 0) std.crypto.secureZero(u8, encoded.items);
+            encoded.deinit(self.allocator);
+        }
+        self.encoder.encode(self.allocator, self.buffer[0..self.buffer_len], submit, &encoded) catch {
             self.state = .automation_buffering;
             return error.Internal;
         };
 
-        const range = self.enqueueAndWrite(encoded.items) catch {
+        // M4: secure the ledger entry BEFORE the sink write so a bookkeeping
+        // failure after a successful PTY write cannot leave the transaction
+        // unrecorded (retry would re-encode and write a second time).
+        const planned_start = self.write_high_water;
+        const planned_end = planned_start + encoded.items.len;
+        const range = ByteRange{ .start = planned_start, .end_exclusive = planned_end };
+
+        const entry = buildLedgerEntry(
+            self.allocator,
+            idempotency_key,
+            expected_digest,
+            locator,
+            capability_epoch,
+            message_id,
+            transaction_id,
+            range,
+            .committed,
+        ) catch {
             self.state = .automation_buffering;
             return error.Internal;
         };
-
-        const label = self.allocator.dupe(u8, "written") catch {
-            self.state = .automation_buffering;
-            return error.Internal;
-        };
-        errdefer self.allocator.free(label);
-
-        const entry = LedgerEntry{
-            .idempotency_key = self.allocator.dupe(u8, idempotency_key) catch return error.Internal,
-            .digest = expected_digest,
-            .locator = self.allocator.dupe(u8, locator) catch return error.Internal,
-            .epoch = capability_epoch,
-            .message_id = self.allocator.dupe(u8, message_id) catch return error.Internal,
-            .transaction_id = self.allocator.dupe(u8, transaction_id) catch return error.Internal,
-            .byte_range = range,
-            .evidence = .written,
-            .result_label = label,
-        };
-        // If append fails after partial ownership, zero and fail closed.
         self.ledger.append(self.allocator, entry) catch {
             var doomed = entry;
             doomed.deinit(self.allocator);
             self.state = .automation_buffering;
             return error.Internal;
         };
+        const ledger_idx = self.ledger.items.len - 1;
 
-        // Zero plaintext buffers on commit.
+        // Sink write after ledger is secured.
+        self.sink.write(encoded.items) catch {
+            // Ledger retained → commit retry is idempotent (no second write).
+            self.zeroAndFreeAutomationBuffers();
+            self.state = .free;
+            return .{
+                .evidence = self.ledger.items[ledger_idx].evidence,
+                .byte_range = self.ledger.items[ledger_idx].byte_range,
+                .result_label = self.ledger.items[ledger_idx].result_label,
+            };
+        };
+        self.write_high_water = planned_end;
+        self.ledger.items[ledger_idx].evidence = .written;
+
         self.zeroAndFreeAutomationBuffers();
         self.state = .free;
 
         return .{
             .evidence = .written,
             .byte_range = range,
-            .result_label = self.ledger.items[self.ledger.items.len - 1].result_label,
+            .result_label = self.ledger.items[ledger_idx].result_label,
         };
     }
 
@@ -757,6 +821,40 @@ pub const InputArbiter = struct {
     }
 };
 
+/// Build a fully-owned ledger entry; on any dupe failure frees prior fields.
+fn buildLedgerEntry(
+    allocator: std.mem.Allocator,
+    idempotency_key: []const u8,
+    digest: [32]u8,
+    locator: []const u8,
+    epoch: u64,
+    message_id: []const u8,
+    transaction_id: []const u8,
+    byte_range: ByteRange,
+    evidence: EvidenceLevel,
+) error{OutOfMemory}!LedgerEntry {
+    const key_owned = try allocator.dupe(u8, idempotency_key);
+    errdefer allocator.free(key_owned);
+    const loc_owned = try allocator.dupe(u8, locator);
+    errdefer allocator.free(loc_owned);
+    const msg_owned = try allocator.dupe(u8, message_id);
+    errdefer allocator.free(msg_owned);
+    const txn_owned = try allocator.dupe(u8, transaction_id);
+    errdefer allocator.free(txn_owned);
+    const label = try allocator.dupe(u8, "written");
+    return .{
+        .idempotency_key = key_owned,
+        .digest = digest,
+        .locator = loc_owned,
+        .epoch = epoch,
+        .message_id = msg_owned,
+        .transaction_id = txn_owned,
+        .byte_range = byte_range,
+        .evidence = evidence,
+        .result_label = label,
+    };
+}
+
 // ── Unit tests (mock sink; every §22 transition + crash-at-boundary) ────────
 
 const MockSink = struct {
@@ -798,17 +896,17 @@ const IdentityEncoder = struct {
     }
     fn encode(
         context: *anyopaque,
+        allocator: std.mem.Allocator,
         body: []const u8,
         submit: SubmitAction,
         out: *std.ArrayList(u8),
     ) anyerror!void {
         _ = context;
-        const gpa = std.testing.allocator;
-        try out.appendSlice(gpa, body);
+        try out.appendSlice(allocator, body);
         switch (submit) {
             .none => {},
-            .@"return" => try out.append(gpa, '\r'),
-            .control_enter => try out.appendSlice(gpa, "\x1b\r"),
+            .@"return" => try out.append(allocator, '\r'),
+            .control_enter => try out.appendSlice(allocator, "\x1b\r"),
         }
     }
 };
@@ -817,9 +915,13 @@ const StaticCancel = struct {
     fn encoder() CancelEncoder {
         return .{ .context = undefined, .encodeFn = encode };
     }
-    fn encode(context: *anyopaque, out: *std.ArrayList(u8)) anyerror!void {
+    fn encode(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+    ) anyerror!void {
         _ = context;
-        try out.appendSlice(std.testing.allocator, "\x03"); // Control-C stand-in
+        try out.appendSlice(allocator, "\x03"); // Control-C stand-in
     }
 };
 
@@ -1338,30 +1440,216 @@ test "viewer disconnect without current lease terminates instead of FREE" {
     try std.testing.expectEqual(State.closed, arb.currentState());
 }
 
-test "positive control: broken timed-unlock would free orphan — we do not" {
-    // If someone added a timed unlock to FREE, this test would fail.
+// M7: The no-timed-unlock invariant is structural — InputArbiter has no clock,
+// timer, Thread, or sleep; only an injected lease_current boolean and explicit
+// onVisibilityLeaseExpired(). A loop over currentState() cannot observe a
+// timed unlock and is not a positive control. See the lease_current field doc.
+
+test "L1: human input dedup returns original written evidence not downgraded" {
     var sink = MockSink{ .allocator = std.testing.allocator };
     defer sink.deinit();
     var arb = makeArbiter(&sink);
     defer arb.deinit();
 
     _ = try arb.claimAcquire("v1", "clm_1");
-    try arb.viewerDisconnect();
-    // Simulate "time passing" with many no-op observations.
-    var i: usize = 0;
-    while (i < 1000) : (i += 1) {
-        try std.testing.expectEqual(State.human_orphaned, arb.currentState());
-    }
-    try std.testing.expectError(error.HumanOrphaned, arb.automationBegin(.{
+    const payload = "hi";
+    const dig = sha256(payload);
+    const first = try arb.humanInput("v1", "clm_1", 1, dig, payload);
+    try std.testing.expectEqual(EvidenceLevel.written, first.evidence);
+    const second = try arb.humanInput("v1", "clm_1", 1, dig, payload);
+    try std.testing.expect(second.duplicate);
+    try std.testing.expectEqual(EvidenceLevel.written, second.evidence);
+}
+
+test "L3: viewerDisconnect during automation zeros plaintext buffer" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const body = "secret-on-disconnect";
+    try arb.automationBegin(.{
         .transaction_id = "t",
-        .idempotency_key = "should_not_run",
-        .expected_len = 1,
-        .expected_digest = sha256("x"),
+        .idempotency_key = "k",
+        .expected_len = body.len,
+        .expected_digest = sha256(body),
         .recipient_generation = 1,
         .capability_epoch = 0,
         .message_id = "m",
         .locator = "l",
         .provider_strategy = "p",
         .submit = .none,
-    }));
+    });
+    _ = try arb.automationChunk(0, body);
+    try std.testing.expect(arb.buffer.len > 0);
+    try arb.viewerDisconnect();
+    try std.testing.expectEqual(@as(usize, 0), arb.buffer.len);
+    try std.testing.expectEqual(State.free, arb.currentState());
+}
+
+test "M8: claimRelease records submit vs cancel kind distinctly" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    _ = try arb.claimAcquire("v1", "clm_1");
+    _ = try arb.claimRelease("v1", "clm_1", .submit, "\r");
+    try std.testing.expectEqual(ReleaseKind.submit, arb.last_release_kind.?);
+
+    _ = try arb.claimAcquire("v1", "clm_2");
+    _ = try arb.claimRelease("v1", "clm_2", .cancel, "\x03");
+    try std.testing.expectEqual(ReleaseKind.cancel, arb.last_release_kind.?);
+    try std.testing.expectEqualStrings("\r\x03", sink.writes.items);
+}
+
+test "M4: ledger secured before write — commit retry does not double-write" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const body = "once-only";
+    const dig = sha256(body);
+    try arb.automationBegin(.{
+        .transaction_id = "txn_m4",
+        .idempotency_key = "idemp_m4",
+        .expected_len = body.len,
+        .expected_digest = dig,
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_m4",
+        .locator = "ses_m4",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, body);
+    // Force sink failure on first write after ledger is secured.
+    sink.fail_next = true;
+    const first = try arb.automationCommit(
+        "txn_m4",
+        "idemp_m4",
+        body.len,
+        dig,
+        1,
+        1,
+        "msg_m4",
+        "ses_m4",
+        .none,
+    );
+    // Ledger retained even though write failed.
+    try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+    try std.testing.expectEqual(EvidenceLevel.committed, first.evidence);
+
+    // Retry must return stored result and NOT write again.
+    const second = try arb.automationCommit(
+        "txn_m4",
+        "idemp_m4",
+        body.len,
+        dig,
+        1,
+        1,
+        "msg_m4",
+        "ses_m4",
+        .none,
+    );
+    try std.testing.expectEqual(first.byte_range.start, second.byte_range.start);
+    try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+}
+
+// B2 POSITIVE CONTROL: allocator failure during operatorResume must not leave
+// freed pointers in claim fields (double-free at deinit / UAF on next use).
+// Against unfixed code (free without null, late errdefer) this double-frees.
+test "B2 positive control: operatorResume dupe failure leaves no freed pointers" {
+    const FailNth = struct {
+        parent: std.mem.Allocator,
+        n: usize,
+        count: usize = 0,
+
+        fn allocator(self: *@This()) std.mem.Allocator {
+            return .{
+                .ptr = self,
+                .vtable = &.{
+                    .alloc = alloc,
+                    .resize = resize,
+                    .remap = remap,
+                    .free = free,
+                },
+            };
+        }
+        fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.count += 1;
+            if (self.count == self.n) return null;
+            return self.parent.rawAlloc(len, alignment, ret_addr);
+        }
+        fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.parent.rawResize(buf, alignment, new_len, ret_addr);
+        }
+        fn remap(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            return self.parent.rawRemap(buf, alignment, new_len, ret_addr);
+        }
+        fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.parent.rawFree(buf, alignment, ret_addr);
+        }
+    };
+
+    // Fail the first dupe in operatorResume (viewer_id) after free+null of olds.
+    {
+        var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
+        defer {
+            const leak = gpa_state.deinit();
+            std.testing.expect(leak == .ok) catch @panic("B2: leak/double-free detected (viewer dupe fail)");
+        }
+        const gpa = gpa_state.allocator();
+        var fail = FailNth{ .parent = gpa, .n = 1 };
+        // Pre-allocate claim with parent so only resume dupes use FailNth.
+        var sink = MockSink{ .allocator = gpa };
+        defer sink.deinit();
+        var arb = InputArbiter.init(gpa, sink.sink(), IdentityEncoder.encoder(), StaticCancel.encoder());
+        defer arb.deinit();
+
+        _ = try arb.claimAcquire("viewer-old", "clm_old");
+        try arb.viewerDisconnect();
+        // Switch allocator to failing for resume path only.
+        arb.allocator = fail.allocator();
+        const err = arb.operatorResume("viewer-new", "clm_new");
+        try std.testing.expectError(error.Internal, err);
+        // Fields must be null — not dangling freed pointers.
+        try std.testing.expect(arb.owner_viewer_id == null);
+        try std.testing.expect(arb.claim_id == null);
+        // Restore parent for safe deinit of remaining arbiter state.
+        arb.allocator = gpa;
+    }
+
+    // Fail the second dupe (claim_id) after viewer dupe succeeded.
+    {
+        var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
+        defer {
+            const leak = gpa_state.deinit();
+            std.testing.expect(leak == .ok) catch @panic("B2: leak/double-free detected (claim dupe fail)");
+        }
+        const gpa = gpa_state.allocator();
+        var sink = MockSink{ .allocator = gpa };
+        defer sink.deinit();
+        var arb = InputArbiter.init(gpa, sink.sink(), IdentityEncoder.encoder(), StaticCancel.encoder());
+        defer arb.deinit();
+
+        _ = try arb.claimAcquire("viewer-old", "clm_old");
+        try arb.viewerDisconnect();
+        // n=1 fails first alloc under FailNth; but claimAcquire already done.
+        // operatorResume: free olds (no alloc), dupe viewer (count=1 fail if n=1).
+        // For second-dupe failure: n=2.
+        var fail = FailNth{ .parent = gpa, .n = 2 };
+        arb.allocator = fail.allocator();
+        const err = arb.operatorResume("viewer-new", "clm_new");
+        try std.testing.expectError(error.Internal, err);
+        // Viewer may have been allocated then freed by errdefer; both null.
+        try std.testing.expect(arb.owner_viewer_id == null);
+        try std.testing.expect(arb.claim_id == null);
+        arb.allocator = gpa;
+    }
 }
