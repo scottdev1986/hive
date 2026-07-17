@@ -57,6 +57,7 @@ import {
   type AgentRecord,
   type CapabilityProvider,
   type ExecutionIdentity,
+  type FlatAssignment,
   type CapabilityRecord,
   type HiveConfig,
   type ModelEnablementDecision,
@@ -269,6 +270,10 @@ export interface HiveSpawnerDependencies {
    */
   port: number | (() => number);
   issueCredential?: CredentialIssuer;
+  assignments?: Readonly<{
+    open(agentId: string, openedAt: string): FlatAssignment;
+    close(agentId: string, closedAt: string): FlatAssignment | null;
+  }>;
   config: {
     codex?: Pick<HiveConfig["codex"], "driver">;
     /** Agent autonomy. Absent (older callers, tests) fails safe to
@@ -556,6 +561,7 @@ export interface AgentPromptOptions {
    * so the one-sentence directive (layer 2) never advertises tools the agent
    * does not have. */
   graphifyTools?: boolean;
+  assignment?: Pick<FlatAssignment, "assignmentId" | "assignmentGeneration">;
 }
 
 /** Layer 2 of the integration doc's adoption strategy: exactly one directive,
@@ -610,6 +616,13 @@ export const SEARCH_HYGIENE =
   "for memory, never re-run it wider: a wider pattern is a bigger allocation, " +
   "not a better search.";
 
+const assignmentPrompt = (
+  assignment: Pick<FlatAssignment, "assignmentId" | "assignmentGeneration">,
+): string =>
+  `Your assignment: ${assignment.assignmentId} generation ${assignment.assignmentGeneration}. ` +
+  "Use these exact values with hive_update_status; stale values are rejected " +
+  "so a prior incarnation cannot report for its successor.";
+
 export function buildAgentPrompt(
   name: string,
   task: string,
@@ -643,6 +656,9 @@ export function buildAgentPrompt(
       ];
   return [
     ...preamble,
+    ...(options.assignment === undefined
+      ? []
+      : [assignmentPrompt(options.assignment)]),
     // Every category: the trimmed prompt drops narration, never a
     // rule, and a small model is the one that can least afford to infer these.
     CODING_GUIDELINES,
@@ -1054,8 +1070,17 @@ export class HiveSpawner implements Spawner {
         default:
           unknownVendor(vendor, "critical-control restart");
       }
+      const assignmentAt = new Date().toISOString();
+      this.dependencies.assignments?.close(prepared.record.id, assignmentAt);
+      const assignment = this.dependencies.assignments?.open(
+        prepared.record.id,
+        assignmentAt,
+      );
       const controlPrompt = [
         `CRITICAL HIVE CONTROL ${message.id} (capability epoch ${message.capabilityEpoch}).`,
+        ...(assignment === undefined
+          ? []
+          : [assignmentPrompt(assignment)]),
         message.body,
         "Your prior process was stopped and its worktree was preserved.",
         "This process is read-only. Do not resume implementation or landing.",
@@ -1163,6 +1188,10 @@ export class HiveSpawner implements Spawner {
       if (failureReason !== null) throw new Error(failureReason);
       this.dependencies.quota.markStarted(reservationId);
     } catch (error) {
+      this.dependencies.assignments?.close(
+        prepared.record.id,
+        new Date().toISOString(),
+      );
       const reason = error instanceof Error
         ? error.message
         : "control acknowledgement process failed to launch";
@@ -1945,21 +1974,6 @@ export class HiveSpawner implements Spawner {
           },
         ),
     ]);
-    const prompt = buildAgentPrompt(
-      name,
-      request.task,
-      worktree,
-      this.dependencies.repoRoot,
-      memoryIndex,
-      {
-        tool,
-        readOnly,
-        category: request.category,
-        brief,
-        ...(graphBrief === null ? {} : { graphBrief }),
-        ...(graphifyUrl === null ? {} : { graphifyTools: true }),
-      },
-    );
     const timestamp = new Date().toISOString();
     // Grok's session id is named by Hive, not discovered afterwards. Claude and
     // Codex report theirs on hook traffic; Grok has no lifecycle hooks, so
@@ -2003,23 +2017,43 @@ export class HiveSpawner implements Spawner {
       writeRevoked: false,
     });
 
-    const dangerous = this.dependencies.config.autonomy === "dangerous";
-    // Servers the human attached to their own Codex sessions. This agent did
-    // not ask for them and pays for them on every message it sends, so the
-    // spawn detaches them for its process only.
-    const excludeMcpServers = tool === "codex"
-      ? await this.inheritedCodexMcpServers()
-      // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
-      : [];
-    let argv: string[];
-    // A reader carries no landing or memory-write right. A writer gets exactly
-    // one landing right for its own branch.
-    const capabilityToken = this.dependencies.issueCredential?.(
-      name,
-      readOnly ? "reader" : "writer",
-      record.capabilityEpoch,
-    );
     try {
+      const assignment = this.dependencies.assignments?.open(
+        record.id,
+        record.createdAt,
+      );
+      const prompt = buildAgentPrompt(
+        name,
+        request.task,
+        worktree,
+        this.dependencies.repoRoot,
+        memoryIndex,
+        {
+          tool,
+          readOnly,
+          category: request.category,
+          brief,
+          ...(graphBrief === null ? {} : { graphBrief }),
+          ...(graphifyUrl === null ? {} : { graphifyTools: true }),
+          ...(assignment === undefined ? {} : { assignment }),
+        },
+      );
+      const dangerous = this.dependencies.config.autonomy === "dangerous";
+      // Servers the human attached to their own Codex sessions. This agent did
+      // not ask for them and pays for them on every message it sends, so the
+      // spawn detaches them for its process only.
+      const excludeMcpServers = tool === "codex"
+        ? await this.inheritedCodexMcpServers()
+        // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
+        : [];
+      let argv: string[];
+      // A reader carries no landing or memory-write right. A writer gets exactly
+      // one landing right for its own branch.
+      const capabilityToken = this.dependencies.issueCredential?.(
+        name,
+        readOnly ? "reader" : "writer",
+        record.capabilityEpoch,
+      );
       await provisionSkills(worktree.path, tool);
       switch (tool) {
         case "claude": {
@@ -2323,12 +2357,28 @@ export class HiveSpawner implements Spawner {
   ): Promise<AgentRecord> {
     const current = this.dependencies.db.getAgentById(record.id);
     if (current !== null && current.status !== "spawning") {
+      if (current.status === "failed" || current.status === "stuck") {
+        this.dependencies.assignments?.close(record.id, new Date().toISOString());
+      }
       return current;
     }
     return await this.failSpawn(record, worktree, failureReason, layer);
   }
 
   private async failSpawn(
+    record: AgentRecord,
+    worktree: CreatedWorktree,
+    failureReason: string,
+    layer: LaunchFailureLayer,
+  ): Promise<AgentRecord> {
+    try {
+      return await this.failSpawnAndCleanup(record, worktree, failureReason, layer);
+    } finally {
+      this.dependencies.assignments?.close(record.id, new Date().toISOString());
+    }
+  }
+
+  private async failSpawnAndCleanup(
     record: AgentRecord,
     worktree: CreatedWorktree,
     failureReason: string,

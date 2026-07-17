@@ -141,7 +141,7 @@ export type FlatAssignment = z.infer<typeof FlatAssignmentSchema>;
 const StatusUpdateCommonShape = {
   requestId: domainUuidV7Schema("req"),
   assignmentId: domainUuidV7Schema("asg"),
-  assignmentGeneration: DecimalUint64Schema,
+  assignmentGeneration: PositiveDecimalUint64Schema,
   progress: z.number().int().min(0).max(100).optional(),
   summary: z.string().min(1).max(STATUS_LIMITS.summaryCharactersMax),
   evidenceRefs: z.array(

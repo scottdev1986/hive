@@ -19,6 +19,7 @@ import {
 } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
 import { HiveSpawner } from "../daemon/spawner-impl";
+import { StatusStore } from "../daemon/status-store";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
@@ -53,6 +54,7 @@ import {
   inheritOrdinaryWorkspaceSelection,
 } from "../daemon/instance-settings";
 import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 
 export async function runDaemon(): Promise<void> {
@@ -62,6 +64,7 @@ export async function runDaemon(): Promise<void> {
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
+  const statusStore = new StatusStore(db, hiveInstanceSuffix());
   // routing.toml is dead as a policy source (user directive 2026-07-12); the
   // file is renamed aside, never deleted and never interpreted.
   const retiredToml = retireLegacyRoutingToml(
@@ -155,6 +158,10 @@ export async function runDaemon(): Promise<void> {
     // to the agent process through its environment.
     issueCredential: (name, role, epoch) =>
       daemon.issueCredential(name, role, epoch),
+    assignments: {
+      open: (agentId, openedAt) => statusStore.openAssignment(agentId, openedAt),
+      close: (agentId, closedAt) => statusStore.closeAssignment(agentId, closedAt),
+    },
     config,
     // Every live spawn is governed by the user's routing policy: the spawn's
     // category resolves to the user-authored chain, every link passes the
@@ -196,6 +203,7 @@ export async function runDaemon(): Promise<void> {
   daemon = new HiveDaemon({
     db,
     spawner,
+    statusStore,
     tmuxSender,
     tmux: sessions,
     repoRoot,

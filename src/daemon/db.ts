@@ -13,35 +13,57 @@ import {
   AgentMessageSchema,
   AgentRecordObjectSchema,
   AgentRecordSchema,
+  Hv1CapabilityRecordSchema,
   HookEventSchema,
   ExecutionIdentitySchema,
   isTerminalAgentStatus,
   type AgentMessage,
   type AgentRecord,
   type HookEvent,
+  type Hv1CapabilityRecord,
 } from "../schemas";
 import {
   mintTmuxSessionLocator,
   sessionInstanceId,
 } from "./session-host/locators";
 
-const StoredCapabilitySchema = z.object({
+const StoredCapabilityRowSchema = z.object({
   id: z.string().min(1),
   subject: z.string().min(1),
   role: z.enum(["operator", "orchestrator", "writer", "reader"]),
   epoch: z.number().int().nonnegative(),
+  constraints: z.string().nullable(),
+  subjects: z.string().nullable(),
   secretHash: z.string().min(1),
   issuedAt: z.string().min(1),
   expiresAt: z.string().min(1),
   revokedAt: z.string().nullable(),
 });
 
-const CapabilityRowSchema = StoredCapabilitySchema;
+export type CapabilityRow = Hv1CapabilityRecord;
 
-export type CapabilityRow = Omit<
-  z.infer<typeof StoredCapabilitySchema>,
-  "secretHash"
->;
+function parseCapabilityRow(row: unknown): {
+  capability: CapabilityRow;
+  secretHash: string;
+} {
+  const stored = StoredCapabilityRowSchema.parse(row);
+  return {
+    capability: Hv1CapabilityRecordSchema.parse({
+      id: stored.id,
+      subject: stored.subject,
+      role: stored.role,
+      epoch: stored.epoch,
+      ...(stored.constraints === null
+        ? {}
+        : { constraints: JSON.parse(stored.constraints) }),
+      ...(stored.subjects === null ? {} : { subjects: JSON.parse(stored.subjects) }),
+      issuedAt: stored.issuedAt,
+      expiresAt: stored.expiresAt,
+      revokedAt: stored.revokedAt,
+    }),
+    secretHash: stored.secretHash,
+  };
+}
 
 export const AuditRowSchema = z.object({
   at: z.string().min(1),
@@ -470,6 +492,8 @@ export class HiveDatabase {
         subject TEXT NOT NULL,
         role TEXT NOT NULL,
         epoch INTEGER NOT NULL,
+        constraints TEXT,
+        subjects TEXT,
         secretHash TEXT NOT NULL,
         issuedAt TEXT NOT NULL,
         expiresAt TEXT NOT NULL,
@@ -499,6 +523,15 @@ export class HiveDatabase {
       );
       CREATE INDEX IF NOT EXISTS audit_log_at ON audit_log(at);
     `);
+    const capabilityColumns = z.array(z.object({ name: z.string() })).parse(
+      this.database.query("PRAGMA table_info(capabilities)").all(),
+    );
+    if (!capabilityColumns.some((column) => column.name === "constraints")) {
+      this.database.exec("ALTER TABLE capabilities ADD COLUMN constraints TEXT");
+    }
+    if (!capabilityColumns.some((column) => column.name === "subjects")) {
+      this.database.exec("ALTER TABLE capabilities ADD COLUMN subjects TEXT");
+    }
     // 2026-07-13 cutover: tiers died; existing databases carry a `tier`
     // column whose values are the old tier names. Renamed and mapped once,
     // here, so every reader sees only categories.
@@ -1450,13 +1483,20 @@ export class HiveDatabase {
   insertCapability(capability: CapabilityRow, secretHash: string): void {
     this.database.query(`
       INSERT INTO capabilities (
-        id, subject, role, epoch, secretHash, issuedAt, expiresAt, revokedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+        id, subject, role, epoch, constraints, subjects, secretHash,
+        issuedAt, expiresAt, revokedAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).run(
       capability.id,
       capability.subject,
       capability.role,
       capability.epoch,
+      capability.constraints === undefined
+        ? null
+        : JSON.stringify(capability.constraints),
+      !("subjects" in capability) || capability.subjects === undefined
+        ? null
+        : JSON.stringify(capability.subjects),
       secretHash,
       capability.issuedAt,
       capability.expiresAt,
@@ -1470,9 +1510,7 @@ export class HiveDatabase {
     const row = this.database.query("SELECT * FROM capabilities WHERE id = ?")
       .get(id);
     if (row === null) return null;
-    const parsed = CapabilityRowSchema.parse(row);
-    const { secretHash, ...capability } = parsed;
-    return { capability, secretHash };
+    return parseCapabilityRow(row);
   }
 
   /** Atomic: the primary key means the first inserter wins and every later

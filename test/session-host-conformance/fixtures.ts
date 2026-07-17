@@ -9,6 +9,12 @@ import {
   type FrameTypeName,
 } from "../../src/schemas/session-protocol";
 import type { WorkspaceEventV2 } from "../../src/schemas/status-envelope";
+import {
+  canonicalJson,
+  emptyStatusProjection,
+  reduceStatusEvent,
+  type StatusReducerProjection,
+} from "../../src/daemon/status-events";
 
 export const FIXTURE_TIME = "2026-07-16T12:00:00.000Z";
 export const FIXTURE_IDS = {
@@ -684,66 +690,10 @@ export function buildWireCorpus() {
   } as const;
 }
 
-export type ReducerProjection = Readonly<{
-  highWaterSeq: string;
-  paused: boolean;
-  recovery: "SNAPSHOT_REQUIRED" | null;
-  corruption: string | null;
-  entities: Readonly<Record<string, unknown>>;
-  seen: Readonly<Record<string, string>>;
-}>;
-
-export const emptyReducerProjection = (): ReducerProjection => ({
-  highWaterSeq: "0",
-  paused: false,
-  recovery: null,
-  corruption: null,
-  entities: {},
-  seen: {},
-});
-
-export function canonicalJson(value: unknown): string {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
-  const entries = Object.entries(value as Record<string, unknown>)
-    .sort(([left], [right]) => left < right ? -1 : left > right ? 1 : 0)
-    .map(([key, item]) => `${JSON.stringify(key)}:${canonicalJson(item)}`);
-  return `{${entries.join(",")}}`;
-}
-
-export function reduceWorkspaceEvent(
-  state: ReducerProjection,
-  event: WorkspaceEventV2,
-): ReducerProjection {
-  if (state.paused || state.corruption !== null) return state;
-  const encoded = canonicalJson(event);
-  const prior = state.seen[event.eventId];
-  if (prior !== undefined) {
-    if (prior === encoded) return state;
-    return { ...state, corruption: `conflicting duplicate ${event.eventId}` };
-  }
-  if (BigInt(event.seq) !== BigInt(state.highWaterSeq) + 1n) {
-    return { ...state, paused: true, recovery: "SNAPSHOT_REQUIRED" };
-  }
-  const seen = { ...state.seen, [event.eventId]: encoded };
-  const entityKey = `${event.entity.kind}:${event.entity.id}:${event.entity.generation ?? "-"}`;
-  const existing = state.entities[entityKey] as { entityRevision?: string } | undefined;
-  const entities = existing !== undefined &&
-      BigInt(event.entityRevision) < BigInt(existing.entityRevision ?? "0")
-    ? state.entities
-    : {
-      ...state.entities,
-      [entityKey]: {
-        entityRevision: event.entityRevision,
-        eventId: event.eventId,
-        kind: event.kind,
-        occurredAt: event.occurredAt,
-        source: event.source,
-        data: event.data,
-      },
-    };
-  return { ...state, highWaterSeq: event.seq, entities, seen };
-}
+export type ReducerProjection = StatusReducerProjection;
+export const emptyReducerProjection = emptyStatusProjection;
+export { canonicalJson };
+export const reduceWorkspaceEvent = reduceStatusEvent;
 
 const baseReducerEvents: readonly WorkspaceEventV2[] = [
   {

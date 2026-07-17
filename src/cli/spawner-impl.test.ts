@@ -566,6 +566,19 @@ describe("HiveSpawner name pool", () => {
         tmux,
         sleep: signalControlReadiness(store),
         quota: controlQuota.quota,
+        assignments: {
+          open(agentId, openedAt) {
+            return {
+              assignmentId: "asg_018f1e90-7b5a-7cc0-8000-000000000003",
+              agentId,
+              assignmentGeneration: "2",
+              state: "open",
+              openedAt,
+              closedAt: null,
+            };
+          },
+          close() { return null; },
+        },
       });
       const message = {
         id: `control-${tool}`,
@@ -592,6 +605,9 @@ describe("HiveSpawner name pool", () => {
       const order = await deliveredPrompt(command);
       expect(order).toContain("CRITICAL HIVE CONTROL");
       expect(order).toContain("This process is read-only");
+      expect(order).toContain(
+        "Your assignment: asg_018f1e90-7b5a-7cc0-8000-000000000003 generation 2",
+      );
       expect(command).toContain(tool === "claude"
         ? "--permission-mode"
         : "--sandbox");
@@ -3255,6 +3271,7 @@ describe("HiveSpawner launch prompt transport", () => {
     quota: QuotaService,
     store: FakeStore,
     sleep: () => Promise<void>,
+    assignments?: HiveSpawnerDependencies["assignments"],
   ): HiveSpawner {
     return newTestSpawner({
       isModelEnabled: async () => true,
@@ -3271,6 +3288,7 @@ describe("HiveSpawner launch prompt transport", () => {
       },
       quota,
       sleep,
+      ...(assignments === undefined ? {} : { assignments }),
     });
   }
 
@@ -3280,12 +3298,30 @@ describe("HiveSpawner launch prompt transport", () => {
     const tmux = new LimitedTmux();
     const { db, quota } = makeQuota(root);
     const store = new FakeStore();
+    const assignmentCalls = { opened: [] as string[], closed: [] as string[] };
     const spawner = makeSpawner(
       root,
       tmux,
       quota,
       store,
       signalReadiness(store),
+      {
+        open(agentId, openedAt) {
+          assignmentCalls.opened.push(agentId);
+          return {
+            assignmentId: "asg_018f1e90-7b5a-7cc0-8000-000000000001",
+            agentId,
+            assignmentGeneration: "1",
+            state: "open",
+            openedAt,
+            closedAt: null,
+          };
+        },
+        close(agentId) {
+          assignmentCalls.closed.push(agentId);
+          return null;
+        },
+      },
     );
 
     const spawned = await spawner.spawn({
@@ -3303,7 +3339,12 @@ describe("HiveSpawner launch prompt transport", () => {
     const promptPath = /\$\(cat '([^']+)'\)/.exec(command)?.[1] ?? "";
     expect(promptPath).toStartWith(process.env.HIVE_HOME!);
     expect(promptPath).not.toStartWith(root);
-    expect(await readFile(promptPath, "utf8")).toContain(hugeBrief);
+    const delivered = await readFile(promptPath, "utf8");
+    expect(delivered).toContain(hugeBrief);
+    expect(delivered).toContain(
+      "Your assignment: asg_018f1e90-7b5a-7cc0-8000-000000000001 generation 1",
+    );
+    expect(assignmentCalls).toEqual({ opened: [spawned.id], closed: [] });
     db.close();
   });
 
@@ -3311,12 +3352,29 @@ describe("HiveSpawner launch prompt transport", () => {
     const root = await mkdtemp(join(tmpdir(), "hive-prompt-transport-"));
     tempRoots.push(root);
     const { db, quota } = makeQuota(root);
+    const closedAssignments: string[] = [];
     const spawner = makeSpawner(
       root,
       new BrokenTmux(),
       quota,
       new FakeStore(),
       async () => {},
+      {
+        open(agentId, openedAt) {
+          return {
+            assignmentId: "asg_018f1e90-7b5a-7cc0-8000-000000000002",
+            agentId,
+            assignmentGeneration: "1",
+            state: "open",
+            openedAt,
+            closedAt: null,
+          };
+        },
+        close(agentId) {
+          closedAssignments.push(agentId);
+          return null;
+        },
+      },
     );
 
     const failed = await spawner.spawn({
@@ -3327,6 +3385,7 @@ describe("HiveSpawner launch prompt transport", () => {
 
     expect(failed.status).toEqual("failed");
     expect(failed.failureReason).toContain("tmux");
+    expect(closedAssignments).toEqual([failed.id]);
     // tmux broke. The model was never contacted, so it has nothing to answer
     // for: quarantining it here is how one bad launch downgrades every later
     // spawn for half an hour.

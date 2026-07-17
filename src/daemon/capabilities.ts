@@ -14,7 +14,11 @@
 //     root will present, because that root has no spawn path of its own —
 //     still daemon-minted, still one level deep.
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
-import { isOrchestratorName } from "../schemas";
+import {
+  Hv1CapabilityRecordSchema,
+  isOrchestratorName,
+  type Hv1CapabilityConstraints,
+} from "../schemas";
 import type { HiveDatabase } from "./db";
 
 export type Role =
@@ -25,6 +29,8 @@ export type Role =
 
 export type Action =
   | "status:read"
+  | "status:write"
+  | "terminal:observe"
   | "quota:read"
   | "quota:write"
   | "token-usage:read"
@@ -68,7 +74,7 @@ const AGENT_DIRECTED: readonly Action[] = [
 ];
 
 const OPERATOR_ACTIONS: readonly Action[] = [
-  "status:read", "quota:read", "quota:write", "token-usage:read",
+  "status:read", "terminal:observe", "quota:read", "quota:write", "token-usage:read",
   "token-usage:write", "agent:spawn", "agent:kill",
   "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
   "message:send", "message:ack", "message:read", "inbox:read",
@@ -119,7 +125,8 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   writer: {
     actions: [
-      "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
+      "status:read", "status:write", "terminal:observe", "quota:read",
+      "message:send", "message:ack", "inbox:read",
       "branch:land", "memory:read", "memory:write", "event:report",
       "telemetry:report",
     ],
@@ -128,7 +135,8 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   reader: {
     actions: [
-      "status:read", "quota:read", "message:send", "message:ack", "inbox:read",
+      "status:read", "status:write", "terminal:observe", "quota:read",
+      "message:send", "message:ack", "inbox:read",
       "memory:read", "event:report", "telemetry:report",
     ],
     anySubject: [],
@@ -136,13 +144,14 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
 };
 
-// Epoch checks exist to stop stale authority, so only the actions that commit
-// carry one: merging a branch, and confirming a control instruction landed.
-// Gating reads on the epoch would fail every status poll during a rotation and
-// buy nothing.
+// Epoch checks exist to stop stale authority. Status reports and terminal
+// observation bind to the current agent incarnation even though ordinary
+// status reads remain available across rotations.
 const EPOCH_CHECKED: ReadonlySet<Action> = new Set<Action>([
   "branch:land",
   "message:ack",
+  "status:write",
+  "terminal:observe",
 ]);
 
 /** Actions a `writeRevoked` agent may not perform even at a current epoch. */
@@ -156,6 +165,8 @@ export interface Capability {
   readonly subject: string;
   readonly role: Role;
   readonly epoch: number;
+  readonly constraints?: Hv1CapabilityConstraints | undefined;
+  readonly subjects?: readonly string[] | undefined;
   readonly issuedAt: string;
   readonly expiresAt: string;
   readonly revokedAt: string | null;
@@ -259,22 +270,29 @@ export class CapabilityStore {
   mint(
     subject: string,
     role: Role,
-    options: { epoch?: number; ttlMs?: number } = {},
+    options: {
+      epoch?: number;
+      ttlMs?: number;
+      constraints?: Hv1CapabilityConstraints;
+      subjects?: readonly string[];
+    } = {},
   ): { token: string; capability: Capability } {
     const issued = this.now();
     const id = crypto.randomUUID();
     const secret = randomBytes(32).toString("base64url");
-    const capability: Capability = {
+    const capability = Hv1CapabilityRecordSchema.parse({
       id,
       subject,
       role,
       epoch: options.epoch ?? 0,
+      ...(options.constraints === undefined ? {} : { constraints: options.constraints }),
+      ...(options.subjects === undefined ? {} : { subjects: options.subjects }),
       issuedAt: issued.toISOString(),
       expiresAt: new Date(
         issued.getTime() + (options.ttlMs ?? DEFAULT_TTL_MS),
       ).toISOString(),
       revokedAt: null,
-    };
+    }) as Capability;
     this.db.insertCapability(capability, hashSecret(secret));
     return { token: `${TOKEN_PREFIX}.${id}.${secret}`, capability };
   }
@@ -470,4 +488,20 @@ export class CapabilityStore {
     }
     return decision;
   }
+}
+
+export function permitsTerminalObservation(
+  capability: Capability,
+  readerAgentId: string | null,
+  targetAgentId: string,
+  include: "metadata" | "visible-text",
+): boolean {
+  const self = readerAgentId !== null && readerAgentId === targetAgentId;
+  if (self && include === "metadata") return true;
+  if (self && include === "visible-text") {
+    return capability.constraints?.content === true;
+  }
+  return capability.role === "operator" &&
+    capability.constraints?.scope === "operator" &&
+    capability.subjects?.includes(targetAgentId) === true;
 }

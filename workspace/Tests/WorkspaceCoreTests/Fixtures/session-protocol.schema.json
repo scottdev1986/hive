@@ -7390,7 +7390,7 @@
             },
             "assignmentGeneration": {
               "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "pattern": "^(?:[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
             },
             "progress": {
@@ -7456,7 +7456,7 @@
             },
             "assignmentGeneration": {
               "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "pattern": "^(?:[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
             },
             "progress": {
@@ -7522,7 +7522,7 @@
             },
             "assignmentGeneration": {
               "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "pattern": "^(?:[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
             },
             "progress": {
@@ -7588,7 +7588,7 @@
             },
             "assignmentGeneration": {
               "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "pattern": "^(?:[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
             },
             "progress": {
@@ -7654,7 +7654,7 @@
             },
             "assignmentGeneration": {
               "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "pattern": "^(?:[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
             },
             "progress": {
@@ -7722,7 +7722,7 @@
             },
             "assignmentGeneration": {
               "type": "string",
-              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "pattern": "^(?:[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
             },
             "progress": {

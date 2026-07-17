@@ -46,6 +46,8 @@ import {
 } from "../adapters/worktrees";
 import {
   HookEventSchema,
+  HiveTerminalObserveInputSchema,
+  HiveUpdateStatusInputSchema,
   ControlIntentSchema,
   compactMemoryWriteResult,
   HandoffSchema,
@@ -70,12 +72,15 @@ import { deriveOrchestratorStatus } from "./orchestrator-status";
 import {
   bearerToken,
   CapabilityStore,
+  permitsTerminalObservation,
   type Action,
   type Capability,
   type Decision,
   type Denial,
   type Role,
 } from "./capabilities";
+import { StatusStore } from "./status-store";
+import type { SessionHost, SessionLocator } from "./session-host/contract";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
 import {
@@ -424,6 +429,13 @@ function logAlertDeliveryFailure(error: unknown): undefined {
 export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
+  statusStore?: StatusStore;
+  /** WP2/WP3 bind these seams. Observation itself only calls capture. */
+  sessionHost?: Pick<SessionHost, "capture">;
+  resolveSessionLocator?: (
+    sessionId: string,
+    generation: number,
+  ) => Promise<SessionLocator | null>;
   tmuxSender?: TmuxSender;
   tmux?: TmuxSessionHost | TmuxEngine;
   recovery?: {
@@ -553,6 +565,7 @@ export class HiveDaemon {
   readonly spawner: Spawner;
   readonly memory: MemoryIndex;
   readonly capabilities: CapabilityStore;
+  readonly status: StatusStore;
   private memoryLock: Promise<unknown> = Promise.resolve();
   private readonly ownsDatabase: boolean;
   private readonly port: number;
@@ -627,13 +640,28 @@ export class HiveDaemon {
   private readonly stopTmuxProcesses: (
     session: string,
   ) => Promise<ReapOutcome>;
+  private readonly sessionHost: Pick<SessionHost, "capture"> | null;
+  private readonly resolveSessionLocator: NonNullable<
+    HiveDaemonOptions["resolveSessionLocator"]
+  > | null;
   private memoryPressure = false;
 
   constructor(options: HiveDaemonOptions) {
     this.ownsDatabase = options.db === undefined;
     this.db = options.db ?? new HiveDatabase();
+    this.status = options.statusStore ?? new StatusStore(this.db, hiveInstanceSuffix());
+    for (const agent of this.db.listAgents()) {
+      if (
+        !["done", "dead", "failed"].includes(agent.status) &&
+        !this.status.hasAssignmentHistory(agent.id)
+      ) {
+        this.status.openAssignment(agent.id, agent.createdAt);
+      }
+    }
     this.memory = new MemoryIndex(this.db.database);
     this.spawner = options.spawner;
+    this.sessionHost = options.sessionHost ?? null;
+    this.resolveSessionLocator = options.resolveSessionLocator ?? null;
     this.capabilities = new CapabilityStore(this.db, (name) => {
       const record = this.db.getAgentByName(name);
       return record === null ? null : {
@@ -1754,6 +1782,7 @@ export class HiveDaemon {
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
+    this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
     const cleaned: {
@@ -3181,6 +3210,30 @@ export class HiveDaemon {
       }
     });
 
+    const statusAgent = this.db.getLiveAgentByName(value.agentName);
+    const turnState = value.kind === "turn-start"
+      ? "working"
+      : value.kind === "turn-end" || value.kind === "session-start"
+        ? "idle"
+        : value.kind === "approval-request" || isPermissionPrompt(value)
+          ? "awaiting_approval"
+          : null;
+    if (statusAgent !== null && turnState !== null) {
+      const observedAt = new Date(value.timestamp).toISOString();
+      this.status.appendSourceEvent({
+        entity: { kind: "agent", id: statusAgent.id },
+        occurredAt: observedAt,
+        kind: "status.turn",
+        source: {
+          kind: "provider-hook",
+          id: `${statusAgent.tool}:${value.toolSessionId ?? statusAgent.id}`,
+          observedAt,
+          confidence: "high",
+        },
+        data: { value: turnState },
+      });
+    }
+
     if (value.kind === "dead") {
       const dead = this.db.getAgentByName(value.agentName);
       if (dead !== null) {
@@ -3346,6 +3399,91 @@ export class HiveDaemon {
         "agents",
         build.message,
       );
+    });
+
+    server.registerTool("hive_update_status", {
+      title: "Report descriptive agent status",
+      description:
+        "Append an authenticated, Assignment-bound descriptive status report. Complete is descriptive and never approves work or changes task, gate, review, or landing authority.",
+      inputSchema: HiveUpdateStatusInputSchema,
+    }, async (input) => {
+      this.authorizeTool(
+        capability,
+        "hive_update_status",
+        "status:write",
+        capability.subject,
+      );
+      const agent = this.db.getLiveAgentByName(capability.subject);
+      if (agent === null) {
+        throw new Error(`No live agent is bound to ${capability.subject}`);
+      }
+      return toolResult(this.status.appendAgentReport({
+        subject: capability.subject,
+        agentId: agent.id,
+        role: capability.role,
+        capabilityEpoch: capability.epoch,
+        toolSessionId: agent.toolSessionId ?? null,
+      }, input, new Date()), "statusReport");
+    });
+
+    server.registerTool("hive_terminal_observe", {
+      title: "Observe bounded terminal state",
+      description:
+        "Read self terminal metadata, or explicitly authorized active-screen text. This cannot focus, attach, resize, acquire input, refresh status, or trigger delivery.",
+      inputSchema: HiveTerminalObserveInputSchema,
+    }, async (input) => {
+      if (this.sessionHost === null || this.resolveSessionLocator === null) {
+        throw new Error("SessionHost terminal observation is unavailable");
+      }
+      const locator = await this.resolveSessionLocator(input.sessionId, input.generation);
+      if (
+        locator === null || locator.sessionId !== input.sessionId ||
+        locator.generation !== input.generation ||
+        locator.instanceId !== this.status.instanceId ||
+        locator.subject.kind !== "agent"
+      ) {
+        throw new Error("No exact terminal generation matches the observation request");
+      }
+      const target = this.db.getAgentById(locator.subject.agentId);
+      if (target === null) throw new Error("Terminal subject is unknown");
+      this.authorizeTool(
+        capability,
+        "hive_terminal_observe",
+        "terminal:observe",
+        target.name,
+      );
+      const readerAgentId = this.db.getLiveAgentByName(capability.subject)?.id ?? null;
+      if (!permitsTerminalObservation(
+        capability,
+        readerAgentId,
+        locator.subject.agentId,
+        input.include,
+      )) {
+        throw new Error("Terminal observation scope was not granted");
+      }
+      const capture = await this.sessionHost.capture(locator, {
+        include: input.include,
+        maxRows: input.maxRows,
+      });
+      const visibleCapture = input.include === "metadata"
+        ? { ...capture, text: null }
+        : capture;
+      let auditEventSeq: string | null = null;
+      if (input.include === "visible-text") {
+        const rowCount = capture.text === null || capture.text.length === 0
+          ? 0
+          : Math.min(input.maxRows, capture.text.split("\n").length);
+        auditEventSeq = this.status.appendObservationAudit({
+          reader: capability.subject,
+          readerRole: capability.role,
+          subjectAgentId: locator.subject.agentId,
+          subjectGeneration: locator.generation,
+          rowCount,
+          reason: `capability:${capability.id}`,
+          observedAt: new Date().toISOString(),
+        }).seq;
+      }
+      return toolResult({ capture: visibleCapture, auditEventSeq }, "terminalObservation");
     });
 
     server.registerTool("hive_preserve_branch", {
@@ -3676,6 +3814,7 @@ export class HiveDaemon {
             }`,
           );
         }
+        this.status.openAssignment(persisted.id, persisted.createdAt);
         // An agent spawned to test a fix that is not in the running binary is
         // wasted money, so a spawn that Hive cannot vouch for carries the reason
         // with it. Warn, never block: the caller stays in control.
