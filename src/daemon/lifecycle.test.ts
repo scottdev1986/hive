@@ -21,6 +21,11 @@ import { hiveInstanceSuffix } from "./tmux-sessions";
 import type { DaemonHandshake } from "./handshake";
 import { handshakeMismatch } from "./handshake";
 
+const fixtureProcessIdentity = (pid: number) => ({
+  startToken: `${pid}:0`,
+  executablePath: "/fixture/hive",
+});
+
 const handshake: DaemonHandshake = {
   productVersion: "0.1.0",
   buildHash: "current-build",
@@ -73,13 +78,18 @@ describe("daemon lifecycle", () => {
     const home = mkdtempSync(join(tmpdir(), "hive-lifecycle-lock-"));
     process.env.HIVE_HOME = home;
     try {
-      await acquireDaemonLock(10101, () => true);
+      await acquireDaemonLock(10101, () => true, fixtureProcessIdentity);
       expect(getDaemonLockPath()).toEqual(join(home, "daemon.lock"));
-      await expect(acquireDaemonLock(20202, () => true)).rejects.toThrow(
+      expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toMatchObject({
+        pid: 10101,
+        startToken: "10101:0",
+        executablePath: "/fixture/hive",
+      });
+      await expect(acquireDaemonLock(20202, () => true, fixtureProcessIdentity)).rejects.toThrow(
         "already starting or running",
       );
       releaseDaemonLock(10101);
-      await acquireDaemonLock(20202, () => true);
+      await acquireDaemonLock(20202, () => true, fixtureProcessIdentity);
       releaseDaemonLock(20202);
     } finally {
       rmSync(home, { recursive: true, force: true });
@@ -94,7 +104,7 @@ describe("daemon lifecycle", () => {
     process.env.HIVE_HOME = home;
     try {
       writeFileSync(getDaemonLockPath(), "not-json\n");
-      await expect(acquireDaemonLock(20202, () => false)).rejects.toThrow(
+      await expect(acquireDaemonLock(20202, () => false, fixtureProcessIdentity)).rejects.toThrow(
         "ownership is unknown",
       );
       expect(readFileSync(getDaemonLockPath(), "utf8")).toBe("not-json\n");
@@ -116,7 +126,7 @@ describe("daemon lifecycle", () => {
     };
     try {
       writeFileSync(getDaemonLockPath(), `${JSON.stringify(lock)}\n`);
-      await expect(acquireDaemonLock(20202, () => true)).rejects.toThrow(
+      await expect(acquireDaemonLock(20202, () => true, fixtureProcessIdentity)).rejects.toThrow(
         "ownership is unknown",
       );
       expect(JSON.parse(readFileSync(getDaemonLockPath(), "utf8"))).toEqual(lock);
@@ -141,7 +151,7 @@ describe("daemon lifecycle", () => {
       await expect(acquireDaemonLock(20202, (pid) => {
         probed.push(pid);
         return false;
-      })).rejects.toThrow("ownership is unknown");
+      }, fixtureProcessIdentity)).rejects.toThrow("ownership is unknown");
       expect(probed).toEqual([]);
       expect(existsSync(getDaemonLockPath())).toBe(true);
     } finally {

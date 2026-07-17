@@ -11,7 +11,8 @@
   },
   "scripts": {
     "typecheck": "tsc --noEmit",
-    "test": "bun test",
+    "test": "bun test && bun run test:sessiond",
+    "test:sessiond": "native/sessiond/test.sh",
     "dev": "bun run src/cli.ts",
     "build:release": "bun run src/release/build.ts",
     "release:plan": "bun run src/release/plan-cli.ts"

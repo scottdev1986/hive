@@ -1,5 +1,6 @@
 import { mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { resolve } from "node:path";
+import { dlopen, FFIType, ptr } from "bun:ffi";
 import { IS_RELEASE_BUILD } from "../version";
 import { getHiveHome } from "./db";
 import {
@@ -26,6 +27,43 @@ interface DaemonLock {
   readonly pid: number;
   readonly instanceId: string;
   readonly startedAt: string;
+  readonly startToken?: string;
+  readonly executablePath?: string;
+}
+
+export interface DaemonProcessIdentity {
+  readonly startToken: string;
+  readonly executablePath: string;
+}
+
+/** §21 PID identity: PROC_PIDTBSDINFO start seconds:microseconds + proc_pidpath. */
+export function macProcessIdentity(pid: number): DaemonProcessIdentity {
+  const libSystem = dlopen("/usr/lib/libSystem.B.dylib", {
+    proc_pidinfo: {
+      args: [FFIType.i32, FFIType.i32, FFIType.u64, FFIType.ptr, FFIType.i32],
+      returns: FFIType.i32,
+    },
+    proc_pidpath: {
+      args: [FFIType.i32, FFIType.ptr, FFIType.u32],
+      returns: FFIType.i32,
+    },
+  });
+  try {
+    const bsdInfo = Buffer.alloc(136);
+    const infoBytes = libSystem.symbols.proc_pidinfo(pid, 3, 0, ptr(bsdInfo), bsdInfo.length);
+    if (infoBytes !== bsdInfo.length) throw new Error(`Could not inspect process start token for pid ${pid}`);
+    const path = Buffer.alloc(4096);
+    const pathBytes = libSystem.symbols.proc_pidpath(pid, ptr(path), path.length);
+    if (pathBytes <= 0) throw new Error(`Could not inspect executable path for pid ${pid}`);
+    const seconds = bsdInfo.readBigUInt64LE(120);
+    const microseconds = bsdInfo.readBigUInt64LE(128);
+    return {
+      startToken: `${seconds}:${microseconds}`,
+      executablePath: path.subarray(0, pathBytes).toString("utf8"),
+    };
+  } finally {
+    libSystem.close();
+  }
 }
 
 type FileEvidence<T> =
@@ -49,7 +87,10 @@ function readDaemonLock(hiveHome = getHiveHome()): FileEvidence<DaemonLock> {
     if (
       typeof lock.pid !== "number" || !Number.isSafeInteger(lock.pid) ||
       lock.pid <= 0 || typeof lock.instanceId !== "string" ||
-      typeof lock.startedAt !== "string"
+      typeof lock.startedAt !== "string" ||
+      !(lock.startToken === undefined || typeof lock.startToken === "string") ||
+      !(lock.executablePath === undefined || typeof lock.executablePath === "string") ||
+      ((lock.startToken === undefined) !== (lock.executablePath === undefined))
     ) return { state: "unknown" };
     return { state: "valid", value: lock as unknown as DaemonLock };
   } catch {
@@ -107,7 +148,8 @@ function removeLockIfOwned(lock: DaemonLock): boolean {
   const current = evidence.value;
   if (
     current.pid !== lock.pid || current.instanceId !== lock.instanceId ||
-    current.startedAt !== lock.startedAt
+    current.startedAt !== lock.startedAt || current.startToken !== lock.startToken ||
+    current.executablePath !== lock.executablePath
   ) return false;
   rmSync(getDaemonLockPath(), { force: true });
   const remaining = readDaemonLock();
@@ -115,7 +157,9 @@ function removeLockIfOwned(lock: DaemonLock): boolean {
   return remaining.state === "valid" && (
     remaining.value.pid !== lock.pid ||
     remaining.value.instanceId !== lock.instanceId ||
-    remaining.value.startedAt !== lock.startedAt
+    remaining.value.startedAt !== lock.startedAt ||
+    remaining.value.startToken !== lock.startToken ||
+    remaining.value.executablePath !== lock.executablePath
   );
 }
 
@@ -153,12 +197,16 @@ async function lockHasLiveHandshake(lock: DaemonLock): Promise<boolean> {
 export async function acquireDaemonLock(
   pid = process.pid,
   isAlive: (pid: number) => boolean = processIsAlive,
+  processIdentity: (pid: number) => DaemonProcessIdentity = macProcessIdentity,
 ): Promise<void> {
   mkdirSync(getHiveHome(), { recursive: true });
+  const identity = processIdentity(pid);
   const lock: DaemonLock = {
     pid,
     instanceId: hiveInstanceSuffix(),
     startedAt: new Date().toISOString(),
+    startToken: identity.startToken,
+    executablePath: identity.executablePath,
   };
   for (let attempt = 0; attempt < 3; attempt += 1) {
     try {
