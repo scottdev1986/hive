@@ -1453,6 +1453,10 @@ pub const WireRecoveryConnector = struct {
 };
 
 pub const HostLaunchReadback = struct {
+    /// During launch only, expires_mono_ns is the host-validated remaining
+    /// lease duration (0 < value <= 15s), not a deadline in the broker's
+    /// process-relative clock. The broker replaces it with its own absolute
+    /// attaching deadline in the copy admitted to Registry.
     record: HostRecord,
     record_json: []const u8,
     created_payload: []u8,
