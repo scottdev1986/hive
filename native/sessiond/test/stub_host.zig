@@ -532,7 +532,7 @@ test "security corpus rejects replay stale generation and foreign instance" {
     );
 }
 
-test "disk recovery uses real host wire and publishes the challenged lease" {
+test "TERMINATED response does not prove the still-live host exited" {
     var root_storage: [48]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/h{x}", .{std.crypto.random.int(u32)});
     try std.fs.makeDirAbsolute(root);
@@ -609,7 +609,7 @@ test "disk recovery uses real host wire and publishes the challenged lease" {
         record.geometry,
         now,
     ) == null);
-    try std.testing.expectEqual(broker.TerminationState.terminated, recovered.registry.terminate(
+    try std.testing.expectEqual(broker.TerminationState.unknown, recovered.registry.terminate(
         record.locator,
         .{
             .mode = "graceful",
@@ -617,6 +617,7 @@ test "disk recovery uses real host wire and publishes the challenged lease" {
             .request_id = "req_018f1e90-7b5a-7cc0-8000-000000000004",
         },
     ));
+    _ = try broker.inspectProcess(record.host_pid);
     thread.join();
     try std.testing.expect(!server.failed.load(.acquire));
 }
@@ -650,6 +651,19 @@ test "wire host control rejects a locator before connecting" {
         .reason = "wrong locator",
         .request_id = "req_018f1e90-7b5a-7cc0-8000-000000000004",
     }).verification_complete);
+}
+
+test "exact host identity absence requires a missing PID or changed start token" {
+    const process = try broker.inspectProcess(c.getpid());
+    var start_token_storage: [64]u8 = undefined;
+    const start_token = try broker.formatStartToken(process.start_token, &start_token_storage);
+    try std.testing.expectEqual(
+        broker.ExactProcessPresence.present,
+        broker.observeExactProcess(c.getpid(), start_token),
+    );
+    try std.testing.expect(!broker.waitForExactProcessAbsence(c.getpid(), start_token));
+    try std.testing.expect(broker.waitForExactProcessAbsence(c.getpid(), "0:0"));
+    try std.testing.expect(broker.waitForExactProcessAbsence(std.math.maxInt(i32), "0:0"));
 }
 
 test "broker launch accepts visibility expiry and rejects attach-grant expiry" {

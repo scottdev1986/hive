@@ -8,10 +8,12 @@ test {
 
 const c = @cImport({
     @cInclude("libproc.h");
+    @cInclude("signal.h");
     @cInclude("sys/proc_info.h");
     @cInclude("sys/socket.h");
     @cInclude("sys/time.h");
     @cInclude("sys/un.h");
+    @cInclude("sys/wait.h");
     @cInclude("unistd.h");
 });
 
@@ -74,6 +76,42 @@ pub fn inspectProcess(pid: i32) !ObservedProcess {
     if (path_len <= 0) return error.PeerExecutableUnavailable;
     result.executable_len = @intCast(path_len);
     return result;
+}
+
+pub const ExactProcessPresence = enum { present, absent, unknown };
+
+pub fn observeExactProcess(pid: i32, expected_start_token: []const u8) ExactProcessPresence {
+    if (pid <= 0 or expected_start_token.len == 0) return .unknown;
+    const observed = inspectProcess(pid) catch {
+        const rc = c.kill(pid, 0);
+        if (rc == 0 or std.posix.errno(rc) != .SRCH) return .unknown;
+        return .absent;
+    };
+    var token_storage: [64]u8 = undefined;
+    const token = formatStartToken(observed.start_token, &token_storage) catch return .unknown;
+    if (!std.mem.eql(u8, token, expected_start_token)) return .absent;
+
+    var status: c_int = 0;
+    const waited = c.waitpid(pid, &status, c.WNOHANG);
+    if (waited == pid) return .absent;
+    if (waited == 0) return .present;
+    if (std.posix.errno(waited) != .CHILD) return .unknown;
+
+    const rc = c.kill(pid, 0);
+    if (rc == 0) return .present;
+    return if (std.posix.errno(rc) == .SRCH) .absent else .unknown;
+}
+
+const host_exit_observation_timeout_ns = 250 * std.time.ns_per_ms;
+const host_exit_poll_interval_ns = 5 * std.time.ns_per_ms;
+
+pub fn waitForExactProcessAbsence(pid: i32, expected_start_token: []const u8) bool {
+    var timer = std.time.Timer.start() catch return false;
+    while (true) {
+        if (observeExactProcess(pid, expected_start_token) == .absent) return true;
+        if (timer.read() >= host_exit_observation_timeout_ns) return false;
+        std.Thread.sleep(host_exit_poll_interval_ns);
+    }
 }
 
 pub const ObservedPeer = struct {
@@ -1237,7 +1275,7 @@ pub const WireHostClient = struct {
             payload,
         )) return error.InvalidHostRequest;
         const stream = try self.connect();
-        defer stream.close();
+        errdefer stream.close();
         const response = try self.exchange(
             stream,
             2,
@@ -1246,6 +1284,7 @@ pub const WireHostClient = struct {
             generated.frame_type.terminated,
             generated.wire_schema.terminated_payload,
         );
+        stream.close();
         defer self.allocator.free(response);
         var parsed = try std.json.parseFromSlice(WireTerminationReadback, self.allocator, response, .{
             .ignore_unknown_fields = true,
@@ -1253,16 +1292,20 @@ pub const WireHostClient = struct {
         defer parsed.deinit();
         const response_locator = try locatorFromDisk(parsed.value.locator);
         if (!sameLocator(locator, response_locator)) return error.InvalidHostResponse;
-        // TODO(WP4): map the real host's per-root exit and survivor evidence
-        // into TerminationReadback without synthesizing proof from state alone.
         if (std.mem.eql(u8, parsed.value.state, "terminated") and
             parsed.value.survivors.len == 0 and parsed.value.errors.len == 0)
+        {
+            const host_exited = waitForExactProcessAbsence(
+                self.expected_record.host_pid,
+                self.expected_record.host_start_token,
+            );
             return .{
                 .pty_closed = true,
-                .host_exited = true,
-                .verification_complete = true,
+                .host_exited = host_exited,
+                .verification_complete = host_exited,
                 .survivor_count = 0,
             };
+        }
         if (std.mem.eql(u8, parsed.value.state, "survivors"))
             return .{
                 .pty_closed = false,
