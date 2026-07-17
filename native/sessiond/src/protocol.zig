@@ -555,12 +555,18 @@ fn validateString(string: []const u8, schema: std.json.ObjectMap) bool {
     const codepoints = std.unicode.utf8CountCodepoints(string) catch return false;
     if (schema.get("minLength")) |minimum| if (codepoints < (numberAsUsize(minimum) orelse return false)) return false;
     if (schema.get("maxLength")) |maximum| if (codepoints > (numberAsUsize(maximum) orelse return false)) return false;
+    var format_validated = false;
     if (schema.get("format")) |format_value| switch (format_value) {
         .string => |format| {
             if (std.mem.eql(u8, format, "hive-uint64-decimal")) {
                 _ = std.fmt.parseInt(u64, string, 10) catch return false;
+                format_validated = true;
             } else if (std.mem.eql(u8, format, "date-time")) {
                 if (!rfc3339Milliseconds(string)) return false;
+                format_validated = true;
+            } else if (std.mem.eql(u8, format, "uuid")) {
+                if (!standardUuid(string)) return false;
+                format_validated = true;
             } else return false;
         },
         else => return false,
@@ -570,7 +576,11 @@ fn validateString(string: []const u8, schema: std.json.ObjectMap) bool {
             .string => |pattern| pattern,
             else => return false,
         };
-        if (!matchesKnownPattern(string, pattern)) return false;
+        // Known patterns always apply (e.g. positive decimal is stricter than format alone).
+        // Unknown Zod-emitted patterns are accepted only when a recognized format already validated.
+        if (matchesKnownPattern(string, pattern)) |matched| {
+            if (!matched) return false;
+        } else if (!format_validated) return false;
     }
     return true;
 }
@@ -626,7 +636,8 @@ fn jsonEqual(left: std.json.Value, right: std.json.Value) bool {
     };
 }
 
-fn matchesKnownPattern(string: []const u8, pattern: []const u8) bool {
+/// Returns null when the pattern is not in the native whitelist.
+fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
     if (std.mem.eql(u8, pattern, "^[0-9a-f]{64}$")) return lowercaseHex(string, 64);
     if (std.mem.eql(u8, pattern, "^sha256:[0-9a-f]{64}$"))
         return std.mem.startsWith(u8, string, "sha256:") and lowercaseHex(string[7..], 64);
@@ -636,10 +647,35 @@ fn matchesKnownPattern(string: []const u8, pattern: []const u8) bool {
         const prefix = pattern[1 .. separator + 1];
         return taggedUuidV7(string, prefix);
     }
+    // Zod z.string().uuid() pattern (unprefixed, versions 1-8 plus nil/max).
+    if (std.mem.indexOf(u8, pattern, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8]") != null)
+        return standardUuid(string);
     if (std.mem.eql(u8, pattern, "^\\/.*")) return std.mem.startsWith(u8, string, "/");
+    // Non-negative decimal uint64 (allows 0). From DecimalUint64Schema.
     if (std.mem.startsWith(u8, pattern, "^(?:0|[1-9]")) return std.fmt.parseInt(u64, string, 10) catch null != null;
+    // Positive decimal uint64 (rejects 0 / leading zeros). From PositiveDecimalUint64Schema (status spine).
+    if (std.mem.eql(u8, pattern, "^(?:[1-9][0-9]{0,19})$")) {
+        if (string.len == 0 or string[0] == '0') return false;
+        return std.fmt.parseInt(u64, string, 10) catch null != null;
+    }
     if (std.mem.indexOf(u8, pattern, "\\d{3}(?:Z))$") != null) return rfc3339Milliseconds(string);
-    return false;
+    return null;
+}
+
+fn standardUuid(string: []const u8) bool {
+    if (std.mem.eql(u8, string, "00000000-0000-0000-0000-000000000000")) return true;
+    if (std.mem.eql(u8, string, "ffffffff-ffff-ffff-ffff-ffffffffffff")) return true;
+    if (string.len != 36) return false;
+    for (string, 0..) |byte, index| {
+        if (index == 8 or index == 13 or index == 18 or index == 23) {
+            if (byte != '-') return false;
+        } else if (!std.ascii.isHex(byte)) return false;
+    }
+    const version = string[14];
+    if (version < '1' or version > '8') return false;
+    const variant = string[19];
+    const variant_lower = std.ascii.toLower(variant);
+    return variant_lower == '8' or variant_lower == '9' or variant_lower == 'a' or variant_lower == 'b';
 }
 
 fn lowercaseHex(string: []const u8, expected: usize) bool {
