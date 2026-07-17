@@ -22,6 +22,7 @@ import {
   STATUS_CONTRACT,
   STATUS_WIRE_SCHEMAS,
 } from "../../src/schemas/status-envelope";
+import { HV1_CAPABILITY_WIRE_SCHEMAS } from "../../src/schemas/capability";
 import {
   MESSAGE_TERMINAL_CONTRACT,
   MESSAGE_TERMINAL_WIRE_SCHEMAS,
@@ -44,6 +45,7 @@ export const GENERATED_FILES = {
 export const WIRE_SCHEMA_CATALOG = {
   ...SESSION_WIRE_SCHEMAS,
   ...STATUS_WIRE_SCHEMAS,
+  ...HV1_CAPABILITY_WIRE_SCHEMAS,
   ...MESSAGE_TERMINAL_WIRE_SCHEMAS,
 } as const;
 
@@ -61,6 +63,7 @@ function renderSchemaDocument(): string {
     generatedFrom: [
       "src/schemas/session-protocol.ts",
       "src/schemas/status-envelope.ts",
+      "src/schemas/capability.ts",
       "src/schemas/message-envelope.ts",
     ],
     schemas,

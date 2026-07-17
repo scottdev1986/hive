@@ -3,6 +3,7 @@ import {
   DecimalUint64Schema,
   PositiveGenerationSchema,
   Rfc3339UtcMillisecondsSchema,
+  Sha256HexSchema,
   domainUuidV7Schema,
 } from "./session-protocol";
 
@@ -60,6 +61,12 @@ export const STATUS_REDUCER_CONTRACT = {
   comparison: "canonical-json-after-every-prefix-and-permutation",
 } as const;
 
+export const WORKSPACE_SNAPSHOT_CONTRACT = {
+  digestOf: "canonical-json-entities-code-unit-key-order",
+  verify: ["schema", "content-sha256", "seq-monotonicity"],
+  resumeAt: "seq+1",
+} as const;
+
 export const WorkspaceEventV2Schema = z.strictObject({
   schemaVersion: z.literal(2),
   eventId: domainUuidV7Schema("evt"),
@@ -82,7 +89,57 @@ export const WorkspaceEventV2Schema = z.strictObject({
 });
 export type WorkspaceEventV2 = z.infer<typeof WorkspaceEventV2Schema>;
 
+// Shape adjudicated for WP7: §24 required a schema/hash/high-water snapshot
+// without fixing the wire fields. The snapshot is a projection checkpoint,
+// never a second event log.
+export const WorkspaceSnapshotV2Schema = z.strictObject({
+  schemaVersion: z.literal(2),
+  instanceId: z.string().min(1),
+  seq: DecimalUint64Schema,
+  entities: z.array(z.strictObject({
+    kind: z.string().min(1),
+    id: z.string().min(1),
+    generation: PositiveGenerationSchema.optional(),
+    entityRevision: DecimalUint64Schema,
+    projection: z.record(z.string(), z.unknown()),
+  })),
+  createdAt: Rfc3339UtcMillisecondsSchema,
+  contentSha256: Sha256HexSchema,
+});
+export type WorkspaceSnapshotV2 = z.infer<typeof WorkspaceSnapshotV2Schema>;
+
+const PositiveDecimalUint64Schema = z.string()
+  .regex(/^(?:[1-9][0-9]{0,19})$/)
+  .refine(
+    (value) => BigInt(value) <= 18_446_744_073_709_551_615n,
+    "must fit in an unsigned 64-bit integer",
+  ).meta({ format: "hive-uint64-decimal" });
+
+// The minimal flat C0 record. The Queen's Hive extends this later; status must
+// not infer task, review, gate, or hierarchy state from it.
+const FlatAssignmentCommonShape = {
+  assignmentId: domainUuidV7Schema("asg"),
+  agentId: z.string().min(1),
+  assignmentGeneration: PositiveDecimalUint64Schema,
+  openedAt: Rfc3339UtcMillisecondsSchema,
+} as const;
+
+export const FlatAssignmentSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    ...FlatAssignmentCommonShape,
+    state: z.literal("open"),
+    closedAt: z.null(),
+  }),
+  z.strictObject({
+    ...FlatAssignmentCommonShape,
+    state: z.literal("closed"),
+    closedAt: Rfc3339UtcMillisecondsSchema,
+  }),
+]);
+export type FlatAssignment = z.infer<typeof FlatAssignmentSchema>;
+
 const StatusUpdateCommonShape = {
+  requestId: domainUuidV7Schema("req"),
   assignmentId: domainUuidV7Schema("asg"),
   assignmentGeneration: DecimalUint64Schema,
   progress: z.number().int().min(0).max(100).optional(),
@@ -130,6 +187,8 @@ export type HiveTerminalObserveInput = z.infer<typeof HiveTerminalObserveInputSc
 
 export const STATUS_WIRE_SCHEMAS = {
   workspaceEventV2: WorkspaceEventV2Schema,
+  workspaceSnapshotV2: WorkspaceSnapshotV2Schema,
+  flatAssignment: FlatAssignmentSchema,
   hiveUpdateStatusInput: HiveUpdateStatusInputSchema,
   hiveTerminalObserveInput: HiveTerminalObserveInputSchema,
 } as const;
@@ -141,4 +200,5 @@ export const STATUS_CONTRACT = {
   limits: STATUS_LIMITS,
   permissions: STATUS_PERMISSIONS,
   reducer: STATUS_REDUCER_CONTRACT,
+  snapshot: WORKSPACE_SNAPSHOT_CONTRACT,
 } as const;

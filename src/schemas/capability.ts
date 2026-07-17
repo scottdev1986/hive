@@ -2,6 +2,49 @@ import { createHash } from "node:crypto";
 import { z } from "zod";
 
 /**
+ * The narrow hv1 authorization vocabulary used by terminal observation. This
+ * is deliberately not a general policy language: unknown constraint keys are
+ * rejected and absence never grants access.
+ */
+export const Hv1CapabilityConstraintsSchema = z.strictObject({
+  content: z.literal(true).optional(),
+  scope: z.literal("operator").optional(),
+});
+export type Hv1CapabilityConstraints = z.infer<
+  typeof Hv1CapabilityConstraintsSchema
+>;
+
+const Hv1CapabilityCommonShape = {
+  id: z.string().uuid(),
+  subject: z.string().min(1),
+  role: z.enum(["operator", "orchestrator", "writer", "reader"]),
+  epoch: z.number().int().nonnegative(),
+  issuedAt: z.iso.datetime({ offset: true }),
+  expiresAt: z.iso.datetime({ offset: true }),
+  revokedAt: z.iso.datetime({ offset: true }).nullable(),
+} as const;
+
+export const Hv1CapabilityRecordSchema = z.union([
+  z.strictObject({
+    ...Hv1CapabilityCommonShape,
+    constraints: z.strictObject({ content: z.literal(true).optional() }).optional(),
+  }),
+  z.strictObject({
+    ...Hv1CapabilityCommonShape,
+    constraints: z.strictObject({
+      content: z.literal(true).optional(),
+      scope: z.literal("operator"),
+    }),
+    subjects: z.array(z.string().min(1)).min(1),
+  }),
+]);
+export type Hv1CapabilityRecord = z.infer<typeof Hv1CapabilityRecordSchema>;
+
+export const HV1_CAPABILITY_WIRE_SCHEMAS = {
+  hv1CapabilityRecord: Hv1CapabilityRecordSchema,
+} as const;
+
+/**
  * Capability records: what the providers themselves say about the models an
  * account can launch.
  *

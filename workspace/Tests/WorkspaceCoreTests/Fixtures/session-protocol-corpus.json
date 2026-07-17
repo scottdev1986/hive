@@ -470,6 +470,7 @@
       "name": "status update",
       "schema": "hiveUpdateStatusInput",
       "value": {
+        "requestId": "req_018f1e90-7b5a-7cc0-8000-000000000004",
         "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
         "assignmentGeneration": "42",
         "phase": "testing",
@@ -527,6 +528,60 @@
         "evidenceRefs": [
           "session-event:1"
         ]
+      }
+    },
+    {
+      "name": "workspace snapshot v2",
+      "schema": "workspaceSnapshotV2",
+      "value": {
+        "schemaVersion": 2,
+        "instanceId": "hive-fixture",
+        "seq": "2",
+        "entities": [
+          {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3,
+            "entityRevision": "2",
+            "projection": {
+              "turnState": "working"
+            }
+          }
+        ],
+        "createdAt": "2026-07-16T12:00:00.000Z",
+        "contentSha256": "0000000000000000000000000000000000000000000000000000000000000000"
+      }
+    },
+    {
+      "name": "flat assignment",
+      "schema": "flatAssignment",
+      "value": {
+        "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
+        "agentId": "agent-fixture",
+        "assignmentGeneration": "1",
+        "state": "open",
+        "openedAt": "2026-07-16T12:00:00.000Z",
+        "closedAt": null
+      }
+    },
+    {
+      "name": "hv1 capability constraints",
+      "schema": "hv1CapabilityRecord",
+      "value": {
+        "id": "018f1e90-7b5a-7cc0-8000-000000000008",
+        "subject": "operator",
+        "role": "operator",
+        "epoch": 0,
+        "constraints": {
+          "content": true,
+          "scope": "operator"
+        },
+        "subjects": [
+          "agent-fixture"
+        ],
+        "issuedAt": "2026-07-16T12:00:00.000Z",
+        "expiresAt": "2026-07-17T12:00:00.000Z",
+        "revokedAt": null
       }
     },
     {
@@ -1946,6 +2001,7 @@
       "name": "blocked status requires blocker",
       "schema": "hiveUpdateStatusInput",
       "value": {
+        "requestId": "req_018f1e90-7b5a-7cc0-8000-000000000004",
         "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
         "assignmentGeneration": "42",
         "phase": "blocked",
@@ -2032,6 +2088,74 @@
         "evidenceRefs": [
           "session-event:1"
         ]
+      }
+    },
+    {
+      "name": "snapshot rejects malformed digest",
+      "schema": "workspaceSnapshotV2",
+      "value": {
+        "schemaVersion": 2,
+        "instanceId": "hive-fixture",
+        "seq": "2",
+        "entities": [
+          {
+            "kind": "agent",
+            "id": "agent-fixture",
+            "generation": 3,
+            "entityRevision": "2",
+            "projection": {
+              "turnState": "working"
+            }
+          }
+        ],
+        "createdAt": "2026-07-16T12:00:00.000Z",
+        "contentSha256": "bad"
+      }
+    },
+    {
+      "name": "assignment generation starts at one",
+      "schema": "flatAssignment",
+      "value": {
+        "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
+        "agentId": "agent-fixture",
+        "assignmentGeneration": "0",
+        "state": "open",
+        "openedAt": "2026-07-16T12:00:00.000Z",
+        "closedAt": null
+      }
+    },
+    {
+      "name": "operator scope requires subjects",
+      "schema": "hv1CapabilityRecord",
+      "value": {
+        "id": "018f1e90-7b5a-7cc0-8000-000000000008",
+        "subject": "operator",
+        "role": "operator",
+        "epoch": 0,
+        "constraints": {
+          "content": true,
+          "scope": "operator"
+        },
+        "issuedAt": "2026-07-16T12:00:00.000Z",
+        "expiresAt": "2026-07-17T12:00:00.000Z",
+        "revokedAt": null
+      }
+    },
+    {
+      "name": "status update requires stable request id",
+      "schema": "hiveUpdateStatusInput",
+      "value": {
+        "assignmentId": "asg_018f1e90-7b5a-7cc0-8000-000000000000",
+        "assignmentGeneration": "42",
+        "phase": "testing",
+        "progress": 80,
+        "summary": "Running the shared contract corpus",
+        "blocker": null,
+        "evidenceRefs": [
+          "event:fixture"
+        ],
+        "nextCheckpoint": "Cross-language parity",
+        "freshForSeconds": 120
       }
     },
     {

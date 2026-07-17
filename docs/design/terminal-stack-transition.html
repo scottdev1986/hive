@@ -1480,6 +1480,20 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
   data: Readonly&lt;Record&lt;string, unknown&gt;&gt;;
 }&gt;;</pre>
 
+        <article class="panel wide">
+          <h3>Status contract additions — shape adjudicated; review required</h3>
+          <pre aria-label="Status snapshot, assignment, and capability additions">WorkspaceSnapshotV2 = {
+  schemaVersion: 2, instanceId, seq,
+  entities: [{ kind, id, generation?, entityRevision, projection }],
+  createdAt, contentSha256
+}
+FlatAssignment = {
+  assignmentId, agentId, assignmentGeneration, state: "open|closed",
+  openedAt, closedAt
+}</pre>
+          <p>The snapshot digest is SHA-256 over canonical JSON of <code>entities</code> with code-unit-sorted keys; consumers verify schema, digest, and a high-water not below their last applied sequence, then resume at <code>seq + 1</code>. Flat Assignment generations start at 1 and advance for each new assignment in one agent lineage. The hv1 constraint vocabulary is closed: <code>content=true</code> grants self visible text, while <code>scope=operator</code> requires an explicit agent-ID allowlist for cross-agent visible text; absent constraints deny. <code>hive_update_status</code> requires an explicit stable <code>requestId</code> (<code>req_</code> UUIDv7); JSON-RPC IDs are not idempotency keys.</p>
+        </article>
+
         <div class="table-wrap compact">
           <table>
             <thead><tr><th>Field</th><th>Authority and precedence</th><th>Freshness rule</th></tr></thead>
@@ -1498,6 +1512,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
           <article class="panel">
             <h3><code>hive_update_status</code></h3>
             <pre aria-label="MCP status update input">{
+  "requestId": "req_…",
   "assignmentId": "asg_…",
   "assignmentGeneration": "42",
   "phase": "planning|implementing|testing|reviewing|blocked|complete",
