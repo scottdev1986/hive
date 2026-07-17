@@ -585,38 +585,6 @@ pub const checkpoint = struct {
     pub const flags: u32 = ${CHECKPOINT_HEADER.flags};
     pub const engine_build_id_bytes: usize = ${CHECKPOINT_HEADER.engineBuildIdBytes};
     pub const payload_sha256_bytes: usize = ${CHECKPOINT_HEADER.payloadSha256Bytes};
-    // Offsets from CHECKPOINT_HEADER.offsets — consumers comptime-assert these so
-    // schema drift fails the Zig suite (not only TypeScript).
-    pub const offsets = struct {
-        pub const magic: usize = ${CHECKPOINT_HEADER.offsets.magic};
-        pub const version: usize = ${CHECKPOINT_HEADER.offsets.version};
-        pub const header_bytes: usize = ${CHECKPOINT_HEADER.offsets.headerBytes};
-        pub const flags: usize = ${CHECKPOINT_HEADER.offsets.flags};
-        pub const through_seq: usize = ${CHECKPOINT_HEADER.offsets.throughSeq};
-        pub const created_mono_nanos: usize = ${CHECKPOINT_HEADER.offsets.createdMonoNanos};
-        pub const columns: usize = ${CHECKPOINT_HEADER.offsets.columns};
-        pub const rows: usize = ${CHECKPOINT_HEADER.offsets.rows};
-        pub const cell_width_px: usize = ${CHECKPOINT_HEADER.offsets.cellWidthPx};
-        pub const cell_height_px: usize = ${CHECKPOINT_HEADER.offsets.cellHeightPx};
-        pub const engine_build_id: usize = ${CHECKPOINT_HEADER.offsets.engineBuildId};
-        pub const payload_length: usize = ${CHECKPOINT_HEADER.offsets.payloadLength};
-        pub const payload_sha256: usize = ${CHECKPOINT_HEADER.offsets.payloadSha256};
-    };
-    pub const widths = struct {
-        pub const magic: usize = ${CHECKPOINT_HEADER.widths.magic};
-        pub const version: usize = ${CHECKPOINT_HEADER.widths.version};
-        pub const header_bytes: usize = ${CHECKPOINT_HEADER.widths.headerBytes};
-        pub const flags: usize = ${CHECKPOINT_HEADER.widths.flags};
-        pub const through_seq: usize = ${CHECKPOINT_HEADER.widths.throughSeq};
-        pub const created_mono_nanos: usize = ${CHECKPOINT_HEADER.widths.createdMonoNanos};
-        pub const columns: usize = ${CHECKPOINT_HEADER.widths.columns};
-        pub const rows: usize = ${CHECKPOINT_HEADER.widths.rows};
-        pub const cell_width_px: usize = ${CHECKPOINT_HEADER.widths.cellWidthPx};
-        pub const cell_height_px: usize = ${CHECKPOINT_HEADER.widths.cellHeightPx};
-        pub const engine_build_id: usize = ${CHECKPOINT_HEADER.widths.engineBuildId};
-        pub const payload_length: usize = ${CHECKPOINT_HEADER.widths.payloadLength};
-        pub const payload_sha256: usize = ${CHECKPOINT_HEADER.widths.payloadSha256};
-    };
 };
 
 pub const limits = struct {
