@@ -10,6 +10,13 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
     });
 
+    const boot_envelope_module = b.createModule(.{
+        .root_source_file = b.path("src/boot_envelope.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    boot_envelope_module.addImport("session_protocol_generated", generated);
+
     const test_module = b.createModule(.{
         .root_source_file = b.path("src/protocol.zig"),
         .target = target,
@@ -18,6 +25,9 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("session_protocol_generated", generated);
 
     const test_step = b.step("test", "Run hive-sessiond tests");
+    const boot_envelope_tests = b.addTest(.{ .root_module = boot_envelope_module });
+    const run_boot_envelope_tests = b.addRunArtifact(boot_envelope_tests);
+    test_step.dependOn(&run_boot_envelope_tests.step);
     const protocol_tests = b.addTest(.{ .root_module = test_module });
     const run_protocol_tests = b.addRunArtifact(protocol_tests);
     test_step.dependOn(&run_protocol_tests.step);
@@ -30,6 +40,7 @@ pub fn build(b: *std.Build) void {
     });
     broker_module.addImport("session_protocol_generated", generated);
     broker_module.addImport("protocol", test_module);
+    broker_module.addImport("boot_envelope", boot_envelope_module);
     const broker_tests = b.addTest(.{ .root_module = broker_module });
     const run_broker_tests = b.addRunArtifact(broker_tests);
     test_step.dependOn(&run_broker_tests.step);
