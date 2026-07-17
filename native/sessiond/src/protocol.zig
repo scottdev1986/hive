@@ -555,18 +555,20 @@ fn validateString(string: []const u8, schema: std.json.ObjectMap) bool {
     const codepoints = std.unicode.utf8CountCodepoints(string) catch return false;
     if (schema.get("minLength")) |minimum| if (codepoints < (numberAsUsize(minimum) orelse return false)) return false;
     if (schema.get("maxLength")) |maximum| if (codepoints > (numberAsUsize(maximum) orelse return false)) return false;
-    var format_validated = false;
+    // date-time is the only format whose check is a strict subset of its Zod patterns;
+    // only it may skip an unknown pattern. hive-uint64-decimal is weaker than its patterns
+    // (parseInt accepts "0"/"007"), so an unknown uint64 pattern must never skip.
+    var date_time_format = false;
     if (schema.get("format")) |format_value| switch (format_value) {
         .string => |format| {
+            if (!knownStringFormat(format)) return false;
             if (std.mem.eql(u8, format, "hive-uint64-decimal")) {
                 _ = std.fmt.parseInt(u64, string, 10) catch return false;
-                format_validated = true;
             } else if (std.mem.eql(u8, format, "date-time")) {
                 if (!rfc3339Milliseconds(string)) return false;
-                format_validated = true;
+                date_time_format = true;
             } else if (std.mem.eql(u8, format, "uuid")) {
                 if (!standardUuid(string)) return false;
-                format_validated = true;
             } else return false;
         },
         else => return false,
@@ -576,11 +578,27 @@ fn validateString(string: []const u8, schema: std.json.ObjectMap) bool {
             .string => |pattern| pattern,
             else => return false,
         };
-        // Known patterns always apply (e.g. positive decimal is stricter than format alone).
-        // Unknown Zod-emitted patterns are accepted only when a recognized format already validated.
         if (matchesKnownPattern(string, pattern)) |matched| {
             if (!matched) return false;
-        } else if (!format_validated) return false;
+        } else if (!date_time_format) return false;
+    }
+    return true;
+}
+
+fn knownStringFormat(format: []const u8) bool {
+    return std.mem.eql(u8, format, "hive-uint64-decimal") or
+        std.mem.eql(u8, format, "date-time") or
+        std.mem.eql(u8, format, "uuid");
+}
+
+/// Whether the validator recognizes this pattern (whitelist hit), or may skip it
+/// only under format date-time (narrow skip rule).
+fn stringConstraintRecognized(format: ?[]const u8, pattern: ?[]const u8) bool {
+    if (format) |name| if (!knownStringFormat(name)) return false;
+    if (pattern) |value| {
+        if (matchesKnownPattern("", value) != null) return true;
+        if (format) |name| if (std.mem.eql(u8, name, "date-time")) return true;
+        return false;
     }
     return true;
 }
@@ -883,6 +901,48 @@ test "every generated control payload corpus case agrees with the canonical sche
                 return error.TestUnexpectedResult;
             }
         }
+    }
+}
+
+test "every schema format and pattern is recognized by the native validator" {
+    // Positive control for validator-vs-schema drift: a new Zod pattern that the
+    // Zig whitelist does not know must fail here, not silently at corpus time.
+    const allocator = std.testing.allocator;
+    var document = try std.json.parseFromSlice(std.json.Value, allocator, generated.schema_fixture, .{});
+    defer document.deinit();
+    const schemas = objectField(document.value, "schemas") orelse return error.TestUnexpectedResult;
+    try assertStringConstraintsRecognized(schemas);
+}
+
+fn assertStringConstraintsRecognized(value: std.json.Value) !void {
+    switch (value) {
+        .object => |object| {
+            const format = blk: {
+                if (object.get("format")) |format_value| switch (format_value) {
+                    .string => |name| break :blk name,
+                    else => return error.TestUnexpectedResult,
+                };
+                break :blk null;
+            };
+            const pattern = blk: {
+                if (object.get("pattern")) |pattern_value| switch (pattern_value) {
+                    .string => |text| break :blk text,
+                    else => return error.TestUnexpectedResult,
+                };
+                break :blk null;
+            };
+            if (format != null or pattern != null) {
+                if (!stringConstraintRecognized(format, pattern)) {
+                    if (format) |name| std.log.err("unrecognized schema format: {s}", .{name});
+                    if (pattern) |text| std.log.err("unrecognized schema pattern: {s}", .{text});
+                    return error.TestUnexpectedResult;
+                }
+            }
+            var iterator = object.iterator();
+            while (iterator.next()) |entry| try assertStringConstraintsRecognized(entry.value_ptr.*);
+        },
+        .array => |array| for (array.items) |item| try assertStringConstraintsRecognized(item),
+        else => {},
     }
 }
 
