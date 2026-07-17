@@ -1283,11 +1283,12 @@ fn socketEvidenceAt(directory: std.fs.Dir, name: []const u8) !broker.SocketEvide
     };
 }
 
-fn requireOwnedDirectory(directory: std.fs.Dir, mode: u16) !void {
+fn requireOwnedDirectory(directory: std.fs.Dir, mode: ?u16) !void {
     const stat = try std.posix.fstat(directory.fd);
     if (stat.uid != std.posix.getuid() or
-        stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR or
-        stat.mode & 0o777 != mode)
+        stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR)
+        return error.DirectorySubstitution;
+    if (mode) |expected| if (stat.mode & 0o777 != expected)
         return error.DirectorySubstitution;
 }
 
@@ -1336,7 +1337,9 @@ pub const HostRuntime = struct {
         defer home.close();
         var runtime = try home.openDir("runtime", .{ .no_follow = true });
         defer runtime.close();
-        try requireOwnedDirectory(runtime, 0o700);
+        // The broker owns `$HIVE_HOME/runtime`; the private authority boundary
+        // begins at runtime/sessiond, which is mode 0700.
+        try requireOwnedDirectory(runtime, null);
         var sessiond = try runtime.openDir("sessiond", .{ .no_follow = true });
         defer sessiond.close();
         try requireOwnedDirectory(sessiond, 0o700);
@@ -3052,6 +3055,42 @@ test "final evidence is O_EXCL and preserves the first writer" {
     const contents = try file.readToEndAlloc(std.testing.allocator, 4096);
     defer std.testing.allocator.free(contents);
     try std.testing.expect(std.mem.indexOf(u8, contents, "\"waitObserved\":true") != null);
+}
+
+test "host runtime accepts the broker layout and rejects a public sessiond directory" {
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(
+        &path_storage,
+        "/tmp/h{x}",
+        .{std.crypto.random.int(u32)},
+    );
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var broker_runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer broker_runtime.deinit();
+    const session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000a1";
+    var directory = try broker_runtime.openHostDirectory(session_id, true);
+    const secret = try broker.createAdoptionSecret(directory);
+    directory.close();
+
+    var home = try std.fs.openDirAbsolute(root, .{});
+    defer home.close();
+    var runtime_parent = try home.openDir("runtime", .{ .no_follow = true });
+    defer runtime_parent.close();
+    try runtime_parent.chmod(0o755);
+    var host_runtime = try HostRuntime.open(
+        std.testing.allocator,
+        root,
+        session_id,
+        secret,
+    );
+    host_runtime.deinit();
+
+    try broker_runtime.directory.chmod(0o755);
+    try std.testing.expectError(
+        error.DirectorySubstitution,
+        HostRuntime.open(std.testing.allocator, root, session_id, secret),
+    );
 }
 
 fn fixtureRegistration() HostRegistration {
