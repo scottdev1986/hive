@@ -211,7 +211,10 @@ final class InputEncodingTests: XCTestCase {
             ),
             let event = NSEvent(cgEvent: cgEvent)
         else {
-            throw XCTSkip("could not synthesize a CGEvent-backed scroll event in this environment")
+            // Fails loudly rather than XCTSkip: skipped-green on a
+            // live-proof gate is false-green (cross-vendor review
+            // 2026-07-17, same policy as the other gate suites).
+            return XCTFail("could not synthesize a CGEvent-backed scroll event — gate 8 live proof requires it")
         }
 
         terminal.scrollWheel(with: event)
@@ -236,6 +239,9 @@ final class InputEncodingTests: XCTestCase {
 
         XCTAssertEqual(engine.keysSentDetail.count, 1, "keyUp must reach the engine at all")
         XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_RELEASE)
+        XCTAssertNil(engine.keysSentDetail[0].text,
+                     "a release must never carry text — real keyAction only embeds its explicit " +
+                     "text: parameter, which keyUp never passes (fidelity audit 2026-07-17)")
     }
 
     // MARK: isARepeat (pre-B1 always sent PRESS)
@@ -315,7 +321,11 @@ final class InputEncodingTests: XCTestCase {
         do {
             surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         } catch {
-            throw XCTSkip("manual surface unavailable in this environment: \(error)")
+            // Fails loudly rather than XCTSkip: skipped-green on a
+            // live-proof gate is false-green (cross-vendor review
+            // 2026-07-17, same policy as the other gate suites).
+            XCTFail("real manual surface required for gate 8 live proof, got: \(error)")
+            throw error
         }
         defer { surface.free() }
         let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)

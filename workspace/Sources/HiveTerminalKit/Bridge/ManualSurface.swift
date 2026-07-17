@@ -280,9 +280,18 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
 
     public func free() {
         guard ownsSurface, let surface = surfaceHandle else { return }
-        ghostty_surface_free(surface)
         surfaceHandle = nil
         ownsSurface = false
+        // ghostty_surface_free mutates app-level state that ghostty_app_tick
+        // (which always runs on the main queue — see GhosttyAppWakeupContext)
+        // also touches, so it must run on that same serial queue: a free from
+        // another thread could otherwise interleave with an in-flight tick.
+        // The pinned Ghostty app frees surfaces on main for the same reason.
+        if Thread.isMainThread {
+            ghostty_surface_free(surface)
+        } else {
+            DispatchQueue.main.sync { ghostty_surface_free(surface) }
+        }
         // callbackContext retained until self deinits — after surface free.
     }
 
@@ -305,17 +314,28 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
 /// wakeup_cb was a no-op, so any Ghostty-internal async work that depends
 /// on a later tick to complete silently never did.
 ///
-/// `app`/`freed` are read-modify-written only inside `runOnMain`, and both
-/// `scheduleTick` and `freeIfNeeded` route their real work through it, so
-/// a tick and a free can never interleave: GCD's main queue is serial, so
-/// once either closure starts running on main it runs to completion (a
+/// `app`/`freed` are read-modify-written only on the main thread, and both
+/// `scheduleTick` and `freeIfNeeded` run their real work there, so a tick
+/// and a free can never interleave: GCD's main queue is serial, so once
+/// either closure starts running on main it runs to completion (a
 /// synchronous `ghostty_app_tick`/`ghostty_app_free` call cannot be
-/// preempted by another main-queue item) before the other can begin. This
-/// is the actual fix — an NSLock held only across `ghostty_app_tick`
-/// itself would risk deadlock if Ghostty synchronously re-enters
-/// `wakeup_cb` from inside a tick (same thread, non-reentrant lock).
+/// preempted by another main-queue item) before the other can begin.
 /// `lock` still guards the fields themselves against non-main readers
 /// (e.g. `bind`), but is never held across a C call into Ghostty.
+///
+/// `scheduleTick` ALWAYS defers via `DispatchQueue.main.async`, even when
+/// already on the main thread — exactly what the pinned Ghostty macOS
+/// app's own `wakeup` does (Ghostty.App.swift). This is load-bearing, not
+/// style: `App.Mailbox.push` (App.zig) invokes `wakeup_cb` synchronously
+/// on the pushing thread, and every surface message chains through it
+/// (apprt/surface.zig), so a main-thread C entry point (e.g.
+/// `ghostty_surface_key` hitting a binding) can invoke `wakeup_cb`
+/// mid-call. An inline tick here would re-enter `ghostty_app_tick` from
+/// inside Ghostty's own stack — including recursively from inside a
+/// tick's own mailbox drain. Upstream never has to survive re-entrant
+/// ticks because its only embedder always defers; ours must too. Deferring
+/// also makes a wakeup arriving during a tick harmless (it just enqueues
+/// the next tick after the current one completes).
 ///
 /// `app` is set only after `ghostty_app_new` succeeds (nothing can call
 /// wakeup before then) and the free body is guaranteed to run at most
@@ -345,20 +365,14 @@ public final class GhosttyAppWakeupContext: @unchecked Sendable {
     /// production; every non-test caller gets the real C call.
     var tickOverride: ((ghostty_app_t) -> Void)?
 
-    private func runOnMain(_ body: @escaping () -> Void) {
-        if Thread.isMainThread {
-            body()
-        } else {
-            DispatchQueue.main.async(execute: body)
-        }
-    }
-
     fileprivate func bind(_ app: ghostty_app_t) {
         lock.lock(); self.app = app; lock.unlock()
     }
 
     fileprivate func scheduleTick() {
-        runOnMain { [weak self] in
+        // Always defer, never tick inline — see the class doc. The pinned
+        // app's own wakeup_cb does exactly this unconditionally.
+        DispatchQueue.main.async { [weak self] in
             guard let self else { return }
             self.lock.lock()
             let app = self.freed ? nil : self.app

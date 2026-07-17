@@ -87,20 +87,54 @@ final class AppWakeupLifecycleTests: XCTestCase {
         XCTAssertEqual(observedApp, owner.app, "the tick must receive the real owning app's handle")
     }
 
-    /// Same-thread call must tick synchronously, not merely enqueue
-    /// forever — the trampoline checks `Thread.isMainThread` and calls
-    /// through directly rather than always dispatching.
-    func testWakeupTrampolineTicksSynchronouslyOnMainThread() throws {
+    /// Services the main run loop so any enqueued main-queue tick gets its
+    /// chance to run. Asserting "no tick happened" without pumping is
+    /// tautological under always-deferred scheduling: the violating block
+    /// would still be sitting unexecuted in the queue.
+    private func pumpMainRunLoop(seconds: TimeInterval) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            RunLoop.main.run(mode: .default, before: deadline)
+        }
+    }
+
+    /// An on-main wakeup must DEFER the tick to a later main-queue turn —
+    /// exactly what the pinned Ghostty app's own `wakeup` does
+    /// (Ghostty.App.swift: unconditional `DispatchQueue.main.async`).
+    /// Fidelity audit (2026-07-17) found the first landed version ticked
+    /// INLINE when already on main and had a test enshrining that: since
+    /// `App.Mailbox.push` (App.zig) invokes `wakeup_cb` synchronously on
+    /// the pushing thread, an inline tick re-enters `ghostty_app_tick`
+    /// from inside whatever Ghostty entry point posted the message —
+    /// including recursively from inside a tick's own mailbox drain —
+    /// a state the upstream code never has to survive because its only
+    /// embedder always defers.
+    func testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp() throws {
         let surface = try makeSurface()
         defer { surface.free() }
         guard let owner = surface.appOwner else {
             return XCTFail("real surface must retain a GhosttyAppOwner")
         }
 
-        var ticked = false
-        owner.wakeupContext.tickOverride = { _ in ticked = true }
+        var tickCount = 0
+        owner.wakeupContext.tickOverride = { _ in tickCount += 1 }
         ghosttyAppWakeupTrampoline(owner.wakeupContext.unownedContextPointer)
-        XCTAssertTrue(ticked, "an on-main call must tick before returning, not merely enqueue")
+
+        // Deterministic: this thread IS main and hasn't serviced the run
+        // loop since the call, so no async main-queue block (ours or a
+        // spontaneous Ghostty wakeup's) can have executed yet. RED if
+        // scheduleTick regresses to inline-on-main.
+        XCTAssertEqual(tickCount, 0,
+                       "an on-main wakeup must defer the tick like the pinned app, never run it inline")
+
+        // And the deferred tick must genuinely execute on a later turn —
+        // RED if scheduleTick regresses to a no-op/never-runs.
+        let deadline = Date().addingTimeInterval(2)
+        while tickCount == 0 && Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertGreaterThanOrEqual(tickCount, 1,
+                                    "the deferred tick must actually execute once the main run loop turns")
     }
 
     /// Positive control: once freed, a wakeup arriving after must be a
@@ -122,6 +156,10 @@ final class AppWakeupLifecycleTests: XCTestCase {
         owner.wakeupContext.tickOverride = { _ in tickCountAfterFree += 1 }
 
         ghosttyAppWakeupTrampoline(owner.wakeupContext.unownedContextPointer)
+        // scheduleTick always defers, so a (wrongly) permitted tick would
+        // only run on a later main-queue turn — service the run loop so a
+        // violation can actually surface before asserting.
+        pumpMainRunLoop(seconds: 0.1)
         XCTAssertEqual(tickCountAfterFree, 0, "a wakeup after free must never reach ghostty_app_tick")
     }
 
@@ -187,6 +225,7 @@ final class AppWakeupLifecycleTests: XCTestCase {
             // wakeup/tick race this test targets.
             record("free-dispatch")
             surface.free()
+            record("surface-free-completed")
             owner.free()
             record("free-completed")
             raceCompleted.fulfill()
@@ -212,10 +251,25 @@ final class AppWakeupLifecycleTests: XCTestCase {
         XCTAssertLessThan(tickEndIndex, freeCompletedIndex,
                           "free() completed before the in-flight tick finished — recorded \(recorded)")
 
+        // Same serialization property for the SURFACE free (fidelity audit
+        // 2026-07-17): ghostty_surface_free mutates app state a concurrent
+        // main-queue tick also touches, so GhosttyManualSurface.free()
+        // must marshal it onto the main queue. If that regresses to
+        // freeing inline on the calling thread, the background thread's
+        // surface.free() returns while main is still inside the tick's
+        // sleep and this goes RED.
+        guard let surfaceFreeIndex = recorded.firstIndex(of: "surface-free-completed") else {
+            return XCTFail("expected surface-free-completed — recorded \(recorded)")
+        }
+        XCTAssertLessThan(tickEndIndex, surfaceFreeIndex,
+                          "ghostty_surface_free completed before the in-flight tick finished — recorded \(recorded)")
+
         // And the trampoline is now a safe no-op — no further ticks recorded.
         var tickCountAfterFree = 0
         owner.wakeupContext.tickOverride = { _ in tickCountAfterFree += 1 }
         ghosttyAppWakeupTrampoline(context)
+        // Deferred scheduling: pump so a violating queued tick could run.
+        pumpMainRunLoop(seconds: 0.1)
         XCTAssertEqual(tickCountAfterFree, 0, "a wakeup arriving after free must not tick again")
     }
 }

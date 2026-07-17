@@ -304,11 +304,14 @@ extension HiveTerminalView {
             key.unshifted_codepoint = codepoint.value
         }
 
-        // event.characters is only a valid property for .keyDown/.keyUp —
-        // NSEvent raises NSInternalInconsistencyException if it's read on a
-        // .flagsChanged event, which never carries text anyway (real
-        // Ghostty's flagsChanged calls keyAction with no text: argument).
-        if event.type == .keyDown || event.type == .keyUp,
+        // Text embeds ONLY on key-down (press/repeat). Real keyAction sets
+        // key.text solely from its explicit `text:` parameter, and keyUp/
+        // flagsChanged never pass one — a release never carries text
+        // (fidelity audit 2026-07-17; embedding it here diverged from the
+        // pinned app). The .keyDown check also keeps event.characters reads
+        // off .flagsChanged events, where NSEvent raises
+        // NSInternalInconsistencyException.
+        if event.type == .keyDown,
            let chars = event.characters, !chars.isEmpty,
            let firstByte = chars.utf8.first, firstByte >= 0x20 {
             chars.withCString { ptr in
