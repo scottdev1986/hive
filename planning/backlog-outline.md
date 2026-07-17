@@ -38,7 +38,7 @@ Parallel tracks (∥ = concurrent):
 - A4 Close/reconnect semantics live-proof: visibility lease, renderer crash → bounded replay; Workspace quit → verified termination of every provider tree (I2).
 
 **Track B — renderer (Swift)** ∥ A
-- B1 Qualify HiveTerminalKit + GhosttyKit build chain: pinned commit, universal XCFramework, patch budget per ADR-0002; fidelity/IME/mouse/resize/copy/search/VoiceOver/GPU lifecycle against real vendor TUIs in a harness.
+- B1 Qualify GhosttyKit build chain + the manual-I/O bridge (FULL SPEC in planning/story-m1-b1-ghosttykit-qualification.md after atlas's B1 pre-review): the six `hive_ghostty_*_v1` exports are a Hive-owned FORK contract the upstream header never promises — 10 P0 gates (manual-mode isolation, terminal-generated replies incl. the known null-handler snapshot defect, threading/lifetime, ABI/build/ship, ordered output, checkpoint/restore incl. full-app-restart proof, rendering/geometry/GPU, input/IME/mouse goldens, action/security matrix, accessibility+operability) + live-proof matrix A–K (K = all three vendor TUIs as black-box compatibility probes only). B1 ends with a qualified manual engine/view bridge + conformance corpus; it does not absorb M2 provider policy.
 - B2 Wire HiveTerminalView into Workspace panes (replaces SwiftTerm attach path); first-responder, selection, accessibility, geometry.
 - B3 New smoke harness driving sessiond+HiveTerminalKit (replaces SmokeRunner/smoke.sh coverage).
 
