@@ -10,18 +10,40 @@ import {
   type TerminalReceiptLevel,
 } from "../../schemas/provider-manifest";
 import { classifyProviderObservation } from "./provider-evidence";
-import { CONFORMANCE_PROBES } from "./__fixtures__/tg4/corpus";
+import {
+  CONFORMANCE_PROBES,
+  EMITTABLE_PROBES,
+  type EmittableProbe,
+} from "./__fixtures__/tg4/corpus";
 
 /**
- * TG4 conformance report derived FROM collector outputs.
- * A "provable-today" row exists only when some probe makes the collector emit
- * that readiness kind or receipt level. No hand-authored contradictions.
+ * TG4 conformance report derived only from emittable probes (adapter-cited
+ * observation shapes) run through classifyProviderObservation.
+ *
+ * A probe is emittable only when it carries non-empty sourceCitations into
+ * adapter/schema source — not because the collector returned a path.
  */
 
-function deriveSurface(surface: ProviderSurfaceId): ProviderConformanceReport["surfaces"][number] {
+function assertEmittable(probe: EmittableProbe): void {
+  if (
+    probe.sourceCitations.length === 0 ||
+    probe.sourceCitations.some((c) => c.length === 0)
+  ) {
+    throw new Error(
+      `probe ${probe.surface}/${probe.label} is not emittable: missing sourceCitations`,
+    );
+  }
+}
+
+function deriveSurface(
+  surface: ProviderSurfaceId,
+): ProviderConformanceReport["surfaces"][number] {
   const probes = CONFORMANCE_PROBES.filter((p) => p.surface === surface);
+  for (const probe of probes) assertEmittable(probe);
+
   const results = probes.map((probe) => ({
     label: probe.label,
+    citations: probe.sourceCitations,
     evidence: classifyProviderObservation(
       probe.surface,
       probe.observation,
@@ -35,14 +57,15 @@ function deriveSurface(surface: ProviderSurfaceId): ProviderConformanceReport["s
       return {
         kind,
         status: "provable-today" as ConformanceLevelStatus,
-        evidence: `collector emitted ${kind} via probe "${hit.label}" (${hit.evidence.observedPath})`,
+        evidence:
+          `emittable probe "${hit.label}" (cited ${hit.citations.join("; ")}) → readiness=${kind}`,
         collectorPath: hit.evidence.observedPath,
       };
     }
     return {
       kind,
       status: "unavailable" as ConformanceLevelStatus,
-      evidence: `no collector probe for ${surface} emits readiness=${kind}`,
+      evidence: `no emittable adapter-cited probe for ${surface} yields readiness=${kind}`,
       collectorPath: null,
     };
   });
@@ -53,7 +76,8 @@ function deriveSurface(surface: ProviderSurfaceId): ProviderConformanceReport["s
       return {
         level,
         status: "provable-today" as ConformanceLevelStatus,
-        evidence: `collector emitted ${level} via probe "${hit.label}" (${hit.evidence.observedPath})`,
+        evidence:
+          `emittable probe "${hit.label}" (cited ${hit.citations.join("; ")}) → receipt=${level}`,
         collectorPath: hit.evidence.observedPath,
       };
     }
@@ -62,8 +86,8 @@ function deriveSurface(surface: ProviderSurfaceId): ProviderConformanceReport["s
       status: "unavailable" as ConformanceLevelStatus,
       evidence:
         level === "transport-written"
-          ? "collector never emits transport-written (sessiond/native commit is WP4 host proof, not adapter observation classification)"
-          : `no collector probe for ${surface} emits receipt=${level}`,
+          ? "no emittable probe yields transport-written (sessiond/native commit is WP4 host proof)"
+          : `no emittable adapter-cited probe for ${surface} yields receipt=${level}`,
       collectorPath: null,
     };
   });
@@ -72,6 +96,13 @@ function deriveSurface(surface: ProviderSurfaceId): ProviderConformanceReport["s
 }
 
 export function buildProviderConformanceReport(): ProviderConformanceReport {
+  // Gate: CONFORMANCE_PROBES must equal the citation-filtered emittable set.
+  if (CONFORMANCE_PROBES.length !== EMITTABLE_PROBES.filter(
+    (p) => p.sourceCitations.length > 0 && p.sourceCitations.every((c) => c.length > 0),
+  ).length) {
+    throw new Error("CONFORMANCE_PROBES diverged from emittable citation filter");
+  }
+
   return ProviderConformanceReportSchema.parse({
     schemaVersion: 1,
     generatedFor: "WP8-early-slice-TG4",
@@ -84,16 +115,14 @@ export function buildProviderConformanceReport(): ProviderConformanceReport {
       "src/adapters/tools/provider-evidence.ts",
     ],
     derivedFrom:
-      "classifyProviderObservation over CONFORMANCE_PROBES (provider-evidence.ts)",
+      "classifyProviderObservation over CONFORMANCE_PROBES (emittable, adapter-cited shapes only)",
     surfaces: PROVIDER_SURFACE_IDS.map(deriveSurface),
   });
 }
 
-/** Lazily built so it always matches live collector behavior. */
 export const PROVIDER_CONFORMANCE_REPORT: ProviderConformanceReport =
   buildProviderConformanceReport();
 
-/** Convenience: which readiness kinds a surface can prove today. */
 export function provableReadiness(
   surface: ProviderSurfaceId,
 ): ReadinessEvidenceKind[] {

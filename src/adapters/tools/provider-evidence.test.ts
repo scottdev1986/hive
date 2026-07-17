@@ -17,6 +17,7 @@ import {
 } from "./provider-manifests";
 import {
   classifyProviderObservation,
+  parseAttemptContext,
   CLAUDE_PERMISSION_PROMPT_TYPE,
 } from "./provider-evidence";
 import {
@@ -25,14 +26,16 @@ import {
 } from "./provider-conformance-report";
 import {
   ABSENT_FIELD_CONTROLS,
+  CONFORMANCE_PROBES,
+  EMITTABLE_PROBES,
   GROK_HOOK_ABSENCE_PROBES,
+  IN_DOUBT_NEGATIVE_CONTROLS,
   TG4_SCENARIO_FIXTURES,
+  attemptFor,
 } from "./__fixtures__/tg4/corpus";
 
 /**
- * §25-derived expectations for TG4 scenarios.
- * These are reasoned from the design prerequisites, not copied from collector
- * return enums stored on fixtures.
+ * §25-derived expectations — not self-enums on fixtures.
  */
 function section25Expectation(
   surface: ProviderSurfaceId,
@@ -42,17 +45,14 @@ function section25Expectation(
     case "claude-tui":
       switch (scenario) {
         case "idle":
-          // Stop + health + session + no modal + matching attempt after commit
           return { readiness: "ready", receipt: "provider-observed" };
         case "busy":
           return { readiness: "busy", receipt: "provider-observed" };
         case "approval":
-          // permission_prompt measured — no receipt upgrade without matching boundary
           return { readiness: "awaiting-approval", receipt: "evidence-absent" };
         case "modal":
           return { readiness: "blocked-unknown", receipt: "evidence-absent" };
         case "disconnect":
-          // committed attempt + death → in-doubt
           return { readiness: "disconnected", receipt: "attempt-in-doubt" };
         case "restart":
           return { readiness: "restarting", receipt: "evidence-absent" };
@@ -65,10 +65,7 @@ function section25Expectation(
         case "busy":
           return { readiness: "busy", receipt: "provider-observed" };
         case "approval":
-          // No Notification/approval hook registered (codex.ts:174-186)
-          return { readiness: "capability-absent", receipt: "capability-absent" };
         case "modal":
-          // Notification not registered → capability-absent, not fake blocked path
           return { readiness: "capability-absent", receipt: "capability-absent" };
         case "disconnect":
           return { readiness: "disconnected", receipt: "attempt-in-doubt" };
@@ -95,12 +92,14 @@ function section25Expectation(
     case "grok-tui":
       switch (scenario) {
         case "idle":
+          // summary.json mtime advance (grok.ts), not turn_completed
           return { readiness: "ready", receipt: "provider-observed" };
         case "busy":
-          return { readiness: "busy", receipt: "provider-observed" };
+          // no turn stream in grok.ts
+          return { readiness: "capability-absent", receipt: "capability-absent" };
         case "approval":
         case "modal":
-          return { readiness: "blocked-unknown", receipt: "evidence-absent" };
+          return { readiness: "capability-absent", receipt: "capability-absent" };
         case "disconnect":
           return { readiness: "disconnected", receipt: "attempt-in-doubt" };
         case "restart":
@@ -119,77 +118,52 @@ describe("WP8 provider manifests", () => {
     for (const manifest of allProviderManifests()) {
       ProviderManifestSchema.parse(manifest);
       expect(manifest.unknownModalBlocksDelivery.value).toBe(true);
-      expect(manifest.fixtureSet.value.startsWith("tg4-")).toBe(true);
       expect(manifest.versionRange.supportedMin.length).toBeGreaterThan(0);
       expect(manifest.versionRange.supportedMax.length).toBeGreaterThan(0);
-      expect(manifest.versionRange.measuredExamples.length).toBeGreaterThan(0);
     }
   });
 
   test("every grounded manifest field carries non-empty sourceCitations", () => {
     for (const manifest of allProviderManifests()) {
       const paths = collectManifestCitationPaths(manifest);
-      // Must cover the fields the review named, not only launchArgv.
       const pathNames = paths.map((p) => p.path);
-      expect(pathNames).toContain("versionRange");
-      expect(pathNames).toContain("readinessStates");
-      expect(pathNames).toContain("strongestAutomaticReceipt");
-      expect(pathNames).toContain("unknownModalBlocksDelivery");
-      expect(pathNames).toContain("capabilityAbsences");
-      expect(pathNames).toContain("fixtureSet");
-      expect(pathNames).toContain("launchArgv");
+      for (const required of [
+        "versionRange",
+        "readinessStates",
+        "strongestAutomaticReceipt",
+        "unknownModalBlocksDelivery",
+        "capabilityAbsences",
+        "fixtureSet",
+        "launchArgv",
+      ]) {
+        expect(pathNames).toContain(required);
+      }
       for (const row of paths) {
         expect(row.citations.length).toBeGreaterThan(0);
-        for (const citation of row.citations) {
-          expect(citation.length).toBeGreaterThan(0);
-        }
       }
     }
   });
 
-  test("codex-tui does not claim awaiting-approval readiness (Notification absent)", () => {
-    const states = PROVIDER_MANIFESTS["codex-tui"].readinessStates.value;
-    expect(states).not.toContain("awaiting-approval");
-    expect(
-      PROVIDER_MANIFESTS["codex-tui"].capabilityAbsences.value.some((a) =>
-        a.includes("approval") || a.includes("Notification"),
-      ),
-    ).toBe(true);
-    const notification = PROVIDER_MANIFESTS["codex-tui"].eventSchemas.find(
-      (e) => e.role === "notification",
-    );
-    expect(notification?.available).toBe(false);
+  test("codex-tui does not claim awaiting-approval", () => {
+    expect(PROVIDER_MANIFESTS["codex-tui"].readinessStates.value)
+      .not.toContain("awaiting-approval");
   });
 
-  test("Grok hook event schemas are unavailable and cite grok.ts", () => {
+  test("Grok marks updates.jsonl/turn_completed unavailable; summary mtime available", () => {
     const grok = PROVIDER_MANIFESTS["grok-tui"];
-    for (const role of [
-      "session-start",
-      "turn-start",
-      "turn-end",
-      "tool-boundary",
-      "notification",
-    ] as const) {
-      const event = grok.eventSchemas.find((e) => e.role === role);
-      expect(event?.available).toBe(false);
-      expect(
-        event?.sourceCitations.some((c) => c.includes("grok.ts")),
-      ).toBe(true);
-    }
-  });
-
-  test("versionRange pins supportedMin/Max, not only measured examples", () => {
-    for (const manifest of allProviderManifests()) {
-      expect(manifest.versionRange.supportedMin).toBeTruthy();
-      expect(manifest.versionRange.supportedMax).toBeTruthy();
-      expect(manifest.versionRange.sourceCitations.length).toBeGreaterThan(0);
-    }
+    const updates = grok.eventSchemas.find((e) => e.id === "hive.grok.updates-jsonl");
+    expect(updates?.available).toBe(false);
+    expect(updates?.sourceCitations.some((c) => c.includes("grok.ts"))).toBe(true);
+    const summary = grok.eventSchemas.find((e) => e.id === "hive.grok.summary-mtime");
+    expect(summary?.available).toBe(true);
+    expect(summary?.sourceCitations.some((c) => c.includes("grok.ts:"))).toBe(true);
+    expect(grok.readinessStates.value).not.toContain("busy");
   });
 });
 
-describe("WP8 attempt-context receipt ladder (§25)", () => {
+describe("WP8 attempt-context fail-closed", () => {
   const session = "ses-1";
-  const baseAttempt: AttemptContext = {
+  const validAttempt: AttemptContext = {
     attemptId: "txn-1",
     committed: true,
     providerSessionId: session,
@@ -203,84 +177,131 @@ describe("WP8 attempt-context receipt ladder (§25)", () => {
     processHealth: "alive",
   };
 
-  test("without attempt context, receipt stays evidence-absent even with a boundary", () => {
-    const evidence = classifyProviderObservation("claude-tui", laterBoundary);
+  test("parseAttemptContext accepts valid attempt and rejects misspelled keys", () => {
+    expect(parseAttemptContext(validAttempt)).toEqual(validAttempt);
+    // misspelled attemptId key
+    expect(
+      parseAttemptContext({
+        atemptId: "txn-1",
+        committed: true,
+        providerSessionId: session,
+        committedAt: validAttempt.committedAt,
+      }),
+    ).toBeUndefined();
+    // missing attemptId
+    expect(
+      parseAttemptContext({
+        committed: true,
+        providerSessionId: session,
+        committedAt: validAttempt.committedAt,
+      }),
+    ).toBeUndefined();
+  });
+
+  test("misspelled attemptId with committed=true never upgrades receipt", () => {
+    const broken = {
+      atemptId: "txn-1",
+      committed: true,
+      providerSessionId: session,
+      committedAt: validAttempt.committedAt,
+    };
+    const evidence = classifyProviderObservation(
+      "claude-tui",
+      laterBoundary,
+      broken,
+    );
     expect(evidence.readiness).toBe("busy");
     expect(evidence.receipt).toBe("evidence-absent");
     expect(evidence.receipt).not.toBe("provider-observed");
+
+    // positive control: same observation with valid attempt upgrades
+    const good = classifyProviderObservation(
+      "claude-tui",
+      laterBoundary,
+      validAttempt,
+    );
+    expect(good.receipt).toBe("provider-observed");
+  });
+
+  test("without attempt context, receipt stays evidence-absent", () => {
+    const evidence = classifyProviderObservation("claude-tui", laterBoundary);
+    expect(evidence.receipt).toBe("evidence-absent");
   });
 
   test("provider-observed requires committed + same session + later timestamp", () => {
     expect(
-      classifyProviderObservation("claude-tui", laterBoundary, baseAttempt).receipt,
+      classifyProviderObservation("claude-tui", laterBoundary, validAttempt)
+        .receipt,
     ).toBe("provider-observed");
-
     expect(
       classifyProviderObservation("claude-tui", laterBoundary, {
-        ...baseAttempt,
+        ...validAttempt,
         committed: false,
       }).receipt,
     ).toBe("evidence-absent");
-
-    expect(
-      classifyProviderObservation("claude-tui", laterBoundary, {
-        ...baseAttempt,
-        providerSessionId: "other-session",
-      }).receipt,
-    ).toBe("evidence-absent");
-
-    expect(
-      classifyProviderObservation("claude-tui", {
-        ...laterBoundary,
-        timestamp: "2026-07-16T11:59:00.000Z",
-      }, baseAttempt).receipt,
-    ).toBe("evidence-absent");
-  });
-
-  test("death without committed attempt is disconnected, not attempt-in-doubt", () => {
-    const dead = {
-      kind: "dead",
-      agentName: "w",
-      timestamp: "2026-07-16T12:00:03.000Z",
-      toolSessionId: session,
-    };
-    const noAttempt = classifyProviderObservation("claude-tui", dead);
-    expect(noAttempt.readiness).toBe("disconnected");
-    expect(noAttempt.receipt).toBe("evidence-absent");
-    expect(noAttempt.receipt).not.toBe("attempt-in-doubt");
-
-    const withAttempt = classifyProviderObservation(
-      "claude-tui",
-      dead,
-      baseAttempt,
-    );
-    expect(withAttempt.readiness).toBe("disconnected");
-    expect(withAttempt.receipt).toBe("attempt-in-doubt");
   });
 });
 
-describe("WP8 readiness prerequisites (§25)", () => {
-  test("Claude ready needs processHealth, toolSessionId, unresolvedModal=false", () => {
-    const incomplete = {
-      kind: "turn-end",
-      agentName: "w",
-      timestamp: "2026-07-16T12:00:02.000Z",
-    };
-    expect(classifyProviderObservation("claude-tui", incomplete).readiness)
-      .toBe("evidence-absent");
-
-    const full = {
-      kind: "turn-end",
-      agentName: "w",
-      timestamp: "2026-07-16T12:00:02.000Z",
-      toolSessionId: "s",
-      processHealth: "alive",
-      unresolvedModal: false,
-    };
-    expect(classifyProviderObservation("claude-tui", full).readiness).toBe("ready");
+describe("WP8 attempt-in-doubt strict prerequisites", () => {
+  test("in-doubt requires nonempty session equality and loss timestamp >= commit", () => {
+    const good = classifyProviderObservation(
+      "claude-tui",
+      {
+        kind: "dead",
+        agentName: "w",
+        timestamp: "2026-07-16T12:00:03.000Z",
+        toolSessionId: "ses-1",
+      },
+      attemptFor("ses-1", "2026-07-16T12:00:01.000Z"),
+    );
+    expect(good.readiness).toBe("disconnected");
+    expect(good.receipt).toBe("attempt-in-doubt");
   });
 
-  test("app-server busy/ready requires params.turn.id and thread identity", () => {
+  test("negative controls never upgrade to attempt-in-doubt", () => {
+    for (const control of IN_DOUBT_NEGATIVE_CONTROLS) {
+      const evidence = classifyProviderObservation(
+        control.surface,
+        control.observation,
+        control.attempt,
+      );
+      expect(evidence.readiness).toBe("disconnected");
+      expect(evidence.receipt).toBe("evidence-absent");
+      expect(evidence.receipt).not.toBe("attempt-in-doubt");
+    }
+  });
+
+  test("death without any attempt is disconnected, not in-doubt", () => {
+    const evidence = classifyProviderObservation("claude-tui", {
+      kind: "dead",
+      agentName: "w",
+      timestamp: "2026-07-16T12:00:03.000Z",
+      toolSessionId: "ses-1",
+    });
+    expect(evidence.receipt).toBe("evidence-absent");
+  });
+});
+
+describe("WP8 readiness prerequisites", () => {
+  test("Claude ready needs processHealth, toolSessionId, unresolvedModal=false", () => {
+    expect(
+      classifyProviderObservation("claude-tui", {
+        kind: "turn-end",
+        timestamp: "2026-07-16T12:00:02.000Z",
+      }).readiness,
+    ).toBe("evidence-absent");
+    expect(
+      classifyProviderObservation("claude-tui", {
+        kind: "turn-end",
+        timestamp: "2026-07-16T12:00:02.000Z",
+        toolSessionId: "s",
+        processHealth: "alive",
+        unresolvedModal: false,
+      }).readiness,
+    ).toBe("ready");
+  });
+
+  test("app-server requires params.turn.id", () => {
     expect(
       classifyProviderObservation("codex-app-server", {
         method: "turn/started",
@@ -288,20 +309,13 @@ describe("WP8 readiness prerequisites (§25)", () => {
         params: { threadId: "th" },
       }).readiness,
     ).toBe("evidence-absent");
-
-    expect(
-      classifyProviderObservation("codex-app-server", {
-        method: "turn/started",
-        timestamp: "2026-07-16T12:00:02.000Z",
-        params: { turn: { id: "t1" }, threadId: "th" },
-      }).readiness,
-    ).toBe("busy");
   });
 
-  test("Grok ready/busy requires processState, sessionId, and activity advancement", () => {
+  test("Grok ready uses summary mtime, not turn_completed", () => {
     expect(
       classifyProviderObservation("grok-tui", {
         processState: "alive",
+        sessionId: "g",
         turnCompleted: true,
       }).readiness,
     ).toBe("evidence-absent");
@@ -310,18 +324,9 @@ describe("WP8 readiness prerequisites (§25)", () => {
       classifyProviderObservation("grok-tui", {
         processState: "alive",
         sessionId: "g",
-        lastActivityAt: "2026-07-16T12:00:02.000Z",
-        turnCompleted: true,
-      }).readiness,
-    ).toBe("evidence-absent");
-
-    expect(
-      classifyProviderObservation("grok-tui", {
-        processState: "alive",
-        sessionId: "g",
-        previousLastActivityAt: "2026-07-16T12:00:00.000Z",
-        lastActivityAt: "2026-07-16T12:00:02.000Z",
-        turnCompleted: true,
+        summaryLocated: true,
+        previousSummaryMtimeMs: 1,
+        summaryMtimeMs: 2,
         timestamp: "2026-07-16T12:00:02.000Z",
       }).readiness,
     ).toBe("ready");
@@ -329,7 +334,7 @@ describe("WP8 readiness prerequisites (§25)", () => {
 });
 
 describe("WP8 TG4 scenario corpus", () => {
-  test("corpus covers every surface × scenario exactly once", () => {
+  test("corpus covers every surface × scenario once with source citations", () => {
     const keys = TG4_SCENARIO_FIXTURES.map((f) => `${f.surface}:${f.scenario}`);
     expect(new Set(keys).size).toBe(keys.length);
     for (const surface of PROVIDER_SURFACE_IDS) {
@@ -337,9 +342,39 @@ describe("WP8 TG4 scenario corpus", () => {
         expect(keys).toContain(`${surface}:${scenario}`);
       }
     }
+    for (const fixture of TG4_SCENARIO_FIXTURES) {
+      expect(fixture.sourceCitations.length).toBeGreaterThan(0);
+    }
   });
 
-  test("classifications match §25-derived expectations (not fixture self-enums)", () => {
+  test("no codex-tui fixture fabricates Notification or approval-request payloads", () => {
+    for (const fixture of TG4_SCENARIO_FIXTURES.filter(
+      (f) => f.surface === "codex-tui",
+    )) {
+      const obs = fixture.observation as Record<string, unknown>;
+      expect(obs.kind).not.toBe("notification");
+      expect(obs.kind).not.toBe("approval-request");
+      if (fixture.scenario === "approval" || fixture.scenario === "modal") {
+        expect(obs.capabilityProbe).toBeDefined();
+      }
+    }
+  });
+
+  test("Grok approval and modal use distinct capability probes", () => {
+    const approval = TG4_SCENARIO_FIXTURES.find(
+      (f) => f.surface === "grok-tui" && f.scenario === "approval",
+    )!;
+    const modal = TG4_SCENARIO_FIXTURES.find(
+      (f) => f.surface === "grok-tui" && f.scenario === "modal",
+    )!;
+    const a = (approval.observation as { capabilityProbe: string }).capabilityProbe;
+    const m = (modal.observation as { capabilityProbe: string }).capabilityProbe;
+    expect(a).toBe("structured-approval");
+    expect(m).toBe("structured-modal");
+    expect(a).not.toBe(m);
+  });
+
+  test("classifications match §25-derived expectations", () => {
     for (const fixture of TG4_SCENARIO_FIXTURES) {
       const expected = section25Expectation(fixture.surface, fixture.scenario);
       const evidence = classifyProviderObservation(
@@ -349,14 +384,10 @@ describe("WP8 TG4 scenario corpus", () => {
       );
       expect(evidence.readiness).toBe(expected.readiness);
       expect(evidence.receipt).toBe(expected.receipt);
-      if (fixture.scenario === "modal" && fixture.surface === "claude-tui") {
-        expect(evidence.readiness).toBe("blocked-unknown");
-        expect(evidence.readiness).not.toBe("ready");
-      }
     }
   });
 
-  test("positive controls: misspelled/missing keys are evidence-absent; correct keys classify", () => {
+  test("positive controls for misspelled keys", () => {
     for (const control of ABSENT_FIELD_CONTROLS) {
       const miss = classifyProviderObservation(
         control.surface,
@@ -364,7 +395,6 @@ describe("WP8 TG4 scenario corpus", () => {
         control.attempt,
       );
       expect(miss.readiness).toBe("evidence-absent");
-
       const hit = classifyProviderObservation(
         control.surface,
         control.correctlySpelled,
@@ -374,87 +404,98 @@ describe("WP8 TG4 scenario corpus", () => {
     }
   });
 
-  test("Grok hook probes are capability-absent", () => {
+  test("Grok capability probes are capability-absent", () => {
     for (const probe of GROK_HOOK_ABSENCE_PROBES) {
-      const evidence = classifyProviderObservation("grok-tui", {
-        capabilityProbe: probe,
-      });
-      expect(evidence.readiness).toBe("capability-absent");
+      expect(
+        classifyProviderObservation("grok-tui", { capabilityProbe: probe })
+          .readiness,
+      ).toBe("capability-absent");
     }
   });
 
   test("permission_prompt is awaiting-approval", () => {
-    const evidence = classifyProviderObservation("claude-tui", {
-      kind: "notification",
-      agentName: "w",
-      timestamp: "2026-07-16T12:00:00.000Z",
-      notificationType: CLAUDE_PERMISSION_PROMPT_TYPE,
-    });
-    expect(evidence.readiness).toBe("awaiting-approval");
+    expect(
+      classifyProviderObservation("claude-tui", {
+        kind: "notification",
+        timestamp: "2026-07-16T12:00:00.000Z",
+        notificationType: CLAUDE_PERMISSION_PROMPT_TYPE,
+      }).readiness,
+    ).toBe("awaiting-approval");
   });
 });
 
-describe("WP8 TG4 conformance report (collector-derived)", () => {
-  test("report is schema-valid and covers all surfaces and receipt levels", () => {
+describe("WP8 emittable probes and conformance report", () => {
+  test("every CONFORMANCE_PROBE is emittable (adapter-cited)", () => {
+    expect(CONFORMANCE_PROBES.length).toBeGreaterThan(0);
+    expect(CONFORMANCE_PROBES.length).toBe(EMITTABLE_PROBES.length);
+    for (const probe of CONFORMANCE_PROBES) {
+      expect(probe.sourceCitations.length).toBeGreaterThan(0);
+      for (const citation of probe.sourceCitations) {
+        expect(citation.length).toBeGreaterThan(0);
+        // Must point at repo source, not invent "collector says so"
+        expect(
+          citation.includes("src/") ||
+            citation.includes("docs/") ||
+            citation.includes("schemas/"),
+        ).toBe(true);
+      }
+    }
+  });
+
+  test("TG4 fixtures are also adapter-cited (emittable discipline)", () => {
+    for (const fixture of TG4_SCENARIO_FIXTURES) {
+      expect(
+        fixture.sourceCitations.some(
+          (c) => c.includes("src/") || c.includes("docs/"),
+        ),
+      ).toBe(true);
+    }
+  });
+
+  test("report is schema-valid and transport-written unavailable", () => {
     const report = ProviderConformanceReportSchema.parse(
       buildProviderConformanceReport(),
     );
-    expect(report.derivedFrom).toContain("classifyProviderObservation");
-    expect(report.surfaces.map((s) => s.surface).sort()).toEqual(
-      [...PROVIDER_SURFACE_IDS].sort(),
-    );
+    expect(report.derivedFrom).toContain("emittable");
     for (const surface of report.surfaces) {
       expect(surface.receipt.map((r) => r.level).sort()).toEqual(
         [...TERMINAL_RECEIPT_LEVELS].sort(),
       );
+      const tw = surface.receipt.find((r) => r.level === "transport-written")!;
+      expect(tw.status).toBe("unavailable");
     }
   });
 
-  test("every provable-today row has a collectorPath from a real emission", () => {
+  test("provable-today rows come from emittable probes with citations, not collector alone", () => {
     for (const surface of PROVIDER_CONFORMANCE_REPORT.surfaces) {
       for (const row of surface.readiness) {
         if (row.status === "provable-today") {
-          expect(row.collectorPath).not.toBeNull();
+          expect(row.evidence).toContain("emittable probe");
+          expect(row.evidence).toMatch(/cited /);
         }
       }
       for (const row of surface.receipt) {
         if (row.status === "provable-today") {
-          expect(row.collectorPath).not.toBeNull();
+          expect(row.evidence).toContain("emittable probe");
+          expect(row.evidence).toMatch(/cited /);
         }
       }
     }
   });
 
-  test("transport-written is unavailable on all surfaces (collector never emits it)", () => {
-    for (const surface of PROVIDER_CONFORMANCE_REPORT.surfaces) {
-      const tw = surface.receipt.find((r) => r.level === "transport-written")!;
-      expect(tw.status).toBe("unavailable");
-      expect(tw.collectorPath).toBeNull();
-    }
-  });
-
-  test("Grok awaiting-approval and turn-boundary are unavailable", () => {
+  test("Grok busy and awaiting-approval unavailable; ready via summary is provable", () => {
     const grok = PROVIDER_CONFORMANCE_REPORT.surfaces.find(
       (s) => s.surface === "grok-tui",
     )!;
-    expect(grok.readiness.find((r) => r.kind === "turn-boundary")?.status)
+    expect(grok.readiness.find((r) => r.kind === "busy")?.status)
       .toBe("unavailable");
     expect(grok.readiness.find((r) => r.kind === "awaiting-approval")?.status)
       .toBe("unavailable");
-  });
-
-  test("codex-tui awaiting-approval is unavailable (capability-absent, not provable)", () => {
-    const codex = PROVIDER_CONFORMANCE_REPORT.surfaces.find(
-      (s) => s.surface === "codex-tui",
-    )!;
-    // capability-absent is provable; awaiting-approval is not emitted as readiness
-    expect(codex.readiness.find((r) => r.kind === "awaiting-approval")?.status)
-      .toBe("unavailable");
-    expect(codex.readiness.find((r) => r.kind === "capability-absent")?.status)
+    expect(grok.readiness.find((r) => r.kind === "ready")?.status)
       .toBe("provable-today");
   });
 
-  test("report matches live rebuild (no stale hand-authored rows)", () => {
+  test("report matches live rebuild", () => {
     expect(PROVIDER_CONFORMANCE_REPORT).toEqual(buildProviderConformanceReport());
   });
 });

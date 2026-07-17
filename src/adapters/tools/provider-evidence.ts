@@ -1,4 +1,5 @@
 import {
+  AttemptContextSchema,
   TERMINAL_EVIDENCE_CONTRACTS,
   type AttemptContext,
   type ProviderEvidenceResult,
@@ -9,19 +10,17 @@ import {
 
 /**
  * Readiness / receipt evidence collection for §25.
- * Evidence only — no delivery scheduling, injection, ledger, or status fusion.
+ * Evidence only — no delivery, injection, ledger, or status fusion.
  *
- * Receipt ladder (never claim above proven prerequisites):
- * - provider-observed: matching attempt (id + committed + exact session +
- *   observation timestamp AFTER commit) plus adapter boundary marker.
- * - attempt-in-doubt: committed attempt whose proof boundary was lost.
- * - Without attempt context: receipt stays evidence-absent (cannot invent
- *   transport-written; that is sessiond/native commit proof elsewhere).
+ * Receipt ladder:
+ * - provider-observed: valid AttemptContext + committed + exact nonempty
+ *   session match + observation timestamp AFTER commit + boundary.
+ * - attempt-in-doubt: valid AttemptContext + committed + exact nonempty
+ *   observationSessionId equality + loss timestamp >= committedAt.
+ * - Invalid/misspelled attempt fields → treat as no attempt (evidence-absent).
  *
- * Readiness prerequisites (§25 rows):
- * - Claude/Codex TUI ready: hook kind + processHealth + exact session + no modal.
- * - Codex app-server: native turn/thread ids in params, not method string alone.
- * - Grok: processState + exact sessionId + activity advancement on that session.
+ * Grok: grounded only in what grok.ts reads (summary.json location/mtime +
+ * preassigned session id + process health). No updates.jsonl / turn_completed.
  */
 
 const isRecord = (value: unknown): value is Record<string, unknown> =>
@@ -43,11 +42,29 @@ const readBoolean = (
   return typeof value === "boolean" ? value : undefined;
 };
 
+const readFiniteNumber = (
+  record: Record<string, unknown>,
+  key: string,
+): number | undefined => {
+  const value = record[key];
+  return typeof value === "number" && Number.isFinite(value) ? value : undefined;
+};
+
 const parseTimeMs = (value: string | undefined): number | null => {
   if (value === undefined) return null;
   const ms = Date.parse(value);
   return Number.isFinite(ms) ? ms : null;
 };
+
+/**
+ * Fail-closed attempt parse. Misspelled keys (e.g. atemptId) or missing
+ * attemptId → undefined (no attempt), never a partial upgrade path.
+ */
+export function parseAttemptContext(raw: unknown): AttemptContext | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  const parsed = AttemptContextSchema.safeParse(raw);
+  return parsed.success ? parsed.data : undefined;
+}
 
 function result(
   surface: ProviderSurfaceId,
@@ -97,11 +114,8 @@ function capabilityAbsent(
   );
 }
 
-/**
- * Receipt from a boundary observation under optional attempt context.
- * Never upgrades without all matching-attempt prerequisites.
- */
-function receiptForBoundary(
+/** Receipt for a post-injection boundary. attempt must already be schema-valid. */
+export function receiptForBoundary(
   attempt: AttemptContext | undefined,
   observationSessionId: string | undefined,
   observationTimestamp: string | undefined,
@@ -111,25 +125,26 @@ function receiptForBoundary(
       receipt: "evidence-absent",
       path: "attempt-context",
       means:
-        "no attempt context — receipt ceiling is evidence-absent (transport-written requires sessiond/native commit proof elsewhere)",
+        "no valid attempt context — receipt ceiling is evidence-absent",
     };
   }
   if (attempt.committed !== true) {
     return {
       receipt: "evidence-absent",
       path: "attempt.committed",
-      means: "attempt not committed — cannot claim provider-observed or in-doubt",
+      means: "attempt not committed — cannot claim provider-observed",
     };
   }
   if (
     observationSessionId === undefined ||
+    observationSessionId.length === 0 ||
     observationSessionId !== attempt.providerSessionId
   ) {
     return {
       receipt: "evidence-absent",
       path: "providerSessionId",
       means:
-        "observation session missing or does not match attempt.providerSessionId",
+        "observation session missing/empty or does not match attempt.providerSessionId",
     };
   }
   const observedMs = parseTimeMs(observationTimestamp);
@@ -151,54 +166,96 @@ function receiptForBoundary(
 }
 
 /**
- * Disconnect/death receipt: attempt-in-doubt only when a committed attempt
- * targeted this session; bare death is disconnected with evidence-absent.
+ * attempt-in-doubt only when:
+ * - valid committed attempt
+ * - exact NONEMPTY observationSessionId === attempt.providerSessionId
+ * - valid loss timestamp with lossMs >= committedAt
+ * Missing session, missing timestamp, or pre-commit timestamp → evidence-absent.
  */
-function receiptForLostBoundary(
+export function receiptForLostBoundary(
   attempt: AttemptContext | undefined,
   observationSessionId: string | undefined,
+  lossTimestamp: string | undefined,
 ): { receipt: ReceiptEvidenceKind; path: string; means: string } {
   if (attempt === undefined || attempt.committed !== true) {
     return {
       receipt: "evidence-absent",
       path: "attempt-context",
       means:
-        "death/disconnect with no committed attempt is not attempt-in-doubt",
+        "death/disconnect with no valid committed attempt is not attempt-in-doubt",
     };
   }
   if (
-    observationSessionId !== undefined &&
-    observationSessionId !== attempt.providerSessionId
+    observationSessionId === undefined ||
+    observationSessionId.length === 0
   ) {
     return {
       receipt: "evidence-absent",
+      path: "observationSessionId",
+      means:
+        "missing/empty observation session — not attempt-in-doubt",
+    };
+  }
+  if (observationSessionId !== attempt.providerSessionId) {
+    return {
+      receipt: "evidence-absent",
       path: "providerSessionId",
-      means: "disconnect session does not match committed attempt session",
+      means: "disconnect session does not equal committed attempt session",
+    };
+  }
+  const lossMs = parseTimeMs(lossTimestamp);
+  const committedMs = parseTimeMs(attempt.committedAt);
+  if (lossMs === null || committedMs === null) {
+    return {
+      receipt: "evidence-absent",
+      path: "lossTimestamp",
+      means: "missing or invalid loss timestamp — not attempt-in-doubt",
+    };
+  }
+  if (lossMs < committedMs) {
+    return {
+      receipt: "evidence-absent",
+      path: "lossTimestamp",
+      means: "loss timestamp before commit — not attempt-in-doubt",
     };
   }
   return {
     receipt: "attempt-in-doubt",
     path: "committed-attempt+lost-boundary",
     means:
-      "committed attempt proof boundary lost at disconnect — outcome unknown",
+      "committed attempt proof boundary lost at/after commit under same session",
   };
 }
 
-/** Claude notification_type measured blocked in daemon/server.ts:396-407. */
 export const CLAUDE_PERMISSION_PROMPT_TYPE = "permission_prompt" as const;
 export const CLAUDE_IDLE_PROMPT_TYPE = "idle_prompt" as const;
 
-/**
- * Claude/Codex TUI hook observation (Hive HookEvent shape + host prerequisites).
- * Ready requires: kind + processHealth=alive + toolSessionId + unresolvedModal=false.
- */
 export function classifyHookObservation(
   surface: "claude-tui" | "codex-tui",
   observation: unknown,
-  attempt?: AttemptContext,
+  attemptRaw?: unknown,
 ): ProviderEvidenceResult {
+  const attempt = parseAttemptContext(attemptRaw);
   if (!isRecord(observation)) {
     return absent(surface, "observation", "observation is not a record");
+  }
+
+  // Capability probes — not fabricated provider payloads.
+  const capabilityProbe = readString(observation, "capabilityProbe");
+  if (capabilityProbe !== undefined) {
+    if (surface === "codex-tui") {
+      if (
+        capabilityProbe === "structured-approval" ||
+        capabilityProbe === "Notification" ||
+        capabilityProbe === "structured-modal"
+      ) {
+        return capabilityAbsent(
+          surface,
+          `capabilityProbe=${capabilityProbe}`,
+          "codex.ts:174-186 registers SessionStart/UserPromptSubmit/PostToolUse/Stop only — no Notification or structured approval",
+        );
+      }
+    }
   }
 
   const kind = readString(observation, "kind");
@@ -206,24 +263,16 @@ export function classifyHookObservation(
     return absent(
       surface,
       "kind",
-      "kind missing or non-string — evidence-absent (positive control: valid kind classifies)",
+      "kind missing or non-string — evidence-absent",
     );
   }
 
-  // Codex TUI never registers Notification (codex.ts:174-186).
-  if (surface === "codex-tui" && kind === "notification") {
+  // Never classify fabricated Notification/approval payloads for codex-tui.
+  if (surface === "codex-tui" && (kind === "notification" || kind === "approval-request")) {
     return capabilityAbsent(
       surface,
-      "kind=notification",
-      "Codex TUI spawn registers no Notification hook — capability absent",
-    );
-  }
-  // Codex TUI has no structured approval-request emission path in adapter hooks.
-  if (surface === "codex-tui" && kind === "approval-request") {
-    return capabilityAbsent(
-      surface,
-      "kind=approval-request",
-      "Codex TUI has no structured approval hook path — capability absent",
+      `kind=${kind}`,
+      "Codex TUI does not emit this kind (hooks not registered) — use capabilityProbe, not a fake payload",
     );
   }
 
@@ -237,14 +286,15 @@ export function classifyHookObservation(
       return absent(
         surface,
         "processHealth",
-        "process/host health missing — not ready (§25 requires provider session ID plus host/process health)",
+        "process/host health missing — not ready",
       );
     }
     if (processHealth !== "alive") {
+      const r = receiptForLostBoundary(attempt, toolSessionId, timestamp);
       return result(
         surface,
         "disconnected",
-        receiptForLostBoundary(attempt, toolSessionId).receipt,
+        r.receipt,
         `processHealth=${processHealth}`,
         "process/host not alive",
         ["ready"],
@@ -297,15 +347,15 @@ export function classifyHookObservation(
       );
     }
     case "turn-start": {
-      // Busy does not require "no modal" the same way, but session + health still apply.
       if (processHealth === undefined) {
         return absent(surface, "processHealth", "processHealth missing — not busy proof");
       }
       if (processHealth !== "alive") {
+        const r = receiptForLostBoundary(attempt, toolSessionId, timestamp);
         return result(
           surface,
           "disconnected",
-          receiptForLostBoundary(attempt, toolSessionId).receipt,
+          r.receipt,
           `processHealth=${processHealth}`,
           "process not alive",
           ["busy", "ready"],
@@ -350,7 +400,6 @@ export function classifyHookObservation(
       );
     }
     case "notification": {
-      // Claude only (codex-tui gated above).
       const notificationType = readString(observation, "notificationType");
       if (notificationType === undefined) {
         return absent(
@@ -389,7 +438,6 @@ export function classifyHookObservation(
       );
     }
     case "approval-request":
-      // Claude path if ever emitted; codex-tui gated above.
       return result(
         surface,
         "awaiting-approval",
@@ -400,7 +448,7 @@ export function classifyHookObservation(
       );
     case "session-end":
     case "dead": {
-      const r = receiptForLostBoundary(attempt, toolSessionId);
+      const r = receiptForLostBoundary(attempt, toolSessionId, timestamp);
       return result(
         surface,
         "disconnected",
@@ -433,14 +481,11 @@ export function classifyHookObservation(
   }
 }
 
-/**
- * Codex app-server RPC observation.
- * Validates nested turn/thread ids — method string alone is insufficient.
- */
 export function classifyCodexAppServerObservation(
   observation: unknown,
-  attempt?: AttemptContext,
+  attemptRaw?: unknown,
 ): ProviderEvidenceResult {
+  const attempt = parseAttemptContext(attemptRaw);
   const surface: ProviderSurfaceId = "codex-app-server";
   if (!isRecord(observation)) {
     return absent(surface, "observation", "observation is not a record");
@@ -466,7 +511,6 @@ export function classifyCodexAppServerObservation(
     return readString(thread, "id");
   })();
 
-  // Session identity for matching attempts is the thread id when present.
   const sessionId = threadId ?? readString(observation, "toolSessionId");
 
   if (method === "turn/started") {
@@ -558,7 +602,6 @@ export function classifyCodexAppServerObservation(
     );
   }
 
-  // Hive-normalized kinds emitted after app-server mapping (session-start on thread).
   const kind = readString(observation, "kind");
   if (kind === "session-start") {
     const thread = sessionId ?? readString(observation, "toolSessionId");
@@ -582,7 +625,8 @@ export function classifyCodexAppServerObservation(
   }
 
   if (kind === "dead" || kind === "session-end") {
-    const r = receiptForLostBoundary(attempt, sessionId ?? readString(observation, "toolSessionId"));
+    const sid = sessionId ?? readString(observation, "toolSessionId");
+    const r = receiptForLostBoundary(attempt, sid, timestamp);
     return result(
       surface,
       "disconnected",
@@ -621,14 +665,19 @@ export function classifyCodexAppServerObservation(
 }
 
 /**
- * Grok TUI: process health + preassigned session + transcript activity.
- * No hooks. ready/busy require processState + exact sessionId + activity
- * advancement on that exact session (§25 / §18).
+ * Grok TUI evidence grounded in grok.ts only:
+ * - preassigned sessionId (spawn --session-id)
+ * - process health (external host fact)
+ * - summary.json location + mtimeMs (findGrokSummaries / GrokSummaryLocation)
+ *
+ * Does NOT read updates.jsonl or turn_completed (those live outside grok.ts
+ * adapter surface). Turn busy-state is capability-absent.
  */
 export function classifyGrokObservation(
   observation: unknown,
-  attempt?: AttemptContext,
+  attemptRaw?: unknown,
 ): ProviderEvidenceResult {
+  const attempt = parseAttemptContext(attemptRaw);
   const surface: ProviderSurfaceId = "grok-tui";
   if (!isRecord(observation)) {
     return absent(surface, "observation", "observation is not a record");
@@ -641,24 +690,33 @@ export function classifyGrokObservation(
       probe === "UserPromptSubmit" ||
       probe === "Stop" ||
       probe === "PostToolUse" ||
-      probe === "Notification"
+      probe === "Notification" ||
+      probe === "structured-approval" ||
+      probe === "structured-modal" ||
+      probe === "turn-busy-state" ||
+      probe === "updates.jsonl" ||
+      probe === "turn_completed"
     ) {
       return capabilityAbsent(
         surface,
         `capabilityProbe=${probe}`,
-        "Grok TUI has no lifecycle hooks (grok.ts registers none; GROK_COMPATIBILITY_ENV disables inherited hooks)",
+        "grok.ts has no lifecycle hooks and does not read updates.jsonl/turn_completed; only summary.json location/mtime",
       );
     }
   }
 
   const processState = readString(observation, "processState");
   const sessionId = readString(observation, "sessionId");
-  const lastActivityAt = readString(observation, "lastActivityAt");
-  const previousLastActivityAt = readString(observation, "previousLastActivityAt");
-  const timestamp = readString(observation, "timestamp") ?? lastActivityAt;
+  const timestamp = readString(observation, "timestamp");
+  const summaryLocated = readBoolean(observation, "summaryLocated");
+  const summaryMtimeMs = readFiniteNumber(observation, "summaryMtimeMs");
+  const previousSummaryMtimeMs = readFiniteNumber(
+    observation,
+    "previousSummaryMtimeMs",
+  );
 
   if (processState === "dead" || processState === "missing") {
-    const r = receiptForLostBoundary(attempt, sessionId);
+    const r = receiptForLostBoundary(attempt, sessionId, timestamp);
     return result(
       surface,
       "disconnected",
@@ -682,106 +740,70 @@ export function classifyGrokObservation(
     );
   }
 
-  const possibleModal = readBoolean(observation, "possibleModal");
-  if (possibleModal === true) {
-    return result(
-      surface,
-      "blocked-unknown",
-      "evidence-absent",
-      "possibleModal=true",
-      "no structured modal proof in v1; possible modal blocks automatic delivery",
-      ["ready", "screen-phrase"],
-    );
-  }
-
-  // Ready/busy prerequisites: processState present, exact sessionId, activity advance.
   if (processState === undefined) {
-    return absent(surface, "processState", "processState missing — unknown, not ready/busy");
+    return absent(surface, "processState", "processState missing — unknown");
   }
   if (processState !== "alive") {
     return absent(
       surface,
       "processState",
-      `processState=${processState} is not a classified ready/busy state`,
+      `processState=${processState} is not a classified alive state`,
     );
   }
   if (sessionId === undefined) {
     return absent(
       surface,
       "sessionId",
-      "exact preassigned session id missing — unknown, not ready/busy",
+      "exact preassigned session id missing — unknown",
     );
   }
 
-  const prevMs = parseTimeMs(previousLastActivityAt);
-  const lastMs = parseTimeMs(lastActivityAt);
-  const activityAdvanced =
-    prevMs !== null && lastMs !== null && lastMs > prevMs;
-
-  if (!activityAdvanced) {
+  // Ready requires summary.json located for this exact session + mtime advance
+  // (grok.ts:353-414 GrokSummaryLocation.mtimeMs).
+  if (summaryLocated !== true) {
     return absent(
       surface,
-      "previousLastActivityAt|lastActivityAt",
-      "activity advancement on exact session not proven — unknown, not ready/busy",
+      "summaryLocated",
+      "summary.json not located for session — grok.ts only proves readiness via summary discovery",
     );
   }
-
-  // Session must match attempt when claiming receipt.
-  const turnCompleted = observation["turnCompleted"];
-  const hasTurnCompleted = Object.prototype.hasOwnProperty.call(
-    observation,
-    "turnCompleted",
-  );
-
-  if (hasTurnCompleted && turnCompleted === true) {
-    const r = receiptForBoundary(attempt, sessionId, timestamp);
-    return result(
-      surface,
-      "ready",
-      r.receipt,
-      "processState+sessionId+activity-advance+turnCompleted=true",
-      "alive process, exact session, activity advanced, turn_completed",
-      r.receipt === "provider-observed"
-        ? TERMINAL_EVIDENCE_CONTRACTS["provider-observed"].excludes
-        : ["provider-observed"],
-    );
-  }
-
-  if (hasTurnCompleted && turnCompleted === false) {
-    const r = receiptForBoundary(attempt, sessionId, timestamp);
-    return result(
-      surface,
-      "busy",
-      r.receipt,
-      "processState+sessionId+activity-advance+turnCompleted=false",
-      "alive process, exact session, activity advanced, turn still streaming",
-      r.receipt === "provider-observed"
-        ? TERMINAL_EVIDENCE_CONTRACTS["provider-observed"].excludes
-        : ["provider-observed"],
-    );
-  }
-
-  if (hasTurnCompleted && turnCompleted === null) {
+  if (summaryMtimeMs === undefined || previousSummaryMtimeMs === undefined) {
     return absent(
       surface,
-      "turnCompleted",
-      "turnCompleted null means unknown — not idle and not working",
+      "summaryMtimeMs|previousSummaryMtimeMs",
+      "summary mtime advancement not proven — evidence-absent",
+    );
+  }
+  if (!(summaryMtimeMs > previousSummaryMtimeMs)) {
+    return absent(
+      surface,
+      "summaryMtimeMs",
+      "summary mtime did not advance on exact session — no activity evidence",
     );
   }
 
-  // Activity advanced but turn state unknown — not ready/busy.
-  return absent(
+  // observedAt for receipt: require ISO timestamp (not mtime alone) for attempt match.
+  const observedAt = timestamp;
+  const r = receiptForBoundary(attempt, sessionId, observedAt);
+  return result(
     surface,
-    "turnCompleted",
-    "activity advanced but turnCompleted absent/invalid — readiness unknown",
+    "ready",
+    r.receipt,
+    "processState+sessionId+summaryLocated+summaryMtime-advance",
+    "alive process, exact session, summary.json located with advanced mtime (grok.ts)",
+    r.receipt === "provider-observed"
+      ? TERMINAL_EVIDENCE_CONTRACTS["provider-observed"].excludes
+      : ["provider-observed", "turn-busy-state", "updates.jsonl"],
   );
 }
 
 export function classifyProviderObservation(
   surface: ProviderSurfaceId,
   observation: unknown,
-  attempt?: AttemptContext,
+  attemptRaw?: unknown,
 ): ProviderEvidenceResult {
+  // Parse once at the entry point so all paths are fail-closed on attempt shape.
+  const attempt = parseAttemptContext(attemptRaw);
   switch (surface) {
     case "claude-tui":
     case "codex-tui":

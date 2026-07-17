@@ -527,13 +527,24 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
       ],
     },
     {
-      id: "hive.grok.session-directory",
-      providerName: "sessions/<id> under grok home (summary.json)",
+      // grok.ts reads summary.json + mtimeMs only — not updates.jsonl / turn_completed.
+      id: "hive.grok.summary-mtime",
+      providerName: "summary.json location + mtimeMs (GrokSummaryLocation)",
       role: "transcript-activity",
       available: true,
       sourceCitations: [
-        "src/adapters/tools/grok.ts:264-267 (grokSessionsDirectory)",
-        "src/adapters/tools/grok.ts:287-413 (findGrokSummaries / session discovery)",
+        "src/adapters/tools/grok.ts:270-279 (GrokSummaryLocation.mtimeMs)",
+        "src/adapters/tools/grok.ts:353-414 (read summary.json + stat mtime)",
+      ],
+    },
+    {
+      id: "hive.grok.updates-jsonl",
+      providerName: "updates.jsonl / turn_completed",
+      role: "transcript-activity",
+      available: false,
+      sourceCitations: [
+        "src/adapters/tools/grok.ts:264-417 (findGrokSummaries stops at summary.json; does not open updates.jsonl)",
+        "src/adapters/tools/grok.ts:277-278 (comment notes updates.jsonl exist on disk but adapter does not read them)",
       ],
     },
     {
@@ -576,18 +587,17 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     },
   ],
   readinessStates: {
+    // ready via summary mtime; busy unavailable (no turn stream in grok.ts)
     value: [
       "ready",
-      "busy",
-      "blocked-unknown",
       "disconnected",
       "restarting",
       "evidence-absent",
       "capability-absent",
     ],
     sourceCitations: [
-      "docs/design/terminal-stack-transition.html §25 Grok TUI row",
-      "src/adapters/tools/grok.ts:18-20,127-133 (preassigned session; no hooks)",
+      "docs/design/terminal-stack-transition.html §25 Grok TUI row (conservative readiness)",
+      "src/adapters/tools/grok.ts:270-279,353-414 (summary mtime only)",
       "src/adapters/tools/provider-evidence.ts classifyGrokObservation",
     ],
   },
@@ -637,11 +647,14 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
       "structured approval/modal proof in v1",
       "awaiting-approval-classification",
       "turn-boundary-hook",
+      "turn-busy-state (no turn stream)",
+      "updates.jsonl / turn_completed reads",
       "native-structured-input-endpoint",
     ],
     sourceCitations: [
-      "src/adapters/tools/grok.ts (entire adapter: spawn/resume/session dirs only)",
+      "src/adapters/tools/grok.ts (spawn/resume/summary discovery only)",
       "src/adapters/tools/grok.ts:39-50",
+      "src/adapters/tools/grok.ts:264-417 (summary.json only)",
       "docs/design/terminal-stack-transition.html §25 Grok TUI row",
     ],
   },
