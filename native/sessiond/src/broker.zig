@@ -978,9 +978,11 @@ pub const WireHostClient = struct {
     }
 
     fn verifyPeer(self: *WireHostClient, peer: *const ObservedPeer) !void {
+        var executable_storage: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
+        const expected_executable = try std.fs.selfExePath(&executable_storage);
         if (peer.uid != std.posix.getuid() or peer.gid != @as(u32, @intCast(c.getgid())) or
             peer.pid != self.expected_record.host_pid or
-            !std.mem.eql(u8, peer.executablePath(), self.expected_record.expected_executable))
+            !std.mem.eql(u8, peer.executablePath(), expected_executable))
             return error.HostIdentityMismatch;
         var token_storage: [64]u8 = undefined;
         const token = try formatStartToken(peer.start_token, &token_storage);
@@ -2804,6 +2806,33 @@ test "socket substitution fails closed" {
     var substituted = expected;
     substituted.inode = 3;
     try std.testing.expectEqual(protocol.WireError.unauthenticated, verifySocket(expected, substituted).?.code);
+}
+
+test "host peer authenticates the sessiond self executable, not the provider executable" {
+    const process = try inspectProcess(c.getpid());
+    var peer: ObservedPeer = .{
+        .uid = std.posix.getuid(),
+        .gid = @intCast(c.getgid()),
+        .pid = process.pid,
+        .start_token = process.start_token,
+        .executable = process.executable,
+        .executable_len = process.executable_len,
+    };
+    var token_storage: [64]u8 = undefined;
+    const token = try formatStartToken(process.start_token, &token_storage);
+    const provider_executable = "/usr/bin/provider-fixture";
+    try std.testing.expect(!std.mem.eql(u8, peer.executablePath(), provider_executable));
+
+    var client: WireHostClient = undefined;
+    client.expected_record = undefined;
+    client.expected_record.host_pid = process.pid;
+    client.expected_record.host_start_token = token;
+    client.expected_record.expected_executable = provider_executable;
+    try client.verifyPeer(&peer);
+
+    @memcpy(peer.executable[0..4], "nope");
+    peer.executable_len = 4;
+    try std.testing.expectError(error.HostIdentityMismatch, client.verifyPeer(&peer));
 }
 
 test "post-connect socket guard rejects a substituted filesystem socket" {
