@@ -2338,7 +2338,11 @@ fn acceptHostHello(
         return error.UnauthenticatedPeer;
 
     var hello_frame = try readRequiredFrame(allocator, stream);
-    defer hello_frame.deinit(allocator);
+    defer {
+        if (expected_role == .viewer)
+            std.crypto.secureZero(u8, hello_frame.payload);
+        hello_frame.deinit(allocator);
+    }
     if (hello_frame.header.type_code != generated.frame_type.hello or
         hello_frame.header.flags != 0 or
         !protocol.validateControlPayload(
@@ -2411,7 +2415,10 @@ pub fn authorizeViewerConnection(
         return error.ViewerHandshakeRefused;
     defer hello.deinit();
     var request = try readRequiredFrame(allocator, stream);
-    defer request.deinit(allocator);
+    defer {
+        std.crypto.secureZero(u8, request.payload);
+        request.deinit(allocator);
+    }
     if (request.header.flags != 0 or
         request.header.type_code != generated.frame_type.host_attach)
     {
