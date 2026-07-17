@@ -1853,6 +1853,14 @@ fn wallExpiryToMonotonic(value: []const u8, now_ns: u64, maximum_ms: u64) !u64 {
     );
 }
 
+fn validatedHostLeaseRemaining(expires_at: []const u8) !u64 {
+    return wallExpiryToMonotonic(
+        expires_at,
+        0,
+        generated.limits.visibility_expiry_ms,
+    );
+}
+
 pub const HostCore = struct {
     allocator: std.mem.Allocator,
     registration: HostRegistration,
@@ -3022,6 +3030,29 @@ test "visibility positive control rejects stale and cross-workspace renewals" {
     );
     try lease.renew("workspace-1", 8, 2_000);
     try std.testing.expectEqual(@as(u64, 8), lease.open_terminal_revision);
+}
+
+test "host registration confirms a future lease bounded by fifteen seconds" {
+    var valid_storage: [24]u8 = undefined;
+    const valid = try broker.wallDeadline(
+        &valid_storage,
+        generated.limits.visibility_expiry_ms,
+    );
+    const remaining = try validatedHostLeaseRemaining(valid);
+    try std.testing.expect(remaining > 0);
+    try std.testing.expect(
+        remaining <= generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
+    );
+
+    var unbounded_storage: [24]u8 = undefined;
+    const unbounded = try broker.wallDeadline(
+        &unbounded_storage,
+        generated.limits.visibility_expiry_ms + 1_000,
+    );
+    try std.testing.expectError(
+        error.InvalidTimestamp,
+        validatedHostLeaseRemaining(unbounded),
+    );
 }
 
 test "accepted broker sockets cannot outlive the visibility deadline" {
