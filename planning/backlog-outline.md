@@ -1,6 +1,8 @@
 # Hive rebuild — milestone-structured backlog outline
 
-Lead planner: astrid · drafted 2026-07-17 · board: github.com/users/scottdev1986/projects/11 (write access pending `project` scope)
+**PLAN STATUS: FINALIZED 2026-07-17 — awaiting user approval. Execution of any story is NOT authorized until the user approves this plan.** All user decisions (Q1–Q7) are ratified and folded in below.
+
+Lead planner: astrid · drafted 2026-07-17 · board: github.com/users/scottdev1986/projects/11
 Reviewed by: atlas (sequencing guardrail + vendor belief-injection finding + full R3 second opinion folded in: P0-1 contract audit → new story M1-A0; P0-2 M1/M2 ownership boundary; P0-3 atomic cut; P0-4 old-build pre-cut drain; P1 behavioral scope; tightened dependency edges; 3-way approval matrix; Q2 revised to main-at-cut + bootstrap binary)
 
 Every story below inherits the HARD PRINCIPLES (stated in each story's DoD when written):
@@ -13,13 +15,13 @@ external research drives, code and design docs are reference not truth; external
 
 Sequencing resolution (explicit): both are specified FIRST and execute at the **Removal Gate** — the replacement host+renderer live-proven across the FULL vendor matrix (real Claude Code, Codex, AND Grok interactive TUIs: launch/type/resize-SIGWINCH/scroll/close with authoritative waitpid reap evidence/restart+reconnect/process-tree containment/100MiB-class backpressure with no loss/crash survival; atlas second opinion, adopted — any failing cell blocks execution). Hard cut, no dual-host canary, no renderer flag, no compat writes. The matrix uses M1's qualification harness launching vendor TUIs manually; it does not depend on M2's spawn/belief/status pipeline. Every M1 build story exists to reach that gate; the two removals then complete M1. You cannot remove the process host that runs agents before its replacement runs agents — so its replacement running agents is the gate, and nothing else unblocks execution.
 
-Standing decision (applies to several stories): sessiond (~10.3K LOC Zig), HiveTerminalKit (~2.2K LOC Swift), vendored Ghostty, ADRs 0001/0002, and conformance-test IDs already exist in-tree, but HiveTerminalKit is imported only by its own tests — nothing user-facing runs it. Per the hard principles this code is NOT presumed correct: each M1 story QUALIFIES the existing artifact against external conformance sources and keeps it only if it passes live; rewrite is the fallback, not the default. (Open question Q4 asks queen/user to confirm this stance.)
+Standing decision (CONFIRMED by user, Q4): sessiond (~10.3K LOC Zig), HiveTerminalKit (~2.2K LOC Swift), vendored Ghostty, ADRs 0001/0002, and conformance-test IDs already exist in-tree, but HiveTerminalKit is imported only by its own tests — nothing user-facing runs it. This code is NOT presumed correct: each M1 story QUALIFIES the existing artifact against external conformance sources and live matrices and keeps it only if it passes; rewrite is the fallback, not the default. In-tree code is a candidate, never evidence.
 
 ---
 
 ## M1 — dev build with a fully functional, beautiful native terminal
 
-Exit: open the dev build → a blank native terminal that looks excellent; create/type/scroll/resize/select/copy/IME/close/reconnect all work; zero tmux, zero SwiftTerm; self-contained app (no user-installed tmux/Ghostty/Zig); works on any project directory.
+Exit: open the dev build → a blank native terminal that looks excellent; create/type/scroll/resize/select/copy/IME/close/reconnect all work; zero tmux, zero SwiftTerm; self-contained app (no user-installed tmux/Ghostty/Zig); works on any project directory. **HARD GATE (user ruling Q5): the USER personally signs off the aesthetic bar — explicit user approval against reference terminals (Ghostty app, Terminal.app, iTerm2) is part of M1's definition of done; no engineer proxy.**
 
 Parallel tracks (∥ = concurrent):
 
@@ -58,7 +60,7 @@ Exit: for each of claude code / codex / grok × {normal, yolo}: agent boots insi
   - codex: `developer_instructions` via ephemeral 0600 `$CODEX_HOME/<name>.config.toml` + `--profile <name>` (not AGENTS.md, not model_instructions_file which REPLACES base instructions; developers.openai.com/codex/config-reference + config-advanced). Normal `-a on-request -s workspace-write`; yolo `--yolo`.
   - grok (research RESOLVED): `--rules` (alias `--append-system-prompt`) appends to system prompt, carried in ACP initialize metadata, not transcript-visible (docs.x.ai/build/cli/reference, modes-and-commands; xai-org/grok-build source). Never `--system-prompt-override` (replaces xAI base prompt). Normal: explicit `--permission-mode default` + explicit sandbox (sandbox default is OFF); yolo `--always-approve`/`--yolo`. Caveat: argv visible via `ps` — belief in argv is silent-in-TUI but not process-inspection-private; if that matters (Q6), use ACP initialize metadata or upstream a file surface.
   - **Approval modes are a 3-way matrix, not normal/yolo (atlas R3, adopted):** approval and sandbox are independent dimensions; run {manual, sandboxed-autonomous, unsafe-bypass} per vendor where supported, naming unsupported distinctions explicitly. Claude: manual `--permission-mode default` / eligible auto `--permission-mode auto` / unsafe `--dangerously-skip-permissions`. Codex: `-a on-request -s workspace-write` / `-a never -s workspace-write` / `--yolo`. Grok: `--permission-mode default` + explicit sandbox / `--always-approve` + explicit restrictive sandbox / approval bypass with sandbox off (macOS child-network caveat stands). The brief's "yolo" maps to unsafe-bypass; sandboxed-autonomous is added coverage.
-  - Grok exception to "0600 files over argv": no `--rules-file` exists — belief rides argv (ps-visible) or the ACP initialize-metadata path (Q6). "Carried in ACP metadata" is evidence/inference, NOT a vendor secrecy guarantee — the raw-PTY nonce proof remains the authority.
+  - Grok argv note (RESOLVED, user ruling Q6): TUI/transcript-silence is SUFFICIENT — "no user should SEE the belief prompt." ps-invisibility is NOT a requirement; prefer a non-argv path only where it is free (do not over-constrain the story on it). "Carried in ACP metadata" is evidence/inference, NOT a vendor secrecy guarantee — the raw-PTY nonce proof remains the authority.
   - Live proof (all vendors, from atlas): unique nonce in belief; capture ALL PTY bytes and assert nonce never renders; neutral first prompt elicits belief-dependent behavior or an authenticated status call carrying the nonce; manual-mode run produces a real approval state on a harmless write+shell, autonomous/bypass runs execute without one. Green exit ≠ proof. Pin vendor versions in evidence.
 - **S2.3 Status pipeline**: StatusEnvelope v2 (source/freshness/confidence), `hive_update_status`, statusline-fact ingestion on the new spine; live agent demonstrates EVERY current status promise (working/idle/approval/paused/stuck/done/failed/unknown) observed end-to-end; terminal pixels are never status truth (I6).
 - **S2.4 Message delivery over the new spine**: normal/steer/urgent/critical delivered through the sessiond arbiter per-vendor with measured receipt; truthful degradation stated per vendor (flat queen→workers policy only; hierarchy comes in M4).
@@ -102,12 +104,16 @@ Exit = every Split Horizon feature-ledger row (A run awareness/hierarchy, B term
 
 ---
 
-## Open questions / user decisions (surfaced, not decided)
+## Decisions ledger (ALL RESOLVED — user rulings via queen, 2026-07-17)
 
-Q1 Board access: RESOLVED — `project` scope granted mid-session; read+write confirmed, stories created on the board.
-Q2 Where does the gutted state land — JOINT RECOMMENDATION REVISED (atlas R3, I concur): **main at the M1 cut + isolated bootstrap binary**, NOT a long-lived integration branch. Precedent: self-hosting toolchains preserve the last known-good TOOL as a bootstrap artifact, not old source in the new mainline (Rust stage0: rustc-dev-guide.rust-lang.org/building/bootstrapping/what-bootstrapping-does.html; Go GOROOT_BOOTSTRAP: go.dev/doc/install/source; GitHub Flow on main-as-definitive: docs.github.com/en/get-started/using-github/github-flow). Concrete rule: after post-cut tests/matrix pass, land the cut on main; keep a checksummed OLD Hive release running from a separate binary with its own HIVE_HOME/DB/socket/ports and no access to new runtime state, used only to orchestrate M2 development; never auto-deploy the M1 binary to production. If old/new runtime state cannot be isolated, that is a blocker to solve first; only then fall back to a time-boxed, continuously-rebased integration branch with identical CI. Awaiting user/queen ratification.
-Q3 STORY-002 interpretation: confirm "agent TUI code" = SwiftTerm/tmux-attach hosting path (my primary reading), not the CLI status-text emitters.
-Q4 Confirm the qualify-don't-presume stance on in-tree sessiond/HiveTerminalKit (vs. mandated from-scratch rewrite).
-Q5 M1 "beautiful" bar: propose design checklist + engineer screenshot review as the acceptance mechanism — who signs off?
-Q6 Grok argv caveat: is silent-in-TUI sufficient, or must the belief also be invisible to local `ps` (then: ACP initialize metadata path / upstream file-surface request)?
-Q7 Third-opinion trigger: atlas's grok finding is sourced from official xAI docs + source; do we still want a Grok-researcher third opinion (queen would spawn) before S2.2-grok is marked Ready?
+Q1 Board access: RESOLVED — `project` scope granted; read+write confirmed, 34 stories on the board.
+Q2 Where the rebuild lands: RESOLVED (user) — the rebuild proceeds **on main progressively**. The installed/running Hive is DECOUPLED from main: it runs a version-pinned released build, so main's mid-flight state endangers nothing and no long-lived integration branch is needed (branches only for work organization). **Release/activation is a separate END gate: nothing ships to consumers until the whole rebuild is done AND stable.** The Removal Gate still governs the tmux cut — main is never gutted before the replacement passes the full live vendor matrix. (This supersedes the earlier astrid/atlas bootstrap-binary machinery: the running Hive already IS the pinned known-good tool; the old-build pre-cut drain from R3 P0-4 still applies to dev instances.)
+Q3 STORY-002 scope: RESOLVED (user) — exactly the SwiftTerm/tmux-attach agent-TUI hosting+render path; status-text emitters explicitly excluded.
+Q4 In-tree sessiond/HiveTerminalKit: RESOLVED (user) — qualify-don't-presume; candidate to qualify across the live matrix, never evidence.
+Q5 M1 aesthetic bar: RESOLVED (user) — the USER personally signs off against reference terminals; hard gate in M1's definition of done.
+Q6 Grok belief silence: RESOLVED (user) — TUI/transcript-silent is SUFFICIENT; prefer non-argv where free; ps-invisibility is NOT a requirement.
+Q7 Grok third opinion: RESOLVED (user) — not needed; atlas's official-sourced finding stands.
+
+## Plan lifecycle
+
+1. ~~Draft~~ → 2. ~~atlas R3 review adopted~~ → 3. ~~User decisions Q1–Q7 folded in~~ → 4. **NOW: finalized plan awaiting USER approval** → 5. Execution authorization (starts with M1 terminal-BUILD stories A0/A1/B1, never the removals) → 6. Removal Gate → atomic cut → 7. M2…M5 → 8. Release/activation END gate.

@@ -4,9 +4,9 @@ Milestone: M1 (executes together with STORY-001 as the M1 cut)
 Backlog position: #2
 State when board access lands: **Ready** (with one interpretation flag for queen/user below)
 
-## Interpretation (stated, not silently chosen)
+## Scope ruling (CONFIRMED by user via queen, 2026-07-17)
 
-Hive does not render an agent TUI of its own: the vendor TUIs (Claude Code, Codex, Grok) render themselves, and Hive's shipping path *hosts* them via a SwiftTerm view execing `tmux attach-session` per pane ("Hive never rolls its own renderer" — TerminalPaneView). Therefore "agent TUI code" is read as: **the legacy presentation/hosting layer through which agent TUIs are displayed** — the SwiftTerm renderer and its tmux-attach glue. The replacement (HiveTerminalKit, Ghostty-based) is NOT in scope — it is the successor. If the requester meant something broader (e.g. also the CLI status-table/statusline text emitters), say so and this story splits; the broader reading risks dragging core session management out with the TUI (WorkspaceCore blends both).
+Hive does not render an agent TUI of its own: the vendor TUIs (Claude Code, Codex, Grok) render themselves, and Hive's shipping path *hosts* them via a SwiftTerm view execing `tmux attach-session` per pane ("Hive never rolls its own renderer" — TerminalPaneView). This story's scope is **exactly the SwiftTerm / tmux-attach agent-TUI hosting+render path — nothing else**. Agent status-text emitters (statusline fact ingestion, status tables, the workspace-feed wire) are explicitly OUT of scope — they are separate systems. The replacement (HiveTerminalKit, Ghostty-based) is NOT in scope — it is the successor.
 
 ## Sequencing
 

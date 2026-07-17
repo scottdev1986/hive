@@ -18,6 +18,7 @@ You cannot remove the process host that runs agents before its replacement runs 
 - **Atomic cut with STORY-002 (atlas R3 P0-3, adopted):** the two removal stories overlap (TerminalPaneView/PaneView/LaunchConfig/ProjectState/AgentFeed/scroll/smoke) and their DoDs depend on each other. They execute as ONE atomic Removal Gate merge train — a single cut with explicit internal ordering — and the full vendor matrix is re-run on the post-deletion tree before the cut lands. Two separately-green PRs are NOT acceptable.
 - **M1/M2 ownership boundary (atlas R3 P0-2, adopted):** M1 owns generic command launch, PTY byte I/O, locator/lifecycle/recovery, and a neutral test fixture; vendor binaries are launched MANUALLY for terminal qualification. M2 owns provider launch profiles, silent beliefs, approval semantics, authenticated status, and control-message receipt. This story's proofs are therefore generic-session proofs, not agent-pipeline proofs.
 - Everything in M1 between now and the gate exists solely to make this cut safe.
+- **Where the cut lands (user ruling Q2, 2026-07-17):** the rebuild proceeds **on main progressively**. The installed/running Hive is decoupled from main — it runs a version-pinned released build — so main's mid-flight state endangers nothing. No long-lived integration branch; branches only for work organization. Release/activation to the running system is a **separate END gate** after the whole rebuild is done AND stable. The Removal Gate still governs this cut: main is never gutted before the replacement qualifies.
 
 ## Scope
 
