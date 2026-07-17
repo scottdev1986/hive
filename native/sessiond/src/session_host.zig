@@ -1714,17 +1714,32 @@ pub const TerminationBinding = struct {
     pty: *pty_host.PtyHost,
     directory: std.fs.Dir,
     arbiter: ?*input_arbiter.InputArbiter = null,
+    /// Optional provider-adapter bytes. No current SessionSpec supplies them;
+    /// absence intentionally degrades to TERM-first rather than fabrication.
+    graceful_action: ?[]const u8 = null,
 };
 
 const ProviderTermination = struct {
     tree: process_inspector.TerminationResult,
     exit: pty_host.ExitEvidence,
+    arbiter_error: ?[]const u8 = null,
+    graceful_action_error: ?[]const u8 = null,
 
     fn deinit(self: *ProviderTermination, allocator: std.mem.Allocator) void {
         self.tree.deinit(allocator);
         self.* = undefined;
     }
 };
+
+fn deliverGracefulAction(binding: TerminationBinding) !void {
+    const bytes = binding.graceful_action orelse return;
+    if (bytes.len == 0) return;
+    _ = try binding.pty.writeAccept(bytes);
+    while (true) {
+        const count = try binding.pty.writeDrain();
+        if (count == 0) return;
+    }
+}
 
 fn parseStartToken(value: []const u8) !process_inspector.StartToken {
     const colon = std.mem.indexOfScalar(u8, value, ':') orelse
@@ -1745,6 +1760,23 @@ fn terminateProvider(
     mode: process_inspector.TerminationMode,
     visibility_expired: bool,
 ) !ProviderTermination {
+    var arbiter_error: ?[]const u8 = null;
+    if (binding.arbiter) |arbiter| {
+        if (visibility_expired)
+            arbiter.onVisibilityLeaseExpired() catch |err| {
+                arbiter_error = @errorName(err);
+            }
+        else
+            arbiter.terminate() catch |err| {
+                arbiter_error = @errorName(err);
+            };
+    }
+    var graceful_action_error: ?[]const u8 = null;
+    if (mode == .graceful and binding.graceful_action != null) {
+        deliverGracefulAction(binding) catch |err| {
+            graceful_action_error = @errorName(err);
+        };
+    }
     var platform = process_inspector.RealPlatform.init();
     var tree = try process_inspector.terminateTree(
         platform.platform(),
@@ -1754,17 +1786,16 @@ fn terminateProvider(
         mode,
     );
     errdefer tree.deinit(allocator);
-    if (binding.arbiter) |arbiter| {
-        if (visibility_expired)
-            try arbiter.onVisibilityLeaseExpired()
-        else
-            try arbiter.terminate();
-    }
     binding.pty.closeMaster();
     const exit: pty_host.ExitEvidence = binding.pty.waitExit(false) catch .{
         .reaped = false,
     };
-    return .{ .tree = tree, .exit = exit };
+    return .{
+        .tree = tree,
+        .exit = exit,
+        .arbiter_error = arbiter_error,
+        .graceful_action_error = graceful_action_error,
+    };
 }
 
 fn leapYearsThrough(year: u64) u64 {
@@ -2255,7 +2286,25 @@ pub const HostCore = struct {
                 .reason = reason,
             });
         }
-        const errors_json = std.json.Array.init(a);
+        var errors_json = std.json.Array.init(a);
+        var final_errors: std.ArrayList(FinalError) = .{};
+        defer final_errors.deinit(a);
+        const termination_errors = [_]struct { phase: []const u8, code: ?[]const u8 }{
+            .{ .phase = "input-arbiter-close", .code = outcome.arbiter_error },
+            .{ .phase = "provider-graceful-action", .code = outcome.graceful_action_error },
+        };
+        for (termination_errors) |termination_error| {
+            const code = termination_error.code orelse continue;
+            var error_value = std.json.ObjectMap.init(a);
+            try error_value.put("phase", .{ .string = termination_error.phase });
+            try error_value.put("code", .{ .string = code });
+            try error_value.put("diagnosticId", .{ .string = "session-host-termination" });
+            try errors_json.append(.{ .object = error_value });
+            try final_errors.append(a, .{
+                .phase = termination_error.phase,
+                .code = code,
+            });
+        }
         var exit_value: std.json.Value = .null;
         if (outcome.exit.reaped) {
             var observed_storage: [24]u8 = undefined;
@@ -2303,7 +2352,6 @@ pub const HostCore = struct {
             "{d}",
             .{self.registration.record.checkpoint_seq},
         );
-        const no_errors = &[_]FinalError{};
         try writeFinalExclusive(self.allocator, binding.directory, .{
             .state = @tagName(outcome.tree.state),
             .exitCode = outcome.exit.exit_code,
@@ -2312,7 +2360,7 @@ pub const HostCore = struct {
             .outputSeq = output_seq,
             .checkpointSeq = checkpoint_seq,
             .survivors = survivors.items,
-            .errors = no_errors,
+            .errors = final_errors.items,
             .failureCode = failure_code,
         });
         self.registration.record.state = .exited;
@@ -3990,6 +4038,35 @@ fn bindTestProvider(
         .process_group_id = readback.pgid,
     };
     core.bindTermination(.{ .pty = pty, .directory = directory });
+}
+
+test "optional provider graceful action reaches the PTY without fabricated bytes" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    _ = try pty.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .geometry = .{ .columns = 80, .rows = 24, .width_px = 800, .height_px = 480 },
+    });
+    const action = "explicit-provider-graceful-action\n";
+    try deliverGracefulAction(.{
+        .pty = &pty,
+        .directory = temporary.dir,
+        .graceful_action = action,
+    });
+    var output: std.ArrayList(u8) = .{};
+    defer output.deinit(std.testing.allocator);
+    var attempts: usize = 0;
+    while (attempts < 200 and std.mem.indexOf(u8, output.items, action) == null) : (attempts += 1) {
+        const chunk = pty.readAvailable() catch |err| switch (err) {
+            error.Closed => break,
+            else => return err,
+        };
+        try output.appendSlice(std.testing.allocator, chunk.bytes);
+        if (chunk.bytes.len == 0) std.Thread.sleep(std.time.ns_per_ms);
+    }
+    try std.testing.expect(std.mem.indexOf(u8, output.items, action) != null);
 }
 
 test "host.sock TERMINATE returns process evidence, writes final, and spares sentinel" {
