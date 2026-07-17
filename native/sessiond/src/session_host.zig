@@ -1050,6 +1050,7 @@ fn parseRegistration(
     errdefer arena.deinit();
     const a = arena.allocator();
     const wire = parsed.value.record;
+    _ = try validatedHostLeaseRemaining(wire.visibility.expiresAt);
     var registration: HostRegistration = .{
         .record = .{
             .locator = try parseLocator(a, wire.locator),
@@ -3474,9 +3475,15 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
+    var expiry_storage: [24]u8 = undefined;
+    var registration = fixtureRegistration();
+    registration.expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        generated.limits.visibility_expiry_ms,
+    );
     var host: RegistrationThread = .{
         .stream = sockets[1],
-        .registration = fixtureRegistration(),
+        .registration = registration,
     };
     const thread = try std.Thread.spawn(.{}, RegistrationThread.run, .{&host});
     errdefer thread.join();
