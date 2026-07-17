@@ -36,6 +36,14 @@ public protocol ManualSurfaceEngine: AnyObject {
         mods: ghostty_input_mods_e
     ) -> Bool
     func sendMousePos(x: Double, y: Double, mods: ghostty_input_mods_e)
+    /// Gate 8: real cell/text-offset selection range, matching Ghostty's own
+    /// selectedRange() (ghostty_surface_read_selection), not a placeholder.
+    func readSelection() -> (offset: Int, length: Int)?
+    /// Gate 8: matches ghostty_surface_mouse_scroll's packed scroll-mods
+    /// bitmask (bit 0 precision, bits 1-3 momentum phase) — see
+    /// HiveTerminalView+Input.swift's ScrollMods for the exact encoding,
+    /// sourced from Ghostty's own macos/Sources/Ghostty/Ghostty.Input.swift.
+    func sendMouseScroll(x: Double, y: Double, mods: Int32)
     func free()
 }
 
@@ -52,6 +60,18 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     public private(set) var freed = false
     public private(set) var textSent: [String] = []
     public private(set) var keysSent = 0
+    /// Gate 8 test detail: the C `text` pointer is only valid synchronously,
+    /// so it's copied to a Swift String here at call time (mirrors the real
+    /// bridge's copy-before-return discipline for callback pointers).
+    public struct KeySent {
+        public let action: ghostty_input_action_e
+        public let mods: ghostty_input_mods_e
+        public let consumedMods: ghostty_input_mods_e
+        public let keycode: UInt32
+        public let unshiftedCodepoint: UInt32
+        public let text: String?
+    }
+    public private(set) var keysSentDetail: [KeySent] = []
 
     private var committed: [(streamSeq: UInt64, bytes: Data, digest: Data)] = []
 
@@ -94,7 +114,14 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     public func refresh() {}
     public func sendKey(_ key: ghostty_input_key_s) -> Bool {
         keysSent += 1
-        _ = key
+        keysSentDetail.append(KeySent(
+            action: key.action,
+            mods: key.mods,
+            consumedMods: key.consumed_mods,
+            keycode: key.keycode,
+            unshiftedCodepoint: key.unshifted_codepoint,
+            text: key.text.map { String(cString: $0) }
+        ))
         return true
     }
     public func sendText(_ text: String) {
@@ -113,6 +140,12 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     }
     public func sendMousePos(x: Double, y: Double, mods: ghostty_input_mods_e) {
         _ = (x, y, mods)
+    }
+    public var fakeSelection: (offset: Int, length: Int)?
+    public func readSelection() -> (offset: Int, length: Int)? { fakeSelection }
+    public private(set) var scrollsSent: [(x: Double, y: Double, mods: Int32)] = []
+    public func sendMouseScroll(x: Double, y: Double, mods: Int32) {
+        scrollsSent.append((x, y, mods))
     }
     public func free() { freed = true }
 }
@@ -230,6 +263,19 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     public func sendMousePos(x: Double, y: Double, mods: ghostty_input_mods_e) {
         guard let surface = surfaceHandle else { return }
         ghostty_surface_mouse_pos(surface, x, y, mods)
+    }
+
+    public func readSelection() -> (offset: Int, length: Int)? {
+        guard let surface = surfaceHandle else { return nil }
+        var text = ghostty_text_s()
+        guard ghostty_surface_read_selection(surface, &text) else { return nil }
+        defer { ghostty_surface_free_text(surface, &text) }
+        return (offset: Int(text.offset_start), length: Int(text.offset_len))
+    }
+
+    public func sendMouseScroll(x: Double, y: Double, mods: Int32) {
+        guard let surface = surfaceHandle else { return }
+        ghostty_surface_mouse_scroll(surface, x, y, ghostty_input_scroll_mods_t(mods))
     }
 
     public func free() {
