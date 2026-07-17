@@ -1141,6 +1141,21 @@ const HiveManual = struct {
     /// reportDeviceAttributes exactly (same pinned Ghostty build): VT220
     /// level 2 conformance, ANSI color, no clipboard feature (52) because
     /// clipboardWrite above always denies.
+    ///
+    /// KNOWN DIVERGENCE (cross-vendor review 2026-07-17, deferred with
+    /// queen's authorization, not fixed): DA3 (CSI = c) gets a default
+    /// Tertiary reply here (unit_id 0), but the pinned exec-mode
+    /// reportDeviceAttributes has no tertiary case and replies to DA3 with
+    /// nothing. This effect's signature — `fn (*Handler)
+    /// device_attributes.Attributes`, called once regardless of which DA
+    /// variant is being asked — has no way to know the request type and
+    /// suppress just the tertiary reply; only the caller (stream_terminal
+    /// .zig's reportDeviceAttributes) knows it. Matching exec-mode exactly
+    /// would mean patching that upstream file too, past ADR-0002's
+    /// six-file budget for a query xterm ctlseqs marks legacy/rare (no
+    /// mainstream TUI negotiation depends on DA3). Revisit if budget ever
+    /// allows a second Zig-side hunk, or if upstream adds a req-aware
+    /// device_attributes effect signature.
     fn deviceAttributes(handler: *terminal.TerminalStream.Handler) terminal.device_attributes.Attributes {
         _ = handler;
         return .{ .secondary = .{ .firmware_version = 10 } };

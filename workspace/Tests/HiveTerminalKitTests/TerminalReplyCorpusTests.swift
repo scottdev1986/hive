@@ -23,11 +23,18 @@ import HiveGhosttyC
 /// deviceAttributes/reportXtversion), not invented — this is the same
 /// pinned Ghostty engine build, so DA1/DA2 must match it exactly.
 final class TerminalReplyCorpusTests: XCTestCase {
+    /// Fails loudly rather than XCTSkip: this is the story's mandated
+    /// LIVE-PROOF gate, so a run where every test silently skips must not
+    /// report as "N tests, 0 failures" (cross-vendor review 2026-07-17
+    /// caught exactly this — a real surface creation failure in the
+    /// reviewer's environment skipped all 9 gate-2/3 tests and still read
+    /// as green).
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
             return try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         } catch {
-            throw XCTSkip("manual surface unavailable in this environment: \(error)")
+            XCTFail("real manual surface required for gate 2 live proof, got: \(error)")
+            throw error
         }
     }
 

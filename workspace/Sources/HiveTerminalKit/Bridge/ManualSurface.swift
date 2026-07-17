@@ -259,36 +259,80 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
 /// wakeup_cb was a no-op, so any Ghostty-internal async work that depends
 /// on a later tick to complete silently never did.
 ///
+/// `app`/`freed` are read-modify-written only inside `runOnMain`, and both
+/// `scheduleTick` and `freeIfNeeded` route their real work through it, so
+/// a tick and a free can never interleave: GCD's main queue is serial, so
+/// once either closure starts running on main it runs to completion (a
+/// synchronous `ghostty_app_tick`/`ghostty_app_free` call cannot be
+/// preempted by another main-queue item) before the other can begin. This
+/// is the actual fix — an NSLock held only across `ghostty_app_tick`
+/// itself would risk deadlock if Ghostty synchronously re-enters
+/// `wakeup_cb` from inside a tick (same thread, non-reentrant lock).
+/// `lock` still guards the fields themselves against non-main readers
+/// (e.g. `bind`), but is never held across a C call into Ghostty.
+///
 /// `app` is set only after `ghostty_app_new` succeeds (nothing can call
-/// wakeup before then) and cleared before `ghostty_app_free`, so a wakeup
-/// racing free either sees the real app or a no-op — never a freed handle.
-/// `ghostty_app_tick` touches AppKit/Metal-adjacent app state, so ticks are
-/// marshaled onto the main thread like every other surface entry point.
+/// wakeup before then) and the free body is guaranteed to run at most
+/// once (first caller wins; `freed` is checked and set atomically under
+/// `lock` before either the app pointer is cleared or the C frees run).
 public final class GhosttyAppWakeupContext: @unchecked Sendable {
     private var app: ghostty_app_t?
+    private var freed = false
     private let lock = NSLock()
+
+    /// Test seam only (gate 3 positive controls): substitutes a spy for
+    /// the real `ghostty_app_tick` call so tests can observe that a tick
+    /// actually executed, on which thread, and with which app pointer —
+    /// not merely that `scheduleTick` returned without crashing. nil in
+    /// production; every non-test caller gets the real C call.
+    var tickOverride: ((ghostty_app_t) -> Void)?
+
+    private func runOnMain(_ body: @escaping () -> Void) {
+        if Thread.isMainThread {
+            body()
+        } else {
+            DispatchQueue.main.async(execute: body)
+        }
+    }
 
     fileprivate func bind(_ app: ghostty_app_t) {
         lock.lock(); self.app = app; lock.unlock()
     }
 
-    fileprivate func unbind() {
-        lock.lock(); self.app = nil; lock.unlock()
-    }
-
     fileprivate func scheduleTick() {
-        let tick = { [weak self] in
+        runOnMain { [weak self] in
             guard let self else { return }
             self.lock.lock()
-            let app = self.app
+            let app = self.freed ? nil : self.app
             self.lock.unlock()
             guard let app else { return }
-            ghostty_app_tick(app)
+            if let override = self.tickOverride {
+                override(app)
+            } else {
+                ghostty_app_tick(app)
+            }
+        }
+    }
+
+    /// Runs `body` (the real `ghostty_app_free`/`ghostty_config_free`
+    /// calls) at most once, on the main thread — the same serial queue
+    /// `scheduleTick` uses, so a tick that has already started always
+    /// finishes before this can run, and a free that has already started
+    /// always finishes before a later-arriving tick can read `app`.
+    /// Blocks the calling thread until the free (or the no-op) completes,
+    /// matching `deinit`'s expectation that `free()` leaves nothing live.
+    fileprivate func freeIfNeeded(_ body: @escaping () -> Void) {
+        let runOnce = { [self] in
+            lock.lock()
+            let shouldRun = !freed
+            if shouldRun { freed = true; app = nil }
+            lock.unlock()
+            if shouldRun { body() }
         }
         if Thread.isMainThread {
-            tick()
+            runOnce()
         } else {
-            DispatchQueue.main.async(execute: tick)
+            DispatchQueue.main.sync(execute: runOnce)
         }
     }
 
@@ -310,7 +354,6 @@ public final class GhosttyAppOwner {
     public let config: ghostty_config_t
     /// internal (not private): gate 3 lifecycle tests drive wakeup_cb directly.
     let wakeupContext: GhosttyAppWakeupContext
-    private var freed = false
 
     fileprivate init(app: ghostty_app_t, config: ghostty_config_t, wakeupContext: GhosttyAppWakeupContext) {
         self.app = app
@@ -324,11 +367,10 @@ public final class GhosttyAppOwner {
     }
 
     public func free() {
-        guard !freed else { return }
-        freed = true
-        wakeupContext.unbind()
-        ghostty_app_free(app)
-        ghostty_config_free(config)
+        wakeupContext.freeIfNeeded { [app, config] in
+            ghostty_app_free(app)
+            ghostty_config_free(config)
+        }
     }
 
     public func tick() {
@@ -355,6 +397,25 @@ public enum GhosttyBridgeFactory {
         }
     }
 
+    /// Builds the runtime config passed to `ghostty_app_new` — pulled out of
+    /// `makeManualSurface` so gate 3 tests can assert the REAL factory wires
+    /// `wakeup_cb`/`userdata` to the real trampoline/context, not a stub.
+    /// Without this seam, only the trampoline function in isolation was
+    /// testable and the factory's own wiring could silently regress to a
+    /// no-op (e.g. `{ _ in }`) with no test catching it.
+    static func makeRuntimeConfig(wakeupContext: GhosttyAppWakeupContext) -> ghostty_runtime_config_s {
+        ghostty_runtime_config_s(
+            userdata: wakeupContext.unownedContextPointer,
+            supports_selection_clipboard: false,
+            wakeup_cb: ghosttyAppWakeupTrampoline,
+            action_cb: { _, _, _ in false },
+            read_clipboard_cb: { _, _, _ in false },
+            confirm_read_clipboard_cb: { _, _, _, _ in },
+            write_clipboard_cb: { _, _, _, _, _ in },
+            close_surface_cb: { _, _ in }
+        )
+    }
+
     /// Create a manual-I/O surface bound to the copy-before-return trampolines.
     /// The returned surface owns the callback context and app for lifetime safety.
     ///
@@ -372,16 +433,7 @@ public enum GhosttyBridgeFactory {
         ghostty_config_finalize(config)
 
         let wakeupContext = GhosttyAppWakeupContext()
-        var runtime = ghostty_runtime_config_s(
-            userdata: wakeupContext.unownedContextPointer,
-            supports_selection_clipboard: false,
-            wakeup_cb: ghosttyAppWakeupTrampoline,
-            action_cb: { _, _, _ in false },
-            read_clipboard_cb: { _, _, _ in false },
-            confirm_read_clipboard_cb: { _, _, _, _ in },
-            write_clipboard_cb: { _, _, _, _, _ in },
-            close_surface_cb: { _, _ in }
-        )
+        var runtime = makeRuntimeConfig(wakeupContext: wakeupContext)
 
         guard let app = ghostty_app_new(&runtime, config) else {
             ghostty_config_free(config)

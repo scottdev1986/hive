@@ -104,19 +104,26 @@ echo "building universal GhosttyKit.xcframework"
 # at the final test-bundle link with "unexpected binary name ... Static
 # libraries should be prefixed with lib". Rename in place and repoint the
 # xcframework's own manifest so every consumer sees a valid archive name.
+#
+# The slice directory name and archive filename are read from the plist's
+# own macOS entry rather than hardcoded, so this survives Ghostty renaming
+# its LibraryIdentifier (e.g. arch-list changes) or BinaryPath convention.
 mac_plist="$OUT/GhosttyKit.xcframework/Info.plist"
 mac_index=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries" "$mac_plist" \
   | /usr/bin/awk '
       /Dict {/ { idx++ }
-      /LibraryIdentifier = macos-arm64_x86_64/ { print idx - 1; found=1 }
+      /SupportedPlatform = macos/ { print idx - 1; found=1 }
       END { if (!found) exit 1 }
     ')
-mac_slice="$OUT/GhosttyKit.xcframework/macos-arm64_x86_64"
-mac_lib="$mac_slice/ghostty-internal.a"
-if [[ -f "$mac_lib" ]]; then
-  /bin/mv "$mac_lib" "$mac_slice/libghostty-internal.a"
-  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:BinaryPath libghostty-internal.a" "$mac_plist"
-  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:LibraryPath libghostty-internal.a" "$mac_plist"
+mac_identifier=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:$mac_index:LibraryIdentifier" "$mac_plist")
+mac_binary_path=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries:$mac_index:BinaryPath" "$mac_plist")
+mac_slice="$OUT/GhosttyKit.xcframework/$mac_identifier"
+mac_lib="$mac_slice/$mac_binary_path"
+if [[ -f "$mac_lib" && "$mac_binary_path" != lib* ]]; then
+  mac_binary_path="lib$mac_binary_path"
+  /bin/mv "$mac_lib" "$mac_slice/$mac_binary_path"
+  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:BinaryPath $mac_binary_path" "$mac_plist"
+  /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:LibraryPath $mac_binary_path" "$mac_plist"
 fi
 
 for target in aarch64:arm64 x86_64:x86_64; do
@@ -159,12 +166,13 @@ if [[ ! -f "$OUT/notices/ghostty/LICENSE" ]]; then
   exit 1
 fi
 
-mac_library="$OUT/GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a"
+mac_library="$mac_slice/$mac_binary_path"
 /usr/bin/nm -gUj "$mac_library" | /usr/bin/sed 's/^_//' | LC_ALL=C /usr/bin/sort -u >"$OUT/symbols/ghostty-all.exports"
 if [[ "$(lock_value ghostty.symbolListSha256)" != "REQUIRED_BEFORE_TG1_PRODUCTION" ]]; then
   "$ROOT/scripts/check-ghostty-abi.sh" "$mac_library"
 fi
 
+export HIVE_MAC_XCFRAMEWORK_ARCHIVE="GhosttyKit.xcframework/$mac_identifier/$mac_binary_path"
 export HIVE_PATCH_SERIES_SHA256="$PATCH_SHA"
 export HIVE_PUBLIC_HEADER_SHA256="$HEADER_SHA"
 export HIVE_SYMBOL_LIST_SHA256="$SYMBOL_SHA"

@@ -120,8 +120,16 @@ function versionNumber(version: string): number {
   return Number(major) * 1000 + Number(minor);
 }
 
+// build-ghosttykit.sh reads the macOS slice's directory/archive name from
+// the xcframework's own Info.plist (it can drift if Ghostty renames its
+// LibraryIdentifier/BinaryPath) and passes the resulting relative path
+// here rather than this script hardcoding a second, possibly-stale copy.
+const macArchivePath =
+  process.env.HIVE_MAC_XCFRAMEWORK_ARCHIVE ??
+  "GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a";
+
 const expectedArchitectures: Array<[string, string[]]> = [
-  ["GhosttyKit.xcframework/macos-arm64_x86_64/ghostty-internal.a", ["arm64", "x86_64"]],
+  [macArchivePath, ["arm64", "x86_64"]],
   ["lib-vt/arm64/libghostty-vt.a", ["arm64"]],
   ["lib-vt/x86_64/libghostty-vt.a", ["x86_64"]],
 ];
