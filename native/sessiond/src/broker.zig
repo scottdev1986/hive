@@ -2016,7 +2016,7 @@ pub fn launchHost(
     const attaching_expiry = std.math.add(
         u64,
         now_ns,
-        generated.limits.attach_grant_timeout_ms * std.time.ns_per_ms,
+        generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
     ) catch return .{
         .failure = .{ .code = .resource_exhausted, .close_connection = false },
         .created_payload = null,

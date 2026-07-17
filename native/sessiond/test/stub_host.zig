@@ -652,7 +652,7 @@ test "wire host control rejects a locator before connecting" {
     }).verification_complete);
 }
 
-test "broker launch passes the exact executable and secret then publishes only validated readback" {
+test "broker launch accepts visibility expiry and rejects attach-grant expiry" {
     var path_storage: [96]u8 = undefined;
     const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-sessiond-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
@@ -686,7 +686,8 @@ test "broker launch passes the exact executable and secret then publishes only v
     record.engine_build_id = "engine-fixture";
     record.visibility.state = .attaching;
     record.visibility.workspace_session_id = "workspace-fixture";
-    record.visibility.expires_mono_ns = 31 * std.time.ns_per_s;
+    record.visibility.expires_mono_ns = 1 * std.time.ns_per_s +
+        broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
     try std.testing.expect(broker.recordJsonMatches(std.testing.allocator, record, record_json));
     var launch_host = fixtureHost(record);
     var launcher: LaunchDouble = .{
@@ -716,6 +717,48 @@ test "broker launch passes the exact executable and secret then publishes only v
     try std.testing.expect(launcher.executable_was_absolute);
     try std.testing.expect(launcher.secret_was_nonzero);
     try std.testing.expect(registry.lookup(record.locator).?.entry.record.state == .live);
+
+    var rejected_path_storage: [96]u8 = undefined;
+    const rejected_root = try std.fmt.bufPrint(
+        &rejected_path_storage,
+        "/tmp/hive-sessiond-{x}",
+        .{std.crypto.random.int(u64)},
+    );
+    try std.fs.makeDirAbsolute(rejected_root);
+    defer std.fs.deleteTreeAbsolute(rejected_root) catch {};
+    var rejected_runtime = try broker.Runtime.open(std.testing.allocator, rejected_root);
+    defer rejected_runtime.deinit();
+    var rejected_record = record;
+    rejected_record.visibility.expires_mono_ns = 1 * std.time.ns_per_s +
+        broker.generated.limits.attach_grant_timeout_ms * std.time.ns_per_ms;
+    var rejected_host = fixtureHost(rejected_record);
+    var rejected_launcher: LaunchDouble = .{
+        .record = rejected_record,
+        .record_json = record_json,
+        .created_payload = created,
+        .host = rejected_host.control(),
+    };
+    var rejected_registry: broker.Registry = .{};
+    const rejected = try broker.launchHost(
+        std.testing.allocator,
+        &rejected_runtime,
+        &rejected_registry,
+        rejected_record.locator.session_id,
+        spec,
+        "",
+        digest,
+        1 * std.time.ns_per_s,
+        rejected_launcher.launcher(),
+    );
+    try std.testing.expectEqual(
+        broker.protocol.WireError.verification_unknown,
+        rejected.failure.?.code,
+    );
+    try std.testing.expect(rejected.created_payload == null);
+    try std.testing.expectEqual(
+        broker.protocol.WireError.not_found,
+        rejected_registry.lookup(rejected_record.locator).?.failure.code,
+    );
 }
 
 test "visibility expiry terminates through the host double with positive readback" {
