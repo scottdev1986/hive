@@ -1,0 +1,11 @@
+ELLEN_REVIEW answered_when_enabled_count=7
+ELLEN_REVIEW bites: DSR (CSI 5 n) -> "\u{1B}[0n"
+ELLEN_REVIEW bites: DA1 (CSI c) -> "\u{1B}[?62;22c"
+ELLEN_REVIEW bites: DA2 (CSI > c) -> "\u{1B}[>1;10;0c"
+ELLEN_REVIEW bites: DA3 (CSI = c) -> "\u{1B}P!|00000000\u{1B}\\"
+ELLEN_REVIEW bites: XTVERSION (CSI > q) -> "\u{1B}P>|ghostty 1.3.2-dev+0000000\u{1B}\\"
+ELLEN_REVIEW bites: DECRQSS (DCS $ q m ST) -> "\u{1B}P1$r0m\u{1B}\\"
+ELLEN_REVIEW bites: XTGETTCAP (DCS + q 544E ST) -> "\u{1B}P1+r544E=787465726D2D67686F73747479\u{1B}\\"
+ELLEN_REVIEW vacuous_count=0
+Test Case '-[HiveTerminalKitTests.EllenReviewSuppressionTests testEachQueryIndividuallySuppressedAndSuppressionIsNonVacuous]' passed (3.172 seconds).
+Test Case '-[HiveTerminalKitTests.EllenReviewSuppressionTests testObservationChannelPositiveControl]' passed (0.210 seconds).
