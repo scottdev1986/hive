@@ -2176,26 +2176,149 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
         return error.DescriptorMapNotRefused;
     if (refused_record.lifecycle != .create_failed) return error.DescriptorMapNotRefused;
 
-    // The frozen create-result schema marks every field of the exec-failed
-    // variant required, and `osCode` is required-but-NULLABLE: a refusal that
-    // carries no OS code must still emit the key. Checked against the raw JSON
-    // object, because parsing into StoredOutcome cannot tell an absent field
-    // from an explicit null — the round trip alone would hide the omission.
-    var refusal_arena = std.heap.ArenaAllocator.init(allocator);
-    defer refusal_arena.deinit();
-    const refusal_document = try std.json.parseFromSliceLeaky(
-        std.json.Value,
-        refusal_arena.allocator(),
-        refused_record.createResultJson orelse return error.DescriptorMapNotRefused,
-        .{},
-    );
-    const refusal_fields = switch (refusal_document) {
-        .object => |object| object,
-        else => return error.CreateResultMissingRequiredField,
+    // The committed refusal is validated against the generated wire schema by
+    // proveCreateResultDocuments in the golden layer, which catches a missing
+    // required-but-nullable field (osCode) without this module hand-listing the
+    // frozen shape.
+}
+
+pub const CreateResultProof = struct {
+    running: []const u8,
+    refused: []const u8,
+
+    pub fn deinit(self: CreateResultProof, allocator: std.mem.Allocator) void {
+        allocator.free(self.refused);
+        allocator.free(self.running);
+    }
+};
+
+/// Assemble the frozen create-result document for one committed session.
+///
+/// The outcome is embedded from the COMMITTED LEDGER BYTES, parsed as an opaque
+/// value, rather than re-serialized from typed values: a field the ledger
+/// omitted must stay omitted here, or a schema check above would be validating
+/// a document this host never actually wrote.
+fn createResultDocument(
+    allocator: std.mem.Allocator,
+    scratch: std.mem.Allocator,
+    session: SessionRef,
+    committed_outcome: []const u8,
+    limits: HostLimits,
+) ![]u8 {
+    const outcome = try std.json.parseFromSliceLeaky(std.json.Value, scratch, committed_outcome, .{});
+
+    var session_object: std.json.ObjectMap = .init(scratch);
+    try session_object.put("key", .{ .string = session.key });
+    try session_object.put("incarnation", .{ .string = session.incarnation });
+
+    var limits_object: std.json.ObjectMap = .init(scratch);
+    try limits_object.put("maxInputTransactionBytes", .{ .integer = @intCast(limits.maxInputTransactionBytes) });
+    try limits_object.put("maxInputQueueBytes", .{ .integer = @intCast(limits.maxInputQueueBytes) });
+    try limits_object.put("maxOutputFrameBytes", .{ .integer = @intCast(limits.maxOutputFrameBytes) });
+    try limits_object.put("outputLowWaterBytes", .{ .integer = @intCast(limits.outputLowWaterBytes) });
+    try limits_object.put("outputHighWaterBytes", .{ .integer = @intCast(limits.outputHighWaterBytes) });
+    try limits_object.put("outputRetentionBytes", .{ .integer = @intCast(limits.outputRetentionBytes) });
+
+    var document: std.json.ObjectMap = .init(scratch);
+    try document.put("session", .{ .object = session_object });
+    try document.put("outcome", outcome);
+    try document.put("limits", .{ .object = limits_object });
+    return std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = document }, .{});
+}
+
+/// Real committed create results — one running, one descriptor-map refusal —
+/// assembled as frozen create-result documents.
+///
+/// This module must stay project-neutral, so it cannot validate them against
+/// the Hive wire schema itself. The golden layer above imports both and does
+/// the validation; producing the documents here is what lets it.
+pub fn proveCreateResultDocuments(allocator: std.mem.Allocator) !CreateResultProof {
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/ncr-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var scratch = std.heap.ArenaAllocator.init(allocator);
+    defer scratch.deinit();
+
+    const request: CreateRequest = .{
+        .key = "foreign://opaque/create-result-document",
+        .idempotencyKey = "create-result-1",
+        .command = .{
+            .executable = "/bin/cat",
+            .arguments = &.{},
+            .workingDirectory = "/tmp",
+            .completeEnvironment = &.{.{ .name = "TERM", .value = "xterm-256color" }},
+            .descriptorMap = &.{},
+        },
+        .terminalProfile = .{
+            .inputMode = .canonical,
+            .echo = false,
+            .signalCharacters = true,
+            .softwareFlowControl = false,
+            .eofByte = 4,
+            .startByte = 17,
+            .stopByte = 19,
+            .hangupOnLastClose = true,
+        },
+        .initialWindow = .{ .columns = 80, .rows = 24, .widthPixels = 0, .heightPixels = 0 },
     };
-    for ([_][]const u8{ "state", "layer", "osCode", "diagnostic" }) |field|
-        if (!refusal_fields.contains(field)) return error.CreateResultMissingRequiredField;
-    if (refusal_fields.count() != 4) return error.CreateResultMissingRequiredField;
+
+    var pty = try pty_host.PtyHost.init(allocator);
+    defer pty.deinit();
+    var direct = DirectHost.init(allocator, &registry, &pty);
+    defer direct.deinit();
+    const created = try direct.host().create(request);
+    switch (created.outcome) {
+        .running => |value| {
+            _ = c.kill(value.child.processId, c.SIGKILL);
+            var status: c_int = 0;
+            _ = c.waitpid(value.child.processId, &status, 0);
+        },
+        else => return error.DirectCreateFailed,
+    }
+    // Read the running record BEFORE the next create: a Record borrows registry
+    // storage that the following reservation recycles.
+    const running_record = registry.get(created.session) orelse return error.SessionNotFound;
+    const running = try createResultDocument(
+        allocator,
+        scratch.allocator(),
+        created.session,
+        running_record.createResultJson orelse return error.MissingCreateReplay,
+        created.limits,
+    );
+    errdefer allocator.free(running);
+
+    var descriptor_pty = try pty_host.PtyHost.init(allocator);
+    defer descriptor_pty.deinit();
+    var descriptor_direct = DirectHost.init(allocator, &registry, &descriptor_pty);
+    defer descriptor_direct.deinit();
+    var descriptor_request = request;
+    descriptor_request.key = "foreign://opaque/create-result-refusal";
+    descriptor_request.idempotencyKey = "create-result-refusal-1";
+    descriptor_request.command.descriptorMap = &.{.{
+        .handle = .{ .token = "opaque-transfer-token", .sourceDisposition = .retain },
+        .targetDescriptor = 3,
+    }};
+    const refused = try descriptor_direct.host().create(descriptor_request);
+    const refused_record = registry.get(refused.session) orelse return error.SessionNotFound;
+    const refusal = try createResultDocument(
+        allocator,
+        scratch.allocator(),
+        refused.session,
+        refused_record.createResultJson orelse return error.MissingCreateReplay,
+        refused.limits,
+    );
+    return .{ .running = running, .refused = refusal };
 }
 
 fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {

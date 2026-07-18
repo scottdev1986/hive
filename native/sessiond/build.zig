@@ -122,6 +122,10 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     neutral_host_golden_module.addImport("neutral_host", neutral_host_module);
+    // The golden layer validates committed create results against the frozen
+    // wire schema; the neutral module itself must not depend on either.
+    neutral_host_golden_module.addImport("protocol", test_module);
+    neutral_host_golden_module.addImport("session_protocol_generated", generated);
     const neutral_host_golden = b.addExecutable(.{
         .name = "sessiond-neutral-host-golden",
         .root_module = neutral_host_golden_module,
