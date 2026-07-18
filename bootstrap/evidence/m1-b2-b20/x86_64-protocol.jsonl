@@ -1,5 +1,5 @@
-{"pid":59349,"stage":"before"}
-{"engineBuildId":"2b27c3abfb2981bd4b3f886ad3c8d377f3d228d813bee2608fd3cf6f29149961","ghosttyCommit":"73534c4680a809398b396c94ac7f12fcccb7963d","layerClass":"IOSurfaceLayer","locatorGeneration":1,"locatorSessionId":"00000000-0000-4000-8000-000000000021","pid":59349,"stage":"create"}
-{"drawCount":1,"hasPresentedContents":true,"highWater":"102","layerClass":"IOSurfaceLayer","orderedChunkCount":3,"pid":59349,"stage":"use"}
-{"hasPresentedContents":false,"pid":59349,"stage":"free","surfaceState":"exited(evidence: \"user-close\")"}
-{"pid":59349,"stage":"done"}
+{"pid":89878,"stage":"before"}
+{"engineBuildId":"e8e456c5ac7481d52c255517fea236403715b52f3194d0cdd98e89bf29f06f19","ghosttyCommit":"73534c4680a809398b396c94ac7f12fcccb7963d","layerClass":"IOSurfaceLayer","locatorGeneration":1,"locatorSessionId":"00000000-0000-4000-8000-000000000021","pid":89878,"stage":"create"}
+{"drawCount":1,"hasPresentedContents":true,"highWater":"106","layerClass":"IOSurfaceLayer","orderedChunkCount":3,"pid":89878,"stage":"use"}
+{"hasPresentedContents":false,"pid":89878,"stage":"free","surfaceState":"exited(evidence: \"user-close\")"}
+{"pid":89878,"stage":"done"}

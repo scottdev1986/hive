@@ -1,4 +1,4 @@
 USER          PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND
-scottkellar 55945 s097    0.0 S    31T   0:00.00   0:00.00 /var/fo 55945 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-terminal-b20.Qs1vP6/build-arm64/arm64-apple-macosx/debug/HiveTerminalB20Probe
-            55945         0.0 S    31T   0:00.00   0:00.00         55945 S
-            55945         0.0 S    31T   0:00.00   0:00.00         55945 S
+scottkellar 88104 s093    1.9 S    31T   0:00.00   0:00.01 /var/fo 88104 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-terminal-b20.My4JMh/build-arm64/arm64-apple-macosx/debug/HiveTerminalB20Probe
+            88104         0.0 S    31T   0:00.00   0:00.00         88104 S
+            88104         0.0 S    31T   0:00.00   0:00.00         88104 S

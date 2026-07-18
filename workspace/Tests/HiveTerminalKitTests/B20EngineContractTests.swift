@@ -16,7 +16,7 @@ final class B20EngineContractTests: XCTestCase {
         view.engine.callbackContext.onWrite = { writes.append($0) }
         let chunks = [
             Data("\u{1B}[2J\u{1B}[HHive B2 neutral replay\r\n\u{1B}[38;5;39mmanual surface\u{1B}[0m".utf8),
-            Data("\u{1B}[5n\u{1B}[c\u{1B}[>c\u{1B}[>q\u{1B}P$qm\u{1B}\\\u{1B}P+q544E\u{1B}\\".utf8),
+            Data("\u{1B}[5n\u{1B}[c\u{1B}[>c\u{1B}[=c\u{1B}[>q\u{1B}P$qm\u{1B}\\\u{1B}P+q544E\u{1B}\\".utf8),
         ]
         var sequence: UInt64 = 0
         for chunk in chunks {
