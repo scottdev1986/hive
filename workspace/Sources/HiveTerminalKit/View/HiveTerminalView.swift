@@ -39,7 +39,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public var onRendererHealthChange: ((RendererHealth) -> Void)?
 
     public private(set) var focusStealAttempts = 0
-    public var testingAllowFocusSteal = false
+    var testingAllowFocusSteal = false
     public private(set) var drawScheduledCount = 0
     public private(set) var resizeFramesSent = 0
     public private(set) var reportedGeometry: TerminalGeometry?

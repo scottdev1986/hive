@@ -2,7 +2,7 @@
 
 Status: **shape frozen**. This is the project-neutral target boundary for terminal-session adapters. The neutral qualification fixture passes A–K. Real-session verification is intentionally incomplete until the pending-A1 discriminators pass and a neutral adapter exists.
 
-The host accepts an opaque session key, a command, a terminal profile, and an initial window. It owns terminal I/O and reports evidence. Product identity, agent identity, provider choice, authorization, repository/worktree concepts, UI visibility, and product lifecycle policy are exclusively adapter concerns above this boundary.
+The host accepts an opaque session key, a command, a terminal profile, and an initial window. It owns terminal I/O and reports evidence. Product identity, agent identity, provider choice, authorization, repository/worktree concepts, and product lifecycle policy are exclusively adapter concerns above this boundary. A consumer whose creation authority depends on a live external representation adopts the separately versioned [terminal-host visibility extension](terminal-host-visibility-v1.md); UI policy still terminates in its adapter.
 
 ## Normative vocabulary
 
@@ -94,6 +94,10 @@ Qualification versions: contract `1.0.0`; neutral fixture `1.0.0`; audited sessi
 ## Deferred boundary work
 
 There is no project-neutral real-sessiond adapter before A2. A1 qualifies and repairs the candidate primitives against the pending discriminators. A2 implements this frozen target over the qualified host. Real-session verification is complete only after both are present; shape freeze does not claim otherwise.
+
+## Visibility-backed creation profile
+
+The base v1.0.0 shape remains stable for consumers without representation-backed lifecycle authority. Visibility-backed consumers must use the visibility extension's replacement `create` operation rather than expose this profile's unguarded base `create`. The extension adds only neutral source identity, inventory revision, lease, renewal, expiry, and typed failure behavior; product pane states and inventory transport stay above the boundary.
 
 ## External basis
 

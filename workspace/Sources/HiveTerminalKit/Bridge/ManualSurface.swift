@@ -315,7 +315,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     /// context's acceptingCallbacks execution-time gate is the
     /// no-delivery-after-free guarantee (dylan review 2026-07-18; single
     /// routing path per queen's integration ruling).
-    public var onActionNotification: ((HiveGhosttyActionNotification) -> Void)? {
+    public var onActionNotification: ((HiveTerminalActionNotification) -> Void)? {
         get { callbackContext.onActionNotification }
         set { callbackContext.onActionNotification = newValue }
     }
@@ -892,7 +892,7 @@ enum HiveGhosttyActionPolicy {
 
     /// internal (not private): gate-9 lifetime tests drive the exact
     /// production dispatch path (registry lookup + context admission gate).
-    static func notifySurface(_ target: ghostty_target_s, _ note: HiveGhosttyActionNotification) {
+    static func notifySurface(_ target: ghostty_target_s, _ note: HiveTerminalActionNotification) {
         guard target.tag == GHOSTTY_TARGET_SURFACE, let handle = target.target.surface else { return }
         GhosttySurfaceCallbackRegistry.shared.enqueueActionNotification(note, for: handle)
     }
@@ -908,7 +908,7 @@ enum HiveGhosttyActionPolicy {
 /// read can tear against the snapshot's text/cursor/viewport; treat the
 /// notification strictly as an async-main invalidation signal.
 /// `readSelection()` remains valid for non-tree consumers.
-public enum HiveGhosttyActionNotification: Equatable, Sendable {
+public enum HiveTerminalActionNotification: Equatable, Sendable {
     case selectionChanged
     case scrollbar(total: UInt64, offset: UInt64, len: UInt64)
 }
@@ -979,7 +979,7 @@ private final class GhosttySurfaceCallbackRegistry: @unchecked Sendable {
     /// Gate 9 carrier routing (same shape as enqueueRendererHealth): the
     /// context's admission gate provides the execution-time
     /// no-delivery-after-free guarantee.
-    func enqueueActionNotification(_ note: HiveGhosttyActionNotification, for surface: ghostty_surface_t?) {
+    func enqueueActionNotification(_ note: HiveTerminalActionNotification, for surface: ghostty_surface_t?) {
         guard let surface else { return }
         lock.lock()
         let context = contexts[UInt(bitPattern: surface)]?.value

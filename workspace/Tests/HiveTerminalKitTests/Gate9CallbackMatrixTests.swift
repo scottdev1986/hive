@@ -127,7 +127,7 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         let surface = try makeSurface()
         defer { surface.free() }
 
-        var received: [HiveGhosttyActionNotification] = []
+        var received: [HiveTerminalActionNotification] = []
         var deliveredOffMain = false
         surface.onActionNotification = { note in
             if !Thread.isMainThread { deliveredOffMain = true }
@@ -161,7 +161,7 @@ final class Gate9CallbackMatrixTests: XCTestCase {
                        .success)
         drainMain(0.1)
 
-        var received: [HiveGhosttyActionNotification] = []
+        var received: [HiveTerminalActionNotification] = []
         surface.onActionNotification = { received.append($0) }
 
         surface.setFocus(true)

@@ -47,7 +47,7 @@ final class BridgeCallbackContext: @unchecked Sendable {
     private var writeHandler: ((Data) -> Void)?
     private var eventHandler: ((BridgeEvent) -> Void)?
     private var rendererHealthHandler: ((RendererHealth) -> Void)?
-    private var actionNotificationHandler: ((HiveGhosttyActionNotification) -> Void)?
+    private var actionNotificationHandler: ((HiveTerminalActionNotification) -> Void)?
     private var acceptingCallbacks = true
     private var activeCallbacks = 0
     private let condition = NSCondition()
@@ -209,7 +209,7 @@ final class BridgeCallbackContext: @unchecked Sendable {
     /// SCROLLBAR), same admission + main-deferral discipline as
     /// enqueueRendererHealth. The execution-time acceptingCallbacks recheck
     /// is the no-delivery-after-free guarantee (dylan review 2026-07-18).
-    public var onActionNotification: ((HiveGhosttyActionNotification) -> Void)? {
+    public var onActionNotification: ((HiveTerminalActionNotification) -> Void)? {
         get {
             condition.lock()
             defer { condition.unlock() }
@@ -222,7 +222,7 @@ final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
-    func enqueueActionNotification(_ note: HiveGhosttyActionNotification) {
+    func enqueueActionNotification(_ note: HiveTerminalActionNotification) {
         guard enter() else { return }
         leave()
         DispatchQueue.main.async { [weak self] in

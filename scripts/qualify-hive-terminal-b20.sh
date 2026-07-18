@@ -281,6 +281,7 @@ for arch in arm64 x86_64; do
     CallbackDisciplineTests \
     Gate4ABIQualificationTests \
     TerminalReplyCorpusTests \
+    RendererReplySuppressionTests \
     LateFrameRejectionTests \
     Gate7RenderingTests \
     Gate3OperationDomainTests \
@@ -321,7 +322,7 @@ for arch in arm64 x86_64; do
     @tsv
   ' "$symbol_dir/HiveTerminalKit.symbols.json" \
     >"$EVIDENCE/$arch-public-api.txt"
-  if /usr/bin/grep -E 'HiveGhosttyC|ghostty_|GhosttyKit|BridgeCallbackContext|ManualSurfaceEngine|GhosttyManualSurface|GhosttyBridgeFactory' \
+  if /usr/bin/grep -E 'Ghostty|ghostty_|BridgeCallbackContext|ManualSurfaceEngine|GhosttyManualSurface|GhosttyBridgeFactory' \
     "$EVIDENCE/$arch-public-api.txt" >/dev/null; then
     echo "upstream Ghostty surface escaped the public Hive adapter for $arch" >&2
     exit 1
