@@ -50,6 +50,9 @@ zig-out/
 .hive/*
 !.hive/skills/
 
+# --- local dev build (Makefile) ---
+.dev/
+
 #Coding Agents
 .claude/
 .codex/
