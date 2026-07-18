@@ -20,6 +20,8 @@ final class CallbackDisciplineTests: XCTestCase {
         hiveBridgeWriteTrampoline(ctx.unownedContextPointer, UnsafePointer(ptr), n)
         ptr.update(repeating: 0xFF, count: n)
 
+        waitUntil { observed != nil }
+
         XCTAssertEqual(observed, original, "copy must survive same-address overwrite")
         XCTAssertNotEqual(observed, Data(bytes: ptr, count: n),
                           "positive control: storage was actually overwritten")
@@ -44,6 +46,8 @@ final class CallbackDisciplineTests: XCTestCase {
         )
         hiveBridgeEventTrampoline(ctx.unownedContextPointer, &event)
         ptr.update(repeating: 0xFF, count: n)
+
+        waitUntil { observed != nil }
 
         XCTAssertEqual(observed?.type, .pwd)
         XCTAssertEqual(observed?.bytes, original)
@@ -71,23 +75,58 @@ final class CallbackDisciplineTests: XCTestCase {
         ptr[0] = 0x01; ptr[1] = 0x02; ptr[2] = 0x03; ptr[3] = 0x04
         hiveBridgeWriteTrampoline(ctx.unownedContextPointer, UnsafePointer(ptr), n)
         ptr.update(repeating: 0xFF, count: n)
+        waitUntil { copy != nil }
         XCTAssertEqual(copy, Data([0x01, 0x02, 0x03, 0x04]))
     }
 
-    /// SF3: renames the old misnamed test — verifies enter()/leave() arm and clear
-    /// `isInCallback` around a trampoline (does not trap on re-entry).
-    func testInCallbackFlagArmedDuringTrampolineAndClearedAfter() {
+    func testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds() {
         let ctx = BridgeCallbackContext()
-        var sawInCallback = false
+        var sawInCallback: Bool?
+        var sawMainThread = false
         ctx.onWrite = { _ in
             sawInCallback = ctx.isInCallback
+            sawMainThread = Thread.isMainThread
         }
         let bytes: [UInt8] = [1]
         bytes.withUnsafeBufferPointer { buf in
             hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
         }
-        XCTAssertTrue(sawInCallback, "enter() must arm inCallback during trampoline")
+        XCTAssertNil(sawInCallback, "host delivery must be deferred until the C callback returns")
         XCTAssertFalse(ctx.isInCallback, "leave() must clear after return")
+        waitUntil { sawInCallback != nil }
+        XCTAssertEqual(sawInCallback, false, "host code must never run inside the C callback scope")
+        XCTAssertTrue(sawMainThread, "all host callback delivery is main-thread confined")
+    }
+
+    func testTeardownDropsDeliveryAlreadyQueuedBeforeFree() {
+        let ctx = BridgeCallbackContext()
+        var deliveries = 0
+        ctx.onWrite = { _ in deliveries += 1 }
+        let bytes: [UInt8] = [1]
+
+        bytes.withUnsafeBufferPointer { buf in
+            hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
+        }
+        ctx.beginTeardown()
+        pumpMainQueue()
+
+        XCTAssertEqual(deliveries, 0, "queued callbacks must self-drop once teardown closes admission")
+    }
+
+    func testCallbackMayRequestFreeOnlyAfterTrampolineReturns() {
+        let ctx = BridgeCallbackContext()
+        let engine = FakeManualSurface(callbackContext: ctx)
+        ctx.onWrite = { _ in
+            XCTAssertFalse(ctx.isInCallback)
+            engine.free()
+        }
+        let bytes: [UInt8] = [1]
+
+        bytes.withUnsafeBufferPointer { buf in
+            hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
+        }
+        XCTAssertFalse(engine.freed, "destruction must not re-enter the C callback")
+        waitUntil { engine.freed }
     }
 
     func testEventTrampolineABI_isTwoParamStructPointer() {
@@ -104,6 +143,24 @@ final class CallbackDisciplineTests: XCTestCase {
             length: 0
         )
         fn(ctx.unownedContextPointer, &event)
+        waitUntil { got }
         XCTAssertTrue(got)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 1,
+        _ condition: @escaping () -> Bool
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertTrue(condition())
+    }
+
+    private func pumpMainQueue() {
+        let done = expectation(description: "main queue pumped")
+        DispatchQueue.main.async { done.fulfill() }
+        wait(for: [done], timeout: 1)
     }
 }

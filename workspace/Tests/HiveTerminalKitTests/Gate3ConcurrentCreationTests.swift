@@ -4,29 +4,27 @@ import XCTest
 
 /// Gate 3 (M1-B1) concurrent surface creation — multi-pane robustness.
 ///
-/// `GhosttyBridgeFactory.makeManualSurface` serializes construction so the
-/// Workspace can create panes concurrently without:
+/// `GhosttyBridgeFactory.makeManualSurface` admits construction to the main
+/// queue so the Workspace can create panes concurrently without:
 /// - HIToolbox TIS abort from concurrent `ghostty_app_new`, or
 /// - a second constructor seeing a busy manual-backend install slot
 ///   (`surfaceFailed`).
 ///
-/// Free is marshaled onto main via `DispatchQueue.main.sync`. The factory
-/// MUST release its creation lock before any free — holding the lock across
-/// main.sync deadlocks when main is itself waiting to create. These tests
-/// pump the run loop with XCTestExpectation (never block main with
-/// `DispatchGroup.wait`) so marshaled frees can complete.
+/// Free uses that same main-queue operation domain. No independent creation
+/// lock is needed, so there is no Swift-lock/renderer-mutex inversion. These
+/// tests pump the run loop with XCTestExpectation (never block main with
+/// `DispatchGroup.wait`) so marshaled work can complete.
 final class Gate3ConcurrentCreationTests: XCTestCase {
-    override func tearDown() {
-        // Always restore the production default if a test flipped the seam.
-        GhosttyBridgeFactory.serializeCreation = true
-        super.tearDown()
-    }
-
     /// Positive control (GREEN path): N concurrent constructors all succeed
     /// under the factory lock. Regression detector — remove the lock and
     /// this aborts in HIToolbox (measured: SIGABRT / TIS concurrent call)
     /// or returns surfaceFailed.
     func testConcurrentSurfaceCreationAllSucceed() throws {
+        var constructionWasMain = true
+        GhosttyBridgeFactory.creationObserver = { _ in
+            constructionWasMain = constructionWasMain && Thread.isMainThread
+        }
+        defer { GhosttyBridgeFactory.creationObserver = nil }
         let n = 8
         let group = DispatchGroup()
         let resultLock = NSLock()
@@ -63,6 +61,7 @@ final class Gate3ConcurrentCreationTests: XCTestCase {
 
         XCTAssertEqual(successes, n, "concurrent create failures: \(failures)")
         XCTAssertTrue(failures.isEmpty, "concurrent create failures: \(failures)")
+        XCTAssertTrue(constructionWasMain, "every native construction entry must execute on main")
 
         // Free from background (marshals to main.sync); pump run loop.
         let freed = expectation(description: "frees finished")
@@ -75,7 +74,7 @@ final class Gate3ConcurrentCreationTests: XCTestCase {
 
     /// Deadlock control: concurrent create on background threads while
     /// another surface is freed (main.sync) must complete — proves the
-    /// factory does not hold creationLock across free.
+    /// factory does not hold a secondary lock across free.
     func testConcurrentCreateDoesNotDeadlockWithMarshaledFree() throws {
         let preexisting = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
 
@@ -128,23 +127,23 @@ final class Gate3ConcurrentCreationTests: XCTestCase {
         wait(for: [freed], timeout: 30)
     }
 
-    /// RED-verified positive control for the unlocked regression: with
-    /// `serializeCreation = false`, concurrent `ghostty_app_new` aborts in
-    /// HIToolbox (TIS concurrent call). Running that unlocked path inside
-    /// XCTest would kill the process, so the RED measurement is recorded
-    /// here as a documented offline control and the seam itself is asserted
-    /// to default-on (so a regression that flips the default is caught).
-    ///
-    /// Offline measurement (clay, 2026-07-18, fresh env):
-    ///   serializeCreation=false + 8 concurrent makeManualSurfaceForTesting
-    ///   → process abort SIGABRT, ASI:
-    ///   "Text Input Sources or Text Services Manager API is being called
-    ///    in two threads concurrently" at ghostty_app_new.
-    ///   serializeCreation=true (production) → 8/8 success, stable.
-    func testCreationSerializationDefaultsOn() {
-        XCTAssertTrue(
-            GhosttyBridgeFactory.serializeCreation,
-            "creation lock must default on; unlocked concurrent create aborts in TIS"
-        )
+    func testBackgroundFactoryCallerRunsEveryNativeEntryOnMain() throws {
+        var observed: [(String, Bool)] = []
+        GhosttyBridgeFactory.creationObserver = { operation in
+            observed.append((operation, Thread.isMainThread))
+        }
+        defer { GhosttyBridgeFactory.creationObserver = nil }
+
+        var created: GhosttyManualSurface?
+        let done = expectation(description: "background create/free")
+        DispatchQueue.global().async {
+            created = try? GhosttyBridgeFactory.makeManualSurfaceForTesting()
+            created?.free()
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 10)
+
+        XCTAssertEqual(observed.map(\.0), ["init", "configNew", "appNew", "surfaceNew"])
+        XCTAssertTrue(observed.allSatisfy(\.1))
     }
 }
