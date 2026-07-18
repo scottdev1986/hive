@@ -37,6 +37,10 @@ yarn-debug.log*
 yarn-error.log*
 *.log
 
+# --- Zig ---
+.zig-cache/
+zig-out/
+
 # --- Environment & secrets ---
 .env
 .env.*
