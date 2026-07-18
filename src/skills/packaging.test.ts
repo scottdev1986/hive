@@ -28,6 +28,7 @@ import { SHIPPED_SKILLS } from "./shipped";
 const repoRoot = join(import.meta.dir, "..", "..");
 
 const EXPECTED_SHIPPED_SKILLS = [
+  "code-review",
   "hive-claude",
   "hive-codex",
   "hive-grok",

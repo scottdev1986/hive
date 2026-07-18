@@ -14,6 +14,7 @@
  * import here — a skill that nobody imports is a skill nobody ships, and
  * `shipped.test.ts` fails when this list and `skills/` disagree.
  */
+import codeReview from "../../skills/code-review/SKILL.md" with { type: "text" };
 import hiveClaude from "../../skills/hive-claude/SKILL.md" with { type: "text" };
 import hiveCodex from "../../skills/hive-codex/SKILL.md" with { type: "text" };
 import hiveGrok from "../../skills/hive-grok/SKILL.md" with { type: "text" };
@@ -48,6 +49,8 @@ export const SHIPPED_SKILLS: readonly ShippedSkill[] = [
     content: karpathyGuidelines,
     tools: [...CAPABILITY_PROVIDERS],
   },
+  // Any vendor can be assigned a cross-vendor review, so every vendor gets it.
+  { name: "code-review", content: codeReview, tools: [...CAPABILITY_PROVIDERS] },
 ];
 
 /** The shipped skills a given CLI should be given. */

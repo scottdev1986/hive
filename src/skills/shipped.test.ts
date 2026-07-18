@@ -28,6 +28,7 @@ async function tempRoot(prefix: string): Promise<string> {
 
 test("every shipped skill carries real content and vendor-required frontmatter", () => {
   expect(SHIPPED_SKILLS.map((skill) => skill.name).sort()).toEqual([
+    "code-review",
     "hive-claude",
     "hive-codex",
     "hive-grok",
@@ -52,16 +53,19 @@ test("each vendor is offered the skills written for it", () => {
     "hive-claude",
     "hive-memory",
     "karpathy-guidelines",
+    "code-review",
   ]);
   expect(shippedSkillsFor("codex").map((skill) => skill.name)).toEqual([
     "hive-codex",
     "hive-memory",
     "karpathy-guidelines",
+    "code-review",
   ]);
   expect(shippedSkillsFor("grok").map((skill) => skill.name)).toEqual([
     "hive-grok",
     "hive-memory",
     "karpathy-guidelines",
+    "code-review",
   ]);
 });
 
