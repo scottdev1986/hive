@@ -113,7 +113,7 @@ const inspection: SessionInspection = {
     completeness: "complete",
   },
   window: {
-    value: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+    value: { columns: 80, rows: 24, widthPixels: 810, heightPixels: 500 },
     revision: "0",
   },
   output: { closed: false, retained: { start: "0", endExclusive: "19" } },
@@ -286,7 +286,7 @@ describe("HiveTerminalHostAdapter", () => {
       checkpointAvailable: true,
       input: { state: "FREE" as const, ownerViewerId: null, claimId: null },
       viewerCount: 0,
-      geometry,
+      geometry: { ...geometry, widthPx: 810, heightPx: 500 },
       resources: {},
       visibility: createResult.inspection.visibility,
       exit: null,
@@ -479,6 +479,9 @@ describe("HiveTerminalHostAdapter", () => {
     const inspected = await adapter.inspect(locator);
     expect(inspected.executableVerified).toBe(false);
     expect(inspected.geometry).toEqual(geometry);
+    expect(inspected.diagnosticIds).toContain(
+      "SESSIOND_PIXEL_GEOMETRY_DERIVED_NO_VIEWER",
+    );
     expect(inspected.diagnosticIds).toContain("SESSIOND_EXECUTABLE_EVIDENCE_STALE");
     await expect(adapter.terminate(locator, {
       mode: "immediate",

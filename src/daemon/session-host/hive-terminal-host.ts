@@ -312,6 +312,12 @@ export class HiveTerminalHostAdapter {
       inspection.diagnostics.length === 0;
     if (!inputFree) diagnostics.add(INPUT_STATE_DIAGNOSTIC);
 
+    const pixelsDerived = inspection.window.value.widthPixels === 0 ||
+      inspection.window.value.heightPixels === 0;
+    if (pixelsDerived) {
+      diagnostics.add("SESSIOND_PIXEL_GEOMETRY_DERIVED_NO_VIEWER");
+    }
+
     return {
       schemaVersion: 1,
       locator: binding.locator,
@@ -334,8 +340,10 @@ export class HiveTerminalHostAdapter {
       geometry: {
         columns: inspection.window.value.columns,
         rows: inspection.window.value.rows,
-        widthPx: inspection.window.value.columns * created.geometry.cellWidthPx,
-        heightPx: inspection.window.value.rows * created.geometry.cellHeightPx,
+        widthPx: inspection.window.value.widthPixels ||
+          inspection.window.value.columns * created.geometry.cellWidthPx,
+        heightPx: inspection.window.value.heightPixels ||
+          inspection.window.value.rows * created.geometry.cellHeightPx,
         cellWidthPx: created.geometry.cellWidthPx,
         cellHeightPx: created.geometry.cellHeightPx,
       },
