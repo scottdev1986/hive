@@ -92,7 +92,8 @@ static uint64_t rng_next(void) {
   return rng_state;
 }
 
-int main(void) {
+int main(int argc, char **argv) {
+  const char *out_dir = (argc > 1) ? argv[1] : NULL;
   const char *build_id = hive_ghostty_engine_build_id_v1();
   CHECK(build_id != NULL && build_id[0] != '\0', "engine build id non-empty");
 
@@ -223,6 +224,24 @@ int main(void) {
                                                      &outlen) !=
               GHOSTTY_SUCCESS,
           "export with null allocator rejected");
+  }
+
+  /* Optional argv[1]: directory to write the authored payload into, as a
+   * cross-artifact fixture for the Swift surface-restore live proof
+   * (Gate6SurfaceRestoreTests restores this exact payload into a REAL
+   * embedded surface — authoring and restoring are different libraries
+   * that must agree byte-for-byte on the format). The fed `content`
+   * constant above is the other half of that fixture contract; the Swift
+   * test asserts the restored screen shows exactly that content. */
+  if (out_dir != NULL) {
+    char path[4096];
+    (void)snprintf(path, sizeof(path), "%s/authored.hvgcp", out_dir);
+    FILE *f = fopen(path, "wb");
+    CHECK(f != NULL, "fixture file opened for write");
+    if (f != NULL) {
+      CHECK(fwrite(pay1, 1, len1, f) == len1, "fixture payload written");
+      CHECK(fclose(f) == 0, "fixture file closed");
+    }
   }
 
   free(pay1);

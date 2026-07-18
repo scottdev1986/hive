@@ -43,4 +43,11 @@ trap 'rm -rf "$TMP"' EXIT HUP INT TERM
   "$ROOT/native/tests/checkpoint/headless-checkpoint-harness.c" \
   "$VT_LIB" \
   -o "$TMP/harness"
-"$TMP/harness"
+
+# The harness also authors checkpoint-fixtures/authored.hvgcp into the
+# artifact, consumed by the Swift surface-restore live proof
+# (Gate6SurfaceRestoreTests) — authoring (lib-vt) and restoring
+# (GhosttyKit surface) are different libraries that must agree.
+FIXTURES="$ARTIFACT/checkpoint-fixtures"
+mkdir -p "$FIXTURES"
+"$TMP/harness" "$FIXTURES"

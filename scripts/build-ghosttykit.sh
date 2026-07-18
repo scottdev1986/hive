@@ -195,6 +195,11 @@ export HIVE_ZIG_ARCHIVE_SHA256="$ZIG_SHA"
 export HIVE_ZIG_BUNDLED_STUB="$BUNDLED_STUB"
 export HIVE_XCODE_LIBSYSTEM_STUB="$XCODE_STUB"
 export HIVE_ZIG_GLOBAL_CACHE="$CACHE/zig-global"
+# Gate 6 (M1-B1): qualify the headless checkpoint-authoring contract on the
+# freshly built lib-vt slice and author the surface-restore fixture, BEFORE
+# the manifest is written so the fixture is part of the recorded artifact.
+"$ROOT/scripts/qualify-ghostty-checkpoint.sh" "$OUT"
+
 bun "$ROOT/scripts/write-ghostty-artifact-metadata.ts" "$OUT"
 
 echo "Ghostty native artifacts: $OUT"
