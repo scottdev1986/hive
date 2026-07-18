@@ -56,6 +56,22 @@ pub const TerminalProfile = struct {
     startByte: u8,
     stopByte: u8,
     hangupOnLastClose: bool,
+
+    fn ptyProfile(self: TerminalProfile) pty_host.TerminalProfile {
+        return .{
+            .input_mode = switch (self.inputMode) {
+                .canonical => .canonical,
+                .literal => .literal,
+            },
+            .echo = self.echo,
+            .signal_characters = self.signalCharacters,
+            .software_flow_control = self.softwareFlowControl,
+            .eof_byte = self.eofByte,
+            .start_byte = self.startByte,
+            .stop_byte = self.stopByte,
+            .hangup_on_last_close = self.hangupOnLastClose,
+        };
+    }
 };
 
 pub const EnvironmentEntry = struct { name: []const u8, value: []const u8 };
@@ -171,6 +187,328 @@ pub const Host = struct {
 
     pub fn create(self: Host, request: CreateRequest) !CreateResult {
         return self.createFn(self.context, request);
+    }
+};
+
+const ExecFailedPayload = std.meta.TagPayload(LaunchOutcome, .@"exec-failed");
+const LaunchFailureLayer = @FieldType(ExecFailedPayload, "layer");
+const ExecProof = @FieldType(std.meta.TagPayload(LaunchOutcome, .running), "execProof");
+
+/// Limits advertised with every create. Derived from the terminal layer's own
+/// queue and chunk bounds so the wire never promises more than the host holds.
+const direct_host_limits: HostLimits = .{
+    .maxInputTransactionBytes = pty_host.stream_chunk_max_bytes,
+    .maxInputQueueBytes = pty_host.write_queue_cap_bytes,
+    .maxOutputFrameBytes = pty_host.stream_chunk_max_bytes,
+    .outputLowWaterBytes = pty_host.stream_chunk_max_bytes,
+    .outputHighWaterBytes = pty_host.write_queue_cap_bytes,
+    .outputRetentionBytes = pty_host.write_queue_cap_bytes,
+};
+
+/// Ledger encoding of `LaunchOutcome`. Null fields are omitted on write, so the
+/// stored bytes are exactly the frozen flattened wire shape — and reading them
+/// back is the single path by which any create result is returned.
+const StoredOutcome = struct {
+    state: enum { running, @"exec-failed", unknown },
+    child: ?ProcessIdentity = null,
+    execProof: ?ExecProof = null,
+    jobControl: ?JobControlEvidence = null,
+    layer: ?LaunchFailureLayer = null,
+    osCode: ?i32 = null,
+    diagnostic: ?[]const u8 = null,
+
+    fn execFailed(layer: LaunchFailureLayer, os_code: ?i32, diagnostic: []const u8) StoredOutcome {
+        return .{
+            .state = .@"exec-failed",
+            .layer = layer,
+            .osCode = os_code,
+            .diagnostic = diagnostic,
+        };
+    }
+
+    fn unknown(diagnostic: []const u8) StoredOutcome {
+        return .{ .state = .unknown, .diagnostic = diagnostic };
+    }
+
+    fn toOutcome(self: StoredOutcome) !LaunchOutcome {
+        return switch (self.state) {
+            .running => .{ .running = .{
+                .child = self.child orelse return error.InvalidCreateResult,
+                .execProof = self.execProof orelse return error.InvalidCreateResult,
+                .jobControl = self.jobControl orelse return error.InvalidCreateResult,
+            } },
+            .@"exec-failed" => .{ .@"exec-failed" = .{
+                .layer = self.layer orelse return error.InvalidCreateResult,
+                .osCode = if (self.osCode) |code| .{ .number = code } else null,
+                .diagnostic = self.diagnostic orelse return error.InvalidCreateResult,
+            } },
+            .unknown => .{ .unknown = .{
+                .diagnostic = self.diagnostic orelse return error.InvalidCreateResult,
+            } },
+        };
+    }
+};
+
+fn wireLaunchFailureLayer(layer: pty_host.LaunchFailureLayer) LaunchFailureLayer {
+    return switch (layer) {
+        .command => .command,
+        .working_directory => .@"working-directory",
+        .environment => .environment,
+        .descriptor_transfer => .@"descriptor-transfer",
+        .terminal_setup => .@"terminal-setup",
+        .exec_transition => .@"exec-transition",
+    };
+}
+
+fn putField(hasher: *std.crypto.hash.sha2.Sha256, value: []const u8) void {
+    putLength(hasher, value.len);
+    hasher.update(value);
+}
+
+fn putInt(hasher: *std.crypto.hash.sha2.Sha256, value: i64) void {
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(i64, &bytes, value, .big);
+    hasher.update(&bytes);
+}
+
+/// Injective, length-prefixed digest over every frozen create field. The ledger
+/// compares it so a replayed idempotency key carrying a different request is a
+/// typed conflict rather than a silent second launch.
+fn hashCreateRequest(request: CreateRequest, out: *[32]u8) void {
+    var hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    putField(&hasher, request.key);
+    putField(&hasher, request.idempotencyKey);
+    putField(&hasher, request.command.executable);
+    putLength(&hasher, request.command.arguments.len);
+    for (request.command.arguments) |argument| putField(&hasher, argument);
+    putField(&hasher, request.command.workingDirectory);
+    putLength(&hasher, request.command.completeEnvironment.len);
+    for (request.command.completeEnvironment) |entry| {
+        putField(&hasher, entry.name);
+        putField(&hasher, entry.value);
+    }
+    putLength(&hasher, request.command.descriptorMap.len);
+    for (request.command.descriptorMap) |mapping| {
+        putField(&hasher, mapping.handle.token);
+        putInt(&hasher, @intFromEnum(mapping.handle.sourceDisposition));
+        putInt(&hasher, mapping.targetDescriptor);
+    }
+    putInt(&hasher, @intFromEnum(request.terminalProfile.inputMode));
+    putInt(&hasher, @intFromBool(request.terminalProfile.echo));
+    putInt(&hasher, @intFromBool(request.terminalProfile.signalCharacters));
+    putInt(&hasher, @intFromBool(request.terminalProfile.softwareFlowControl));
+    putInt(&hasher, request.terminalProfile.eofByte);
+    putInt(&hasher, request.terminalProfile.startByte);
+    putInt(&hasher, request.terminalProfile.stopByte);
+    putInt(&hasher, @intFromBool(request.terminalProfile.hangupOnLastClose));
+    putInt(&hasher, request.initialWindow.columns);
+    putInt(&hasher, request.initialWindow.rows);
+    putInt(&hasher, request.initialWindow.widthPixels);
+    putInt(&hasher, request.initialWindow.heightPixels);
+    hasher.final(out);
+}
+
+/// Production `Host`: opens its own terminal and launches the frozen command
+/// directly. It owns the resulting PTY, so it must run in the process that will
+/// go on to serve the session. Create is exactly-once by the registry ledger —
+/// a replayed idempotency key returns the recorded result and never spawns.
+pub const DirectHost = struct {
+    allocator: std.mem.Allocator,
+    registry: *Registry,
+    pty: *pty_host.PtyHost,
+    arena: std.heap.ArenaAllocator,
+    /// Spawn attempts actually issued to the terminal layer. The ledger must
+    /// hold this at one per created session; replays may never advance it.
+    spawns: usize = 0,
+
+    pub fn init(
+        allocator: std.mem.Allocator,
+        registry: *Registry,
+        pty: *pty_host.PtyHost,
+    ) DirectHost {
+        return .{
+            .allocator = allocator,
+            .registry = registry,
+            .pty = pty,
+            .arena = std.heap.ArenaAllocator.init(allocator),
+        };
+    }
+
+    pub fn deinit(self: *DirectHost) void {
+        self.arena.deinit();
+    }
+
+    pub fn host(self: *DirectHost) Host {
+        return .{ .context = self, .createFn = createCb };
+    }
+
+    fn createCb(context: *anyopaque, request: CreateRequest) anyerror!CreateResult {
+        const self: *DirectHost = @ptrCast(@alignCast(context));
+        return self.create(request);
+    }
+
+    pub fn create(self: *DirectHost, request: CreateRequest) !CreateResult {
+        var digest: [32]u8 = undefined;
+        hashCreateRequest(request, &digest);
+        switch (try self.registry.reserve(
+            request.key,
+            request.idempotencyKey,
+            digest,
+            request.initialWindow,
+        )) {
+            .existing => |record| {
+                const session = try self.ownSession(record.session);
+                return self.replay(session);
+            },
+            .reserved => |record| {
+                const session = try self.ownSession(record.session);
+                return self.launch(session, request);
+            },
+        }
+    }
+
+    /// A `Record` borrows registry storage that the next mutation recycles, so
+    /// the identity this host hands out — and keeps using across register and
+    /// commit — must be copied out of the registry arena first.
+    fn ownSession(self: *DirectHost, session: SessionRef) !SessionRef {
+        const a = self.arena.allocator();
+        return .{
+            .key = try a.dupe(u8, session.key),
+            .incarnation = try a.dupe(u8, session.incarnation),
+        };
+    }
+
+    /// The one path that turns ledger state into a create result, so a first
+    /// create and its replay cannot diverge.
+    fn replay(self: *DirectHost, session: SessionRef) !CreateResult {
+        const record = self.registry.get(session) orelse return error.SessionNotFound;
+        // A reservation without a committed result means an earlier create died
+        // mid-launch. Its child may well be running, so relaunching here would
+        // double-spawn: report the launch as unproven instead of guessing.
+        const stored = record.createResultJson orelse return .{
+            .session = session,
+            .outcome = .{ .unknown = .{
+                .diagnostic = "create was reserved without a committed result; launch state is unproven",
+            } },
+            .limits = direct_host_limits,
+        };
+        const parsed = try std.json.parseFromSliceLeaky(
+            StoredOutcome,
+            self.arena.allocator(),
+            stored,
+            .{},
+        );
+        return .{
+            .session = session,
+            .outcome = try parsed.toOutcome(),
+            .limits = direct_host_limits,
+        };
+    }
+
+    fn commit(self: *DirectHost, session: SessionRef, outcome: StoredOutcome) !CreateResult {
+        const json = try std.json.Stringify.valueAlloc(
+            self.allocator,
+            outcome,
+            .{ .emit_null_optional_fields = false },
+        );
+        defer self.allocator.free(json);
+        _ = try self.registry.commitCreate(session, json);
+        return self.replay(session);
+    }
+
+    fn launch(self: *DirectHost, session: SessionRef, request: CreateRequest) !CreateResult {
+        // M1: the wire carries opaque transfer tokens and this host has no
+        // descriptor-passing channel that could resolve one into a descriptor.
+        // Refuse in the ledger so the rejection replays like any other result.
+        if (request.command.descriptorMap.len > 0) return self.commit(session, StoredOutcome.execFailed(
+            .@"descriptor-transfer",
+            null,
+            "descriptor map is unsupported in M1; this host opens its own terminal",
+        ));
+
+        var scratch = std.heap.ArenaAllocator.init(self.allocator);
+        defer scratch.deinit();
+        const a = scratch.allocator();
+
+        // argv[0] is the image execve resolves, so the frozen executable leads.
+        const argv = try a.alloc([]const u8, request.command.arguments.len + 1);
+        argv[0] = request.command.executable;
+        @memcpy(argv[1..], request.command.arguments);
+        const envp = try a.alloc([]const u8, request.command.completeEnvironment.len);
+        for (request.command.completeEnvironment, envp) |entry, *slot|
+            slot.* = try std.fmt.allocPrint(a, "{s}={s}", .{ entry.name, entry.value });
+
+        self.spawns += 1;
+        const outcome = self.pty.spawn(.{
+            .argv = argv,
+            .cwd = request.command.workingDirectory,
+            .envp = envp,
+            .terminal_profile = request.terminalProfile.ptyProfile(),
+            .geometry = request.initialWindow.ptyGeometry(),
+        }) catch |err| return self.commit(session, StoredOutcome.unknown(@errorName(err)));
+        const spawned = switch (outcome) {
+            .running => |value| value,
+            .exec_failed => |evidence| return self.commit(session, StoredOutcome.execFailed(
+                wireLaunchFailureLayer(evidence.layer),
+                evidence.os_code,
+                "terminal launch failed before the child reached exec",
+            )),
+        };
+
+        const host_identity = process_inspector.observeProcessPresent(c.getpid()) orelse
+            return self.commit(session, StoredOutcome.unknown("host process identity unavailable"));
+        var host_token_storage: [64]u8 = undefined;
+        const host_token = try host_identity.start_token.format(&host_token_storage);
+        var child_token_storage: [64]u8 = undefined;
+        const child_token = try spawned.start_token.format(&child_token_storage);
+
+        // A running readback exists only after the child cleared the
+        // setsid/TIOCSCTTY/dup2 barrier, so these bits are measured, not assumed.
+        const session_leader = spawned.pid == spawned.session;
+        const controlling_terminal = spawned.terminalIdentity().len > 0;
+        const job_control: JobControlEvidence = .{
+            .sessionLeader = session_leader,
+            .controllingTerminal = controlling_terminal,
+            // The exec barrier binds all three standard streams to the slave.
+            .standardStreamsShareTerminal = true,
+            .childSessionId = spawned.session,
+            .childProcessGroupId = spawned.pgid,
+            .foregroundProcessGroupId = spawned.foreground_pgid,
+            .terminalIdentity = spawned.terminalIdentity(),
+            .initialProfileAppliedBeforeExec = spawned.initial_profile_applied_before_exec,
+            .initialWindowAppliedBeforeExec = spawned.initial_window_applied_before_exec,
+            .completeness = if (session_leader and controlling_terminal and
+                spawned.initial_profile_applied_before_exec and
+                spawned.initial_window_applied_before_exec) .complete else .partial,
+        };
+
+        // The registered window is the geometry read back off the terminal, not
+        // the one requested.
+        _ = try self.registry.register(session, .{
+            .host = .{ .processId = c.getpid(), .startToken = host_token },
+            .child = .{ .processId = spawned.pid, .startToken = child_token },
+            .childSessionId = spawned.session,
+            .childProcessGroupId = spawned.pgid,
+            .foregroundProcessGroupId = spawned.foreground_pgid,
+            .terminalIdentity = spawned.terminalIdentity(),
+            .sessionLeader = session_leader,
+            .controllingTerminal = controlling_terminal,
+            .standardStreamsShareTerminal = true,
+            .initialProfileAppliedBeforeExec = spawned.initial_profile_applied_before_exec,
+            .initialWindowAppliedBeforeExec = spawned.initial_window_applied_before_exec,
+            .window = .{
+                .columns = spawned.geometry.columns,
+                .rows = spawned.geometry.rows,
+                .widthPixels = spawned.geometry.width_px,
+                .heightPixels = spawned.geometry.height_px,
+            },
+        });
+        return self.commit(session, .{
+            .state = .running,
+            .child = .{ .processId = spawned.pid, .startToken = child_token },
+            .execProof = .@"replacement-observed",
+            .jobControl = job_control,
+        });
     }
 };
 
@@ -1553,76 +1891,38 @@ const LiveProofHandler = struct {
     }
 };
 
-fn runLiveProofHost(root: []const u8, session: SessionRef, ready_fd: std.posix.fd_t) !void {
+fn runLiveProofHost(root: []const u8, request: CreateRequest, ready_fd: std.posix.fd_t) !void {
     const allocator = std.heap.page_allocator;
     var runtime = try Runtime.open(allocator, root);
     defer runtime.deinit();
     var registry = try Registry.open(allocator, &runtime);
     defer registry.deinit();
-    const record = registry.get(session) orelse return error.SessionNotFound;
 
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
-    const proof_profile: pty_host.TerminalProfile = .{
-        .input_mode = .canonical,
-        .echo = false,
-        .signal_characters = true,
-        .software_flow_control = true,
-        .eof_byte = 5,
-        .start_byte = 18,
-        .stop_byte = 20,
-        .hangup_on_last_close = false,
-    };
-    const outcome = try pty.spawn(.{
-        .argv = &.{"/bin/cat"},
-        .cwd = "/tmp",
-        .envp = &.{},
-        .terminal_profile = proof_profile,
-        .geometry = record.window.ptyGeometry(),
-    });
-    const spawned = switch (outcome) {
+    var direct = DirectHost.init(allocator, &registry, &pty);
+    defer direct.deinit();
+
+    // The create path under proof: one frozen request in, one committed
+    // CreateResult out, with the terminal opened and owned by this host.
+    const created = try direct.host().create(request);
+    const running = switch (created.outcome) {
         .running => |value| value,
-        .exec_failed => return error.LiveProofExecFailed,
+        else => return error.LiveProofCreateFailed,
     };
-    // A running readback is only constructed after the child has passed the
-    // setsid/TIOCSCTTY/three-dup2 exec barrier and the parent has measured the
-    // live terminal foreground group.
-    if (spawned.pid != spawned.session or
-        spawned.pgid != spawned.foreground_pgid or
-        spawned.terminalIdentity().len == 0)
+    if (!running.jobControl.sessionLeader or
+        !running.jobControl.controllingTerminal or
+        running.jobControl.completeness != .complete or
+        !std.mem.startsWith(u8, running.jobControl.terminalIdentity, "/dev/"))
         return error.JobControlEvidenceUnavailable;
-    const host_identity = process_inspector.observeProcessPresent(c.getpid()) orelse
-        return error.HostIdentityUnavailable;
-    var host_token_storage: [64]u8 = undefined;
-    const host_token = try host_identity.start_token.format(&host_token_storage);
-    var child_token_storage: [64]u8 = undefined;
-    const child_token = try spawned.start_token.format(&child_token_storage);
+    if (direct.spawns != 1) return error.UnexpectedSpawnCount;
+    const session = created.session;
 
     var endpoint = try HostEndpoint.open(allocator, &runtime, session);
     defer endpoint.deinit();
-    _ = try registry.register(session, .{
-        .host = .{ .processId = c.getpid(), .startToken = host_token },
-        .child = .{ .processId = spawned.pid, .startToken = child_token },
-        .childSessionId = spawned.session,
-        .childProcessGroupId = spawned.pgid,
-        .foregroundProcessGroupId = spawned.foreground_pgid,
-        .terminalIdentity = spawned.terminalIdentity(),
-        .sessionLeader = true,
-        .controllingTerminal = true,
-        .standardStreamsShareTerminal = true,
-        .initialProfileAppliedBeforeExec = spawned.initial_profile_applied_before_exec,
-        .initialWindowAppliedBeforeExec = spawned.initial_window_applied_before_exec,
-        .window = .{
-            .columns = spawned.geometry.columns,
-            .rows = spawned.geometry.rows,
-            .widthPixels = spawned.geometry.width_px,
-            .heightPixels = spawned.geometry.height_px,
-        },
-    });
-    _ = try registry.commitCreate(session, "{\"state\":\"running\",\"proof\":\"replacement-observed\"}");
 
     const ready: std.fs.File = .{ .handle = ready_fd };
-    try ready.writeAll("1");
+    try ready.writeAll(session.incarnation);
     ready.close();
     var handler: LiveProofHandler = .{
         .pty = &pty,
@@ -1712,6 +2012,147 @@ fn proveCreateFailureAdmission(allocator: std.mem.Allocator) !void {
     if (!replay.session.eql(failed_session.value)) return error.HistoricalReplayLost;
 }
 
+/// Direct create is exactly-once against a real terminal. A replayed
+/// idempotency key returns the recorded result without issuing a second spawn,
+/// a changed request under that key is a typed conflict, and a descriptor map
+/// is refused with typed evidence rather than silently ignored.
+fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/nd-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try Registry.open(allocator, &runtime);
+    defer registry.deinit();
+
+    const request: CreateRequest = .{
+        .key = "foreign://opaque/direct-create",
+        .idempotencyKey = "direct-create-1",
+        .command = .{
+            .executable = "/bin/cat",
+            .arguments = &.{},
+            .workingDirectory = "/tmp",
+            .completeEnvironment = &.{.{ .name = "TERM", .value = "xterm-256color" }},
+            .descriptorMap = &.{},
+        },
+        .terminalProfile = .{
+            .inputMode = .canonical,
+            .echo = false,
+            .signalCharacters = true,
+            .softwareFlowControl = false,
+            .eofByte = 4,
+            .startByte = 17,
+            .stopByte = 19,
+            .hangupOnLastClose = true,
+        },
+        .initialWindow = .{ .columns = 80, .rows = 24, .widthPixels = 0, .heightPixels = 0 },
+    };
+
+    var pty = try pty_host.PtyHost.init(allocator);
+    defer pty.deinit();
+    var direct = DirectHost.init(allocator, &registry, &pty);
+    defer direct.deinit();
+
+    const created = try direct.host().create(request);
+    const running = switch (created.outcome) {
+        .running => |value| value,
+        else => return error.DirectCreateFailed,
+    };
+    defer {
+        _ = c.kill(running.child.processId, c.SIGKILL);
+        var status: c_int = 0;
+        _ = c.waitpid(running.child.processId, &status, 0);
+    }
+    if (direct.spawns != 1) return error.UnexpectedSpawnCount;
+
+    // The sharpest double-spawn risk is a fresh host process retrying the same
+    // create after a crash. Its terminal is untouched, so nothing but the ledger
+    // stands between the retry and a second child: assert on that host's own
+    // spawn counter, which only the replay path can hold at zero. This runs
+    // before the same-host replay so no earlier guard can mask it.
+    var retry_pty = try pty_host.PtyHost.init(allocator);
+    defer retry_pty.deinit();
+    var retry_direct = DirectHost.init(allocator, &registry, &retry_pty);
+    defer retry_direct.deinit();
+    // However the retry ends, it must not have started a second child. The
+    // ledger's own register/commit guards reject a duplicate *record*, but they
+    // fire after the spawn — only the replay branch prevents the process.
+    const retried = retry_direct.host().create(request) catch |err| {
+        if (retry_direct.spawns != 0) return error.DoubleSpawn;
+        return err;
+    };
+    const retried_running = switch (retried.outcome) {
+        .running => |value| value,
+        else => return error.DirectCreateReplayChanged,
+    };
+    if (retry_direct.spawns != 0) return error.DoubleSpawn;
+    if (registry.list().len != 1) return error.DoubleSpawn;
+    if (!retried.session.eql(created.session) or
+        retried_running.child.processId != running.child.processId)
+        return error.DirectCreateReplayChanged;
+
+    // Replay control: the identical frozen request returns the recorded result
+    // and this host's own terminal is never asked for a second child.
+    const replayed = try direct.host().create(request);
+    const replayed_running = switch (replayed.outcome) {
+        .running => |value| value,
+        else => return error.DirectCreateReplayChanged,
+    };
+    if (direct.spawns != 1) return error.DoubleSpawn;
+    if (registry.list().len != 1) return error.DoubleSpawn;
+    if (!replayed.session.eql(created.session) or
+        replayed_running.child.processId != running.child.processId or
+        !std.mem.eql(u8, replayed_running.child.startToken, running.child.startToken))
+        return error.DirectCreateReplayChanged;
+
+    // A changed request under the same idempotency key is a typed conflict,
+    // never a second launch.
+    var conflicting = request;
+    conflicting.initialWindow = .{
+        .columns = 81,
+        .rows = 24,
+        .widthPixels = 0,
+        .heightPixels = 0,
+    };
+    if (direct.create(conflicting)) |_| {
+        return error.ChangedRequestAccepted;
+    } else |err| if (err != error.CreateConflict) return err;
+    if (direct.spawns != 1) return error.DoubleSpawn;
+
+    // Descriptor maps are explicitly unsupported in M1: the wire carries opaque
+    // transfer tokens this host cannot resolve, so the create is refused with
+    // typed evidence, committed to the ledger, and never spawned.
+    var descriptor_pty = try pty_host.PtyHost.init(allocator);
+    defer descriptor_pty.deinit();
+    var descriptor_direct = DirectHost.init(allocator, &registry, &descriptor_pty);
+    defer descriptor_direct.deinit();
+    var descriptor_request = request;
+    descriptor_request.key = "foreign://opaque/descriptor-map";
+    descriptor_request.idempotencyKey = "descriptor-create-1";
+    descriptor_request.command.descriptorMap = &.{.{
+        .handle = .{ .token = "opaque-transfer-token", .sourceDisposition = .retain },
+        .targetDescriptor = 3,
+    }};
+    const refused = try descriptor_direct.host().create(descriptor_request);
+    switch (refused.outcome) {
+        .@"exec-failed" => |evidence| {
+            if (evidence.layer != .@"descriptor-transfer") return error.DescriptorMapNotRefused;
+        },
+        else => return error.DescriptorMapNotRefused,
+    }
+    if (descriptor_direct.spawns != 0) return error.DescriptorMapSpawned;
+    const refused_record = registry.get(refused.session) orelse
+        return error.DescriptorMapNotRefused;
+    if (refused_record.lifecycle != .create_failed) return error.DescriptorMapNotRefused;
+}
+
 fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
     var root_storage: [64]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/nb-{x}", .{
@@ -1793,6 +2234,7 @@ fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
 pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     try proveSocketPathPreflight(allocator);
     try proveCreateFailureAdmission(allocator);
+    try proveDirectCreateIdempotency(allocator);
     try proveBoundedRecovery(allocator);
     var root_storage: [64]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/nhl-{x}", .{
@@ -1815,32 +2257,42 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
         runtime.deinit();
     };
     const key = "tenant://foreign-project/../../opaque session ✓";
+    const request: CreateRequest = .{
+        .key = key,
+        .idempotencyKey = "create-idempotency-1",
+        .command = .{
+            .executable = "/bin/cat",
+            .arguments = &.{},
+            .workingDirectory = "/tmp",
+            .completeEnvironment = &.{
+                .{ .name = "PATH", .value = "/usr/bin:/bin" },
+                .{ .name = "TERM", .value = "xterm-256color" },
+            },
+            .descriptorMap = &.{},
+        },
+        // Every field is deliberately off the terminal layer's default, so a
+        // profile observed on the slave was applied by this create and not
+        // inherited from the host.
+        .terminalProfile = .{
+            .inputMode = .canonical,
+            .echo = false,
+            .signalCharacters = true,
+            .softwareFlowControl = true,
+            .eofByte = 5,
+            .startByte = 18,
+            .stopByte = 20,
+            .hangupOnLastClose = false,
+        },
+        .initialWindow = .{ .columns = 91, .rows = 37, .widthPixels = 1092, .heightPixels = 740 },
+    };
     var request_digest: [32]u8 = undefined;
-    std.crypto.hash.sha2.Sha256.hash("canonical frozen create request", &request_digest, .{});
-    const reserved = switch (try registry.reserve(
-        key,
-        "create-idempotency-1",
-        request_digest,
-        .{ .columns = 91, .rows = 37, .widthPixels = 1092, .heightPixels = 740 },
-    )) {
-        .reserved => |record| record,
-        .existing => return error.UnexpectedReplay,
-    };
-    const session: SessionRef = .{
-        .key = try allocator.dupe(u8, reserved.session.key),
-        .incarnation = try allocator.dupe(u8, reserved.session.incarnation),
-    };
-    defer allocator.free(session.incarnation);
-    defer allocator.free(session.key);
-    const directory_name = sessionDirectoryName(session);
-    if (directory_name.len != 46 or std.mem.indexOf(u8, &directory_name, key) != null)
-        return error.OpaqueDirectoryDerivationFailed;
+    hashCreateRequest(request, &request_digest);
 
     const ready_pipe = try std.posix.pipe();
     const host_pid = try std.posix.fork();
     if (host_pid == 0) {
         std.posix.close(ready_pipe[0]);
-        runLiveProofHost(root, session, ready_pipe[1]) catch |err| {
+        runLiveProofHost(root, request, ready_pipe[1]) catch |err| {
             std.debug.print("neutral live proof host failed: {s}\n", .{@errorName(err)});
             std.posix.exit(125);
         };
@@ -1854,10 +2306,15 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     };
     std.posix.close(ready_pipe[1]);
     const ready: std.fs.File = .{ .handle = ready_pipe[0] };
-    var marker: [1]u8 = undefined;
-    try readExact(ready, &marker);
+    // The host mints the incarnation inside create, so the controller learns
+    // the session identity only after the create was committed.
+    var incarnation: [32]u8 = undefined;
+    try readExact(ready, &incarnation);
     ready.close();
-    if (marker[0] != '1') return error.HostRegistrationMissing;
+    const session: SessionRef = .{ .key = key, .incarnation = &incarnation };
+    const directory_name = sessionDirectoryName(session);
+    if (directory_name.len != 46 or std.mem.indexOf(u8, &directory_name, key) != null)
+        return error.OpaqueDirectoryDerivationFailed;
 
     // Discard the original controller state. Recovery must use only the
     // durable record, private capability, and live host.sock.
@@ -1884,11 +2341,26 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
         live.terminalIdentity == null or
         !std.mem.startsWith(u8, live.terminalIdentity.?, "/dev/"))
         return error.RecoveredJobControlEvidenceIncomplete;
-    if (!std.mem.eql(
-        u8,
-        "{\"state\":\"running\",\"proof\":\"replacement-observed\"}",
+    // The committed create result is the frozen flattened wire shape, and it
+    // agrees with the job-control evidence recovered from the record.
+    var replay_arena = std.heap.ArenaAllocator.init(allocator);
+    defer replay_arena.deinit();
+    const replayed = std.json.parseFromSliceLeaky(
+        StoredOutcome,
+        replay_arena.allocator(),
         live.createResultJson orelse return error.MissingCreateReplay,
-    )) return error.CreateReplayChanged;
+        .{ .ignore_unknown_fields = false },
+    ) catch return error.CreateReplayChanged;
+    const replayed_child = replayed.child orelse return error.CreateReplayChanged;
+    const replayed_job_control = replayed.jobControl orelse return error.CreateReplayChanged;
+    if (replayed.state != .running or
+        replayed.execProof != .@"replacement-observed" or
+        replayed_child.processId != live.child.?.processId or
+        replayed_job_control.completeness != .complete or
+        replayed_job_control.childSessionId != live.childSessionId.? or
+        !replayed_job_control.initialProfileAppliedBeforeExec or
+        !replayed_job_control.initialWindowAppliedBeforeExec)
+        return error.CreateReplayChanged;
     if (recovered.remove(session))
         return error.ActiveSessionRemoved
     else |err| if (err != error.SessionStillActive) return err;
