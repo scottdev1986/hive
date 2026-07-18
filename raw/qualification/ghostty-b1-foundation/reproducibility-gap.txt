@@ -1,0 +1,9 @@
+status=qualified_shipped_runtime_artifacts_byte_identical
+build_count=3
+shipped_runtime_set=GhosttyKit.xcframework,lib-vt,notices,sbom.cdx.json
+gate6_fixture_handoff=B1.4_gate6_checkpoint_serialization
+fixture_difference_count=0
+fixture_differences_zero_based=
+path_independence=known_limitation
+static_archive_absolute_build_path_references=22256
+path_independence_scope=Gate4_follow_up; runtime artifacts reproduce at the fixed content-addressed build path
