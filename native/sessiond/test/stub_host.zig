@@ -602,11 +602,17 @@ const WireStubServer = struct {
         else
             try std.json.Stringify.valueAlloc(payload_allocator, .{
                 .schemaVersion = @as(u8, 1),
-                .locator = try wireLocatorValue(payload_allocator, self.record.locator),
                 .state = "terminated",
                 .exit = @as(?u8, null),
+                .reap = .{
+                    .authority = "unavailable",
+                    .reaped = false,
+                    .status = @as(?u8, null),
+                    .completeness = "unknown",
+                },
                 .survivors = &[_]std.json.Value{},
-                .errors = &[_]std.json.Value{},
+                .completeness = "partial",
+                .diagnostics = &[_][]const u8{"wire-stub-terminated"},
             }, .{});
         if (!broker.protocol.validateControlPayload(allocator, response_schema, response))
             return error.InvalidResponse;
@@ -1170,7 +1176,8 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         listed.payload,
     ));
     try std.testing.expect(std.mem.indexOf(u8, listed.payload, record.locator.session_id) != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed.payload, "\"presence\":\"present\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed.payload, "\"lifecycle\":\"running\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed.payload, "\"completeness\":\"partial\"") != null);
 
     const inspect = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.inspect_payload);
     defer std.testing.allocator.free(inspect);
@@ -1186,7 +1193,8 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         inspected.payload,
     ));
     try std.testing.expect(std.mem.indexOf(u8, inspected.payload, record.host_start_token) != null);
-    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, "\"state\":\"UNKNOWN\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, "\"lifecycle\":\"running\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, "sessiond-registry-projection") != null);
 
     const terminate = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.terminate_payload);
     defer std.testing.allocator.free(terminate);
@@ -1202,6 +1210,7 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         terminated.payload,
     ));
     try std.testing.expect(std.mem.indexOf(u8, terminated.payload, "\"state\":\"terminated\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, terminated.payload, "\"reap\"") != null);
     try std.testing.expect(host.terminated);
 
     client.close();

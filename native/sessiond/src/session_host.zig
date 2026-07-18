@@ -1825,17 +1825,18 @@ const WireVisibilityRenew = struct {
     openTerminalRevision: []const u8,
 };
 
-const WireTerminate = struct {
-    schemaVersion: u8,
-    locator: WireLocator,
-    mode: []const u8,
-    reason: []const u8,
-    requestId: []const u8,
-};
-
 const WireTerminalSessionRef = struct {
     key: []const u8,
     incarnation: []const u8,
+};
+
+const WireTerminate = struct {
+    schemaVersion: u8,
+    session: WireTerminalSessionRef,
+    mode: []const u8,
+    target: []const u8,
+    deadline: []const u8,
+    idempotencyKey: []const u8,
 };
 
 const WireClaimAcquire = struct {
@@ -3173,22 +3174,25 @@ pub const HostCore = struct {
             .ignore_unknown_fields = true,
         });
         defer parsed.deinit();
-        const locator = try parseLocator(self.allocator, parsed.value.locator);
-        defer {
-            self.allocator.free(locator.instance_id);
-            self.allocator.free(locator.session_id);
-            switch (locator.subject) {
-                .root => {},
-                .agent => |agent_id| self.allocator.free(agent_id),
-            }
-            if (locator.engine_build_id) |engine| self.allocator.free(engine);
-        }
-        if (!sameLocator(locator, self.registration.record.locator))
+        if (parsed.value.schemaVersion != 1) return error.InvalidTermination;
+        // Frozen A0 addresses the host by SessionRef; map generation→incarnation.
+        var incarnation_storage: [32]u8 = undefined;
+        const incarnation = try std.fmt.bufPrint(
+            &incarnation_storage,
+            "{d}",
+            .{self.registration.record.locator.generation},
+        );
+        if (!std.mem.eql(u8, parsed.value.session.key, self.registration.record.locator.session_id) or
+            !std.mem.eql(u8, parsed.value.session.incarnation, incarnation))
             return error.InvalidTermination;
         const mode = std.meta.stringToEnum(
             process_inspector.TerminationMode,
             parsed.value.mode,
         ) orelse return error.InvalidTermination;
+        if (!std.mem.eql(u8, parsed.value.target, "process-tree") and
+            !std.mem.eql(u8, parsed.value.target, "foreground-group") and
+            !std.mem.eql(u8, parsed.value.target, "session-members"))
+            return error.InvalidTermination;
         return self.terminateBound(mode, null);
     }
 
@@ -3230,9 +3234,11 @@ pub const HostCore = struct {
             const token = try member.identity.start_token.format(&token_storage);
             const owned_token = try a.dupe(u8, token);
             const reason = try a.dupe(u8, member.reason);
+            var process = std.json.ObjectMap.init(a);
+            try process.put("processId", .{ .integer = member.identity.pid });
+            try process.put("startToken", .{ .string = owned_token });
             var survivor = std.json.ObjectMap.init(a);
-            try survivor.put("pid", .{ .integer = member.identity.pid });
-            try survivor.put("startToken", .{ .string = owned_token });
+            try survivor.put("process", .{ .object = process });
             try survivor.put("reason", .{ .string = reason });
             try survivors_json.append(.{ .object = survivor });
             try survivors.append(a, .{
@@ -3241,29 +3247,31 @@ pub const HostCore = struct {
                 .reason = reason,
             });
         }
-        var errors_json = std.json.Array.init(a);
         var final_errors: std.ArrayList(FinalError) = .{};
         defer final_errors.deinit(a);
+        var diagnostics = std.json.Array.init(a);
         const termination_errors = [_]struct { phase: []const u8, code: ?[]const u8 }{
             .{ .phase = "input-arbiter-close", .code = outcome.arbiter_error },
             .{ .phase = "provider-graceful-action", .code = outcome.graceful_action_error },
         };
         for (termination_errors) |termination_error| {
             const code = termination_error.code orelse continue;
-            var error_value = std.json.ObjectMap.init(a);
-            try error_value.put("phase", .{ .string = termination_error.phase });
-            try error_value.put("code", .{ .string = code });
-            try error_value.put("diagnosticId", .{ .string = "session-host-termination" });
-            try errors_json.append(.{ .object = error_value });
+            try diagnostics.append(.{ .string = try std.fmt.allocPrint(
+                a,
+                "{s}:{s}",
+                .{ termination_error.phase, code },
+            ) });
             try final_errors.append(a, .{
                 .phase = termination_error.phase,
                 .code = code,
             });
         }
+        if (failure_code) |code| try diagnostics.append(.{ .string = code });
+
         var exit_value: std.json.Value = .null;
+        var observed_storage: [24]u8 = undefined;
+        const observed_at = try broker.wallDeadline(&observed_storage, 0);
         if (outcome.exit.reaped) {
-            var observed_storage: [24]u8 = undefined;
-            const observed_at = try broker.wallDeadline(&observed_storage, 0);
             var exit = std.json.ObjectMap.init(a);
             try exit.put("code", if (outcome.exit.exit_code) |code|
                 .{ .integer = code }
@@ -3276,13 +3284,41 @@ pub const HostCore = struct {
             try exit.put("observedAt", .{ .string = try a.dupe(u8, observed_at) });
             exit_value = .{ .object = exit };
         }
+        // waitpid is authoritative only when this host is the direct parent.
+        var reap = std.json.ObjectMap.init(a);
+        try reap.put("authority", .{ .string = if (outcome.exit.reaped)
+            "direct-parent"
+        else
+            "unavailable" });
+        try reap.put("reaped", .{ .bool = outcome.exit.reaped });
+        try reap.put("status", exit_value);
+        try reap.put("completeness", .{ .string = if (outcome.exit.reaped and
+            outcome.tree.state == .terminated and
+            survivors_json.items.len == 0)
+            "complete"
+        else if (outcome.exit.reaped)
+            "partial"
+        else
+            "unknown" });
+
+        const completeness: []const u8 = if (outcome.tree.state == .terminated and
+            outcome.exit.reaped and
+            survivors_json.items.len == 0 and
+            diagnostics.items.len == 0)
+            "complete"
+        else if (outcome.tree.state == .survivors)
+            "partial"
+        else
+            "unknown";
+
         var root = std.json.ObjectMap.init(a);
         try root.put("schemaVersion", .{ .integer = 1 });
-        try root.put("locator", try locatorValue(a, self.registration.record.locator));
         try root.put("state", .{ .string = @tagName(outcome.tree.state) });
         try root.put("exit", exit_value);
+        try root.put("reap", .{ .object = reap });
         try root.put("survivors", .{ .array = survivors_json });
-        try root.put("errors", .{ .array = errors_json });
+        try root.put("completeness", .{ .string = completeness });
+        try root.put("diagnostics", .{ .array = diagnostics });
         const response = try std.json.Stringify.valueAlloc(
             self.allocator,
             std.json.Value{ .object = root },
@@ -5595,12 +5631,23 @@ fn terminationPayload(
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
-    var root = std.json.ObjectMap.init(arena.allocator());
+    const a = arena.allocator();
+    var incarnation_storage: [32]u8 = undefined;
+    const incarnation = try std.fmt.bufPrint(
+        &incarnation_storage,
+        "{d}",
+        .{registration.record.locator.generation},
+    );
+    var session = std.json.ObjectMap.init(a);
+    try session.put("key", .{ .string = registration.record.locator.session_id });
+    try session.put("incarnation", .{ .string = try a.dupe(u8, incarnation) });
+    var root = std.json.ObjectMap.init(a);
     try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("locator", try locatorValue(arena.allocator(), registration.record.locator));
+    try root.put("session", .{ .object = session });
     try root.put("mode", .{ .string = mode });
-    try root.put("reason", .{ .string = "test-close" });
-    try root.put("requestId", .{ .string = "req_01890f9e-7b9a-7cc2-8e2b-8c6b8b8b8b8b" });
+    try root.put("target", .{ .string = "process-tree" });
+    try root.put("deadline", .{ .string = "2099-01-01T00:00:00.000Z" });
+    try root.put("idempotencyKey", .{ .string = "req_01890f9e-7b9a-7cc2-8e2b-8c6b8b8b8b8b" });
     return std.json.Stringify.valueAlloc(
         allocator,
         std.json.Value{ .object = root },

@@ -899,10 +899,17 @@ const WireAdoptionReadback = struct {
 
 const WireTerminationReadback = struct {
     schemaVersion: u8,
-    locator: DiskLocator,
     state: []const u8,
+    exit: ?std.json.Value = null,
+    reap: struct {
+        authority: []const u8,
+        reaped: bool,
+        status: ?std.json.Value = null,
+        completeness: []const u8,
+    },
     survivors: []const std.json.Value,
-    errors: []const std.json.Value,
+    completeness: []const u8,
+    diagnostics: []const []const u8 = &.{},
 };
 
 fn locatorJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.json.Value {
@@ -1288,12 +1295,19 @@ pub const WireHostClient = struct {
         if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
-        const payload = try std.json.Stringify.valueAlloc(payload_arena.allocator(), .{
+        const a = payload_arena.allocator();
+        // Frozen A0 TERMINATE on the broker→host wire. reason/request_id map onto
+        // target/idempotencyKey for the legacy HostControl command surface.
+        const payload = try std.json.Stringify.valueAlloc(a, .{
             .schemaVersion = @as(u8, 1),
-            .locator = try locatorJsonValue(payload_arena.allocator(), locator),
+            .session = .{
+                .key = locator.session_id,
+                .incarnation = try std.fmt.allocPrint(a, "{d}", .{locator.generation}),
+            },
             .mode = command.mode,
-            .reason = command.reason,
-            .requestId = command.request_id,
+            .target = "process-tree",
+            .deadline = "2099-01-01T00:00:00.000Z",
+            .idempotencyKey = command.request_id,
         }, .{});
         if (!protocol.validateControlPayload(
             self.allocator,
@@ -1316,10 +1330,9 @@ pub const WireHostClient = struct {
             .ignore_unknown_fields = true,
         });
         defer parsed.deinit();
-        const response_locator = try locatorFromDisk(parsed.value.locator);
-        if (!sameLocator(locator, response_locator)) return error.InvalidHostResponse;
+        if (parsed.value.schemaVersion != 1) return error.InvalidHostResponse;
         if (std.mem.eql(u8, parsed.value.state, "terminated") and
-            parsed.value.survivors.len == 0 and parsed.value.errors.len == 0)
+            parsed.value.survivors.len == 0)
         {
             const host_exited = waitForExactProcessAbsence(
                 self.expected_record.host_pid,
@@ -2755,89 +2768,148 @@ fn inspectionVisibilityValue(
     return .{ .object = value };
 }
 
-fn inspectionValue(
+fn sessionRefJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.json.Value {
+    var incarnation_storage: [32]u8 = undefined;
+    const incarnation = try std.fmt.bufPrint(&incarnation_storage, "{d}", .{locator.generation});
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("key", .{ .string = locator.session_id });
+    try value.put("incarnation", .{ .string = try allocator.dupe(u8, incarnation) });
+    return .{ .object = value };
+}
+
+fn sessionMatchesLocator(session_key: []const u8, session_incarnation: []const u8, locator: Locator) bool {
+    if (!std.mem.eql(u8, session_key, locator.session_id)) return false;
+    var incarnation_storage: [32]u8 = undefined;
+    const incarnation = std.fmt.bufPrint(&incarnation_storage, "{d}", .{locator.generation}) catch return false;
+    return std.mem.eql(u8, session_incarnation, incarnation);
+}
+
+fn processIdentityJsonValue(
+    allocator: std.mem.Allocator,
+    process_id: i32,
+    start_token: []const u8,
+) !std.json.Value {
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("processId", .{ .integer = process_id });
+    try value.put("startToken", .{ .string = start_token });
+    return .{ .object = value };
+}
+
+fn windowSizeJsonValue(allocator: std.mem.Allocator, geometry: Geometry) !std.json.Value {
+    var value = std.json.ObjectMap.init(allocator);
+    try value.put("columns", .{ .integer = geometry.columns });
+    try value.put("rows", .{ .integer = geometry.rows });
+    try value.put("widthPixels", .{ .integer = geometry.width_px });
+    try value.put("heightPixels", .{ .integer = geometry.height_px });
+    return .{ .object = value };
+}
+
+/// Frozen A0 SessionInspection projection from the legacy broker registry.
+/// Completeness is never complete here: the broker does not own live host
+/// arbiter/job-control/descendant evidence.
+fn frozenInspectionValue(
     allocator: std.mem.Allocator,
     entry: *const Entry,
     now_ns: u64,
 ) !std.json.Value {
+    _ = now_ns;
     const record = entry.record;
-    // The broker registry does not own the host's live arbiter/checkpoint
-    // details. Preserve the known lifecycle fields but never label this
-    // projection complete.
-    const complete = false;
-    const presence: []const u8 = if (entry.quarantined or record.state == .unknown or record.state == .starting)
+    const lifecycle: []const u8 = if (entry.quarantined or record.state == .unknown)
         "unknown"
+    else if (record.state == .starting)
+        "creating"
     else if (record.state == .exited)
         "exited"
     else
-        "present";
-    var output_storage: [32]u8 = undefined;
-    var checkpoint_storage: [32]u8 = undefined;
-    const output_seq = try std.fmt.bufPrint(&output_storage, "{d}", .{record.output_seq});
-    const checkpoint_seq = try std.fmt.bufPrint(&checkpoint_storage, "{d}", .{record.checkpoint_seq});
+        "running";
+    var revision_storage: [32]u8 = undefined;
+    const revision = try std.fmt.bufPrint(
+        &revision_storage,
+        "{d}",
+        .{record.visibility.open_terminal_revision},
+    );
+    var start_storage: [32]u8 = undefined;
+    var end_storage: [32]u8 = undefined;
+    const retained_start = try std.fmt.bufPrint(&start_storage, "{d}", .{record.checkpoint_seq});
+    const retained_end = try std.fmt.bufPrint(&end_storage, "{d}", .{record.output_seq});
     var evidence_storage: [24]u8 = undefined;
     const evidence_at = try wallDeadline(&evidence_storage, 0);
 
-    var input = std.json.ObjectMap.init(allocator);
-    try input.put("state", .{ .string = "UNKNOWN" });
-    try input.put("ownerViewerId", .null);
-    try input.put("claimId", .null);
-    const resources = std.json.ObjectMap.init(allocator);
-    const survivors = std.json.Array.init(allocator);
     var diagnostics = std.json.Array.init(allocator);
     try diagnostics.append(.{ .string = "sessiond-registry-projection" });
+    try diagnostics.append(.{ .string = "job-control-evidence-unavailable" });
+    try diagnostics.append(.{ .string = "descendant-inspection-unavailable" });
+
+    var window = std.json.ObjectMap.init(allocator);
+    try window.put("value", try windowSizeJsonValue(allocator, record.geometry));
+    try window.put("revision", .{ .string = try allocator.dupe(u8, revision) });
+
+    var retained = std.json.ObjectMap.init(allocator);
+    try retained.put("start", .{ .string = try allocator.dupe(u8, retained_start) });
+    try retained.put("endExclusive", .{ .string = try allocator.dupe(u8, retained_end) });
+    var output = std.json.ObjectMap.init(allocator);
+    try output.put("closed", .{ .bool = record.state == .exited });
+    try output.put("retained", .{ .object = retained });
+
+    var checkpoints = std.json.ObjectMap.init(allocator);
+    try checkpoints.put("retained", .{ .integer = if (record.checkpoint_seq > 0) 1 else 0 });
+    try checkpoints.put("newest", .null);
+
+    var reap = std.json.ObjectMap.init(allocator);
+    try reap.put("authority", .{ .string = "unavailable" });
+    try reap.put("reaped", .{ .bool = false });
+    try reap.put("status", .null);
+    try reap.put("completeness", .{ .string = "unknown" });
+
+    const descendants = std.json.Array.init(allocator);
+    const survivors = std.json.Array.init(allocator);
 
     var value = std.json.ObjectMap.init(allocator);
-    try value.put("schemaVersion", .{ .integer = 1 });
-    try value.put("locator", try locatorJsonValue(allocator, record.locator));
-    try value.put("presence", .{ .string = presence });
-    try value.put("complete", .{ .bool = complete });
-    try value.put("hostPid", if (record.state == .exited) .null else .{ .integer = record.host_pid });
-    try value.put("hostStartToken", if (record.state == .exited) .null else .{ .string = record.host_start_token });
-    try value.put("providerRoot", if (record.state == .exited)
+    try value.put("session", try sessionRefJsonValue(allocator, record.locator));
+    try value.put("lifecycle", .{ .string = lifecycle });
+    try value.put("completeness", .{ .string = "partial" });
+    try value.put("host", if (record.state == .exited)
         .null
     else
-        try inspectionProcessRootValue(allocator, record.process_root));
-    try value.put("expectedExecutable", .{ .string = record.expected_executable });
-    try value.put("executableVerified", .{ .bool = false });
-    try value.put("outputSeq", .{ .string = try allocator.dupe(u8, output_seq) });
-    try value.put("checkpointSeq", .{ .string = try allocator.dupe(u8, checkpoint_seq) });
-    try value.put("checkpointAvailable", .{ .bool = false });
-    try value.put("input", .{ .object = input });
-    try value.put("viewerCount", .{ .integer = 0 });
-    try value.put("geometry", try inspectionGeometryValue(allocator, record.geometry));
-    try value.put("resources", .{ .object = resources });
-    try value.put("visibility", try inspectionVisibilityValue(allocator, record.visibility, now_ns));
+        try processIdentityJsonValue(allocator, record.host_pid, record.host_start_token));
+    try value.put("child", if (record.state == .exited)
+        .null
+    else
+        try processIdentityJsonValue(
+            allocator,
+            record.process_root.pid,
+            record.process_root.start_token,
+        ));
+    try value.put("jobControl", .null);
+    try value.put("window", .{ .object = window });
+    try value.put("output", .{ .object = output });
+    try value.put("checkpoints", .{ .object = checkpoints });
+    try value.put("inputOwner", .null);
     try value.put("exit", .null);
+    try value.put("reap", .{ .object = reap });
+    try value.put("descendants", .{ .array = descendants });
     try value.put("survivors", .{ .array = survivors });
     try value.put("evidenceAt", .{ .string = try allocator.dupe(u8, evidence_at) });
-    try value.put("diagnosticIds", .{ .array = diagnostics });
+    try value.put("diagnostics", .{ .array = diagnostics });
     return .{ .object = value };
 }
 
 fn encodeListedPayload(
     allocator: std.mem.Allocator,
     registry: *Registry,
-    instance_id: []const u8,
     now_ns: u64,
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
     var entries = std.json.Array.init(a);
-    var complete = registry.enumeration_complete;
+    // Frozen A0 LIST is deliberately unscoped; Hive filtering stays above.
     for (&registry.entries) |*slot| if (slot.*) |*entry| {
-        if (!std.mem.eql(u8, entry.record.locator.instance_id, instance_id)) continue;
-        try entries.append(try inspectionValue(a, entry, now_ns));
-        if (entry.quarantined or entry.record.state == .unknown) complete = false;
-    };
-    for (&registry.directory_quarantines) |slot| if (slot != null) {
-        complete = false;
+        try entries.append(try frozenInspectionValue(a, entry, now_ns));
     };
     var root = std.json.ObjectMap.init(a);
     try root.put("schemaVersion", .{ .integer = 1 });
     try root.put("entries", .{ .array = entries });
-    try root.put("complete", .{ .bool = complete });
     const payload = try std.json.Stringify.valueAlloc(
         allocator,
         std.json.Value{ .object = root },
@@ -2859,9 +2931,12 @@ fn encodeInspectedPayload(
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
+    const a = arena.allocator();
+    var root = try frozenInspectionValue(a, entry, now_ns);
+    try root.object.put("schemaVersion", .{ .integer = 1 });
     const payload = try std.json.Stringify.valueAlloc(
         allocator,
-        try inspectionValue(arena.allocator(), entry, now_ns),
+        root,
         .{},
     );
     errdefer allocator.free(payload);
@@ -2875,32 +2950,38 @@ fn encodeInspectedPayload(
 
 fn encodeTerminatedPayload(
     allocator: std.mem.Allocator,
-    locator: Locator,
     state: TerminationState,
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     const a = arena.allocator();
-    const positive = state == .terminated;
+    const state_name: []const u8 = switch (state) {
+        .terminated => "terminated",
+        .survivors => "survivors",
+        .unknown => "unknown",
+    };
+    // Broker registry readback is not waitpid authority. Preserve measured
+    // absence of exit status rather than fabricating direct-parent reaps.
+    var reap = std.json.ObjectMap.init(a);
+    try reap.put("authority", .{ .string = "unavailable" });
+    try reap.put("reaped", .{ .bool = false });
+    try reap.put("status", .null);
+    try reap.put("completeness", .{ .string = "unknown" });
+    var diagnostics = std.json.Array.init(a);
+    try diagnostics.append(.{ .string = "broker-registry-termination-readback" });
+    if (state == .survivors)
+        try diagnostics.append(.{ .string = "survivor-details-unavailable" });
+    if (state == .unknown)
+        try diagnostics.append(.{ .string = "verification-unknown" });
     const survivors = std.json.Array.init(a);
-    var errors = std.json.Array.init(a);
-    if (!positive) {
-        var failure = std.json.ObjectMap.init(a);
-        try failure.put("phase", .{ .string = "process-tree" });
-        try failure.put("code", .{ .string = if (state == .survivors)
-            "survivor-details-unavailable"
-        else
-            "verification-unknown" });
-        try failure.put("diagnosticId", .{ .string = "sessiond-termination" });
-        try errors.append(.{ .object = failure });
-    }
     var root = std.json.ObjectMap.init(a);
     try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("locator", try locatorJsonValue(a, locator));
-    try root.put("state", .{ .string = if (positive) "terminated" else "unknown" });
+    try root.put("state", .{ .string = state_name });
     try root.put("exit", .null);
+    try root.put("reap", .{ .object = reap });
     try root.put("survivors", .{ .array = survivors });
-    try root.put("errors", .{ .array = errors });
+    try root.put("completeness", .{ .string = if (state == .terminated) "partial" else "unknown" });
+    try root.put("diagnostics", .{ .array = diagnostics });
     const payload = try std.json.Stringify.valueAlloc(
         allocator,
         std.json.Value{ .object = root },
@@ -2913,6 +2994,21 @@ fn encodeTerminatedPayload(
         payload,
     )) return error.InvalidTerminatedPayload;
     return payload;
+}
+
+fn lookupEntryBySession(
+    registry: *Registry,
+    session_key: []const u8,
+    session_incarnation: []const u8,
+) LookupResult {
+    for (&registry.entries) |*slot| if (slot.*) |*entry| {
+        if (!sessionMatchesLocator(session_key, session_incarnation, entry.record.locator))
+            continue;
+        if (entry.quarantined)
+            return .{ .failure = .{ .code = .not_found, .close_connection = false } };
+        return .{ .entry = entry };
+    };
+    return .{ .failure = .{ .code = .not_found, .close_connection = false } };
 }
 
 pub const ProductionBackend = struct {
@@ -2976,7 +3072,8 @@ pub const ProductionBackend = struct {
         payload: []const u8,
         now_ns: u64,
     ) BackendResult {
-        const Request = struct { schemaVersion: u8, instanceId: []const u8 };
+        // Frozen A0 LIST is unscoped: schemaVersion only.
+        const Request = struct { schemaVersion: u8 };
         var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
             return failure(.malformed_frame);
         defer parsed.deinit();
@@ -2984,7 +3081,6 @@ pub const ProductionBackend = struct {
         const response = encodeListedPayload(
             allocator,
             self.registry,
-            parsed.value.instanceId,
             now_ns,
         ) catch |err| return failure(if (err == error.OutOfMemory)
             .resource_exhausted
@@ -2999,14 +3095,19 @@ pub const ProductionBackend = struct {
         payload: []const u8,
         now_ns: u64,
     ) BackendResult {
-        const Request = struct { schemaVersion: u8, locator: DiskLocator };
+        const Request = struct {
+            schemaVersion: u8,
+            session: struct { key: []const u8, incarnation: []const u8 },
+        };
         var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
             return failure(.malformed_frame);
         defer parsed.deinit();
         if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
-        const locator = locatorFromDisk(parsed.value.locator) catch
-            return failure(.malformed_frame);
-        const found = self.registry.lookup(locator) orelse return failure(.not_found);
+        const found = lookupEntryBySession(
+            self.registry,
+            parsed.value.session.key,
+            parsed.value.session.incarnation,
+        );
         const entry = switch (found) {
             .failure => |lookup_failure| return .{ .failure = lookup_failure },
             .entry => |entry| entry,
@@ -3023,27 +3124,40 @@ pub const ProductionBackend = struct {
     ) BackendResult {
         const Request = struct {
             schemaVersion: u8,
-            locator: DiskLocator,
+            session: struct { key: []const u8, incarnation: []const u8 },
             mode: []const u8,
-            reason: []const u8,
-            requestId: []const u8,
+            target: []const u8,
+            deadline: []const u8,
+            idempotencyKey: []const u8,
         };
         var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
             return failure(.malformed_frame);
         defer parsed.deinit();
         if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
-        const locator = locatorFromDisk(parsed.value.locator) catch
+        if (!std.mem.eql(u8, parsed.value.mode, "graceful") and
+            !std.mem.eql(u8, parsed.value.mode, "immediate"))
             return failure(.malformed_frame);
-        if (self.registry.lookup(locator)) |found| switch (found) {
+        if (!std.mem.eql(u8, parsed.value.target, "process-tree") and
+            !std.mem.eql(u8, parsed.value.target, "foreground-group") and
+            !std.mem.eql(u8, parsed.value.target, "session-members"))
+            return failure(.malformed_frame);
+        const found = lookupEntryBySession(
+            self.registry,
+            parsed.value.session.key,
+            parsed.value.session.incarnation,
+        );
+        const entry = switch (found) {
             .failure => |lookup_failure| return .{ .failure = lookup_failure },
-            .entry => {},
-        } else return failure(.not_found);
-        const state = self.registry.terminate(locator, .{
+            .entry => |entry| entry,
+        };
+        // Legacy HostControl remains locator-addressed; the frozen wire maps
+        // SessionRef onto the exact registered locator.
+        const state = self.registry.terminate(entry.record.locator, .{
             .mode = parsed.value.mode,
-            .reason = parsed.value.reason,
-            .request_id = parsed.value.requestId,
+            .reason = parsed.value.target,
+            .request_id = parsed.value.idempotencyKey,
         });
-        const response = encodeTerminatedPayload(allocator, locator, state) catch |err|
+        const response = encodeTerminatedPayload(allocator, state) catch |err|
             return failure(if (err == error.OutOfMemory) .resource_exhausted else .internal);
         return .{ .response = response };
     }
@@ -3396,13 +3510,27 @@ test "broker dispatcher validates projections and handles PING without lifecycle
         .request_id = 7,
         .stream_seq = 0,
     };
-    const malformed_list = "{\"schemaVersion\":1}";
+    // Frozen A0 LIST rejects Hive scope keys; instanceId is adapter policy.
+    const malformed_list = "{\"schemaVersion\":1,\"instanceId\":\"hive-fixture\"}";
+    var malformed_header = header;
+    malformed_header.payload_length = malformed_list.len;
     const malformed = dispatchFrame(std.testing.allocator, .{
-        .header = header,
+        .header = malformed_header,
         .payload = @constCast(malformed_list),
     }, 99, backend.backend());
     try std.testing.expectEqual(protocol.WireError.malformed_frame, malformed.failure.code);
     try std.testing.expectEqual(@as(usize, 0), backend.calls);
+
+    // Positive control: unscoped LIST is schema-valid and reaches the backend.
+    const valid_list = "{\"schemaVersion\":1}";
+    var valid_header = header;
+    valid_header.payload_length = valid_list.len;
+    const valid = dispatchFrame(std.testing.allocator, .{
+        .header = valid_header,
+        .payload = @constCast(valid_list),
+    }, 99, backend.backend());
+    try std.testing.expectEqual(protocol.WireError.internal, valid.failure.code);
+    try std.testing.expectEqual(@as(usize, 1), backend.calls);
 
     const ping_payload = "{\"schemaVersion\":1,\"monoNanos\":\"12\"}";
     var ping_header = header;
@@ -3415,7 +3543,7 @@ test "broker dispatcher validates projections and handles PING without lifecycle
     defer ping.response.deinit(std.testing.allocator);
     try std.testing.expectEqual(generated.frame_type.pong, ping.response.header.type_code);
     try std.testing.expectEqual(@as(?u64, 99), protocol.decodePingPong(std.testing.allocator, ping.response.payload));
-    try std.testing.expectEqual(@as(usize, 0), backend.calls);
+    try std.testing.expectEqual(@as(usize, 1), backend.calls);
 }
 
 test "PONG must correlate to the outstanding broker PING" {

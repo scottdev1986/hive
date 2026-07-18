@@ -231,9 +231,10 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         parsed_created.value.inspection.providerRoot.pid,
     );
 
+    // Frozen A0 LIST is unscoped (no Hive instanceId). Expect the real session
+    // key under the SessionRef projection.
     const list_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
-        .instanceId = instance_id,
     }, .{});
     defer allocator.free(list_payload);
     const listed = switch (backend.call(
@@ -254,7 +255,10 @@ fn runGolden(allocator: std.mem.Allocator) !void {
 
     const inspect_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
-        .locator = wire_locator,
+        .session = .{
+            .key = session_id,
+            .incarnation = "1",
+        },
     }, .{});
     defer allocator.free(inspect_payload);
     const inspected = switch (backend.call(
@@ -273,8 +277,8 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         inspected,
     )) return error.InvalidRealInspection;
     const InspectedProjection = struct {
-        presence: []const u8,
-        providerRoot: struct { pid: i32 },
+        lifecycle: []const u8,
+        child: ?struct { processId: i32 },
     };
     var parsed_inspected = try std.json.parseFromSlice(
         InspectedProjection,
@@ -283,16 +287,21 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .{ .ignore_unknown_fields = true },
     );
     defer parsed_inspected.deinit();
-    if (!std.mem.eql(u8, parsed_inspected.value.presence, "present") or
-        parsed_inspected.value.providerRoot.pid != parsed_created.value.inspection.providerRoot.pid)
+    if (!std.mem.eql(u8, parsed_inspected.value.lifecycle, "running") or
+        parsed_inspected.value.child == null or
+        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid)
         return error.InvalidRealInspection;
 
     const terminate_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
-        .locator = wire_locator,
+        .session = .{
+            .key = session_id,
+            .incarnation = "1",
+        },
         .mode = "immediate",
-        .reason = "real host golden completed",
-        .requestId = "req_018f1e90-7b5a-7cc0-8000-0000000000f4",
+        .target = "process-tree",
+        .deadline = "2099-01-01T00:00:00.000Z",
+        .idempotencyKey = "req_018f1e90-7b5a-7cc0-8000-0000000000f4",
     }, .{});
     defer allocator.free(terminate_payload);
     const terminated = switch (backend.call(

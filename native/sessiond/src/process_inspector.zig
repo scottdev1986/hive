@@ -97,6 +97,20 @@ pub const ObserveResult = union(enum) {
 
 pub const TerminationMode = enum { graceful, immediate };
 
+pub const TerminationTarget = union(enum) {
+    process_tree,
+    foreground_group: i32,
+    session_members: i32,
+
+    fn includes(self: TerminationTarget, process: ProcessIdentity) bool {
+        return switch (self) {
+            .process_tree => true,
+            .foreground_group => |process_group| process.pgid == process_group,
+            .session_members => |session| process.session == session,
+        };
+    }
+};
+
 pub const MemberFate = enum {
     /// wait/absence evidence confirmed the exact PID+start-token is gone.
     terminated,
@@ -583,7 +597,15 @@ pub fn terminateTree(
     expected_root_token: ?StartToken,
     mode: TerminationMode,
 ) Error!TerminationResult {
-    return terminateTreeBefore(platform, allocator, root_pid, expected_root_token, mode, null);
+    return terminateTreeBefore(
+        platform,
+        allocator,
+        root_pid,
+        expected_root_token,
+        mode,
+        .process_tree,
+        null,
+    );
 }
 
 pub fn terminateTreeUntil(
@@ -600,6 +622,27 @@ pub fn terminateTreeUntil(
         root_pid,
         expected_root_token,
         mode,
+        .process_tree,
+        operation_deadline_ns,
+    );
+}
+
+pub fn terminateTreeTargetedUntil(
+    platform: Platform,
+    allocator: std.mem.Allocator,
+    root_pid: i32,
+    expected_root_token: ?StartToken,
+    mode: TerminationMode,
+    target: TerminationTarget,
+    operation_deadline_ns: u64,
+) Error!TerminationResult {
+    return terminateTreeBefore(
+        platform,
+        allocator,
+        root_pid,
+        expected_root_token,
+        mode,
+        target,
         operation_deadline_ns,
     );
 }
@@ -624,6 +667,7 @@ fn terminateTreeBefore(
     root_pid: i32,
     expected_root_token: ?StartToken,
     mode: TerminationMode,
+    target: TerminationTarget,
     operation_deadline_ns: ?u64,
 ) Error!TerminationResult {
     if (deadlineReached(platform, operation_deadline_ns)) return .{
@@ -641,8 +685,14 @@ fn terminateTreeBefore(
     );
     defer snap.deinit(allocator);
 
-    // Work on a mutable deepest-first copy of verified members.
-    const ordered = try allocator.dupe(ProcessIdentity, snap.members);
+    // Never signal outside the verified child tree. Narrower targets filter
+    // that contained snapshot by measured process-group/session identity.
+    var selected: std.ArrayList(ProcessIdentity) = .{};
+    defer selected.deinit(allocator);
+    for (snap.members) |member| {
+        if (target.includes(member)) try selected.append(allocator, member);
+    }
+    const ordered = try selected.toOwnedSlice(allocator);
     defer allocator.free(ordered);
     deepestFirstOrder(ordered);
 
@@ -700,10 +750,14 @@ fn terminateTreeBefore(
         if (any_survivor) break :blk .survivors;
         if (any_unknown) break :blk .unknown;
         if (ordered.len == 0) {
-            // No verified members: only terminated if root absence is evidenced.
-            break :blk switch (rootEvidence(platform, root_pid, expected_root_token)) {
-                .absent_evidenced => .terminated,
-                .unobservable, .still_present => .unknown,
+            // An empty stable narrowed target is complete. The full-tree case
+            // still requires positive root absence evidence.
+            break :blk switch (target) {
+                .process_tree => switch (rootEvidence(platform, root_pid, expected_root_token)) {
+                    .absent_evidenced => .terminated,
+                    .unobservable, .still_present => .unknown,
+                },
+                .foreground_group, .session_members => .terminated,
             };
         }
         break :blk .terminated;
@@ -1308,6 +1362,109 @@ test "termination deadline bounds the settle wait and preserves survivors" {
     try testing.expectEqual(@as(usize, 1), simulated.signals);
     try testing.expect(result.deadline_expired);
     try testing.expectEqual(TerminationState.survivors, result.state);
+}
+
+test "foreground target signals only matching members inside the verified tree" {
+    const TargetPlatform = struct {
+        now: u64 = 0,
+        rootKilled: bool = false,
+        childKilled: bool = false,
+
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+
+        fn identity(pid: i32, parent: i32, pgid: i32) ProcessIdentity {
+            return .{
+                .pid = pid,
+                .start_token = .{ .seconds = @intCast(pid), .microseconds = 1 },
+                .parent = parent,
+                .pgid = pgid,
+                .session = 10,
+                .executable = @splat(0),
+            };
+        }
+
+        fn monoNow(context: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return self.now;
+        }
+
+        fn sleep(context: *anyopaque, duration: u64) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.now += duration;
+        }
+
+        fn kill(context: *anyopaque, pid: i32, _: i32) bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (pid == 10) self.rootKilled = true;
+            if (pid == 11) self.childKilled = true;
+            return pid == 10 or pid == 11;
+        }
+
+        fn observe(context: *anyopaque, pid: i32) ObserveResult {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (pid == 10) return if (self.rootKilled) .absent else .{ .present = identity(10, 1, 10) };
+            if (pid == 11) return if (self.childKilled) .absent else .{ .present = identity(11, 10, 20) };
+            return .absent;
+        }
+
+        fn waitNoHang(context: *anyopaque, pid: i32) bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return (pid == 10 and self.rootKilled) or (pid == 11 and self.childKilled);
+        }
+
+        fn listChildren(
+            _: *anyopaque,
+            allocator: std.mem.Allocator,
+            pid: i32,
+        ) anyerror![]i32 {
+            if (pid != 10) return allocator.alloc(i32, 0);
+            const result = try allocator.alloc(i32, 1);
+            result[0] = 11;
+            return result;
+        }
+    };
+
+    var simulated: TargetPlatform = .{};
+    var result = try terminateTreeTargetedUntil(
+        simulated.platform(),
+        std.testing.allocator,
+        10,
+        .{ .seconds = 10, .microseconds = 1 },
+        .immediate,
+        .{ .foreground_group = 20 },
+        3 * std.time.ns_per_s,
+    );
+    defer result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(TerminationState.terminated, result.state);
+    try std.testing.expectEqual(@as(usize, 1), result.members.len);
+    try std.testing.expect(!simulated.rootKilled);
+    try std.testing.expect(simulated.childKilled);
+
+    var session_simulated: TargetPlatform = .{};
+    var session_result = try terminateTreeTargetedUntil(
+        session_simulated.platform(),
+        std.testing.allocator,
+        10,
+        .{ .seconds = 10, .microseconds = 1 },
+        .immediate,
+        .{ .session_members = 10 },
+        3 * std.time.ns_per_s,
+    );
+    defer session_result.deinit(std.testing.allocator);
+    try std.testing.expectEqual(TerminationState.terminated, session_result.state);
+    try std.testing.expectEqual(@as(usize, 2), session_result.members.len);
+    try std.testing.expect(session_simulated.rootKilled);
+    try std.testing.expect(session_simulated.childKilled);
 }
 
 test "M1: absent root with empty tree reports terminated not unknown" {
