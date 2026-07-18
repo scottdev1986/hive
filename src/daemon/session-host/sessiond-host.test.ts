@@ -13,7 +13,9 @@ import {
   HelloPayloadSchema,
   SessionSpecSchema,
 } from "../../schemas/session-protocol";
+import { HiveDatabase } from "../db";
 import type { DaemonHandshake } from "../handshake";
+import { HiveTerminalHostAdapter } from "./hive-terminal-host";
 import type { SessionSpec } from "./contract";
 import type { TerminalHostBindingStore } from "./terminal-host-binding";
 import type {
@@ -783,6 +785,73 @@ describe("SessiondHost landed frozen operations", () => {
     }]);
     expect(broker.requests).toHaveLength(0);
     expect(broker.closed).toBe(true);
+  });
+
+  test("composes negotiated create through the adapter and a real binding database", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-create-scaffold-"));
+    const db = new HiveDatabase(join(directory, "hive.db"));
+    const transportSession = {
+      key: brokerLocator.sessionId,
+      incarnation: "neutral-incarnation-scaffold",
+    };
+    const transportInspection = {
+      ...inspectionWire,
+      session: transportSession,
+    };
+    const brokers: RecordingClient[] = [];
+    const host = new SessiondHost({
+      pendingBindings: db,
+      connectBroker: async () => {
+        const broker = new RecordingClient((request) => {
+          switch (request.requestType) {
+            case "LIST":
+              return { schemaVersion: 1, entries: [transportInspection] };
+            case "INSPECT":
+              return { schemaVersion: 1, ...transportInspection };
+            default:
+              throw new Error(`unexpected request: ${request.requestType}`);
+          }
+        }, () => createdPayload, brokerLocator.engineBuildId);
+        brokers.push(broker);
+        return broker;
+      },
+    });
+    const adapter = new HiveTerminalHostAdapter(host, db, brokerLocator.instanceId);
+
+    try {
+      await expect(adapter.create(
+        sessionSpec,
+        new Uint8Array(),
+        pendingBinding,
+      )).resolves.toEqual({
+        locator: brokerLocator,
+        inspection: createdPayload.inspection,
+        created: true,
+      });
+      expect(db.getTerminalHostBindingByLocator(brokerLocator))
+        .toEqual(pendingBinding);
+      expect(db.database.query(`
+        SELECT locatorInstanceId, locatorSessionId, locatorGeneration
+        FROM terminal_host_bindings
+      `).all()).toEqual([{
+        locatorInstanceId: brokerLocator.instanceId,
+        locatorSessionId: brokerLocator.sessionId,
+        locatorGeneration: brokerLocator.generation,
+      }]);
+      await expect(adapter.inspect(brokerLocator)).resolves.toEqual({
+        binding: pendingBinding,
+        inspection: { ...inspection, session: transportSession },
+      });
+      expect(brokers.flatMap((broker) => broker.creates)).toEqual([{
+        beginPayload: createBeginPayload,
+        initialInput: new Uint8Array(),
+      }]);
+      expect(brokers.flatMap((broker) => broker.requests)
+        .map((request) => request.requestType)).toEqual(["LIST", "INSPECT"]);
+    } finally {
+      db.close();
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test("keeps production sessiond create admission explicitly disabled by default", async () => {
