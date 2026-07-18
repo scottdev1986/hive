@@ -1,0 +1,52 @@
+import { describe, expect, test } from "bun:test";
+import { NeutralVisibilityHostFixture, VISIBILITY_LEASE_MILLISECONDS } from "./neutral-visibility-fixture";
+
+const term = (key: string, idem = `create-${key}`) => ({
+  key, idempotencyKey: idem,
+  command: { executable: "/usr/bin/printf", arguments: ["x"], workingDirectory: "/tmp/n",
+    completeEnvironment: [{ name: "TERM", value: "xterm-256color" }], descriptorMap: [] },
+  terminalProfile: { inputMode: "literal" as const, echo: false, signalCharacters: true,
+    softwareFlowControl: true, eofByte: 4, startByte: 17, stopByte: 19, hangupOnLastClose: true },
+  initialWindow: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+});
+const src = (id: string, pid: number, tok: string) => ({ sessionId: id, process: { processId: pid, startToken: tok } });
+
+describe("independent edge probes", () => {
+  test("EDGE1: replay after expiry cannot resurrect authority", async () => {
+    const h = new NeutralVisibilityHostFixture();
+    const s = src("e1", 1, "1:a");
+    h.publishSnapshot({ source: s, inventoryRevision: "1", representedSessionKeys: ["k1"] });
+    const first: any = await h.create({ terminal: term("k1"), visibility: { source: s, inventoryRevision: "1" } });
+    expect(first.state).toBe("created");
+    await h.advance(VISIBILITY_LEASE_MILLISECONDS);
+    expect(h.currentLease(first.result.session)).toBeNull();
+    const replay: any = await h.create({ terminal: term("k1"), visibility: { source: s, inventoryRevision: "1" } });
+    console.log("EDGE1 replay.state =", replay.state, "| lease.state =", replay.lease?.state);
+    const renew: any = await h.renewVisibility({ session: first.result.session, visibility: { source: s, inventoryRevision: "1" } });
+    console.log("EDGE1 renew after replay =", renew.state, renew.reason, "renewed:", renew.renewed);
+    expect(renew.state).toBe("rejected");
+    expect(renew.renewed).toBe(false);
+    expect(h.currentLease(first.result.session)).toBeNull();
+  });
+
+  test("EDGE2: cached rejection under same idempotency key after evidence is corrected", async () => {
+    const h = new NeutralVisibilityHostFixture();
+    const s = src("e2", 2, "2:a");
+    h.publishSnapshot({ source: s, inventoryRevision: "2", representedSessionKeys: ["k2"] });
+    const bad: any = await h.create({ terminal: term("k2", "same"), visibility: { source: s, inventoryRevision: "1" } });
+    console.log("EDGE2 first =", bad.state, bad.reason);
+    const retry: any = await h.create({ terminal: term("k2", "same"), visibility: { source: s, inventoryRevision: "2" } });
+    console.log("EDGE2 corrected retry =", retry.state, retry.reason, "(fail-closed if still rejected)");
+    expect(retry.createInvoked).toBe(false);
+  });
+
+  test("EDGE3: same source cannot double-create the same key via a new idempotency key", async () => {
+    const h = new NeutralVisibilityHostFixture();
+    const s = src("e3", 3, "3:a");
+    h.publishSnapshot({ source: s, inventoryRevision: "1", representedSessionKeys: ["k3"] });
+    const a: any = await h.create({ terminal: term("k3", "i1"), visibility: { source: s, inventoryRevision: "1" } });
+    const b: any = await h.create({ terminal: term("k3", "i2"), visibility: { source: s, inventoryRevision: "1" } });
+    console.log("EDGE3 second create =", b.state, b.reason ?? "", "incarnation:", b.result?.session?.incarnation, "vs first:", a.result?.session?.incarnation);
+    console.log("EDGE3 first lease still tracked?", h.currentLease(a.result.session) !== null);
+  });
+});
