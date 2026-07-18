@@ -23,11 +23,21 @@ enum {
   hive_event_clipboard_denied_is_5 = 1 / (HIVE_GHOSTTY_EVENT_CLIPBOARD_DENIED == 5),
   hive_event_close_request_is_6 = 1 / (HIVE_GHOSTTY_EVENT_CLOSE_REQUEST == 6),
 
+  /* The enum's REPRESENTATION is ABI, not just its values: the Zig
+   * trampoline writes this field as a c_int (4 bytes). The offset/size
+   * asserts below cannot catch a representation drift on their own — with
+   * an 8-byte enum, offsetof(bytes) == sizeof(void *) still holds and the
+   * struct size is unchanged, but the type field would overlap what Zig
+   * wrote as padding (cross-vendor review brenda, 2026-07-18). */
+  hive_event_enum_is_c_int_sized = 1 / (sizeof(hive_ghostty_event_e) == 4),
+
   /* Layout of the only aggregate Hive defines on the wire. Field order,
    * offsets, and the 4-byte enum→pointer padding are ABI: the Zig
    * trampoline writes this struct byte-for-byte (the check script passes
    * -Wno-padded because this padding is asserted here as contract). */
   hive_event_struct_type_first = 1 / (offsetof(hive_ghostty_event_s, type) == 0),
+  hive_event_struct_padding_is_4 =
+      1 / (offsetof(hive_ghostty_event_s, bytes) - sizeof(hive_ghostty_event_e) == 4),
   hive_event_struct_bytes_at_ptr = 1 / (offsetof(hive_ghostty_event_s, bytes) == sizeof(void *)),
   hive_event_struct_length_after = 1 / (offsetof(hive_ghostty_event_s, length) == 2 * sizeof(void *)),
   hive_event_struct_total_size = 1 / (sizeof(hive_ghostty_event_s) == 3 * sizeof(void *))
