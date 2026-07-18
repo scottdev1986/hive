@@ -663,6 +663,20 @@ public enum GhosttyBridgeFactory {
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480
     ) throws -> GhosttyManualSurface {
+        try makeManualSurface(
+            hostView: hostView,
+            widthPx: widthPx,
+            heightPx: heightPx,
+            configPolicyPath: manualConfigPolicyPath
+        )
+    }
+
+    private static func makeManualSurface(
+        hostView: NSView,
+        widthPx: UInt32,
+        heightPx: UInt32,
+        configPolicyPath: UnsafePointer<CChar>
+    ) throws -> GhosttyManualSurface {
         // Snapshot the seam once: a mid-call flip of serializeCreation must
         // not unlock a lock we never took (NSLock unlock-without-lock is UB).
         let didLock = serializeCreation
@@ -696,7 +710,7 @@ public enum GhosttyBridgeFactory {
         // `keybind = clear` empties the root set and all tables
         // (config/Config.zig keybind parser). The pinned C API has no
         // load_string, so the one-line policy is loaded via a temp file.
-        ghostty_config_load_file(config, Self.manualConfigPolicyPath)
+        ghostty_config_load_file(config, configPolicyPath)
         ghostty_config_finalize(config)
 
         let wakeupContext = GhosttyAppWakeupContext()
@@ -760,13 +774,27 @@ public enum GhosttyBridgeFactory {
         return UnsafePointer(strdup(url.path))
     }()
 
+    /// XCTest may have no active CVDisplayLink; only frame pacing is disabled.
+    /// The real Metal renderer, IOSurface layer, and terminal core still run.
+    private static let headlessTestConfigPolicyPath: UnsafePointer<CChar> = {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hive-ghostty-test-config-\(ProcessInfo.processInfo.processIdentifier).conf")
+        try? Data("keybind = clear\nwindow-vsync = false\n".utf8).write(to: url)
+        return UnsafePointer(strdup(url.path))
+    }()
+
     /// Convenience for tests: host view is retained by the returned surface (SF1).
     public static func makeManualSurfaceForTesting(
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480
     ) throws -> GhosttyManualSurface {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
-        return try makeManualSurface(hostView: host, widthPx: widthPx, heightPx: heightPx)
+        return try makeManualSurface(
+            hostView: host,
+            widthPx: widthPx,
+            heightPx: heightPx,
+            configPolicyPath: headlessTestConfigPolicyPath
+        )
     }
 }
 

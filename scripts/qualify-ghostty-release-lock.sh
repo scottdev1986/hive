@@ -36,6 +36,8 @@ TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-release-lock.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 /usr/bin/rsync -a --exclude .build --exclude Vendor \
   "$ROOT/workspace/" "$TMP/workspace/"
+mkdir -p "$TMP/native/include"
+/usr/bin/rsync -a "$ROOT/native/include/" "$TMP/native/include/"
 mkdir -p "$TMP/workspace/Vendor"
 /usr/bin/ditto "$XCFRAMEWORK" "$TMP/workspace/Vendor/GhosttyKit.xcframework"
 
@@ -45,10 +47,17 @@ for arch in arm64 x86_64; do
     exit 1
   fi
   echo "qualifying cross-library checkpoint restore: $arch"
-  HIVE_GHOSTTY_ARTIFACT="$ARTIFACT" HIVE_EXPECTED_TEST_ARCH="$arch" \
-    /usr/bin/swift test \
-      --package-path "$TMP/workspace" \
+  (
+    unset HTTP_PROXY HTTPS_PROXY http_proxy https_proxy NO_PROXY no_proxy
+    cd "$TMP/workspace"
+    /usr/bin/arch "-$arch" /usr/bin/swift build \
+      --build-tests \
       --scratch-path "$TMP/build-$arch" \
-      --triple "$arch-apple-macosx14.0" \
-      --filter Gate6SurfaceRestoreTests
+      --triple "$arch-apple-macosx14.0"
+    bundle="$TMP/build-$arch/$arch-apple-macosx/debug/HiveWorkspacePackageTests.xctest"
+    HIVE_GHOSTTY_ARTIFACT="$ARTIFACT" HIVE_EXPECTED_TEST_ARCH="$arch" \
+      /usr/bin/arch "-$arch" /usr/bin/xcrun xctest \
+        -XCTest 'HiveTerminalKitTests.Gate6SurfaceRestoreTests/testEveryLibVtAuthoredSplitRestoresIntoRealSurface' \
+        "$bundle"
+  )
 done

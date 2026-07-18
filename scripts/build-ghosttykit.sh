@@ -202,4 +202,8 @@ export HIVE_ZIG_GLOBAL_CACHE="$CACHE/zig-global"
 
 bun "$ROOT/scripts/write-ghostty-artifact-metadata.ts" "$OUT"
 
+if [[ $PRODUCTION -eq 1 ]]; then
+  "$ROOT/scripts/qualify-ghostty-release-lock.sh" "$OUT"
+fi
+
 echo "Ghostty native artifacts: $OUT"

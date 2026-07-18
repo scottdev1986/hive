@@ -83,6 +83,104 @@ static uint8_t *export_or_null(GhosttyTerminal t, size_t *len) {
   return payload;
 }
 
+struct corpus_case {
+  const char *bytes;
+  size_t length;
+};
+
+#define CORPUS_CASE(value) {value, sizeof(value) - 1}
+static const struct corpus_case checkpoint_corpus[] = {
+    CORPUS_CASE("\x1b[31mred\x1b[0m"),
+    CORPUS_CASE("\x1b]2;checkpoint title\x07"),
+    CORPUS_CASE("\x1bP$qm\x1b\\"),
+    CORPUS_CASE("A\xf0\x9f\x98\x84Z"),
+    CORPUS_CASE("e\xcc\x81x"),
+    CORPUS_CASE("\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\"),
+    CORPUS_CASE("\x1b[?2026hsynchronized\x1b[?2026l"),
+    CORPUS_CASE("primary\x1b[?1049halternate\x1b[?1049lprimary-again"),
+    CORPUS_CASE("12345678901234567890"),
+};
+static const char subsequent[] =
+    "\x07\x1b]2;after\x07\x1b]7;file://host/tmp\x07\x1b[6n!";
+
+static int write_u32_le(FILE *f, uint32_t value) {
+  const uint8_t bytes[4] = {
+      (uint8_t)value, (uint8_t)(value >> 8),
+      (uint8_t)(value >> 16), (uint8_t)(value >> 24)};
+  return fwrite(bytes, 1, sizeof(bytes), f) == sizeof(bytes);
+}
+
+static void write_blob(const char *path, const uint8_t *bytes, size_t length) {
+  FILE *f = fopen(path, "wb");
+  CHECK(f != NULL, "fixture file opened for write");
+  if (f == NULL) return;
+  CHECK(fwrite(bytes, 1, length, f) == length, "fixture bytes written");
+  CHECK(fclose(f) == 0, "fixture file closed");
+}
+
+static void write_corpus_fixtures(const char *out_dir, const char *build_id) {
+  char path[4096];
+  int path_length = snprintf(path, sizeof(path), "%s/engine-build-id.txt", out_dir);
+  CHECK(path_length > 0 && (size_t)path_length < sizeof(path),
+        "engine id fixture path fits");
+  if (path_length > 0 && (size_t)path_length < sizeof(path))
+    write_blob(path, (const uint8_t *)build_id, strlen(build_id));
+
+  path_length = snprintf(path, sizeof(path), "%s/corpus.hvg6", out_dir);
+  CHECK(path_length > 0 && (size_t)path_length < sizeof(path),
+        "corpus manifest path fits");
+  FILE *manifest = NULL;
+  if (path_length > 0 && (size_t)path_length < sizeof(path))
+    manifest = fopen(path, "wb");
+  CHECK(manifest != NULL, "corpus manifest opened for write");
+  if (manifest != NULL) {
+    CHECK(fwrite("HVG6C001", 1, 8, manifest) == 8, "corpus magic written");
+    CHECK(write_u32_le(manifest, (uint32_t)(sizeof(checkpoint_corpus) /
+                                            sizeof(checkpoint_corpus[0]))),
+          "corpus count written");
+    CHECK(write_u32_le(manifest, (uint32_t)(sizeof(subsequent) - 1)),
+          "subsequent length written");
+    CHECK(fwrite(subsequent, 1, sizeof(subsequent) - 1, manifest) ==
+              sizeof(subsequent) - 1,
+          "subsequent bytes written");
+    for (size_t i = 0; i < sizeof(checkpoint_corpus) /
+                               sizeof(checkpoint_corpus[0]); i++) {
+      CHECK(write_u32_le(manifest, (uint32_t)checkpoint_corpus[i].length),
+            "corpus case length written");
+      CHECK(fwrite(checkpoint_corpus[i].bytes, 1, checkpoint_corpus[i].length,
+                   manifest) == checkpoint_corpus[i].length,
+            "corpus case bytes written");
+    }
+    CHECK(fclose(manifest) == 0, "corpus manifest closed");
+  }
+
+  for (size_t case_index = 0;
+       case_index < sizeof(checkpoint_corpus) / sizeof(checkpoint_corpus[0]);
+       case_index++) {
+    const struct corpus_case *item = &checkpoint_corpus[case_index];
+    for (size_t split = 0; split <= item->length; split++) {
+      GhosttyTerminal terminal = new_terminal();
+      CHECK(terminal != NULL, "corpus author terminal created");
+      if (terminal == NULL) continue;
+      feed(terminal, item->bytes, split);
+      size_t payload_length = 0;
+      uint8_t *payload = export_or_null(terminal, &payload_length);
+      CHECK(payload != NULL && payload_length > 42,
+            "corpus checkpoint exported");
+      path_length = snprintf(path, sizeof(path),
+                             "%s/case-%02zu-split-%03zu.hvgcp", out_dir,
+                             case_index, split);
+      CHECK(path_length > 0 && (size_t)path_length < sizeof(path),
+            "corpus fixture path fits");
+      if (payload != NULL && path_length > 0 &&
+          (size_t)path_length < sizeof(path))
+        write_blob(path, payload, payload_length);
+      free(payload);
+      ghostty_terminal_free(terminal);
+    }
+  }
+}
+
 /* Deterministic PRNG — no time/random seeding, reproducible corpus. */
 static uint64_t rng_state = 0x9e3779b97f4a7c15ULL;
 static uint64_t rng_next(void) {
@@ -226,23 +324,10 @@ int main(int argc, char **argv) {
           "export with null allocator rejected");
   }
 
-  /* Optional argv[1]: directory to write the authored payload into, as a
-   * cross-artifact fixture for the Swift surface-restore live proof
-   * (Gate6SurfaceRestoreTests restores this exact payload into a REAL
-   * embedded surface — authoring and restoring are different libraries
-   * that must agree byte-for-byte on the format). The fed `content`
-   * constant above is the other half of that fixture contract; the Swift
-   * test asserts the restored screen shows exactly that content. */
-  if (out_dir != NULL) {
-    char path[4096];
-    (void)snprintf(path, sizeof(path), "%s/authored.hvgcp", out_dir);
-    FILE *f = fopen(path, "wb");
-    CHECK(f != NULL, "fixture file opened for write");
-    if (f != NULL) {
-      CHECK(fwrite(pay1, 1, len1, f) == len1, "fixture payload written");
-      CHECK(fclose(f) == 0, "fixture file closed");
-    }
-  }
+  /* The cross-library release lock restores every corpus byte split into
+   * the real embedded surface. The manifest lets Swift prove that it is
+   * consuming this exact C-authored corpus rather than a duplicated fake. */
+  if (out_dir != NULL) write_corpus_fixtures(out_dir, build_id);
 
   free(pay1);
   ghostty_terminal_free(author);
