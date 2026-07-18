@@ -110,6 +110,17 @@ pub const DescriptorMapping = struct {
     target_fd: posix.fd_t,
 };
 
+pub const TerminalProfile = struct {
+    input_mode: enum { canonical, literal } = .literal,
+    echo: bool = false,
+    signal_characters: bool = false,
+    software_flow_control: bool = false,
+    eof_byte: u8 = 4,
+    start_byte: u8 = 17,
+    stop_byte: u8 = 19,
+    hangup_on_last_close: bool = true,
+};
+
 pub const SpawnSpec = struct {
     /// Absolute or PATH-resolved argv[0] identity expected after exec.
     argv: []const []const u8,
@@ -118,6 +129,7 @@ pub const SpawnSpec = struct {
     envp: ?[]const []const u8 = null,
     /// Only these explicitly transferred descriptors survive exec.
     descriptor_map: []const DescriptorMapping = &.{},
+    terminal_profile: TerminalProfile = .{},
     geometry: Geometry,
 };
 
@@ -126,15 +138,24 @@ pub const SpawnReadback = struct {
     pid: i32,
     pgid: i32,
     session: i32,
+    foreground_pgid: i32,
     start_token: process_inspector.StartToken,
     executable: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined,
     executable_len: usize = 0,
     geometry: Geometry,
+    terminal_identity: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined,
+    terminal_identity_len: usize = 0,
+    initial_profile_applied_before_exec: bool,
+    initial_window_applied_before_exec: bool,
     /// process_inspector spawn-time root snapshot status.
     root_snapshot_status: process_inspector.SnapshotStatus,
 
     pub fn executablePath(self: *const SpawnReadback) []const u8 {
         return self.executable[0..self.executable_len];
+    }
+
+    pub fn terminalIdentity(self: *const SpawnReadback) []const u8 {
+        return self.terminal_identity[0..self.terminal_identity_len];
     }
 };
 
@@ -285,9 +306,40 @@ pub const PtyHost = struct {
         const ws = winsizeFromGeometry(spec.geometry);
         if (c.ioctl(slave, c.TIOCSWINSZ, &ws) != 0)
             return error.SpawnFailed;
-        // Raw mode: binary PTY I/O must not pass through cooked line discipline
-        // (\n↔\r\n, echo, etc.) or ordered digests of child output will corrupt.
-        setRaw(slave);
+        var applied_ws: c.struct_winsize = undefined;
+        if (c.ioctl(slave, c.TIOCGWINSZ, &applied_ws) != 0)
+            return .{ .exec_failed = .{
+                .layer = .terminal_setup,
+                .os_code = std.c._errno().*,
+            } };
+        if (!geometryFromWinsize(applied_ws).eql(spec.geometry))
+            return .{ .exec_failed = .{
+                .layer = .terminal_setup,
+                .os_code = c.EIO,
+            } };
+        if (applyTerminalProfile(slave, spec.terminal_profile)) |os_code|
+            return .{ .exec_failed = .{
+                .layer = .terminal_setup,
+                .os_code = os_code,
+            } };
+        var terminal_identity: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = @splat(0);
+        const terminal_identity_error = c.ttyname_r(
+            slave,
+            &terminal_identity,
+            terminal_identity.len,
+        );
+        if (terminal_identity_error != 0) return .{ .exec_failed = .{
+            .layer = .terminal_setup,
+            .os_code = terminal_identity_error,
+        } };
+        const terminal_identity_len = std.mem.indexOfScalar(
+            u8,
+            &terminal_identity,
+            0,
+        ) orelse return .{ .exec_failed = .{
+            .layer = .terminal_setup,
+            .os_code = c.EIO,
+        } };
 
         // Build C argv before fork (heap is forbidden in the child after fork).
         const argv_owned = try dupeArgv(self.allocator, spec.argv);
@@ -463,6 +515,13 @@ pub const PtyHost = struct {
         self.start_token = identity.start_token;
         self.pgid = identity.pgid;
         self.session = identity.session;
+        const foreground_pgid = c.tcgetpgrp(self.master_fd);
+        if (foreground_pgid < 0) {
+            self.forceKillChild();
+            self.closeMaster();
+            self.spawned = false;
+            return error.IdentityUnavailable;
+        }
 
         // Spawn-time root snapshot via process_inspector (stable preferred).
         var real_plat = process_inspector.RealPlatform.init();
@@ -474,11 +533,23 @@ pub const PtyHost = struct {
         ) catch {
             // Snapshot failure does not undo a live spawn with identity evidence,
             // but readback reports unknown completeness.
-            return .{ .running = makeReadback(self, identity, .unknown) };
+            return .{ .running = makeReadback(
+                self,
+                identity,
+                .unknown,
+                foreground_pgid,
+                terminal_identity[0..terminal_identity_len],
+            ) };
         };
         defer snap.deinit(self.allocator);
 
-        return .{ .running = makeReadback(self, identity, snap.status) };
+        return .{ .running = makeReadback(
+            self,
+            identity,
+            snap.status,
+            foreground_pgid,
+            terminal_identity[0..terminal_identity_len],
+        ) };
     }
 
     pub fn resize(self: *PtyHost, geometry: Geometry, revision: u64) Error!ResizeReceipt {
@@ -847,28 +918,61 @@ fn geometryFromWinsize(ws: c.struct_winsize) Geometry {
     };
 }
 
-fn setRaw(fd: c_int) void {
+fn profileMatches(term: c.struct_termios, profile: TerminalProfile) bool {
+    return (term.c_lflag & c.ICANON != 0) == (profile.input_mode == .canonical) and
+        (term.c_lflag & c.ECHO != 0) == profile.echo and
+        (term.c_lflag & c.ISIG != 0) == profile.signal_characters and
+        (term.c_iflag & c.IXON != 0) == profile.software_flow_control and
+        (term.c_iflag & c.IXOFF != 0) == profile.software_flow_control and
+        (term.c_cflag & c.HUPCL != 0) == profile.hangup_on_last_close and
+        term.c_cc[c.VEOF] == profile.eof_byte and
+        term.c_cc[c.VSTART] == profile.start_byte and
+        term.c_cc[c.VSTOP] == profile.stop_byte;
+}
+
+fn applyTerminalProfile(fd: c_int, profile: TerminalProfile) ?c_int {
     var term: c.struct_termios = undefined;
-    if (c.tcgetattr(fd, &term) != 0) return;
+    if (c.tcgetattr(fd, &term) != 0) return std.c._errno().*;
     c.cfmakeraw(&term);
-    _ = c.tcsetattr(fd, c.TCSANOW, &term);
+    if (profile.input_mode == .canonical) term.c_lflag |= c.ICANON;
+    if (profile.echo) term.c_lflag |= c.ECHO;
+    if (profile.signal_characters) term.c_lflag |= c.ISIG;
+    if (profile.software_flow_control) term.c_iflag |= c.IXON | c.IXOFF;
+    if (profile.hangup_on_last_close)
+        term.c_cflag |= c.HUPCL
+    else
+        term.c_cflag &= ~@as(@TypeOf(term.c_cflag), c.HUPCL);
+    term.c_cc[c.VEOF] = profile.eof_byte;
+    term.c_cc[c.VSTART] = profile.start_byte;
+    term.c_cc[c.VSTOP] = profile.stop_byte;
+    if (c.tcsetattr(fd, c.TCSANOW, &term) != 0) return std.c._errno().*;
+    var applied: c.struct_termios = undefined;
+    if (c.tcgetattr(fd, &applied) != 0) return std.c._errno().*;
+    return if (profileMatches(applied, profile)) null else c.EIO;
 }
 
 fn makeReadback(
     host: *const PtyHost,
     identity: process_inspector.ProcessIdentity,
     snap_status: process_inspector.SnapshotStatus,
+    foreground_pgid: i32,
+    terminal_identity: []const u8,
 ) SpawnReadback {
     var rb: SpawnReadback = .{
         .pid = host.pid,
         .pgid = host.pgid,
         .session = host.session,
+        .foreground_pgid = foreground_pgid,
         .start_token = host.start_token,
         .geometry = host.geometry,
+        .terminal_identity_len = terminal_identity.len,
+        .initial_profile_applied_before_exec = true,
+        .initial_window_applied_before_exec = true,
         .root_snapshot_status = snap_status,
         .executable_len = identity.executable_len,
     };
     @memcpy(rb.executable[0..identity.executable_len], identity.executablePath());
+    @memcpy(rb.terminal_identity[0..terminal_identity.len], terminal_identity);
     return rb;
 }
 
@@ -985,6 +1089,52 @@ test "spawn cat: readback proves pid/pgid/start-token/executable" {
     if (!evidence.reaped) {
         // deinit will SIGKILL+wait — that is still positive reaping.
     }
+}
+
+test "spawn applies the exact terminal profile and reports real job-control evidence" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    const profile: TerminalProfile = .{
+        .input_mode = .canonical,
+        .echo = true,
+        .signal_characters = true,
+        .software_flow_control = true,
+        .eof_byte = 5,
+        .start_byte = 18,
+        .stop_byte = 20,
+        .hangup_on_last_close = false,
+    };
+    const geometry: Geometry = .{
+        .columns = 93,
+        .rows = 31,
+        .width_px = 930,
+        .height_px = 620,
+    };
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    const rb = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "sleep 5" },
+        .terminal_profile = profile,
+        .geometry = geometry,
+    }));
+
+    try testing.expectEqual(rb.pid, rb.session);
+    try testing.expectEqual(rb.pid, rb.pgid);
+    try testing.expectEqual(rb.pid, rb.foreground_pgid);
+    try testing.expect(rb.terminalIdentity().len > 0);
+    try testing.expect(std.mem.startsWith(u8, rb.terminalIdentity(), "/dev/"));
+    try testing.expect(rb.initial_profile_applied_before_exec);
+    try testing.expect(rb.initial_window_applied_before_exec);
+
+    var applied_profile: c.struct_termios = undefined;
+    try testing.expectEqual(@as(c_int, 0), c.tcgetattr(host.master_fd, &applied_profile));
+    try testing.expect(profileMatches(applied_profile, profile));
+    var applied_window: c.struct_winsize = undefined;
+    try testing.expectEqual(
+        @as(c_int, 0),
+        c.ioctl(host.master_fd, c.TIOCGWINSZ, &applied_window),
+    );
+    try testing.expect(geometryFromWinsize(applied_window).eql(geometry));
 }
 
 test "spawn passes the spec environment to the child" {

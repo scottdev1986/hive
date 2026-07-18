@@ -1,6 +1,6 @@
 # M1-A1 sessiond qualification
 
-Status: the contract-freeze-facing minimum, PTY/reap qualification, and production lifecycle wire have landed. Frozen claim, transactional input, and resize receipts are projected onto the production host wire in the current review increment. Attach streaming, visibility renewal, crash/adoption, and bounded replay qualification remain open.
+Status: the contract-freeze-facing minimum, PTY/reap qualification, production lifecycle wire, and frozen claim/input/resize projections have landed. Frozen create schemas have also landed. Native neutral create, the remaining frozen control plane, attach streaming, visibility renewal, crash/adoption, and bounded replay qualification remain open.
 
 ## Qualified behavior
 
@@ -8,6 +8,7 @@ Status: the contract-freeze-facing minimum, PTY/reap qualification, and producti
 - Descriptor transfer is allowlisted. The caller retains its source descriptor, the child receives a duplicate at the declared target, standard streams remain attached to the PTY, and every other inherited descriptor is closed before replacement.
 - Resize is a revisioned ordered mutation. Revisions must increase, input accepted earlier is written before the resize, and success returns the geometry read back from the terminal after the set operation. The receipt does not claim that a foreground application handled `SIGWINCH`.
 - PTY creation produces one master/slave pair. The replacement becomes a new session and process-group leader, receives the slave as all three standard streams and controlling terminal, starts in the foreground process group, and observes the requested initial geometry.
+- Initial terminal setup applies the exact requested canonical/literal, echo, signal-character, software-flow-control, control-byte, and hangup flags to the slave before replacement. It reads those attributes and all four window fields back before launch can report success, and the running evidence carries the real terminal identity and foreground process group.
 - A process event is notification, not exit proof. Exit evidence is authoritative only when the host, as direct parent, obtains the status from `waitpid`. A nonblocking wait distinguishes a running child from an unavailable wait authority; `ECHILD` is reported as unknown rather than fabricated into an exit.
 - Process-tree termination cannot consume the root child's wait status behind the PTY owner's back. Root waits are routed through the owner, and successful immediate termination persists a positive direct-child wait observation.
 - The production broker dispatches inventory, exact-locator inspection, and termination instead of collapsing those defined operations to not-found. Inventory preserves enumeration completeness; registry-only inspection marks unavailable host-owned arbiter and checkpoint facts as partial rather than inventing them; termination reports success only after the registry receives positive host and process-tree readback.
@@ -26,6 +27,7 @@ Environment: macOS 26.3.1 (25D2128), arm64; locked Zig 0.15.2.
 | C — descriptor hygiene | An arbitrary descriptor was made intentionally inheritable before launch; the replaced process positively observed that it was absent. | Pass |
 | D — ordered resize | Revision 41 applied rows 37, columns 111, and both pixel dimensions. An independent `TIOCGWINSZ` matched every receipt value. Input accepted next preceded revision 42, its ordered position increased, and replaying revision 42 was rejected as stale. | Pass |
 | A — PTY lifecycle | A real replacement reported PID = session ID = process-group ID. `TIOCGPGRP` on the live master returned that group, the child observed descriptors 0, 1, and 2 as terminals, and `stty` read back the requested 37-by-111 geometry. | Pass |
+| Frozen create terminal profile | A real replacement received a deliberately non-default profile: canonical input, echo, signal characters, and software flow control enabled; custom EOF/start/stop bytes; and hangup-on-close disabled. Independent `tcgetattr` and `TIOCGWINSZ` reads matched the request, while the running readback reported PID = session ID = process-group ID = foreground process-group ID and a real terminal identity. | Pass |
 | F — notify then reap | A real `EVFILT_PROC`/`NOTE_EXIT` event arrived for a child exiting 23. The event was followed by a separate direct-parent `waitpid`, which returned the same child's status and produced typed exited/reaped evidence. | Pass |
 | F — lost authority | A deliberate competing `waitpid` consumed a child exiting 29. The PTY owner's subsequent wait observed `ECHILD` and returned unavailable/unknown with no invented exit code. | Pass |
 | Termination evidence | A real provider tree was terminated while an unrelated sentinel process survived. The immutable terminal result reported no survivors and a positive root wait observation. | Pass |
@@ -36,7 +38,7 @@ Environment: macOS 26.3.1 (25D2128), arm64; locked Zig 0.15.2.
 | Resize wire | A framed resize applied revision 41 to a real PTY and returned rows 37 and columns 111 from the post-set terminal readback. | Pass |
 | EOF and hangup | Canonical EOF against the real raw-mode provider was rejected because the terminal was not canonical and the provider remained live. A real PTY accepted hangup only after draining, closed its master, and produced direct-child reap evidence. | Pass |
 
-Positive controls were observed before the production changes: the focused freeze discriminator step reported 0/4 passing, and the live termination test observed a terminated tree whose root wait evidence had been lost. For the transactional input increment, removing the production `INPUT_SUBMIT` dispatch while retaining the real-host control failed at the expected APPLIED response; restoring it made the same control pass. The strengthened behavioral discriminators and the complete native suite pass after the changes.
+Positive controls were observed before the production changes: the focused freeze discriminator step reported 0/4 passing, and the live termination test observed a terminated tree whose root wait evidence had been lost. For the transactional input increment, removing the production `INPUT_SUBMIT` dispatch while retaining the real-host control failed at the expected APPLIED response; restoring it made the same control pass. For the frozen create profile, temporarily replacing the requested attributes with the default profile failed the independent live readback assertion; restoring the requested profile made all 173 native tests pass. The strengthened behavioral discriminators and the complete native suite pass after the changes.
 
 ## External basis
 
@@ -51,4 +53,4 @@ Positive controls were observed before the production changes: the focused freez
 
 ## Remaining A1 qualification
 
-The next increment must wire attach streaming and visibility renewal, then exercise broker/host crash and adoption matrices and bounded journal/replay behavior.
+The next increments must finish native neutral create and the frozen terminate/list/inspect control plane, then wire attach streaming and visibility renewal before exercising broker/host crash and adoption matrices and bounded journal/replay behavior.
