@@ -1,7 +1,7 @@
-p4593
+p55189
 f0
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.QQRcEF/x86_64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.PFPMto/x86_64.control
 f1
 tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/derek/raw/qualification/ghostty-b1-foundation/x86_64-protocol.jsonl
@@ -10,10 +10,10 @@ tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/derek/raw/qualification/ghostty-b1-foundation/x86_64-probe.stderr.txt
 f3
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.QQRcEF/x86_64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.PFPMto/x86_64.control
 f4
 tREG
-n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/508e8dcd-bf22-4b7b-84b0-6e8a5e17ff19.run.lock
+n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/f3230e48-1f46-439a-8670-b59fc6160508.run.lock
 f5
 tKQUEUE
 ncount=0, state=0x12

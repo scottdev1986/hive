@@ -36,9 +36,9 @@ hash_shipped() {
       find GhosttyKit.xcframework lib-vt notices -type f -print \
         | LC_ALL=C /usr/bin/sort
     ) | while IFS= read -r relative; do
-      /usr/bin/shasum -a 256 "$ARTIFACT/$relative"
+      (cd "$ARTIFACT" && /usr/bin/shasum -a 256 "$relative")
     done
-    /usr/bin/shasum -a 256 "$ARTIFACT/sbom.cdx.json"
+    (cd "$ARTIFACT" && /usr/bin/shasum -a 256 sbom.cdx.json)
   } >"$output"
 }
 
@@ -77,33 +77,76 @@ diff -u --label build-b-files --label build-c-files \
   "$TMP/manifest-b.tsv" "$TMP/manifest-c.tsv" \
   >"$EVIDENCE/reproducibility-file-hash.diff" || test $? -eq 1
 
+fixture_paths="$TMP/fixture-paths.txt"
+: >"$fixture_paths"
+while IFS= read -r relative_fixture; do
+  if ! /usr/bin/cmp -s "$TMP/checkpoint-a/$relative_fixture" \
+    "$TMP/checkpoint-b/$relative_fixture" || \
+     ! /usr/bin/cmp -s "$TMP/checkpoint-b/$relative_fixture" \
+    "$TMP/checkpoint-c/$relative_fixture"; then
+    printf '%s\n' "$relative_fixture" >>"$fixture_paths"
+  fi
+done < <(
+  cd "$TMP/checkpoint-a"
+  find . -type f -print | sed 's#^\./##' | LC_ALL=C sort
+)
+
+byte_at() {
+  local file=$1
+  local offset=$2
+  /usr/bin/od -An -tu1 -j "$offset" -N 1 "$file" | tr -d '[:space:]'
+}
+
+archive_path_refs=0
+while IFS= read -r archive; do
+  refs=$(/usr/bin/strings "$archive" | /usr/bin/grep -F -o "$ROOT" | wc -l || true)
+  archive_path_refs=$((archive_path_refs + refs))
+done < <(find "$ARTIFACT/GhosttyKit.xcframework" "$ARTIFACT/lib-vt" \
+  -type f -name '*.a' -print | LC_ALL=C sort)
+
 {
   printf 'status=qualified_shipped_runtime_artifacts_byte_identical\n'
   printf 'build_count=%s\n' "$RUNS"
   printf 'shipped_runtime_set=GhosttyKit.xcframework,lib-vt,notices,sbom.cdx.json\n'
   printf 'gate6_fixture_handoff=B1.4_gate6_checkpoint_serialization\n'
+  printf 'fixture_difference_count=%s\n' "$(wc -l <"$fixture_paths" | tr -d ' ')"
   printf 'fixture_differences_zero_based=\n'
-  while IFS= read -r fixture; do
-    relative_fixture=${fixture#checkpoint-fixtures/}
-    old="$TMP/checkpoint-b/$relative_fixture"
+  while IFS= read -r relative_fixture; do
+    old="$TMP/checkpoint-a/$relative_fixture"
+    middle="$TMP/checkpoint-b/$relative_fixture"
     new="$TMP/checkpoint-c/$relative_fixture"
-    if ! /usr/bin/cmp -s "$old" "$new"; then
-      /usr/bin/cmp -l "$old" "$new" | while read -r offset old_byte new_byte; do
-        printf '%s offset=%s old=0x%02X new=0x%02X\n' \
-          "$fixture" "$((offset - 1))" "$old_byte" "$new_byte"
-      done
+    difference=$(cmp -l "$old" "$middle" 2>/dev/null | head -n 1 || true)
+    if [[ -z "$difference" ]]; then
+      difference=$(cmp -l "$middle" "$new" 2>/dev/null | head -n 1 || true)
     fi
-  done < <(
-    /usr/bin/awk -F '\t' '$1 ~ /^checkpoint-fixtures\// { print $1 }' \
-      "$TMP/manifest-b.tsv" \
-      | while IFS= read -r fixture; do
-          relative_fixture=${fixture#checkpoint-fixtures/}
-          if ! /usr/bin/cmp -s "$TMP/checkpoint-b/$relative_fixture" \
-            "$TMP/checkpoint-c/$relative_fixture"; then
-            printf '%s\n' "$fixture"
-          fi
-        done
-  )
+    if [[ -z "$difference" ]]; then
+      difference=$(cmp -l "$old" "$new" 2>/dev/null | head -n 1 || true)
+    fi
+    read -r one_based old_byte new_byte <<<"$difference"
+    # cmp reports byte values in octal; decode them before validating the
+    # decimal bytes read from each of the three snapshots.
+    old_decimal=$((8#$old_byte))
+    new_decimal=$((8#$new_byte))
+    offset=$((one_based - 1))
+    if [[ "$(byte_at "$old" "$offset")" -ne "$old_decimal" &&
+      "$(byte_at "$middle" "$offset")" -ne "$old_decimal" ]]; then
+      echo "cmp byte conversion mismatch for $relative_fixture" >&2
+      exit 1
+    fi
+    if [[ "$(byte_at "$middle" "$offset")" -ne "$new_decimal" &&
+      "$(byte_at "$new" "$offset")" -ne "$new_decimal" ]]; then
+      echo "cmp byte conversion mismatch for $relative_fixture" >&2
+      exit 1
+    fi
+    printf 'checkpoint-fixtures/%s offset=%s a=0x%02X b=0x%02X c=0x%02X nondeterministic=true\n' \
+      "$relative_fixture" "$offset" \
+      "$(byte_at "$old" "$offset")" \
+      "$(byte_at "$middle" "$offset")" \
+      "$(byte_at "$new" "$offset")"
+  done <"$fixture_paths"
+  printf 'path_independence=known_limitation\n'
+  printf 'static_archive_absolute_build_path_references=%s\n' "$archive_path_refs"
+  printf 'path_independence_scope=Gate4_follow_up; runtime artifacts reproduce at the fixed content-addressed build path\n'
 } >"$EVIDENCE/reproducibility-gap.txt"
 
 echo "shipped runtime reproducibility qualified; evidence: $EVIDENCE"

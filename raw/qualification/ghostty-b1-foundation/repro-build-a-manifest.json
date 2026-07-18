@@ -9133,49 +9133,49 @@
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-005.hvgcp",
-      "sha256": "be877eecb545539efde6191aead1440338b26427bde7c574f386e6945576f721",
+      "sha256": "504df13520e7eac0be5549c76f23c91ef470aa934f6bc86706ff7a5039093bc0",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-006.hvgcp",
-      "sha256": "fb17855285ac3cfdb86bf5db4f4f2bfaf4422de5c76c6b667e700c55c2322ff8",
+      "sha256": "0763600cff790a7aae591669ff769022e48358cf21cf899afb7a5c4e0f769a97",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-007.hvgcp",
-      "sha256": "a4aff528e4397777d4aae86e734a1c5190faea9411f3941a298e9b0af2ff36eb",
+      "sha256": "f093e1ac6ed9b78091f6ecde2c1b574e6cff786214377b3d99fbbf7a568ff58c",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-008.hvgcp",
-      "sha256": "006f5815ff79e9447f74f800fe686a06a6cf0e3dc31c7d8db7c76f6a142a462a",
+      "sha256": "cc313eb4e11751f289b5508a02fe6e2956fd1b6998bc1226b51451edf66c0e7e",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-009.hvgcp",
-      "sha256": "391b2da09d6f23d1e70e74b1104c6d57b0343a9d43728a8c16d6e73c469c313d",
+      "sha256": "80d542aecb1346ed3d1e5202170d19eadc01ac8cfc51cbf9f07376ad4ff62129",
       "size": 412637,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-010.hvgcp",
-      "sha256": "54ee613882cc5496938899331bf3da3298ef2d2760291c316d01db0725731a96",
+      "sha256": "a7d8e61d43a6748be4d55646179476df5feda4108d07d2574610aa94d307d1aa",
       "size": 412638,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-011.hvgcp",
-      "sha256": "714ec216e5c1f29a38ba980c9e38c8acf4fbeb1d5ad7da5b9e5b6b9f3f8dc4b9",
+      "sha256": "c699ce6745dc4391fb68b9b0f27eb2734b0f99b75c0eed06884e09d23ba7d979",
       "size": 412639,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-012.hvgcp",
-      "sha256": "c54c6813a6115ee532c39b993422d35a428c92594c65a33f9e5956c757437bea",
+      "sha256": "56b8ccc39c74ff1b2e687def1ecdc8e4f448c0beb6e368e2919ea714386f015d",
       "size": 412636,
       "type": "file"
     },
@@ -11389,7 +11389,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/ios-arm64/libghostty-internal-fat.a",
-      "sha256": "a14c4d9d0918eaf5b6e1b23a625b104ba0ac9f76e17c479a92c6b63af3157ab3",
+      "sha256": "2d8e743801a4bdebfe0ae7dbeac71a58a547b4ecdd25632ca52ce8872c039021",
       "size": 141098304,
       "type": "file"
     },
@@ -11407,7 +11407,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/ios-arm64-simulator/libghostty-internal-fat.a",
-      "sha256": "3a28db4bb6ed5d554378d88315555200969842fc7bef066224322ce6965132ec",
+      "sha256": "739a35ac5d38dbc3399a17d3f7afd52a0c9ce9e13c227be8ee7ac582ca96f84e",
       "size": 141121616,
       "type": "file"
     },
@@ -11425,7 +11425,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a",
-      "sha256": "2c1e921ce5cab46db8a51f8ffe5fcb2261ce34529d3e9f0bd77a167356541f8f",
+      "sha256": "5f78c17ce1f530e6479f4447677de04e35bb0df719221f846b675ac5db403973",
       "size": 286909160,
       "type": "file"
     },
@@ -11629,13 +11629,13 @@
     },
     {
       "path": "lib-vt/arm64/libghostty-vt.a",
-      "sha256": "6b85368b7363c8fee39f1b608c76ae586a746956bfa761ad5e0e157f9d02a9f3",
+      "sha256": "8ed0b9429a036813abda0b368fb51e9c0a11eaf551f20f797c641a4b3347c608",
       "size": 10166640,
       "type": "file"
     },
     {
       "path": "lib-vt/x86_64/libghostty-vt.a",
-      "sha256": "6089dbe64cb7630e64403d41d40a861df1ebed2900e67b7b6d7796e19dcc5e50",
+      "sha256": "8578ea5155c661e045d6da9ecee0b055b8341f32fd6fa099d214e9a9b4f7f78d",
       "size": 11223400,
       "type": "file"
     },

@@ -1,4 +1,4 @@
-    628 Thread_28153106: io
-    + 628 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
-    +   628 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x102e2030c]
-    +     628 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
+    610 Thread_28350249: io
+    + 610 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   610 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1053a430c]
+    +     610 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]

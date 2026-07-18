@@ -117,6 +117,11 @@ shipped runtime set (XCFramework, lib-vt slices, notices, and SBOM). The guard
 fails on any byte drift, including metadata ordering, and retains all three
 manifests and hash lists as evidence.
 
+The qualification evidence also records a Gate 4 portability limitation:
+static archives retain absolute build-directory references. Runtime artifacts
+reproduce at the fixed content-addressed build path, but archive bytes are not
+yet path-independent; this remains a documented follow-up for release review.
+
 The notarization carrier is signed with a Developer ID Application identity,
 secure timestamp, and hardened runtime, then strictly verified and packaged as
 the exact ZIP submitted by `notarytool`. Apple requires Developer ID signing,
