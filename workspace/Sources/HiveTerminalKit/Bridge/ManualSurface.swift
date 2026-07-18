@@ -799,7 +799,7 @@ public enum GhosttyBridgeFactory {
     public static func makeManualSurfaceForTesting(
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480,
-        terminalReplies: GhosttyTerminalReplyPolicy = .disabled
+        terminalReplies: GhosttyTerminalReplyPolicy = .enabled
     ) throws -> GhosttyManualSurface {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
         return try makeManualSurface(
