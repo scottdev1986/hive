@@ -277,6 +277,12 @@ const StoredOutcome = struct {
     }
 };
 
+fn parseStoredOutcomeOwned(allocator: std.mem.Allocator, stored: []const u8) !StoredOutcome {
+    return std.json.parseFromSliceLeaky(StoredOutcome, allocator, stored, .{
+        .allocate = .alloc_always,
+    });
+}
+
 fn wireLaunchFailureLayer(layer: pty_host.LaunchFailureLayer) LaunchFailureLayer {
     return switch (layer) {
         .command => .command,
@@ -431,12 +437,7 @@ pub const DirectHost = struct {
             } },
             .limits = direct_host_limits,
         };
-        const parsed = try std.json.parseFromSliceLeaky(
-            StoredOutcome,
-            self.arena.allocator(),
-            stored,
-            .{},
-        );
+        const parsed = try parseStoredOutcomeOwned(self.arena.allocator(), stored);
         return .{
             .session = session,
             .outcome = try parsed.toOutcome(),
@@ -2267,6 +2268,42 @@ fn createResultDocument(
     try document.put("outcome", outcome);
     try document.put("limits", .{ .object = limits_object });
     return std.json.Stringify.valueAlloc(allocator, std.json.Value{ .object = document }, .{});
+}
+
+test "stored create outcome owns strings beyond registry source lifetime" {
+    const running_json =
+        \\{"state":"running","child":{"processId":42,"startToken":"child-start"},"execProof":"replacement-observed","jobControl":{"sessionLeader":true,"controllingTerminal":true,"standardStreamsShareTerminal":true,"childSessionId":42,"childProcessGroupId":42,"foregroundProcessGroupId":42,"terminalIdentity":"/dev/ttys001","initialProfileAppliedBeforeExec":true,"initialWindowAppliedBeforeExec":true,"completeness":"complete"}}
+    ;
+    var running_source: [running_json.len]u8 = undefined;
+    @memcpy(running_source[0..], running_json);
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const running = try parseStoredOutcomeOwned(arena.allocator(), running_source[0..]);
+    @memset(running_source[0..], 0xaa);
+    const running_outcome = try running.toOutcome();
+    switch (running_outcome) {
+        .running => |value| {
+            try std.testing.expectEqualStrings("child-start", value.child.startToken);
+            try std.testing.expectEqualStrings("/dev/ttys001", value.jobControl.terminalIdentity);
+        },
+        else => return error.TestUnexpectedResult,
+    }
+
+    const failed_json =
+        \\{"state":"exec-failed","layer":"command","osCode":null,"diagnostic":"launch-failed"}
+    ;
+    var failed_source: [failed_json.len]u8 = undefined;
+    @memcpy(failed_source[0..], failed_json);
+    const failed = try parseStoredOutcomeOwned(arena.allocator(), failed_source[0..]);
+    @memset(failed_source[0..], 0xaa);
+    const failed_outcome = try failed.toOutcome();
+    switch (failed_outcome) {
+        .@"exec-failed" => |value| try std.testing.expectEqualStrings(
+            "launch-failed",
+            value.diagnostic,
+        ),
+        else => return error.TestUnexpectedResult,
+    }
 }
 
 /// Real committed create results — one running, one descriptor-map refusal —
