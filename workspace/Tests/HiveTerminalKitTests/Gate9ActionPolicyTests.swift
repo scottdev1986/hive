@@ -17,18 +17,57 @@ final class Gate9ActionPolicyTests: XCTestCase {
         }
     }
 
-    /// Completeness: every tag value at the PINNED header (0...65) has
-    /// exactly one verdict, and the first value past the pinned range has
-    /// none. The upgrade-time guarantee is the header sha pin
-    /// (toolchain-lock publicHeaderSha256): upstream cannot grow this enum
-    /// without failing the build chain, and when the pin is deliberately
-    /// bumped this test demands a verdict for every new tag.
-    func testEveryPinnedActionTagHasExactlyOneVerdict() {
-        let pinnedCount: UInt32 = 66
-        XCTAssertEqual(GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD.rawValue, pinnedCount - 1,
-                       "last pinned tag must be \(pinnedCount - 1) — if this moved, the header changed " +
-                       "without this matrix being re-reviewed")
-        for raw in 0..<pinnedCount {
+    /// Parses ONLY the `ghostty_action_tag_e` enum block out of the PINNED
+    /// vendored header and counts its members. Cross-vendor review
+    /// (2026-07-18) corrected the earlier claim that publicHeaderSha256
+    /// guarded this — that pin hashes the BRIDGE header, which has no action
+    /// enum, so a bump appending tag 66 passed every check. This reads the
+    /// real enum from vendor/ghostty/include/ghostty.h (itself pinned by the
+    /// tree hash in ghostty-upstream-tree.txt), so a new tag changes this
+    /// count and turns the completeness test RED.
+    private func pinnedActionEnumMemberCount() throws -> Int {
+        let repoRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // HiveTerminalKitTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // workspace
+            .deletingLastPathComponent() // repo root
+        let header = repoRoot.appendingPathComponent("vendor/ghostty/include/ghostty.h")
+        let text = try String(contentsOf: header, encoding: .utf8)
+        guard let closeRange = text.range(of: "} ghostty_action_tag_e;") else {
+            XCTFail("ghostty_action_tag_e not found in pinned header \(header.path)")
+            return -1
+        }
+        let head = String(text[text.startIndex..<closeRange.lowerBound])
+        guard let openRange = head.range(of: "typedef enum {", options: .backwards) else {
+            XCTFail("action enum opening brace not found before ghostty_action_tag_e")
+            return -1
+        }
+        let block = String(head[openRange.upperBound...])
+        // Each enumerator name appears exactly once inside the block.
+        return block.components(separatedBy: "GHOSTTY_ACTION_").count - 1
+    }
+
+    private var classifiedSetCount: Int {
+        HiveGhosttyActionPolicy.handledByEffectsTags.count
+            + HiveGhosttyActionPolicy.deniedPolicyTags.count
+            + HiveGhosttyActionPolicy.deniedGestureTags.count
+            + HiveGhosttyActionPolicy.engineInertTags.count
+    }
+
+    /// Completeness: every tag value at the pinned header (0..<count) has
+    /// exactly one verdict; the first value past the range has none; and the
+    /// classified-set size EQUALS the member count parsed live from the
+    /// pinned action enum — so an upstream bump that appends a tag turns
+    /// this RED and demands a verdict.
+    func testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader() throws {
+        let pinnedCount = try pinnedActionEnumMemberCount()
+        XCTAssertEqual(pinnedCount, classifiedSetCount,
+                       "the number of GHOSTTY_ACTION_ tags in the pinned enum (\(pinnedCount)) must equal the " +
+                       "classified-set size (\(classifiedSetCount)); a mismatch means upstream changed the enum " +
+                       "and a tag lost/needs its verdict")
+        XCTAssertEqual(GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD.rawValue, UInt32(pinnedCount - 1),
+                       "last pinned tag must be \(pinnedCount - 1)")
+        for raw in 0..<UInt32(pinnedCount) {
             let tag = ghostty_action_tag_e(rawValue: raw)
             let memberships = [
                 HiveGhosttyActionPolicy.handledByEffectsTags.contains(where: { $0 == tag }),
@@ -40,9 +79,8 @@ final class Gate9ActionPolicyTests: XCTestCase {
                            "tag rawValue \(raw) must be classified in exactly one category, got \(memberships)")
             XCTAssertNotNil(HiveGhosttyActionPolicy.classify(tag))
         }
-        XCTAssertNil(HiveGhosttyActionPolicy.classify(ghostty_action_tag_e(rawValue: pinnedCount)),
-                     "values past the pinned range must be unclassified — a silent catch-all here " +
-                     "would defeat the completeness guarantee")
+        XCTAssertNil(HiveGhosttyActionPolicy.classify(ghostty_action_tag_e(rawValue: UInt32(pinnedCount))),
+                     "a value past the pinned range must be unclassified — no silent catch-all")
     }
 
     /// Security rulings are pinned as data: a rewrite that reclassifies
@@ -55,33 +93,76 @@ final class Gate9ActionPolicyTests: XCTestCase {
         XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_QUIT), .deniedGesture)
     }
 
-    /// The factory must wire the REAL policy callback, not a stub — same
-    /// regression class the wakeup_cb factory test guards.
-    func testFactoryWiresThePolicyActionCallback() throws {
+    /// BEHAVIOR, not the table (cross-vendor review 2026-07-18): the earlier
+    /// controls asserted classify() the data table while handle() discarded
+    /// the verdict and blanket-returned false. This drives the REAL callback
+    /// body for one representative of each verdict and asserts the spy
+    /// observed the verdict handle ROUTED it through — RED if handle
+    /// regresses to a blanket false that ignores classify().
+    func testHandleRoutesThroughTheVerdictNotABlanketFalse() {
+        var seen: [(UInt32, HiveGhosttyActionPolicy.Verdict?)] = []
+        HiveGhosttyActionPolicy.setObserver { seen.append(($0.rawValue, $1)) }
+        defer { HiveGhosttyActionPolicy.setObserver(nil) }
+
+        let cases: [(ghostty_action_tag_e, HiveGhosttyActionPolicy.Verdict)] = [
+            (GHOSTTY_ACTION_RING_BELL, .handledByEffects),
+            (GHOSTTY_ACTION_DESKTOP_NOTIFICATION, .deniedPolicy),
+            (GHOSTTY_ACTION_QUIT, .deniedGesture),
+            (GHOSTTY_ACTION_SCROLLBAR, .engineInert),
+        ]
+        for (tag, _) in cases {
+            XCTAssertFalse(HiveGhosttyActionPolicy.handle(tag), "B1: every action resolves to false")
+        }
+        XCTAssertEqual(seen.count, cases.count, "handle must invoke the spy once per call")
+        for (i, (tag, expected)) in cases.enumerated() {
+            XCTAssertEqual(seen[i].0, tag.rawValue)
+            XCTAssertEqual(seen[i].1, expected,
+                           "handle must ROUTE \(tag.rawValue) through \(expected) — a blanket false that ignores " +
+                           "classify() would report a wrong/nil verdict here")
+        }
+    }
+
+    /// LIVE per-verdict routing: a real action reaching the callback from a
+    /// real surface must carry the verdict handle routed it through, and it
+    /// must match classify(). Non-vacuous: scrolling output reliably emits
+    /// SCROLLBAR (engineInert), so the callback must fire at least once.
+    func testLiveCallbackFiringsCarryTheCorrectVerdict() throws {
         let surface = try makeSurface()
         defer { surface.free() }
-        // No pointer-identity check is possible for a closure-converted C
-        // function pointer, so drive it: the policy handle() must be
-        // observable through the spy when the callback fires. We can't
-        // force Ghostty to emit an action on demand synchronously, but we
-        // CAN prove the spy plumbing works and stays silent when nothing
-        // fires — the OSC-9 test below is the live-fire counterpart.
-        var seen: [ghostty_action_tag_e] = []
-        HiveGhosttyActionPolicy.setObserver { seen.append($0) }
+
+        let lock = NSLock()
+        var seen: [(UInt32, HiveGhosttyActionPolicy.Verdict?)] = []
+        HiveGhosttyActionPolicy.setObserver { tag, verdict in
+            lock.lock(); seen.append((tag.rawValue, verdict)); lock.unlock()
+        }
         defer { HiveGhosttyActionPolicy.setObserver(nil) }
-        XCTAssertTrue(HiveGhosttyActionPolicy.handle(GHOSTTY_ACTION_RING_BELL) == false,
-                      "B1 policy: no action is apprt-handled")
-        XCTAssertEqual(seen.map(\.rawValue), [GHOSTTY_ACTION_RING_BELL.rawValue],
-                       "the spy must observe handle() invocations")
+
+        // Enough lines to scroll a 24-row terminal → SCROLLBAR fires.
+        var out = Data()
+        for i in 0..<60 { out.append(Data("line \(i)\r\n".utf8)) }
+        XCTAssertEqual(surface.processOutput(bytes: out, streamSeq: 0), .success)
+        let deadline = Date().addingTimeInterval(0.5)
+        while Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+
+        lock.lock(); let firings = seen; lock.unlock()
+        XCTAssertFalse(firings.isEmpty,
+                       "the real action callback must fire from scrolling output — an empty set makes the " +
+                       "per-verdict assertion vacuous")
+        for (raw, verdict) in firings {
+            XCTAssertNotNil(verdict, "a real action reaching the callback must be classified, rawValue \(raw)")
+            XCTAssertEqual(verdict, HiveGhosttyActionPolicy.classify(ghostty_action_tag_e(rawValue: raw)),
+                           "the verdict handle routed must match classify() for rawValue \(raw)")
+        }
     }
 
     /// B-class strip (queen ruling 1): the manual config carries
     /// `keybind = clear`, so Ghostty's default window/tab/split bindings
     /// are unreachable-by-construction. Observable: cmd+N (default
-    /// new_window) reports NOT-a-binding on the live surface, and the key
-    /// falls through to encoding (consumed-or-ignored by the terminal,
-    /// never by a binding). RED if the strip is removed: cmd+N is a
-    /// default binding in a stock config.
+    /// new_window) reports NOT-a-binding on the live surface. RED if the
+    /// strip is removed: cmd+N is a default binding in a stock config.
     func testDefaultWindowBindingsAreStrippedFromManualConfig() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -102,9 +183,8 @@ final class Gate9ActionPolicyTests: XCTestCase {
                        "cmd+N must NOT be a binding on a manual surface — the gate-9 strip " +
                        "(keybind = clear) makes Ghostty's window management unreachable-by-construction")
 
-        // And no gesture action fires when the key is actually sent.
         var actionsSeen: [UInt32] = []
-        HiveGhosttyActionPolicy.setObserver { actionsSeen.append($0.rawValue) }
+        HiveGhosttyActionPolicy.setObserver { tag, _ in actionsSeen.append(tag.rawValue) }
         defer { HiveGhosttyActionPolicy.setObserver(nil) }
         _ = surface.sendKey(key)
         XCTAssertFalse(actionsSeen.contains(GHOSTTY_ACTION_NEW_WINDOW.rawValue),
@@ -113,13 +193,8 @@ final class Gate9ActionPolicyTests: XCTestCase {
 
     /// DESKTOP_NOTIFICATION deny (queen ruling 3), live-fire: OSC 9 from
     /// the untrusted byte stream must not post anything — and must not
-    /// crash or poison the stream. If the engine routes it to the action
-    /// callback in manual mode, the spy sees the tag and the verdict is
-    /// deniedPolicy (return false, nothing happens); if manual mode never
-    /// emits it, unreachable-by-construction is equally acceptable. Either
-    /// way: no notification API is ever touched by the bridge (grep-level
-    /// fact: HiveTerminalKit imports no UserNotifications), and the stream
-    /// stays healthy.
+    /// crash or poison the stream. No notification API is ever touched by
+    /// the bridge (HiveTerminalKit imports no UserNotifications).
     func testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -127,19 +202,16 @@ final class Gate9ActionPolicyTests: XCTestCase {
         var writes: [Data] = []
         surface.callbackContext.onWrite = { writes.append($0) }
         var actionsSeen: [UInt32] = []
-        HiveGhosttyActionPolicy.setObserver { actionsSeen.append($0.rawValue) }
+        HiveGhosttyActionPolicy.setObserver { tag, _ in actionsSeen.append(tag.rawValue) }
         defer { HiveGhosttyActionPolicy.setObserver(nil) }
 
         let osc9 = Data("\u{1B}]9;pwned by agent\u{07}".utf8)
         XCTAssertEqual(surface.processOutput(bytes: osc9, streamSeq: 0), .success)
 
-        // Stream healthy afterward: DA1 still answers byte-exactly.
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: UInt64(osc9.count)), .success)
         XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)],
                        "OSC 9 must produce no reply and must not poison the following query")
 
-        // If the action fired at all, it must have been the denied tag —
-        // never anything privileged.
         for raw in actionsSeen {
             XCTAssertEqual(raw, GHOSTTY_ACTION_DESKTOP_NOTIFICATION.rawValue,
                            "only the denied notification tag may appear for OSC 9, saw rawValue \(raw)")

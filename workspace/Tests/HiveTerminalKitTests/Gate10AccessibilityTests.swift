@@ -97,6 +97,61 @@ final class Gate10AccessibilityTests: XCTestCase {
         XCTAssertEqual(view.accessibilitySelectedTextRange(), NSRange(location: NSNotFound, length: 0))
     }
 
+    /// POSITIVE control (cross-vendor review 2026-07-18 — the selection test
+    /// was negative-only): make a REAL selection via Ghostty's own select_all
+    /// binding action, then assert the a11y surface reports the real
+    /// selected text and a non-empty range from ghostty_surface_read_selection
+    /// — not the NSNotFound placeholder.
+    func testAccessibilitySelectedTextReflectsARealSelection() throws {
+        let view = try makeView()
+        let surface = surface(of: view)
+        defer { surface.free() }
+        guard let handle = surface.surfaceHandle else { return XCTFail("real surface required") }
+
+        XCTAssertEqual(surface.processOutput(bytes: Data("selectable content".utf8), streamSeq: 0), .success)
+        let action = "select_all"
+        _ = action.withCString { ghostty_surface_binding_action(handle, $0, UInt(action.utf8.count)) }
+
+        guard let selected = view.accessibilitySelectedText() else {
+            return XCTFail("a real select_all must produce non-nil selected text")
+        }
+        XCTAssertTrue(selected.contains("selectable content"),
+                      "selected text must be the real selection, got \(selected.debugDescription)")
+        let range = view.accessibilitySelectedTextRange()
+        XCTAssertNotEqual(range.location, NSNotFound, "a real selection must report a concrete range")
+        XCTAssertGreaterThan(range.length, 0, "a real selection's range length must be > 0")
+    }
+
+    /// Non-ASCII: NSRange is UTF-16-based while String.count is grapheme-
+    /// based, and they DIVERGE for astral characters (an emoji is 1 grapheme
+    /// but 2 UTF-16 units). Cross-vendor review flagged this untested. The
+    /// a11y APIs must stay internally consistent and not crash on non-ASCII —
+    /// visibleCharacterRange.length must equal numberOfCharacters, and a
+    /// range read must not trap.
+    func testAccessibilityHandlesNonASCIIWithoutRangeCountDivergence() throws {
+        let view = try makeView()
+        let surface = surface(of: view)
+        defer { surface.free() }
+
+        // Grapheme é (1 UTF-16), astral emoji 😀 (2 UTF-16), ZWJ family (many).
+        XCTAssertEqual(surface.processOutput(bytes: Data("é😀 abc".utf8), streamSeq: 0), .success)
+
+        let value = view.accessibilityValue() as? String ?? ""
+        XCTAssertTrue(value.contains("é"), "non-ASCII content must be exposed, got \(value.prefix(16).debugDescription)")
+
+        // Internal consistency: the range the surface advertises as visible
+        // must match the count it advertises — a mismatch means one uses
+        // UTF-16 length and the other grapheme count.
+        XCTAssertEqual(view.accessibilityVisibleCharacterRange().length,
+                       view.accessibilityNumberOfCharacters(),
+                       "visible range length and character count must agree on the same unit")
+
+        // A bounded range read across the non-ASCII content must not trap and
+        // must return a real substring.
+        let sub = view.accessibilityString(for: NSRange(location: 0, length: 1))
+        XCTAssertNotNil(sub, "reading the first character of non-ASCII content must not return nil/crash")
+    }
+
     /// Degenerate surface (freed): the a11y surface must stay safe — empty
     /// content, zero counts, no crash. Proves the guards, not a happy path.
     func testAccessibilitySurfaceSafeAfterFree() throws {

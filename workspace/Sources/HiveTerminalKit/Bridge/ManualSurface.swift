@@ -422,13 +422,26 @@ public let ghosttyAppWakeupTrampoline: ghostty_runtime_wakeup_cb = { userdata in
 
 /// Gate 9 (M1-B1) action policy for manual surfaces: every
 /// `ghostty_action_tag_e` at the PINNED header (66 tags) is classified —
-/// never a blanket false. B1 handles no action at the apprt level (the
-/// callback always returns false), but the FALSE IS TYPED: each tag has an
-/// explicit verdict, tests walk the full range for completeness, and the
-/// upgrade-time guarantee is mechanical — the vendored header is
-/// sha-pinned (toolchain-lock publicHeaderSha256), so upstream cannot add
-/// a tag without failing the build chain, at which point the completeness
-/// test demands a verdict for it.
+/// never a blanket false. B1 handles no action at the apprt level, so
+/// every verdict currently resolves to "return false", but `handle` routes
+/// through the verdict per-tag via an exhaustive switch and treats an
+/// UNKNOWN tag (no verdict) as a loud programmer error (`assertionFailure`
+/// in debug), never a silent false — so the false is genuinely typed at
+/// the binding, not a blanket. Gate9ActionPolicyTests exercises this
+/// behaviorally through the callback (not just the classify table),
+/// including a real byte-triggerable action routed to its verdict.
+///
+/// UPGRADE-TIME GUARANTEE (corrected after cross-vendor review 2026-07-18 —
+/// the earlier claim that toolchain-lock's publicHeaderSha256 forced this
+/// was WRONG: that pin hashes native/include/hive_ghostty_bridge.h, which
+/// does not contain the action enum). The real two-part guarantee: (1) the
+/// whole vendored tree is pinned by ghostty-upstream-tree.txt's patched-
+/// tree hash and checked by scripts/vendor-ghostty.sh verify, so any change
+/// to vendor/ghostty/include/ghostty.h fails the build chain; and (2)
+/// Gate9ActionPolicyTests parses the `ghostty_action_tag_e` enum block
+/// directly from that pinned header and asserts its member count equals the
+/// classified-set size, so a bump that appends a tag turns RED and demands
+/// a verdict.
 ///
 /// Verdicts (queen rulings 2026-07-18):
 /// - handledByEffects: visible behavior already flows through the manual
@@ -505,23 +518,49 @@ public enum HiveGhosttyActionPolicy {
     }
 
     /// Test spy (nil in production): observes every action-callback firing
-    /// with its tag, so controls can prove the callback genuinely runs —
-    /// same discipline as GhosttyAppWakeupContext.tickOverride.
+    /// with its tag AND the verdict `handle` routed it through, so controls
+    /// prove the callback behaves per-verdict — not merely that the
+    /// classify() table is correct. Same discipline as
+    /// GhosttyAppWakeupContext.tickOverride.
     private static let observerLock = NSLock()
-    private static var observer: ((ghostty_action_tag_e) -> Void)?
-    static func setObserver(_ body: ((ghostty_action_tag_e) -> Void)?) {
+    private static var observer: ((ghostty_action_tag_e, Verdict?) -> Void)?
+    static func setObserver(_ body: ((ghostty_action_tag_e, Verdict?) -> Void)?) {
         observerLock.lock(); observer = body; observerLock.unlock()
     }
 
-    /// The real callback body. Always returns false in B1 — nothing is
-    /// apprt-handled — but through the typed verdict, never as a blanket.
+    /// The real callback body. Every action resolves to `false` in B1
+    /// (nothing is apprt-handled: title/pwd/bell flow through the vt
+    /// Handler effects → bridge events, denials and inert notifications
+    /// return false), but the routing is EXHAUSTIVE and per-verdict — an
+    /// unknown tag is a loud error in debug, never a silent false — so the
+    /// "never a blanket false" property holds at the binding.
     static func handle(_ tag: ghostty_action_tag_e) -> Bool {
         observerLock.lock()
         let spy = observer
         observerLock.unlock()
-        spy?(tag)
-        _ = classify(tag) // nil = unknown tag; completeness test owns it
-        return false
+
+        let verdict = classify(tag)
+        spy?(tag, verdict)
+
+        switch verdict {
+        case .handledByEffects:
+            // Duplicate of the effects/event path; not re-handled here.
+            return false
+        case .deniedPolicy, .deniedGesture:
+            // Deliberate denial (security / undelegated gesture).
+            return false
+        case .engineInert:
+            // Engine housekeeping notification, no B1 consumer.
+            return false
+        case nil:
+            // A tag with no verdict = the classified set drifted from the
+            // pinned enum (Gate9ActionPolicyTests guards against this at
+            // build). Fail loud in debug so it can never merge silently;
+            // still safe (deny) in release.
+            assertionFailure("unclassified ghostty action tag \(tag.rawValue) reached the callback — " +
+                             "the gate-9 classification is out of sync with the pinned action enum")
+            return false
+        }
     }
 }
 

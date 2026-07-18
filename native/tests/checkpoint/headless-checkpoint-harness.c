@@ -195,7 +195,7 @@ int main(int argc, char **argv) {
     CHECK(fuzz != NULL, "fuzz allocation");
     if (fuzz == NULL) continue;
     for (size_t b = 0; b < flen; b++) fuzz[b] = (uint8_t)rng_next();
-    if ((i % 2) == 0 && flen >= 8) memcpy(fuzz, "HVTCP001", 8);
+    if ((i % 2) == 0 && flen >= 8) memcpy(fuzz, "HVGCP001", 8);
     CHECK(hive_ghostty_terminal_checkpoint_import_v1(victim, fuzz, flen) !=
               GHOSTTY_SUCCESS,
           "fuzzed payload rejected");

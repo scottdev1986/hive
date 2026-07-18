@@ -61,21 +61,6 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
     }
 
     func testRestoreAuthoredCheckpointFirstFrameNoSpuriousWritesExactReplay() throws {
-        // KNOWN DEFECT (boris audit, 2026-07-18, reported to queen):
-        // the lib-vt-authored payload is REJECTED by the embedded surface's
-        // restore even though both libraries report the IDENTICAL engine
-        // build id (c80ec525…) and the payload round-trips inside lib-vt.
-        // The two builds serialize comptime-config-dependent struct layouts
-        // differently, so the wire formats diverge while the build id —
-        // which hashes sources, not configuration — falsely promises
-        // compatibility. Until fixed, the adjudicated daemon-authors →
-        // surface-restores flow cannot work. XCTExpectFailure keeps this
-        // live proof pinned: the moment cross-library restore starts
-        // working, this flips to an unexpected pass and forces the full
-        // proof below to become the real gate.
-        XCTExpectFailure(
-            "HIVE-B1-G6-XLIB: cross-library checkpoint restore broken — wire-format divergence under identical build ids"
-        )
         let payload = try fixturePayload()
         let surface = try makeSurface()
         defer { surface.free() }
@@ -88,18 +73,48 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         // Caller-chosen through_seq, as sessiond would supply from its
         // journal position.
         let throughSeq: UInt64 = 1_000
-        XCTAssertEqual(surface.restoreCheckpoint(payload: payload, throughSeq: throughSeq), .success,
-                       "the lib-vt-authored payload must restore into the embedded surface")
+        let result = surface.restoreCheckpoint(payload: payload, throughSeq: throughSeq)
+
+        // KNOWN DEFECT until option D (boris audit 2026-07-18; cross-vendor
+        // review 2026-07-18 narrowed this from an over-broad XCTExpectFailure
+        // that masked ANY later regression): the lib-vt-authored payload is
+        // REJECTED by the embedded surface's restore because lib-vt (c_abi=
+        // true) and the embedded core (c_abi=false) serialize the same
+        // structs with divergent enum backing, while the source-only build
+        // id falsely promises compatibility. So the ONLY assertion the
+        // current snapshot can make is the exact rejection — scoped here,
+        // masking nothing. When option D aligns c_abi and restore returns
+        // .success, this guard falls through and the FULL proof below
+        // becomes the real gate (that fall-through is itself the loud
+        // signal Calvin's D work must complete this test).
+        guard result == .success else {
+            XCTAssertEqual(result, .invalidValue,
+                           "HIVE-B1-G6-XLIB: until option D aligns c_abi, cross-library restore is rejected " +
+                           "with .invalidValue; when this starts returning .success the full proof below runs")
+            XCTAssertEqual(surface.throughSeq, 0, "a rejected restore must not advance through_seq")
+            return
+        }
+
+        // ---- POST-D PROOF (runs only once cross-library restore works) ----
         XCTAssertEqual(surface.throughSeq, throughSeq)
 
         // No spurious host-bound bytes may be emitted by the restore itself
-        // (the story: "emits no spurious input/write/event, then accepts
-        // exact replay"). Terminal-generated writes are synchronous on this
-        // thread, so an empty log here is meaningful, not a race.
+        // (story: "emits no spurious input/write/event"). Terminal-generated
+        // writes are synchronous on this thread, so an empty log is
+        // meaningful, not a race.
         XCTAssertTrue(writes.isEmpty, "restore must not emit bytes toward the host, got \(writes)")
 
-        // First frame: the authored content (the harness's `content`
-        // constant — fixture contract, keep in sync) is on screen.
+        // Restore DOES emit the state-sync events the embedded restore path
+        // fires (embedded.zig ~1259-1261: title, pwd, invalidate) — these
+        // are surface-internal, not host-bound bytes.
+        let eventTypes = Set(events.map(\.type))
+        XCTAssertTrue(eventTypes.contains(.invalidate),
+                      "restore must invalidate so the first frame repaints, got \(eventTypes)")
+        XCTAssertTrue(eventTypes.contains(.title) && eventTypes.contains(.pwd),
+                      "restore must re-emit title+pwd from the restored terminal, got \(eventTypes)")
+
+        // First frame: the authored content (harness `content` constant —
+        // fixture contract, keep in sync) is on screen.
         let screen = readScreenText(surface)
         XCTAssertTrue(screen.contains("hello é world"),
                       "restored first frame must show the authored text — got \(screen.prefix(80).debugDescription)")
@@ -108,6 +123,7 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
 
         // Exact replay: ordered output continues at the restored seq, and
         // the restored parser answers protocol queries byte-exactly.
+        writes.removeAll()
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: throughSeq), .success,
                        "replay at the restored through_seq must be accepted")
         XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)],
