@@ -281,7 +281,9 @@ pub fn selectProtocolMinor(client: SessionProtocolRange) ?u8 {
 pub fn parseDaemonHello(allocator: std.mem.Allocator, payload: []const u8) !std.json.Parsed(DaemonHello) {
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.hello_payload, payload))
         return error.MalformedDaemonHello;
-    const parsed = try std.json.parseFromSlice(DaemonHello, allocator, payload, .{});
+    const parsed = try std.json.parseFromSlice(DaemonHello, allocator, payload, .{
+        .allocate = .alloc_always,
+    });
     if (parsed.value.schemaVersion != 1 or !std.mem.eql(u8, parsed.value.clientRole, "daemon")) {
         var owned = parsed;
         owned.deinit();
@@ -3140,6 +3142,27 @@ test "daemon claims never override kernel identity" {
         .start_token = "11:2",
         .executable = "hive",
     }, claims).?.code == .unauthenticated);
+}
+
+test "daemon HELLO parsing owns strings beyond source lifetime" {
+    const hello_json =
+        \\{"schemaVersion":1,"buildId":"daemon-build","instanceId":"instance-a","protocol":{"major":1,"minMinor":0,"maxMinor":0},"clientRole":"daemon","daemonControl":{"productVersion":"0.0.0-dev","buildHash":"daemon-build","wireProtocol":{"min":1,"max":1},"schemaEpoch":1,"instanceId":"instance-a","hiveUuid":"hive-a","identityKey":"project-a","repoFamilyKey":"family-a"}}
+    ;
+    var hello_source: [hello_json.len]u8 = undefined;
+    @memcpy(hello_source[0..], hello_json);
+    var hello = try parseDaemonHello(std.testing.allocator, hello_source[0..]);
+    defer hello.deinit();
+    @memset(hello_source[0..], 0xaa);
+
+    try std.testing.expectEqualStrings("daemon-build", hello.value.buildId);
+    try std.testing.expectEqualStrings("instance-a", hello.value.instanceId);
+    try std.testing.expectEqualStrings("daemon", hello.value.clientRole);
+    try std.testing.expectEqualStrings("0.0.0-dev", hello.value.daemonControl.productVersion);
+    try std.testing.expectEqualStrings("daemon-build", hello.value.daemonControl.buildHash);
+    try std.testing.expectEqualStrings("instance-a", hello.value.daemonControl.instanceId);
+    try std.testing.expectEqualStrings("hive-a", hello.value.daemonControl.hiveUuid);
+    try std.testing.expectEqualStrings("project-a", hello.value.daemonControl.identityKey);
+    try std.testing.expectEqualStrings("family-a", hello.value.daemonControl.repoFamilyKey.?);
 }
 
 test "daemon lock parsing owns strings beyond source lifetime" {
