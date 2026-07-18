@@ -140,6 +140,57 @@ final class TerminalReplyCorpusTests: XCTestCase {
         XCTAssertTrue(writes.isEmpty, "matches Ghostty's own empty enquiry-response default")
     }
 
+    /// OSC 52 clipboard READ policy (story:14 requires it stated
+    /// explicitly; gate 9 security surface): an agent's output stream must
+    /// never read the host clipboard. A permissive terminal answers
+    /// `OSC 52 ; c ; ? ST` with the clipboard contents base64-encoded —
+    /// host-data exfiltration by untrusted bytes. Hive's policy is DENY:
+    /// read_clipboard_cb returns false, and the protocol-visible behavior
+    /// is silence (the requesting TUI gets no reply). A clipboard-read
+    /// reply would arrive asynchronously via the io thread (same delivery
+    /// as key encodings), so this drains the run loop before asserting
+    /// emptiness — without the drain, "no bytes" would be vacuous.
+    func testOSC52ClipboardReadIsDeniedNoReplyEver() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        let writesLock = NSLock()
+        var writes: [Data] = []
+        surface.callbackContext.onWrite = { data in
+            writesLock.lock(); writes.append(data); writesLock.unlock()
+        }
+
+        // OSC 52, clipboard 'c', '?' = read request, BEL-terminated; then
+        // ST-terminated variant for completeness.
+        XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}]52;c;?\u{07}".utf8), streamSeq: 0), .success)
+        let second = Data("\u{1B}]52;c;?\u{1B}\\".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: second, streamSeq: 9), .success)
+
+        // Drain: give any (wrongly) queued async reply its chance to land.
+        let deadline = Date().addingTimeInterval(0.3)
+        while Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+
+        writesLock.lock()
+        let observed = writes
+        writesLock.unlock()
+        XCTAssertTrue(observed.isEmpty,
+                      "an OSC 52 read must never produce a reply — host clipboard bytes would be " +
+                      "exfiltrated into the agent's input stream; got \(observed)")
+
+        // Positive control for the observation channel: the surface still
+        // answers a legitimate query through the same callback, so the
+        // emptiness above is a real denial, not a broken write path.
+        XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 9 + UInt64(second.count)), .success)
+        writesLock.lock()
+        let after = writes
+        writesLock.unlock()
+        XCTAssertEqual(after, [Data("\u{1B}[?62;22c".utf8)],
+                       "DA1 must still answer — proving the write channel was live while OSC 52 stayed silent")
+    }
+
     /// Ordering: a burst combining multiple response-producing controls in
     /// ONE process_output_v1 call must deliver every reply exactly once,
     /// in the same order the queries appeared in the stream.
