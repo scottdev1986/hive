@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import { createHash } from "node:crypto";
 import { readFile } from "node:fs/promises";
+import { z } from "zod";
 import { WorkspaceEventV2Schema } from "../../src/schemas/status-envelope";
 import {
   buildReducerCorpus,
@@ -42,7 +43,7 @@ export function runTypeScriptConformance(
     const schema = WIRE_SCHEMA_CATALOG[item.schema as keyof typeof WIRE_SCHEMA_CATALOG];
     const result = schema.safeParse(item.value);
     if (!result.success) throw new Error(`TypeScript rejected valid case ${item.name}: ${result.error.message}`);
-    const canonical = canonicalJson(result.data);
+    const canonical = canonicalJson(z.encode(schema as z.ZodType, result.data));
     validEncodings[item.name] = canonical;
     canonicalDigests[item.name] = createHash("sha256").update(canonical).digest("hex");
   }

@@ -299,6 +299,69 @@ const fixtureTerminalHostResize = {
   orderedAt: "2",
   foregroundProcessObservation: "not-claimed",
 };
+const fixtureTerminalHostCheckpoint = {
+  contentType: "application/vnd.hive.terminal-checkpoint",
+  schemaVersion: "1",
+  hashAlgorithm: "sha256",
+  hash: "b".repeat(64),
+  throughEventSequence: "12",
+  throughOutputOffset: "2048",
+  opaqueBytes: "dGVybWluYWwtc3RhdGU=",
+};
+const fixtureTerminalHostInspection = {
+  session: fixtureTerminalHostSession,
+  lifecycle: "running",
+  completeness: "complete",
+  host: { processId: 4100, startToken: "4100:123456" },
+  child: fixtureTerminalHostCreateResult.outcome.child,
+  jobControl: fixtureTerminalHostCreateResult.outcome.jobControl,
+  window: {
+    value: fixtureTerminalHostCreateRequest.initialWindow,
+    revision: fixtureTerminalHostResize.revision,
+  },
+  output: {
+    closed: false,
+    retained: { start: "2048", endExclusive: "4096" },
+  },
+  checkpoints: { retained: 1, newest: fixtureTerminalHostCheckpoint },
+  inputOwner: fixtureTerminalHostClaim,
+  exit: null,
+  reap: {
+    authority: "direct-parent",
+    reaped: false,
+    status: null,
+    completeness: "complete",
+  },
+  descendants: [{ processId: 4102, startToken: "4102:123458" }],
+  survivors: [],
+  evidenceAt: FIXTURE_TIME,
+  diagnostics: [],
+};
+const fixtureTerminalHostExit = {
+  code: null,
+  signal: 9,
+  observedAt: FIXTURE_TIME,
+};
+const fixtureTerminalHostTerminationRequest = {
+  session: fixtureTerminalHostSession,
+  mode: "immediate",
+  target: "process-tree",
+  deadline: "2026-07-16T12:00:02.000Z",
+  idempotencyKey: "terminate-fixture-key",
+};
+const fixtureTerminalHostTerminationResult = {
+  state: "terminated",
+  exit: fixtureTerminalHostExit,
+  reap: {
+    authority: "direct-parent",
+    reaped: true,
+    status: fixtureTerminalHostExit,
+    completeness: "complete",
+  },
+  survivors: [],
+  completeness: "complete",
+  diagnostics: [],
+};
 
 const validCases: readonly WireCorpusCase[] = [
   { name: "session locator", schema: "sessionLocator", value: fixtureLocator },
@@ -563,12 +626,12 @@ const validCases: readonly WireCorpusCase[] = [
   { name: "CREATE_BEGIN session spec and pending visibility", schema: "createBeginPayload", value: fixtureCreateBegin },
   { name: "CREATE_COMMIT digest", schema: "createCommitPayload", value: { schemaVersion: 1, totalLength: 12, sha256: "a".repeat(64) } },
   { name: "CREATED result", schema: "createdPayload", value: { schemaVersion: 1, ...fixtureCreateResult } },
-  { name: "LIST instance", schema: "listPayload", value: { schemaVersion: 1, instanceId: fixtureLocator.instanceId } },
-  { name: "LISTED inventory", schema: "listedPayload", value: { schemaVersion: 1, entries: [fixtureInspection], complete: true } },
-  { name: "INSPECT locator", schema: "inspectPayload", value: { schemaVersion: 1, locator: fixtureLocator } },
-  { name: "INSPECTED evidence", schema: "inspectedPayload", value: fixtureInspection },
-  { name: "TERMINATE exact generation", schema: "terminatePayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureTerminationRequest } },
-  { name: "TERMINATED result", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminationResult } },
+  { name: "LIST neutral inventory", schema: "listPayload", value: { schemaVersion: 1 } },
+  { name: "LISTED frozen inventory", schema: "listedPayload", value: { schemaVersion: 1, entries: [fixtureTerminalHostInspection] } },
+  { name: "INSPECT neutral session", schema: "inspectPayload", value: { schemaVersion: 1, session: fixtureTerminalHostSession } },
+  { name: "INSPECTED frozen evidence", schema: "inspectedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostInspection } },
+  { name: "TERMINATE frozen request", schema: "terminatePayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationRequest } },
+  { name: "TERMINATED frozen result", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationResult } },
   { name: "VISIBILITY_RENEW exact generation", schema: "visibilityRenewPayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureVisibilityRequest } },
   { name: "RENEWED lease", schema: "renewedPayload", value: { schemaVersion: 1, ...fixtureVisibilityLease } },
   { name: "ATTACH_REQUEST exact generation", schema: "attachRequestPayload", value: { schemaVersion: 1, locator: fixtureLocator, ...fixtureAttachRequest } },
@@ -609,6 +672,26 @@ const validCases: readonly WireCorpusCase[] = [
     name: "frozen neutral create result",
     schema: "terminalHostCreateResult",
     value: fixtureTerminalHostCreateResult,
+  },
+  {
+    name: "frozen neutral checkpoint",
+    schema: "terminalHostCheckpoint",
+    value: fixtureTerminalHostCheckpoint,
+  },
+  {
+    name: "frozen neutral inspection",
+    schema: "terminalHostSessionInspection",
+    value: fixtureTerminalHostInspection,
+  },
+  {
+    name: "frozen neutral termination request",
+    schema: "terminalHostTerminationRequest",
+    value: fixtureTerminalHostTerminationRequest,
+  },
+  {
+    name: "frozen neutral termination result",
+    schema: "terminalHostTerminationResult",
+    value: fixtureTerminalHostTerminationResult,
   },
   {
     name: "CLAIM_ACQUIRE frozen request",
@@ -721,12 +804,12 @@ const invalidCases: readonly WireCorpusCase[] = [
   { name: "CREATE_BEGIN rejects zero open-terminal revision", schema: "createBeginPayload", value: { ...fixtureCreateBegin, visibility: { ...fixtureVisibilityRequest, openTerminalRevision: "0" } } },
   { name: "CREATE_COMMIT rejects oversized input", schema: "createCommitPayload", value: { schemaVersion: 1, totalLength: TERMINAL_LIMITS.automatedMessageBytes + 1, sha256: "a".repeat(64) } },
   { name: "CREATED rejects missing inspection", schema: "createdPayload", value: { schemaVersion: 1, locator: fixtureLocator, created: true } },
-  { name: "LIST rejects missing instance", schema: "listPayload", value: { schemaVersion: 1 } },
-  { name: "LISTED rejects missing completeness", schema: "listedPayload", value: { schemaVersion: 1, entries: [fixtureInspection] } },
-  { name: "INSPECT rejects missing locator", schema: "inspectPayload", value: { schemaVersion: 1 } },
-  { name: "INSPECTED rejects unknown field", schema: "inspectedPayload", value: { ...fixtureInspection, trusted: true } },
-  { name: "TERMINATE rejects missing locator", schema: "terminatePayload", value: { schemaVersion: 1, ...fixtureTerminationRequest } },
-  { name: "TERMINATED rejects missing state", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminationResult, state: undefined } },
+  { name: "LIST rejects Hive scope", schema: "listPayload", value: { schemaVersion: 1, instanceId: fixtureLocator.instanceId } },
+  { name: "LISTED rejects missing entries", schema: "listedPayload", value: { schemaVersion: 1 } },
+  { name: "INSPECT rejects missing session", schema: "inspectPayload", value: { schemaVersion: 1 } },
+  { name: "INSPECTED rejects unknown field", schema: "inspectedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostInspection, trusted: true } },
+  { name: "TERMINATE rejects missing target", schema: "terminatePayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationRequest, target: undefined } },
+  { name: "TERMINATED rejects missing reap", schema: "terminatedPayload", value: { schemaVersion: 1, ...fixtureTerminalHostTerminationResult, reap: undefined } },
   { name: "VISIBILITY_RENEW rejects missing locator", schema: "visibilityRenewPayload", value: { schemaVersion: 1, ...fixtureVisibilityRequest } },
   { name: "RENEWED rejects missing locator", schema: "renewedPayload", value: { schemaVersion: 1, state: "active", expiresAt: fixtureVisibilityLease.expiresAt, openTerminalRevision: "7" } },
   { name: "ATTACH_REQUEST rejects missing locator", schema: "attachRequestPayload", value: { schemaVersion: 1, ...fixtureAttachRequest } },
@@ -749,6 +832,26 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen create result rejects collapsed launch failure",
     schema: "terminalHostCreateResult",
     value: { ...fixtureTerminalHostCreateResult, outcome: { state: "failed" } },
+  },
+  {
+    name: "frozen checkpoint rejects malformed bytes",
+    schema: "terminalHostCheckpoint",
+    value: { ...fixtureTerminalHostCheckpoint, opaqueBytes: "not base64" },
+  },
+  {
+    name: "frozen inspection requires reap evidence",
+    schema: "terminalHostSessionInspection",
+    value: { ...fixtureTerminalHostInspection, reap: undefined },
+  },
+  {
+    name: "frozen termination request requires target",
+    schema: "terminalHostTerminationRequest",
+    value: { ...fixtureTerminalHostTerminationRequest, target: undefined },
+  },
+  {
+    name: "frozen termination result requires completeness",
+    schema: "terminalHostTerminationResult",
+    value: { ...fixtureTerminalHostTerminationResult, completeness: undefined },
   },
   {
     name: "CLAIM_ACQUIRE rejects absent session fencing",

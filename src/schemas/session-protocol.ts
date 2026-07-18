@@ -676,6 +676,76 @@ export const TerminalHostResizeResultSchema = z.discriminatedUnion("state", [
 ]);
 
 export const BASE64_BYTES_PATTERN = "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$";
+const TerminalHostCheckpointBytesSchema = z.codec(
+  z.string()
+    .max(Math.ceil(TERMINAL_LIMITS.checkpointBytes / 3) * 4)
+    .regex(new RegExp(BASE64_BYTES_PATTERN)),
+  z.custom<Uint8Array>((value) => value instanceof Uint8Array),
+  {
+    decode: (value) => new Uint8Array(Buffer.from(value, "base64")),
+    encode: (value) => Buffer.from(value).toString("base64"),
+  },
+);
+export const TerminalHostCheckpointSchema = z.strictObject({
+  contentType: z.string().min(1),
+  schemaVersion: z.string().min(1),
+  hashAlgorithm: z.literal("sha256"),
+  hash: z.string().min(1),
+  throughEventSequence: DecimalUint64Schema,
+  throughOutputOffset: DecimalUint64Schema,
+  opaqueBytes: TerminalHostCheckpointBytesSchema,
+}).readonly();
+export const TerminalHostSessionInspectionSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  lifecycle: z.enum(["creating", "running", "exited", "lost", "unknown"]),
+  completeness: TerminalHostCompletenessSchema,
+  host: TerminalHostProcessIdentitySchema.nullable(),
+  child: TerminalHostProcessIdentitySchema.nullable(),
+  jobControl: TerminalHostJobControlEvidenceSchema.nullable(),
+  window: z.strictObject({
+    value: TerminalHostWindowSizeSchema,
+    revision: DecimalUint64Schema,
+  }).readonly(),
+  output: z.strictObject({
+    closed: z.boolean(),
+    retained: z.strictObject({
+      start: DecimalUint64Schema,
+      endExclusive: DecimalUint64Schema,
+    }).readonly(),
+  }).readonly(),
+  checkpoints: z.strictObject({
+    retained: SafeUintSchema,
+    newest: TerminalHostCheckpointSchema.nullable(),
+  }).readonly(),
+  inputOwner: TerminalHostInputClaimSchema.nullable(),
+  exit: TerminalHostExitStatusSchema.nullable(),
+  reap: TerminalHostReapEvidenceSchema,
+  descendants: z.array(TerminalHostProcessIdentitySchema).readonly(),
+  survivors: z.array(z.strictObject({
+    process: TerminalHostProcessIdentitySchema,
+    reason: z.string(),
+  }).readonly()).readonly(),
+  evidenceAt: Rfc3339UtcMillisecondsSchema,
+  diagnostics: z.array(z.string()).readonly(),
+}).readonly();
+export const TerminalHostTerminationRequestSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  mode: z.enum(["graceful", "immediate"]),
+  target: z.enum(["foreground-group", "session-members", "process-tree"]),
+  deadline: Rfc3339UtcMillisecondsSchema,
+  idempotencyKey: z.string().min(1),
+}).readonly();
+export const TerminalHostTerminationResultSchema = z.strictObject({
+  state: z.enum(["terminated", "survivors", "unknown"]),
+  exit: TerminalHostExitStatusSchema.nullable(),
+  reap: TerminalHostReapEvidenceSchema,
+  survivors: z.array(z.strictObject({
+    process: TerminalHostProcessIdentitySchema,
+    reason: z.string(),
+  }).readonly()).readonly(),
+  completeness: TerminalHostCompletenessSchema,
+  diagnostics: z.array(z.string()).readonly(),
+}).readonly();
 const EncodedInputBytesSchema = z.string()
   .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
   .regex(new RegExp(BASE64_BYTES_PATTERN));
@@ -1024,36 +1094,34 @@ export const CreatedPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
   ...CreateResultSchema.unwrap().shape,
 }).readonly();
-/** §19/§20 LIST scopes enumeration to one exact Hive instance. */
+/** Frozen A0 list is deliberately unscoped; Hive filtering lives in the adapter. */
 export const ListPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  instanceId: z.string().min(1),
 }).readonly();
-/** §19 LISTED preserves per-entry unknowns and overall enumeration completeness. */
+/** LISTED carries the exact frozen A0 inspection shape for every live host record. */
 export const ListedPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  entries: z.array(SessionInspectionSchema).readonly(),
-  complete: z.boolean(),
+  entries: z.array(TerminalHostSessionInspectionSchema).readonly(),
 }).readonly();
-/** §19/§20 INSPECT names one exact locator. */
+/** Frozen A0 INSPECT names one neutral session incarnation. */
 export const InspectPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  locator: SessionLocatorSchema,
+  session: TerminalHostSessionRefSchema,
 }).readonly();
-/** §19/§20 INSPECTED is the strict wire projection of SessionInspection. */
+/** INSPECTED is the strict wire projection of frozen A0 SessionInspection. */
 export const InspectedPayloadSchema = z.strictObject({
-  ...SessionInspectionSchema.unwrap().shape,
+  schemaVersion: z.literal(1),
+  ...TerminalHostSessionInspectionSchema.unwrap().shape,
 }).readonly();
-/** §19/§20 TERMINATE combines the exact locator with TerminationRequest. */
+/** TERMINATE projects the complete frozen A0 termination request. */
 export const TerminatePayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  locator: SessionLocatorSchema,
-  ...TerminationRequestSchema.unwrap().shape,
+  ...TerminalHostTerminationRequestSchema.unwrap().shape,
 }).readonly();
-/** §19/§20 TERMINATED is the strict wire projection of TerminationResult. */
+/** TERMINATED is the strict wire projection of frozen A0 TerminationResult. */
 export const TerminatedPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
-  ...TerminationResultSchema.unwrap().shape,
+  ...TerminalHostTerminationResultSchema.unwrap().shape,
 }).readonly();
 /** §19/§20 VISIBILITY_RENEW combines the exact locator with VisibilityRequest. */
 export const VisibilityRenewPayloadSchema = z.strictObject({
@@ -1127,6 +1195,10 @@ export const SESSION_WIRE_SCHEMAS = {
   appliedPayload: AppliedPayloadSchema,
   terminalHostCreateRequest: TerminalHostCreateRequestSchema,
   terminalHostCreateResult: TerminalHostCreateResultSchema,
+  terminalHostCheckpoint: TerminalHostCheckpointSchema,
+  terminalHostSessionInspection: TerminalHostSessionInspectionSchema,
+  terminalHostTerminationRequest: TerminalHostTerminationRequestSchema,
+  terminalHostTerminationResult: TerminalHostTerminationResultSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
@@ -1186,6 +1258,10 @@ type TerminalHostInputClaimSchemaMatchesContract = Assert<Equals<z.infer<typeof 
 type TerminalHostClaimResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostClaimResultSchema>, TerminalHostContract.ClaimResult>>;
 type TerminalHostInputReceiptSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostInputReceiptSchema>, TerminalHostContract.InputReceipt>>;
 type TerminalHostResizeResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostResizeResultSchema>, TerminalHostContract.ResizeResult>>;
+type TerminalHostCheckpointSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostCheckpointSchema>, TerminalHostContract.Checkpoint>>;
+type TerminalHostSessionInspectionSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostSessionInspectionSchema>, TerminalHostContract.SessionInspection>>;
+type TerminalHostTerminationRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostTerminationRequestSchema>, Parameters<TerminalHostContract.TerminalHost["terminate"]>[0]>>;
+type TerminalHostTerminationResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostTerminationResultSchema>, TerminalHostContract.TerminationResult>>;
 type AutomatedInputSchemaMatchesContract = Assert<Equals<z.infer<typeof AutomatedInputSchema>, SessionHostContract.AutomatedInput>>;
 type InputReceiptSchemaMatchesContract = Assert<Equals<z.infer<typeof InputReceiptSchema>, SessionHostContract.InputReceipt>>;
 type TerminationRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminationRequestSchema>, SessionHostContract.TerminationRequest>>;

@@ -2433,15 +2433,10 @@
         "schemaVersion": {
           "type": "number",
           "const": 1
-        },
-        "instanceId": {
-          "type": "string",
-          "minLength": 1
         }
       },
       "required": [
-        "schemaVersion",
-        "instanceId"
+        "schemaVersion"
       ],
       "additionalProperties": false
     },
@@ -2461,138 +2456,51 @@
             "readOnly": true,
             "type": "object",
             "properties": {
-              "schemaVersion": {
-                "type": "number",
-                "const": 1
-              },
-              "locator": {
+              "session": {
                 "readOnly": true,
                 "type": "object",
                 "properties": {
-                  "schemaVersion": {
-                    "type": "number",
-                    "const": 1
-                  },
-                  "instanceId": {
+                  "key": {
                     "type": "string",
                     "minLength": 1
                   },
-                  "subject": {
-                    "readOnly": true,
-                    "oneOf": [
-                      {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
-                            "const": "root"
-                          }
-                        },
-                        "required": [
-                          "kind"
-                        ],
-                        "additionalProperties": false
-                      },
-                      {
-                        "type": "object",
-                        "properties": {
-                          "kind": {
-                            "type": "string",
-                            "const": "agent"
-                          },
-                          "agentId": {
-                            "type": "string",
-                            "minLength": 1
-                          }
-                        },
-                        "required": [
-                          "kind",
-                          "agentId"
-                        ],
-                        "additionalProperties": false
-                      }
-                    ]
-                  },
-                  "generation": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 9007199254740991
-                  },
-                  "sessionId": {
+                  "incarnation": {
                     "type": "string",
-                    "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-                  },
-                  "hostKind": {
-                    "type": "string",
-                    "enum": [
-                      "tmux",
-                      "sessiond"
-                    ]
-                  },
-                  "engineBuildId": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                    "minLength": 1
                   }
                 },
                 "required": [
-                  "schemaVersion",
-                  "instanceId",
-                  "subject",
-                  "generation",
-                  "sessionId",
-                  "hostKind",
-                  "engineBuildId"
+                  "key",
+                  "incarnation"
                 ],
                 "additionalProperties": false
               },
-              "presence": {
+              "lifecycle": {
                 "type": "string",
                 "enum": [
-                  "present",
+                  "creating",
+                  "running",
                   "exited",
                   "lost",
                   "unknown"
                 ]
               },
-              "complete": {
-                "type": "boolean"
-              },
-              "hostPid": {
-                "anyOf": [
-                  {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  {
-                    "type": "null"
-                  }
+              "completeness": {
+                "type": "string",
+                "enum": [
+                  "complete",
+                  "partial",
+                  "unavailable",
+                  "unknown"
                 ]
               },
-              "hostStartToken": {
+              "host": {
                 "anyOf": [
                   {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  {
-                    "type": "null"
-                  }
-                ]
-              },
-              "providerRoot": {
-                "anyOf": [
-                  {
+                    "readOnly": true,
                     "type": "object",
                     "properties": {
-                      "pid": {
+                      "processId": {
                         "type": "integer",
                         "exclusiveMinimum": 0,
                         "maximum": 9007199254740991
@@ -2600,17 +2508,11 @@
                       "startToken": {
                         "type": "string",
                         "minLength": 1
-                      },
-                      "processGroupId": {
-                        "type": "integer",
-                        "exclusiveMinimum": 0,
-                        "maximum": 9007199254740991
                       }
                     },
                     "required": [
-                      "pid",
-                      "startToken",
-                      "processGroupId"
+                      "processId",
+                      "startToken"
                     ],
                     "additionalProperties": false
                   },
@@ -2619,177 +2521,301 @@
                   }
                 ]
               },
-              "expectedExecutable": {
-                "type": "string",
-                "minLength": 1
+              "child": {
+                "anyOf": [
+                  {
+                    "readOnly": true,
+                    "type": "object",
+                    "properties": {
+                      "processId": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "startToken": {
+                        "type": "string",
+                        "minLength": 1
+                      }
+                    },
+                    "required": [
+                      "processId",
+                      "startToken"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
-              "executableVerified": {
-                "type": "boolean"
-              },
-              "outputSeq": {
-                "type": "string",
-                "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                "format": "hive-uint64-decimal"
-              },
-              "checkpointSeq": {
-                "type": "string",
-                "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-                "format": "hive-uint64-decimal"
-              },
-              "checkpointAvailable": {
-                "type": "boolean"
-              },
-              "input": {
-                "type": "object",
-                "properties": {
-                  "state": {
-                    "anyOf": [
-                      {
+              "jobControl": {
+                "anyOf": [
+                  {
+                    "readOnly": true,
+                    "type": "object",
+                    "properties": {
+                      "sessionLeader": {
+                        "type": "boolean"
+                      },
+                      "controllingTerminal": {
+                        "type": "boolean"
+                      },
+                      "standardStreamsShareTerminal": {
+                        "type": "boolean"
+                      },
+                      "childSessionId": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "childProcessGroupId": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "foregroundProcessGroupId": {
+                        "type": "integer",
+                        "exclusiveMinimum": 0,
+                        "maximum": 9007199254740991
+                      },
+                      "terminalIdentity": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "initialProfileAppliedBeforeExec": {
+                        "type": "boolean"
+                      },
+                      "initialWindowAppliedBeforeExec": {
+                        "type": "boolean"
+                      },
+                      "completeness": {
                         "type": "string",
                         "enum": [
-                          "FREE",
-                          "HUMAN_GESTURE",
-                          "HUMAN_OWNED",
-                          "HUMAN_ORPHANED",
-                          "AUTOMATION_BUFFERING",
-                          "AUTOMATION_COMMITTED",
-                          "TERMINATING",
-                          "CLOSED"
+                          "complete",
+                          "partial",
+                          "unavailable",
+                          "unknown"
                         ]
-                      },
-                      {
-                        "type": "string",
-                        "const": "UNKNOWN"
                       }
-                    ]
+                    },
+                    "required": [
+                      "sessionLeader",
+                      "controllingTerminal",
+                      "standardStreamsShareTerminal",
+                      "childSessionId",
+                      "childProcessGroupId",
+                      "foregroundProcessGroupId",
+                      "terminalIdentity",
+                      "initialProfileAppliedBeforeExec",
+                      "initialWindowAppliedBeforeExec",
+                      "completeness"
+                    ],
+                    "additionalProperties": false
                   },
-                  "ownerViewerId": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
-                  },
-                  "claimId": {
-                    "anyOf": [
-                      {
-                        "type": "string",
-                        "minLength": 1
-                      },
-                      {
-                        "type": "null"
-                      }
-                    ]
+                  {
+                    "type": "null"
                   }
-                },
-                "required": [
-                  "state",
-                  "ownerViewerId",
-                  "claimId"
-                ],
-                "additionalProperties": false
+                ]
               },
-              "viewerCount": {
-                "type": "integer",
-                "minimum": 0,
-                "maximum": 4
-              },
-              "geometry": {
+              "window": {
                 "readOnly": true,
                 "type": "object",
                 "properties": {
-                  "columns": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 1000
+                  "value": {
+                    "readOnly": true,
+                    "type": "object",
+                    "properties": {
+                      "columns": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000
+                      },
+                      "rows": {
+                        "type": "integer",
+                        "minimum": 1,
+                        "maximum": 1000
+                      },
+                      "widthPixels": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 65535
+                      },
+                      "heightPixels": {
+                        "type": "integer",
+                        "minimum": 0,
+                        "maximum": 65535
+                      }
+                    },
+                    "required": [
+                      "columns",
+                      "rows",
+                      "widthPixels",
+                      "heightPixels"
+                    ],
+                    "additionalProperties": false,
+                    "x-hive-max-active-cells": 250000
                   },
-                  "rows": {
-                    "type": "integer",
-                    "minimum": 1,
-                    "maximum": 1000
-                  },
-                  "widthPx": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "heightPx": {
-                    "type": "integer",
-                    "exclusiveMinimum": 0,
-                    "maximum": 9007199254740991
-                  },
-                  "cellWidthPx": {
-                    "type": "number",
-                    "exclusiveMinimum": 0
-                  },
-                  "cellHeightPx": {
-                    "type": "number",
-                    "exclusiveMinimum": 0
-                  }
-                },
-                "required": [
-                  "columns",
-                  "rows",
-                  "widthPx",
-                  "heightPx",
-                  "cellWidthPx",
-                  "cellHeightPx"
-                ],
-                "additionalProperties": false,
-                "x-hive-max-active-cells": 250000
-              },
-              "resources": {
-                "readOnly": true,
-                "type": "object",
-                "propertyNames": {
-                  "type": "string"
-                },
-                "additionalProperties": {
-                  "type": "number"
-                }
-              },
-              "visibility": {
-                "type": "object",
-                "properties": {
-                  "state": {
-                    "type": "string",
-                    "enum": [
-                      "attaching",
-                      "visible",
-                      "reconnecting",
-                      "expired"
-                    ]
-                  },
-                  "workspaceSessionId": {
-                    "type": "string",
-                    "minLength": 1
-                  },
-                  "openTerminalRevision": {
+                  "revision": {
                     "type": "string",
                     "pattern": "^(?:0|[1-9][0-9]{0,19})$",
                     "format": "hive-uint64-decimal"
-                  },
-                  "expiresAt": {
-                    "type": "string",
-                    "format": "date-time",
-                    "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
                   }
                 },
                 "required": [
-                  "state",
-                  "workspaceSessionId",
-                  "openTerminalRevision",
-                  "expiresAt"
+                  "value",
+                  "revision"
                 ],
                 "additionalProperties": false
+              },
+              "output": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "closed": {
+                    "type": "boolean"
+                  },
+                  "retained": {
+                    "readOnly": true,
+                    "type": "object",
+                    "properties": {
+                      "start": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                        "format": "hive-uint64-decimal"
+                      },
+                      "endExclusive": {
+                        "type": "string",
+                        "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                        "format": "hive-uint64-decimal"
+                      }
+                    },
+                    "required": [
+                      "start",
+                      "endExclusive"
+                    ],
+                    "additionalProperties": false
+                  }
+                },
+                "required": [
+                  "closed",
+                  "retained"
+                ],
+                "additionalProperties": false
+              },
+              "checkpoints": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "retained": {
+                    "type": "integer",
+                    "minimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "newest": {
+                    "anyOf": [
+                      {
+                        "readOnly": true,
+                        "type": "object",
+                        "properties": {
+                          "contentType": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "schemaVersion": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "hashAlgorithm": {
+                            "type": "string",
+                            "const": "sha256"
+                          },
+                          "hash": {
+                            "type": "string",
+                            "minLength": 1
+                          },
+                          "throughEventSequence": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                            "format": "hive-uint64-decimal"
+                          },
+                          "throughOutputOffset": {
+                            "type": "string",
+                            "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                            "format": "hive-uint64-decimal"
+                          },
+                          "opaqueBytes": {
+                            "type": "string",
+                            "maxLength": 89478488,
+                            "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                          }
+                        },
+                        "required": [
+                          "contentType",
+                          "schemaVersion",
+                          "hashAlgorithm",
+                          "hash",
+                          "throughEventSequence",
+                          "throughOutputOffset",
+                          "opaqueBytes"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  }
+                },
+                "required": [
+                  "retained",
+                  "newest"
+                ],
+                "additionalProperties": false
+              },
+              "inputOwner": {
+                "anyOf": [
+                  {
+                    "readOnly": true,
+                    "type": "object",
+                    "properties": {
+                      "token": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "writer": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "kind": {
+                        "type": "string",
+                        "enum": [
+                          "human",
+                          "automation"
+                        ]
+                      },
+                      "leaseExpiresAt": {
+                        "type": "string",
+                        "format": "date-time",
+                        "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                      }
+                    },
+                    "required": [
+                      "token",
+                      "writer",
+                      "kind",
+                      "leaseExpiresAt"
+                    ],
+                    "additionalProperties": false
+                  },
+                  {
+                    "type": "null"
+                  }
+                ]
               },
               "exit": {
                 "anyOf": [
                   {
+                    "readOnly": true,
                     "type": "object",
                     "properties": {
                       "code": {
@@ -2808,7 +2834,7 @@
                         "anyOf": [
                           {
                             "type": "integer",
-                            "minimum": -9007199254740991,
+                            "minimum": 0,
                             "maximum": 9007199254740991
                           },
                           {
@@ -2834,13 +2860,95 @@
                   }
                 ]
               },
-              "survivors": {
+              "reap": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "authority": {
+                    "type": "string",
+                    "enum": [
+                      "direct-parent",
+                      "durable-parent-record",
+                      "unavailable"
+                    ]
+                  },
+                  "reaped": {
+                    "type": "boolean"
+                  },
+                  "status": {
+                    "anyOf": [
+                      {
+                        "readOnly": true,
+                        "type": "object",
+                        "properties": {
+                          "code": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": -9007199254740991,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "signal": {
+                            "anyOf": [
+                              {
+                                "type": "integer",
+                                "minimum": 0,
+                                "maximum": 9007199254740991
+                              },
+                              {
+                                "type": "null"
+                              }
+                            ]
+                          },
+                          "observedAt": {
+                            "type": "string",
+                            "format": "date-time",
+                            "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                          }
+                        },
+                        "required": [
+                          "code",
+                          "signal",
+                          "observedAt"
+                        ],
+                        "additionalProperties": false
+                      },
+                      {
+                        "type": "null"
+                      }
+                    ]
+                  },
+                  "completeness": {
+                    "type": "string",
+                    "enum": [
+                      "complete",
+                      "partial",
+                      "unavailable",
+                      "unknown"
+                    ]
+                  }
+                },
+                "required": [
+                  "authority",
+                  "reaped",
+                  "status",
+                  "completeness"
+                ],
+                "additionalProperties": false
+              },
+              "descendants": {
                 "readOnly": true,
                 "type": "array",
                 "items": {
+                  "readOnly": true,
                   "type": "object",
                   "properties": {
-                    "pid": {
+                    "processId": {
                       "type": "integer",
                       "exclusiveMinimum": 0,
                       "maximum": 9007199254740991
@@ -2848,15 +2956,48 @@
                     "startToken": {
                       "type": "string",
                       "minLength": 1
-                    },
-                    "reason": {
-                      "type": "string",
-                      "minLength": 1
                     }
                   },
                   "required": [
-                    "pid",
-                    "startToken",
+                    "processId",
+                    "startToken"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "survivors": {
+                "readOnly": true,
+                "type": "array",
+                "items": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "process": {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "processId": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "startToken": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "processId",
+                        "startToken"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reason": {
+                      "type": "string"
+                    }
+                  },
+                  "required": [
+                    "process",
                     "reason"
                   ],
                   "additionalProperties": false
@@ -2867,49 +3008,39 @@
                 "format": "date-time",
                 "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
               },
-              "diagnosticIds": {
+              "diagnostics": {
                 "readOnly": true,
                 "type": "array",
                 "items": {
-                  "type": "string",
-                  "minLength": 1
+                  "type": "string"
                 }
               }
             },
             "required": [
-              "schemaVersion",
-              "locator",
-              "presence",
-              "complete",
-              "hostPid",
-              "hostStartToken",
-              "providerRoot",
-              "expectedExecutable",
-              "executableVerified",
-              "outputSeq",
-              "checkpointSeq",
-              "checkpointAvailable",
-              "input",
-              "viewerCount",
-              "geometry",
-              "resources",
-              "visibility",
+              "session",
+              "lifecycle",
+              "completeness",
+              "host",
+              "child",
+              "jobControl",
+              "window",
+              "output",
+              "checkpoints",
+              "inputOwner",
               "exit",
+              "reap",
+              "descendants",
               "survivors",
               "evidenceAt",
-              "diagnosticIds"
+              "diagnostics"
             ],
             "additionalProperties": false
           }
-        },
-        "complete": {
-          "type": "boolean"
         }
       },
       "required": [
         "schemaVersion",
-        "entries",
-        "complete"
+        "entries"
       ],
       "additionalProperties": false
     },
@@ -2922,97 +3053,29 @@
           "type": "number",
           "const": 1
         },
-        "locator": {
+        "session": {
           "readOnly": true,
           "type": "object",
           "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
+            "key": {
               "type": "string",
               "minLength": 1
             },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
+            "incarnation": {
               "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
-            },
-            "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "minLength": 1
             }
           },
           "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
+            "key",
+            "incarnation"
           ],
           "additionalProperties": false
         }
       },
       "required": [
         "schemaVersion",
-        "locator"
+        "session"
       ],
       "additionalProperties": false
     },
@@ -3025,134 +3088,51 @@
           "type": "number",
           "const": 1
         },
-        "locator": {
+        "session": {
           "readOnly": true,
           "type": "object",
           "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
+            "key": {
               "type": "string",
               "minLength": 1
             },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
+            "incarnation": {
               "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
-            },
-            "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "minLength": 1
             }
           },
           "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
+            "key",
+            "incarnation"
           ],
           "additionalProperties": false
         },
-        "presence": {
+        "lifecycle": {
           "type": "string",
           "enum": [
-            "present",
+            "creating",
+            "running",
             "exited",
             "lost",
             "unknown"
           ]
         },
-        "complete": {
-          "type": "boolean"
-        },
-        "hostPid": {
-          "anyOf": [
-            {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            {
-              "type": "null"
-            }
+        "completeness": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable",
+            "unknown"
           ]
         },
-        "hostStartToken": {
+        "host": {
           "anyOf": [
             {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "providerRoot": {
-          "anyOf": [
-            {
+              "readOnly": true,
               "type": "object",
               "properties": {
-                "pid": {
+                "processId": {
                   "type": "integer",
                   "exclusiveMinimum": 0,
                   "maximum": 9007199254740991
@@ -3160,17 +3140,11 @@
                 "startToken": {
                   "type": "string",
                   "minLength": 1
-                },
-                "processGroupId": {
-                  "type": "integer",
-                  "exclusiveMinimum": 0,
-                  "maximum": 9007199254740991
                 }
               },
               "required": [
-                "pid",
-                "startToken",
-                "processGroupId"
+                "processId",
+                "startToken"
               ],
               "additionalProperties": false
             },
@@ -3179,177 +3153,301 @@
             }
           ]
         },
-        "expectedExecutable": {
-          "type": "string",
-          "minLength": 1
+        "child": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "processId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "processId",
+                "startToken"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
-        "executableVerified": {
-          "type": "boolean"
-        },
-        "outputSeq": {
-          "type": "string",
-          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-          "format": "hive-uint64-decimal"
-        },
-        "checkpointSeq": {
-          "type": "string",
-          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
-          "format": "hive-uint64-decimal"
-        },
-        "checkpointAvailable": {
-          "type": "boolean"
-        },
-        "input": {
-          "type": "object",
-          "properties": {
-            "state": {
-              "anyOf": [
-                {
+        "jobControl": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "sessionLeader": {
+                  "type": "boolean"
+                },
+                "controllingTerminal": {
+                  "type": "boolean"
+                },
+                "standardStreamsShareTerminal": {
+                  "type": "boolean"
+                },
+                "childSessionId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "childProcessGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "foregroundProcessGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "terminalIdentity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "initialProfileAppliedBeforeExec": {
+                  "type": "boolean"
+                },
+                "initialWindowAppliedBeforeExec": {
+                  "type": "boolean"
+                },
+                "completeness": {
                   "type": "string",
                   "enum": [
-                    "FREE",
-                    "HUMAN_GESTURE",
-                    "HUMAN_OWNED",
-                    "HUMAN_ORPHANED",
-                    "AUTOMATION_BUFFERING",
-                    "AUTOMATION_COMMITTED",
-                    "TERMINATING",
-                    "CLOSED"
+                    "complete",
+                    "partial",
+                    "unavailable",
+                    "unknown"
                   ]
-                },
-                {
-                  "type": "string",
-                  "const": "UNKNOWN"
                 }
-              ]
+              },
+              "required": [
+                "sessionLeader",
+                "controllingTerminal",
+                "standardStreamsShareTerminal",
+                "childSessionId",
+                "childProcessGroupId",
+                "foregroundProcessGroupId",
+                "terminalIdentity",
+                "initialProfileAppliedBeforeExec",
+                "initialWindowAppliedBeforeExec",
+                "completeness"
+              ],
+              "additionalProperties": false
             },
-            "ownerViewerId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            },
-            "claimId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+            {
+              "type": "null"
             }
-          },
-          "required": [
-            "state",
-            "ownerViewerId",
-            "claimId"
-          ],
-          "additionalProperties": false
+          ]
         },
-        "viewerCount": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4
-        },
-        "geometry": {
+        "window": {
           "readOnly": true,
           "type": "object",
           "properties": {
-            "columns": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 1000
+            "value": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                },
+                "heightPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPixels",
+                "heightPixels"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
             },
-            "rows": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 1000
-            },
-            "widthPx": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "heightPx": {
-              "type": "integer",
-              "exclusiveMinimum": 0,
-              "maximum": 9007199254740991
-            },
-            "cellWidthPx": {
-              "type": "number",
-              "exclusiveMinimum": 0
-            },
-            "cellHeightPx": {
-              "type": "number",
-              "exclusiveMinimum": 0
-            }
-          },
-          "required": [
-            "columns",
-            "rows",
-            "widthPx",
-            "heightPx",
-            "cellWidthPx",
-            "cellHeightPx"
-          ],
-          "additionalProperties": false,
-          "x-hive-max-active-cells": 250000
-        },
-        "resources": {
-          "readOnly": true,
-          "type": "object",
-          "propertyNames": {
-            "type": "string"
-          },
-          "additionalProperties": {
-            "type": "number"
-          }
-        },
-        "visibility": {
-          "type": "object",
-          "properties": {
-            "state": {
-              "type": "string",
-              "enum": [
-                "attaching",
-                "visible",
-                "reconnecting",
-                "expired"
-              ]
-            },
-            "workspaceSessionId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "openTerminalRevision": {
+            "revision": {
               "type": "string",
               "pattern": "^(?:0|[1-9][0-9]{0,19})$",
               "format": "hive-uint64-decimal"
-            },
-            "expiresAt": {
-              "type": "string",
-              "format": "date-time",
-              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
             }
           },
           "required": [
-            "state",
-            "workspaceSessionId",
-            "openTerminalRevision",
-            "expiresAt"
+            "value",
+            "revision"
           ],
           "additionalProperties": false
+        },
+        "output": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            },
+            "retained": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "closed",
+            "retained"
+          ],
+          "additionalProperties": false
+        },
+        "checkpoints": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "retained": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "newest": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "contentType": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "schemaVersion": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "hashAlgorithm": {
+                      "type": "string",
+                      "const": "sha256"
+                    },
+                    "hash": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "throughEventSequence": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "throughOutputOffset": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "opaqueBytes": {
+                      "type": "string",
+                      "maxLength": 89478488,
+                      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                    }
+                  },
+                  "required": [
+                    "contentType",
+                    "schemaVersion",
+                    "hashAlgorithm",
+                    "hash",
+                    "throughEventSequence",
+                    "throughOutputOffset",
+                    "opaqueBytes"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "retained",
+            "newest"
+          ],
+          "additionalProperties": false
+        },
+        "inputOwner": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "token": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "writer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "human",
+                    "automation"
+                  ]
+                },
+                "leaseExpiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "token",
+                "writer",
+                "kind",
+                "leaseExpiresAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
         },
         "exit": {
           "anyOf": [
             {
+              "readOnly": true,
               "type": "object",
               "properties": {
                 "code": {
@@ -3368,7 +3466,7 @@
                   "anyOf": [
                     {
                       "type": "integer",
-                      "minimum": -9007199254740991,
+                      "minimum": 0,
                       "maximum": 9007199254740991
                     },
                     {
@@ -3394,13 +3492,95 @@
             }
           ]
         },
-        "survivors": {
+        "reap": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "authority": {
+              "type": "string",
+              "enum": [
+                "direct-parent",
+                "durable-parent-record",
+                "unavailable"
+              ]
+            },
+            "reaped": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable",
+                "unknown"
+              ]
+            }
+          },
+          "required": [
+            "authority",
+            "reaped",
+            "status",
+            "completeness"
+          ],
+          "additionalProperties": false
+        },
+        "descendants": {
           "readOnly": true,
           "type": "array",
           "items": {
+            "readOnly": true,
             "type": "object",
             "properties": {
-              "pid": {
+              "processId": {
                 "type": "integer",
                 "exclusiveMinimum": 0,
                 "maximum": 9007199254740991
@@ -3408,15 +3588,48 @@
               "startToken": {
                 "type": "string",
                 "minLength": 1
-              },
-              "reason": {
-                "type": "string",
-                "minLength": 1
               }
             },
             "required": [
-              "pid",
-              "startToken",
+              "processId",
+              "startToken"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "survivors": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "readOnly": true,
+            "type": "object",
+            "properties": {
+              "process": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "processId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "processId",
+                  "startToken"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "process",
               "reason"
             ],
             "additionalProperties": false
@@ -3427,37 +3640,32 @@
           "format": "date-time",
           "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
         },
-        "diagnosticIds": {
+        "diagnostics": {
           "readOnly": true,
           "type": "array",
           "items": {
-            "type": "string",
-            "minLength": 1
+            "type": "string"
           }
         }
       },
       "required": [
         "schemaVersion",
-        "locator",
-        "presence",
-        "complete",
-        "hostPid",
-        "hostStartToken",
-        "providerRoot",
-        "expectedExecutable",
-        "executableVerified",
-        "outputSeq",
-        "checkpointSeq",
-        "checkpointAvailable",
-        "input",
-        "viewerCount",
-        "geometry",
-        "resources",
-        "visibility",
+        "session",
+        "lifecycle",
+        "completeness",
+        "host",
+        "child",
+        "jobControl",
+        "window",
+        "output",
+        "checkpoints",
+        "inputOwner",
         "exit",
+        "reap",
+        "descendants",
         "survivors",
         "evidenceAt",
-        "diagnosticIds"
+        "diagnostics"
       ],
       "additionalProperties": false
     },
@@ -3470,90 +3678,22 @@
           "type": "number",
           "const": 1
         },
-        "locator": {
+        "session": {
           "readOnly": true,
           "type": "object",
           "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
+            "key": {
               "type": "string",
               "minLength": 1
             },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
+            "incarnation": {
               "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
-            },
-            "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "minLength": 1
             }
           },
           "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
+            "key",
+            "incarnation"
           ],
           "additionalProperties": false
         },
@@ -3564,21 +3704,31 @@
             "immediate"
           ]
         },
-        "reason": {
+        "target": {
+          "type": "string",
+          "enum": [
+            "foreground-group",
+            "session-members",
+            "process-tree"
+          ]
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "idempotencyKey": {
           "type": "string",
           "minLength": 1
-        },
-        "requestId": {
-          "type": "string",
-          "pattern": "^req_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
         }
       },
       "required": [
         "schemaVersion",
-        "locator",
+        "session",
         "mode",
-        "reason",
-        "requestId"
+        "target",
+        "deadline",
+        "idempotencyKey"
       ],
       "additionalProperties": false
     },
@@ -3591,93 +3741,6 @@
           "type": "number",
           "const": 1
         },
-        "locator": {
-          "readOnly": true,
-          "type": "object",
-          "properties": {
-            "schemaVersion": {
-              "type": "number",
-              "const": 1
-            },
-            "instanceId": {
-              "type": "string",
-              "minLength": 1
-            },
-            "subject": {
-              "readOnly": true,
-              "oneOf": [
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "root"
-                    }
-                  },
-                  "required": [
-                    "kind"
-                  ],
-                  "additionalProperties": false
-                },
-                {
-                  "type": "object",
-                  "properties": {
-                    "kind": {
-                      "type": "string",
-                      "const": "agent"
-                    },
-                    "agentId": {
-                      "type": "string",
-                      "minLength": 1
-                    }
-                  },
-                  "required": [
-                    "kind",
-                    "agentId"
-                  ],
-                  "additionalProperties": false
-                }
-              ]
-            },
-            "generation": {
-              "type": "integer",
-              "minimum": 1,
-              "maximum": 9007199254740991
-            },
-            "sessionId": {
-              "type": "string",
-              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
-            },
-            "hostKind": {
-              "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
-            },
-            "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
-            }
-          },
-          "required": [
-            "schemaVersion",
-            "instanceId",
-            "subject",
-            "generation",
-            "sessionId",
-            "hostKind",
-            "engineBuildId"
-          ],
-          "additionalProperties": false
-        },
         "state": {
           "type": "string",
           "enum": [
@@ -3689,6 +3752,7 @@
         "exit": {
           "anyOf": [
             {
+              "readOnly": true,
               "type": "object",
               "properties": {
                 "code": {
@@ -3707,7 +3771,7 @@
                   "anyOf": [
                     {
                       "type": "integer",
-                      "minimum": -9007199254740991,
+                      "minimum": 0,
                       "maximum": 9007199254740991
                     },
                     {
@@ -3733,69 +3797,150 @@
             }
           ]
         },
+        "reap": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "authority": {
+              "type": "string",
+              "enum": [
+                "direct-parent",
+                "durable-parent-record",
+                "unavailable"
+              ]
+            },
+            "reaped": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable",
+                "unknown"
+              ]
+            }
+          },
+          "required": [
+            "authority",
+            "reaped",
+            "status",
+            "completeness"
+          ],
+          "additionalProperties": false
+        },
         "survivors": {
           "readOnly": true,
           "type": "array",
           "items": {
+            "readOnly": true,
             "type": "object",
             "properties": {
-              "pid": {
-                "type": "integer",
-                "exclusiveMinimum": 0,
-                "maximum": 9007199254740991
-              },
-              "startToken": {
-                "type": "string",
-                "minLength": 1
+              "process": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "processId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "processId",
+                  "startToken"
+                ],
+                "additionalProperties": false
               },
               "reason": {
-                "type": "string",
-                "minLength": 1
+                "type": "string"
               }
             },
             "required": [
-              "pid",
-              "startToken",
+              "process",
               "reason"
             ],
             "additionalProperties": false
           }
         },
-        "errors": {
+        "completeness": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable",
+            "unknown"
+          ]
+        },
+        "diagnostics": {
           "readOnly": true,
           "type": "array",
           "items": {
-            "type": "object",
-            "properties": {
-              "phase": {
-                "type": "string",
-                "minLength": 1
-              },
-              "code": {
-                "type": "string",
-                "minLength": 1
-              },
-              "diagnosticId": {
-                "type": "string",
-                "minLength": 1
-              }
-            },
-            "required": [
-              "phase",
-              "code",
-              "diagnosticId"
-            ],
-            "additionalProperties": false
+            "type": "string"
           }
         }
       },
       "required": [
         "schemaVersion",
-        "locator",
         "state",
         "exit",
+        "reap",
         "survivors",
-        "errors"
+        "completeness",
+        "diagnostics"
       ],
       "additionalProperties": false
     },
@@ -5753,6 +5898,904 @@
         "session",
         "outcome",
         "limits"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostCheckpoint": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "contentType": {
+          "type": "string",
+          "minLength": 1
+        },
+        "schemaVersion": {
+          "type": "string",
+          "minLength": 1
+        },
+        "hashAlgorithm": {
+          "type": "string",
+          "const": "sha256"
+        },
+        "hash": {
+          "type": "string",
+          "minLength": 1
+        },
+        "throughEventSequence": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "throughOutputOffset": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "opaqueBytes": {
+          "type": "string",
+          "maxLength": 89478488,
+          "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+        }
+      },
+      "required": [
+        "contentType",
+        "schemaVersion",
+        "hashAlgorithm",
+        "hash",
+        "throughEventSequence",
+        "throughOutputOffset",
+        "opaqueBytes"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostSessionInspection": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "lifecycle": {
+          "type": "string",
+          "enum": [
+            "creating",
+            "running",
+            "exited",
+            "lost",
+            "unknown"
+          ]
+        },
+        "completeness": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable",
+            "unknown"
+          ]
+        },
+        "host": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "processId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "processId",
+                "startToken"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "child": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "processId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "startToken": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "processId",
+                "startToken"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "jobControl": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "sessionLeader": {
+                  "type": "boolean"
+                },
+                "controllingTerminal": {
+                  "type": "boolean"
+                },
+                "standardStreamsShareTerminal": {
+                  "type": "boolean"
+                },
+                "childSessionId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "childProcessGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "foregroundProcessGroupId": {
+                  "type": "integer",
+                  "exclusiveMinimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "terminalIdentity": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "initialProfileAppliedBeforeExec": {
+                  "type": "boolean"
+                },
+                "initialWindowAppliedBeforeExec": {
+                  "type": "boolean"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "partial",
+                    "unavailable",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "sessionLeader",
+                "controllingTerminal",
+                "standardStreamsShareTerminal",
+                "childSessionId",
+                "childProcessGroupId",
+                "foregroundProcessGroupId",
+                "terminalIdentity",
+                "initialProfileAppliedBeforeExec",
+                "initialWindowAppliedBeforeExec",
+                "completeness"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "window": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "value": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                },
+                "heightPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPixels",
+                "heightPixels"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            }
+          },
+          "required": [
+            "value",
+            "revision"
+          ],
+          "additionalProperties": false
+        },
+        "output": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "closed": {
+              "type": "boolean"
+            },
+            "retained": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "closed",
+            "retained"
+          ],
+          "additionalProperties": false
+        },
+        "checkpoints": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "retained": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "newest": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "contentType": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "schemaVersion": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "hashAlgorithm": {
+                      "type": "string",
+                      "const": "sha256"
+                    },
+                    "hash": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "throughEventSequence": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "throughOutputOffset": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "opaqueBytes": {
+                      "type": "string",
+                      "maxLength": 89478488,
+                      "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                    }
+                  },
+                  "required": [
+                    "contentType",
+                    "schemaVersion",
+                    "hashAlgorithm",
+                    "hash",
+                    "throughEventSequence",
+                    "throughOutputOffset",
+                    "opaqueBytes"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "retained",
+            "newest"
+          ],
+          "additionalProperties": false
+        },
+        "inputOwner": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "token": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "writer": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "kind": {
+                  "type": "string",
+                  "enum": [
+                    "human",
+                    "automation"
+                  ]
+                },
+                "leaseExpiresAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "token",
+                "writer",
+                "kind",
+                "leaseExpiresAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reap": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "authority": {
+              "type": "string",
+              "enum": [
+                "direct-parent",
+                "durable-parent-record",
+                "unavailable"
+              ]
+            },
+            "reaped": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable",
+                "unknown"
+              ]
+            }
+          },
+          "required": [
+            "authority",
+            "reaped",
+            "status",
+            "completeness"
+          ],
+          "additionalProperties": false
+        },
+        "descendants": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "readOnly": true,
+            "type": "object",
+            "properties": {
+              "processId": {
+                "type": "integer",
+                "exclusiveMinimum": 0,
+                "maximum": 9007199254740991
+              },
+              "startToken": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "processId",
+              "startToken"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "survivors": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "readOnly": true,
+            "type": "object",
+            "properties": {
+              "process": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "processId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "processId",
+                  "startToken"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "process",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "evidenceAt": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "diagnostics": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "session",
+        "lifecycle",
+        "completeness",
+        "host",
+        "child",
+        "jobControl",
+        "window",
+        "output",
+        "checkpoints",
+        "inputOwner",
+        "exit",
+        "reap",
+        "descendants",
+        "survivors",
+        "evidenceAt",
+        "diagnostics"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostTerminationRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "graceful",
+            "immediate"
+          ]
+        },
+        "target": {
+          "type": "string",
+          "enum": [
+            "foreground-group",
+            "session-members",
+            "process-tree"
+          ]
+        },
+        "deadline": {
+          "type": "string",
+          "format": "date-time",
+          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "session",
+        "mode",
+        "target",
+        "deadline",
+        "idempotencyKey"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostTerminationResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "state": {
+          "type": "string",
+          "enum": [
+            "terminated",
+            "survivors",
+            "unknown"
+          ]
+        },
+        "exit": {
+          "anyOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "reap": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "authority": {
+              "type": "string",
+              "enum": [
+                "direct-parent",
+                "durable-parent-record",
+                "unavailable"
+              ]
+            },
+            "reaped": {
+              "type": "boolean"
+            },
+            "status": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "completeness": {
+              "type": "string",
+              "enum": [
+                "complete",
+                "partial",
+                "unavailable",
+                "unknown"
+              ]
+            }
+          },
+          "required": [
+            "authority",
+            "reaped",
+            "status",
+            "completeness"
+          ],
+          "additionalProperties": false
+        },
+        "survivors": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "readOnly": true,
+            "type": "object",
+            "properties": {
+              "process": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "processId": {
+                    "type": "integer",
+                    "exclusiveMinimum": 0,
+                    "maximum": 9007199254740991
+                  },
+                  "startToken": {
+                    "type": "string",
+                    "minLength": 1
+                  }
+                },
+                "required": [
+                  "processId",
+                  "startToken"
+                ],
+                "additionalProperties": false
+              },
+              "reason": {
+                "type": "string"
+              }
+            },
+            "required": [
+              "process",
+              "reason"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "completeness": {
+          "type": "string",
+          "enum": [
+            "complete",
+            "partial",
+            "unavailable",
+            "unknown"
+          ]
+        },
+        "diagnostics": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "type": "string"
+          }
+        }
+      },
+      "required": [
+        "state",
+        "exit",
+        "reap",
+        "survivors",
+        "completeness",
+        "diagnostics"
       ],
       "additionalProperties": false
     },
@@ -8681,7 +9724,6 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
-            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -8747,7 +9789,6 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
-            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -8813,7 +9854,6 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
-            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -8879,7 +9919,6 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
-            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -8947,7 +9986,6 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
-            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -9013,7 +10051,6 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
-            "freshForSeconds",
             "phase",
             "blocker"
           ],

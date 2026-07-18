@@ -894,201 +894,232 @@
       }
     },
     {
-      "name": "LIST instance",
+      "name": "LIST neutral inventory",
       "schema": "listPayload",
       "value": {
-        "schemaVersion": 1,
-        "instanceId": "hive-fixture"
+        "schemaVersion": 1
       }
     },
     {
-      "name": "LISTED inventory",
+      "name": "LISTED frozen inventory",
       "schema": "listedPayload",
       "value": {
         "schemaVersion": 1,
         "entries": [
           {
-            "schemaVersion": 1,
-            "locator": {
-              "schemaVersion": 1,
-              "instanceId": "hive-fixture",
-              "subject": {
-                "kind": "agent",
-                "agentId": "agent-fixture"
+            "session": {
+              "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+              "incarnation": "3"
+            },
+            "lifecycle": "running",
+            "completeness": "complete",
+            "host": {
+              "processId": 4100,
+              "startToken": "4100:123456"
+            },
+            "child": {
+              "processId": 4101,
+              "startToken": "4101:123457"
+            },
+            "jobControl": {
+              "sessionLeader": true,
+              "controllingTerminal": true,
+              "standardStreamsShareTerminal": true,
+              "childSessionId": 4101,
+              "childProcessGroupId": 4101,
+              "foregroundProcessGroupId": 4101,
+              "terminalIdentity": "/dev/ttys001",
+              "initialProfileAppliedBeforeExec": true,
+              "initialWindowAppliedBeforeExec": true,
+              "completeness": "complete"
+            },
+            "window": {
+              "value": {
+                "columns": 120,
+                "rows": 40,
+                "widthPixels": 1200,
+                "heightPixels": 800
               },
-              "generation": 3,
-              "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-              "hostKind": "sessiond",
-              "engineBuildId": "engine-fixture"
+              "revision": "8"
             },
-            "presence": "present",
-            "complete": true,
-            "hostPid": 4100,
-            "hostStartToken": "4100:123456",
-            "providerRoot": {
-              "pid": 4101,
-              "startToken": "4101:123457",
-              "processGroupId": 4101
+            "output": {
+              "closed": false,
+              "retained": {
+                "start": "2048",
+                "endExclusive": "4096"
+              }
             },
-            "expectedExecutable": "/usr/local/bin/codex",
-            "executableVerified": true,
-            "outputSeq": "4096",
-            "checkpointSeq": "2048",
-            "checkpointAvailable": true,
-            "input": {
-              "state": "FREE",
-              "ownerViewerId": null,
-              "claimId": null
+            "checkpoints": {
+              "retained": 1,
+              "newest": {
+                "contentType": "application/vnd.hive.terminal-checkpoint",
+                "schemaVersion": "1",
+                "hashAlgorithm": "sha256",
+                "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+                "throughEventSequence": "12",
+                "throughOutputOffset": "2048",
+                "opaqueBytes": "dGVybWluYWwtc3RhdGU="
+              }
             },
-            "viewerCount": 1,
-            "geometry": {
-              "columns": 120,
-              "rows": 40,
-              "widthPx": 1200,
-              "heightPx": 800,
-              "cellWidthPx": 10,
-              "cellHeightPx": 20
-            },
-            "resources": {
-              "rssBytes": 16777216
-            },
-            "visibility": {
-              "state": "visible",
-              "workspaceSessionId": "workspace-fixture",
-              "openTerminalRevision": "7",
-              "expiresAt": "2026-07-16T12:00:15.000Z"
+            "inputOwner": {
+              "token": "claim-fixture-token",
+              "writer": "viewer-fixture",
+              "kind": "human",
+              "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
             },
             "exit": null,
+            "reap": {
+              "authority": "direct-parent",
+              "reaped": false,
+              "status": null,
+              "completeness": "complete"
+            },
+            "descendants": [
+              {
+                "processId": 4102,
+                "startToken": "4102:123458"
+              }
+            ],
             "survivors": [],
             "evidenceAt": "2026-07-16T12:00:00.000Z",
-            "diagnosticIds": []
+            "diagnostics": []
           }
-        ],
-        "complete": true
+        ]
       }
     },
     {
-      "name": "INSPECT locator",
+      "name": "INSPECT neutral session",
       "schema": "inspectPayload",
       "value": {
         "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
         }
       }
     },
     {
-      "name": "INSPECTED evidence",
+      "name": "INSPECTED frozen evidence",
       "schema": "inspectedPayload",
       "value": {
         "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "lifecycle": "running",
+        "completeness": "complete",
+        "host": {
+          "processId": 4100,
+          "startToken": "4100:123456"
+        },
+        "child": {
+          "processId": 4101,
+          "startToken": "4101:123457"
+        },
+        "jobControl": {
+          "sessionLeader": true,
+          "controllingTerminal": true,
+          "standardStreamsShareTerminal": true,
+          "childSessionId": 4101,
+          "childProcessGroupId": 4101,
+          "foregroundProcessGroupId": 4101,
+          "terminalIdentity": "/dev/ttys001",
+          "initialProfileAppliedBeforeExec": true,
+          "initialWindowAppliedBeforeExec": true,
+          "completeness": "complete"
+        },
+        "window": {
+          "value": {
+            "columns": 120,
+            "rows": 40,
+            "widthPixels": 1200,
+            "heightPixels": 800
           },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
+          "revision": "8"
         },
-        "presence": "present",
-        "complete": true,
-        "hostPid": 4100,
-        "hostStartToken": "4100:123456",
-        "providerRoot": {
-          "pid": 4101,
-          "startToken": "4101:123457",
-          "processGroupId": 4101
+        "output": {
+          "closed": false,
+          "retained": {
+            "start": "2048",
+            "endExclusive": "4096"
+          }
         },
-        "expectedExecutable": "/usr/local/bin/codex",
-        "executableVerified": true,
-        "outputSeq": "4096",
-        "checkpointSeq": "2048",
-        "checkpointAvailable": true,
-        "input": {
-          "state": "FREE",
-          "ownerViewerId": null,
-          "claimId": null
+        "checkpoints": {
+          "retained": 1,
+          "newest": {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1",
+            "hashAlgorithm": "sha256",
+            "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "throughEventSequence": "12",
+            "throughOutputOffset": "2048",
+            "opaqueBytes": "dGVybWluYWwtc3RhdGU="
+          }
         },
-        "viewerCount": 1,
-        "geometry": {
-          "columns": 120,
-          "rows": 40,
-          "widthPx": 1200,
-          "heightPx": 800,
-          "cellWidthPx": 10,
-          "cellHeightPx": 20
-        },
-        "resources": {
-          "rssBytes": 16777216
-        },
-        "visibility": {
-          "state": "visible",
-          "workspaceSessionId": "workspace-fixture",
-          "openTerminalRevision": "7",
-          "expiresAt": "2026-07-16T12:00:15.000Z"
+        "inputOwner": {
+          "token": "claim-fixture-token",
+          "writer": "viewer-fixture",
+          "kind": "human",
+          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": false,
+          "status": null,
+          "completeness": "complete"
+        },
+        "descendants": [
+          {
+            "processId": 4102,
+            "startToken": "4102:123458"
+          }
+        ],
         "survivors": [],
         "evidenceAt": "2026-07-16T12:00:00.000Z",
-        "diagnosticIds": []
+        "diagnostics": []
       }
     },
     {
-      "name": "TERMINATE exact generation",
+      "name": "TERMINATE frozen request",
       "schema": "terminatePayload",
       "value": {
         "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
         },
-        "mode": "graceful",
-        "reason": "terminal closed",
-        "requestId": "req_018f1e90-7b5a-7cc0-8000-000000000004"
+        "mode": "immediate",
+        "target": "process-tree",
+        "deadline": "2026-07-16T12:00:02.000Z",
+        "idempotencyKey": "terminate-fixture-key"
       }
     },
     {
-      "name": "TERMINATED result",
+      "name": "TERMINATED frozen result",
       "schema": "terminatedPayload",
       "value": {
         "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
-        },
         "state": "terminated",
-        "exit": null,
+        "exit": {
+          "code": null,
+          "signal": 9,
+          "observedAt": "2026-07-16T12:00:00.000Z"
+        },
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": true,
+          "status": {
+            "code": null,
+            "signal": 9,
+            "observedAt": "2026-07-16T12:00:00.000Z"
+          },
+          "completeness": "complete"
+        },
         "survivors": [],
-        "errors": []
+        "completeness": "complete",
+        "diagnostics": []
       }
     },
     {
@@ -1506,6 +1537,140 @@
           "outputHighWaterBytes": 4194304,
           "outputRetentionBytes": 67108864
         }
+      }
+    },
+    {
+      "name": "frozen neutral checkpoint",
+      "schema": "terminalHostCheckpoint",
+      "value": {
+        "contentType": "application/vnd.hive.terminal-checkpoint",
+        "schemaVersion": "1",
+        "hashAlgorithm": "sha256",
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "throughEventSequence": "12",
+        "throughOutputOffset": "2048",
+        "opaqueBytes": "dGVybWluYWwtc3RhdGU="
+      }
+    },
+    {
+      "name": "frozen neutral inspection",
+      "schema": "terminalHostSessionInspection",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "lifecycle": "running",
+        "completeness": "complete",
+        "host": {
+          "processId": 4100,
+          "startToken": "4100:123456"
+        },
+        "child": {
+          "processId": 4101,
+          "startToken": "4101:123457"
+        },
+        "jobControl": {
+          "sessionLeader": true,
+          "controllingTerminal": true,
+          "standardStreamsShareTerminal": true,
+          "childSessionId": 4101,
+          "childProcessGroupId": 4101,
+          "foregroundProcessGroupId": 4101,
+          "terminalIdentity": "/dev/ttys001",
+          "initialProfileAppliedBeforeExec": true,
+          "initialWindowAppliedBeforeExec": true,
+          "completeness": "complete"
+        },
+        "window": {
+          "value": {
+            "columns": 120,
+            "rows": 40,
+            "widthPixels": 1200,
+            "heightPixels": 800
+          },
+          "revision": "8"
+        },
+        "output": {
+          "closed": false,
+          "retained": {
+            "start": "2048",
+            "endExclusive": "4096"
+          }
+        },
+        "checkpoints": {
+          "retained": 1,
+          "newest": {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1",
+            "hashAlgorithm": "sha256",
+            "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "throughEventSequence": "12",
+            "throughOutputOffset": "2048",
+            "opaqueBytes": "dGVybWluYWwtc3RhdGU="
+          }
+        },
+        "inputOwner": {
+          "token": "claim-fixture-token",
+          "writer": "viewer-fixture",
+          "kind": "human",
+          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
+        },
+        "exit": null,
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": false,
+          "status": null,
+          "completeness": "complete"
+        },
+        "descendants": [
+          {
+            "processId": 4102,
+            "startToken": "4102:123458"
+          }
+        ],
+        "survivors": [],
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "frozen neutral termination request",
+      "schema": "terminalHostTerminationRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "mode": "immediate",
+        "target": "process-tree",
+        "deadline": "2026-07-16T12:00:02.000Z",
+        "idempotencyKey": "terminate-fixture-key"
+      }
+    },
+    {
+      "name": "frozen neutral termination result",
+      "schema": "terminalHostTerminationResult",
+      "value": {
+        "state": "terminated",
+        "exit": {
+          "code": null,
+          "signal": 9,
+          "observedAt": "2026-07-16T12:00:00.000Z"
+        },
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": true,
+          "status": {
+            "code": null,
+            "signal": 9,
+            "observedAt": "2026-07-16T12:00:00.000Z"
+          },
+          "completeness": "complete"
+        },
+        "survivors": [],
+        "completeness": "complete",
+        "diagnostics": []
       }
     },
     {
@@ -2711,79 +2876,22 @@
       }
     },
     {
-      "name": "LIST rejects missing instance",
+      "name": "LIST rejects Hive scope",
       "schema": "listPayload",
+      "value": {
+        "schemaVersion": 1,
+        "instanceId": "hive-fixture"
+      }
+    },
+    {
+      "name": "LISTED rejects missing entries",
+      "schema": "listedPayload",
       "value": {
         "schemaVersion": 1
       }
     },
     {
-      "name": "LISTED rejects missing completeness",
-      "schema": "listedPayload",
-      "value": {
-        "schemaVersion": 1,
-        "entries": [
-          {
-            "schemaVersion": 1,
-            "locator": {
-              "schemaVersion": 1,
-              "instanceId": "hive-fixture",
-              "subject": {
-                "kind": "agent",
-                "agentId": "agent-fixture"
-              },
-              "generation": 3,
-              "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-              "hostKind": "sessiond",
-              "engineBuildId": "engine-fixture"
-            },
-            "presence": "present",
-            "complete": true,
-            "hostPid": 4100,
-            "hostStartToken": "4100:123456",
-            "providerRoot": {
-              "pid": 4101,
-              "startToken": "4101:123457",
-              "processGroupId": 4101
-            },
-            "expectedExecutable": "/usr/local/bin/codex",
-            "executableVerified": true,
-            "outputSeq": "4096",
-            "checkpointSeq": "2048",
-            "checkpointAvailable": true,
-            "input": {
-              "state": "FREE",
-              "ownerViewerId": null,
-              "claimId": null
-            },
-            "viewerCount": 1,
-            "geometry": {
-              "columns": 120,
-              "rows": 40,
-              "widthPx": 1200,
-              "heightPx": 800,
-              "cellWidthPx": 10,
-              "cellHeightPx": 20
-            },
-            "resources": {
-              "rssBytes": 16777216
-            },
-            "visibility": {
-              "state": "visible",
-              "workspaceSessionId": "workspace-fixture",
-              "openTerminalRevision": "7",
-              "expiresAt": "2026-07-16T12:00:15.000Z"
-            },
-            "exit": null,
-            "survivors": [],
-            "evidenceAt": "2026-07-16T12:00:00.000Z",
-            "diagnosticIds": []
-          }
-        ]
-      }
-    },
-    {
-      "name": "INSPECT rejects missing locator",
+      "name": "INSPECT rejects missing session",
       "schema": "inspectPayload",
       "value": {
         "schemaVersion": 1
@@ -2794,92 +2902,113 @@
       "schema": "inspectedPayload",
       "value": {
         "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "lifecycle": "running",
+        "completeness": "complete",
+        "host": {
+          "processId": 4100,
+          "startToken": "4100:123456"
+        },
+        "child": {
+          "processId": 4101,
+          "startToken": "4101:123457"
+        },
+        "jobControl": {
+          "sessionLeader": true,
+          "controllingTerminal": true,
+          "standardStreamsShareTerminal": true,
+          "childSessionId": 4101,
+          "childProcessGroupId": 4101,
+          "foregroundProcessGroupId": 4101,
+          "terminalIdentity": "/dev/ttys001",
+          "initialProfileAppliedBeforeExec": true,
+          "initialWindowAppliedBeforeExec": true,
+          "completeness": "complete"
+        },
+        "window": {
+          "value": {
+            "columns": 120,
+            "rows": 40,
+            "widthPixels": 1200,
+            "heightPixels": 800
           },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
+          "revision": "8"
         },
-        "presence": "present",
-        "complete": true,
-        "hostPid": 4100,
-        "hostStartToken": "4100:123456",
-        "providerRoot": {
-          "pid": 4101,
-          "startToken": "4101:123457",
-          "processGroupId": 4101
+        "output": {
+          "closed": false,
+          "retained": {
+            "start": "2048",
+            "endExclusive": "4096"
+          }
         },
-        "expectedExecutable": "/usr/local/bin/codex",
-        "executableVerified": true,
-        "outputSeq": "4096",
-        "checkpointSeq": "2048",
-        "checkpointAvailable": true,
-        "input": {
-          "state": "FREE",
-          "ownerViewerId": null,
-          "claimId": null
+        "checkpoints": {
+          "retained": 1,
+          "newest": {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1",
+            "hashAlgorithm": "sha256",
+            "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "throughEventSequence": "12",
+            "throughOutputOffset": "2048",
+            "opaqueBytes": "dGVybWluYWwtc3RhdGU="
+          }
         },
-        "viewerCount": 1,
-        "geometry": {
-          "columns": 120,
-          "rows": 40,
-          "widthPx": 1200,
-          "heightPx": 800,
-          "cellWidthPx": 10,
-          "cellHeightPx": 20
-        },
-        "resources": {
-          "rssBytes": 16777216
-        },
-        "visibility": {
-          "state": "visible",
-          "workspaceSessionId": "workspace-fixture",
-          "openTerminalRevision": "7",
-          "expiresAt": "2026-07-16T12:00:15.000Z"
+        "inputOwner": {
+          "token": "claim-fixture-token",
+          "writer": "viewer-fixture",
+          "kind": "human",
+          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
         },
         "exit": null,
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": false,
+          "status": null,
+          "completeness": "complete"
+        },
+        "descendants": [
+          {
+            "processId": 4102,
+            "startToken": "4102:123458"
+          }
+        ],
         "survivors": [],
         "evidenceAt": "2026-07-16T12:00:00.000Z",
-        "diagnosticIds": [],
+        "diagnostics": [],
         "trusted": true
       }
     },
     {
-      "name": "TERMINATE rejects missing locator",
+      "name": "TERMINATE rejects missing target",
       "schema": "terminatePayload",
       "value": {
         "schemaVersion": 1,
-        "mode": "graceful",
-        "reason": "terminal closed",
-        "requestId": "req_018f1e90-7b5a-7cc0-8000-000000000004"
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "mode": "immediate",
+        "deadline": "2026-07-16T12:00:02.000Z",
+        "idempotencyKey": "terminate-fixture-key"
       }
     },
     {
-      "name": "TERMINATED rejects missing state",
+      "name": "TERMINATED rejects missing reap",
       "schema": "terminatedPayload",
       "value": {
         "schemaVersion": 1,
-        "locator": {
-          "schemaVersion": 1,
-          "instanceId": "hive-fixture",
-          "subject": {
-            "kind": "agent",
-            "agentId": "agent-fixture"
-          },
-          "generation": 3,
-          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
-          "hostKind": "sessiond",
-          "engineBuildId": "engine-fixture"
+        "state": "terminated",
+        "exit": {
+          "code": null,
+          "signal": 9,
+          "observedAt": "2026-07-16T12:00:00.000Z"
         },
-        "exit": null,
         "survivors": [],
-        "errors": []
+        "completeness": "complete",
+        "diagnostics": []
       }
     },
     {
@@ -3247,6 +3376,132 @@
           "outputHighWaterBytes": 4194304,
           "outputRetentionBytes": 67108864
         }
+      }
+    },
+    {
+      "name": "frozen checkpoint rejects malformed bytes",
+      "schema": "terminalHostCheckpoint",
+      "value": {
+        "contentType": "application/vnd.hive.terminal-checkpoint",
+        "schemaVersion": "1",
+        "hashAlgorithm": "sha256",
+        "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+        "throughEventSequence": "12",
+        "throughOutputOffset": "2048",
+        "opaqueBytes": "not base64"
+      }
+    },
+    {
+      "name": "frozen inspection requires reap evidence",
+      "schema": "terminalHostSessionInspection",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "lifecycle": "running",
+        "completeness": "complete",
+        "host": {
+          "processId": 4100,
+          "startToken": "4100:123456"
+        },
+        "child": {
+          "processId": 4101,
+          "startToken": "4101:123457"
+        },
+        "jobControl": {
+          "sessionLeader": true,
+          "controllingTerminal": true,
+          "standardStreamsShareTerminal": true,
+          "childSessionId": 4101,
+          "childProcessGroupId": 4101,
+          "foregroundProcessGroupId": 4101,
+          "terminalIdentity": "/dev/ttys001",
+          "initialProfileAppliedBeforeExec": true,
+          "initialWindowAppliedBeforeExec": true,
+          "completeness": "complete"
+        },
+        "window": {
+          "value": {
+            "columns": 120,
+            "rows": 40,
+            "widthPixels": 1200,
+            "heightPixels": 800
+          },
+          "revision": "8"
+        },
+        "output": {
+          "closed": false,
+          "retained": {
+            "start": "2048",
+            "endExclusive": "4096"
+          }
+        },
+        "checkpoints": {
+          "retained": 1,
+          "newest": {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1",
+            "hashAlgorithm": "sha256",
+            "hash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "throughEventSequence": "12",
+            "throughOutputOffset": "2048",
+            "opaqueBytes": "dGVybWluYWwtc3RhdGU="
+          }
+        },
+        "inputOwner": {
+          "token": "claim-fixture-token",
+          "writer": "viewer-fixture",
+          "kind": "human",
+          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
+        },
+        "exit": null,
+        "descendants": [
+          {
+            "processId": 4102,
+            "startToken": "4102:123458"
+          }
+        ],
+        "survivors": [],
+        "evidenceAt": "2026-07-16T12:00:00.000Z",
+        "diagnostics": []
+      }
+    },
+    {
+      "name": "frozen termination request requires target",
+      "schema": "terminalHostTerminationRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "mode": "immediate",
+        "deadline": "2026-07-16T12:00:02.000Z",
+        "idempotencyKey": "terminate-fixture-key"
+      }
+    },
+    {
+      "name": "frozen termination result requires completeness",
+      "schema": "terminalHostTerminationResult",
+      "value": {
+        "state": "terminated",
+        "exit": {
+          "code": null,
+          "signal": 9,
+          "observedAt": "2026-07-16T12:00:00.000Z"
+        },
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": true,
+          "status": {
+            "code": null,
+            "signal": 9,
+            "observedAt": "2026-07-16T12:00:00.000Z"
+          },
+          "completeness": "complete"
+        },
+        "survivors": [],
+        "diagnostics": []
       }
     },
     {

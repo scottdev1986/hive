@@ -60,7 +60,7 @@ function renderSchemaDocument(): string {
   const schemas = Object.fromEntries(
     Object.entries(WIRE_SCHEMA_CATALOG).map(([name, schema]) => [
       name,
-      z.toJSONSchema(schema),
+      z.toJSONSchema(schema, { io: "input" }),
     ]),
   );
   return prettyJson({
