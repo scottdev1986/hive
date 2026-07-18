@@ -55,7 +55,7 @@ The native terminal engine contract and the evidence required before Hive may em
 
 | Article | Summary | Updated |
 | --- | --- | --- |
-| [Ghostty manual bridge fork contract v1](terminal/ghostty-fork-contract-v1.md) | The six Hive-owned manual-I/O operations, isolation sentinels, frozen ABI and supply chain, shipment rules, and upgrade/rollback procedure. | 2026-07-18 |
+| [Ghostty manual bridge fork contract v1](terminal/ghostty-fork-contract-v1.md) | The seven Hive-owned manual-surface operations, isolation sentinels, frozen ABI and supply chain, shipment rules, and upgrade/rollback procedure. | 2026-07-18 |
 
 ## workspace
 

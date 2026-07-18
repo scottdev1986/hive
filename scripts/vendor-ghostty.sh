@@ -24,9 +24,14 @@ series_entries() {
 patch_series_sha256() {
   payload=$(mktemp "${TMPDIR:-/tmp}/hive-ghostty-series.XXXXXX")
   : >"$payload"
-  series_entries | while IFS= read -r patch; do
+  # No pipeline here: an `exit 1` inside `series_entries | while ...` only
+  # leaves the pipeline subshell, so a missing series entry would still
+  # digest the partial payload. Series entries are single awk-emitted
+  # tokens, so word splitting is safe.
+  for patch in $(series_entries); do
     if [ ! -f "$PATCH_DIR/$patch" ]; then
       echo "patch series entry is missing: $patch" >&2
+      /bin/rm -f "$payload"
       exit 1
     fi
     printf '%s\000' "$patch" >>"$payload"

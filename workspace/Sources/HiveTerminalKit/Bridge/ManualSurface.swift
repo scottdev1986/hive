@@ -329,7 +329,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
     }
 }
 
-/// Real L0 wrapper over the six §23 `_v1` symbols + stock surface APIs.
+/// Real L0 wrapper over the seven §23 `_v1` symbols + stock surface APIs.
 ///
 /// ## Ownership (M2 / SF1)
 /// This type **retains** `callbackContext`, `appOwner`, and `hostView` for the

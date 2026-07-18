@@ -46,6 +46,68 @@ const HiveEvent = extern struct {
 
 const HiveWriteFn = *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void;
 const HiveEventFn = *const fn (?*anyopaque, *const HiveEvent) callconv(.c) void;
+
+const HiveSemanticRow = extern struct {
+    utf8_offset: u64,
+    utf8_length: u64,
+    utf16_offset: u64,
+    utf16_length: u64,
+    line_break_utf8_length: u32,
+    line_break_utf16_length: u32,
+    cell_utf16_offset_index: u32,
+    cell_count: u32,
+};
+
+const HiveSemanticSnapshot = extern struct {
+    generation: u64,
+    text: ?[*]const u8,
+    text_length: u64,
+    text_utf16_length: u64,
+    visible_rows: ?[*]const HiveSemanticRow,
+    visible_row_count: u64,
+    cell_utf16_offsets: ?[*]const u64,
+    cell_utf16_offset_count: u64,
+    selected_text: ?[*]const u8,
+    selected_text_length: u64,
+    selection_utf16_offset: u64,
+    selection_utf16_length: u64,
+    cursor_utf16_offset: u64,
+    cursor_line: u64,
+    scroll_total: u64,
+    scroll_offset: u64,
+    scroll_length: u64,
+    columns: u32,
+    rows: u32,
+    width_px: u32,
+    height_px: u32,
+    cell_width_px: u32,
+    cell_height_px: u32,
+    padding_top_px: u32,
+    padding_bottom_px: u32,
+    padding_right_px: u32,
+    padding_left_px: u32,
+    cursor_column: u32,
+    cursor_row: u32,
+    cursor_x_px: u32,
+    cursor_y_px: u32,
+    cursor_width_px: u32,
+    cursor_height_px: u32,
+    has_selection: u8,
+    selection_is_rectangular: u8,
+    selection_range_clipped: u8,
+    cursor_visible: u8,
+    cursor_pending_wrap: u8,
+    viewport_follows_bottom: u8,
+    reserved: [2]u8,
+    allocation: ?*anyopaque,
+    allocation_length: u64,
+};
+
+comptime {
+    assert(@sizeOf(HiveSemanticRow) == 48);
+    assert(@sizeOf(HiveSemanticSnapshot) == 224);
+}
+
 const HiveTerminalReplyPolicy = enum(c_uint) {
     disabled = 0,
     enabled = 1,
@@ -1063,6 +1125,8 @@ const HiveManual = struct {
     pending: std.ArrayList(u8) = .empty,
     checkpoint_valid: bool = true,
     output_ranges: hive_checkpoint.OutputRangeLedger = .{},
+    semantic_digest: ?[32]u8 = null,
+    semantic_generation: u64 = 0,
 
     fn init(surface: *Surface, opts: HiveManualInit) !HiveManual {
         var handler = surface.core_surface.io.terminal.vtHandler();
@@ -1182,6 +1246,23 @@ const HiveManual = struct {
         };
     }
 
+    fn semanticSnapshotLocked(self: *HiveManual) Allocator.Error!HiveSemanticCapture {
+        var capture = try HiveSemanticCapture.init(
+            self.surface.app.core_app.alloc,
+            &self.surface.core_surface,
+        );
+        const digest = capture.digest();
+        if (self.semantic_digest == null or
+            !std.mem.eql(u8, &self.semantic_digest.?, &digest))
+        {
+            if (self.semantic_generation < std.math.maxInt(u64))
+                self.semantic_generation += 1;
+            self.semantic_digest = digest;
+        }
+        capture.snapshot.generation = self.semantic_generation;
+        return capture;
+    }
+
     fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
         const alloc = self.surface.app.core_app.alloc;
         const mutex = self.surface.core_surface.renderer_state.mutex;
@@ -1262,6 +1343,383 @@ const HiveManual = struct {
         return .success;
     }
 };
+
+const HiveSemanticCapture = struct {
+    snapshot: HiveSemanticSnapshot,
+    text: []u8,
+    visible_rows: []HiveSemanticRow,
+    cell_utf16_offsets: []u64,
+    selected_text: ?[:0]const u8,
+
+    fn init(
+        alloc: Allocator,
+        surface: *CoreSurface,
+    ) Allocator.Error!HiveSemanticCapture {
+        const terminal_state = surface.renderer_state.terminal;
+        const screen = terminal_state.screens.active;
+        const columns: u32 = @intCast(screen.pages.cols);
+        const rows: u32 = @intCast(screen.pages.rows);
+        const not_found = std.math.maxInt(u64);
+
+        const selection = screen.selection;
+        const selected_text = if (selection) |value|
+            try screen.selectionString(alloc, .{ .sel = value, .trim = false })
+        else
+            null;
+        errdefer if (selected_text) |value| alloc.free(value);
+
+        const selection_points: ?struct {
+            top_left: terminal.point.Coordinate,
+            bottom_right: terminal.point.Coordinate,
+            clipped: bool,
+        } = if (selection) |value| points: {
+            if (value.rectangle) break :points null;
+            const selection_top_left = value.topLeft(screen);
+            const selection_bottom_right = value.bottomRight(screen);
+            const viewport_top_left = screen.pages.getTopLeft(.viewport);
+            const viewport_bottom_right = screen.pages.getBottomRight(.viewport).?;
+            if (selection_bottom_right.before(viewport_top_left) or
+                viewport_bottom_right.before(selection_top_left))
+                break :points null;
+
+            const top_clipped = selection_top_left.before(viewport_top_left);
+            const top_pin = if (top_clipped) viewport_top_left else selection_top_left;
+            const top_left = screen.pages.pointFromPin(.viewport, top_pin).?.viewport;
+            const bottom_clipped = viewport_bottom_right.before(selection_bottom_right);
+            const bottom_pin = if (bottom_clipped) viewport_bottom_right else selection_bottom_right;
+            const bottom_right = screen.pages.pointFromPin(.viewport, bottom_pin).?.viewport;
+            break :points .{
+                .top_left = top_left,
+                .bottom_right = bottom_right,
+                .clipped = top_clipped or bottom_clipped,
+            };
+        } else null;
+
+        const cursor = screen.cursor;
+        const cursor_viewport: ?terminal.point.Coordinate = cursor_viewport: {
+            const point = screen.pages.pointFromPin(
+                .viewport,
+                cursor.page_pin.*,
+            ) orelse break :cursor_viewport null;
+            if (point.viewport.y >= rows or point.viewport.x >= columns)
+                break :cursor_viewport null;
+            break :cursor_viewport point.viewport;
+        };
+        const cursor_visible = cursor_viewport != null and
+            terminal_state.modes.get(.cursor_visible);
+
+        var text_writer: std.Io.Writer.Allocating = .init(alloc);
+        defer text_writer.deinit();
+        var visible_rows: std.ArrayList(HiveSemanticRow) = .empty;
+        defer visible_rows.deinit(alloc);
+        try visible_rows.ensureTotalCapacity(alloc, @intCast(rows));
+        var cell_utf16_offsets: std.ArrayList(u64) = .empty;
+        defer cell_utf16_offsets.deinit(alloc);
+        const cell_offset_count = std.math.mul(
+            usize,
+            @intCast(rows),
+            @as(usize, @intCast(columns)) + 1,
+        ) catch return error.OutOfMemory;
+        try cell_utf16_offsets.ensureTotalCapacity(alloc, cell_offset_count);
+
+        var pin_map: std.ArrayList(terminal.Pin) = .empty;
+        defer pin_map.deinit(alloc);
+        var text_utf16_length: u64 = 0;
+        var cursor_utf16_offset: u64 = not_found;
+        var selection_utf16_offset: u64 = not_found;
+        var selection_utf16_end: u64 = not_found;
+        const viewport_top = screen.pages.getTopLeft(.viewport);
+
+        for (0..@as(usize, @intCast(rows))) |row_index_usize| {
+            const row_index: u32 = @intCast(row_index_usize);
+            var row_pin = viewport_top.down(@intCast(row_index)).?;
+            row_pin.x = 0;
+            var row_end = row_pin;
+            row_end.x = @intCast(columns - 1);
+
+            const utf8_start = text_writer.writer.buffered().len;
+            const utf8_offset: u64 = @intCast(utf8_start);
+            const utf16_offset = text_utf16_length;
+            pin_map.clearRetainingCapacity();
+            var formatter = terminal.formatter.ScreenFormatter.init(
+                screen,
+                .{ .emit = .plain, .unwrap = false, .trim = true },
+            );
+            formatter.content = .{ .selection = terminal.Selection.init(
+                row_pin,
+                row_end,
+                false,
+            ) };
+            formatter.pin_map = .{ .alloc = alloc, .map = &pin_map };
+            formatter.format(&text_writer.writer) catch return error.OutOfMemory;
+
+            const utf8_end = text_writer.writer.buffered().len;
+            const utf8_length: u64 = @intCast(utf8_end - utf8_start);
+            const row_text = text_writer.writer.buffered()[utf8_start..utf8_end];
+            const utf16_length = utf16Length(row_text);
+
+            const cell_utf16_offset_index: u32 = @intCast(cell_utf16_offsets.items.len);
+            for (0..@as(usize, @intCast(columns)) + 1) |column_usize| {
+                const byte_offset = if (column_usize == columns)
+                    row_text.len
+                else
+                    utf8BoundaryBeforeCell(
+                        pin_map.items,
+                        row_pin,
+                        @intCast(column_usize),
+                        row_text.len,
+                    );
+                cell_utf16_offsets.appendAssumeCapacity(
+                    utf16_offset + utf16Length(row_text[0..byte_offset]),
+                );
+            }
+
+            if (cursor_visible) if (cursor_viewport) |point| {
+                if (point.y == row_index) {
+                    const cursor_cell: usize = if (cursor.pending_wrap)
+                        @intCast(columns)
+                    else
+                        @min(@as(usize, @intCast(point.x)), @as(usize, @intCast(columns)));
+                    cursor_utf16_offset = cell_utf16_offsets.items[
+                        @as(usize, @intCast(cell_utf16_offset_index)) + cursor_cell
+                    ];
+                }
+            };
+
+            if (selection_points) |points| {
+                if (points.top_left.y == row_index) {
+                    const cell = @min(
+                        @as(usize, @intCast(points.top_left.x)),
+                        @as(usize, @intCast(columns)),
+                    );
+                    selection_utf16_offset = cell_utf16_offsets.items[
+                        @as(usize, @intCast(cell_utf16_offset_index)) + cell
+                    ];
+                }
+                if (points.bottom_right.y == row_index) {
+                    const cell = @min(
+                        @as(usize, @intCast(points.bottom_right.x)) + 1,
+                        @as(usize, @intCast(columns)),
+                    );
+                    selection_utf16_end = cell_utf16_offsets.items[
+                        @as(usize, @intCast(cell_utf16_offset_index)) + cell
+                    ];
+                }
+            }
+
+            const row_wraps = row_pin.rowAndCell().row.wrap;
+            const line_break: u32 = @intFromBool(!row_wraps and row_index + 1 < rows);
+            visible_rows.appendAssumeCapacity(.{
+                .utf8_offset = utf8_offset,
+                .utf8_length = utf8_length,
+                .utf16_offset = utf16_offset,
+                .utf16_length = utf16_length,
+                .line_break_utf8_length = line_break,
+                .line_break_utf16_length = line_break,
+                .cell_utf16_offset_index = cell_utf16_offset_index,
+                .cell_count = columns,
+            });
+            text_utf16_length += utf16_length;
+            if (line_break == 1) {
+                text_writer.writer.writeByte('\n') catch return error.OutOfMemory;
+                text_utf16_length += 1;
+            }
+        }
+
+        const text = try text_writer.toOwnedSlice();
+        errdefer alloc.free(text);
+        const captured_rows = try visible_rows.toOwnedSlice(alloc);
+        errdefer alloc.free(captured_rows);
+        const captured_cell_offsets = try cell_utf16_offsets.toOwnedSlice(alloc);
+        errdefer alloc.free(captured_cell_offsets);
+
+        const scrollbar = screen.pages.scrollbar();
+        const cell_width_px = if (columns == 0) 0 else terminal_state.width_px / columns;
+        const cell_height_px = if (rows == 0) 0 else terminal_state.height_px / rows;
+        const cursor_point: terminal.point.Coordinate = cursor_viewport orelse .{
+            .x = cursor.x,
+            .y = cursor.y,
+        };
+        const cursor_x_px = pixelOffset(
+            0,
+            cursor_point.x,
+            cell_width_px,
+        );
+        const cursor_y_px = pixelOffset(
+            0,
+            cursor_point.y,
+            cell_height_px,
+        );
+        const selection_length = if (selection_utf16_offset != not_found and
+            selection_utf16_end != not_found and
+            selection_utf16_end >= selection_utf16_offset)
+            selection_utf16_end - selection_utf16_offset
+        else
+            0;
+
+        return .{
+            .snapshot = .{
+                .generation = 0,
+                .text = null,
+                .text_length = @intCast(text.len),
+                .text_utf16_length = text_utf16_length,
+                .visible_rows = null,
+                .visible_row_count = @intCast(captured_rows.len),
+                .cell_utf16_offsets = null,
+                .cell_utf16_offset_count = @intCast(captured_cell_offsets.len),
+                .selected_text = null,
+                .selected_text_length = if (selected_text) |value| @intCast(value.len) else 0,
+                .selection_utf16_offset = selection_utf16_offset,
+                .selection_utf16_length = selection_length,
+                .cursor_utf16_offset = cursor_utf16_offset,
+                .cursor_line = if (cursor_visible)
+                    cursor_viewport.?.y
+                else
+                    not_found,
+                .scroll_total = @intCast(scrollbar.total),
+                .scroll_offset = @intCast(scrollbar.offset),
+                .scroll_length = @intCast(scrollbar.len),
+                .columns = columns,
+                .rows = rows,
+                .width_px = terminal_state.width_px,
+                .height_px = terminal_state.height_px,
+                .cell_width_px = cell_width_px,
+                .cell_height_px = cell_height_px,
+                .padding_top_px = 0,
+                .padding_bottom_px = 0,
+                .padding_right_px = 0,
+                .padding_left_px = 0,
+                .cursor_column = cursor.x,
+                .cursor_row = cursor.y,
+                .cursor_x_px = cursor_x_px,
+                .cursor_y_px = cursor_y_px,
+                .cursor_width_px = cell_width_px,
+                .cursor_height_px = cell_height_px,
+                .has_selection = @intFromBool(selection != null),
+                .selection_is_rectangular = @intFromBool(if (selection) |value| value.rectangle else false),
+                .selection_range_clipped = @intFromBool(
+                    (if (selection) |value| !value.rectangle else false) and
+                        (selection_points == null or selection_points.?.clipped),
+                ),
+                .cursor_visible = @intFromBool(cursor_visible),
+                .cursor_pending_wrap = @intFromBool(cursor.pending_wrap),
+                .viewport_follows_bottom = @intFromBool(screen.viewportIsBottom()),
+                .reserved = .{0} ** 2,
+                .allocation = null,
+                .allocation_length = 0,
+            },
+            .text = text,
+            .visible_rows = captured_rows,
+            .cell_utf16_offsets = captured_cell_offsets,
+            .selected_text = selected_text,
+        };
+    }
+
+    fn digest(self: *const HiveSemanticCapture) [32]u8 {
+        var hash = std.crypto.hash.sha2.Sha256.init(.{});
+        hashU64(&hash, self.snapshot.text_length);
+        hashU64(&hash, self.snapshot.text_utf16_length);
+        hashU64(&hash, self.snapshot.visible_row_count);
+        hashU64(&hash, self.snapshot.cell_utf16_offset_count);
+        hashU64(&hash, self.snapshot.selected_text_length);
+        hashU64(&hash, self.snapshot.selection_utf16_offset);
+        hashU64(&hash, self.snapshot.selection_utf16_length);
+        hashU64(&hash, self.snapshot.cursor_utf16_offset);
+        hashU64(&hash, self.snapshot.cursor_line);
+        hashU64(&hash, self.snapshot.scroll_total);
+        hashU64(&hash, self.snapshot.scroll_offset);
+        hashU64(&hash, self.snapshot.scroll_length);
+        hashU32(&hash, self.snapshot.columns);
+        hashU32(&hash, self.snapshot.rows);
+        hashU32(&hash, self.snapshot.width_px);
+        hashU32(&hash, self.snapshot.height_px);
+        hashU32(&hash, self.snapshot.cell_width_px);
+        hashU32(&hash, self.snapshot.cell_height_px);
+        hashU32(&hash, self.snapshot.padding_top_px);
+        hashU32(&hash, self.snapshot.padding_bottom_px);
+        hashU32(&hash, self.snapshot.padding_right_px);
+        hashU32(&hash, self.snapshot.padding_left_px);
+        hashU32(&hash, self.snapshot.cursor_column);
+        hashU32(&hash, self.snapshot.cursor_row);
+        hashU32(&hash, self.snapshot.cursor_x_px);
+        hashU32(&hash, self.snapshot.cursor_y_px);
+        hashU32(&hash, self.snapshot.cursor_width_px);
+        hashU32(&hash, self.snapshot.cursor_height_px);
+        hashU8(&hash, self.snapshot.has_selection);
+        hashU8(&hash, self.snapshot.selection_is_rectangular);
+        hashU8(&hash, self.snapshot.selection_range_clipped);
+        hashU8(&hash, self.snapshot.cursor_visible);
+        hashU8(&hash, self.snapshot.cursor_pending_wrap);
+        hashU8(&hash, self.snapshot.viewport_follows_bottom);
+        for (self.visible_rows) |row| {
+            hashU64(&hash, row.utf8_offset);
+            hashU64(&hash, row.utf8_length);
+            hashU64(&hash, row.utf16_offset);
+            hashU64(&hash, row.utf16_length);
+            hashU32(&hash, row.line_break_utf8_length);
+            hashU32(&hash, row.line_break_utf16_length);
+            hashU32(&hash, row.cell_utf16_offset_index);
+            hashU32(&hash, row.cell_count);
+        }
+        for (self.cell_utf16_offsets) |offset| hashU64(&hash, offset);
+        hash.update(self.text);
+        if (self.selected_text) |value| hash.update(value);
+        var result: [32]u8 = undefined;
+        hash.final(&result);
+        return result;
+    }
+
+    fn deinit(self: *HiveSemanticCapture, alloc: Allocator) void {
+        alloc.free(self.text);
+        alloc.free(self.visible_rows);
+        alloc.free(self.cell_utf16_offsets);
+        if (self.selected_text) |value| alloc.free(value);
+        self.* = undefined;
+    }
+};
+
+fn hashU64(hash: *std.crypto.hash.sha2.Sha256, value: u64) void {
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &bytes, value, .little);
+    hash.update(&bytes);
+}
+
+fn hashU32(hash: *std.crypto.hash.sha2.Sha256, value: u32) void {
+    var bytes: [4]u8 = undefined;
+    std.mem.writeInt(u32, &bytes, value, .little);
+    hash.update(&bytes);
+}
+
+fn hashU8(hash: *std.crypto.hash.sha2.Sha256, value: u8) void {
+    hash.update(&.{value});
+}
+
+fn utf16Length(text: []const u8) u64 {
+    const view = std.unicode.Utf8View.init(text) catch unreachable;
+    var iterator = view.iterator();
+    var length: u64 = 0;
+    while (iterator.nextCodepoint()) |codepoint|
+        length += if (codepoint > 0xFFFF) 2 else 1;
+    return length;
+}
+
+fn utf8BoundaryBeforeCell(
+    pins: []const terminal.Pin,
+    row: terminal.Pin,
+    column: terminal.size.CellCountInt,
+    fallback: usize,
+) usize {
+    for (pins, 0..) |pin, index| {
+        if (pin.node == row.node and pin.y == row.y and pin.x >= column)
+            return index;
+    }
+    return fallback;
+}
+
+fn pixelOffset(offset: u32, cell: u32, cell_size: u32) u32 {
+    const body = std.math.mul(u32, cell, cell_size) catch return std.math.maxInt(u32);
+    return std.math.add(u32, offset, body) catch std.math.maxInt(u32);
+}
 
 /// Inspector is the state required for the terminal inspector. A terminal
 /// inspector is 1:1 with a Surface.
@@ -1888,6 +2346,89 @@ pub const CAPI = struct {
         // A checkpoint is never empty; null is invalid for every length.
         const payload = if (payload_) |ptr| ptr[0..length] else return .invalid_value;
         return manual.restore(payload, through_seq);
+    }
+
+    export fn hive_ghostty_surface_semantic_snapshot_v1(
+        surface_: ?*Surface,
+        alloc_fn_: ?c_terminal.CheckpointAllocFn,
+        context: ?*anyopaque,
+        snapshot_: ?*HiveSemanticSnapshot,
+    ) callconv(.c) GhosttyResult {
+        const snapshot = snapshot_ orelse return .invalid_value;
+        snapshot.* = std.mem.zeroes(HiveSemanticSnapshot);
+        const surface = surface_ orelse return .invalid_value;
+        const manual = surface.hive_manual orelse return .invalid_value;
+        const alloc_fn = alloc_fn_ orelse return .invalid_value;
+        const alloc = surface.app.core_app.alloc;
+
+        var capture = capture: {
+            const state = &surface.core_surface.renderer_state;
+            state.lockDemand();
+            defer state.unlockDemand();
+            break :capture manual.semanticSnapshotLocked() catch
+                return .out_of_memory;
+        };
+        defer capture.deinit(alloc);
+
+        const row_bytes = std.math.mul(
+            usize,
+            capture.visible_rows.len,
+            @sizeOf(HiveSemanticRow),
+        ) catch return .out_of_space;
+        const cell_bytes = std.math.mul(
+            usize,
+            capture.cell_utf16_offsets.len,
+            @sizeOf(u64),
+        ) catch return .out_of_space;
+        const cell_offset = row_bytes;
+        const text_offset = std.math.add(
+            usize,
+            cell_offset,
+            cell_bytes,
+        ) catch return .out_of_space;
+        const selected_offset = std.math.add(
+            usize,
+            text_offset,
+            capture.text.len,
+        ) catch return .out_of_space;
+        const allocation_length = std.math.add(
+            usize,
+            selected_offset,
+            if (capture.selected_text) |value| value.len else 0,
+        ) catch return .out_of_space;
+        const memory = alloc_fn(
+            context,
+            allocation_length,
+            @alignOf(HiveSemanticRow),
+        ) orelse return .out_of_memory;
+        const bytes: [*]u8 = @ptrCast(memory);
+
+        @memcpy(
+            bytes[0..row_bytes],
+            std.mem.sliceAsBytes(capture.visible_rows),
+        );
+        @memcpy(
+            bytes[cell_offset..text_offset],
+            std.mem.sliceAsBytes(capture.cell_utf16_offsets),
+        );
+        @memcpy(
+            bytes[text_offset..selected_offset],
+            capture.text,
+        );
+        if (capture.selected_text) |value|
+            @memcpy(bytes[selected_offset..allocation_length], value);
+
+        capture.snapshot.visible_rows = @ptrCast(@alignCast(bytes));
+        capture.snapshot.cell_utf16_offsets = @ptrCast(@alignCast(bytes + cell_offset));
+        capture.snapshot.text = @ptrCast(bytes + text_offset);
+        capture.snapshot.selected_text = if (capture.selected_text != null)
+            @ptrCast(bytes + selected_offset)
+        else
+            null;
+        capture.snapshot.allocation = memory;
+        capture.snapshot.allocation_length = @intCast(allocation_length);
+        snapshot.* = capture.snapshot;
+        return .success;
     }
 
     export fn hive_ghostty_terminal_checkpoint_export_v1(

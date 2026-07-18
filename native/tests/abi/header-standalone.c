@@ -5,6 +5,8 @@
 typedef struct { char prefix; hive_ghostty_event_e value; } hive_event_align_probe;
 typedef struct { char prefix; int value; } hive_int_align_probe;
 typedef struct { char prefix; hive_ghostty_event_s value; } hive_event_struct_align_probe;
+typedef struct { char prefix; hive_ghostty_semantic_row_s value; } hive_row_struct_align_probe;
+typedef struct { char prefix; hive_ghostty_semantic_snapshot_s value; } hive_snapshot_struct_align_probe;
 typedef struct { char prefix; void *value; } hive_pointer_align_probe;
 
 /* Gate 4 (M1-B1): freeze every wire-visible value and layout of the
@@ -51,6 +53,118 @@ enum {
   hive_event_struct_total_size = 1 / (sizeof(hive_ghostty_event_s) == 3 * sizeof(void *)),
   hive_event_struct_pointer_aligned =
       1 / (offsetof(hive_event_struct_align_probe, value) ==
+           offsetof(hive_pointer_align_probe, value)),
+
+  hive_row_utf8_offset_first =
+      1 / (offsetof(hive_ghostty_semantic_row_s, utf8_offset) == 0),
+  hive_row_utf8_length_at_8 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, utf8_length) == 8),
+  hive_row_utf16_offset_at_16 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, utf16_offset) == 16),
+  hive_row_utf16_length_at_24 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, utf16_length) == 24),
+  hive_row_break8_at_32 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, line_break_utf8_length) == 32),
+  hive_row_break16_at_36 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, line_break_utf16_length) == 36),
+  hive_row_cell_map_at_40 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, cell_utf16_offset_index) == 40),
+  hive_row_cell_count_at_44 =
+      1 / (offsetof(hive_ghostty_semantic_row_s, cell_count) == 44),
+  hive_row_size_is_48 =
+      1 / (sizeof(hive_ghostty_semantic_row_s) == 48),
+  hive_row_pointer_aligned =
+      1 / (offsetof(hive_row_struct_align_probe, value) ==
+           offsetof(hive_pointer_align_probe, value)),
+
+  hive_snapshot_generation_first =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, generation) == 0),
+  hive_snapshot_text_at_8 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, text) == 8),
+  hive_snapshot_text_length_at_16 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, text_length) == 16),
+  hive_snapshot_text_utf16_length_at_24 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, text_utf16_length) == 24),
+  hive_snapshot_rows_at_32 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, visible_rows) == 32),
+  hive_snapshot_row_count_at_40 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, visible_row_count) == 40),
+  hive_snapshot_cell_map_at_48 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cell_utf16_offsets) == 48),
+  hive_snapshot_cell_map_count_at_56 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cell_utf16_offset_count) == 56),
+  hive_snapshot_selected_text_at_64 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, selected_text) == 64),
+  hive_snapshot_selected_text_length_at_72 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, selected_text_length) == 72),
+  hive_snapshot_selection_offset_at_80 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, selection_utf16_offset) == 80),
+  hive_snapshot_selection_length_at_88 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, selection_utf16_length) == 88),
+  hive_snapshot_cursor_offset_at_96 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_utf16_offset) == 96),
+  hive_snapshot_cursor_line_at_104 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_line) == 104),
+  hive_snapshot_scroll_total_at_112 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, scroll_total) == 112),
+  hive_snapshot_scroll_offset_at_120 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, scroll_offset) == 120),
+  hive_snapshot_scroll_length_at_128 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, scroll_length) == 128),
+  hive_snapshot_columns_at_136 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, columns) == 136),
+  hive_snapshot_rows_geometry_at_140 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, rows) == 140),
+  hive_snapshot_width_at_144 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, width_px) == 144),
+  hive_snapshot_height_at_148 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, height_px) == 148),
+  hive_snapshot_cell_width_at_152 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cell_width_px) == 152),
+  hive_snapshot_cell_height_at_156 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cell_height_px) == 156),
+  hive_snapshot_padding_top_at_160 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, padding_top_px) == 160),
+  hive_snapshot_padding_bottom_at_164 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, padding_bottom_px) == 164),
+  hive_snapshot_padding_right_at_168 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, padding_right_px) == 168),
+  hive_snapshot_padding_left_at_172 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, padding_left_px) == 172),
+  hive_snapshot_cursor_column_at_176 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_column) == 176),
+  hive_snapshot_cursor_row_at_180 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_row) == 180),
+  hive_snapshot_cursor_x_at_184 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_x_px) == 184),
+  hive_snapshot_cursor_y_at_188 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_y_px) == 188),
+  hive_snapshot_cursor_width_at_192 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_width_px) == 192),
+  hive_snapshot_cursor_height_at_196 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_height_px) == 196),
+  hive_snapshot_flags_at_200 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, has_selection) == 200),
+  hive_snapshot_rectangle_at_201 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, selection_is_rectangular) == 201),
+  hive_snapshot_clipped_at_202 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, selection_range_clipped) == 202),
+  hive_snapshot_cursor_visible_at_203 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_visible) == 203),
+  hive_snapshot_pending_wrap_at_204 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, cursor_pending_wrap) == 204),
+  hive_snapshot_follows_bottom_at_205 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, viewport_follows_bottom) == 205),
+  hive_snapshot_reserved_at_206 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, reserved) == 206),
+  hive_snapshot_allocation_at_208 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, allocation) == 208),
+  hive_snapshot_allocation_length_at_216 =
+      1 / (offsetof(hive_ghostty_semantic_snapshot_s, allocation_length) == 216),
+  hive_snapshot_size_is_224 =
+      1 / (sizeof(hive_ghostty_semantic_snapshot_s) == 224),
+  hive_snapshot_pointer_aligned =
+      1 / (offsetof(hive_snapshot_struct_align_probe, value) ==
            offsetof(hive_pointer_align_probe, value))
 };
 
@@ -87,6 +201,10 @@ int main(void) {
   ghostty_result_e (*restore_surface)(
     ghostty_surface_t, const uint8_t *, size_t, uint64_t) =
     hive_ghostty_surface_restore_checkpoint_v1;
+  ghostty_result_e (*semantic_snapshot)(
+    ghostty_surface_t, hive_ghostty_alloc_fn, void *,
+    hive_ghostty_semantic_snapshot_s *) =
+    hive_ghostty_surface_semantic_snapshot_v1;
   ghostty_result_e (*export_terminal)(
     ghostty_terminal_t, hive_ghostty_alloc_fn, void *, uint8_t **, size_t *) =
     hive_ghostty_terminal_checkpoint_export_v1;
@@ -98,6 +216,7 @@ int main(void) {
   (void)new_manual;
   (void)process_output;
   (void)restore_surface;
+  (void)semantic_snapshot;
   (void)export_terminal;
   (void)import_terminal;
   (void)write_callback;

@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "WorkspaceCore", targets: ["WorkspaceCore"]),
         .library(name: "HiveTerminalKit", targets: ["HiveTerminalKit"]),
         .executable(name: "GhosttyManualIsolationProbe", targets: ["GhosttyManualIsolationProbe"]),
+        .executable(name: "GhosttyGate10Probe", targets: ["GhosttyGate10Probe"]),
         .executable(name: "HiveTerminalB20Probe", targets: ["HiveTerminalB20Probe"]),
     ],
     dependencies: [
@@ -34,7 +35,7 @@ let package = Package(
             name: "GhosttyKit",
             path: ghosttyKitPath
         ),
-        // C ABI surface for the six _v1 symbols. `include/hive_ghostty_bridge.h` is a
+        // C ABI surface for the seven _v1 symbols. `include/hive_ghostty_bridge.h` is a
         // symlink to repo-root `native/include/hive_ghostty_bridge.h` (one file pins
         // both halves — same pattern as Fixtures sharing the daemon wire doc).
         // HeaderParityTests fails closed if that link ever becomes a drifting fork.
@@ -93,6 +94,11 @@ let package = Package(
             name: "GhosttyManualIsolationProbe",
             dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
             path: "Tests/GhosttyManualIsolationProbe"
+        ),
+        .executableTarget(
+            name: "GhosttyGate10Probe",
+            dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
+            path: "Tests/GhosttyGate10Probe"
         ),
         // B2.0 boundary probe: deliberately cannot import HiveGhosttyC or
         // GhosttyKit. It drives only Workspace-visible Hive value types.

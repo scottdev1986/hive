@@ -47,6 +47,50 @@ final class Gate4ABIQualificationTests: XCTestCase {
         XCTAssertEqual(MemoryLayout<hive_ghostty_event_s>.offset(of: \.bytes), 8)
         XCTAssertEqual(MemoryLayout<hive_ghostty_event_s>.offset(of: \.length), 16)
 
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_row_s>.size, 48)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_row_s>.stride, 48)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_row_s>.alignment, 8)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_row_s>.offset(of: \.utf8_offset), 0)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_row_s>.offset(of: \.utf16_offset), 16)
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_row_s>.offset(of: \.line_break_utf8_length),
+            32
+        )
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_row_s>.offset(of: \.cell_utf16_offset_index),
+            40
+        )
+
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_snapshot_s>.size, 224)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_snapshot_s>.stride, 224)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_snapshot_s>.alignment, 8)
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.visible_rows),
+            32
+        )
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.cell_utf16_offsets),
+            48
+        )
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.selected_text),
+            64
+        )
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.scroll_total),
+            112
+        )
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.columns), 136)
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.cursor_column),
+            176
+        )
+        XCTAssertEqual(
+            MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.has_selection),
+            200
+        )
+        XCTAssertEqual(MemoryLayout<hive_ghostty_semantic_snapshot_s>.offset(of: \.allocation), 208)
+
         let buildID = String(cString: hive_ghostty_engine_build_id_v1())
         XCTAssertNotNil(buildID.range(of: "^[0-9a-f]{64}$", options: .regularExpression))
 
@@ -61,6 +105,12 @@ final class Gate4ABIQualificationTests: XCTestCase {
             hive_ghostty_surface_restore_checkpoint_v1(nil, nil, 0, 0),
             GHOSTTY_INVALID_VALUE
         )
+        var semanticSnapshot = hive_ghostty_semantic_snapshot_s()
+        XCTAssertEqual(
+            hive_ghostty_surface_semantic_snapshot_v1(nil, nil, nil, &semanticSnapshot),
+            GHOSTTY_INVALID_VALUE
+        )
+        XCTAssertNil(semanticSnapshot.allocation)
         var payload: UnsafeMutablePointer<UInt8>?
         var length = 0
         XCTAssertEqual(
@@ -80,7 +130,9 @@ final class Gate4ABIQualificationTests: XCTestCase {
             "enum_align=\(MemoryLayout<hive_ghostty_event_e>.alignment) " +
             "event_size=\(MemoryLayout<hive_ghostty_event_s>.size) " +
             "event_align=\(MemoryLayout<hive_ghostty_event_s>.alignment) " +
-            "callconv=c symbols=6 build_id=\(buildID)"
+            "row_size=\(MemoryLayout<hive_ghostty_semantic_row_s>.size) " +
+            "snapshot_size=\(MemoryLayout<hive_ghostty_semantic_snapshot_s>.size) " +
+            "callconv=c symbols=7 build_id=\(buildID)"
         )
     }
 }

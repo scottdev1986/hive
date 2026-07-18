@@ -28,9 +28,23 @@ int main(void) {
   CHECK(offsetof(hive_ghostty_event_s, length) == 2 * sizeof(void *));
   CHECK(sizeof(hive_ghostty_event_s) == 3 * sizeof(void *));
   CHECK(_Alignof(hive_ghostty_event_s) == _Alignof(void *));
+  CHECK(sizeof(hive_ghostty_semantic_row_s) == 48);
+  CHECK(_Alignof(hive_ghostty_semantic_row_s) == _Alignof(void *));
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, visible_rows) == 32);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, cell_utf16_offsets) == 48);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, selected_text) == 64);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, scroll_total) == 112);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, columns) == 136);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, cursor_column) == 176);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, has_selection) == 200);
+  CHECK(offsetof(hive_ghostty_semantic_snapshot_s, allocation) == 208);
+  CHECK(sizeof(hive_ghostty_semantic_snapshot_s) == 224);
+  CHECK(_Alignof(hive_ghostty_semantic_snapshot_s) == _Alignof(void *));
   printf(
-    "C_ABI_OK pointer=%zu enum_size=%zu enum_align=%zu event_size=%zu event_align=%zu\n",
+    "C_ABI_OK pointer=%zu enum_size=%zu enum_align=%zu event_size=%zu "
+    "event_align=%zu row_size=%zu snapshot_size=%zu symbols=7\n",
     sizeof(void *), sizeof(hive_ghostty_event_e), _Alignof(hive_ghostty_event_e),
-    sizeof(hive_ghostty_event_s), _Alignof(hive_ghostty_event_s));
+    sizeof(hive_ghostty_event_s), _Alignof(hive_ghostty_event_s),
+    sizeof(hive_ghostty_semantic_row_s), sizeof(hive_ghostty_semantic_snapshot_s));
   return 0;
 }

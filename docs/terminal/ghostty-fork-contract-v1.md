@@ -15,9 +15,10 @@ and is retained as a B1.4 handoff rather than hidden or absorbed here.
 The pinned upstream header says the embedding API is not yet general purpose
 and that its only consumer is Ghostty’s macOS app. It defines process-owning
 surface creation and the stock renderer/input callbacks, but it does not define
-manual output ingestion, ordered output sequence numbers, or checkpoints. The
-six operations below are therefore versioned and qualified as one indivisible
-Hive contract. Upstream Ghostty and Ghostling do not provide evidence for it.
+manual output ingestion, ordered output sequence numbers, checkpoints, or an
+atomic accessibility snapshot. The seven operations below are therefore
+versioned and qualified as one indivisible Hive contract. Upstream Ghostty and
+Ghostling do not provide evidence for it.
 
 ## Frozen source and toolchain
 
@@ -25,11 +26,11 @@ Hive contract. Upstream Ghostty and Ghostling do not provide evidence for it.
 |---|---|
 | Upstream commit | `73534c4680a809398b396c94ac7f12fcccb7963d` |
 | Upstream Git tree | `0aeaa44eda9efaf41523c3c0d4f6851eb81e536e` |
-| Patched Git tree | `7a199af1796ec6681d7a462b5a64ec889552f16d` |
-| Ordered patch-series SHA-256 | `77398dc2a90e642a41c42b26b6dd7e9eb26fa1841c103547c27cccd7390e25dc` |
+| Patched Git tree | `d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb` |
+| Ordered patch-series SHA-256 | `ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0` |
 | Upstream public-header SHA-256 | `36ca1c10cd07094abbf77cb14c2531899ca74c089a62f6f6cdeb07aa4927b2af` |
-| Hive bridge-header SHA-256 | `7c065bfa1ebac11b6b2ce70a14b3c06b54377ad610bf8ce0ae0d1308864f64ea` |
-| Six-symbol allowlist SHA-256 | `0ef7a18716a6bcf2a3ab1917584ed37f863a0ee183c88a037345ed55f4cc427f` |
+| Hive bridge-header SHA-256 | `275ca6b8d3af85d9e9addcdc4f4e0edc599cd8fba2f93b19fd3d1f089688fafe` |
+| Seven-symbol allowlist SHA-256 | `16e34bd7e3776904a8b5c13b69ebb3a883dcd071f090ac57e32f95cdb61139e9` |
 | Zig | `0.15.2`; official arm64 archive `3cc2bab…fa6b`; official x86_64 archive `375b6909…b43f7f` |
 | Apple toolchain | Xcode `26.6` build `17F113`; Swift `6.3.3`; Swift tools `5.10` |
 | Deployment | macOS `14.0`; universal arm64 and x86_64 static slices |
@@ -40,7 +41,7 @@ and [pinned raw header](https://raw.githubusercontent.com/ghostty-org/ghostty/73
 during qualification. Zig version and archive identities come from Zig’s
 [official 0.15.2 downloads](https://ziglang.org/download/#release-0.15.2).
 
-## The six operations
+## The seven operations
 
 1. `hive_ghostty_engine_build_id_v1` returns a nonempty, lowercase 64-digit
    hexadecimal identity. The identity binds checkpoint layout, engine inputs,
@@ -59,8 +60,14 @@ during qualification. Zig version and archive identities come from Zig’s
 6. `hive_ghostty_terminal_checkpoint_import_v1` replaces a compatible
    terminal from an opaque checkpoint and rejects a wrong build, truncation,
    corruption, or invalid size.
+7. `hive_ghostty_surface_semantic_snapshot_v1` captures viewport-bounded text
+   and rows, UTF-16 cursor and selection state, scrollbar state, and terminal
+   geometry under one renderer-state mutex acquisition. It allocates one
+   caller-owned block only after the locked capture completes. Stock separate
+   reads cannot supply this contract because renderer and termio mutation can
+   interleave between them.
 
-There are exactly six globally exported names with the `hive_ghostty_` prefix.
+There are exactly seven globally exported names with the `hive_ghostty_` prefix.
 Adding, removing, renaming, or versioning another such name is an ABI change and
 must fail the allowlist check.
 
@@ -92,7 +99,7 @@ thread, process-tree, and sampled-stack inventories are retained with the run.
 
 ## ABI and shipment rules
 
-All six functions and all three callback types use the C calling convention.
+All seven functions and all three callback types use the C calling convention.
 The result values are success `0`, out-of-memory `-1`, invalid-value `-2`,
 out-of-space `-3`, and no-value `-4`. Event values are invalidate `1`, title
 `2`, working-directory `3`, bell `4`, clipboard-denied `5`, and close-request
@@ -149,7 +156,7 @@ until the replacement has passed review and deployment.
 
 Rollback stops new surface admission, drains or closes surfaces using the new
 identity, atomically reselects the previous accepted artifact, and verifies its
-manifest, signature, notarization ticket, and six-symbol ABI before admission
+manifest, signature, notarization ticket, and seven-symbol ABI before admission
 resumes. A checkpoint is restored only by the exact matching build identity and
 architecture. Otherwise the host supplies a fresh compatible snapshot or
 ordered replay; rollback never mislabels an incompatible checkpoint as usable.

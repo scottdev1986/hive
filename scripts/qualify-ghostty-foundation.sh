@@ -234,8 +234,8 @@ for arch in arm64 x86_64; do
   /usr/bin/nm -arch "$arch" -gUj "$embedded_library" \
     | /usr/bin/sed 's/^_//' \
     | /usr/bin/grep '^hive_ghostty_' \
-    | LC_ALL=C /usr/bin/sort -u >"$EVIDENCE/$arch-six-symbols.txt"
-  /usr/bin/cmp "$EVIDENCE/$arch-six-symbols.txt" "$ROOT/native/abi/ghostty-bridge.exports"
+    | LC_ALL=C /usr/bin/sort -u >"$EVIDENCE/$arch-seven-symbols.txt"
+  /usr/bin/cmp "$EVIDENCE/$arch-seven-symbols.txt" "$ROOT/native/abi/ghostty-bridge.exports"
   run_probe "$arch" "$binary"
 done
 
