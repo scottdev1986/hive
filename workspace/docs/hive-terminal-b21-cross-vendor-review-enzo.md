@@ -64,6 +64,28 @@ property the visibility contract exists to guarantee.
 3. Add a fixture case (T) with its own mutation control covering same-key re-create under an
    active lease, and a case proving a failing teardown does not abort the sweep.
 
+## Acceptance criteria for the re-review pass
+
+Recorded so the next pass does not have to re-derive the bar (queen's routing: elaine authors
+all fixes, a non-Codex reviewer verifies — do not let the fixer and the verifier be the same
+vendor). At the new pin, require:
+
+1. **B1** — a failing `terminate()` is converted into that lease's own typed failure/`unknown`
+   and the sweep CONTINUES. Prove it with an injected throwing terminate, not by inspection.
+2. **B2** — one key binds to one live leased generation, and doc §1 no longer says "another
+   source". Same-source re-create over an active lease must be handled explicitly.
+3. The reproducer at `bootstrap/evidence/m1-b2-b21-review-enzo/orphaned-lease-reproducer.test.ts.txt`
+   must go **GREEN** at the new pin.
+4. New fixture case(s) covering the above ship a mutation control that bites **at its intended
+   assertion** — capture the faulted failure diff; "the case threw" is not sufficient.
+5. **O1 must be positive-controlled.** Swapping bare `rg` for `/usr/bin/grep` only stops the
+   `command not found`; it does not prove the check works. Require it to actually go RED against
+   a probe that genuinely imports the upstream boundary. An unproven guard here is what wrote a
+   hardcoded PASS record in the first place.
+6. Re-verify the **full** contract surface, not only changed lines: B1/B2 alter create-admission
+   and teardown semantics, so the existing eight L–S controls and ELLEN F1–F4 can regress.
+   Re-run the whole suite matrix in §5 below.
+
 ## Non-blocking observations
 
 - **O1. `if rg` fails open** — `scripts/qualify-hive-terminal-b20.sh:252` runs bare `rg` as an
