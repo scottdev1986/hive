@@ -70,6 +70,7 @@ fn initInner(
     // We should expose this as a build option in the future so we can
     // conditionally do this.
     vt_options.oniguruma = false;
+    vt_options.tmux_control_mode = false;
 
     var simd_libs: SharedDeps.LazyPathList = .empty;
 

@@ -22,6 +22,9 @@ pub const Options = struct {
     ///
     oniguruma: bool,
 
+    /// Whether tmux control mode support is available.
+    tmux_control_mode: bool,
+
     /// Whether to build SIMD-accelerated code paths. This pulls in more
     /// build-time dependencies and adds libc as a runtime dependency,
     /// but results in significant performance improvements.
@@ -71,8 +74,7 @@ pub const Options = struct {
             !(target.cpu.arch == .wasm32 and target.os.tag == .freestanding),
         );
 
-        // These are synthesized based on other options.
-        opts.addOption(bool, "tmux_control_mode", self.oniguruma);
+        opts.addOption(bool, "tmux_control_mode", self.tmux_control_mode);
 
         // Version information.
         opts.addOption(

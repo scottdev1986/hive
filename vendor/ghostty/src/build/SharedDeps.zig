@@ -133,7 +133,10 @@ pub fn add(
     step.root_module.addOptions("build_options", self.options);
 
     // Every exe needs the terminal options
-    self.config.terminalOptions(.ghostty).add(b, step.root_module);
+    var terminal_options = self.config.terminalOptions(.ghostty);
+    terminal_options.c_abi = true;
+    terminal_options.tmux_control_mode = false;
+    terminal_options.add(b, step.root_module);
 
     // C imports for locale constants and functions
     {

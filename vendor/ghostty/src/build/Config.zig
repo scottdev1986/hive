@@ -575,6 +575,7 @@ pub fn terminalOptions(self: *const Config, artifact: TerminalBuildOptions.Artif
         .artifact = artifact,
         .simd = self.simd,
         .oniguruma = true,
+        .tmux_control_mode = false,
         .c_abi = false,
         .version = switch (artifact) {
             .ghostty => self.version,

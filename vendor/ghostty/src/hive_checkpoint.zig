@@ -34,18 +34,124 @@ const identity_sources = [_][]const u8{
     @embedFile("lib_vt.zig"),
 };
 
+const Sha256 = std.crypto.hash.sha2.Sha256;
+
+fn hashInt(hash: *Sha256, value: u64) void {
+    var bytes: [8]u8 = undefined;
+    std.mem.writeInt(u64, &bytes, value, .little);
+    hash.update(&bytes);
+}
+
+fn hashText(hash: *Sha256, value: []const u8) void {
+    hash.update(value);
+    hash.update(&.{0});
+}
+
+fn hashTypeLayout(hash: *Sha256, comptime T: type) void {
+    const info = @typeInfo(T);
+    hashText(hash, @tagName(std.meta.activeTag(info)));
+    hashInt(hash, @sizeOf(T));
+    hashInt(hash, @alignOf(T));
+    hashInt(hash, @bitSizeOf(T));
+    switch (info) {
+        .int => |v| hashText(hash, @tagName(v.signedness)),
+        .@"enum" => |v| {
+            hashTypeLayout(hash, v.tag_type);
+            inline for (v.fields) |field| {
+                hashText(hash, field.name);
+                hashInt(hash, field.value);
+            }
+        },
+        .@"struct" => |v| {
+            hashText(hash, @tagName(v.layout));
+            inline for (v.fields) |field| {
+                hashText(hash, field.name);
+                if (!field.is_comptime) hashInt(hash, @bitOffsetOf(T, field.name));
+                hashTypeLayout(hash, field.type);
+            }
+        },
+        .@"union" => |v| {
+            hashText(hash, @tagName(v.layout));
+            if (v.tag_type) |tag| hashTypeLayout(hash, tag);
+            inline for (v.fields) |field| {
+                hashText(hash, field.name);
+                hashTypeLayout(hash, field.type);
+            }
+        },
+        .array => |v| {
+            hashInt(hash, v.len);
+            hashTypeLayout(hash, v.child);
+        },
+        .optional => |v| hashTypeLayout(hash, v.child),
+        .pointer => |v| {
+            hashText(hash, @tagName(v.size));
+            hashInt(hash, v.alignment);
+        },
+        else => {},
+    }
+}
+
+fn hashCheckpointLayout(hash: *Sha256) void {
+    hashText(hash, "hive-checkpoint-layout-v1");
+    hashText(hash, @tagName(builtin.target.cpu.arch.endian()));
+    hashText(hash, @tagName(builtin.target.abi));
+    hashText(hash, @tagName(builtin.target.cCharSignedness()));
+    hashInt(hash, builtin.target.ptrBitWidth());
+    hashInt(hash, std.heap.page_size_min);
+
+    // Only options that affect checkpoint bytes or replay belong here.
+    inline for (.{
+        build_options.c_abi,
+        build_options.kitty_graphics,
+        build_options.tmux_control_mode,
+        build_options.slow_runtime_safety,
+    }) |value| hashInt(hash, @intFromBool(value));
+
+    inline for (.{
+        c_char, c_int,
+        u8,     u16,
+        u21,    u32,
+        u64,    usize,
+        bool,   ?u21,
+    }) |T| hashTypeLayout(hash, T);
+    inline for (.{
+        @TypeOf(@as(Handler, undefined).apc_handler.max_bytes), @TypeOf(@as(Handler, undefined).apc_handler.enabled),
+        @TypeOf(@as(Terminal, undefined).status_display),       @TypeOf(@as(Terminal, undefined).rows),
+        @TypeOf(@as(Terminal, undefined).cols),                 Terminal.ScrollingRegion,
+        Terminal.Colors,                                        @TypeOf(@as(Terminal, undefined).modes),
+        @TypeOf(@as(Terminal, undefined).mouse_shape),          @TypeOf(@as(Terminal, undefined).flags),
+        ScreenSet.Key,                                          @TypeOf(@as(PageList, undefined).cols),
+        @TypeOf(@as(PageList, undefined).rows),                 Page,
+        Page.Layout,                                            pagepkg.Row,
+        pagepkg.Cell,                                           ?Screen.SavedCursor,
+        Screen.CharsetState,                                    @TypeOf(@as(Screen, undefined).protected_mode),
+        @TypeOf(@as(Screen, undefined).kitty_keyboard),         Screen.SemanticPrompt,
+        CursorWire,
+    }) |T| hashTypeLayout(hash, T);
+    inline for (.{
+        terminal.kitty.graphics.Image,                                         @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits),
+        @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),
+        terminal.kitty.graphics.ImageStorage.PlacementKey,                     terminal.kitty.graphics.ImageStorage.Placement,
+        @TypeOf(@as(GlyphEntry, undefined).design),                            @TypeOf(@as(GlyphEntry, undefined).width),
+        @TypeOf(@as(GlyphEntry, undefined).constraint),                        GlyphOutline.Point,
+    }) |T| hashTypeLayout(hash, T);
+
+    const page_layout = canonicalBytes(Page.layout(.{ .cols = 80, .rows = 24 }));
+    hash.update(&page_layout);
+}
+
 var build_id: [32]u8 = undefined;
 var build_id_hex: [65]u8 = undefined;
 var build_id_once = std.once(initBuildId);
 
-// Intentionally architecture-agnostic: every universal slice hashes both
-// locked Zig toolchains and the same bridge sources into one checkpoint ID.
+// Universal slices share an ID only when their serialized layouts are equal.
 fn initBuildId() void {
-    var hash = std.crypto.hash.sha2.Sha256.init(.{});
+    var hash = Sha256.init(.{});
     for (identity_sources) |source| {
         hash.update(source);
         hash.update(&.{0});
     }
+    hashCheckpointLayout(&hash);
     hash.final(&build_id);
     build_id_hex[0..64].* = std.fmt.bytesToHex(build_id, .lower);
     build_id_hex[64] = 0;
@@ -845,6 +951,27 @@ fn readGlyphs(r: *Reader, alloc: Allocator, t: *Terminal) Error!void {
             else => |e| return e,
         };
     }
+}
+
+test "checkpoint layout fingerprint covers enum backing tags and field offsets" {
+    const Narrow = enum(u8) { a = 0, b = 1 };
+    const Wide = enum(c_int) { a = 0, b = 1 };
+    const Renumbered = enum(u8) { a = 0, b = 2 };
+    const Ordered = extern struct { a: u8, b: u32 };
+    const Reordered = extern struct { b: u32, a: u8 };
+    const LayoutDigest = struct {
+        fn of(comptime T: type) [32]u8 {
+            var hash = Sha256.init(.{});
+            hashTypeLayout(&hash, T);
+            var result: [32]u8 = undefined;
+            hash.final(&result);
+            return result;
+        }
+    };
+
+    try std.testing.expect(!std.mem.eql(u8, &LayoutDigest.of(Narrow), &LayoutDigest.of(Wide)));
+    try std.testing.expect(!std.mem.eql(u8, &LayoutDigest.of(Narrow), &LayoutDigest.of(Renumbered)));
+    try std.testing.expect(!std.mem.eql(u8, &LayoutDigest.of(Ordered), &LayoutDigest.of(Reordered)));
 }
 
 test "checkpoint partial utf8 and alternate screen round trip" {
