@@ -4226,6 +4226,7 @@ fn runHostLoop(
         }
 
         if (try neutral_endpoint.acceptIfReady()) |stream| {
+            errdefer stream.close();
             refreshNeutralRecord(
                 neutral_registry,
                 neutral_endpoint.session,
