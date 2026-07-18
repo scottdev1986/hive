@@ -194,6 +194,19 @@ describe("sessiond wire framing", () => {
     expect(() => new SessiondFrameDecoder().push(encoded)).toThrow(SessiondProtocolError);
   });
 
+  test("enforces the negotiated control-frame cap", () => {
+    const encoded = encodeSessiondFrame({
+      type: "PING",
+      flags: 0,
+      requestId: 1n,
+      streamSeq: 0n,
+      payload: new Uint8Array(2),
+    });
+    expect(() => new SessiondFrameDecoder(1).push(encoded)).toThrow(
+      "sessiond control frame exceeds the negotiated v1 cap",
+    );
+  });
+
   test("ignores complete unknown optional frames", () => {
     const encoded = encodeSessiondFrame({
       type: "PING",

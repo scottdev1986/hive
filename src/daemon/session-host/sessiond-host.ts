@@ -104,6 +104,14 @@ export function encodeSessiondFrame(frame: SessiondFrame): Uint8Array {
 export class SessiondFrameDecoder {
   private buffered = new Uint8Array();
 
+  constructor(
+    private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame,
+  ) {}
+
+  setControlFrameMaxBytes(value: number): void {
+    this.controlFrameMaxBytes = value;
+  }
+
   push(chunk: Uint8Array): SessiondFrame[] {
     const combined = new Uint8Array(this.buffered.byteLength + chunk.byteLength);
     combined.set(this.buffered);
@@ -138,7 +146,7 @@ export class SessiondFrameDecoder {
       }
       const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
       const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
-      if (payloadLength > TERMINAL_LIMITS.controlJsonBytesPerFrame) {
+      if (payloadLength > this.controlFrameMaxBytes) {
         throw new SessiondProtocolError("sessiond control frame exceeds the negotiated v1 cap");
       }
       const frameLength = FRAME_HEADER.bytes + payloadLength;
@@ -195,6 +203,7 @@ export class SessiondSocketClient implements SessiondControlClient {
   private readonly pending = new Map<bigint, PendingRequest>();
   private readonly decoder = new SessiondFrameDecoder();
   private closed = false;
+  private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame;
 
   private constructor(private readonly socket: Socket) {
     socket.on("data", (chunk) =>
@@ -219,6 +228,11 @@ export class SessiondSocketClient implements SessiondControlClient {
     if (this.closed) return Promise.reject(new Error("sessiond connection is closed"));
     const requestId = this.nextRequestId++;
     const payload = textEncoder.encode(JSON.stringify(request.payload));
+    if (payload.byteLength > this.controlFrameMaxBytes) {
+      return Promise.reject(new SessiondProtocolError(
+        "sessiond control frame exceeds the negotiated v1 cap",
+      ));
+    }
     const bytes = encodeSessiondFrame({
       type: request.requestType,
       flags: request.flags ?? 0,
@@ -255,6 +269,11 @@ export class SessiondSocketClient implements SessiondControlClient {
     this.closed = true;
     this.socket.destroy();
     this.fail(new Error("sessiond connection closed"));
+  }
+
+  setControlFrameMaxBytes(value: number): void {
+    this.controlFrameMaxBytes = value;
+    this.decoder.setControlFrameMaxBytes(value);
   }
 
   private receive(chunk: Uint8Array): void {
@@ -396,10 +415,13 @@ async function connectBroker(
     if (
       welcome.endpointRole !== "broker" ||
       welcome.instanceId !== handshake.instanceId ||
-      welcome.protocol.major !== SESSION_PROTOCOL_VERSION.major
+      welcome.protocol.major !== SESSION_PROTOCOL_VERSION.major ||
+      welcome.protocol.minor < SESSION_PROTOCOL_MINOR_RANGE.min ||
+      welcome.protocol.minor > SESSION_PROTOCOL_MINOR_RANGE.max
     ) {
       throw new SessiondProtocolError("sessiond broker WELCOME does not match this daemon");
     }
+    client.setControlFrameMaxBytes(welcome.limits.controlFrameMaxBytes);
     return client;
   } catch (error) {
     client.close();
