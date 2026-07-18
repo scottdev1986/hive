@@ -165,12 +165,10 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         surface.onActionNotification = { received.append($0) }
 
         surface.setFocus(true)
-        surface.sendMousePos(x: 10, y: 10, mods: ghostty_input_mods_e(rawValue: 0))
-        _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT,
-                                    mods: ghostty_input_mods_e(rawValue: 0))
-        surface.sendMousePos(x: 220, y: 10, mods: ghostty_input_mods_e(rawValue: 0))
-        _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT,
-                                    mods: ghostty_input_mods_e(rawValue: 0))
+        surface.sendMousePos(x: 10, y: 10, modifiers: [])
+        _ = surface.sendMouseButton(state: .press, button: .left, modifiers: [])
+        surface.sendMousePos(x: 220, y: 10, modifiers: [])
+        _ = surface.sendMouseButton(state: .release, button: .left, modifiers: [])
         drainMain(0.5)
 
         XCTAssertTrue(received.contains(.selectionChanged),

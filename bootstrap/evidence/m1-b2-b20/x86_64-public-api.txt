@@ -74,6 +74,10 @@ s:15HiveTerminalKit17ManualSurfaceSizeV8heightPxs6UInt32Vvp	let heightPx: UInt32
 s:15HiveTerminalKit17ManualSurfaceSizeV11cellWidthPxs6UInt32Vvp	let cellWidthPx: UInt32
 s:15HiveTerminalKit17ManualSurfaceSizeV12cellHeightPxs6UInt32Vvp	let cellHeightPx: UInt32
 s:15HiveTerminalKit17ManualSurfaceSizeV7columns4rows7widthPx06heightJ009cellWidthJ00l6HeightJ0ACs6UInt16V_AKs6UInt32VA3Mtcfc	init(columns: UInt16, rows: UInt16, widthPx: UInt32, heightPx: UInt32, cellWidthPx: UInt32, cellHeightPx: UInt32)
+s:15HiveTerminalKit0A25GhosttyActionNotificationO	enum HiveGhosttyActionNotification
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0A25GhosttyActionNotificationO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0A25GhosttyActionNotificationO16selectionChangedyA2CmF	case selectionChanged
+s:15HiveTerminalKit0A25GhosttyActionNotificationO9scrollbaryACs6UInt64V_A2FtcACmF	case scrollbar(total: UInt64, offset: UInt64, len: UInt64)
 s:15HiveTerminalKit0abC4InfoO	enum HiveTerminalKitInfo
 s:15HiveTerminalKit0abC4InfoO6moduleSSvpZ	static let module: String
 s:15HiveTerminalKit0abC4InfoO17layersImplementedSSvpZ	static let layersImplemented: String

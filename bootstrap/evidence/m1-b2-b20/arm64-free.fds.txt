@@ -1,7 +1,7 @@
-p88104
+p97457
 f0
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.My4JMh/arm64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.m8JNwV/arm64.control
 f1
 tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b20/arm64-protocol.jsonl
@@ -10,10 +10,10 @@ tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b20/arm64-probe.stderr.txt
 f3
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.My4JMh/arm64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.m8JNwV/arm64.control
 f4
 tREG
-n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/e1af357a-d89f-4e0f-2f99-1ac61e43ed63.run.lock
+n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/5afda266-0d3f-4fa1-4b8d-eef16ec0aac3.run.lock
 f6
 tREG
 n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/C/com.apple.metal/16777235_467/functions.list

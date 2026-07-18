@@ -1,7 +1,7 @@
-p89878
+p99653
 f0
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.My4JMh/x86_64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.m8JNwV/x86_64.control
 f1
 tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b20/x86_64-protocol.jsonl
@@ -10,4 +10,4 @@ tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b20/x86_64-probe.stderr.txt
 f3
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.My4JMh/x86_64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.m8JNwV/x86_64.control
