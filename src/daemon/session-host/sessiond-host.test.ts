@@ -408,16 +408,20 @@ describe("sessiond wire framing", () => {
 describe("SessiondHost landed frozen operations", () => {
   test("reports an absent production broker as explicit not-ready evidence", async () => {
     const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-absent-"));
-    const host = new SessiondHost({
-      hiveHome: directory,
-      handshake: async () => handshake,
-    });
+    try {
+      const host = new SessiondHost({
+        hiveHome: directory,
+        handshake: async () => handshake,
+      });
 
-    const failure = host.list().catch((error) => error);
-    await expect(failure).resolves.toBeInstanceOf(SessiondBrokerUnavailableError);
-    await expect(failure).resolves.toMatchObject({
-      socketPath: join(directory, "runtime", "sessiond", "broker.sock"),
-    });
+      const failure = host.list().catch((error) => error);
+      await expect(failure).resolves.toBeInstanceOf(SessiondBrokerUnavailableError);
+      await expect(failure).resolves.toMatchObject({
+        socketPath: join(directory, "runtime", "sessiond", "broker.sock"),
+      });
+    } finally {
+      await rm(directory, { recursive: true, force: true });
+    }
   });
 
   test("sends create as one exact CREATE_BEGIN and returns exact CREATED", async () => {
