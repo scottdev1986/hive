@@ -82,9 +82,32 @@ Engine build ids (new format): arm64 7791a60d… · x86_64 34e0e103… (cross-ar
 - Gate 3/7 (dominic): pin e6d5413c.
 - DA3 fix (edwin): landed main c4325217.
 
-## Landing-turn items (need integrated async base, now on main 4f3dd06e)
+## Landing turn (COMPLETE — rebased onto main d3e4b282, async base)
 
-- Gate6SurfaceRestoreTests: un-skip + pumpMainQueue + resolve vacuous
-  restoredWrites.isEmpty + prove GREEN under async on both arches.
-- qualify-ghostty-release-lock.sh: move XCTSkip below the arch guard + assert
-  executed-and-not-skipped (kill the false-green).
+Rebase: replayed the three-fix serializer + in-place restore onto main. main's
+HiveManual.restore was still the by-value UAF (Gate 3 async did not touch the
+restore fn), so my fix applied to a Gate-3-untouched region — no foreign-code
+merge. Series regenerated: 0001 re-spliced, 0002 absorbed-hunks stripped, new
+ordered 0003 restore delta; patched-tree 7bad8cc8, series 5de6aa43; vendor
+verify + lock validation green; six exports + symbolListSha256 unchanged (no
+fork-surface growth). Post-rebase build ids: arm64 de9688e2 · x86_64 4eb4c9f6.
+
+Async items (all done + proven, both arches):
+- Gate6SurfaceRestoreTests UN-SKIPPED; pumpMainQueue drives Gate 3's async
+  callback delivery; restoredWrites.isEmpty made non-vacuous (pumped) plus a
+  new assertion that real DSR reply bytes flow (referenceWrites/restoredWrites
+  non-empty, not empty==empty). UAF fix makes pumping safe.
+- qualify-ghostty-release-lock.sh asserts the test PASS-executed AND was NOT
+  skipped (xctest exits 0 on XCTSkip/zero-match — the false-green).
+
+Landing-turn proofs:
+- RELEASE LOCK async: EXIT=0, "executed and passed (not skipped)" on arm64 AND
+  x86_64 (release-lock-landing.log).
+- POSITIVE CONTROL (mandatory): forced XCTSkip → release lock EXIT=1; xctest
+  itself exited 0 ("Executed 1 test, with 1 test skipped and 0 failures" — the
+  false-green) but the not-skipped assertion caught it: "did not PASS-execute …
+  (skipped or zero-matched?)" (release-lock-poscontrol.log). Guard bites.
+- Determinism post-rebase: fixture_difference_count=0, shipped runtime a==b==c
+  (repro-landing.log, exit 0).
+- typecheck 0, sessiond 0. Full test-lib-vt: tertiary-DA gone post-rebase
+  (edwin's DA3 landed on main).
