@@ -134,6 +134,24 @@ pub fn build(b: *std.Build) void {
     );
     neutral_host_proof_step.dependOn(&run_neutral_host_golden.step);
 
+    const neutral_control_plane_module = b.createModule(.{
+        .root_source_file = b.path("src/neutral_control_plane.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    neutral_control_plane_module.addImport("neutral_host", neutral_host_module);
+    neutral_control_plane_module.addImport("process_inspector", process_inspector_module);
+    neutral_control_plane_module.addImport("session_protocol_generated", generated);
+    const neutral_control_plane_tests = b.addTest(.{ .root_module = neutral_control_plane_module });
+    const run_neutral_control_plane_tests = b.addRunArtifact(neutral_control_plane_tests);
+    test_step.dependOn(&run_neutral_control_plane_tests.step);
+    const neutral_control_plane_step = b.step(
+        "neutral-control-plane",
+        "Run frozen neutral LIST/INSPECT/TERMINATE operation tests",
+    );
+    neutral_control_plane_step.dependOn(&run_neutral_control_plane_tests.step);
+
     // A1 contract-freeze-facing real-host discriminators. Keep the named step
     // for focused qualification and include it in the ordinary native suite.
     const pending_a1_module = b.createModule(.{
