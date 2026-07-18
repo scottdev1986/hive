@@ -15,10 +15,10 @@ import XCTest
 /// tests pump the run loop with XCTestExpectation (never block main with
 /// `DispatchGroup.wait`) so marshaled work can complete.
 final class Gate3ConcurrentCreationTests: XCTestCase {
-    /// Positive control (GREEN path): N concurrent constructors all succeed
-    /// under the factory lock. Regression detector — remove the lock and
-    /// this aborts in HIToolbox (measured: SIGABRT / TIS concurrent call)
-    /// or returns surfaceFailed.
+    /// Positive control (GREEN path): N concurrent callers all succeed after
+    /// the factory admits each complete constructor to the main queue.
+    /// Removing that admission aborts in HIToolbox (measured: SIGABRT / TIS
+    /// concurrent call) or returns surfaceFailed.
     func testConcurrentSurfaceCreationAllSucceed() throws {
         var constructionWasMain = true
         GhosttyBridgeFactory.creationObserver = { _ in
@@ -62,6 +62,8 @@ final class Gate3ConcurrentCreationTests: XCTestCase {
         XCTAssertEqual(successes, n, "concurrent create failures: \(failures)")
         XCTAssertTrue(failures.isEmpty, "concurrent create failures: \(failures)")
         XCTAssertTrue(constructionWasMain, "every native construction entry must execute on main")
+        XCTAssertEqual(GhosttyBridgeFactory.initializationCount, 1,
+                       "Ghostty's single process-global state must never be reinitialized per surface")
 
         // Free from background (marshals to main.sync); pump run loop.
         let freed = expectation(description: "frees finished")
@@ -143,7 +145,31 @@ final class Gate3ConcurrentCreationTests: XCTestCase {
         }
         wait(for: [done], timeout: 10)
 
-        XCTAssertEqual(observed.map(\.0), ["init", "configNew", "appNew", "surfaceNew"])
+        XCTAssertEqual(observed.map(\.0).filter { $0 != "init" }, ["configNew", "appNew", "surfaceNew"])
         XCTAssertTrue(observed.allSatisfy(\.1))
+    }
+
+    func testRapidBackgroundCreateFreeCyclesRemainSerialized() {
+        let cycles = 32
+        var failures: [String] = []
+        let lock = NSLock()
+        let done = expectation(description: "rapid create/free cycles")
+
+        DispatchQueue.global(qos: .userInitiated).async {
+            for cycle in 0..<cycles {
+                do {
+                    let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+                    surface.free()
+                } catch {
+                    lock.lock()
+                    failures.append("cycle=\(cycle): \(error)")
+                    lock.unlock()
+                }
+            }
+            done.fulfill()
+        }
+        wait(for: [done], timeout: 60)
+
+        XCTAssertTrue(failures.isEmpty, "rapid create/free failures: \(failures)")
     }
 }

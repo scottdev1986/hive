@@ -16,6 +16,34 @@ public enum GhosttyBridgeResult: Int32, Equatable, Sendable {
     }
 }
 
+/// Geometry reported by Ghostty after a framebuffer resize. Consumers must
+/// use these cells verbatim; deriving rows/columns from font guesses is not a
+/// supported fallback.
+public struct ManualSurfaceSize: Equatable, Sendable {
+    public let columns: UInt16
+    public let rows: UInt16
+    public let widthPx: UInt32
+    public let heightPx: UInt32
+    public let cellWidthPx: UInt32
+    public let cellHeightPx: UInt32
+
+    public init(
+        columns: UInt16,
+        rows: UInt16,
+        widthPx: UInt32,
+        heightPx: UInt32,
+        cellWidthPx: UInt32,
+        cellHeightPx: UInt32
+    ) {
+        self.columns = columns
+        self.rows = rows
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.cellWidthPx = cellWidthPx
+        self.cellHeightPx = cellHeightPx
+    }
+}
+
 /// L0 surface engine seam — production uses Ghostty; tests inject fakes.
 ///
 /// Threading contract: AppKit/Metal and every Ghostty app/surface C entry run
@@ -32,6 +60,10 @@ public protocol ManualSurfaceEngine: AnyObject {
     func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> GhosttyBridgeResult
     func setFocus(_ focused: Bool)
     func setSize(widthPx: UInt32, heightPx: UInt32)
+    func setContentScale(x: Double, y: Double)
+    func setDisplayID(_ displayID: UInt32)
+    func setOcclusion(_ visible: Bool)
+    func reportedSize() -> ManualSurfaceSize?
     func draw()
     func refresh()
     func sendKey(_ key: ghostty_input_key_s) -> Bool
@@ -63,7 +95,12 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     public private(set) var restored: [(throughSeq: UInt64, payload: Data)] = []
     public private(set) var focusCalls: [Bool] = []
     public private(set) var sizeCalls: [(UInt32, UInt32)] = []
+    public private(set) var contentScaleCalls: [(Double, Double)] = []
+    public private(set) var displayIDCalls: [UInt32] = []
+    public private(set) var occlusionCalls: [Bool] = []
+    public var fakeReportedSize: ManualSurfaceSize?
     public private(set) var drawCount = 0
+    public private(set) var refreshCount = 0
     public private(set) var freed = false
     public private(set) var textSent: [String] = []
     public private(set) var keysSent = 0
@@ -130,8 +167,12 @@ public final class FakeManualSurface: ManualSurfaceEngine {
 
     public func setFocus(_ focused: Bool) { focusCalls.append(focused) }
     public func setSize(widthPx: UInt32, heightPx: UInt32) { sizeCalls.append((widthPx, heightPx)) }
+    public func setContentScale(x: Double, y: Double) { contentScaleCalls.append((x, y)) }
+    public func setDisplayID(_ displayID: UInt32) { displayIDCalls.append(displayID) }
+    public func setOcclusion(_ visible: Bool) { occlusionCalls.append(visible) }
+    public func reportedSize() -> ManualSurfaceSize? { fakeReportedSize }
     public func draw() { drawCount += 1 }
-    public func refresh() {}
+    public func refresh() { refreshCount += 1 }
     public func sendKey(_ key: ghostty_input_key_s) -> Bool {
         keysSent += 1
         keysSentDetail.append(KeySent(
@@ -276,6 +317,38 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         ghostty_surface_set_size(surface, widthPx, heightPx)
     }
 
+    public func setContentScale(x: Double, y: Double) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_content_scale(surface, x, y)
+    }
+
+    public func setDisplayID(_ displayID: UInt32) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_display_id(surface, displayID)
+    }
+
+    public func setOcclusion(_ visible: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_occlusion(surface, visible)
+    }
+
+    public func reportedSize() -> ManualSurfaceSize? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return nil }
+        let size = ghostty_surface_size(surface)
+        return ManualSurfaceSize(
+            columns: size.columns,
+            rows: size.rows,
+            widthPx: size.width_px,
+            heightPx: size.height_px,
+            cellWidthPx: size.cell_width_px,
+            cellHeightPx: size.cell_height_px
+        )
+    }
+
     public func draw() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
@@ -345,6 +418,7 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         performOnMainSync {
             guard self.ownsSurface, let surface = self.rawSurfaceHandle else { return }
             self.callbackContext.beginTeardown()
+            GhosttySurfaceCallbackRegistry.shared.unregister(surface)
             self.rawSurfaceHandle = nil
             self.ownsSurface = false
             self.operationObserver?("surfaceFree", .begin)
@@ -645,6 +719,42 @@ public enum HiveGhosttyActionPolicy {
     }
 }
 
+/// `ghostty_runtime_action_cb` has no userdata parameter. Keep the surface to
+/// callback-context association here so renderer-health actions can be copied
+/// without calling any Ghostty API from inside the callback. The registry lock
+/// is never held across a C call, main-queue hop, or context lock.
+private final class GhosttySurfaceCallbackRegistry: @unchecked Sendable {
+    static let shared = GhosttySurfaceCallbackRegistry()
+
+    private final class WeakContext {
+        weak var value: BridgeCallbackContext?
+        init(_ value: BridgeCallbackContext) { self.value = value }
+    }
+
+    private let lock = NSLock()
+    private var contexts: [UInt: WeakContext] = [:]
+
+    func register(_ surface: ghostty_surface_t, context: BridgeCallbackContext) {
+        lock.lock()
+        contexts[UInt(bitPattern: surface)] = WeakContext(context)
+        lock.unlock()
+    }
+
+    func unregister(_ surface: ghostty_surface_t) {
+        lock.lock()
+        contexts.removeValue(forKey: UInt(bitPattern: surface))
+        lock.unlock()
+    }
+
+    func enqueueRendererHealth(_ health: RendererHealth, for surface: ghostty_surface_t?) {
+        guard let surface else { return }
+        lock.lock()
+        let context = contexts[UInt(bitPattern: surface)]?.value
+        lock.unlock()
+        context?.enqueueRendererHealth(health)
+    }
+}
+
 /// Owns a Ghostty app + config for manual surface creation (M2).
 public final class GhosttyAppOwner {
     public let app: ghostty_app_t
@@ -697,6 +807,8 @@ public enum GhosttyBridgeFactory {
     /// Test seam: observes each real C construction entry after main-queue
     /// admission. Production leaves this nil.
     static var creationObserver: ((String) -> Void)?
+    private(set) static var initializationCount = 0
+    private static var globalInitialized = false
 
     /// Builds the runtime config passed to `ghostty_app_new` — pulled out of
     /// `makeManualSurface` so gate 3 tests can assert the REAL factory wires
@@ -711,7 +823,20 @@ public enum GhosttyBridgeFactory {
             wakeup_cb: ghosttyAppWakeupTrampoline,
             // Gate 9: typed per-tag policy, not a blanket false — see
             // HiveGhosttyActionPolicy.
-            action_cb: { _, _, action in HiveGhosttyActionPolicy.handle(action.tag) },
+            action_cb: { _, target, action in
+                let handled = HiveGhosttyActionPolicy.handle(action.tag)
+                if action.tag == GHOSTTY_ACTION_RENDERER_HEALTH,
+                   target.tag == GHOSTTY_TARGET_SURFACE {
+                    let health: RendererHealth = action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_HEALTHY
+                        ? .healthy
+                        : .unhealthy
+                    GhosttySurfaceCallbackRegistry.shared.enqueueRendererHealth(
+                        health,
+                        for: target.target.surface
+                    )
+                }
+                return handled
+            },
             read_clipboard_cb: { _, _, _ in false },
             confirm_read_clipboard_cb: { _, _, _, _ in },
             write_clipboard_cb: { _, _, _, _, _ in },
@@ -747,9 +872,7 @@ public enum GhosttyBridgeFactory {
     ) throws -> GhosttyManualSurface {
         dispatchPrecondition(condition: .onQueue(.main))
 
-        // ghostty_init is idempotent for process lifetime.
-        creationObserver?("init")
-        _ = ghostty_init(0, nil)
+        try ensureGlobalInitializedOnMain()
 
         creationObserver?("configNew")
         guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
@@ -783,7 +906,10 @@ public enum GhosttyBridgeFactory {
                 nsview: Unmanaged.passUnretained(hostView).toOpaque()
             )
         )
-        surfaceConfig.scale_factor = Double(hostView.window?.backingScaleFactor ?? 2.0)
+        // The view synchronizes the real backing scale after attachment and on
+        // every screen/backing change. Until then, 1× is a neutral provisional
+        // value; assuming Retina here would be guessed geometry.
+        surfaceConfig.scale_factor = Double(hostView.window?.backingScaleFactor ?? 1.0)
         surfaceConfig.font_size = 13
 
         let callbackContext = BridgeCallbackContext()
@@ -801,6 +927,7 @@ public enum GhosttyBridgeFactory {
         ) else {
             throw FactoryError.surfaceFailed
         }
+        GhosttySurfaceCallbackRegistry.shared.register(surface, context: callbackContext)
 
         // Size the surface (never 0×0).
         let w = widthPx > 0 ? widthPx : UInt32(max(1, hostView.bounds.width))
@@ -814,6 +941,15 @@ public enum GhosttyBridgeFactory {
             appOwner: owner,
             ownsSurface: true
         )
+    }
+
+    private static func ensureGlobalInitializedOnMain() throws {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !globalInitialized else { return }
+        creationObserver?("init")
+        guard ghostty_init(0, nil) == 0 else { throw FactoryError.initFailed }
+        globalInitialized = true
+        initializationCount += 1
     }
 
     /// One-line manual-surface config policy, written once per process.

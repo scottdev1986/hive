@@ -21,10 +21,16 @@ public struct BridgeEvent: Equatable, Sendable {
     }
 }
 
+public enum RendererHealth: Equatable, Sendable {
+    case healthy
+    case unhealthy
+}
+
 /// MEMORY-SAFETY-SENSITIVE Swift↔C callback boundary (§23).
 ///
-/// Bridge callbacks are **non-reentrant**. Their C-facing bodies only copy;
-/// host handlers are delivered later on the main queue.
+/// C-facing callback bodies only copy and may overlap on native worker
+/// threads; host handlers are delivered later on the serial main queue and
+/// never re-enter Ghostty.
 /// Pointers/`bytes` fields are valid **only for the duration of the call**.
 /// This context **always copies** write and event bytes synchronously before
 /// returning to C.
@@ -40,9 +46,15 @@ public struct BridgeEvent: Equatable, Sendable {
 public final class BridgeCallbackContext: @unchecked Sendable {
     private var writeHandler: ((Data) -> Void)?
     private var eventHandler: ((BridgeEvent) -> Void)?
+    private var rendererHealthHandler: ((RendererHealth) -> Void)?
     private var acceptingCallbacks = true
     private var activeCallbacks = 0
     private let condition = NSCondition()
+
+    /// Gate 3 test seam: production leaves this nil. Runs inside the admitted
+    /// copy scope so teardown-vs-callback ordering can be proved without a
+    /// timing-dependent oversized allocation.
+    var callbackCopyObserver: (() -> Void)?
 
     public var onWrite: ((Data) -> Void)? {
         get {
@@ -70,6 +82,19 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
+    public var onRendererHealth: ((RendererHealth) -> Void)? {
+        get {
+            condition.lock()
+            defer { condition.unlock() }
+            return rendererHealthHandler
+        }
+        set {
+            condition.lock()
+            rendererHealthHandler = acceptingCallbacks ? newValue : nil
+            condition.unlock()
+        }
+    }
+
     public init() {}
 
     /// Synchronous write body. Copies `length` bytes from `bytes` before
@@ -77,6 +102,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
     /// the native renderer mutex may be held.
     public func handleWrite(bytes: UnsafePointer<UInt8>?, length: Int) {
         guard enter() else { return }
+        callbackCopyObserver?()
         let copy: Data
         if length > 0, let bytes {
             copy = Data(bytes: bytes, count: length)
@@ -137,6 +163,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         }
         writeHandler = nil
         eventHandler = nil
+        rendererHealthHandler = nil
         condition.unlock()
     }
 
@@ -162,19 +189,33 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
+    /// Surface-scoped action-callback seam. The C enum is copied to this
+    /// Swift value before return; host delivery remains deferred to main.
+    func enqueueRendererHealth(_ health: RendererHealth) {
+        guard enter() else { return }
+        leave()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.condition.lock()
+            let handler = self.acceptingCallbacks ? self.rendererHealthHandler : nil
+            self.condition.unlock()
+            handler?(health)
+        }
+    }
+
     private func enter() -> Bool {
         condition.lock()
         defer { condition.unlock() }
         guard acceptingCallbacks else { return false }
-        precondition(activeCallbacks == 0, "bridge callbacks are non-reentrant")
-        activeCallbacks = 1
+        activeCallbacks += 1
         return true
     }
 
     private func leave() {
         condition.lock()
-        activeCallbacks = 0
-        condition.broadcast()
+        precondition(activeCallbacks > 0)
+        activeCallbacks -= 1
+        if activeCallbacks == 0 { condition.broadcast() }
         condition.unlock()
     }
 }

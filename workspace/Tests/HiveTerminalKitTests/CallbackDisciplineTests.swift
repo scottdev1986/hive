@@ -113,6 +113,59 @@ final class CallbackDisciplineTests: XCTestCase {
         XCTAssertEqual(deliveries, 0, "queued callbacks must self-drop once teardown closes admission")
     }
 
+    func testTeardownAlsoDropsQueuedRendererHealthDelivery() {
+        let ctx = BridgeCallbackContext()
+        var deliveries = 0
+        ctx.onRendererHealth = { _ in deliveries += 1 }
+
+        ctx.enqueueRendererHealth(.unhealthy)
+        ctx.beginTeardown()
+        pumpMainQueue()
+
+        XCTAssertEqual(deliveries, 0, "renderer-health actions cannot arrive after surface teardown")
+    }
+
+    func testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight() throws {
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        surface.callbackContext.callbackCopyObserver = {
+            entered.signal()
+            release.wait()
+        }
+        var deliveries = 0
+        surface.callbackContext.onWrite = { _ in deliveries += 1 }
+
+        let byte = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+        byte.initialize(to: 0x41)
+        defer { byte.deallocate() }
+
+        let callbackDone = expectation(description: "callback returned")
+        DispatchQueue.global(qos: .userInitiated).async {
+            hiveBridgeWriteTrampoline(
+                surface.callbackContext.unownedContextPointer,
+                UnsafePointer(byte),
+                1
+            )
+            callbackDone.fulfill()
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 1), .success)
+
+        let freeDone = expectation(description: "surface free returned")
+        DispatchQueue.global(qos: .userInitiated).async {
+            surface.free()
+            freeDone.fulfill()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            release.signal()
+        }
+
+        wait(for: [callbackDone, freeDone], timeout: 3)
+        pumpMainQueue()
+        XCTAssertNil(surface.surfaceHandle)
+        XCTAssertEqual(deliveries, 0, "delivery queued by the completed copy must drop after teardown")
+    }
+
     func testCallbackMayRequestFreeOnlyAfterTrampolineReturns() {
         let ctx = BridgeCallbackContext()
         let engine = FakeManualSurface(callbackContext: ctx)

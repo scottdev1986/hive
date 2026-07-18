@@ -60,19 +60,25 @@ final class Gate3OperationDomainTests: XCTestCase {
         let stateLock = NSLock()
         var activeOperations = 0
         var overlapDetected = false
-        surface.operationObserver = { _, phase in
+        var freeEnded = false
+        surface.operationObserver = { operation, phase in
             stateLock.lock()
             if phase == .begin {
                 activeOperations += 1
                 overlapDetected = overlapDetected || activeOperations > 1
             } else {
                 activeOperations -= 1
+                if operation == "surfaceFree" { freeEnded = true }
             }
             stateLock.unlock()
         }
 
         var deliveredAfterFree = 0
-        surface.callbackContext.onEvent = { _ in deliveredAfterFree += 1 }
+        surface.callbackContext.onEvent = { _ in
+            stateLock.lock()
+            if freeEnded { deliveredAfterFree += 1 }
+            stateLock.unlock()
+        }
         let start = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
         DispatchQueue.global().async(group: group) {
