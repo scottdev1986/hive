@@ -298,6 +298,7 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
               buildHostCommand: () => [
                 "/bin/sh",
                 "-c",
+                `test "$HIVE_HOME" = ${JSON.stringify(home)} && ` +
                 "while IFS= read -r line; do :; done",
               ],
               startAgent: async () => {},

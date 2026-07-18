@@ -875,7 +875,11 @@ export class HiveSpawner implements Spawner {
       toolSessionId: record.toolSessionId ?? null,
       cwd: record.worktreePath,
       argv: ["/bin/sh", "-lc", command],
-      environment: {},
+      environment: Object.fromEntries(
+        Object.entries(process.env).filter(
+          (entry): entry is [string, string] => entry[1] !== undefined,
+        ),
+      ),
       expectedExecutable,
       readOnly: record.readOnly,
       capabilityEpoch: record.capabilityEpoch,
