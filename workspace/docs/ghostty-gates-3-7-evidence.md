@@ -126,9 +126,9 @@ Retina display: 3456×2234 physical pixels, 1728×1117 logical points at 120 Hz.
 | Focused unsanitized Gate 3/7/link corpus after fixes | 42 tests executed; 41 passed, 1 physical-hardware test skipped, 0 failures |
 | Raw ThreadSanitizer rapid-create run before fix | repeated process-global-init thread warnings, including one per rapid create; this run caught the false idempotence assumption |
 | Raw ThreadSanitizer rapid-create run after fix | 4 tests passed; warnings reduced to one process-lifetime GlobalState thread at xctest exit |
-| `TSAN_OPTIONS=report_thread_leaks=0:halt_on_error=1 swift test --sanitize=thread --filter 'AppWakeupLifecycleTests\|CallbackDisciplineTests\|Gate3ConcurrentCreationTests\|Gate3OperationDomainTests\|Gate7RenderingTests'` | 35 tests passed; no data-race report |
+| `TSAN_OPTIONS=report_thread_leaks=0:halt_on_error=1 swift test --sanitize=thread --filter 'AppWakeupLifecycleTests\|CallbackDisciplineTests\|Gate3ConcurrentCreationTests\|Gate3OperationDomainTests\|Gate7RenderingTests'` | 37 tests executed; 36 passed, 1 physical-hardware test skipped; no data-race report |
 | Targeted ThreadSanitizer callback-copy/free and output/free races after the final callback counter fix | 2 tests passed; no data-race report |
-| `ASAN_OPTIONS=halt_on_error=1 swift test --sanitize=address --filter 'AppWakeupLifecycleTests\|CallbackDisciplineTests\|Gate3ConcurrentCreationTests\|Gate3OperationDomainTests\|Gate7RenderingTests'` | 35 tests passed; no address-safety report |
+| `ASAN_OPTIONS=halt_on_error=1 swift test --sanitize=address --filter 'AppWakeupLifecycleTests\|CallbackDisciplineTests\|Gate3ConcurrentCreationTests\|Gate3OperationDomainTests\|Gate7RenderingTests'` | 37 tests executed; 36 passed, 1 physical-hardware test skipped; no address-safety report |
 | Targeted AddressSanitizer callback-copy/free and two-surface health routing after the final callback counter fix | 2 tests passed; no address-safety report |
 | ASAN leak detection | unavailable: Apple's sanitizer aborted with “detect_leaks is not supported on this platform”; this is not recorded as leak proof |
 

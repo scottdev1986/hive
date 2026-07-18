@@ -129,9 +129,17 @@ final class CallbackDisciplineTests: XCTestCase {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
         let entered = DispatchSemaphore(value: 0)
         let release = DispatchSemaphore(value: 0)
+        let orderLock = NSLock()
+        var nextOrder = 0
+        var copyObserverReturnedOrder: Int?
+        var freeReturnedOrder: Int?
         surface.callbackContext.callbackCopyObserver = {
             entered.signal()
             release.wait()
+            orderLock.lock()
+            nextOrder += 1
+            copyObserverReturnedOrder = nextOrder
+            orderLock.unlock()
         }
         var deliveries = 0
         surface.callbackContext.onWrite = { _ in deliveries += 1 }
@@ -154,6 +162,10 @@ final class CallbackDisciplineTests: XCTestCase {
         let freeDone = expectation(description: "surface free returned")
         DispatchQueue.global(qos: .userInitiated).async {
             surface.free()
+            orderLock.lock()
+            nextOrder += 1
+            freeReturnedOrder = nextOrder
+            orderLock.unlock()
             freeDone.fulfill()
         }
         DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
@@ -162,6 +174,17 @@ final class CallbackDisciplineTests: XCTestCase {
 
         wait(for: [callbackDone, freeDone], timeout: 3)
         pumpMainQueue()
+        orderLock.lock()
+        let observedCopyReturn = copyObserverReturnedOrder
+        let observedFreeReturn = freeReturnedOrder
+        orderLock.unlock()
+        XCTAssertNotNil(observedCopyReturn)
+        XCTAssertNotNil(observedFreeReturn)
+        XCTAssertLessThan(
+            observedCopyReturn ?? .max,
+            observedFreeReturn ?? .min,
+            "surface free must return only after the in-flight callback copy scope returns"
+        )
         XCTAssertNil(surface.surfaceHandle)
         XCTAssertEqual(deliveries, 0, "delivery queued by the completed copy must drop after teardown")
     }
