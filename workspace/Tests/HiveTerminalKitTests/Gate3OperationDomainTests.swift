@@ -36,7 +36,7 @@ final class Gate3OperationDomainTests: XCTestCase {
             }
         }
 
-        var result: GhosttyBridgeResult?
+        var result: HiveTerminalEngineResult?
         let finished = expectation(description: "off-main output finished")
         DispatchQueue.global(qos: .userInitiated).async {
             result = surface.processOutput(bytes: source, streamSeq: 0)

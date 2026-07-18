@@ -1,5 +1,4 @@
 import AppKit
-import HiveGhosttyC
 
 /// Accessibility (M1-B1 gate 10): neither ghostty.h nor Ghostling supplies
 /// Hive's AppKit accessibility contract, so this is a Hive-owned surface
@@ -21,16 +20,7 @@ extension HiveTerminalView {
     /// real app's cachedScreenContents source exactly. Empty string when no
     /// surface is bound (degenerate but valid — never a crash).
     private func accessibilityScreenContents() -> String {
-        guard let handle = engine.surfaceHandle else { return "" }
-        var text = ghostty_text_s()
-        let selection = ghostty_selection_s(
-            top_left: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_TOP_LEFT, x: 0, y: 0),
-            bottom_right: ghostty_point_s(tag: GHOSTTY_POINT_SCREEN, coord: GHOSTTY_POINT_COORD_BOTTOM_RIGHT, x: 0, y: 0),
-            rectangle: false
-        )
-        guard ghostty_surface_read_text(handle, selection, &text) else { return "" }
-        defer { ghostty_surface_free_text(handle, &text) }
-        return String(cString: text.text)
+        engine.readScreenText()
     }
 
     public override func isAccessibilityElement() -> Bool { true }
@@ -49,12 +39,8 @@ extension HiveTerminalView {
     /// when nothing is selected, so a screen reader announces "no
     /// selection" rather than an empty read.
     public override func accessibilitySelectedText() -> String? {
-        guard let handle = engine.surfaceHandle else { return nil }
-        var text = ghostty_text_s()
-        guard ghostty_surface_read_selection(handle, &text) else { return nil }
-        defer { ghostty_surface_free_text(handle, &text) }
-        let str = String(cString: text.text)
-        return str.isEmpty ? nil : str
+        guard let text = engine.readSelectedText(), !text.isEmpty else { return nil }
+        return text
     }
 
     /// NSAccessibility text APIs are UTF-16/NSString-indexed: character

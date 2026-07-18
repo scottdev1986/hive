@@ -1,0 +1,391 @@
+s:15HiveTerminalKit19AttachReplayOutcomeO	enum AttachReplayOutcome
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit19AttachReplayOutcomeO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit19AttachReplayOutcomeO17firstCorrectFrameyACs6UInt64V_SStcACmF	case firstCorrectFrame(highWater: UInt64, connectionId: String)
+s:15HiveTerminalKit19AttachReplayOutcomeO6failedyAcA0B12SurfaceStateOcACmF	case failed(TerminalSurfaceState)
+s:15HiveTerminalKit19AttachReplayOutcomeO17rejectedLateFrameyA2CmF	case rejectedLateFrame
+s:15HiveTerminalKit19AttachReplayOutcomeO08continueE0yA2CmF	case continueReplay
+s:15HiveTerminalKit18AttachReplayClientC	final class AttachReplayClient
+s:15HiveTerminalKit18AttachReplayClientC5stateAA0B12SurfaceStateOvp	var state: TerminalSurfaceState { get }
+s:15HiveTerminalKit18AttachReplayClientC7bindingAA14SurfaceBindingVSgvp	var binding: SurfaceBinding? { get }
+s:15HiveTerminalKit18AttachReplayClientC9highWaters6UInt64Vvp	var highWater: UInt64 { get }
+s:15HiveTerminalKit18AttachReplayClientC17claimPresentationAA010InputClaimH0Ovp	var claimPresentation: InputClaimPresentation { get }
+s:15HiveTerminalKit18AttachReplayClientC26firstCorrectFramePresentedSbvp	var firstCorrectFramePresented: Bool { get }
+s:15HiveTerminalKit18AttachReplayClientC8viewerIdSSvp	let viewerId: String
+s:15HiveTerminalKit18AttachReplayClientC10applicatorAA21OutputRangeApplicatorCvp	let applicator: OutputRangeApplicator
+s:15HiveTerminalKit18AttachReplayClientC16handshakeTimeoutSdvp	var handshakeTimeout: TimeInterval
+s:15HiveTerminalKit18AttachReplayClientC17streamIdleTimeoutSdvp	var streamIdleTimeout: TimeInterval
+s:15HiveTerminalKit18AttachReplayClientC21resizeQuiescenceNanoss6UInt64VvpZ	static let resizeQuiescenceNanos: UInt64
+s:15HiveTerminalKit18AttachReplayClientC6attach5grant8geometry8afterSeq9transportAA0dE7OutcomeOAA0D5GrantV_AA0B8GeometryVs6UInt64VAA13HostTransport_ptKF	@discardableResult func attach(grant: AttachGrant, geometry: TerminalGeometry, afterSeq: UInt64, transport: any HostTransport) throws -> AttachReplayOutcome
+s:15HiveTerminalKit18AttachReplayClientC11handleFrame_12frameBindingAA0dE7OutcomeOAA04WireH0V_AA07SurfaceJ0VtKF	func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome
+s:15HiveTerminalKit18AttachReplayClientC18handleEncodedWriteyy10Foundation4DataVF	func handleEncodedWrite(_ bytes: Data)
+s:15HiveTerminalKit18AttachReplayClientC17beginClaimAcquireyyKF	func beginClaimAcquire() throws
+s:15HiveTerminalKit18AttachReplayClientC15noteClaimResult7claimId5ownedySS_SbtF	func noteClaimResult(claimId: String, owned: Bool)
+s:15HiveTerminalKit18AttachReplayClientC12noteOrphaned7claimIdySS_tF	func noteOrphaned(claimId: String)
+s:15HiveTerminalKit18AttachReplayClientC10sendResizeyyAA0B8GeometryVKF	func sendResize(_ geometry: TerminalGeometry) throws
+s:15HiveTerminalKit13HostTransportP	protocol HostTransport : AnyObject
+s:15HiveTerminalKit13HostTransportP12connectionIdSSvp	var connectionId: String { get }
+s:15HiveTerminalKit13HostTransportP8isClosedSbvp	var isClosed: Bool { get }
+s:15HiveTerminalKit13HostTransportP4sendyyAA9WireFrameVKF	func send(_ frame: WireFrame) throws
+s:15HiveTerminalKit13HostTransportP7receive7timeoutAA9WireFrameVSgSdSg_tKF	func receive(timeout: TimeInterval?) throws -> WireFrame?
+s:15HiveTerminalKit13HostTransportP5closeyyF	func close()
+s:15HiveTerminalKit13HostTransportPAAE7receiveAA9WireFrameVSgyKF	func receive() throws -> WireFrame?
+s:15HiveTerminalKit14RendererHealthO	enum RendererHealth
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit14RendererHealthO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit14RendererHealthO7healthyyA2CmF	case healthy
+s:15HiveTerminalKit14RendererHealthO9unhealthyyA2CmF	case unhealthy
+s:15HiveTerminalKit0aB14EngineIdentityV	struct HiveTerminalEngineIdentity
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0aB14EngineIdentityV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0aB14EngineIdentityV20pinnedUpstreamCommitSSvpZ	static let pinnedUpstreamCommit: String
+s:15HiveTerminalKit0aB14EngineIdentityV14upstreamCommitSSvp	let upstreamCommit: String
+s:15HiveTerminalKit0aB14EngineIdentityV7buildIdSSvp	let buildId: String
+s:15HiveTerminalKit0aB14EngineIdentityV14upstreamCommit7buildIdACSS_SStcfc	init(upstreamCommit: String, buildId: String)
+s:15HiveTerminalKit0aB14EngineIdentityV7currentACvpZ	static var current: HiveTerminalEngineIdentity { get }
+s:15HiveTerminalKit0aB14RenderEvidenceV	struct HiveTerminalRenderEvidence
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0aB14RenderEvidenceV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0aB14RenderEvidenceV6engineAA0aB14EngineIdentityVvp	let engine: HiveTerminalEngineIdentity
+s:15HiveTerminalKit0aB14RenderEvidenceV7locatorAA14SessionLocatorVSgvp	let locator: SessionLocator?
+s:15HiveTerminalKit0aB14RenderEvidenceV9highWaters6UInt64Vvp	let highWater: UInt64
+s:15HiveTerminalKit0aB14RenderEvidenceV9drawCountSivp	let drawCount: Int
+s:15HiveTerminalKit0aB14RenderEvidenceV10layerClassSSSgvp	let layerClass: String?
+s:15HiveTerminalKit0aB14RenderEvidenceV20hasPresentedContentsSbvp	let hasPresentedContents: Bool
+s:15HiveTerminalKit0aB14RenderEvidenceV6engine7locator9highWater9drawCount10layerClass20hasPresentedContentsAcA0aB14EngineIdentityV_AA14SessionLocatorVSgs6UInt64VSiSSSgSbtcfc	init(engine: HiveTerminalEngineIdentity, locator: SessionLocator?, highWater: UInt64, drawCount: Int, layerClass: String?, hasPresentedContents: Bool)
+s:15HiveTerminalKit0aB12BindingErrorO	enum HiveTerminalBindingError
+s:s5ErrorP10FoundationE20localizedDescriptionSSvp::SYNTHESIZED::s:15HiveTerminalKit0aB12BindingErrorO	var localizedDescription: String { get }
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0aB12BindingErrorO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0aB12BindingErrorO14locatorChangedyAcA14SessionLocatorV_AFtcACmF	case locatorChanged(expected: SessionLocator, attempted: SessionLocator)
+s:15HiveTerminalKit0aB12BindingErrorO6closedyA2CmF	case closed
+s:15HiveTerminalKit0aB12BindingErrorO11descriptionSSvp	var description: String { get }
+s:15HiveTerminalKit0aB12EngineResultO	enum HiveTerminalEngineResult
+s:SYsSHRzSH8RawValueSYRpzrlE04hashB0Sivp::SYNTHESIZED::s:15HiveTerminalKit0aB12EngineResultO	var hashValue: Int { get }
+s:SYsSHRzSH8RawValueSYRpzrlE4hash4intoys6HasherVz_tF::SYNTHESIZED::s:15HiveTerminalKit0aB12EngineResultO	func hash(into hasher: inout Hasher)
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0aB12EngineResultO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0aB12EngineResultO7successyA2CmF	case success
+s:15HiveTerminalKit0aB12EngineResultO11outOfMemoryyA2CmF	case outOfMemory
+s:15HiveTerminalKit0aB12EngineResultO12invalidValueyA2CmF	case invalidValue
+s:15HiveTerminalKit0aB12EngineResultO10outOfSpaceyA2CmF	case outOfSpace
+s:15HiveTerminalKit0aB12EngineResultO7noValueyA2CmF	case noValue
+s:15HiveTerminalKit0aB12EngineResultO8rawValueACSgs5Int32V_tcfc	init?(rawValue: Int32)
+s:15HiveTerminalKit17ManualSurfaceSizeV	struct ManualSurfaceSize
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit17ManualSurfaceSizeV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit17ManualSurfaceSizeV7columnss6UInt16Vvp	let columns: UInt16
+s:15HiveTerminalKit17ManualSurfaceSizeV4rowss6UInt16Vvp	let rows: UInt16
+s:15HiveTerminalKit17ManualSurfaceSizeV7widthPxs6UInt32Vvp	let widthPx: UInt32
+s:15HiveTerminalKit17ManualSurfaceSizeV8heightPxs6UInt32Vvp	let heightPx: UInt32
+s:15HiveTerminalKit17ManualSurfaceSizeV11cellWidthPxs6UInt32Vvp	let cellWidthPx: UInt32
+s:15HiveTerminalKit17ManualSurfaceSizeV12cellHeightPxs6UInt32Vvp	let cellHeightPx: UInt32
+s:15HiveTerminalKit17ManualSurfaceSizeV7columns4rows7widthPx06heightJ009cellWidthJ00l6HeightJ0ACs6UInt16V_AKs6UInt32VA3Mtcfc	init(columns: UInt16, rows: UInt16, widthPx: UInt32, heightPx: UInt32, cellWidthPx: UInt32, cellHeightPx: UInt32)
+s:15HiveTerminalKit0abC4InfoO	enum HiveTerminalKitInfo
+s:15HiveTerminalKit0abC4InfoO6moduleSSvpZ	static let module: String
+s:15HiveTerminalKit0abC4InfoO17layersImplementedSSvpZ	static let layersImplemented: String
+s:15HiveTerminalKit0abC4InfoO6l3SeamSSvpZ	static let l3Seam: String
+s:15HiveTerminalKit17OutputApplyResultO	enum OutputApplyResult
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit17OutputApplyResultO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit17OutputApplyResultO7appliedyACs6UInt64V_tcACmF	case applied(newHighWater: UInt64)
+s:15HiveTerminalKit17OutputApplyResultO16duplicateIgnoredyA2CmF	case duplicateIgnored
+s:15HiveTerminalKit17OutputApplyResultO17gapRebaseRequiredyA2CmF	case gapRebaseRequired
+s:15HiveTerminalKit17OutputApplyResultO28digestConflictRebaseRequiredyA2CmF	case digestConflictRebaseRequired
+s:15HiveTerminalKit17OutputApplyResultO20rejectedWrongBindingyACSS_tcACmF	case rejectedWrongBinding(evidence: String)
+s:15HiveTerminalKit17OutputApplyResultO11engineErroryAcA0ab6EngineF0OcACmF	case engineError(HiveTerminalEngineResult)
+s:15HiveTerminalKit21OutputRangeApplicatorC	final class OutputRangeApplicator
+s:15HiveTerminalKit21OutputRangeApplicatorC7bindingAA14SurfaceBindingVSgvp	var binding: SurfaceBinding? { get }
+s:15HiveTerminalKit21OutputRangeApplicatorC9highWaters6UInt64Vvp	var highWater: UInt64 { get }
+s:15HiveTerminalKit21OutputRangeApplicatorC17lastAppliedDigest10Foundation4DataVSgvp	var lastAppliedDigest: Data? { get }
+s:15HiveTerminalKit21OutputRangeApplicatorC4bind_9highWateryAA14SurfaceBindingV_s6UInt64VtF	func bind(_ binding: SurfaceBinding, highWater: UInt64 = 0)
+s:15HiveTerminalKit21OutputRangeApplicatorC12clearBindingyyF	func clearBinding()
+s:15HiveTerminalKit21OutputRangeApplicatorC5apply5bytes9streamSeq12frameBindingAA0D11ApplyResultO10Foundation4DataV_s6UInt64VAA07SurfaceL0VtF	func apply(bytes: Data, streamSeq: UInt64, frameBinding: SurfaceBinding) -> OutputApplyResult
+s:15HiveTerminalKit21OutputRangeApplicatorC17restoreCheckpoint7payload10throughSeq12frameBindingAA0D11ApplyResultO10Foundation4DataV_s6UInt64VAA07SurfaceM0VtF	func restoreCheckpoint(payload: Data, throughSeq: UInt64, frameBinding: SurfaceBinding) -> OutputApplyResult
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)isAccessibilityElement	@MainActor override func isAccessibilityElement() -> Bool
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityRole	@MainActor override func accessibilityRole() -> NSAccessibility.Role?
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityHelp	@MainActor override func accessibilityHelp() -> String?
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityValue	@MainActor override func accessibilityValue() -> Any?
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilitySelectedTextRange	@MainActor override func accessibilitySelectedTextRange() -> NSRange
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilitySelectedText	@MainActor override func accessibilitySelectedText() -> String?
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityNumberOfCharacters	@MainActor override func accessibilityNumberOfCharacters() -> Int
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityVisibleCharacterRange	@MainActor override func accessibilityVisibleCharacterRange() -> NSRange
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityLineForIndex:	@MainActor override func accessibilityLine(for index: Int) -> Int
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)accessibilityStringForRange:	@MainActor override func accessibilityString(for range: NSRange) -> String?
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(py)acceptsFirstResponder	@MainActor override var acceptsFirstResponder: Bool { get }
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)mouseDown:	@MainActor override func mouseDown(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)mouseUp:	@MainActor override func mouseUp(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)mouseDragged:	@MainActor override func mouseDragged(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)mouseMoved:	@MainActor override func mouseMoved(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)scrollWheel:	@MainActor override func scrollWheel(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)keyDown:	@MainActor override func keyDown(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)keyUp:	@MainActor override func keyUp(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)flagsChanged:	@MainActor override func flagsChanged(with event: NSEvent)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)insertText:replacementRange:	@MainActor func insertText(_ string: Any, replacementRange: NSRange)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)hasMarkedText	@MainActor func hasMarkedText() -> Bool
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)markedRange	@MainActor func markedRange() -> NSRange
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)selectedRange	@MainActor func selectedRange() -> NSRange
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)setMarkedText:selectedRange:replacementRange:	@MainActor func setMarkedText(_ string: Any, selectedRange: NSRange, replacementRange: NSRange)
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)unmarkText	@MainActor func unmarkText()
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)validAttributesForMarkedText	@MainActor func validAttributesForMarkedText() -> [NSAttributedString.Key]
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)attributedSubstringForProposedRange:actualRange:	@MainActor func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString?
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)characterIndexForPoint:	@MainActor func characterIndex(for point: NSPoint) -> Int
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)firstRectForCharacterRange:actualRange:	@MainActor func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)doCommandBySelector:	@MainActor override func doCommand(by selector: Selector)
+s:15HiveTerminalKit0aB4ViewC15focusExplicitlyyyF	@MainActor func focusExplicitly()
+c:@CM@HiveTerminalKit@objc(cs)HiveTerminalView(im)resignFirstResponder	@MainActor override func resignFirstResponder() -> Bool
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView	@MainActor final class HiveTerminalView
+s:15HiveTerminalKit0aB4ViewC12surfaceStateAA0b7SurfaceF0Ovp	@MainActor var surfaceState: TerminalSurfaceState { get }
+s:15HiveTerminalKit0aB4ViewC7bindingAA14SurfaceBindingVSgvp	@MainActor var binding: SurfaceBinding? { get }
+s:15HiveTerminalKit0aB4ViewC14sessionLocatorAA07SessionF0VSgvp	@MainActor var sessionLocator: SessionLocator? { get }
+s:15HiveTerminalKit0aB4ViewC17claimPresentationAA010InputClaimF0Ovp	@MainActor var claimPresentation: InputClaimPresentation { get }
+s:15HiveTerminalKit0aB4ViewC9highWaters6UInt64Vvp	@MainActor var highWater: UInt64 { get }
+s:15HiveTerminalKit0aB4ViewC9lastTitleSSvp	@MainActor var lastTitle: String { get }
+s:15HiveTerminalKit0aB4ViewC7lastPwdSSvp	@MainActor var lastPwd: String { get }
+s:15HiveTerminalKit0aB4ViewC11onUserCloseyycSgvp	@MainActor var onUserClose: (() -> Void)?
+s:15HiveTerminalKit0aB4ViewC19onFirstCorrectFrameys6UInt64VcSgvp	@MainActor var onFirstCorrectFrame: ((UInt64) -> Void)?
+s:15HiveTerminalKit0aB4ViewC13onStateChangeyAA0b7SurfaceF0OcSgvp	@MainActor var onStateChange: ((TerminalSurfaceState) -> Void)?
+s:15HiveTerminalKit0aB4ViewC6onBellyycSgvp	@MainActor var onBell: (() -> Void)?
+s:15HiveTerminalKit0aB4ViewC22onRendererHealthChangeyAA0fG0OcSgvp	@MainActor var onRendererHealthChange: ((RendererHealth) -> Void)?
+s:15HiveTerminalKit0aB4ViewC18focusStealAttemptsSivp	@MainActor var focusStealAttempts: Int { get }
+s:15HiveTerminalKit0aB4ViewC22testingAllowFocusStealSbvp	@MainActor var testingAllowFocusSteal: Bool
+s:15HiveTerminalKit0aB4ViewC18drawScheduledCountSivp	@MainActor var drawScheduledCount: Int { get }
+s:15HiveTerminalKit0aB4ViewC16resizeFramesSentSivp	@MainActor var resizeFramesSent: Int { get }
+s:15HiveTerminalKit0aB4ViewC16reportedGeometryAA0bF0VSgvp	@MainActor var reportedGeometry: TerminalGeometry? { get }
+s:15HiveTerminalKit0aB4ViewC19appliedContentScaleSo6CGSizeVvp	@MainActor var appliedContentScale: NSSize { get }
+s:15HiveTerminalKit0aB4ViewC19appliedDrawableSizeSo6CGSizeVvp	@MainActor var appliedDrawableSize: CGSize { get }
+s:15HiveTerminalKit0aB4ViewC16appliedDisplayIDs6UInt32VSgvp	@MainActor var appliedDisplayID: UInt32? { get }
+s:15HiveTerminalKit0aB4ViewC23appliedOcclusionVisibleSbSgvp	@MainActor var appliedOcclusionVisible: Bool? { get }
+s:15HiveTerminalKit0aB4ViewC15rendererHealthySbvp	@MainActor var rendererHealthy: Bool { get }
+s:15HiveTerminalKit0aB4ViewC20sleepTransitionCountSivp	@MainActor var sleepTransitionCount: Int { get }
+s:15HiveTerminalKit0aB4ViewC19wakeTransitionCountSivp	@MainActor var wakeTransitionCount: Int { get }
+s:15HiveTerminalKit0aB4ViewC5frame8viewerIdACSo6CGRectV_SStKcfc	@MainActor init(frame frameRect: NSRect, viewerId: String = "viewer-local") throws
+s:15HiveTerminalKit0aB4ViewC14renderEvidenceAA0ab6RenderF0Vvp	@MainActor var renderEvidence: HiveTerminalRenderEvidence { get }
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView(im)drawRect:	@MainActor override func draw(_ dirtyRect: NSRect)
+s:15HiveTerminalKit0aB4ViewC6attach5grant8geometry8afterSeq9transportAA19AttachReplayOutcomeOAA0K5GrantV_AA0B8GeometryVs6UInt64VAA13HostTransport_ptKF	@discardableResult @MainActor func attach(grant: AttachGrant, geometry: TerminalGeometry, afterSeq: UInt64 = 0, transport: any HostTransport) throws -> AttachReplayOutcome
+s:15HiveTerminalKit0aB4ViewC4bind2to9highWateryAA14SurfaceBindingV_s6UInt64VtKF	@MainActor func bind(to newBinding: SurfaceBinding, highWater: UInt64 = 0) throws
+s:15HiveTerminalKit0aB4ViewC11applyOutput5bytes9streamSeq12frameBindingAA0F11ApplyResultO10Foundation4DataV_s6UInt64VAA07SurfaceK0VtF	@MainActor func applyOutput(bytes: Data, streamSeq: UInt64, frameBinding: SurfaceBinding) -> OutputApplyResult
+s:15HiveTerminalKit0aB4ViewC17applyStatusUpdate8evidenceySS_tF	@MainActor func applyStatusUpdate(evidence: String)
+s:15HiveTerminalKit0aB4ViewC27notifyOutputStatusReconnect6reasonySS_tF	@MainActor func notifyOutputStatusReconnect(reason: String)
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView(im)viewWillMoveToWindow:	@MainActor override func viewWillMove(toWindow newWindow: NSWindow?)
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView(im)viewDidMoveToWindow	@MainActor override func viewDidMoveToWindow()
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView(im)viewDidChangeBackingProperties	@MainActor override func viewDidChangeBackingProperties()
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView(im)layout	@MainActor override func layout()
+c:@M@HiveTerminalKit@objc(cs)HiveTerminalView(im)setFrameSize:	@MainActor override func setFrameSize(_ newSize: NSSize)
+s:15HiveTerminalKit0aB4ViewC9userCloseyyF	@MainActor func userClose()
+s:15HiveTerminalKit18CheckpointEnvelopeV	struct CheckpointEnvelope
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit18CheckpointEnvelopeV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit18CheckpointEnvelopeV11headerBytesSivpZ	static let headerBytes: Int
+s:15HiveTerminalKit18CheckpointEnvelopeV5magicSSvpZ	static let magic: String
+s:15HiveTerminalKit18CheckpointEnvelopeV7versions6UInt16VvpZ	static let version: UInt16
+s:15HiveTerminalKit18CheckpointEnvelopeV16headerBytesFields6UInt16VvpZ	static let headerBytesField: UInt16
+s:15HiveTerminalKit18CheckpointEnvelopeV5flagss6UInt32VvpZ	static let flags: UInt32
+s:15HiveTerminalKit18CheckpointEnvelopeV11FieldOffseta	typealias FieldOffset = SessionProtocolGenerated.Checkpoint.Offset
+s:15HiveTerminalKit18CheckpointEnvelopeV10throughSeqs6UInt64Vvp	var throughSeq: UInt64
+s:15HiveTerminalKit18CheckpointEnvelopeV16createdMonoNanoss6UInt64Vvp	var createdMonoNanos: UInt64
+s:15HiveTerminalKit18CheckpointEnvelopeV7columnss6UInt32Vvp	var columns: UInt32
+s:15HiveTerminalKit18CheckpointEnvelopeV4rowss6UInt32Vvp	var rows: UInt32
+s:15HiveTerminalKit18CheckpointEnvelopeV16cellWidthPxFixeds6UInt32Vvp	var cellWidthPxFixed: UInt32
+s:15HiveTerminalKit18CheckpointEnvelopeV17cellHeightPxFixeds6UInt32Vvp	var cellHeightPxFixed: UInt32
+s:15HiveTerminalKit18CheckpointEnvelopeV13engineBuildId10Foundation4DataVvp	var engineBuildId: Data
+s:15HiveTerminalKit18CheckpointEnvelopeV13payloadLengths6UInt32Vvp	var payloadLength: UInt32
+s:15HiveTerminalKit18CheckpointEnvelopeV13payloadSha25610Foundation4DataVvp	var payloadSha256: Data
+s:15HiveTerminalKit18CheckpointEnvelopeV7payload10Foundation4DataVvp	var payload: Data
+s:15HiveTerminalKit18CheckpointEnvelopeV16engineBuildIdHexSSvp	var engineBuildIdHex: String { get }
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO	enum ParseError
+s:s5ErrorP10FoundationE20localizedDescriptionSSvp::SYNTHESIZED::s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO	var localizedDescription: String { get }
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO8tooShortyAESicAEmF	case tooShort(Int)
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO8badMagicyA2EmF	case badMagic
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO10badVersionyAEs6UInt16VcAEmF	case badVersion(UInt16)
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO14badHeaderBytesyAEs6UInt16VcAEmF	case badHeaderBytes(UInt16)
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO8badFlagsyAEs6UInt32VcAEmF	case badFlags(UInt32)
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO17incompletePayloadyAESi_SitcAEmF	case incompletePayload(have: Int, need: Int)
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO21payloadDigestMismatchyA2EmF	case payloadDigestMismatch
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO14engineMismatchyAESS_SStcAEmF	case engineMismatch(expected: String, found: String)
+s:15HiveTerminalKit18CheckpointEnvelopeV10ParseErrorO11descriptionSSvp	var description: String { get }
+s:15HiveTerminalKit18CheckpointEnvelopeV5parseyAC10Foundation4DataVKFZ	static func parse(_ data: Data) throws -> CheckpointEnvelope
+s:15HiveTerminalKit18CheckpointEnvelopeV10isCompleteySb10Foundation4DataVFZ	static func isComplete(_ data: Data) -> Bool
+s:15HiveTerminalKit18CheckpointEnvelopeV18requiredTotalBytesySiSg10Foundation4DataVFZ	static func requiredTotalBytes(_ data: Data) -> Int?
+s:15HiveTerminalKit18CheckpointEnvelopeV6encode10throughSeq7payload13engineBuildId7columns4rows10Foundation4DataVs6UInt64V_A2Ls6UInt32VAPtFZ	static func encode(throughSeq: UInt64, payload: Data, engineBuildId: Data, columns: UInt32 = 80, rows: UInt32 = 24) -> Data
+s:15HiveTerminalKit24SessionProtocolGeneratedO	enum SessionProtocolGenerated
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO	enum Checkpoint
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5magicSSvpZ	static let magic: String
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO7versions6UInt16VvpZ	static let version: UInt16
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO11headerBytesSivpZ	static let headerBytes: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5flagss6UInt32VvpZ	static let flags: UInt32
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO18engineBuildIdBytesSivpZ	static let engineBuildIdBytes: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO18payloadSha256BytesSivpZ	static let payloadSha256Bytes: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO	enum Offset
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO5magicSivpZ	static let magic: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO7versionSivpZ	static let version: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO11headerBytesSivpZ	static let headerBytes: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO5flagsSivpZ	static let flags: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO10throughSeqSivpZ	static let throughSeq: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO16createdMonoNanosSivpZ	static let createdMonoNanos: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO7columnsSivpZ	static let columns: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO4rowsSivpZ	static let rows: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO11cellWidthPxSivpZ	static let cellWidthPx: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO12cellHeightPxSivpZ	static let cellHeightPx: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO13engineBuildIdSivpZ	static let engineBuildId: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO13payloadLengthSivpZ	static let payloadLength: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO6OffsetO13payloadSha256SivpZ	static let payloadSha256: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO	enum Width
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO5magicSivpZ	static let magic: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO7versionSivpZ	static let version: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO11headerBytesSivpZ	static let headerBytes: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO5flagsSivpZ	static let flags: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO10throughSeqSivpZ	static let throughSeq: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO16createdMonoNanosSivpZ	static let createdMonoNanos: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO7columnsSivpZ	static let columns: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO4rowsSivpZ	static let rows: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO04cellH2PxSivpZ	static let cellWidthPx: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO12cellHeightPxSivpZ	static let cellHeightPx: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO13engineBuildIdSivpZ	static let engineBuildId: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO13payloadLengthSivpZ	static let payloadLength: Int
+s:15HiveTerminalKit24SessionProtocolGeneratedO10CheckpointO5WidthO13payloadSha256SivpZ	static let payloadSha256: Int
+s:15HiveTerminalKit9FrameTypeO	enum FrameType
+s:SYsSHRzSH8RawValueSYRpzrlE04hashB0Sivp::SYNTHESIZED::s:15HiveTerminalKit9FrameTypeO	var hashValue: Int { get }
+s:SYsSHRzSH8RawValueSYRpzrlE4hash4intoys6HasherVz_tF::SYNTHESIZED::s:15HiveTerminalKit9FrameTypeO	func hash(into hasher: inout Hasher)
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit9FrameTypeO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit9FrameTypeO5helloyA2CmF	case hello
+s:15HiveTerminalKit9FrameTypeO7welcomeyA2CmF	case welcome
+s:15HiveTerminalKit9FrameTypeO5erroryA2CmF	case error
+s:15HiveTerminalKit9FrameTypeO4pingyA2CmF	case ping
+s:15HiveTerminalKit9FrameTypeO4pongyA2CmF	case pong
+s:15HiveTerminalKit9FrameTypeO13attachRequestyA2CmF	case attachRequest
+s:15HiveTerminalKit9FrameTypeO11attachGrantyA2CmF	case attachGrant
+s:15HiveTerminalKit9FrameTypeO10hostAttachyA2CmF	case hostAttach
+s:15HiveTerminalKit9FrameTypeO13snapshotBeginyA2CmF	case snapshotBegin
+s:15HiveTerminalKit9FrameTypeO13snapshotBytesyA2CmF	case snapshotBytes
+s:15HiveTerminalKit9FrameTypeO6outputyA2CmF	case output
+s:15HiveTerminalKit9FrameTypeO7appliedyA2CmF	case applied
+s:15HiveTerminalKit9FrameTypeO6resizeyA2CmF	case resize
+s:15HiveTerminalKit9FrameTypeO6detachyA2CmF	case detach
+s:15HiveTerminalKit9FrameTypeO5eventyA2CmF	case event
+s:15HiveTerminalKit9FrameTypeO12claimAcquireyA2CmF	case claimAcquire
+s:15HiveTerminalKit9FrameTypeO11claimResultyA2CmF	case claimResult
+s:15HiveTerminalKit9FrameTypeO10humanInputyA2CmF	case humanInput
+s:15HiveTerminalKit9FrameTypeO12claimReleaseyA2CmF	case claimRelease
+s:15HiveTerminalKit9FrameTypeO12gestureInputyA2CmF	case gestureInput
+s:15HiveTerminalKit9FrameTypeO8rawValueACSgs6UInt16V_tcfc	init?(rawValue: UInt16)
+s:15HiveTerminalKit10FrameFlagsV	struct FrameFlags
+s:s9OptionSetPsE5unionyxxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func union(_ other: Self) -> Self
+s:s9OptionSetPsE12intersectionyxxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func intersection(_ other: Self) -> Self
+s:s9OptionSetPsE19symmetricDifferenceyxxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func symmetricDifference(_ other: Self) -> Self
+s:s9OptionSetPs7ElementQzRszrlE8containsySbxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func contains(_ member: Self) -> Bool
+s:s9OptionSetPs7ElementQzRszrlE6insertySb8inserted_x17memberAfterInserttxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	@discardableResult mutating func insert(_ newMember: Self.Element) -> (inserted: Bool, memberAfterInsert: Self.Element)
+s:s9OptionSetPs7ElementQzRszrlE6removeyxSgxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	@discardableResult mutating func remove(_ member: Self.Element) -> Self.Element?
+s:s9OptionSetPs7ElementQzRszrlE6update4withxSgx_tF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	@discardableResult mutating func update(with newMember: Self.Element) -> Self.Element?
+s:s9OptionSetPss17FixedWidthInteger8RawValueRpzrlExycfc::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	init()
+s:s9OptionSetPss17FixedWidthInteger8RawValueRpzrlE9formUnionyyxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	mutating func formUnion(_ other: Self)
+s:s9OptionSetPss17FixedWidthInteger8RawValueRpzrlE16formIntersectionyyxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	mutating func formIntersection(_ other: Self)
+s:s9OptionSetPss17FixedWidthInteger8RawValueRpzrlE23formSymmetricDifferenceyyxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	mutating func formSymmetricDifference(_ other: Self)
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	static func != (lhs: Self, rhs: Self) -> Bool
+s:s9OptionSetPs7ElementQzRszs17FixedWidthInteger8RawValueRpzrlE6insertySb8inserted_x17memberAfterInserttxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	@discardableResult mutating func insert(_ newMember: Self.Element) -> (inserted: Bool, memberAfterInsert: Self.Element)
+s:s10SetAlgebraPs7ElementQz012ArrayLiteralC0RtzrlE05arrayE0xAFd_tcfc::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	init(arrayLiteral: Self.Element...)
+s:s10SetAlgebraPsEyxqd__ncSTRd__7ElementQyd__ACRtzlufc::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	init<S>(_ sequence: S) where S : Sequence, Self.Element == S.Element
+s:s10SetAlgebraPsE8subtractyyxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	mutating func subtract(_ other: Self)
+s:s10SetAlgebraPsE8isSubset2ofSbx_tF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func isSubset(of other: Self) -> Bool
+s:s10SetAlgebraPsE10isSuperset2ofSbx_tF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func isSuperset(of other: Self) -> Bool
+s:s10SetAlgebraPsE10isDisjoint4withSbx_tF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func isDisjoint(with other: Self) -> Bool
+s:s10SetAlgebraPsE11subtractingyxxF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func subtracting(_ other: Self) -> Self
+s:s10SetAlgebraPsE7isEmptySbvp::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	var isEmpty: Bool { get }
+s:s10SetAlgebraPsE16isStrictSuperset2ofSbx_tF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func isStrictSuperset(of other: Self) -> Bool
+s:s10SetAlgebraPsE14isStrictSubset2ofSbx_tF::SYNTHESIZED::s:15HiveTerminalKit10FrameFlagsV	func isStrictSubset(of other: Self) -> Bool
+s:15HiveTerminalKit10FrameFlagsV8rawValues6UInt16Vvp	let rawValue: UInt16
+s:15HiveTerminalKit10FrameFlagsV8rawValueACs6UInt16V_tcfc	init(rawValue: UInt16)
+s:15HiveTerminalKit10FrameFlagsV8responseACvpZ	static let response: FrameFlags
+s:15HiveTerminalKit10FrameFlagsV5finalACvpZ	static let final: FrameFlags
+s:15HiveTerminalKit10FrameFlagsV5errorACvpZ	static let error: FrameFlags
+s:15HiveTerminalKit10FrameFlagsV16contentSensitiveACvpZ	static let contentSensitive: FrameFlags
+s:15HiveTerminalKit10FrameFlagsV11allowedMasks6UInt16VvpZ	static let allowedMask: UInt16
+s:15HiveTerminalKit9WireFrameV	struct WireFrame
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit9WireFrameV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit9WireFrameV4typeAA0E4TypeOvp	var type: FrameType
+s:15HiveTerminalKit9WireFrameV5flagsAA0E5FlagsVvp	var flags: FrameFlags
+s:15HiveTerminalKit9WireFrameV9requestIds6UInt64Vvp	var requestId: UInt64
+s:15HiveTerminalKit9WireFrameV9streamSeqs6UInt64Vvp	var streamSeq: UInt64
+s:15HiveTerminalKit9WireFrameV7payload10Foundation4DataVvp	var payload: Data
+s:15HiveTerminalKit9WireFrameV4type5flags9requestId9streamSeq7payloadAcA0E4TypeO_AA0E5FlagsVs6UInt64VAN10Foundation4DataVtcfc	init(type: FrameType, flags: FrameFlags = [], requestId: UInt64 = 0, streamSeq: UInt64 = 0, payload: Data = Data())
+s:15HiveTerminalKit9WireErrorO	enum WireError
+s:s5ErrorP10FoundationE20localizedDescriptionSSvp::SYNTHESIZED::s:15HiveTerminalKit9WireErrorO	var localizedDescription: String { get }
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit9WireErrorO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit9WireErrorO14malformedFrameyACSScACmF	case malformedFrame(String)
+s:15HiveTerminalKit9WireErrorO16protocolMismatchyACSScACmF	case protocolMismatch(String)
+s:15HiveTerminalKit9WireErrorO16unsupportedFrameyACs6UInt16VcACmF	case unsupportedFrame(UInt16)
+s:15HiveTerminalKit9WireErrorO13frameTooLargeyAcA9FrameTypeO_SitcACmF	case frameTooLarge(type: FrameType, length: Int)
+s:15HiveTerminalKit9WireErrorO16malformedPayloadyACSScACmF	case malformedPayload(String)
+s:15HiveTerminalKit9WireErrorO15bindingMismatchyACSScACmF	case bindingMismatch(String)
+s:15HiveTerminalKit9WireErrorO14rebaseRequiredyACSScACmF	case rebaseRequired(String)
+s:15HiveTerminalKit9WireErrorO12notConnectedyA2CmF	case notConnected
+s:15HiveTerminalKit9WireErrorO6closedyA2CmF	case closed
+s:15HiveTerminalKit9WireErrorO14receiveTimeoutyA2CmF	case receiveTimeout
+s:15HiveTerminalKit9WireErrorO11descriptionSSvp	var description: String { get }
+s:15HiveTerminalKit10FrameCodecO	enum FrameCodec
+s:15HiveTerminalKit10FrameCodecO11headerBytesSivpZ	static let headerBytes: Int
+s:15HiveTerminalKit10FrameCodecO5magicSays5UInt8VGvpZ	static let magic: [UInt8]
+s:15HiveTerminalKit10FrameCodecO13protocolMajors5UInt8VvpZ	static let protocolMajor: UInt8
+s:15HiveTerminalKit10FrameCodecO13protocolMinors5UInt8VvpZ	static let protocolMinor: UInt8
+s:15HiveTerminalKit10FrameCodecO07controlD8MaxBytesSivpZ	static let controlFrameMaxBytes: Int
+s:15HiveTerminalKit10FrameCodecO19streamChunkMaxBytesSivpZ	static let streamChunkMaxBytes: Int
+s:15HiveTerminalKit10FrameCodecO15optionalTypeBits6UInt16VvpZ	static let optionalTypeBit: UInt16
+s:15HiveTerminalKit10FrameCodecO6encodey10Foundation4DataVAA04WireD0VKFZ	static func encode(_ frame: WireFrame) throws -> Data
+s:15HiveTerminalKit10FrameCodecO12decodeHeaderyAA0D4TypeOSg4type_s6UInt16V0I4CodeAA0D5FlagsV5flagsSi13payloadLengths6UInt64V9requestIdAQ9streamSeqSb14ignoreOptionalt10Foundation4DataVKFZ	static func decodeHeader(_ bytes: Data) throws -> (type: FrameType?, typeCode: UInt16, flags: FrameFlags, payloadLength: Int, requestId: UInt64, streamSeq: UInt64, ignoreOptional: Bool)
+s:15HiveTerminalKit10FrameCodecO06decodeD06header7payloadAA04WireD0VSg10Foundation4DataV_ALtKFZ	static func decodeFrame(header: Data, payload: Data) throws -> WireFrame?
+s:15HiveTerminalKit10FrameCodecO11jsonPayloady10Foundation4DataVSDySSypGKFZ	static func jsonPayload(_ object: [String : Any]) throws -> Data
+s:15HiveTerminalKit10FrameCodecO15parseJSONObjectySDySSypG10Foundation4DataVKFZ	static func parseJSONObject(_ data: Data) throws -> [String : Any]
+s:15HiveTerminalKit14SessionLocatorV	struct SessionLocator
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit14SessionLocatorV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit14SessionLocatorV13schemaVersionSivp	var schemaVersion: Int
+s:15HiveTerminalKit14SessionLocatorV10instanceIdSSvp	var instanceId: String
+s:15HiveTerminalKit14SessionLocatorV11subjectKindSSvp	var subjectKind: String
+s:15HiveTerminalKit14SessionLocatorV7agentIdSSSgvp	var agentId: String?
+s:15HiveTerminalKit14SessionLocatorV10generationSivp	var generation: Int
+s:15HiveTerminalKit14SessionLocatorV9sessionIdSSvp	var sessionId: String
+s:15HiveTerminalKit14SessionLocatorV8hostKindSSvp	var hostKind: String
+s:15HiveTerminalKit14SessionLocatorV13engineBuildIdSSSgvp	var engineBuildId: String?
+s:15HiveTerminalKit14SessionLocatorV13schemaVersion10instanceId11subjectKind05agentI010generation07sessionI004hostK0011engineBuildI0ACSi_S3SSgSiS2SALtcfc	init(schemaVersion: Int = 1, instanceId: String, subjectKind: String, agentId: String? = nil, generation: Int, sessionId: String, hostKind: String, engineBuildId: String? = nil)
+s:15HiveTerminalKit14SessionLocatorV10jsonObjectSDySSypGyF	func jsonObject() -> [String : Any]
+s:15HiveTerminalKit14SessionLocatorV5parseyACSDySSypGKFZ	static func parse(_ object: [String : Any]) throws -> SessionLocator
+s:15HiveTerminalKit14SurfaceBindingV	struct SurfaceBinding
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit14SurfaceBindingV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit14SurfaceBindingV7locatorAA14SessionLocatorVvp	var locator: SessionLocator
+s:15HiveTerminalKit14SurfaceBindingV12connectionIdSSvp	var connectionId: String
+s:15HiveTerminalKit14SurfaceBindingV7locator12connectionIdAcA14SessionLocatorV_SStcfc	init(locator: SessionLocator, connectionId: String)
+s:15HiveTerminalKit14SurfaceBindingV10generationSivp	var generation: Int { get }
+s:15HiveTerminalKit0B8GeometryV	struct TerminalGeometry
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0B8GeometryV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0B8GeometryV7columnsSivp	var columns: Int
+s:15HiveTerminalKit0B8GeometryV4rowsSivp	var rows: Int
+s:15HiveTerminalKit0B8GeometryV7widthPxSivp	var widthPx: Int
+s:15HiveTerminalKit0B8GeometryV8heightPxSivp	var heightPx: Int
+s:15HiveTerminalKit0B8GeometryV11cellWidthPxSdvp	var cellWidthPx: Double
+s:15HiveTerminalKit0B8GeometryV12cellHeightPxSdvp	var cellHeightPx: Double
+s:15HiveTerminalKit0B8GeometryV7columns4rows7widthPx06heightH009cellWidthH00j6HeightH0ACSi_S3iS2dtcfc	init(columns: Int, rows: Int, widthPx: Int, heightPx: Int, cellWidthPx: Double, cellHeightPx: Double)
+s:15HiveTerminalKit0B8GeometryV8isUsableSbvp	var isUsable: Bool { get }
+s:15HiveTerminalKit0B8GeometryV10jsonObjectSDySSypGyF	func jsonObject() -> [String : Any]
+s:15HiveTerminalKit0B8GeometryV5parseyACSDySSypGKFZ	static func parse(_ object: [String : Any]) throws -> TerminalGeometry
+s:15HiveTerminalKit11AttachGrantV	struct AttachGrant
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit11AttachGrantV	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit11AttachGrantV7locatorAA14SessionLocatorVvp	var locator: SessionLocator
+s:15HiveTerminalKit11AttachGrantV8endpointSSvp	var endpoint: String
+s:15HiveTerminalKit11AttachGrantV5tokenSSvp	var token: String
+s:15HiveTerminalKit11AttachGrantV9expiresAtSSvp	var expiresAt: String
+s:15HiveTerminalKit11AttachGrantV13engineBuildIdSSvp	var engineBuildId: String
+s:15HiveTerminalKit11AttachGrantV13checkpointSeqs6UInt64Vvp	var checkpointSeq: UInt64
+s:15HiveTerminalKit11AttachGrantV9outputSeqs6UInt64Vvp	var outputSeq: UInt64
+s:15HiveTerminalKit11AttachGrantV10operationsSaySSGvp	var operations: [String]
+s:15HiveTerminalKit11AttachGrantV7locator8endpoint5token9expiresAt13engineBuildId13checkpointSeq06outputO010operationsAcA14SessionLocatorV_S4Ss6UInt64VAOSaySSGtcfc	init(locator: SessionLocator, endpoint: String, token: String, expiresAt: String, engineBuildId: String, checkpointSeq: UInt64, outputSeq: UInt64, operations: [String])
+s:15HiveTerminalKit11AttachGrantV5parseyACSDySSypGKFZ	static func parse(_ object: [String : Any]) throws -> AttachGrant
+s:15HiveTerminalKit0B12SurfaceStateO	enum TerminalSurfaceState
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit0B12SurfaceStateO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit0B12SurfaceStateO8startingyA2CmF	case starting
+s:15HiveTerminalKit0B12SurfaceStateO9attachingyA2CmF	case attaching
+s:15HiveTerminalKit0B12SurfaceStateO9replayingyA2CmF	case replaying
+s:15HiveTerminalKit0B12SurfaceStateO4liveyA2CmF	case live
+s:15HiveTerminalKit0B12SurfaceStateO7delayedyACSS_tcACmF	case delayed(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO8orphanedyACSS_tcACmF	case orphaned(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO6exitedyACSS_tcACmF	case exited(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO4lostyACSS_tcACmF	case lost(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO18incompatibleEngineyACSS_tcACmF	case incompatibleEngine(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO12unauthorizedyACSS_tcACmF	case unauthorized(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO14rendererFailedyACSS_tcACmF	case rendererFailed(evidence: String)
+s:15HiveTerminalKit0B12SurfaceStateO9isFailureSbvp	var isFailure: Bool { get }
+s:15HiveTerminalKit22InputClaimPresentationO	enum InputClaimPresentation
+s:SQsE2neoiySbx_xtFZ::SYNTHESIZED::s:15HiveTerminalKit22InputClaimPresentationO	static func != (lhs: Self, rhs: Self) -> Bool
+s:15HiveTerminalKit22InputClaimPresentationO4freeyA2CmF	case free
+s:15HiveTerminalKit22InputClaimPresentationO10humanOwnedyACSS_SStcACmF	case humanOwned(viewerId: String, claimId: String)
+s:15HiveTerminalKit22InputClaimPresentationO13humanOrphanedyACSS_SStcACmF	case humanOrphaned(viewerId: String, claimId: String)

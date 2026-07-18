@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import HiveGhosttyC
 import IOKit.hidsystem
 
 /// Input (M8, gate 8): native NSEvent → ghostty_surface_key/text/preedit/mouse
@@ -15,24 +14,24 @@ extension HiveTerminalView {
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
         engine.setFocus(true)
-        forwardMouse(event, state: GHOSTTY_MOUSE_PRESS)
+        forwardMouse(event, state: .press)
         super.mouseDown(with: event)
     }
 
     public override func mouseUp(with event: NSEvent) {
-        forwardMouse(event, state: GHOSTTY_MOUSE_RELEASE)
+        forwardMouse(event, state: .release)
         super.mouseUp(with: event)
     }
 
     public override func mouseDragged(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
+        engine.sendMousePos(x: p.x, y: bounds.height - p.y, modifiers: mapMods(event.modifierFlags))
         super.mouseDragged(with: event)
     }
 
     public override func mouseMoved(with event: NSEvent) {
         let p = convert(event.locationInWindow, from: nil)
-        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
+        engine.sendMousePos(x: p.x, y: bounds.height - p.y, modifiers: mapMods(event.modifierFlags))
         super.mouseMoved(with: event)
     }
 
@@ -103,7 +102,7 @@ extension HiveTerminalView {
     /// from keyDown. Real Ghostty's keyUp is simple (no IME choreography,
     /// unlike keyDown): `keyAction(GHOSTTY_ACTION_RELEASE, event: event)`.
     public override func keyUp(with event: NSEvent) {
-        encodeKey(event, action: GHOSTTY_ACTION_RELEASE)
+        encodeKey(event, action: .release)
     }
 
     /// Pre-B1 snapshot had no flagsChanged override — a bare modifier
@@ -118,13 +117,13 @@ extension HiveTerminalView {
     /// must report a release (mods.rawValue & mod != 0 alone can't tell
     /// which side is still down).
     public override func flagsChanged(with event: NSEvent) {
-        let mod: UInt32
+        let modifier: TerminalModifiers
         switch event.keyCode {
-        case 0x39: mod = GHOSTTY_MODS_CAPS.rawValue
-        case 0x38, 0x3C: mod = GHOSTTY_MODS_SHIFT.rawValue
-        case 0x3B, 0x3E: mod = GHOSTTY_MODS_CTRL.rawValue
-        case 0x3A, 0x3D: mod = GHOSTTY_MODS_ALT.rawValue
-        case 0x37, 0x36: mod = GHOSTTY_MODS_SUPER.rawValue
+        case 0x39: modifier = .capsLock
+        case 0x38, 0x3C: modifier = .shift
+        case 0x3B, 0x3E: modifier = .control
+        case 0x3A, 0x3D: modifier = .option
+        case 0x37, 0x36: modifier = .command
         default: return
         }
 
@@ -132,8 +131,8 @@ extension HiveTerminalView {
 
         let mods = mapMods(event.modifierFlags)
 
-        var action = GHOSTTY_ACTION_RELEASE
-        if mods.rawValue & mod != 0 {
+        var action: TerminalKeyAction = .release
+        if mods.contains(modifier) {
             let sidePressed: Bool
             switch event.keyCode {
             case 0x3C: sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERSHIFTKEYMASK) != 0
@@ -142,7 +141,7 @@ extension HiveTerminalView {
             case 0x36: sidePressed = event.modifierFlags.rawValue & UInt(NX_DEVICERCMDKEYMASK) != 0
             default: sidePressed = true
             }
-            if sidePressed { action = GHOSTTY_ACTION_PRESS }
+            if sidePressed { action = .press }
         }
 
         encodeKey(event, action: action)
@@ -214,17 +213,16 @@ extension HiveTerminalView {
     /// here; the width-zero case is a narrow accessibility-dictation UI
     /// detail, not a defect this gate's "placeholder IME ranges" names.
     public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
-        guard let handle = engine.surfaceHandle else {
+        guard let point = engine.imePoint() else {
             return toScreen(convert(bounds, to: nil))
         }
 
-        var x: Double = 0
-        var y: Double = 0
-        var width: Double = 0
-        var height: Double = 0
-        ghostty_surface_ime_point(handle, &x, &y, &width, &height)
-
-        let viewRect = NSRect(x: x, y: frame.size.height - y, width: width, height: height)
+        let viewRect = NSRect(
+            x: point.x,
+            y: frame.size.height - point.y,
+            width: point.width,
+            height: point.height
+        )
         return toScreen(convert(viewRect, to: nil))
     }
 
@@ -293,27 +291,18 @@ extension HiveTerminalView {
     /// derivation at all. When action is nil (the keyDown path), a real
     /// pre-B1 gap: repeats were never distinguished from fresh presses
     /// (event.isARepeat was ignored), always sending GHOSTTY_ACTION_PRESS.
-    func encodeKey(_ event: NSEvent, action explicitAction: ghostty_input_action_e? = nil) {
-        var key = ghostty_input_key_s()
-        if let explicitAction {
-            key.action = explicitAction
-        } else if event.type == .keyUp {
-            key.action = GHOSTTY_ACTION_RELEASE
-        } else {
-            key.action = event.isARepeat ? GHOSTTY_ACTION_REPEAT : GHOSTTY_ACTION_PRESS
-        }
-        key.keycode = UInt32(event.keyCode)
-        key.composing = false
-
-        key.mods = mapMods(event.modifierFlags)
-        key.consumed_mods = mapMods(event.modifierFlags.subtracting([.control, .command]))
-
-        key.unshifted_codepoint = 0
+    func encodeKey(_ event: NSEvent, action explicitAction: TerminalKeyAction? = nil) {
+        var unshiftedCodepoint: UInt32 = 0
         if event.type == .keyDown || event.type == .keyUp,
            let chars = event.characters(byApplyingModifiers: []),
            let codepoint = chars.unicodeScalars.first {
-            key.unshifted_codepoint = codepoint.value
+            unshiftedCodepoint = codepoint.value
         }
+
+        let action = explicitAction ?? (event.type == .keyUp
+            ? .release
+            : (event.isARepeat ? .repeat : .press))
+        let text: String?
 
         // Text embeds ONLY on key-down (press/repeat). Real keyAction sets
         // key.text solely from its explicit `text:` parameter, and keyUp/
@@ -325,26 +314,35 @@ extension HiveTerminalView {
         if event.type == .keyDown,
            let chars = event.characters, !chars.isEmpty,
            let firstByte = chars.utf8.first, firstByte >= 0x20 {
-            chars.withCString { ptr in
-                key.text = ptr
-                _ = engine.sendKey(key)
-            }
+            text = chars
         } else {
-            key.text = nil
-            _ = engine.sendKey(key)
+            text = nil
         }
+        _ = engine.sendKey(TerminalKeyEvent(
+            action: action,
+            modifiers: mapMods(event.modifierFlags),
+            consumedModifiers: mapMods(event.modifierFlags.subtracting([.control, .command])),
+            keycode: UInt32(event.keyCode),
+            text: text,
+            unshiftedCodepoint: unshiftedCodepoint,
+            composing: false
+        ))
     }
 
-    func forwardMouse(_ event: NSEvent, state: ghostty_input_mouse_state_e) {
+    func forwardMouse(_ event: NSEvent, state: TerminalMouseButtonState) {
         let p = convert(event.locationInWindow, from: nil)
-        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
-        let button: ghostty_input_mouse_button_e
+        engine.sendMousePos(x: p.x, y: bounds.height - p.y, modifiers: mapMods(event.modifierFlags))
+        let button: TerminalMouseButton
         switch event.buttonNumber {
-        case 1: button = GHOSTTY_MOUSE_RIGHT
-        case 2: button = GHOSTTY_MOUSE_MIDDLE
-        default: button = GHOSTTY_MOUSE_LEFT
+        case 1: button = .right
+        case 2: button = .middle
+        default: button = .left
         }
-        _ = engine.sendMouseButton(state: state, button: button, mods: mapMods(event.modifierFlags))
+        _ = engine.sendMouseButton(
+            state: state,
+            button: button,
+            modifiers: mapMods(event.modifierFlags)
+        )
     }
 
     /// Exact port of the real Ghostty macOS app's Ghostty.ghosttyMods
@@ -356,21 +354,21 @@ extension HiveTerminalView {
     /// distinguish left/right at all). No num-lock mapping: the real app
     /// doesn't map it either (GHOSTTY_MODS_NUM has no NSEvent equivalent
     /// exposed this way), so matching it exactly means not inventing one.
-    func mapMods(_ flags: NSEvent.ModifierFlags) -> ghostty_input_mods_e {
-        var mods: UInt32 = GHOSTTY_MODS_NONE.rawValue
-        if flags.contains(.shift) { mods |= GHOSTTY_MODS_SHIFT.rawValue }
-        if flags.contains(.control) { mods |= GHOSTTY_MODS_CTRL.rawValue }
-        if flags.contains(.option) { mods |= GHOSTTY_MODS_ALT.rawValue }
-        if flags.contains(.command) { mods |= GHOSTTY_MODS_SUPER.rawValue }
-        if flags.contains(.capsLock) { mods |= GHOSTTY_MODS_CAPS.rawValue }
+    func mapMods(_ flags: NSEvent.ModifierFlags) -> TerminalModifiers {
+        var modifiers: TerminalModifiers = []
+        if flags.contains(.shift) { modifiers.insert(.shift) }
+        if flags.contains(.control) { modifiers.insert(.control) }
+        if flags.contains(.option) { modifiers.insert(.option) }
+        if flags.contains(.command) { modifiers.insert(.command) }
+        if flags.contains(.capsLock) { modifiers.insert(.capsLock) }
 
         let rawFlags = flags.rawValue
-        if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { mods |= GHOSTTY_MODS_SHIFT_RIGHT.rawValue }
-        if rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 { mods |= GHOSTTY_MODS_CTRL_RIGHT.rawValue }
-        if rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0 { mods |= GHOSTTY_MODS_ALT_RIGHT.rawValue }
-        if rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0 { mods |= GHOSTTY_MODS_SUPER_RIGHT.rawValue }
+        if rawFlags & UInt(NX_DEVICERSHIFTKEYMASK) != 0 { modifiers.insert(.rightShift) }
+        if rawFlags & UInt(NX_DEVICERCTLKEYMASK) != 0 { modifiers.insert(.rightControl) }
+        if rawFlags & UInt(NX_DEVICERALTKEYMASK) != 0 { modifiers.insert(.rightOption) }
+        if rawFlags & UInt(NX_DEVICERCMDKEYMASK) != 0 { modifiers.insert(.rightCommand) }
 
-        return ghostty_input_mods_e(rawValue: mods)
+        return modifiers
     }
 
     func activeClaimNeeded(for event: NSEvent) -> Bool {

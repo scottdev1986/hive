@@ -44,7 +44,7 @@ public final class AttachReplayClient {
 
     public static let resizeQuiescenceNanos: UInt64 = 100_000_000
 
-    public init(viewerId: String, engine: ManualSurfaceEngine) {
+    init(viewerId: String, engine: ManualSurfaceEngine) {
         self.viewerId = viewerId
         self.engine = engine
         self.applicator = OutputRangeApplicator(engine: engine)
@@ -62,7 +62,7 @@ public final class AttachReplayClient {
         transport: HostTransport
     ) throws -> AttachReplayOutcome {
         // M3: fail CLOSED — never restore when local engine id is unknown or mismatched.
-        let localEngine = GhosttyManualSurface.engineBuildId()
+        let localEngine = HiveTerminalEngineIdentity.current.buildId
         if localEngine.isEmpty {
             state = .incompatibleEngine(evidence: "local engine build id unavailable")
             return .failed(state)
@@ -152,7 +152,7 @@ public final class AttachReplayClient {
         return .failed(state)
     }
 
-    public func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
+    func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
         transport?.close()
         transport = nil
         binding = newBinding
@@ -287,7 +287,7 @@ public final class AttachReplayClient {
             }
 
             // M3: fail CLOSED — wire engineBuildId must equal local engine (no test sentinels).
-            let local = GhosttyManualSurface.engineBuildId()
+            let local = HiveTerminalEngineIdentity.current.buildId
             if local.isEmpty {
                 state = .incompatibleEngine(evidence: "local engine build id unavailable")
                 return .failed(state)

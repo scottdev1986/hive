@@ -1,0 +1,242 @@
+Test Suite 'Selected tests' started at 2026-07-18 16:32:48.233.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:48.234.
+Test Suite 'B20EngineContractTests' started at 2026-07-18 16:32:48.234.
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testProductionViewSuppressesRepliesAndPresentsOrderedNeutralReplay]' started.
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testProductionViewSuppressesRepliesAndPresentsOrderedNeutralReplay]' passed (0.102 seconds).
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testSwiftPinProjectionMatchesNativeToolchainLock]' started.
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testSwiftPinProjectionMatchesNativeToolchainLock]' passed (0.002 seconds).
+Test Suite 'B20EngineContractTests' passed at 2026-07-18 16:32:48.338.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.104 (0.104) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:48.338.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.104 (0.104) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:48.338.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.104 (0.105) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:48.393.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:48.394.
+Test Suite 'CallbackDisciplineTests' started at 2026-07-18 16:32:48.394.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' passed (0.207 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.012 seconds).
+Test Suite 'CallbackDisciplineTests' passed at 2026-07-18 16:32:48.676.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.282 (0.283) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:48.676.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.282 (0.283) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:48.676.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.282 (0.283) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:48.764.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:48.764.
+Test Suite 'Gate4ABIQualificationTests' started at 2026-07-18 16:32:48.764.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' started.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testEnabledPolicyCreatesLiveSurfaceAndReplies]' started.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testEnabledPolicyCreatesLiveSurfaceAndReplies]' passed (0.076 seconds).
+Test Suite 'Gate4ABIQualificationTests' passed at 2026-07-18 16:32:48.842.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.077 (0.077) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:48.842.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.077 (0.077) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:48.842.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.077 (0.078) seconds
+SWIFT_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 callconv=c symbols=6 build_id=cd20992008a1f957ffd8c01d191dec297e55540483164dc83f80a759e1879459
+Test Suite 'Selected tests' started at 2026-07-18 16:32:48.892.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:48.893.
+Test Suite 'TerminalReplyCorpusTests' started at 2026-07-18 16:32:48.893.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' passed (0.067 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' passed (0.313 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' passed (0.009 seconds).
+Test Suite 'TerminalReplyCorpusTests' passed at 2026-07-18 16:32:49.335.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.442 (0.442) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:49.335.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.442 (0.442) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:49.335.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.442 (0.443) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:49.389.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:49.390.
+Test Suite 'LateFrameRejectionTests' started at 2026-07-18 16:32:49.390.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testDifferentLocatorIsRejectedWithoutMutatingSurface]' started.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testDifferentLocatorIsRejectedWithoutMutatingSurface]' passed (0.054 seconds).
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testLateFrameViaAttachClientHandleFrame]' started.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testLateFrameViaAttachClientHandleFrame]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testSameLocatorReconnectRejectsOldConnectionFrame]' started.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testSameLocatorReconnectRejectsOldConnectionFrame]' passed (0.000 seconds).
+Test Suite 'LateFrameRejectionTests' passed at 2026-07-18 16:32:49.445.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.055 (0.055) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:49.445.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.055 (0.055) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:49.445.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.055 (0.056) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:49.497.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:49.498.
+Test Suite 'Gate7RenderingTests' started at 2026-07-18 16:32:49.498.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testBackingDisplayAndOcclusionChangesReachRealSurface]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testBackingDisplayAndOcclusionChangesReachRealSurface]' passed (0.114 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testCloseCancelsDrawAlreadyQueuedByInvalidate]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testCloseCancelsDrawAlreadyQueuedByInvalidate]' passed (0.052 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testIdleSurfaceHasNoTimerDrivenOrAppKitDraws]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testIdleSurfaceHasNoTimerDrivenOrAppKitDraws]' passed (0.169 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testInvalidateCoalescesAndNeverDrawsAgainThroughAppKitDraw]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testInvalidateCoalescesAndNeverDrawsAgainThroughAppKitDraw]' passed (0.022 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testLiveResizeCommitsEveryDistinctFramebufferBeforeQuiescence]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testLiveResizeCommitsEveryDistinctFramebufferBeforeQuiescence]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testOcclusionSuppressesDrawAndPresentsOnePendingFrameWhenVisible]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testOcclusionSuppressesDrawAndPresentsOnePendingFrameWhenVisible]' passed (0.072 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testPhysicalMonitorScaleAndSleepWakeQualification]' started.
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.Qs1vP6/workspace/Tests/HiveTerminalKitTests/Gate7RenderingTests.swift:383: -[HiveTerminalKitTests.Gate7RenderingTests testPhysicalMonitorScaleAndSleepWakeQualification] : Test skipped - requires interactive multi-display qualification hardware
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testPhysicalMonitorScaleAndSleepWakeQualification]' skipped (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testProductionViewHostsPinnedGhosttyIOSurfaceLayer]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testProductionViewHostsPinnedGhosttyIOSurfaceLayer]' passed (0.004 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealOutputProducesGPUBackedLayerContents]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealOutputProducesGPUBackedLayerContents]' passed (0.017 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealViewAndRendererOwnerReleaseWithoutExplicitClose]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealViewAndRendererOwnerReleaseWithoutExplicitClose]' passed (0.008 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRendererHealthIsSurfaceScopedDeferredAndRecoverable]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRendererHealthIsSurfaceScopedDeferredAndRecoverable]' passed (0.076 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRenderingStateUsesMainConfinedEngineWrappers]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRenderingStateUsesMainConfinedEngineWrappers]' passed (0.008 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testResizeUsesGhosttyReportedCellGeometryExactly]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testResizeUsesGhosttyReportedCellGeometryExactly]' passed (0.006 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRuntimeHealthActionTargetsOnlyItsRealSurface]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRuntimeHealthActionTargetsOnlyItsRealSurface]' passed (0.022 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testSleepDefersPendingDrawAndWakeRefreshesExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testSleepDefersPendingDrawAndWakeRefreshesExactlyOnce]' passed (0.070 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testZeroSizeCancelsPendingResizeInsteadOfCommittingStalePixels]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testZeroSizeCancelsPendingResizeInsteadOfCommittingStalePixels]' passed (0.177 seconds).
+Test Suite 'Gate7RenderingTests' passed at 2026-07-18 16:32:50.318.
+	 Executed 16 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.819 (0.820) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:50.318.
+	 Executed 16 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.819 (0.820) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:50.318.
+	 Executed 16 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.819 (0.821) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:50.423.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:50.424.
+Test Suite 'Gate3OperationDomainTests' started at 2026-07-18 16:32:50.425.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' started.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' passed (0.059 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' started.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' passed (0.009 seconds).
+Test Suite 'Gate3OperationDomainTests' passed at 2026-07-18 16:32:50.502.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.077 (0.078) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:50.503.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.077 (0.078) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:50.503.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.077 (0.079) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:50.556.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:50.557.
+Test Suite 'Gate3ConcurrentCreationTests' started at 2026-07-18 16:32:50.557.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' passed (0.073 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' passed (0.021 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' passed (0.272 seconds).
+Test Suite 'Gate3ConcurrentCreationTests' passed at 2026-07-18 16:32:50.938.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.381 (0.381) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:50.938.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.381 (0.381) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:50.938.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.381 (0.382) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:50.989.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:50.990.
+Test Suite 'AppWakeupLifecycleTests' started at 2026-07-18 16:32:50.990.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' passed (0.763 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' passed (0.113 seconds).
+Test Suite 'AppWakeupLifecycleTests' passed at 2026-07-18 16:32:51.885.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.895 (0.895) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:51.885.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.895 (0.895) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:51.885.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.895 (0.896) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:51.938.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:51.939.
+Test Suite 'GhosttyBridgeLinkTests' started at 2026-07-18 16:32:51.939.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testEngineBuildIdSymbolResolves]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testEngineBuildIdSymbolResolves]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testFactoryCreatesManualSurfaceWithRealCallbacks]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testFactoryCreatesManualSurfaceWithRealCallbacks]' passed (0.118 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testRealSurfaceProcessOutputUsesCopySafeEventTrampoline]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testRealSurfaceProcessOutputUsesCopySafeEventTrampoline]' passed (0.019 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testSurfaceStronglyRetainsHostViewAndCallbackContext]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testSurfaceStronglyRetainsHostViewAndCallbackContext]' passed (0.008 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testTrampolineAssignableToFactoryTypedSlots]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testTrampolineAssignableToFactoryTypedSlots]' passed (0.000 seconds).
+Test Suite 'GhosttyBridgeLinkTests' passed at 2026-07-18 16:32:52.085.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.146 (0.146) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:52.085.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.146 (0.146) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:52.085.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.146 (0.147) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:52.179.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:52.180.
+Test Suite 'OrderedOutputEngineTests' started at 2026-07-18 16:32:52.180.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testConflictingBytesAtSameRangeIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testConflictingBytesAtSameRangeIsInvalid]' passed (0.067 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testCSISequenceSplitAcrossChunkBoundaryStillReplies]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testCSISequenceSplitAcrossChunkBoundaryStillReplies]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDuplicateExactRetransmitIsIdempotent]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDuplicateExactRetransmitIsIdempotent]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testEmptyBytesIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testEmptyBytesIsInvalid]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedGapDoesNotPoisonSubsequentValidCall]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedGapDoesNotPoisonSubsequentValidCall]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter]' passed (0.009 seconds).
+Test Suite 'OrderedOutputEngineTests' passed at 2026-07-18 16:32:52.302.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.121 (0.122) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:52.302.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.121 (0.122) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:52.302.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.121 (0.123) seconds
+Test Suite 'Selected tests' started at 2026-07-18 16:32:52.355.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 16:32:52.355.
+Test Suite 'OrderedOutputStressTests' started at 2026-07-18 16:32:52.356.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' passed (0.255 seconds).
+Test Suite 'OrderedOutputStressTests' passed at 2026-07-18 16:32:52.611.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.255 (0.255) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 16:32:52.611.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.255 (0.255) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 16:32:52.611.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.255 (0.256) seconds

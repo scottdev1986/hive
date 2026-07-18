@@ -211,7 +211,15 @@ final class Gate9ActionPolicyTests: XCTestCase {
         var actionsSeen: [UInt32] = []
         HiveGhosttyActionPolicy.setObserver { tag, _ in actionsSeen.append(tag.rawValue) }
         defer { HiveGhosttyActionPolicy.setObserver(nil) }
-        _ = surface.sendKey(key)
+        _ = surface.sendKey(TerminalKeyEvent(
+            action: .press,
+            modifiers: .command,
+            consumedModifiers: [],
+            keycode: 45,
+            text: nil,
+            unshiftedCodepoint: 0x6E,
+            composing: false
+        ))
         XCTAssertFalse(actionsSeen.contains(GHOSTTY_ACTION_NEW_WINDOW.rawValue),
                        "a stripped binding must never reach the action callback as NEW_WINDOW")
     }

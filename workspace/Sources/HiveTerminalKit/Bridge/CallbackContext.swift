@@ -2,7 +2,7 @@ import Foundation
 import HiveGhosttyC
 
 /// §23 bridge event types (hive_ghostty_event_e).
-public enum BridgeEventType: Int32, Equatable, Sendable {
+enum BridgeEventType: Int32, Equatable, Sendable {
     case invalidate = 1
     case title = 2
     case pwd = 3
@@ -11,11 +11,11 @@ public enum BridgeEventType: Int32, Equatable, Sendable {
     case closeRequest = 6
 }
 
-public struct BridgeEvent: Equatable, Sendable {
-    public var type: BridgeEventType
-    public var bytes: Data
+struct BridgeEvent: Equatable, Sendable {
+    var type: BridgeEventType
+    var bytes: Data
 
-    public init(type: BridgeEventType, bytes: Data = Data()) {
+    init(type: BridgeEventType, bytes: Data = Data()) {
         self.type = type
         self.bytes = bytes
     }
@@ -43,7 +43,7 @@ public enum RendererHealth: Equatable, Sendable {
 /// on the Swift side; C must never free the context. If the wrapper deinits
 /// while the C surface still holds the pointer, the next callback is a UAF —
 /// tests construct a real surface and assert the owner keeps the context.
-public final class BridgeCallbackContext: @unchecked Sendable {
+final class BridgeCallbackContext: @unchecked Sendable {
     private var writeHandler: ((Data) -> Void)?
     private var eventHandler: ((BridgeEvent) -> Void)?
     private var rendererHealthHandler: ((RendererHealth) -> Void)?
@@ -57,7 +57,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
     /// timing-dependent oversized allocation.
     var callbackCopyObserver: (() -> Void)?
 
-    public var onWrite: ((Data) -> Void)? {
+    var onWrite: ((Data) -> Void)? {
         get {
             condition.lock()
             defer { condition.unlock() }
@@ -70,7 +70,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
-    public var onEvent: ((BridgeEvent) -> Void)? {
+    var onEvent: ((BridgeEvent) -> Void)? {
         get {
             condition.lock()
             defer { condition.unlock() }
@@ -83,7 +83,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
-    public var onRendererHealth: ((RendererHealth) -> Void)? {
+    var onRendererHealth: ((RendererHealth) -> Void)? {
         get {
             condition.lock()
             defer { condition.unlock() }
@@ -96,12 +96,12 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         }
     }
 
-    public init() {}
+    init() {}
 
     /// Synchronous write body. Copies `length` bytes from `bytes` before
     /// returning. It never invokes host code or calls back into Ghostty while
     /// the native renderer mutex may be held.
-    public func handleWrite(bytes: UnsafePointer<UInt8>?, length: Int) {
+    func handleWrite(bytes: UnsafePointer<UInt8>?, length: Int) {
         guard enter() else { return }
         callbackCopyObserver?()
         let copy: Data
@@ -116,7 +116,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
 
     /// Synchronous event body from a `hive_ghostty_event_s *` (§23 ABI).
     /// Unpacks type/bytes/length and copies payload before return.
-    public func handleEvent(_ event: UnsafePointer<hive_ghostty_event_s>?) {
+    func handleEvent(_ event: UnsafePointer<hive_ghostty_event_s>?) {
         guard enter() else { return }
         guard let event else {
             leave()
@@ -138,17 +138,17 @@ public final class BridgeCallbackContext: @unchecked Sendable {
     }
 
     /// Unowned context pointer for C `void *` (lifetime owned by Swift wrapper).
-    public var unownedContextPointer: UnsafeMutableRawPointer {
+    var unownedContextPointer: UnsafeMutableRawPointer {
         Unmanaged.passUnretained(self).toOpaque()
     }
 
-    public static func fromContext(_ pointer: UnsafeMutableRawPointer?) -> BridgeCallbackContext? {
+    static func fromContext(_ pointer: UnsafeMutableRawPointer?) -> BridgeCallbackContext? {
         guard let pointer else { return nil }
         return Unmanaged<BridgeCallbackContext>.fromOpaque(pointer).takeUnretainedValue()
     }
 
     /// Visible for re-entrancy positive-control tests.
-    public var isInCallback: Bool {
+    var isInCallback: Bool {
         condition.lock()
         defer { condition.unlock() }
         return activeCallbacks > 0
@@ -254,7 +254,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
 // MARK: - C trampolines typed against hive_ghostty_bridge.h (M1/B1)
 
 /// Write trampoline: matches `hive_ghostty_write_fn` exactly.
-public let hiveBridgeWriteTrampoline: hive_ghostty_write_fn = { context, bytes, length in
+let hiveBridgeWriteTrampoline: hive_ghostty_write_fn = { context, bytes, length in
     guard let ctx = BridgeCallbackContext.fromContext(context) else { return }
     ctx.handleWrite(bytes: bytes, length: Int(length))
 }
@@ -262,7 +262,7 @@ public let hiveBridgeWriteTrampoline: hive_ghostty_write_fn = { context, bytes, 
 /// Event trampoline: matches `hive_ghostty_event_fn` — **two** params
 /// `(void *context, const hive_ghostty_event_s *event)`. Unpacks the struct
 /// inside; never takes flattened type/bytes/length (B1).
-public let hiveBridgeEventTrampoline: hive_ghostty_event_fn = { context, event in
+let hiveBridgeEventTrampoline: hive_ghostty_event_fn = { context, event in
     guard let ctx = BridgeCallbackContext.fromContext(context) else { return }
     ctx.handleEvent(event)
 }

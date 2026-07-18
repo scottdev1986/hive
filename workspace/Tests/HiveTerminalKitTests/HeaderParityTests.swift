@@ -47,11 +47,11 @@ final class HeaderParityTests: XCTestCase {
         XCTAssertEqual(GHOSTTY_OUT_OF_SPACE.rawValue, -3)
         XCTAssertEqual(GHOSTTY_NO_VALUE.rawValue, -4)
 
-        XCTAssertEqual(GhosttyBridgeResult.success.rawValue, Int32(GHOSTTY_SUCCESS.rawValue))
-        XCTAssertEqual(GhosttyBridgeResult.outOfMemory.rawValue, Int32(GHOSTTY_OUT_OF_MEMORY.rawValue))
-        XCTAssertEqual(GhosttyBridgeResult.invalidValue.rawValue, Int32(GHOSTTY_INVALID_VALUE.rawValue))
-        XCTAssertEqual(GhosttyBridgeResult.outOfSpace.rawValue, Int32(GHOSTTY_OUT_OF_SPACE.rawValue))
-        XCTAssertEqual(GhosttyBridgeResult.noValue.rawValue, Int32(GHOSTTY_NO_VALUE.rawValue))
+        XCTAssertEqual(HiveTerminalEngineResult.success.rawValue, Int32(GHOSTTY_SUCCESS.rawValue))
+        XCTAssertEqual(HiveTerminalEngineResult.outOfMemory.rawValue, Int32(GHOSTTY_OUT_OF_MEMORY.rawValue))
+        XCTAssertEqual(HiveTerminalEngineResult.invalidValue.rawValue, Int32(GHOSTTY_INVALID_VALUE.rawValue))
+        XCTAssertEqual(HiveTerminalEngineResult.outOfSpace.rawValue, Int32(GHOSTTY_OUT_OF_SPACE.rawValue))
+        XCTAssertEqual(HiveTerminalEngineResult.noValue.rawValue, Int32(GHOSTTY_NO_VALUE.rawValue))
 
         // When the offline artifact is present, pin against the real types.h text.
         let repoRoot = try findRepoRoot()

@@ -2,7 +2,6 @@ import AppKit
 import Darwin
 import Foundation
 import HiveGhosttyC
-import HiveTerminalKit
 
 final class CallbackLog: @unchecked Sendable {
     private let lock = NSLock()
@@ -20,6 +19,14 @@ final class CallbackLog: @unchecked Sendable {
         return writes
     }
 }
+
+private let probeWriteCallback: hive_ghostty_write_fn = { context, bytes, length in
+    guard let context, let bytes else { return }
+    let log = Unmanaged<CallbackLog>.fromOpaque(context).takeUnretainedValue()
+    log.append(Data(bytes: bytes, count: Int(length)))
+}
+
+private let probeEventCallback: hive_ghostty_event_fn = { _, _ in }
 
 private func fail(_ message: String) -> Never {
     FileHandle.standardError.write(Data("MANUAL_ISOLATION_FAIL \(message)\n".utf8))
@@ -97,9 +104,8 @@ var runtime = ghostty_runtime_config_s(
 guard let app = ghostty_app_new(&runtime, config) else { fail("ghostty_app_new") }
 
 let hostView = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
-let callbackContext = BridgeCallbackContext()
 let callbackLog = CallbackLog()
-callbackContext.onWrite = { callbackLog.append($0) }
+let callbackContext = Unmanaged.passUnretained(callbackLog).toOpaque()
 
 let workingDirectory = strdup("/hive-manual-cwd-must-be-inert-and-missing")!
 let command = strdup("/bin/sleep 600")!
@@ -133,10 +139,10 @@ let surface: ghostty_surface_t? = withUnsafeMutablePointer(to: &environment) { e
         app,
         &surfaceConfig,
         UInt32(HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED),
-        hiveBridgeWriteTrampoline,
-        callbackContext.unownedContextPointer,
-        hiveBridgeEventTrampoline,
-        callbackContext.unownedContextPointer
+        probeWriteCallback,
+        callbackContext,
+        probeEventCallback,
+        nil
     )
 }
 guard let surface else { fail("manual surface creation rejected inert process fields") }

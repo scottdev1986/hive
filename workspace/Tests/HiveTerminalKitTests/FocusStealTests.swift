@@ -34,7 +34,7 @@ final class FocusStealTests: XCTestCase {
         // Fire the events that MUST NOT steal focus.
         terminal.notifyOutputStatusReconnect(reason: "output")
         terminal.applyStatusUpdate(evidence: "agent-busy")
-        terminal.retarget(
+        try? terminal.bind(
             to: SurfaceBinding(locator: makeTestLocator(), connectionId: "reconnect-1"),
             highWater: 0
         )

@@ -14,6 +14,7 @@ let package = Package(
         .library(name: "WorkspaceCore", targets: ["WorkspaceCore"]),
         .library(name: "HiveTerminalKit", targets: ["HiveTerminalKit"]),
         .executable(name: "GhosttyManualIsolationProbe", targets: ["GhosttyManualIsolationProbe"]),
+        .executable(name: "HiveTerminalB20Probe", targets: ["HiveTerminalB20Probe"]),
     ],
     dependencies: [
         // Provides LocalProcessTerminalView, the AppKit terminal view that
@@ -92,6 +93,13 @@ let package = Package(
             name: "GhosttyManualIsolationProbe",
             dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
             path: "Tests/GhosttyManualIsolationProbe"
+        ),
+        // B2.0 boundary probe: deliberately cannot import HiveGhosttyC or
+        // GhosttyKit. It drives only Workspace-visible Hive value types.
+        .executableTarget(
+            name: "HiveTerminalB20Probe",
+            dependencies: ["HiveTerminalKit"],
+            path: "Tests/HiveTerminalB20Probe"
         ),
     ]
 )

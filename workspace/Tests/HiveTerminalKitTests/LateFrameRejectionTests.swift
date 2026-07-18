@@ -1,13 +1,12 @@
 import XCTest
 @testable import HiveTerminalKit
 
-/// LATE-FRAME positive control (§06/§26): deliver a frame bound to an OLD
-/// locator/generation to a retargeted surface and prove it is rejected
-/// (not applied).
+/// Exact-mapping positive controls (§06/§26): one view never changes locator
+/// or generation; reconnect changes only the connection fence.
 ///
 /// Uses: FakeManualSurface (no GhosttyKit).
 final class LateFrameRejectionTests: XCTestCase {
-    func testLateFrameForOldBindingIsRejectedNotApplied() {
+    func testDifferentLocatorIsRejectedWithoutMutatingSurface() throws {
         let engine = FakeManualSurface()
         let view = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 200, height: 100), engine: engine)
 
@@ -17,7 +16,7 @@ final class LateFrameRejectionTests: XCTestCase {
         let newBinding = SurfaceBinding(locator: newLocator, connectionId: "conn-new")
 
         // Bind to old, apply a frame successfully.
-        view.retarget(to: oldBinding, highWater: 0)
+        try view.bind(to: oldBinding, highWater: 0)
         let first = view.applyOutput(
             bytes: Data("hello".utf8),
             streamSeq: 0,
@@ -26,15 +25,21 @@ final class LateFrameRejectionTests: XCTestCase {
         XCTAssertEqual(first, .applied(newHighWater: 5))
         XCTAssertEqual(engine.appliedRanges.count, 1)
 
-        // Retarget to new generation/connection.
-        view.retarget(to: newBinding, highWater: 0)
-        XCTAssertEqual(view.binding, newBinding)
+        XCTAssertThrowsError(try view.bind(to: newBinding, highWater: 0)) { error in
+            guard case HiveTerminalBindingError.locatorChanged(let expected, let attempted) = error else {
+                return XCTFail("expected locatorChanged, got \(error)")
+            }
+            XCTAssertEqual(expected, oldLocator)
+            XCTAssertEqual(attempted, newLocator)
+        }
+        XCTAssertEqual(view.binding, oldBinding)
+        XCTAssertEqual(view.sessionLocator, oldLocator)
 
-        // LATE FRAME: host still delivers a frame tagged for the old binding.
+        // A frame for the refused locator must never reach the existing surface.
         let late = view.applyOutput(
             bytes: Data("LATE-FRAME-BYTES".utf8),
             streamSeq: 5,
-            frameBinding: oldBinding
+            frameBinding: newBinding
         )
 
         guard case .rejectedWrongBinding(let evidence) = late else {
@@ -42,17 +47,40 @@ final class LateFrameRejectionTests: XCTestCase {
             return
         }
         XCTAssertTrue(
-            evidence.contains("conn-old") || evidence.contains(oldLocator.sessionId),
+            evidence.contains("conn-new") || evidence.contains(newLocator.sessionId),
             "evidence should name the mismatched binding: \(evidence)"
         )
         // Positive control: engine must NOT have applied the late bytes.
         XCTAssertEqual(
             engine.appliedRanges.count,
             1,
-            "late frame must not reach process_output on the retargeted surface"
+            "foreign-locator frame must not reach process_output on the fixed surface"
         )
         XCTAssertEqual(engine.appliedRanges.last?.bytes, Data("hello".utf8))
         XCTAssertNotEqual(view.highWater, 5 + UInt64("LATE-FRAME-BYTES".utf8.count))
+    }
+
+    func testSameLocatorReconnectRejectsOldConnectionFrame() throws {
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 200, height: 100), engine: engine)
+        let locator = makeTestLocator(generation: 1)
+        let oldBinding = SurfaceBinding(locator: locator, connectionId: "c-old")
+        let newBinding = SurfaceBinding(locator: locator, connectionId: "c-new")
+
+        try view.bind(to: oldBinding)
+        try view.bind(to: newBinding)
+        XCTAssertEqual(view.sessionLocator, locator)
+        XCTAssertEqual(view.binding, newBinding)
+
+        let late = view.applyOutput(
+            bytes: Data("late".utf8),
+            streamSeq: 0,
+            frameBinding: oldBinding
+        )
+        guard case .rejectedWrongBinding = late else {
+            return XCTFail("old connection must be rejected, got \(late)")
+        }
+        XCTAssertTrue(engine.appliedRanges.isEmpty)
     }
 
     func testLateFrameViaAttachClientHandleFrame() throws {

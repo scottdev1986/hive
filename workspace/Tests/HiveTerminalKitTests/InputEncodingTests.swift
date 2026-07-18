@@ -117,7 +117,7 @@ final class InputEncodingTests: XCTestCase {
         XCTAssertEqual(engine.keysSentDetail.count, 1)
         let sent = engine.keysSentDetail[0]
         XCTAssertNotEqual(sent.unshiftedCodepoint, 0, "unshifted_codepoint must no longer be hardcoded to zero")
-        XCTAssertEqual(sent.consumedMods.rawValue, GHOSTTY_MODS_SHIFT.rawValue,
+        XCTAssertEqual(sent.consumedModifiers.rawValue, GHOSTTY_MODS_SHIFT.rawValue,
                        "consumed_mods must reflect mods minus control/command, not a hardcoded zero")
     }
 
@@ -132,8 +132,8 @@ final class InputEncodingTests: XCTestCase {
         // mods carries the real shift+control; consumed_mods drops control
         // (and command) per Ghostty's own heuristic: those never contribute
         // to text translation.
-        XCTAssertEqual(sent.mods.rawValue, GHOSTTY_MODS_SHIFT.rawValue | GHOSTTY_MODS_CTRL.rawValue)
-        XCTAssertEqual(sent.consumedMods.rawValue, GHOSTTY_MODS_SHIFT.rawValue)
+        XCTAssertEqual(sent.modifiers.rawValue, GHOSTTY_MODS_SHIFT.rawValue | GHOSTTY_MODS_CTRL.rawValue)
+        XCTAssertEqual(sent.consumedModifiers.rawValue, GHOSTTY_MODS_SHIFT.rawValue)
     }
 
     // MARK: 4. Key+text single-send
@@ -238,7 +238,7 @@ final class InputEncodingTests: XCTestCase {
         terminal.keyUp(with: event)
 
         XCTAssertEqual(engine.keysSentDetail.count, 1, "keyUp must reach the engine at all")
-        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_RELEASE)
+        XCTAssertEqual(engine.keysSentDetail[0].action, .release)
         XCTAssertNil(engine.keysSentDetail[0].text,
                      "a release must never carry text — real keyAction only embeds its explicit " +
                      "text: parameter, which keyUp never passes (fidelity audit 2026-07-17)")
@@ -252,11 +252,11 @@ final class InputEncodingTests: XCTestCase {
 
         let fresh = makeKeyEvent(characters: "x", keyCode: 7, isARepeat: false)
         terminal.encodeKey(fresh)
-        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_PRESS)
+        XCTAssertEqual(engine.keysSentDetail[0].action, .press)
 
         let repeated = makeKeyEvent(characters: "x", keyCode: 7, isARepeat: true)
         terminal.encodeKey(repeated)
-        XCTAssertEqual(engine.keysSentDetail[1].action, GHOSTTY_ACTION_REPEAT,
+        XCTAssertEqual(engine.keysSentDetail[1].action, .repeat,
                        "a held/repeating key must report GHOSTTY_ACTION_REPEAT, not PRESS again")
     }
 
@@ -275,7 +275,7 @@ final class InputEncodingTests: XCTestCase {
 
         XCTAssertEqual(engine.keysSentDetail.count, 1,
                        "pre-B1 snapshot had no flagsChanged override — a bare modifier press/release never reached the terminal")
-        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_PRESS)
+        XCTAssertEqual(engine.keysSentDetail[0].action, .press)
     }
 
     func testFlagsChangedSendsReleaseWhenTheModifierClears() {
@@ -288,7 +288,7 @@ final class InputEncodingTests: XCTestCase {
         terminal.flagsChanged(with: event)
 
         XCTAssertEqual(engine.keysSentDetail.count, 1)
-        XCTAssertEqual(engine.keysSentDetail[0].action, GHOSTTY_ACTION_RELEASE)
+        XCTAssertEqual(engine.keysSentDetail[0].action, .release)
     }
 
     func testFlagsChangedIgnoresUnmappedKeyCodes() {

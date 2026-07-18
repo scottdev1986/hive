@@ -1,0 +1,232 @@
+Fetching https://github.com/migueldeicaza/SwiftTerm from cache
+Fetching https://github.com/apple/swift-argument-parser from cache
+Fetched https://github.com/apple/swift-argument-parser from cache (0.34s)
+warning: 'swiftterm': skipping cache due to an error: The file “maintenance.lock” doesn’t exist.
+[1/11452] Fetching swiftterm
+Fetched https://github.com/migueldeicaza/SwiftTerm from cache (1.60s)
+Computing version for https://github.com/migueldeicaza/SwiftTerm
+Computed https://github.com/migueldeicaza/SwiftTerm at 1.11.2 (1.63s)
+Computing version for https://github.com/apple/swift-argument-parser
+Computed https://github.com/apple/swift-argument-parser at 1.8.2 (0.03s)
+Creating working copy for https://github.com/apple/swift-argument-parser
+Working copy of https://github.com/apple/swift-argument-parser resolved at 1.8.2
+Creating working copy for https://github.com/migueldeicaza/SwiftTerm
+Working copy of https://github.com/migueldeicaza/SwiftTerm resolved at 1.11.2
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/32] /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.Qs1vP6/build-x86_64/x86_64-apple-macosx/debug/HiveWorkspacePackageTests.derived/runner.swift
+[3/32] Write sources
+[4/32] Write HiveWorkspace-entitlement.plist
+[5/32] Write sources
+[10/32] Write HiveTerminalB20Probe-entitlement.plist
+[11/32] Write sources
+[13/32] Write GhosttyManualIsolationProbe-entitlement.plist
+[14/32] Write sources
+[16/32] Copying libghostty-internal.a
+[17/32] Copying VendorMarks
+[18/32] Copying Fixtures
+[19/32] Compiling HiveGhosttyC empty.c
+[20/32] Write swift-version--58304C5D6DBC2206.txt
+[22/117] Compiling WorkspaceCore ModelControlCommand.swift
+[23/118] Compiling WorkspaceCore TerminalScroll.swift
+[24/118] Compiling WorkspaceCore TokenUsagePresentation.swift
+[25/118] Compiling WorkspaceCore SpatialNavigation.swift
+[26/118] Compiling WorkspaceCore Status.swift
+[27/118] Compiling SwiftTerm BufferLine.swift
+[28/118] Compiling SwiftTerm BufferSet.swift
+[29/118] Compiling SwiftTerm Extensions.swift
+[30/118] Compiling SwiftTerm TerminalProgressBarView.swift
+[31/118] Compiling SwiftTerm TerminalViewDelegate.swift
+[32/118] Compiling SwiftTerm Buffer.swift
+[33/118] Emitting module WorkspaceCore
+[34/118] Compiling WorkspaceCore RoutingPolicyDocument.swift
+[35/118] Compiling WorkspaceCore ProjectState.swift
+[36/118] Compiling WorkspaceCore LayoutTree.swift
+[37/118] Compiling WorkspaceCore ModelControlPolicy.swift
+[38/118] Compiling WorkspaceCore WorkspaceStatus.swift
+[39/118] Compiling WorkspaceCore PaneFocus.swift
+[40/118] Compiling WorkspaceCore ModelControlState.swift
+[41/118] Compiling WorkspaceCore ModelControlSnapshot.swift
+[42/136] Compiling SwiftTerm SwiftUITerminalView.swift
+[43/136] Compiling SwiftTerm iOSAccessoryView.swift
+[44/136] Compiling SwiftTerm iOSCaretView.swift
+[45/139] Compiling SwiftTerm iOSDoubleButton.swift
+[46/139] Compiling SwiftTerm iOSExtensions.swift
+[47/139] Compiling SwiftTerm iOSKeyboardView.swift
+[48/139] Compiling SwiftTerm iOSTerminalView.swift
+[49/139] Compiling SwiftTerm iOSTextInput.swift
+[50/139] Compiling SwiftTerm iOSTextStorage.swift
+[51/139] Compiling SwiftTerm TerminalViewSearch.swift
+[52/139] Compiling SwiftTerm UnicodeWidthData.swift
+[53/139] Compiling SwiftTerm Utilities.swift
+[54/139] Compiling HiveTerminalKit SessionTypes.swift
+[55/139] Compiling HiveTerminalKit CheckpointHeader.generated.swift
+[56/139] Compiling HiveTerminalKit FrameCodec.swift
+[59/139] Compiling SwiftTerm CharData.swift
+[60/139] Compiling SwiftTerm CharSets.swift
+[61/139] Emitting module SwiftTerm
+[62/139] Compiling SwiftTerm CircularList.swift
+[63/139] Compiling SwiftTerm Colors.swift
+[64/139] Compiling SwiftTerm EscapeSequenceParser.swift
+[65/139] Compiling SwiftTerm EscapeSequences.swift
+[66/139] Compiling WorkspaceCoreTests AgentActivityTests.swift
+[67/139] Compiling WorkspaceCoreTests AttentionQueueTests.swift
+[68/139] Compiling WorkspaceCoreTests ComposerInputTests.swift
+[69/139] Compiling WorkspaceCoreTests LayoutTransitionTests.swift
+[70/139] Compiling HiveTerminalKit CheckpointEnvelope.swift
+[71/139] Compiling HiveTerminalKit HiveTerminalView+Input.swift
+[72/139] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
+[73/139] Compiling HiveTerminalKit HiveTerminalView.swift
+[74/139] Compiling SwiftTerm KittyPlaceholder.swift
+[75/139] Compiling SwiftTerm Line.swift
+[76/139] Compiling SwiftTerm LocalProcess.swift
+[77/139] Compiling HiveTerminalKit OutputRangeApplicator.swift
+[78/139] Compiling HiveTerminalKit HiveTerminalKit.swift
+[79/139] Compiling HiveTerminalKit CallbackContext.swift
+[80/139] Compiling HiveTerminalKit EngineContract.swift
+[81/139] Compiling HiveTerminalKit HostTransport.swift
+[82/139] Compiling HiveTerminalKit AttachReplayClient.swift
+[83/139] Emitting module HiveTerminalKit
+[84/139] Compiling HiveTerminalKit ManualSurface.swift
+[85/167] Compiling HiveTerminalKitTests Gate6SurfaceRestoreTests.swift
+[86/167] Compiling HiveTerminalKitTests Gate7RenderingTests.swift
+[87/167] Compiling HiveTerminalKitTests Gate3OperationDomainTests.swift
+[88/167] Compiling HiveTerminalKitTests Gate4ABIQualificationTests.swift
+[89/167] Emitting module HiveTerminalB20Probe
+[90/167] Compiling HiveTerminalB20Probe main.swift
+[90/167] Write Objects.LinkFileList
+[92/167] Emitting module GhosttyManualIsolationProbe
+[93/167] Compiling GhosttyManualIsolationProbe main.swift
+[93/167] Write Objects.LinkFileList
+[95/167] Compiling SwiftTerm SearchService.swift
+[96/167] Compiling SwiftTerm SearchState.swift
+[97/167] Compiling SwiftTerm SelectionService.swift
+[98/167] Compiling SwiftTerm MacAccessibilityService.swift
+[99/167] Compiling SwiftTerm MacCaretView.swift
+[100/167] Compiling SwiftTerm MacDebugView.swift
+[101/167] Compiling SwiftTerm SearchEngine.swift
+[102/167] Compiling SwiftTerm SearchLineCache.swift
+[103/167] Compiling SwiftTerm SearchOptions.swift
+[104/167] Compiling SwiftTerm MacExtensions.swift
+[105/167] Compiling SwiftTerm MacFindBarView.swift
+[106/167] Compiling SwiftTerm MacLocalTerminalView.swift
+[107/167] Compiling SwiftTerm MacTerminalView.swift
+[108/167] Compiling SwiftTerm Position.swift
+[109/167] Compiling SwiftTerm Pty.swift
+[110/167] Compiling SwiftTerm ExtensionsTerminal.swift
+[111/167] Compiling SwiftTerm File.swift
+[112/167] Compiling SwiftTerm HeadlessTerminal.swift
+[113/167] Compiling SwiftTerm KittyGraphics.swift
+[114/167] Compiling SwiftTerm SixelDcsHandler.swift
+[115/167] Compiling SwiftTerm Terminal.swift
+[116/167] Compiling SwiftTerm TerminalOptions.swift
+[117/198] Compiling HiveWorkspace Theme.swift
+[118/198] Compiling HiveWorkspace main.swift
+[119/198] Compiling HiveWorkspace ModelControlDataSource.swift
+[120/198] Compiling HiveWorkspace ModelRowView.swift
+[121/199] Compiling HiveWorkspace ProviderCardView.swift
+[122/199] Compiling HiveWorkspace SettingsPageController.swift
+[123/199] Compiling HiveWorkspace LayoutContainerView.swift
+[124/199] Compiling HiveWorkspace MainMenuBuilder.swift
+[125/199] Compiling HiveWorkspace EffortControlView.swift
+[126/199] Compiling HiveWorkspace MCCCopy.swift
+[127/199] Emitting module HiveWorkspace
+[128/199] Compiling HiveWorkspace PaneView.swift
+[129/199] Compiling HiveWorkspace ProjectSwitcher.swift
+[130/199] Compiling HiveWorkspace ComposerLeaseStore.swift
+[131/199] Compiling HiveWorkspace CapsuleBadge.swift
+[132/199] Compiling HiveWorkspace resource_bundle_accessor.swift
+[133/199] Compiling HiveWorkspace CardView.swift
+[134/199] Compiling HiveWorkspace ProviderMarkView.swift
+[135/199] Compiling HiveWorkspace SmokeRunner.swift
+[136/199] Compiling HiveWorkspace TerminalPaneView.swift
+[137/199] Compiling HiveWorkspace AppDelegate.swift
+[138/199] Compiling HiveWorkspace AttentionCenter.swift
+[139/199] Compiling HiveWorkspace ProjectWindowController.swift
+[140/199] Compiling HiveWorkspace ChainEditorView.swift
+[141/199] Compiling HiveWorkspace FeedClient.swift
+[142/199] Compiling HiveWorkspace LaunchConfig.swift
+[143/199] Compiling HiveWorkspace UsageMeterView.swift
+[144/199] Compiling HiveWorkspace ThemeTokens.swift
+[145/199] Compiling HiveWorkspace PaneFocusRingView.swift
+[146/199] Compiling HiveWorkspace PaneStatusBorderView.swift
+[147/199] Compiling HiveWorkspace SettingsWindowController.swift
+[148/199] Compiling HiveWorkspace UsageSettingsController.swift
+[148/199] Write Objects.LinkFileList
+[150/199] Compiling HiveTerminalKitTests OrderedOutputEngineTests.swift
+[151/200] Compiling WorkspaceCoreTests SessionProtocolFixtureTests.swift
+[152/201] Compiling WorkspaceCoreTests SpatialNavigationTests.swift
+[153/201] Compiling WorkspaceCoreTests TokenUsageWireContractTests.swift
+[154/201] Compiling WorkspaceCoreTests ModelControlWireContractTests.swift
+[155/201] Compiling WorkspaceCoreTests ProjectStateTests.swift
+[156/201] Compiling HiveTerminalKitTests OrderedOutputStressTests.swift
+[157/201] Compiling WorkspaceCoreTests RoutingPolicyDocumentTests.swift
+[158/201] Compiling WorkspaceCoreTests RoutingPolicyWireContractTests.swift
+[159/201] Compiling WorkspaceCoreTests TokenUsagePresentationTests.swift
+[160/201] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
+[161/201] Compiling WorkspaceCoreTests PaneFocusTests.swift
+[162/201] Compiling HiveTerminalKitTests InputEncodingTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.Qs1vP6/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
+ 80 |         )
+ 81 |         weak var weakHost = externalHost
+    |                  `- warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 82 | 
+ 83 |         let surface: GhosttyManualSurface
+
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.Qs1vP6/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 93 |         defer { surface.free() }
+ 94 | 
+ 95 |         weak var weakCtx = surface.callbackContext
+    |                  `- warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 96 |         externalHost = nil // only surface should hold the view now
+ 97 | 
+
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.Qs1vP6/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
+ 80 |         )
+ 81 |         weak var weakHost = externalHost
+    |                  `- warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 82 | 
+ 83 |         let surface: GhosttyManualSurface
+
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.Qs1vP6/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 93 |         defer { surface.free() }
+ 94 | 
+ 95 |         weak var weakCtx = surface.callbackContext
+    |                  `- warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+ 96 |         externalHost = nil // only surface should hold the view now
+ 97 | 
+
+[#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
+[165/201] Compiling HiveTerminalKitTests LateFrameRejectionTests.swift
+[166/201] Compiling WorkspaceCoreTests LayoutTreeTests.swift
+[167/201] Compiling WorkspaceCoreTests WorkspaceStatusReducerTests.swift
+[168/201] Compiling WorkspaceCoreTests WorkspaceFeedWireContractTests.swift
+[169/201] Compiling WorkspaceCoreTests resource_bundle_accessor.swift
+[170/201] Compiling HiveTerminalKitTests KittyKeyboardGoldenTests.swift
+[171/201] Compiling HiveTerminalKitTests InMemoryHostTransport.swift
+[174/201] Emitting module WorkspaceCoreTests
+[175/201] Compiling WorkspaceCoreTests ModelControlTests.swift
+[182/201] Emitting module HiveTerminalKitTests
+[183/201] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
+[183/201] Linking HiveWorkspace
+[184/208] Linking HiveTerminalB20Probe
+[185/208] Linking GhosttyManualIsolationProbe
+[196/208] Applying HiveWorkspace
+[197/208] Applying GhosttyManualIsolationProbe
+[198/208] Applying HiveTerminalB20Probe
+[200/208] Compiling HiveWorkspaceTests AppDelegateLifecycleTests.swift
+[201/208] Compiling HiveWorkspaceTests ComposerLeaseStoreTests.swift
+[202/208] Emitting module HiveWorkspaceTests
+[203/208] Compiling HiveWorkspaceTests ChainEditorViewTests.swift
+[204/208] Compiling HiveWorkspaceTests UsageMeterViewTests.swift
+[205/208] Compiling HiveWorkspaceTests ProjectSwitcherTests.swift
+[206/208] Compiling HiveWorkspaceTests SettingsWindowControllerTests.swift
+[207/210] Emitting module HiveWorkspacePackageTests
+[208/210] Compiling HiveWorkspacePackageTests runner.swift
+[208/210] Write Objects.LinkFileList
+[209/210] Linking HiveWorkspacePackageTests
+Build complete! (14.91s)

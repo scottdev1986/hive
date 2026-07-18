@@ -26,7 +26,10 @@ final class Gate7RenderingTests: XCTestCase {
         let genericView = NSView(frame: view.bounds)
         genericView.wantsLayer = true
 
-        XCTAssertNotNil(view.engine.surfaceHandle, "real Ghostty surface must be alive")
+        XCTAssertNotNil(
+            (view.engine as? GhosttyManualSurface)?.surfaceHandle,
+            "real Ghostty surface must be alive"
+        )
         XCTAssertTrue(view.subviews.contains { $0.layer === layer })
         XCTAssertTrue(
             String(describing: type(of: layer)).contains("IOSurfaceLayer"),
@@ -222,7 +225,7 @@ final class Gate7RenderingTests: XCTestCase {
         )
         defer { view.userClose() }
         _ = view.makeAttachClient()
-        view.retarget(
+        try? view.bind(
             to: SurfaceBinding(locator: makeTestLocator(), connectionId: "gate-7-resize"),
             highWater: 0
         )

@@ -8,7 +8,7 @@ public enum OutputApplyResult: Equatable, Sendable {
     case digestConflictRebaseRequired
     /// Late frame: payload bound to a different locator/generation/connection.
     case rejectedWrongBinding(evidence: String)
-    case engineError(GhosttyBridgeResult)
+    case engineError(HiveTerminalEngineResult)
 }
 
 /// Applies contiguous ordered OUTPUT ranges to a `ManualSurfaceEngine`.
@@ -27,7 +27,7 @@ public final class OutputRangeApplicator {
     private var committedDigests: [UInt64: (length: Int, digest: Data)] = [:]
     private let engine: ManualSurfaceEngine
 
-    public init(engine: ManualSurfaceEngine) {
+    init(engine: ManualSurfaceEngine) {
         self.engine = engine
     }
 

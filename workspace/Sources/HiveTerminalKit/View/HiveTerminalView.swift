@@ -1,6 +1,5 @@
 import AppKit
 import Foundation
-import HiveGhosttyC
 
 /// L1 `HiveTerminalView` — one edge-to-edge NSView bound to exactly one
 /// SessionLocator/generation (§26).
@@ -15,6 +14,7 @@ import HiveGhosttyC
 public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var surfaceState: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
+    public private(set) var sessionLocator: SessionLocator?
     public private(set) var claimPresentation: InputClaimPresentation = .free
     public private(set) var highWater: UInt64 = 0
     public private(set) var lastTitle: String = ""
@@ -22,15 +22,15 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     private var engineStorage: ManualSurfaceEngine?
     private var applicatorStorage: OutputRangeApplicator?
-    public var engine: ManualSurfaceEngine {
+    var engine: ManualSurfaceEngine {
         guard let engineStorage else { preconditionFailure("terminal surface is not initialized") }
         return engineStorage
     }
-    public var applicator: OutputRangeApplicator {
+    var applicator: OutputRangeApplicator {
         guard let applicatorStorage else { preconditionFailure("terminal applicator is not initialized") }
         return applicatorStorage
     }
-    public private(set) var attachClient: AttachReplayClient?
+    private(set) var attachClient: AttachReplayClient?
 
     public var onUserClose: (() -> Void)?
     public var onFirstCorrectFrame: ((UInt64) -> Void)?
@@ -66,7 +66,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     var markedText: NSAttributedString?
     var pendingAuthoringHeld = false
 
-    public init(frame frameRect: NSRect, engine: ManualSurfaceEngine, viewerId: String = "viewer-local") {
+    init(frame frameRect: NSRect, engine: ManualSurfaceEngine, viewerId: String = "viewer-local") {
         self.engineStorage = engine
         self.viewerId = viewerId
         self.applicatorStorage = OutputRangeApplicator(engine: engine)
@@ -113,6 +113,19 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         resizeWorkItem?.cancel()
         removeWindowObservers()
         removeWorkspaceObservers()
+        engineStorage?.free()
+    }
+
+    public var renderEvidence: HiveTerminalRenderEvidence {
+        let layer = ghosttyRenderingLayer
+        return HiveTerminalRenderEvidence(
+            engine: .current,
+            locator: sessionLocator,
+            highWater: highWater,
+            drawCount: drawScheduledCount,
+            layerClass: layer.map { String(describing: type(of: $0)) },
+            hasPresentedContents: layer?.contents != nil
+        )
     }
 
     /// Wire §23 bridge events: INVALIDATE → render; CLOSE_REQUEST → terminate seam (M9).
@@ -194,7 +207,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     // MARK: - Attach
 
-    public func makeAttachClient() -> AttachReplayClient {
+    func makeAttachClient() -> AttachReplayClient {
         let client = AttachReplayClient(viewerId: viewerId, engine: engine)
         // Encoder-out write path → HUMAN_INPUT (client owns claim binding).
         engine.callbackContext.onWrite = { [weak client] bytes in
@@ -223,10 +236,12 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         afterSeq: UInt64 = 0,
         transport: HostTransport
     ) throws -> AttachReplayOutcome {
+        try admitBinding(
+            SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId),
+            highWater: afterSeq
+        )
         setSurfaceState(.attaching)
         let client = attachClient ?? makeAttachClient()
-        binding = SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
-        applicator.bind(binding!, highWater: afterSeq)
         let outcome = try client.attach(
             grant: grant,
             geometry: geometry,
@@ -250,13 +265,27 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         return outcome
     }
 
-    public func retarget(to newBinding: SurfaceBinding, highWater: UInt64 = 0) {
+    /// Binds this view to one exact locator. A reconnect may replace only the
+    /// connection fence; a different locator or generation requires a new view.
+    public func bind(to newBinding: SurfaceBinding, highWater: UInt64 = 0) throws {
+        try admitBinding(newBinding, highWater: highWater)
         attachClient?.retarget(newBinding: newBinding, highWater: highWater)
+        setSurfaceState(.attaching)
+        notifyOutputStatusReconnect(reason: "binding-reconnect")
+    }
+
+    private func admitBinding(_ newBinding: SurfaceBinding, highWater: UInt64) throws {
+        guard !closed else { throw HiveTerminalBindingError.closed }
+        if let sessionLocator, sessionLocator != newBinding.locator {
+            throw HiveTerminalBindingError.locatorChanged(
+                expected: sessionLocator,
+                attempted: newBinding.locator
+            )
+        }
+        sessionLocator = newBinding.locator
         binding = newBinding
         applicator.bind(newBinding, highWater: highWater)
         self.highWater = highWater
-        setSurfaceState(.attaching)
-        notifyOutputStatusReconnect(reason: "retarget-reconnect")
     }
 
     public func applyOutput(
