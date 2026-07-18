@@ -177,7 +177,8 @@ test("TypeScript creates and binds a real DirectHost session", async () => {
           expect(created.created).toBe(true);
           expect(created.locator).toEqual(locator);
           expect(created.inspection.presence).toBe("present");
-          expect(created.inspection.complete).toBe(true);
+          expect(created.inspection.complete).toBe(false);
+          expect(created.inspection.visibility.state).toBe("attaching");
           expect(created.inspection.hostPid).not.toBe(process.pid);
           expect(created.inspection.hostPid).not.toBe(broker.pid);
           expect(created.inspection.providerRoot?.pid).not.toBe(process.pid);
