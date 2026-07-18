@@ -1,0 +1,83 @@
+M1-B2.1 cross-vendor DELTA re-review (ernest/Claude) — reproduction summary
+Pin: 6290a81c   Prior pin: 2b42c449 (NO-LAND, enzo)   Author: elaine (Codex)   Verdict: PASS
+
+HOW TO REPRODUCE
+  1. git worktree add --detach <scratch> 6290a81c
+  2. cd <scratch> && bun install --frozen-lockfile
+  3. clone a sibling worktree's .cache/native ONLY after verifying its
+     native/toolchain-lock.json is byte-identical to the pin's, then
+     ditto <artifact>/GhosttyKit.xcframework -> workspace/Vendor/GhosttyKit.xcframework
+  4. run the probes and mutations below
+
+B1 — EXPIRY-SWEEP ISOLATION: CLOSED, proven by two independent mutations
+  M1: in neutral-visibility-fixture.ts, make the catch rethrow (`throw error;`)
+      -> RED at visibility-contract.test.ts:252
+         "Expected promise that resolves / Received promise that rejected"
+      (proves terminate() genuinely throws there; the catch is exercised, not dead)
+  M2: keep the catch, `break` after the first expired lease in advance()
+      -> RED at visibility-contract.test.ts:262
+         "Matcher error: received value must be a non-null object"
+      (proves the LATER lease is independently asserted to tear down)
+  Pin restored and verified pristine after each mutation.
+
+B2 — ONE KEY / ONE LIVE LEASED GENERATION: CLOSED, proven by mutation
+  M3: revert ONLY the same-source half of the guard to 2b42c449 behavior
+      (`owner && owner !== request.visibility.source.sessionId`)
+      -> RED at :318 (Case R new same-source assertion; received state:"created" inc-2)
+      -> RED at :274 (sweep case, unreconciled-generation re-create assertion)
+  Doc §1 corrected off "another source"; §6 Case R row updated to match.
+
+ENZO'S ORPHANED-LEASE REPRODUCER — GREEN IN SUBSTANCE
+  Verbatim it now ERRORS at line 18 (b.result undefined) because the second create is
+  REJECTED — the probe can no longer build its own precondition. Adapted output:
+    A state: created inc: inc-1
+    B state: rejected reason: duplicate-session-owner createInvoked: false
+    A lease held: active
+    advance() completed WITHOUT throwing
+    A lease after sweep: expired
+    A teardown: "terminated"
+    A inspect: exited
+  At 2b42c449 this printed: advance() THREW: StaleIncarnationError, both leases still held.
+
+KEY RELEASE IS NOT LEAKED BY THE NEW FENCE
+  owners cleared only on verified absence. After a clean teardown a new generation IS
+  admitted (same source and cross source both -> created, inc-2); an unknown teardown
+  keeps the key fenced. See key-release-probe.test.ts.txt.
+
+O1 — FAIL-OPEN QUALIFIER: FIXED AND POSITIVE-CONTROLLED (see o1-positive-control.txt)
+  pristine tree ............ status 1, record written, no exit      CORRECT
+  probe importing GhosttyKit status 0, "imports the upstream boundary", EXIT 1  RED
+  probe dir absent ......... status 2, EXIT 1                       CORRECT
+  OLD block (2b42c449) vs the SAME offending probe: rg not found, EXIT 0,
+  hardcoded PASS record written. The fix is real, not cosmetic.
+
+O2 — FIXED at type level. VisibilityLease = Active | Expired; expired carries expiredAt +
+  teardown; renewal's active arm narrowed to ActiveVisibilityLease; created.lease is the
+  UNION so consumers must discriminate. Replay asserts lease.state === "expired".
+
+O3 — DOCUMENTED (doc §2) and TESTED (sticky replay + corrected NEW key reaches created).
+
+FULL SURFACE UNDISTURBED
+  eight L-S controls ....... all pass semantic + faulted halves
+  F1 ....................... answered_when_enabled_count=7, vacuous_count=0, BOTH arches
+  F2 ....................... testingAllowFocusSteal 0 occurrences, both arches
+  F3 ....................... old symbol 0 / new symbol 1 (positive control), both arches
+  F4 ....................... 0 bare-Ghostty public symbols, 394-line non-vacuous dump
+  neutrality ............... 0 hits on the wide term set across contract + fixture;
+                             same pattern hits the qualifier script 24x (real negative)
+
+SUITES REPRODUCED INDEPENDENTLY AT THE PIN (author's /tmp artifact NOT consulted)
+  bun test ................. 1714 pass / 10 skip / 0 fail   (real exit 0)
+  bun run typecheck ........ clean                          (real exit 0)
+  terminal-host-freeze ..... 28 pass / 0 fail
+  visibility-contract ...... 12 pass / 0 fail, 87 expect() calls
+  swift test (full) ........ 321 executed / 2 skipped / 0 failures (real exit 0)
+  swift build --build-tests. clean (real exit 0)
+  dual-arch B2 qualifier ... exit 0, arm64 + x86_64, patched_tree verified vs lock
+
+NEW NON-BLOCKING (follow-ups)
+  N1 the new sweep case + sticky-rejection case have no IN-SUITE mutation control
+     (outside the `cases` fault table); non-vacuity proven once by this reviewer.
+     Fix: add an abort-sweep-on-teardown-failure fault and register the case.
+  N2 the qualifier's pass-branch record is still a hardcoded imports= string rather
+     than the observed imports; the check is genuine but the attestation can go stale.

@@ -1,0 +1,37 @@
+// Probes the path the B2 fence introduces: `owners` is cleared only on verified absence.
+// Confirms the fence does NOT become permanent — after a clean teardown a new generation
+// is admitted, same source and cross source alike.
+// Observed at 6290a81c:
+//   A: created inc-1
+//   A teardown: terminated lease: expired
+//   B after clean teardown: created inc-2
+//   C: created -> D after teardown: created
+import { describe, test } from "bun:test";
+import { NeutralVisibilityHostFixture, VISIBILITY_LEASE_MILLISECONDS } from "./neutral-visibility-fixture";
+const term = (key: string, idem: string) => ({
+  key, idempotencyKey: idem,
+  command: { executable: "/usr/bin/printf", arguments: ["x"], workingDirectory: "/tmp/n",
+    completeEnvironment: [{ name: "TERM", value: "xterm-256color" }], descriptorMap: [] },
+  terminalProfile: { inputMode: "literal" as const, echo: false, signalCharacters: true,
+    softwareFlowControl: true, eofByte: 4, startByte: 17, stopByte: 19, hangupOnLastClose: true },
+  initialWindow: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+});
+const s = { sessionId: "rel", process: { processId: 9, startToken: "9:a" } };
+describe("key release after verified-absent teardown", () => {
+  test("a new generation is admitted once teardown is complete", async () => {
+    const h = new NeutralVisibilityHostFixture();
+    h.publishSnapshot({ source: s, inventoryRevision: "1", representedSessionKeys: ["kr"] });
+    const a: any = await h.create({ terminal: term("kr", "i1"), visibility: { source: s, inventoryRevision: "1" } });
+    console.log("A:", a.state, a.result.session.incarnation);
+    await h.advance(VISIBILITY_LEASE_MILLISECONDS);
+    console.log("A teardown:", h.expiryResult(a.result.session)?.state, "lease:", h.currentLease(a.result.session)?.state);
+    const b: any = await h.create({ terminal: term("kr", "i2"), visibility: { source: s, inventoryRevision: "1" } });
+    console.log("B after clean teardown:", b.state, b.reason ?? "", b.result?.session?.incarnation ?? "");
+    const s2 = { sessionId: "rel2", process: { processId: 10, startToken: "10:a" } };
+    h.publishSnapshot({ source: s2, inventoryRevision: "1", representedSessionKeys: ["kr2"] });
+    const c: any = await h.create({ terminal: term("kr2", "j1"), visibility: { source: s2, inventoryRevision: "1" } });
+    await h.advance(VISIBILITY_LEASE_MILLISECONDS);
+    const d: any = await h.create({ terminal: term("kr2", "j2"), visibility: { source: s2, inventoryRevision: "1" } });
+    console.log("C:", c.state, "-> D after teardown:", d.state, d.reason ?? "");
+  });
+});
