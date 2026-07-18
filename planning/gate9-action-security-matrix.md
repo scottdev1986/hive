@@ -1,10 +1,22 @@
 # M1-B1 Gate 9 — action/security matrix (design, pre-implementation)
 
-Status: DESIGN for the gate-9 increment. The current runtime config uses a
-blanket `action_cb: { _, _, _ in false }` (ManualSurface.swift
-makeRuntimeConfig) — exactly what the story forbids ("never blanket
-false"). This document classifies every `ghostty_action_tag_e` at the
-pinned header (ghostty.h:885-952, 70 tags) into the story's three verdicts
+Status: IMPLEMENTED as of 2026-07-18. The blanket false is gone: the
+runtime config routes through `HiveGhosttyActionPolicy` (typed per-tag
+verdicts, exhaustive against the pinned header at test time), the B-class
+strip landed as `keybind = clear`, and this increment added the
+non-action runtime-callback matrix (close/clipboard probes), the OSC 52
+write/read layer proofs, the SECURE_INPUT structural-unreachability
+record, the static no-privileged-opener scan, and the observe-only
+SELECTION_CHANGED/SCROLLBAR notification carrier for Gate 10. The
+authoritative record of every disposition + its control is
+raw/qualification/ghostty-b1-actions/dispositions.md; the sections below
+are the original design and are kept for rationale. (Historical note: the
+"70 tags" below was a pre-implementation estimate; the pinned enum has 66,
+and the completeness test counts the header live rather than trusting
+either number.)
+
+Original design follows. It classifies every `ghostty_action_tag_e` at the
+pinned header into the story's three verdicts
 — HANDLED, DENIED (deliberate, with visible behavior), or UNREACHABLE
 (proven, not assumed) — and names the positive control for each class.
 

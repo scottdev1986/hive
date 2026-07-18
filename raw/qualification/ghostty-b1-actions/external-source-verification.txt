@@ -1,0 +1,34 @@
+Gate 9 external source verification — fetched LIVE 2026-07-18 (douglas)
+
+SOURCE 1: xterm ctlseqs (https://invisible-island.net/xterm/ctlseqs/ctlseqs.txt)
+Verifies the OSC 52 threat model the gate-9 controls measure:
+- "Ps = 5 2 -> Manipulate Selection Data. These controls may be disabled
+  using the allowWindowOps resource. The parameter Pt is parsed as Pc ; Pd"
+- Read semantics ('?'): "If the second parameter is a ? , xterm replies to
+  the host with the selection data encoded using the same protocol."
+- Data encoding: "Normally this is a string encoded in base64 (RFC-4648)."
+CONSEQUENCE: a permissive terminal answers OSC 52;c;? with the HOST
+clipboard, base64-encoded, on the byte stream an agent reads — clipboard
+exfiltration. The measured Hive behavior (no reply ever, and the apprt
+read_clipboard_cb never invoked from bytes —
+Gate9CallbackMatrixTests.testOSC52ReadNeverReachesTheApprtReadCallback,
+TerminalReplyCorpusTests.testOSC52ClipboardReadIsDeniedNoReplyEver) is the
+denial of exactly this reply. xterm itself ships these controls gated
+(allowWindowOps), so deny-by-default is standard practice, not an outlier.
+
+SOURCE 2: OSC 8 de-facto spec, "Hyperlinks in Terminal Emulators"
+(https://gist.github.com/egmontkob/eb114294efbcd5adb1944c9f3cb5feda)
+- Format: OSC 8 ; params ; URI ST ... closed by OSC 8 ; ; ST
+- Activation: "They shouldn't open the link on a simple mouse click ...
+  only on some more complex user action such as Ctrl+click or via the
+  right-click menu."
+- Security: terminals may "present a confirmation dialog before opening
+  it" or "decide to disable this feature (or even have it disabled by
+  default)".
+CONSEQUENCE: B1's OPEN_URL disposition (deny at the bridge; no opener
+symbol exists in HiveTerminalKit —
+Gate9CallbackMatrixTests.testKitSourcesContainNoPrivilegedOpeners) is an
+explicitly sanctioned posture under the de-facto spec ("disabled by
+default"), not a compatibility violation. The reachability trace feeds a
+hostile OSC 8 payload and OPEN_URL never reaches the action callback from
+bytes (Gate9ReachabilityTraceTests, hard pin = {SCROLLBAR}).

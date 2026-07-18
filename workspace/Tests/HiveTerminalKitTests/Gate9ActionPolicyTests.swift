@@ -116,7 +116,10 @@ final class Gate9ActionPolicyTests: XCTestCase {
             (GHOSTTY_ACTION_SCROLLBAR, .engineInert),
         ]
         for (tag, _) in cases {
-            XCTAssertFalse(HiveGhosttyActionPolicy.handle(tag), "B1: every action resolves to false")
+            let action = ghostty_action_s(tag: tag, action: ghostty_action_u())
+            let target = ghostty_target_s(tag: GHOSTTY_TARGET_APP, target: ghostty_target_u())
+            XCTAssertFalse(HiveGhosttyActionPolicy.handle(action, target: target),
+                           "B1: every action resolves to false")
         }
         XCTAssertEqual(seen.count, cases.count, "handle must invoke the spy once per call")
         for (i, (tag, expected)) in cases.enumerated() {

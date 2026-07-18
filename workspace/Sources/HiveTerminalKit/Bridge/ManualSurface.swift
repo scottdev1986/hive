@@ -253,6 +253,34 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         return rawSurfaceHandle
     }
 
+    /// Gate 9 observe-only action notifications (SELECTION_CHANGED /
+    /// SCROLLBAR), delivered async on the main thread with the payload
+    /// already value-copied. Set/read from the main thread.
+    public var onActionNotification: ((HiveGhosttyActionNotification) -> Void)?
+
+    /// Routes an action target's `ghostty_surface_t` back to the owning
+    /// Swift surface. Weak values + removal in `free()` mean a freed
+    /// surface can never be delivered to (no callback after free).
+    private static let actionRegistryLock = NSLock()
+    private static var actionRegistry: [ghostty_surface_t: WeakSurfaceBox] = [:]
+    private final class WeakSurfaceBox {
+        weak var value: GhosttyManualSurface?
+        init(_ value: GhosttyManualSurface) { self.value = value }
+    }
+
+    static func deliverActionNotification(
+        _ note: HiveGhosttyActionNotification,
+        toSurfaceHandle handle: ghostty_surface_t
+    ) {
+        actionRegistryLock.lock()
+        let box = actionRegistry[handle]
+        actionRegistryLock.unlock()
+        guard let surface = box?.value else { return }
+        DispatchQueue.main.async { [weak surface] in
+            surface?.onActionNotification?(note)
+        }
+    }
+
     /// Strong host view so the C `nsview` pointer never dangles (SF1).
     public private(set) var hostView: NSView?
     /// App retained so the surface stays valid (app owns surface lifetime tree).
@@ -278,6 +306,14 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         self.hostView = hostView
         self.appOwner = appOwner
         self.ownsSurface = ownsSurface
+        // Only the owning wrapper receives action notifications: a
+        // non-owning alias of the same handle must not shadow the owner
+        // in the registry.
+        if ownsSurface {
+            Self.actionRegistryLock.lock()
+            Self.actionRegistry[surface] = WeakSurfaceBox(self)
+            Self.actionRegistryLock.unlock()
+        }
     }
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> GhosttyBridgeResult {
@@ -698,13 +734,31 @@ public enum HiveGhosttyActionPolicy {
     /// return false), but the routing is EXHAUSTIVE and per-verdict — an
     /// unknown tag is a loud error in debug, never a silent false — so the
     /// "never a blanket false" property holds at the binding.
-    static func handle(_ tag: ghostty_action_tag_e) -> Bool {
+    ///
+    /// Observe-only side channel (Gate 10 consumer): SELECTION_CHANGED and
+    /// SCROLLBAR are additionally forwarded — payload value-copied, async
+    /// on main, per-surface — via `GhosttyManualSurface.onActionNotification`.
+    /// The return value to the engine is unchanged (still false), so the
+    /// security disposition of both tags is unaffected.
+    static func handle(_ action: ghostty_action_s, target: ghostty_target_s) -> Bool {
+        let tag = action.tag
         observerLock.lock()
         let spy = observer
         observerLock.unlock()
 
         let verdict = classify(tag)
         spy?(tag, verdict)
+
+        switch tag {
+        case GHOSTTY_ACTION_SELECTION_CHANGED:
+            notifySurface(target, .selectionChanged)
+        case GHOSTTY_ACTION_SCROLLBAR:
+            // Value copy of the C payload before the callback returns.
+            let sb = action.action.scrollbar
+            notifySurface(target, .scrollbar(total: sb.total, offset: sb.offset, len: sb.len))
+        default:
+            break
+        }
 
         switch verdict {
         case .handledByEffects:
@@ -725,6 +779,51 @@ public enum HiveGhosttyActionPolicy {
                              "the gate-9 classification is out of sync with the pinned action enum")
             return false
         }
+    }
+
+    private static func notifySurface(_ target: ghostty_target_s, _ note: HiveGhosttyActionNotification) {
+        guard target.tag == GHOSTTY_TARGET_SURFACE, let handle = target.target.surface else { return }
+        GhosttyManualSurface.deliverActionNotification(note, toSurfaceHandle: handle)
+    }
+}
+
+/// Gate 9 → Gate 10 carrier: announcement-worthy engine actions bridged
+/// per-surface. Observe-only — the action callback still returns false to
+/// the engine for both tags, so nothing privileged is enabled by listening.
+/// `scrollbar` fields map 1:1 to `ghostty_action_scrollbar_s` (pinned
+/// ghostty.h); `selectionChanged` carries no payload at the pinned header —
+/// consumers pull the selection via `readSelection()` /
+/// `ghostty_surface_read_selection` from the main thread on receipt.
+public enum HiveGhosttyActionNotification: Equatable, Sendable {
+    case selectionChanged
+    case scrollbar(total: UInt64, offset: UInt64, len: UInt64)
+}
+
+/// Gate 9 observability for the four non-action runtime callbacks
+/// (`close_surface_cb`, `read_clipboard_cb`, `confirm_read_clipboard_cb`,
+/// `write_clipboard_cb`). Production behavior is unchanged — deny/no-op —
+/// the probes only count invocations so tests can prove a callback that is
+/// claimed unreachable genuinely never fired (with a direct-invocation
+/// positive control proving the probe itself observes).
+enum HiveGhosttyRuntimeCallbackProbe: CaseIterable {
+    case closeSurface, readClipboard, confirmReadClipboard, writeClipboard
+}
+
+enum HiveGhosttyRuntimeCallbackProbes {
+    private static let lock = NSLock()
+    private static var counts: [HiveGhosttyRuntimeCallbackProbe: Int] = [:]
+
+    static func record(_ probe: HiveGhosttyRuntimeCallbackProbe) {
+        lock.lock(); counts[probe, default: 0] += 1; lock.unlock()
+    }
+
+    static func count(_ probe: HiveGhosttyRuntimeCallbackProbe) -> Int {
+        lock.lock(); defer { lock.unlock() }
+        return counts[probe] ?? 0
+    }
+
+    static func reset() {
+        lock.lock(); counts = [:]; lock.unlock()
     }
 }
 
@@ -833,7 +932,9 @@ public enum GhosttyBridgeFactory {
             // Gate 9: typed per-tag policy, not a blanket false — see
             // HiveGhosttyActionPolicy.
             action_cb: { _, target, action in
-                let handled = HiveGhosttyActionPolicy.handle(action.tag)
+                // Gate 9 typed policy + notification dispatch; Gate 3/7's
+                // renderer-health enqueue rides the same callback.
+                let handled = HiveGhosttyActionPolicy.handle(action, target: target)
                 if action.tag == GHOSTTY_ACTION_RENDERER_HEALTH,
                    target.tag == GHOSTTY_TARGET_SURFACE {
                     let health: RendererHealth = action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_HEALTHY
@@ -846,10 +947,25 @@ public enum GhosttyBridgeFactory {
                 }
                 return handled
             },
-            read_clipboard_cb: { _, _, _ in false },
-            confirm_read_clipboard_cb: { _, _, _, _ in },
-            write_clipboard_cb: { _, _, _, _, _ in },
-            close_surface_cb: { _, _ in }
+            // Gate 9 dispositions for the non-action runtime callbacks.
+            // Each is deny/no-op; the probes exist so tests can prove the
+            // unreachability claims (close: manual surfaces route close as
+            // the CLOSE_REQUEST bridge event and return before this cb;
+            // clipboard: OSC 52 is denied in the patched vt handler before
+            // the apprt layer). See Gate9CallbackMatrixTests.
+            read_clipboard_cb: { _, _, _ in
+                HiveGhosttyRuntimeCallbackProbes.record(.readClipboard)
+                return false
+            },
+            confirm_read_clipboard_cb: { _, _, _, _ in
+                HiveGhosttyRuntimeCallbackProbes.record(.confirmReadClipboard)
+            },
+            write_clipboard_cb: { _, _, _, _, _ in
+                HiveGhosttyRuntimeCallbackProbes.record(.writeClipboard)
+            },
+            close_surface_cb: { _, _ in
+                HiveGhosttyRuntimeCallbackProbes.record(.closeSurface)
+            }
         )
     }
 

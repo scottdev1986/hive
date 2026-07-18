@@ -1,0 +1,234 @@
+import AppKit
+import XCTest
+import HiveGhosttyC
+@testable import HiveTerminalKit
+
+/// Gate 9 (M1-B1): the NON-ACTION runtime-callback half of the matrix
+/// (close_surface_cb, read/confirm/write clipboard cbs) plus the
+/// observe-only action-notification carrier for Gate 10.
+///
+/// Every unreachability claim here is probe-measured with a
+/// direct-invocation positive control proving the probe itself observes —
+/// a dead probe would otherwise make "never fired" vacuous.
+final class Gate9CallbackMatrixTests: XCTestCase {
+    private func makeSurface() throws -> GhosttyManualSurface {
+        do {
+            return try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        } catch {
+            XCTFail("real manual surface required for gate 9 matrix, got: \(error)")
+            throw error
+        }
+    }
+
+    private func drainMain(_ seconds: TimeInterval = 0.3) {
+        let deadline = Date().addingTimeInterval(seconds)
+        while Date() < deadline {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.02))
+            Thread.sleep(forTimeInterval: 0.01)
+        }
+    }
+
+    // MARK: close request
+
+    /// Positive control for the probe seam: the REAL factory runtime config's
+    /// close_surface_cb increments the probe when invoked directly. Without
+    /// this, the "never fired" assertions below could pass on a dead probe.
+    func testCloseSurfaceProbeObservesDirectInvocation() {
+        let runtime = GhosttyBridgeFactory.makeRuntimeConfig(wakeupContext: GhosttyAppWakeupContext())
+        let before = HiveGhosttyRuntimeCallbackProbes.count(.closeSurface)
+        runtime.close_surface_cb?(nil, false)
+        XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.closeSurface), before + 1,
+                       "the factory's close_surface_cb must record on the probe when invoked")
+    }
+
+    /// Story cover "close request": a close request on a manual surface is
+    /// HANDLED as the CLOSE_REQUEST bridge event (embedded.zig Surface.close
+    /// takes the hive_manual branch and RETURNS before app.opts.close_surface),
+    /// so the C close_surface_cb is unreachable-by-construction. Both halves
+    /// are asserted: the event arrives, and the probe stays flat.
+    func testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+        guard let handle = surface.surfaceHandle else { return XCTFail("real surface required") }
+
+        var events: [BridgeEvent] = []
+        surface.callbackContext.onEvent = { events.append($0) }
+        let before = HiveGhosttyRuntimeCallbackProbes.count(.closeSurface)
+
+        ghostty_surface_request_close(handle)
+        drainMain()
+
+        XCTAssertTrue(events.contains { $0.type == .closeRequest },
+                      "a close request on a manual surface must surface as the CLOSE_REQUEST bridge " +
+                      "event (visible behavior); got \(events.map(\.type))")
+        XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.closeSurface), before,
+                       "the C close_surface_cb must never fire for a manual surface — the hive_manual " +
+                       "branch returns first (embedded.zig Surface.close)")
+    }
+
+    // MARK: OSC 52 clipboard
+
+    /// OSC 52 write from untrusted bytes: DENIED with VISIBLE behavior — the
+    /// CLIPBOARD_DENIED bridge event fires, the macOS pasteboard is untouched
+    /// (changeCount stable), and the deny happens in the patched vt handler
+    /// BEFORE the apprt layer (write/confirm clipboard probes stay flat).
+    func testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        var events: [BridgeEvent] = []
+        surface.callbackContext.onEvent = { events.append($0) }
+        let pasteboardBefore = NSPasteboard.general.changeCount
+        let writeBefore = HiveGhosttyRuntimeCallbackProbes.count(.writeClipboard)
+        let confirmBefore = HiveGhosttyRuntimeCallbackProbes.count(.confirmReadClipboard)
+
+        // OSC 52, clipboard 'c', "hello" base64 — a hostile clipboard plant.
+        XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}]52;c;aGVsbG8=\u{07}".utf8), streamSeq: 0),
+                       .success)
+        drainMain()
+
+        XCTAssertTrue(events.contains { $0.type == .clipboardDenied },
+                      "OSC 52 write must be denied VISIBLY via the CLIPBOARD_DENIED event; got \(events.map(\.type))")
+        XCTAssertEqual(NSPasteboard.general.changeCount, pasteboardBefore,
+                       "untrusted bytes must never mutate the macOS pasteboard")
+        XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.writeClipboard), writeBefore,
+                       "the deny must happen in the vt handler — write_clipboard_cb never fires")
+        XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.confirmReadClipboard), confirmBefore)
+    }
+
+    /// OSC 52 read: the existing reply-corpus control proves protocol
+    /// silence; this half proves the deny LAYER — the request never even
+    /// reaches the apprt read_clipboard_cb. Positive control: invoking the
+    /// factory's read_clipboard_cb directly both records on the probe and
+    /// returns false (the typed deny).
+    func testOSC52ReadNeverReachesTheApprtReadCallback() throws {
+        let runtime = GhosttyBridgeFactory.makeRuntimeConfig(wakeupContext: GhosttyAppWakeupContext())
+        let direct = HiveGhosttyRuntimeCallbackProbes.count(.readClipboard)
+        XCTAssertEqual(runtime.read_clipboard_cb?(nil, GHOSTTY_CLIPBOARD_STANDARD, nil), false,
+                       "read_clipboard_cb must deny")
+        XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.readClipboard), direct + 1,
+                       "probe positive control")
+
+        let surface = try makeSurface()
+        defer { surface.free() }
+        let before = HiveGhosttyRuntimeCallbackProbes.count(.readClipboard)
+        XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}]52;c;?\u{07}".utf8), streamSeq: 0), .success)
+        drainMain()
+        XCTAssertEqual(HiveGhosttyRuntimeCallbackProbes.count(.readClipboard), before,
+                       "an OSC 52 read from untrusted bytes must be denied before the apprt layer — " +
+                       "read_clipboard_cb must never fire from terminal bytes")
+    }
+
+    // MARK: action-notification carrier (Gate 10 consumer)
+
+    /// SCROLLBAR: scrolling output must deliver a typed, payload-carrying
+    /// notification on the main thread through the per-surface sink.
+    func testScrollOutputDeliversScrollbarNotificationWithPayload() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        var received: [HiveGhosttyActionNotification] = []
+        var deliveredOffMain = false
+        surface.onActionNotification = { note in
+            if !Thread.isMainThread { deliveredOffMain = true }
+            received.append(note)
+        }
+
+        var out = Data()
+        for i in 0..<60 { out.append(Data("line \(i)\r\n".utf8)) }
+        XCTAssertEqual(surface.processOutput(bytes: out, streamSeq: 0), .success)
+        drainMain(0.5)
+
+        XCTAssertFalse(deliveredOffMain, "action notifications must be delivered on the main thread")
+        let scrollbars = received.compactMap { note -> (UInt64, UInt64, UInt64)? in
+            if case let .scrollbar(total, offset, len) = note { return (total, offset, len) }
+            return nil
+        }
+        XCTAssertFalse(scrollbars.isEmpty,
+                       "scrolling output must deliver a scrollbar notification; got \(received)")
+        XCTAssertTrue(scrollbars.contains { $0.0 > 0 && $0.2 > 0 },
+                      "scrollbar payload must carry real geometry (total/len > 0); got \(scrollbars)")
+    }
+
+    /// SELECTION_CHANGED: a real mouse-drag selection gesture must deliver
+    /// the notification (measured, not inferred from the tag name) — and the
+    /// selection must be readable via ghostty_surface_read_selection.
+    func testSelectionGestureDeliversSelectionChangedNotification() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        XCTAssertEqual(surface.processOutput(bytes: Data("hello selection world\r\n".utf8), streamSeq: 0),
+                       .success)
+        drainMain(0.1)
+
+        var received: [HiveGhosttyActionNotification] = []
+        surface.onActionNotification = { received.append($0) }
+
+        surface.setFocus(true)
+        surface.sendMousePos(x: 10, y: 10, mods: ghostty_input_mods_e(rawValue: 0))
+        _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_PRESS, button: GHOSTTY_MOUSE_LEFT,
+                                    mods: ghostty_input_mods_e(rawValue: 0))
+        surface.sendMousePos(x: 220, y: 10, mods: ghostty_input_mods_e(rawValue: 0))
+        _ = surface.sendMouseButton(state: GHOSTTY_MOUSE_RELEASE, button: GHOSTTY_MOUSE_LEFT,
+                                    mods: ghostty_input_mods_e(rawValue: 0))
+        drainMain(0.5)
+
+        XCTAssertTrue(received.contains(.selectionChanged),
+                      "a drag selection must deliver .selectionChanged; got \(received)")
+        XCTAssertNotNil(surface.readSelection(),
+                        "the dragged selection must be readable via ghostty_surface_read_selection")
+    }
+
+    /// Lifetime: after free(), a late action routed at the old handle value
+    /// must be dropped — never delivered (no callback after free).
+    func testNoNotificationDeliveredAfterFree() throws {
+        let surface = try makeSurface()
+        guard let handle = surface.surfaceHandle else { return XCTFail("real surface required") }
+
+        var received = 0
+        surface.onActionNotification = { _ in received += 1 }
+        surface.free()
+
+        // The handle value is only used as a registry KEY (never deref'd).
+        GhosttyManualSurface.deliverActionNotification(.selectionChanged, toSurfaceHandle: handle)
+        drainMain(0.1)
+        XCTAssertEqual(received, 0, "a freed surface must never receive action notifications")
+    }
+
+    // MARK: static privileged-opener scan
+
+    /// SECURITY: no code path in HiveTerminalKit can open URLs, post user
+    /// notifications, or flip macOS secure input — the symbols simply do not
+    /// occur. Complements the live denials: even a misrouted verdict has no
+    /// privileged sink to reach. Positive controls: the scanner must see a
+    /// known-present symbol and a plausible file count, or the scan is dead.
+    func testKitSourcesContainNoPrivilegedOpeners() throws {
+        let sourcesRoot = URL(fileURLWithPath: #filePath)
+            .deletingLastPathComponent() // HiveTerminalKitTests
+            .deletingLastPathComponent() // Tests
+            .deletingLastPathComponent() // workspace
+            .appendingPathComponent("Sources/HiveTerminalKit")
+        let files = try XCTUnwrap(FileManager.default.enumerator(at: sourcesRoot, includingPropertiesForKeys: nil))
+            .compactMap { $0 as? URL }
+            .filter { $0.pathExtension == "swift" }
+        XCTAssertGreaterThanOrEqual(files.count, 5, "scanner must see the kit's sources (dead-scan control)")
+
+        let forbidden = ["NSWorkspace", "UserNotifications", "UNUserNotificationCenter",
+                         "EnableSecureEventInput", "DisableSecureEventInput"]
+        var sawKnownSymbol = false
+        for file in files {
+            let text = try String(contentsOf: file, encoding: .utf8)
+            // Comment lines may NAME a forbidden symbol (the policy docs do);
+            // only code lines can call one.
+            let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+                .joined(separator: "\n")
+            if code.contains("GhosttyManualSurface") { sawKnownSymbol = true }
+            for symbol in forbidden {
+                XCTAssertFalse(code.contains(symbol),
+                               "\(file.lastPathComponent) must not reference privileged opener \(symbol) in code")
+            }
+        }
+        XCTAssertTrue(sawKnownSymbol, "scanner must find a known-present symbol (dead-scan control)")
+    }
+}

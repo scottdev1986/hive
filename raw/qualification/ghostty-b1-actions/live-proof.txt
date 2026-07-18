@@ -1,0 +1,63 @@
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/9] Write sources
+[3/9] Write swift-version--58304C5D6DBC2206.txt
+[5/9] Emitting module HiveTerminalKit
+[6/9] Compiling HiveTerminalKit ManualSurface.swift
+[6/11] Write Objects.LinkFileList
+[8/11] Linking GhosttyManualIsolationProbe
+[9/11] Applying GhosttyManualIsolationProbe
+[10/11] Linking HiveWorkspacePackageTests
+Build complete! (3.55s)
+Test Suite 'Selected tests' started at 2026-07-18 14:19:35.569.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 14:19:35.570.
+Test Suite 'Gate9ActionPolicyTests' started at 2026-07-18 14:19:35.570.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testDefaultWindowBindingsAreStrippedFromManualConfig]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testDefaultWindowBindingsAreStrippedFromManualConfig]' passed (0.050 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader]' passed (0.002 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testHandleRoutesThroughTheVerdictNotABlanketFalse]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testHandleRoutesThroughTheVerdictNotABlanketFalse]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testLiveCallbackFiringsCarryTheCorrectVerdict]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testLiveCallbackFiringsCarryTheCorrectVerdict]' passed (0.536 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testSecurityRulingsArePinned]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testSecurityRulingsArePinned]' passed (0.000 seconds).
+Test Suite 'Gate9ActionPolicyTests' passed at 2026-07-18 14:19:36.176.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.606 (0.606) seconds
+Test Suite 'Gate9CallbackMatrixTests' started at 2026-07-18 14:19:36.176.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb]' passed (0.328 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseSurfaceProbeObservesDirectInvocation]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseSurfaceProbeObservesDirectInvocation]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testKitSourcesContainNoPrivilegedOpeners]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testKitSourcesContainNoPrivilegedOpeners]' passed (0.023 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNoNotificationDeliveredAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNoNotificationDeliveredAfterFree]' passed (0.132 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52ReadNeverReachesTheApprtReadCallback]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52ReadNeverReachesTheApprtReadCallback]' passed (0.339 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched]' passed (0.313 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testScrollOutputDeliversScrollbarNotificationWithPayload]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testScrollOutputDeliversScrollbarNotificationWithPayload]' passed (0.527 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testSelectionGestureDeliversSelectionChangedNotification]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testSelectionGestureDeliversSelectionChangedNotification]' passed (0.631 seconds).
+Test Suite 'Gate9CallbackMatrixTests' passed at 2026-07-18 14:19:38.470.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 2.293 (2.294) seconds
+Test Suite 'Gate9ReachabilityTraceTests' started at 2026-07-18 14:19:38.470.
+Test Case '-[HiveTerminalKitTests.Gate9ReachabilityTraceTests testTraceRecordsExactReachableActionSetFromUntrustedOutput]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ReachabilityTraceTests testTraceRecordsExactReachableActionSetFromUntrustedOutput]' passed (0.517 seconds).
+Test Suite 'Gate9ReachabilityTraceTests' passed at 2026-07-18 14:19:38.986.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.517 (0.517) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 14:19:38.987.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 3.415 (3.417) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 14:19:38.987.
+	 Executed 15 tests, with 0 failures (0 unexpected) in 3.415 (3.418) seconds
+GATE9-TRACE reachable-from-output action tags = ["26:SCROLLBAR"]
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
