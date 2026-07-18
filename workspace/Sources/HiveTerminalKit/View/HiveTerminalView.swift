@@ -63,8 +63,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var appliedFramebufferSize: (width: UInt32, height: UInt32)?
     private let resizeQuiescence: TimeInterval = 0.100
     // internal (not private): HiveTerminalView+Input.swift (gate 8) reads/writes these.
-    var markedText: NSAttributedString?
-    var pendingAuthoringHeld = false
+    var markedText = NSMutableAttributedString()
+    var keyTextAccumulator: [String]?
+    var previousPressureStage = 0
 
     init(frame frameRect: NSRect, engine: ManualSurfaceEngine, viewerId: String = "viewer-local") {
         self.engineStorage = engine

@@ -1,0 +1,64 @@
+Gate 8 external-source verification
+retrieved: 2026-07-18 America/New_York
+
+Pinned Ghostty source
+commit: 73534c4680a809398b396c94ac7f12fcccb7963d
+tree: 0aeaa44eda9efaf41523c3c0d4f6851eb81e536e
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/macos/Sources/Ghostty/NSEvent%2BExtension.swift
+sha256: cfc03dd39221bba5f3b878d227de791f3bde57f202f1ab114d1ef9de6b8d5616
+vendored pinned copy: byte-identical
+
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/macos/Sources/Ghostty/Ghostty.Input.swift
+sha256: c7ee226e86c5570c9c17aed33185a88875d8039274e1cb197cf7663b61609f4f
+vendored pinned copy: byte-identical
+
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/macos/Sources/Ghostty/Surface%20View/SurfaceView_AppKit.swift
+sha256: 3ebd00c5d453929138b8cc791272877062a098019636311b93fa3771bb32e105
+vendored pinned copy: byte-identical
+
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/macos/Sources/Ghostty/Ghostty.App.swift
+sha256: ecda66c310fa943b6ec1490a8c22c475224294abafe7cdc77ec04cbe097b3a5f
+
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/macos/Sources/Ghostty/Surface%20View/SurfaceView.swift
+sha256: 95928a11b64df38d79ca353328819dfdc4177c179188f0df987bebcc18e3f823
+
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/src/config/Config.zig
+sha256: 516b65d6accb8cbb206565c30a0d52817c6799244d4babb1e4403d3d61d4f527
+
+https://raw.githubusercontent.com/ghostty-org/ghostty/73534c4680a809398b396c94ac7f12fcccb7963d/src/apprt/embedded.zig
+sha256: 5b8811b920ff5cd717afbdaa21d022bf09ec829994d65460db206e76006d36b9
+
+Apple NSTextInputClient machine-readable documentation
+https://developer.apple.com/tutorials/data/documentation/appkit/nstextinputclient.json
+sha256: 2832466e2ebe41dffddee88274a5eab9ab115d388a08ee6cf3ad3cd3f1a21bfc
+
+Apple NSEvent pressure/stage documentation
+https://developer.apple.com/documentation/appkit/nsevent/pressure
+https://developer.apple.com/documentation/appkit/nsevent/stage
+
+Kitty keyboard protocol
+https://sw.kovidgoyal.net/kitty/keyboard-protocol/
+sha256: 2c56f8fda9f18358f3ada15389217629c931b6a6f2f1ac573a279f56852c0474
+
+xterm control sequences
+https://invisible-island.net/xterm/ctlseqs/ctlseqs.html
+sha256: 1012765fdce0043da7353695a50378cb35bc93d057d0a0d9e0544fba3ef0c947
+
+Pinned behavioral audit result
+- NSEvent+Extension.swift writes UInt32(NSEvent.keyCode) into
+  ghostty_input_key_s.keycode. The pinned engine resolves that platform-native
+  code through its macOS keycode table; converting it to ghostty_input_key_e
+  at the Swift boundary would diverge from the pinned app. Gate 8 therefore
+  retains the native code and proves the mapping end-to-end with distinct
+  physical left/right modifier Kitty bytes.
+- consumed_mods, unshifted_codepoint, translated modifiers, composing state,
+  repeat/release actions, and text lifetime follow that same pinned source.
+- Ghostty.App.swift proves runtime clipboard callbacks receive the surface
+  config userdata, and that read completion is asynchronous through
+  ghostty_surface_complete_clipboard_request. Config.zig fixes the explicit
+  OSC policy values used by Hive: clipboard-read=deny and
+  clipboard-write=deny.
+
+The web documents were fetched live. In-tree Ghostty code was used only after
+the pinned raw GitHub sources above were independently fetched; the three
+sources also present in the reviewed vendor artifact were byte-compared.

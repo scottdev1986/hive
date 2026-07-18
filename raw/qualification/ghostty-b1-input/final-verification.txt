@@ -1,0 +1,65 @@
+Gate 8 final verification on 2026-07-18
+
+Integrated base: a89c20dbc2c96a9f3a3389e44ef97bf2fa7ca0d1
+Landed Gate 9 parent: 89969341
+Pinned Ghostty commit: 73534c4680a809398b396c94ac7f12fcccb7963d
+Patched Ghostty tree: a27fc0e76555552cf7202c98fb1a31b2021bcf26
+Patch-set sha256: 603bb8a1ef795b59c6b2e7a3de5d78b4cdab59bb68e6f4557d71e0cc17af225b
+Artifact manifest sha256: 60e955532c7ee4bb9e5578a35fd81f5500652376668a596676fecce7d90ddb97
+Materialized macOS universal library sha256: 9c40903c3a6baaa253a4f59780f879bae34c342bb4f2d97ae877a2393d229fed
+arm64 checkpoint build id: 0762764116c83a45a14251322dc2a3b34e9b67851797ec60e199466352799972
+x86_64 checkpoint build id: e8e456c5ac7481d52c255517fea236403715b52f3194d0cdd98e89bf29f06f19
+
+PASS: ./scripts/provision-native-toolchain.sh
+PASS: ./scripts/build-ghosttykit.sh
+      Six-export C/Zig ABI checks passed for arm64 and x86_64.
+      Headless checkpoint harness passed for arm64 and x86_64.
+PASS: materialized artifact library equals rebuilt artifact library byte-for-byte
+PASS: swift package --package-path workspace clean
+PASS: swift test --package-path workspace
+      355 tests executed, 2 skipped, 0 failures.
+PASS: swift build --package-path workspace --arch arm64 --build-tests
+PASS: swift build --package-path workspace --arch x86_64 --build-tests
+PASS: arch -x86_64 xcrun xctest workspace/.build/x86_64-apple-macosx/debug/HiveWorkspacePackageTests.xctest
+      355 tests executed under Rosetta, 2 skipped, 0 failures.
+PASS: git diff --check
+
+F2 — IME geometry fidelity fixed:
+The dictation insertion rect now uses Gate 7's reported cell width in backing
+pixels divided by the applied content scale. The control uses a three-cell
+24-point preedit rect, a 16-pixel cell, 2x scale, and range location 2; the
+measured x offset is 16 points. Restoring the old whole-preedit-width shape
+makes the test RED at 48 points versus 16 points.
+When Gate 7 cell geometry is unavailable, the fallback retains
+Ghostty's preedit origin, zeroes insertion width, returns finite screen
+coordinates, and tracks a window move by the exact screen-point delta.
+
+F3 — intentional documented divergence from pinned upstream:
+Hive does not port SurfaceView_AppKit's "We must have an associated event"
+guard. The keyTextAccumulator remains the physical-key routing boundary, while
+eventless dictation, Character Viewer, and Services commits are accepted. The
+deterministic harness passes associatedEvent=nil and proves "文" is sent exactly
+once with no physical key. Restoring the upstream guard makes the control RED
+with [] versus ["文"]. The explicit seam avoids depending on XCTest runners
+that retain a synthetic NSApp.currentEvent.
+
+F4 — real keyDown/accumulator coverage:
+The real-engine Kitty goldens enter through keyDown/keyUp. Multi-stage CJK
+preedit sends "日" then "日本", emits zero PTY bytes before commit, and commits
+"日本語" through keyDown -> interpretKeyEvents -> keyTextAccumulator -> surface
+as exact UTF-8 once. Removing the accumulator makes the alternate Shift+A
+golden RED with a raw one-byte "A" write plus the ten-byte Kitty frame instead
+of the single Kitty frame.
+
+F5 — dead state removed:
+The write-only pendingAuthoringHeld field and its writes are gone.
+
+The final suite also covers key/text single-injection, dead-key/emoji-ZWJ/RTL
+composition, mouse motion/button/scroll coordinates, the 2x backing-scale
+button path, disabled terminal replies with host key/text/bracketed-paste
+writes, async selection copy, fail-closed unsafe paste, OSC-52 clipboard
+unreachability, and clipboard completion teardown lifetime.
+
+Force Touch pressure remains an automated surface-contract seam plus an
+explicit pending human hardware acceptance. No hardware Force Touch claim is
+made. See live-proof.jsonl.

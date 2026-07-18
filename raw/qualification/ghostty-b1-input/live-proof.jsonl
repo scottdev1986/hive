@@ -1,0 +1,29 @@
+{"kind":"engine","ghostty_commit":"73534c4680a809398b396c94ac7f12fcccb7963d","patched_tree":"a27fc0e76555552cf7202c98fb1a31b2021bcf26","artifact":"GhosttyKit.xcframework","macos_library_sha256":"9c40903c3a6baaa253a4f59780f879bae34c342bb4f2d97ae877a2393d229fed"}
+{"kind":"kitty","case":"legacy_shift_enter_press","utf8":"\u001b[27;2;13~","hex":"1b5b32373b323b31337e","count":1,"path":"keyDown->interpretKeyEvents/keyTextAccumulator->surface"}
+{"kind":"kitty","case":"shift_enter_press","flags":11,"utf8":"\u001b[13;2u","hex":"1b5b31333b3275","count":1,"path":"keyDown->interpretKeyEvents/keyTextAccumulator->surface"}
+{"kind":"kitty","case":"shift_enter_repeat","flags":11,"utf8":"\u001b[13;2:2u","hex":"1b5b31333b323a3275","count":1,"path":"keyDown->interpretKeyEvents/keyTextAccumulator->surface"}
+{"kind":"kitty","case":"shift_enter_release","flags":11,"utf8":"\u001b[13;2:3u","hex":"1b5b31333b323a3375","count":1,"path":"keyUp->surface"}
+{"kind":"kitty","case":"physical_left_shift","flags":11,"utf8":"\u001b[57441;2u","hex":"1b5b35373434313b3275","count":1}
+{"kind":"kitty","case":"physical_right_shift","flags":11,"utf8":"\u001b[57447;2u","hex":"1b5b35373434373b3275","count":1}
+{"kind":"kitty","case":"alternate_unshifted_shift_a","flags":15,"utf8":"\u001b[97:65;2u","hex":"1b5b39373a36353b3275","count":1,"path":"keyDown->interpretKeyEvents/keyTextAccumulator->surface","accumulator_removal_control":"RED: writes [1 byte,10 bytes] instead of [10 bytes]"}
+{"kind":"ime_commit","case":"cjk","preedits":["日","日本"],"pty_bytes_before_commit":0,"utf8":"日本語","hex":"e697a5e69cace8aa9e","count":1,"path":"keyDown->interpretKeyEvents/keyTextAccumulator->surface"}
+{"kind":"ime_commit","case":"dead_key","utf8":"é","hex":"c3a9","count":1}
+{"kind":"ime_commit","case":"emoji_zwj","utf8":"👩‍💻","hex":"f09f91a9e2808df09f92bb","count":1}
+{"kind":"ime_commit","case":"rtl","utf8":"שָלוֹם","hex":"d7a9d6b8d79cd795d6b9d79d","count":1}
+{"kind":"mouse","case":"sgr_no_button_motion_before_press","view_point":{"x":25,"y":260},"utf8":"\u001b[<35;3;16M","hex":"1b5b3c33353b333b31364d","count":1,"mode":"DECSET 1003 + SGR 1006"}
+{"kind":"mouse","case":"sgr_left_press","view_point":{"x":25,"y":260},"utf8":"\u001b[<0;3;16M","hex":"1b5b3c303b333b31364d","count":1}
+{"kind":"mouse","case":"sgr_left_release","view_point":{"x":25,"y":260},"utf8":"\u001b[<0;3;16m","hex":"1b5b3c303b333b31366d","count":1}
+{"kind":"mouse","case":"sgr_scroll_down","view_point":{"x":25,"y":260},"utf8":"\u001b[<65;3;16M","hex":"1b5b3c36353b333b31364d","count":9}
+{"kind":"mouse","case":"pressure_stage_and_release_reset","proof":"deterministic_surface_contract","stage":2,"pressure":0.75,"release_stage":0,"release_pressure":0,"hardware_force_click_claimed":false}
+{"kind":"manual_acceptance","case":"force_touch_stage_2","status":"pending_human_hardware_run","procedure":"On a Force Touch trackpad, press through stage 2 while the terminal reports pressure events; verify the surface receives stage 2 with nonzero pressure and mouse release resets stage and pressure to zero.","automated_seam_proof":"pressure_stage_and_release_reset","hardware_force_click_claimed":false}
+{"kind":"geometry","case":"two_x_backing_scale","event_view_point":{"x":25,"y":40},"sent_ghostty_point":{"x":25,"y":260},"backing_scale":2,"multiplied":false}
+{"kind":"geometry","case":"two_x_backing_scale_left_button","event_view_point":{"x":25,"y":40},"sent_ghostty_point":{"x":25,"y":260},"backing_scale":2,"button":"left","multiplied":false}
+{"kind":"geometry","case":"dictation_cell_offset_2x","backing_scale":2,"preedit_width_points":24,"cell_width_px":16,"cell_width_points":8,"range_location":2,"range_length":0,"x_offset_points":16,"old_shape_offset_points":48,"old_shape_control":"RED: 48 points versus 16 points"}
+{"kind":"geometry","case":"dictation_missing_cell_geometry_fallback","reported_size":null,"range_location":2,"range_length":0,"x_offset_points":0,"width_points":0,"finite":true,"window_move_points":{"x":300,"y":250},"screen_rect_move_points":{"x":300,"y":250}}
+{"kind":"ime_commit","case":"eventless_host_commit","associated_event":false,"utf8":"文","hex":"e69687","count":1,"physical_key_count":0,"policy":"intentional documented divergence from pinned SurfaceView_AppKit associated-event guard","restored_guard_control":"RED: [] versus [文]"}
+{"kind":"binding_action","case":"search_navigation","query":"needle","actions":["search:needle","navigate_search:next","navigate_search:previous","end_search"],"accepted":true}
+{"kind":"clipboard","case":"disabled_reply_host_input","terminal_query_reply_count":0,"host_actions":["key","text","paste"],"utf8":"x\u001b[200~文\u001b[201~\u001b[200~clip\nboard\u001b[201~","hex":"781b5b3230307ee696871b5b3230317e1b5b3230307e636c69700a626f6172641b5b3230317e","single_write_callback_path":true}
+{"kind":"clipboard","case":"unsafe_paste_confirmation","probe_order":["read_clipboard","confirm_read_clipboard"],"pty_write_count":0,"completion_text":"","confirmed":true,"policy":"fail_closed"}
+{"kind":"clipboard","case":"selection_copy","location":"standard","mime":"text/plain","data":"copy me","copied_before_callback_return":true,"host_delivery":"deferred_main"}
+{"kind":"clipboard","case":"osc52_denied","operations":["read","write"],"event":"clipboardDenied","clipboard_callback_delta":0,"pty_write_count":0}
+{"kind":"clipboard","case":"teardown_pending_read","completion_text":"","confirmed":true,"completion_count":1,"stale_queued_completion_dropped":true}

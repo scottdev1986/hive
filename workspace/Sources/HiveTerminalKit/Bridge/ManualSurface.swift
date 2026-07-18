@@ -89,9 +89,18 @@ enum TerminalMouseButtonState: Equatable, Sendable {
 }
 
 enum TerminalMouseButton: Equatable, Sendable {
+    case unknown
     case left
     case right
     case middle
+    case four
+    case five
+    case six
+    case seven
+    case eight
+    case nine
+    case ten
+    case eleven
 }
 
 struct ManualSurfaceIMEPoint: Equatable, Sendable {
@@ -122,21 +131,26 @@ protocol ManualSurfaceEngine: AnyObject {
     func reportedSize() -> ManualSurfaceSize?
     func draw()
     func refresh()
+    func keyTranslationMods(_ mods: TerminalModifiers) -> TerminalModifiers
     func sendKey(_ key: TerminalKeyEvent) -> Bool
     func sendText(_ text: String)
     func sendPreedit(_ text: String)
+    func mouseCaptured() -> Bool
     func sendMouseButton(
         state: TerminalMouseButtonState,
         button: TerminalMouseButton,
         modifiers: TerminalModifiers
     ) -> Bool
     func sendMousePos(x: Double, y: Double, modifiers: TerminalModifiers)
+    func sendMousePressure(stage: UInt32, pressure: Double)
     func imePoint() -> ManualSurfaceIMEPoint?
+    func performBindingAction(_ action: String) -> Bool
     /// Gate 8: real cell/text-offset selection range, matching Ghostty's own
     /// selectedRange() (ghostty_surface_read_selection), not a placeholder.
     func readSelection() -> (offset: Int, length: Int)?
     func readScreenText() -> String
     func readSelectedText() -> String?
+    func completeClipboardRequest(_ text: String, state: UnsafeMutableRawPointer?, confirmed: Bool)
     /// Gate 8: matches ghostty_surface_mouse_scroll's packed scroll-mods
     /// bitmask (bit 0 precision, bits 1-3 momentum phase) — see
     /// HiveTerminalView+Input.swift's ScrollMods for the exact encoding,
@@ -161,6 +175,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
     private(set) var refreshCount = 0
     private(set) var freed = false
     private(set) var textSent: [String] = []
+    private(set) var preeditsSent: [String] = []
     private(set) var keysSent = 0
     /// Gate 8 test detail: the C `text` pointer is only valid synchronously,
     /// so it's copied to a Swift String here at call time (mirrors the real
@@ -172,6 +187,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
         let keycode: UInt32
         let unshiftedCodepoint: UInt32
         let text: String?
+        let composing: Bool
     }
     private(set) var keysSentDetail: [KeySent] = []
 
@@ -232,6 +248,10 @@ final class FakeManualSurface: ManualSurfaceEngine {
     public func reportedSize() -> ManualSurfaceSize? { fakeReportedSize }
     public func draw() { drawCount += 1 }
     public func refresh() { refreshCount += 1 }
+    var translatedKeyMods: TerminalModifiers?
+    func keyTranslationMods(_ mods: TerminalModifiers) -> TerminalModifiers {
+        translatedKeyMods ?? mods
+    }
     func sendKey(_ key: TerminalKeyEvent) -> Bool {
         keysSent += 1
         keysSentDetail.append(KeySent(
@@ -240,7 +260,8 @@ final class FakeManualSurface: ManualSurfaceEngine {
             consumedModifiers: key.consumedModifiers,
             keycode: key.keycode,
             unshiftedCodepoint: key.unshiftedCodepoint,
-            text: key.text
+            text: key.text,
+            composing: key.composing
         ))
         return true
     }
@@ -249,25 +270,52 @@ final class FakeManualSurface: ManualSurfaceEngine {
         // Encoder-out tail: fake write callback with UTF-8 bytes.
         callbackContext.enqueueWrite(Data(text.utf8))
     }
-    public func sendPreedit(_ text: String) { _ = text }
+    public func sendPreedit(_ text: String) { preeditsSent.append(text) }
+    public var fakeMouseCaptured = false
+    public private(set) var mouseCaptureQueryCount = 0
+    public func mouseCaptured() -> Bool {
+        mouseCaptureQueryCount += 1
+        return fakeMouseCaptured
+    }
+    private(set) var mouseButtonsSent: [(
+        state: TerminalMouseButtonState,
+        button: TerminalMouseButton,
+        mods: TerminalModifiers
+    )] = []
     public func sendMouseButton(
         state: TerminalMouseButtonState,
         button: TerminalMouseButton,
         modifiers: TerminalModifiers
     ) -> Bool {
-        _ = (state, button, modifiers)
+        mouseButtonsSent.append((state, button, modifiers))
         return true
     }
+    private(set) var mousePositionsSent: [(x: Double, y: Double, mods: TerminalModifiers)] = []
     func sendMousePos(x: Double, y: Double, modifiers: TerminalModifiers) {
-        _ = (x, y, modifiers)
+        mousePositionsSent.append((x, y, modifiers))
     }
-    func imePoint() -> ManualSurfaceIMEPoint? { nil }
+    private(set) var mousePressuresSent: [(stage: UInt32, pressure: Double)] = []
+    func sendMousePressure(stage: UInt32, pressure: Double) {
+        mousePressuresSent.append((stage, pressure))
+    }
+    var fakeIMEPoint: ManualSurfaceIMEPoint?
+    func imePoint() -> ManualSurfaceIMEPoint? { fakeIMEPoint }
+    var bindingActionResult = true
+    private(set) var bindingActions: [String] = []
+    func performBindingAction(_ action: String) -> Bool {
+        bindingActions.append(action)
+        return bindingActionResult
+    }
     public var fakeSelection: (offset: Int, length: Int)?
     public func readSelection() -> (offset: Int, length: Int)? { fakeSelection }
     var fakeScreenText = ""
     var fakeSelectedText: String?
     func readScreenText() -> String { fakeScreenText }
     func readSelectedText() -> String? { fakeSelectedText }
+    private(set) var clipboardCompletions: [(text: String, state: UnsafeMutableRawPointer?, confirmed: Bool)] = []
+    func completeClipboardRequest(_ text: String, state: UnsafeMutableRawPointer?, confirmed: Bool) {
+        clipboardCompletions.append((text, state, confirmed))
+    }
     public private(set) var scrollsSent: [(x: Double, y: Double, mods: Int32)] = []
     public func sendMouseScroll(x: Double, y: Double, mods: Int32) {
         scrollsSent.append((x, y, mods))
@@ -298,6 +346,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     let callbackContext: BridgeCallbackContext
     private var rawThroughSeq: UInt64 = 0
     private var rawSurfaceHandle: ghostty_surface_t?
+    private let clipboardContext: GhosttyClipboardContext
 
     var throughSeq: UInt64 {
         performOnMainSync { self.rawThroughSeq }
@@ -332,9 +381,27 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     var operationObserver: ((String, GhosttyOperationPhase) -> Void)?
     var outputCopyObserver: ((Data) -> Void)?
 
+    convenience init(
+        surface: ghostty_surface_t,
+        callbackContext: BridgeCallbackContext,
+        hostView: NSView? = nil,
+        appOwner: GhosttyAppOwner? = nil,
+        ownsSurface: Bool = true
+    ) {
+        self.init(
+            surface: surface,
+            callbackContext: callbackContext,
+            clipboardContext: GhosttyClipboardContext(),
+            hostView: hostView,
+            appOwner: appOwner,
+            ownsSurface: ownsSurface
+        )
+    }
+
     init(
         surface: ghostty_surface_t,
         callbackContext: BridgeCallbackContext,
+        clipboardContext: GhosttyClipboardContext,
         hostView: NSView? = nil,
         appOwner: GhosttyAppOwner? = nil,
         ownsSurface: Bool = true
@@ -342,6 +409,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         precondition(Thread.isMainThread, "Ghostty surface wrappers must be created on the main thread")
         self.rawSurfaceHandle = surface
         self.callbackContext = callbackContext
+        self.clipboardContext = clipboardContext
         self.hostView = hostView
         self.appOwner = appOwner
         self.ownsSurface = ownsSurface
@@ -437,6 +505,16 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         ghostty_surface_refresh(surface)
     }
 
+    func keyTranslationMods(_ mods: TerminalModifiers) -> TerminalModifiers {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return mods }
+        let native = ghostty_surface_key_translation_mods(
+            surface,
+            ghostty_input_mods_e(rawValue: mods.rawValue)
+        )
+        return TerminalModifiers(rawValue: native.rawValue)
+    }
+
     func sendKey(_ key: TerminalKeyEvent) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return false }
@@ -471,9 +549,19 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     public func sendPreedit(_ text: String) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
+        if text.isEmpty {
+            ghostty_surface_preedit(surface, nil, 0)
+            return
+        }
         text.withCString { cstr in
             ghostty_surface_preedit(surface, cstr, UInt(text.utf8.count))
         }
+    }
+
+    public func mouseCaptured() -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return false }
+        return ghostty_surface_mouse_captured(surface)
     }
 
     public func sendMouseButton(
@@ -488,9 +576,18 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
             : GHOSTTY_MOUSE_RELEASE
         let nativeButton: ghostty_input_mouse_button_e
         switch button {
+        case .unknown: nativeButton = GHOSTTY_MOUSE_UNKNOWN
         case .left: nativeButton = GHOSTTY_MOUSE_LEFT
         case .right: nativeButton = GHOSTTY_MOUSE_RIGHT
         case .middle: nativeButton = GHOSTTY_MOUSE_MIDDLE
+        case .four: nativeButton = GHOSTTY_MOUSE_FOUR
+        case .five: nativeButton = GHOSTTY_MOUSE_FIVE
+        case .six: nativeButton = GHOSTTY_MOUSE_SIX
+        case .seven: nativeButton = GHOSTTY_MOUSE_SEVEN
+        case .eight: nativeButton = GHOSTTY_MOUSE_EIGHT
+        case .nine: nativeButton = GHOSTTY_MOUSE_NINE
+        case .ten: nativeButton = GHOSTTY_MOUSE_TEN
+        case .eleven: nativeButton = GHOSTTY_MOUSE_ELEVEN
         }
         let nativeModifiers = ghostty_input_mods_e(rawValue: modifiers.rawValue)
         return ghostty_surface_mouse_button(surface, nativeState, nativeButton, nativeModifiers)
@@ -516,6 +613,20 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         var height: Double = 0
         ghostty_surface_ime_point(surface, &x, &y, &width, &height)
         return ManualSurfaceIMEPoint(x: x, y: y, width: width, height: height)
+    }
+
+    public func sendMousePressure(stage: UInt32, pressure: Double) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_mouse_pressure(surface, stage, pressure)
+    }
+
+    public func performBindingAction(_ action: String) -> Bool {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return false }
+        return action.withCString { ptr in
+            ghostty_surface_binding_action(surface, ptr, UInt(action.utf8.count))
+        }
     }
 
     public func readSelection() -> (offset: Int, length: Int)? {
@@ -562,6 +673,18 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         return String(data: Data(bytes: pointer, count: Int(text.text_len)), encoding: .utf8)
     }
 
+    func completeClipboardRequest(
+        _ text: String,
+        state: UnsafeMutableRawPointer?,
+        confirmed: Bool
+    ) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        text.withCString { chars in
+            ghostty_surface_complete_clipboard_request(surface, chars, state, confirmed)
+        }
+    }
+
     public func sendMouseScroll(x: Double, y: Double, mods: Int32) {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
@@ -571,6 +694,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     public func free() {
         performOnMainSync {
             guard self.ownsSurface, let surface = self.rawSurfaceHandle else { return }
+            self.clipboardContext.beginTeardown()
             self.callbackContext.beginTeardown()
             GhosttySurfaceCallbackRegistry.shared.unregister(surface)
             self.rawSurfaceHandle = nil
@@ -1072,21 +1196,34 @@ enum GhosttyBridgeFactory {
                 }
                 return handled
             },
-            // Gate 9 dispositions for the non-action runtime callbacks.
-            // Each is deny/no-op; the probes exist so tests can prove the
-            // unreachability claims (close: manual surfaces route close as
-            // the CLOSE_REQUEST bridge event and return before this cb;
-            // clipboard: OSC 52 is denied in the patched vt handler before
-            // the apprt layer). See Gate9CallbackMatrixTests.
-            read_clipboard_cb: { _, _, _ in
+            // Gate 9 probes remain the first statement in each callback.
+            // Gate 8 admits clipboard work only through explicit host
+            // binding actions; the fixed deny config keeps OSC 52 from ever
+            // reaching this apprt layer. See Gate8ClipboardTests and
+            // Gate9CallbackMatrixTests.
+            read_clipboard_cb: { userdata, location, state in
                 HiveGhosttyRuntimeCallbackProbes.record(.readClipboard)
-                return false
+                return GhosttyClipboardContext.fromUserdata(userdata)?.beginRead(
+                    location: location,
+                    state: state
+                ) ?? false
             },
-            confirm_read_clipboard_cb: { _, _, _, _ in
+            confirm_read_clipboard_cb: { userdata, string, state, request in
                 HiveGhosttyRuntimeCallbackProbes.record(.confirmReadClipboard)
+                GhosttyClipboardContext.fromUserdata(userdata)?.confirmRead(
+                    string: string,
+                    state: state,
+                    request: request
+                )
             },
-            write_clipboard_cb: { _, _, _, _, _ in
+            write_clipboard_cb: { userdata, location, content, count, confirm in
                 HiveGhosttyRuntimeCallbackProbes.record(.writeClipboard)
+                GhosttyClipboardContext.fromUserdata(userdata)?.write(
+                    location: location,
+                    content: content,
+                    count: count,
+                    confirm: confirm
+                )
             },
             close_surface_cb: { _, _ in
                 HiveGhosttyRuntimeCallbackProbes.record(.closeSurface)
@@ -1120,7 +1257,8 @@ enum GhosttyBridgeFactory {
         widthPx: UInt32,
         heightPx: UInt32,
         terminalReplies: GhosttyTerminalReplyPolicy,
-        configPolicyPath: UnsafePointer<CChar>
+        configPolicyPath: UnsafePointer<CChar>,
+        clipboardContext: GhosttyClipboardContext = GhosttyClipboardContext()
     ) throws -> GhosttyManualSurface {
         dispatchPrecondition(condition: .onQueue(.main))
 
@@ -1152,6 +1290,7 @@ enum GhosttyBridgeFactory {
         let owner = GhosttyAppOwner(app: app, config: config, wakeupContext: wakeupContext)
 
         var surfaceConfig = ghostty_surface_config_new()
+        surfaceConfig.userdata = clipboardContext.unownedContextPointer
         surfaceConfig.platform_tag = GHOSTTY_PLATFORM_MACOS
         surfaceConfig.platform = ghostty_platform_u(
             macos: ghostty_platform_macos_s(
@@ -1187,13 +1326,16 @@ enum GhosttyBridgeFactory {
         let h = heightPx > 0 ? heightPx : UInt32(max(1, hostView.bounds.height))
         ghostty_surface_set_size(surface, w, h)
 
-        return GhosttyManualSurface(
+        let manualSurface = GhosttyManualSurface(
             surface: surface,
             callbackContext: callbackContext,
+            clipboardContext: clipboardContext,
             hostView: hostView,
             appOwner: owner,
             ownsSurface: true
         )
+        clipboardContext.bind(surface: manualSurface)
+        return manualSurface
     }
 
     private static func ensureGlobalInitializedOnMain() throws {
@@ -1205,13 +1347,13 @@ enum GhosttyBridgeFactory {
         initializationCount += 1
     }
 
-    /// One-line manual-surface config policy, written once per process.
-    /// Contents are the gate-9 ruling, not user preference — never merge
-    /// user config files into a manual surface.
+    /// Fixed manual-surface policy, written once per process. Contents are
+    /// gate rulings, not user preference — never merge user config files
+    /// into a manual surface.
     static let manualConfigPolicyPath: UnsafePointer<CChar> = {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("hive-ghostty-manual-config-\(ProcessInfo.processInfo.processIdentifier).conf")
-        try? Data("keybind = clear\n".utf8).write(to: url)
+        try? Data("keybind = clear\nclipboard-read = deny\nclipboard-write = deny\n".utf8).write(to: url)
         // Intentionally leaked: valid for process lifetime, handed to C.
         return UnsafePointer(strdup(url.path))
     }()
@@ -1221,7 +1363,7 @@ enum GhosttyBridgeFactory {
     private static let headlessTestConfigPolicyPath: UnsafePointer<CChar> = {
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent("hive-ghostty-test-config-\(ProcessInfo.processInfo.processIdentifier).conf")
-        try? Data("keybind = clear\nwindow-vsync = false\n".utf8).write(to: url)
+        try? Data("keybind = clear\nclipboard-read = deny\nclipboard-write = deny\nwindow-vsync = false\n".utf8).write(to: url)
         return UnsafePointer(strdup(url.path))
     }()
 
@@ -1239,6 +1381,25 @@ enum GhosttyBridgeFactory {
                 heightPx: heightPx,
                 terminalReplies: terminalReplies,
                 configPolicyPath: headlessTestConfigPolicyPath
+            )
+        }
+    }
+
+    static func makeManualSurfaceForClipboardTesting(
+        widthPx: UInt32 = 800,
+        heightPx: UInt32 = 480,
+        terminalReplies: GhosttyTerminalReplyPolicy,
+        clipboardContext: GhosttyClipboardContext
+    ) throws -> GhosttyManualSurface {
+        try performOnMainSync {
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
+            return try makeManualSurfaceOnMain(
+                hostView: host,
+                widthPx: widthPx,
+                heightPx: heightPx,
+                terminalReplies: terminalReplies,
+                configPolicyPath: headlessTestConfigPolicyPath,
+                clipboardContext: clipboardContext
             )
         }
     }

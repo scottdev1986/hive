@@ -1,0 +1,15 @@
+Gate 8 provisional verification on 2026-07-18
+
+Development base: a382c47aec5066bbe6f3db298d7f13efdba112b7
+Status: provisional; Gate 2/5 and Gate 3 are not yet landed on main.
+
+PASS: swift build --package-path workspace --build-tests
+PASS: swift test --package-path workspace --filter 'InputEncodingTests|KittyKeyboardGoldenTests'
+      50 tests, 0 failures (45 input/IME/mouse; 5 Kitty byte goldens)
+
+EXPECTED INTEGRATION RED: swift test --package-path workspace
+The provisional Gate 3 base defers callback delivery to main while the old
+pre-Gate-2/5 TerminalReplyCorpusTests and OrderedOutputStressTests still read
+the write log synchronously. They observe zero replies and the corpus later
+indexes an empty array. Gate 8 does not edit those owned files. Final full
+verification is required after Gate 2/5 and Gate 3 land on main.
