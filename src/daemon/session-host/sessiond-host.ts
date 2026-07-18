@@ -469,13 +469,17 @@ export class SessiondHost implements LandedTerminalHost {
   ): Promise<ClaimResult> {
     const payload = ClaimAcquirePayloadSchema.parse({ schemaVersion: 1, ...request });
     const host = await this.connectDirect(request.session);
-    const response = await host.request({
-      requestType: "CLAIM_ACQUIRE",
-      responseType: "CLAIM_RESULT",
-      payload,
-      responseSchema: ClaimResultPayloadSchema,
-    });
-    return response.result;
+    try {
+      const response = await host.request({
+        requestType: "CLAIM_ACQUIRE",
+        responseType: "CLAIM_RESULT",
+        payload,
+        responseSchema: ClaimResultPayloadSchema,
+      });
+      return response.result;
+    } finally {
+      host.close();
+    }
   }
 
   async submitInput(
@@ -494,17 +498,21 @@ export class SessiondHost implements LandedTerminalHost {
       operation,
     });
     const host = await this.connectDirect(request.session);
-    const response = await host.request({
-      requestType: "INPUT_SUBMIT",
-      responseType: "APPLIED",
-      flags: FRAME_FLAGS.contentSensitive,
-      payload,
-      responseSchema: AppliedPayloadSchema,
-    });
-    if (response.resultKind !== "input") {
-      throw new SessiondProtocolError("sessiond returned a resize result for input");
+    try {
+      const response = await host.request({
+        requestType: "INPUT_SUBMIT",
+        responseType: "APPLIED",
+        flags: FRAME_FLAGS.contentSensitive,
+        payload,
+        responseSchema: AppliedPayloadSchema,
+      });
+      if (response.resultKind !== "input") {
+        throw new SessiondProtocolError("sessiond returned a resize result for input");
+      }
+      return response.receipt;
+    } finally {
+      host.close();
     }
-    return response.receipt;
   }
 
   async resize(
@@ -512,15 +520,19 @@ export class SessiondHost implements LandedTerminalHost {
   ): Promise<ResizeResult> {
     const payload = ResizePayloadSchema.parse({ schemaVersion: 1, ...request });
     const host = await this.connectDirect(request.session);
-    const response = await host.request({
-      requestType: "RESIZE",
-      responseType: "APPLIED",
-      payload,
-      responseSchema: AppliedPayloadSchema,
-    });
-    if (response.resultKind !== "resize") {
-      throw new SessiondProtocolError("sessiond returned an input result for resize");
+    try {
+      const response = await host.request({
+        requestType: "RESIZE",
+        responseType: "APPLIED",
+        payload,
+        responseSchema: AppliedPayloadSchema,
+      });
+      if (response.resultKind !== "resize") {
+        throw new SessiondProtocolError("sessiond returned an input result for resize");
+      }
+      return response.result;
+    } finally {
+      host.close();
     }
-    return response.result;
   }
 }

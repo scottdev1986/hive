@@ -342,7 +342,7 @@ describe("SessiondHost landed frozen operations", () => {
   });
 
   test("projects claim, idempotent input, and resize onto an attached neutral host", async () => {
-    const direct = new RecordingClient((request) => {
+    const respond = (request: SessiondControlRequest<unknown>) => {
       switch (request.requestType) {
         case "CLAIM_ACQUIRE":
           return { schemaVersion: 1, result: claim };
@@ -353,11 +353,14 @@ describe("SessiondHost landed frozen operations", () => {
         default:
           throw new Error(`unexpected request: ${request.requestType}`);
       }
-    });
+    };
+    const directClients: RecordingClient[] = [];
     const host = new SessiondHost({
       connectBroker: async () => new RecordingClient(() => createResult),
       connectDirect: async (requested) => {
         expect(requested).toEqual(session);
+        const direct = new RecordingClient(respond);
+        directClients.push(direct);
         return direct;
       },
     });
@@ -387,15 +390,16 @@ describe("SessiondHost landed frozen operations", () => {
     await expect(host.submitInput(inputRequest)).resolves.toEqual(receipt);
     await expect(host.resize(resizeRequest)).resolves.toEqual(resize);
 
-    expect(direct.requests.map((request) => request.requestType)).toEqual([
+    const requests = directClients.flatMap((client) => client.requests);
+    expect(requests.map((request) => request.requestType)).toEqual([
       "CLAIM_ACQUIRE",
       "INPUT_SUBMIT",
       "INPUT_SUBMIT",
       "RESIZE",
     ]);
-    expect(direct.requests[1]?.flags).toBe(FRAME_FLAGS.contentSensitive);
-    expect(direct.requests[1]?.payload).toEqual(direct.requests[2]?.payload);
-    expect(direct.requests[1]?.payload).toMatchObject({
+    expect(requests[1]?.flags).toBe(FRAME_FLAGS.contentSensitive);
+    expect(requests[1]?.payload).toEqual(requests[2]?.payload);
+    expect(requests[1]?.payload).toMatchObject({
       schemaVersion: 1,
       session,
       transactionId: receipt.transactionId,
@@ -406,6 +410,8 @@ describe("SessiondHost landed frozen operations", () => {
         bytes: Buffer.from("wire-input\n").toString("base64"),
       },
     });
+    expect(directClients).toHaveLength(4);
+    expect(directClients.every((client) => client.closed)).toBe(true);
   });
 
   test("fails direct operations at the frozen wire-3 boundary by default", async () => {
