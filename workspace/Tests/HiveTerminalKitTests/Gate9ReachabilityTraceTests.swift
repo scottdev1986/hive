@@ -95,37 +95,38 @@ final class Gate9ReachabilityTraceTests: XCTestCase {
         // effectively empty of anything privileged — a stronger result than
         // "denied": the classification is confirmed by measurement, not
         // inferred from tag names.
+        //
+        // HARD PIN (cross-vendor review 2026-07-18, clyde): assert equality
+        // to exactly {SCROLLBAR}, not a soft subset of the policy's
+        // byte-reachable buckets. A soft check would pass a dangerous tag
+        // that was misclassified into deniedPolicy/handledByEffects/
+        // engineInert (e.g. DESKTOP_NOTIFICATION is in deniedPolicyTags —
+        // {SCROLLBAR, DESKTOP_NOTIFICATION} would satisfy subset checks
+        // while contradicting the empty-privileged-action claim).
 
-        // 0. Liveness (non-vacuous guard): the action channel must have
-        //    fired at least once, or "nothing dangerous fired" would be
-        //    meaningless (a dead observer passes every subset check). A
-        //    real surface processing output+geometry always emits SCROLLBAR.
-        XCTAssertFalse(reachable.isEmpty,
-                       "the action callback must have fired at least once from output — an empty set here " +
-                       "means the trace channel is dead and every assertion below is vacuous")
+        let expected: Set<UInt32> = [GHOSTTY_ACTION_SCROLLBAR.rawValue]
 
-        // 1. Nothing gesture-only (window/tab/split/quit/inspector) may be
-        //    reachable from raw output — that would be a privilege leak.
+        // 0. Liveness (non-vacuous guard): SCROLLBAR must be present, or the
+        //    action channel is dead and a hard equality to {SCROLLBAR} would
+        //    fail for the wrong reason. Kept as its own assertion so a dead
+        //    observer is diagnosed distinctly from an over-broad set.
+        XCTAssertTrue(reachable.contains(GHOSTTY_ACTION_SCROLLBAR.rawValue),
+                      "liveness: SCROLLBAR must fire from real output+geometry — empty/missing means the " +
+                      "trace channel is dead (observed \(names))")
+
+        // 1. Hard pin: the measured reachable set IS exactly {SCROLLBAR}.
+        //    Extra tags = privileged surface grew (or classification lied).
+        //    Missing SCROLLBAR is already covered by the liveness assert.
+        XCTAssertEqual(reachable, expected,
+                       "byte-triggerable action surface must be exactly {SCROLLBAR}; " +
+                       "observed \(names) — reclassify / re-measure before pinning")
+
+        // 2. Diagnostic extras (kept; redundant with the hard pin but name
+        //    the failure mode if a future edit softens equality by mistake):
         let gestureRaws = Set(HiveGhosttyActionPolicy.deniedGestureTags.map(\.rawValue))
         let leaked = reachable.intersection(gestureRaws)
         XCTAssertTrue(leaked.isEmpty,
                       "no gesture/window-management action may be reachable from untrusted output; leaked \(leaked)")
-
-        // 2. Every reachable tag must be one the policy already classifies
-        //    as byte-reachable (handled/deniedPolicy/engineInert) — if the
-        //    trace surfaces a tag the policy put in the gesture bucket or
-        //    left unclassified, the classification is WRONG and must be
-        //    corrected before pinning.
-        let byteReachable = Set(
-            (HiveGhosttyActionPolicy.handledByEffectsTags
-             + HiveGhosttyActionPolicy.deniedPolicyTags
-             + HiveGhosttyActionPolicy.engineInertTags).map(\.rawValue)
-        )
-        for raw in reachable {
-            XCTAssertTrue(byteReachable.contains(raw),
-                          "trace reached tag \(raw):\(Self.tagName(raw)) which the policy does NOT classify as " +
-                          "byte-reachable — reclassify before pinning")
-        }
     }
 
     private static func tagName(_ raw: UInt32) -> String {
