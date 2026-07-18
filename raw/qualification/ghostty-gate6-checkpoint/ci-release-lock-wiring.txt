@@ -1,0 +1,19 @@
+Gate 6 backlog C — verification of CI wiring for the 187-restore release lock
+Verified: 2026-07-18, agent diego, branch hive/diego-category-complex-coding-m1-b1
+
+Finding: CI does NOT invoke the release lock on any path.
+
+Evidence (read from CI configuration at this commit):
+- .github/workflows/ contains exactly two workflows: graphify-artifacts.yml, release.yml
+- release.yml steps (grep -nE "run:|uses:"): checkout, setup-bun, bun install,
+  brew install tmux, bun run typecheck, bun test, e2e test, release plan CLI,
+  signing manifest steps. No step invokes scripts/build-ghosttykit.sh (whose
+  --production branch runs scripts/qualify-ghostty-release-lock.sh at
+  build-ghosttykit.sh:217-219) and no step invokes
+  scripts/qualify-ghostty-release-lock.sh directly.
+- grep -n "ghosttykit|native|GhosttyKit|--production" .github/workflows/release.yml: no matches.
+
+Consequence: the exhaustive both-arch surface-restore release lock currently
+runs only when a human (or agent) runs build-ghosttykit.sh --production
+locally. Per the story, this task is verification only — wiring CI is a
+separate decision for the orchestrator; reported to queen 2026-07-18.

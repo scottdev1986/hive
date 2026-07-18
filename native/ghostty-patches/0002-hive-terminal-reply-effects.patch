@@ -229,28 +229,6 @@ index f683855..8cbd512 100644
          };
          defer {
              CoreSurface.hive_manual_backend = null;
-diff --git a/src/hive_checkpoint.zig b/src/hive_checkpoint.zig
-index e095e1b..15e9985 100644
---- a/src/hive_checkpoint.zig
-+++ b/src/hive_checkpoint.zig
-@@ -32,6 +32,7 @@ const identity_sources = [_][]const u8{
-     @embedFile("Surface.zig"),
-     @embedFile("termio/backend.zig"),
-     @embedFile("lib_vt.zig"),
-+    @embedFile("terminal/stream_terminal.zig"),
- };
- 
- const Sha256 = std.crypto.hash.sha2.Sha256;
-@@ -386,7 +387,8 @@ pub fn feed(
-         stream.next(byte);
-         if (stream.parser.state == .ground and
-             stream.utf8decoder.state == 0 and
--            stream.handler.apc_handler.state == .inactive)
-+            stream.handler.apc_handler.state == .inactive and
-+            stream.handler.dcs_handler.state == .inactive)
-         {
-             pending.clearRetainingCapacity();
-         }
 diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
 index 91cfb21..8e3eb99 100644
 --- a/src/terminal/stream_terminal.zig

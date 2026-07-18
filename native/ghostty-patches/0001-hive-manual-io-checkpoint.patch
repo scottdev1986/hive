@@ -509,10 +509,10 @@ index b68be92..e6c9ff1 100644
      {
 diff --git a/src/hive_checkpoint.zig b/src/hive_checkpoint.zig
 new file mode 100644
-index 0000000..ddb9a1c
+index 0000000..f902f12
 --- /dev/null
 +++ b/src/hive_checkpoint.zig
-@@ -0,0 +1,1498 @@
+@@ -0,0 +1,2524 @@
 +const std = @import("std");
 +const builtin = @import("builtin");
 +const terminal = @import("terminal/main.zig");
@@ -520,6 +520,8 @@ index 0000000..ddb9a1c
 +const point = @import("terminal/point.zig");
 +const hyperlink = @import("terminal/hyperlink.zig");
 +const build_options = @import("terminal_options");
++
++const sizepkg = @import("terminal/size.zig");
 +
 +const Allocator = std.mem.Allocator;
 +const Terminal = terminal.Terminal;
@@ -529,6 +531,7 @@ index 0000000..ddb9a1c
 +const ScreenSet = terminal.ScreenSet;
 +const PageList = terminal.PageList;
 +const Page = pagepkg.Page;
++const Selection = terminal.Selection;
 +const GlyphEntry = terminal.apc.glyph.Glossary.Entry;
 +const GlyphOutline = @import("font/opentype/glyf.zig").Glyf.Outline;
 +
@@ -547,6 +550,7 @@ index 0000000..ddb9a1c
 +    @embedFile("Surface.zig"),
 +    @embedFile("termio/backend.zig"),
 +    @embedFile("lib_vt.zig"),
++    @embedFile("terminal/stream_terminal.zig"),
 +};
 +
 +const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -606,13 +610,66 @@ index 0000000..ddb9a1c
 +    }
 +}
 +
-+fn hashCheckpointLayout(hash: *Sha256) void {
++/// Single source of truth for the wire (fingerprint completeness B): the
++/// fingerprint hashes exactly this list, and the write/read funnel enforces
++/// membership at compile time — serializing a type that is not fingerprinted
++/// is a build error, so the two can never drift apart.
++const fingerprinted_types = .{
++    c_char, c_int,
++    u8,     u16,
++    u21,    u32,
++    u64,    usize,
++    bool,   ?u21,
++
++    @TypeOf(@as(Handler, undefined).apc_handler.max_bytes), @TypeOf(@as(Handler, undefined).apc_handler.enabled),
++    @TypeOf(@as(Handler, undefined).default_cursor),        @TypeOf(@as(Handler, undefined).default_cursor_style),
++    @TypeOf(@as(Handler, undefined).default_cursor_blink),  @TypeOf(@as(Terminal, undefined).status_display),
++    @TypeOf(@as(Terminal, undefined).rows),                 @TypeOf(@as(Terminal, undefined).cols),
++    Terminal.ScrollingRegion,                               Terminal.Colors,
++    @TypeOf(@as(Terminal, undefined).modes),                @TypeOf(@as(Terminal, undefined).mouse_shape),
++    @TypeOf(@as(Terminal, undefined).flags),                ScreenSet.Key,
++    @TypeOf(@as(PageList, undefined).cols),                 @TypeOf(@as(PageList, undefined).rows),
++    Page,                                                   Page.Layout,
++    pagepkg.Row,                                            pagepkg.Cell,
++    ?Screen.SavedCursor,                                    Screen.CharsetState,
++    @TypeOf(@as(Screen, undefined).protected_mode),         @TypeOf(@as(Screen, undefined).kitty_keyboard),
++    Screen.SemanticPrompt,                                  CursorWire,
++    point.Coordinate,                                       terminal.Style,
++    hyperlink.PageEntry,                                    Screen.CursorStyle,
++    StyleSet,                                               HyperlinkSet,
++    terminal.Style.Color,
++
++    terminal.kitty.graphics.Image,                                         @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits),
++    @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),
++    terminal.kitty.graphics.ImageStorage.PlacementKey,                     terminal.kitty.graphics.ImageStorage.Placement,
++    @TypeOf(@as(GlyphEntry, undefined).design),                            @TypeOf(@as(GlyphEntry, undefined).width),
++    @TypeOf(@as(GlyphEntry, undefined).constraint),                        GlyphOutline.Point,
++};
++
++fn isFingerprinted(comptime T: type) bool {
++    comptime {
++        for (fingerprinted_types) |F| if (F == T) return true;
++        return false;
++    }
++}
++
++fn assertFingerprinted(comptime T: type) void {
++    if (comptime !isFingerprinted(T))
++        @compileError("serialized type is not fingerprinted: " ++ @typeName(T));
++}
++
++fn hashLayoutCommon(hash: *Sha256, page_size: usize) void {
 +    hashText(hash, "hive-checkpoint-layout-v1");
++    // Architecture binding (fingerprint completeness A): checkpoints embed
++    // raw page memory whose page-rounded layout is architecture-specific,
++    // and cross-architecture separation must not rest solely on the
++    // page-size input below.
++    hashText(hash, @tagName(builtin.target.cpu.arch));
 +    hashText(hash, @tagName(builtin.target.cpu.arch.endian()));
 +    hashText(hash, @tagName(builtin.target.abi));
 +    hashText(hash, @tagName(builtin.target.cCharSignedness()));
 +    hashInt(hash, builtin.target.ptrBitWidth());
-+    hashInt(hash, std.heap.page_size_min);
++    hashInt(hash, page_size);
 +
 +    // Only options that affect checkpoint bytes or replay belong here.
 +    inline for (.{
@@ -622,39 +679,25 @@ index 0000000..ddb9a1c
 +        build_options.slow_runtime_safety,
 +    }) |value| hashInt(hash, @intFromBool(value));
 +
-+    inline for (.{
-+        c_char, c_int,
-+        u8,     u16,
-+        u21,    u32,
-+        u64,    usize,
-+        bool,   ?u21,
-+    }) |T| hashTypeLayout(hash, T);
-+    inline for (.{
-+        @TypeOf(@as(Handler, undefined).apc_handler.max_bytes), @TypeOf(@as(Handler, undefined).apc_handler.enabled),
-+        @TypeOf(@as(Handler, undefined).default_cursor),        @TypeOf(@as(Handler, undefined).default_cursor_style),
-+        @TypeOf(@as(Handler, undefined).default_cursor_blink),  @TypeOf(@as(Terminal, undefined).status_display),
-+        @TypeOf(@as(Terminal, undefined).rows),                 @TypeOf(@as(Terminal, undefined).cols),
-+        Terminal.ScrollingRegion,                               Terminal.Colors,
-+        @TypeOf(@as(Terminal, undefined).modes),                @TypeOf(@as(Terminal, undefined).mouse_shape),
-+        @TypeOf(@as(Terminal, undefined).flags),                ScreenSet.Key,
-+        @TypeOf(@as(PageList, undefined).cols),                 @TypeOf(@as(PageList, undefined).rows),
-+        Page,                                                   Page.Layout,
-+        pagepkg.Row,                                            pagepkg.Cell,
-+        ?Screen.SavedCursor,                                    Screen.CharsetState,
-+        @TypeOf(@as(Screen, undefined).protected_mode),         @TypeOf(@as(Screen, undefined).kitty_keyboard),
-+        Screen.SemanticPrompt,                                  CursorWire,
-+        point.Coordinate,
-+    }) |T| hashTypeLayout(hash, T);
-+    inline for (.{
-+        terminal.kitty.graphics.Image,                                         @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits),
-+        @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),
-+        terminal.kitty.graphics.ImageStorage.PlacementKey,                     terminal.kitty.graphics.ImageStorage.Placement,
-+        @TypeOf(@as(GlyphEntry, undefined).design),                            @TypeOf(@as(GlyphEntry, undefined).width),
-+        @TypeOf(@as(GlyphEntry, undefined).constraint),                        GlyphOutline.Point,
-+    }) |T| hashTypeLayout(hash, T);
++    inline for (fingerprinted_types) |T| hashTypeLayout(hash, T);
++}
 +
-+    const page_layout = canonicalBytes(Page.layout(.{ .cols = 80, .rows = 24 }));
-+    hash.update(&page_layout);
++fn hashCheckpointLayout(hash: *Sha256) void {
++    hashLayoutCommon(hash, std.heap.page_size_min);
++    hashPlainValue(hash, Page.layout(.{ .cols = 80, .rows = 24 }));
++}
++
++/// Backlog-A proof surface: the layout fingerprint with every page-size
++/// derived input held constant (page-size input pinned, concrete page
++/// layout excluded). The qualification harness dumps this on both native
++/// slices and requires inequality — architecture separation must survive
++/// with page size held equal.
++pub fn archProofFingerprint() [32]u8 {
++    var hash = Sha256.init(.{});
++    hashLayoutCommon(&hash, 4096);
++    var out: [32]u8 = undefined;
++    hash.final(&out);
++    return out;
 +}
 +
 +var build_id: [32]u8 = undefined;
@@ -689,32 +732,176 @@ index 0000000..ddb9a1c
 +    CheckpointTooLarge,
 +};
 +
-+fn canonicalBytes(value: anytype) [@sizeOf(@TypeOf(value))]u8 {
++/// The structural wire codec. Every value reaches the wire as live data
++/// only: integers as little-endian byte-aligned values, enums as their
++/// backing integer, packed structs as exactly their backing-integer bytes,
++/// auto structs field-by-field in declaration order, optionals as a presence
++/// byte plus payload, and tagged unions as the tag plus the active payload
++/// only. In-memory padding and inactive union payload bytes therefore never
++/// reach the wire — the class of defect behind non-deterministic, leaking
++/// checkpoint bytes. Pointer-bearing and untagged types are compile errors,
++/// forcing an explicit per-field decision at the call site.
++fn ByteAlignedInt(comptime T: type) type {
++    return std.math.ByteAlignedInt(T);
++}
++
++fn emitValue(w: *Writer, value: anytype) Error!void {
 +    const T = @TypeOf(value);
-+    var result: [@sizeOf(T)]u8 align(@alignOf(T)) = @splat(0);
 +    switch (@typeInfo(T)) {
-+        .array => {
-+            for (value, 0..) |item, i| {
-+                const item_bytes = canonicalBytes(item);
-+                @memcpy(
-+                    result[i * item_bytes.len ..][0..item_bytes.len],
-+                    &item_bytes,
-+                );
-+            }
++        .int => {
++            const Wide = ByteAlignedInt(T);
++            var bytes: [@divExact(@bitSizeOf(Wide), 8)]u8 = undefined;
++            std.mem.writeInt(Wide, &bytes, value, .little);
++            try w.write(&bytes);
 +        },
++        .bool => try w.write(&.{@intFromBool(value)}),
++        .float => try emitValue(
++            w,
++            @as(std.meta.Int(.unsigned, @bitSizeOf(T)), @bitCast(value)),
++        ),
++        .@"enum" => |info| try emitValue(w, @as(info.tag_type, @intFromEnum(value))),
 +        .@"struct" => |info| switch (info.layout) {
-+            .@"packed" => @as(*T, @ptrCast(&result)).* = value,
++            .@"packed" => try emitValue(w, @as(info.backing_integer.?, @bitCast(value))),
 +            else => inline for (info.fields) |field| {
-+                const field_bytes = canonicalBytes(@field(value, field.name));
-+                @memcpy(
-+                    result[@offsetOf(T, field.name)..][0..field_bytes.len],
-+                    &field_bytes,
-+                );
++                if (!field.is_comptime) try emitValue(w, @field(value, field.name));
 +            },
 +        },
-+        else => @as(*T, @ptrCast(&result)).* = value,
++        .optional => {
++            try emitValue(w, value != null);
++            if (value) |unwrapped| try emitValue(w, unwrapped);
++        },
++        .@"union" => |info| {
++            if (info.tag_type == null)
++                @compileError("untagged union is not serializable: " ++ @typeName(T));
++            try emitValue(w, std.meta.activeTag(value));
++            switch (value) {
++                inline else => |payload| try emitValue(w, payload),
++            }
++        },
++        .array => for (value) |item| try emitValue(w, item),
++        .void => {},
++        else => @compileError("type is not serializable: " ++ @typeName(T)),
++    }
++}
++
++fn readValue(r: *Reader, comptime T: type) Error!T {
++    switch (@typeInfo(T)) {
++        .int => {
++            const Wide = ByteAlignedInt(T);
++            const wide_bytes = @divExact(@bitSizeOf(Wide), 8);
++            const raw = std.mem.readInt(
++                Wide,
++                (try r.take(wide_bytes))[0..wide_bytes],
++                .little,
++            );
++            return std.math.cast(T, raw) orelse error.InvalidCheckpoint;
++        },
++        .bool => return switch ((try r.take(1))[0]) {
++            0 => false,
++            1 => true,
++            else => error.InvalidCheckpoint,
++        },
++        .float => return @bitCast(
++            try readValue(r, std.meta.Int(.unsigned, @bitSizeOf(T))),
++        ),
++        .@"enum" => |info| {
++            const raw = try readValue(r, info.tag_type);
++            return std.meta.intToEnum(T, raw) catch error.InvalidCheckpoint;
++        },
++        .@"struct" => |info| switch (info.layout) {
++            .@"packed" => return @bitCast(try readValue(r, info.backing_integer.?)),
++            else => {
++                var result: T = undefined;
++                inline for (info.fields) |field| {
++                    if (!field.is_comptime) {
++                        @field(result, field.name) = try readValue(r, field.type);
++                    }
++                }
++                return result;
++            },
++        },
++        .optional => |info| {
++            if (!try readValue(r, bool)) return null;
++            return try readValue(r, info.child);
++        },
++        .@"union" => |info| {
++            const Tag = info.tag_type orelse
++                @compileError("untagged union is not deserializable: " ++ @typeName(T));
++            const tag = try readValue(r, Tag);
++            switch (tag) {
++                inline else => |active| {
++                    const Payload = @FieldType(T, @tagName(active));
++                    return @unionInit(T, @tagName(active), try readValue(r, Payload));
++                },
++            }
++        },
++        .array => |info| {
++            var result: T = undefined;
++            for (&result) |*item| item.* = try readValue(r, info.child);
++            return result;
++        },
++        .void => return {},
++        else => @compileError("type is not deserializable: " ++ @typeName(T)),
++    }
++}
++
++/// Emit every field of an auto-layout struct except the comptime-named
++/// skip list. Skipped fields are the caller's responsibility on both sides
++/// (pointer-bearing fields whose payloads travel separately).
++fn emitStructExcept(
++    w: *Writer,
++    value: anytype,
++    comptime skip: []const []const u8,
++) Error!void {
++    const T = @TypeOf(value);
++    assertFingerprinted(T);
++    inline for (@typeInfo(T).@"struct".fields) |field| {
++        comptime var skipped = false;
++        inline for (skip) |name| {
++            if (comptime std.mem.eql(u8, field.name, name)) skipped = true;
++        }
++        if (!skipped and !field.is_comptime) {
++            try emitValue(w, @field(value, field.name));
++        }
++    }
++}
++
++/// Read every field of an auto-layout struct except the comptime-named skip
++/// list, which are left undefined for the caller to fill.
++fn readStructExcept(
++    r: *Reader,
++    comptime T: type,
++    comptime skip: []const []const u8,
++) Error!T {
++    assertFingerprinted(T);
++    var result: T = undefined;
++    inline for (@typeInfo(T).@"struct".fields) |field| {
++        comptime var skipped = false;
++        inline for (skip) |name| {
++            if (comptime std.mem.eql(u8, field.name, name)) skipped = true;
++        }
++        if (!skipped and !field.is_comptime) {
++            @field(result, field.name) = try readValue(r, field.type);
++        }
 +    }
 +    return result;
++}
++
++/// Hash a plain data value (ints, bools, enums, and structs/arrays of them)
++/// into the layout fingerprint. Used for the concrete page layout constants.
++fn hashPlainValue(hash: *Sha256, value: anytype) void {
++    const T = @TypeOf(value);
++    switch (@typeInfo(T)) {
++        .int => hashInt(hash, @intCast(value)),
++        .bool => hashInt(hash, @intFromBool(value)),
++        .@"enum" => hashInt(hash, @intFromEnum(value)),
++        .@"struct" => |info| inline for (info.fields) |field| {
++            if (!field.is_comptime) hashPlainValue(hash, @field(value, field.name));
++        },
++        .array => for (value) |item| hashPlainValue(hash, item),
++        .void => {},
++        else => @compileError("type is not layout-hashable: " ++ @typeName(T)),
++    }
 +}
 +
 +const Writer = struct {
@@ -732,8 +919,8 @@ index 0000000..ddb9a1c
 +    }
 +
 +    fn plain(self: *Writer, value: anytype) Error!void {
-+        const bytes = canonicalBytes(value);
-+        try self.write(&bytes);
++        assertFingerprinted(@TypeOf(value));
++        try emitValue(self, value);
 +    }
 +
 +    fn slice(self: *Writer, bytes: []const u8) Error!void {
@@ -758,9 +945,8 @@ index 0000000..ddb9a1c
 +    }
 +
 +    fn plain(self: *Reader, comptime T: type) Error!T {
-+        var result: T = undefined;
-+        @memcpy(std.mem.asBytes(&result), try self.take(@sizeOf(T)));
-+        return result;
++        assertFingerprinted(T);
++        return readValue(self, T);
 +    }
 +
 +    fn slice(self: *Reader, alloc: Allocator) Error![]u8 {
@@ -901,19 +1087,30 @@ index 0000000..ddb9a1c
 +        stream.next(byte);
 +        if (stream.parser.state == .ground and
 +            stream.utf8decoder.state == 0 and
-+            stream.handler.apc_handler.state == .inactive)
++            stream.handler.apc_handler.state == .inactive and
++            stream.handler.dcs_handler.state == .inactive)
 +        {
 +            pending.clearRetainingCapacity();
 +        }
 +    }
 +}
 +
++/// Initialize the restored stream directly in its FINAL storage (`out`)
++/// and replay the pending tail there. Replaying a partial OSC engages the
++/// parser's capture, whose writer pointer and fixed backing both reference
++/// the stream's own storage — a stream that has replayed pending bytes must
++/// NEVER be moved afterwards (use-after-move: the capture would dangle and
++/// a later OSC continuation writes through the stale pointer). A pristine
++/// stream has no captures engaged, which is why the single init move below
++/// is sound. Infallible: initAlloc cannot fail and replay returns no
++/// errors, so callers may sequence this after a point of no return.
 +pub fn restoreStream(
++    out: *Stream,
 +    t: *Terminal,
 +    state: HandlerState,
 +    pending: []const u8,
 +    effects: Handler.Effects,
-+) Error!Stream {
++) void {
 +    var handler: Handler = .init(t);
 +    handler.apc_handler.max_bytes = state.max_bytes;
 +    handler.apc_handler.enabled = state.enabled;
@@ -921,11 +1118,9 @@ index 0000000..ddb9a1c
 +    handler.default_cursor_style = state.default_cursor_style;
 +    handler.default_cursor_blink = state.default_cursor_blink;
 +
-+    var result: Stream = .initAlloc(t.gpa(), handler);
-+    errdefer result.deinit();
-+    for (pending) |byte| result.next(byte);
-+    result.handler.effects = effects;
-+    return result;
++    out.* = .initAlloc(t.gpa(), handler);
++    for (pending) |byte| out.next(byte);
++    out.handler.effects = effects;
 +}
 +
 +pub fn encode(
@@ -1076,6 +1271,119 @@ index 0000000..ddb9a1c
 +    return t;
 +}
 +
++const StyleSet = @TypeOf(@as(Page, undefined).styles);
++const HyperlinkSet = @TypeOf(@as(Page, undefined).hyperlink_set);
++const SetRefCountInt = sizepkg.CellCountInt;
++
++/// Build the canonical twin of a live page: a freshly zeroed same-capacity
++/// page into which only the live rows are structurally cloned. Live page
++/// memory carries dead bytes — freed cells/styles/graphemes/strings and
++/// recycled regions — whose content is build- and history-dependent and may
++/// predate the checkpoint; nothing dead may reach the wire. A same-capacity
++/// clone cannot exceed any set or allocator capacity, so failures here are
++/// allocation failures.
++fn canonicalPage(page: *const Page) Error!Page {
++    var canon = Page.init(page.capacity) catch return error.OutOfMemory;
++    errdefer canon.deinit();
++    canon.cloneFrom(page, 0, page.size.rows) catch return error.OutOfMemory;
++    canon.size = page.size;
++    return canon;
++}
++
++/// Emit one ref-counted set as a structural side table: count, then per id
++/// in ascending (== canonical insertion) order the refcount and the value.
++/// Canonical pages build their sets exclusively through cloneFrom insertion,
++/// so ids are contiguous from 1 and every id is live.
++fn writeSetTable(w: *Writer, set: anytype, memory: []u8) Error!void {
++    const live: u32 = @intCast(set.next_id - 1);
++    try w.plain(live);
++    var id: u32 = 1;
++    while (id <= live) : (id += 1) {
++        try w.plain(set.refCount(memory, @intCast(id)));
++        try w.plain(set.get(memory, @intCast(id)).*);
++    }
++}
++
++/// Rebuild a scrubbed set region from its side table. addWithId recomputes
++/// the table/probe state deterministically from the canonical value hashes,
++/// in the same ascending-id order the exporter used, so a valid table
++/// reproduces the exporter's set struct exactly (validated by the caller).
++fn readSetTable(
++    r: *Reader,
++    comptime T: type,
++    set: anytype,
++    memory: []u8,
++    ctx: anytype,
++    string_bounds: ?struct { start: usize, end: usize },
++) Error!void {
++    const live = try r.plain(u32);
++    // Ids 1..live must fit the layout (id 0 is reserved); anything larger
++    // trips asserts inside the set instead of returning an error.
++    if (live >= set.layout.cap) return error.InvalidCheckpoint;
++    var id: u32 = 1;
++    while (id <= live) : (id += 1) {
++        const ref = try r.plain(SetRefCountInt);
++        if (ref == 0) return error.InvalidCheckpoint;
++        const value = try r.plain(T);
++        // Hyperlink entries are hashed through their string storage, so
++        // their offsets must be bounded before the set dereferences them.
++        if (comptime T == hyperlink.PageEntry) {
++            const bounds = string_bounds.?;
++            if (!hyperlinkSliceInBounds(value.uri, bounds.start, bounds.end))
++                return error.InvalidCheckpoint;
++            switch (value.id) {
++                .explicit => |slice| if (!hyperlinkSliceInBounds(
++                    slice,
++                    bounds.start,
++                    bounds.end,
++                )) return error.InvalidCheckpoint,
++                .implicit => {},
++            }
++        }
++        const assigned = set.addWithIdContext(memory, value, @intCast(id), ctx) catch
++            return error.InvalidCheckpoint;
++        if (assigned) |actual| if (actual != id) return error.InvalidCheckpoint;
++        if (ref > 1) set.useMultiple(memory, @intCast(id), ref - 1);
++    }
++}
++
++/// Fields of Page whose value is a pure function of the capacity-derived
++/// layout. Everything else is either live state validated separately or the
++/// scrubbed sets rebuilt from side tables. An unknown field name fails the
++/// comparison closed (treated as derived), so an upstream Page change that
++/// adds live state breaks decoding loudly rather than silently.
++fn validateDerivedMetadata(metadata: *const Page, derived: *const Page) bool {
++    inline for (@typeInfo(Page).@"struct".fields) |field| {
++        const skip = comptime for ([_][]const u8{
++            "memory",
++            "size",
++            "dirty",
++            "pause_integrity_checks",
++            "styles",
++            "hyperlink_set",
++        }) |name| {
++            if (std.mem.eql(u8, field.name, name)) break true;
++        } else false;
++        if (!skip) {
++            if (!std.meta.eql(
++                @field(metadata.*, field.name),
++                @field(derived.*, field.name),
++            )) return false;
++        }
++    }
++    return true;
++}
++
++fn hyperlinkSliceInBounds(
++    slice: anytype,
++    start: usize,
++    end: usize,
++) bool {
++    const offset: usize = slice.offset.offset;
++    const slice_end = std.math.add(usize, offset, slice.len) catch return false;
++    return offset >= start and slice_end <= end;
++}
++
 +fn writePageList(w: *Writer, pages: *const PageList) Error!void {
 +    try w.plain(pages.page_serial);
 +    try w.plain(pages.page_serial_epoch);
@@ -1097,13 +1405,136 @@ index 0000000..ddb9a1c
 +        const page = preserved.page();
 +        try w.plain(node.serial);
 +
-+        var metadata = canonicalBytes(page.*);
++        var canon = try canonicalPage(page);
++        defer canon.deinit();
++        // The hyperlink set's context holds transient page pointers used
++        // only while hashing/comparing; it is never wire state and is
++        // re-supplied per call on import.
++        try emitStructExcept(w, canon, &.{ "memory", "hyperlink_set" });
++        try emitStructExcept(w, canon.hyperlink_set, &.{"context"});
++
++        // Raw page bytes, with the union-bearing set regions zeroed on the
++        // wire: stored set items contain in-memory union padding that Zig
++        // cannot canonicalize in place, so those regions travel as
++        // structural side tables instead.
++        const l = Page.layout(canon.capacity);
++        if (canon.memory.len > std.math.maxInt(u32)) return error.CheckpointTooLarge;
++        try w.plain(@as(u32, @intCast(canon.memory.len)));
++        const base = w.bytes.items.len;
++        try w.write(canon.memory);
++        const wire_page = w.bytes.items[base..][0..canon.memory.len];
++        @memset(wire_page[l.styles_start..][0..l.styles_layout.total_size], 0);
 +        @memset(
-+            metadata[@offsetOf(Page, "memory")..][0..@sizeOf([]u8)],
++            wire_page[l.hyperlink_set_start..][0..l.hyperlink_set_layout.total_size],
 +            0,
 +        );
-+        try w.write(&metadata);
-+        try w.slice(page.memory);
++        // The grapheme and hyperlink-map hash tables / bitmap allocators store
++        // interior offsets whose ALIGNMENT is asserted on deref; a corrupt
++        // stored offset would reach Offset.ptr's unreachable in ReleaseFast
++        // (illegal behavior on corrupt input, a CH violation). Scrub these
++        // regions on the wire and rebuild their cell associations from range-
++        // validated side tables on import — no raw region byte is ever
++        // dereferenced during decode. (string_alloc stays raw: it is u8, so it
++        // never misaligns, and its only readers already bounds-check offsets.)
++        @memset(wire_page[l.grapheme_alloc_start..][0..l.grapheme_alloc_layout.total_size], 0);
++        @memset(wire_page[l.grapheme_map_start..][0..l.grapheme_map_layout.total_size], 0);
++        @memset(wire_page[l.hyperlink_map_start..][0..l.hyperlink_map_layout.total_size], 0);
++
++        try writeSetTable(w, &canon.styles, canon.memory);
++        try writeSetTable(w, &canon.hyperlink_set, canon.memory);
++        try writeGraphemeTable(w, &canon);
++        try writeHyperlinkMapTable(w, &canon);
++    }
++}
++
++/// Emit a side table of (cell linear index, codepoints) for every cell that
++/// carries grapheme continuation data. Safe: `page` is our canonical clone.
++fn writeGraphemeTable(w: *Writer, page: *const Page) Error!void {
++    const cols: usize = page.size.cols;
++    const rows = page.rows.ptr(page.memory)[0..page.size.rows];
++    var count: u32 = 0;
++    for (rows) |*row| {
++        const cells = row.cells.ptr(page.memory)[0..cols];
++        for (cells) |*cell| if (cell.hasGrapheme()) {
++            count += 1;
++        };
++    }
++    try w.plain(count);
++    for (rows, 0..) |*row, y| {
++        const cells = row.cells.ptr(page.memory)[0..cols];
++        for (cells, 0..) |*cell, x| if (cell.hasGrapheme()) {
++            const cps = page.lookupGrapheme(cell) orelse return error.InvalidCheckpoint;
++            try w.plain(@as(u32, @intCast(y * cols + x)));
++            try w.plain(@as(u32, @intCast(cps.len)));
++            for (cps) |cp| try w.plain(cp);
++        };
++    }
++}
++
++/// Emit a side table of (cell linear index, hyperlink id) for every cell
++/// associated with a hyperlink.
++fn writeHyperlinkMapTable(w: *Writer, page: *const Page) Error!void {
++    const cols: usize = page.size.cols;
++    const rows = page.rows.ptr(page.memory)[0..page.size.rows];
++    var count: u32 = 0;
++    for (rows) |*row| {
++        const cells = row.cells.ptr(page.memory)[0..cols];
++        for (cells) |*cell| if (cell.hyperlink) {
++            count += 1;
++        };
++    }
++    try w.plain(count);
++    for (rows, 0..) |*row, y| {
++        const cells = row.cells.ptr(page.memory)[0..cols];
++        for (cells, 0..) |*cell, x| if (cell.hyperlink) {
++            const id = page.lookupHyperlink(cell) orelse return error.InvalidCheckpoint;
++            try w.plain(@as(u32, @intCast(y * cols + x)));
++            try w.plain(id);
++        };
++    }
++}
++
++/// Resolve a serialized (linear cell index) to its row/cell pointers,
++/// rejecting an out-of-range index.
++fn cellAt(page: *Page, owned: []u8, index: u32) Error!struct { row: *pagepkg.Row, cell: *pagepkg.Cell } {
++    const cols: usize = page.size.cols;
++    const total = cols * @as(usize, page.size.rows);
++    if (index >= total) return error.InvalidCheckpoint;
++    const row = &page.rows.ptr(owned)[index / cols];
++    const cell = &row.cells.ptr(owned)[index % cols];
++    return .{ .row = row, .cell = cell };
++}
++
++fn readGraphemeTable(r: *Reader, page: *Page, owned: []u8) Error!void {
++    const count = try r.plain(u32);
++    for (0..count) |_| {
++        const loc = try cellAt(page, owned, try r.plain(u32));
++        const cp_count = try r.plain(u32);
++        if (cp_count == 0) return error.InvalidCheckpoint;
++        // Take the alloc-new branch on the first codepoint: a scrubbed map
++        // has no entry for this cell, so appendGrapheme must not try to
++        // append to an existing (absent) slice.
++        loc.cell.content_tag = .codepoint;
++        for (0..cp_count) |_| {
++            const cp = try r.plain(u21);
++            page.appendGrapheme(loc.row, loc.cell, cp) catch
++                return error.InvalidCheckpoint;
++        }
++    }
++}
++
++fn readHyperlinkMapTable(r: *Reader, page: *Page, owned: []u8) Error!void {
++    const count = try r.plain(u32);
++    for (0..count) |_| {
++        const loc = try cellAt(page, owned, try r.plain(u32));
++        const id = try r.plain(hyperlink.Id);
++        // The referenced entry must be a live rebuilt hyperlink id. Refcounts
++        // are already carried by the hyperlink_set side table, so associate
++        // the cell WITHOUT an extra use().
++        if (id == 0 or id >= page.hyperlink_set.next_id)
++            return error.InvalidCheckpoint;
++        page.setHyperlink(loc.row, loc.cell, id) catch
++            return error.InvalidCheckpoint;
 +    }
 +}
 +
@@ -1117,8 +1548,32 @@ index 0000000..ddb9a1c
 +    const total_rows = try r.plain(usize);
 +    const count = try r.plain(u32);
 +    if (cols == 0 or rows == 0 or count == 0) return error.InvalidCheckpoint;
++    // The active viewport requires at least `rows` total rows, and every
++    // page needs far more than one payload byte — bound the declared counts
++    // before any allocation is sized from them.
++    if (total_rows < rows) return error.InvalidCheckpoint;
++    // Each serialized page carries at least one page_size_min-aligned memory
++    // block (plus its serial, metadata, length prefix, and side tables), so
++    // `count` pages require at least count * page_size_min remaining bytes.
++    // Reject a count the remaining payload cannot possibly back BEFORE it
++    // sizes any allocation: MemoryPool.init preheats count *
++    // Page.layout(std_capacity) (~512 KiB each), so an unbounded count
++    // within the 64 MiB byte cap would otherwise drive a multi-terabyte
++    // preheat before a single page is validated.
++    if (count > (r.bytes.len -| r.offset) / std.heap.page_size_min)
++        return error.InvalidCheckpoint;
 +
-+    var pool = try PageList.MemoryPool.init(alloc, std.heap.page_allocator, count);
++    // The preheat is a pure free-list optimization and both pools grow on
++    // demand; page memory is allocated per-page below rather than drawn from
++    // the preheated page buffers. Cap the up-front reservation so even a
++    // structurally-valid large count cannot force a huge preheat — a valid
++    // 64 MiB payload holds at most this many std-capacity pages.
++    const max_preheat_pages = max_payload_bytes / Page.layout(pagepkg.std_capacity).total_size;
++    var pool = try PageList.MemoryPool.init(
++        alloc,
++        std.heap.page_allocator,
++        @min(count, max_preheat_pages),
++    );
 +    errdefer pool.deinit();
 +    var list: PageList.List = .{};
 +    errdefer {
@@ -1129,12 +1584,50 @@ index 0000000..ddb9a1c
 +    }
 +
 +    var page_size: usize = 0;
++    var rows_total: usize = 0;
 +    for (0..count) |_| {
 +        const serial = try r.plain(u64);
-+        var metadata = try r.plain(Page);
++        if (serial < page_serial_epoch) return error.InvalidCheckpoint;
++        var metadata = try readStructExcept(r, Page, &.{ "memory", "hyperlink_set" });
++        metadata.hyperlink_set = try readStructExcept(r, HyperlinkSet, &.{"context"});
++        metadata.hyperlink_set.context = .{};
 +        const memory = try r.take(try r.plain(u32));
 +        if (memory.len == 0 or memory.len % std.heap.page_size_min != 0)
 +            return error.InvalidCheckpoint;
++        if (metadata.size.rows == 0 or metadata.size.cols == 0 or
++            metadata.size.rows > metadata.capacity.rows or
++            metadata.size.cols > metadata.capacity.cols)
++            return error.InvalidCheckpoint;
++        const layout = Page.layout(metadata.capacity);
++        if (layout.total_size != memory.len) return error.InvalidCheckpoint;
++
++        // The scrubbed regions must arrive zeroed; anything else is a
++        // non-canonical (corrupt or crafted) payload.
++        inline for (.{
++            .{ layout.styles_start, layout.styles_layout.total_size },
++            .{ layout.hyperlink_set_start, layout.hyperlink_set_layout.total_size },
++            .{ layout.grapheme_alloc_start, layout.grapheme_alloc_layout.total_size },
++            .{ layout.grapheme_map_start, layout.grapheme_map_layout.total_size },
++            .{ layout.hyperlink_map_start, layout.hyperlink_map_layout.total_size },
++        }) |region| {
++            if (!std.mem.allEqual(u8, memory[region[0]..][0..region[1]], 0))
++                return error.InvalidCheckpoint;
++        }
++
++        // Every layout-derived metadata field must equal a freshly derived
++        // twin before anything dereferences an offset: a crafted offset
++        // otherwise walks outside the page mapping.
++        const scratch = try alloc.alignedAlloc(
++            u8,
++            .fromByteUnits(std.heap.page_size_min),
++            layout.total_size,
++        );
++        defer alloc.free(scratch);
++        @memset(scratch, 0);
++        const derived = Page.initBuf(.init(scratch), layout);
++        if (!validateDerivedMetadata(&metadata, &derived))
++            return error.InvalidCheckpoint;
++
 +        const owned = try pool.pages.arena.child_allocator.alignedAlloc(
 +            u8,
 +            .fromByteUnits(std.heap.page_size_min),
@@ -1143,11 +1636,133 @@ index 0000000..ddb9a1c
 +        errdefer pool.pages.arena.child_allocator.free(owned);
 +        @memcpy(owned, memory);
 +        metadata.memory = owned;
-+        const layout = Page.layout(metadata.capacity);
-+        if (layout.total_size != memory.len or
-+            metadata.size.rows > metadata.capacity.rows or
-+            metadata.size.cols > metadata.capacity.cols)
++
++        // Rebuild the scrubbed sets from their side tables, then require the
++        // rebuilt set state to equal the serialized metadata exactly — this
++        // simultaneously validates the metadata counters and the tables.
++        const expected_styles = metadata.styles;
++        const expected_hyperlinks = metadata.hyperlink_set;
++        const buf = sizepkg.OffsetBuf.init(owned);
++        metadata.styles = .init(buf.add(layout.styles_start), layout.styles_layout, .{});
++        try readSetTable(
++            r,
++            terminal.Style,
++            &metadata.styles,
++            owned,
++            @as(StyleSet.Context, .{}),
++            null,
++        );
++        if (!std.meta.eql(metadata.styles, expected_styles))
 +            return error.InvalidCheckpoint;
++        metadata.hyperlink_set = .init(
++            buf.add(layout.hyperlink_set_start),
++            layout.hyperlink_set_layout,
++            .{},
++        );
++        try readSetTable(
++            r,
++            hyperlink.PageEntry,
++            &metadata.hyperlink_set,
++            owned,
++            @as(HyperlinkSet.Context, .{ .page = &metadata }),
++            .{
++                .start = layout.string_alloc_start,
++                .end = layout.string_alloc_start +
++                    layout.string_alloc_layout.total_size,
++            },
++        );
++        metadata.hyperlink_set.context = .{};
++        if (!std.meta.eql(metadata.hyperlink_set, expected_hyperlinks))
++            return error.InvalidCheckpoint;
++
++        // Re-initialize the scrubbed grapheme/hyperlink-map regions to empty
++        // and rebuild their cell associations from the range-validated side
++        // tables via public page APIs. No byte of these regions is ever
++        // dereferenced from the wire, so corrupt input cannot reach an
++        // interior-offset alignment assert.
++        // Validate every row's cell-array offset before ANY cell deref (the
++        // grapheme/hyperlink rebuild below indexes cells via cellAt): a
++        // crafted row.cells offset would otherwise reach Offset.ptr's
++        // alignment assert. rows.offset itself is already validated by
++        // validateDerivedMetadata.
++        {
++            const cell_size = @sizeOf(pagepkg.Cell);
++            const wire_rows = metadata.rows.ptr(owned)[0..metadata.size.rows];
++            for (wire_rows, 0..) |*row, y| {
++                const expected_cells = layout.cells_start +
++                    y * @as(usize, metadata.capacity.cols) * cell_size;
++                if (row.cells.offset != expected_cells)
++                    return error.InvalidCheckpoint;
++            }
++        }
++
++        metadata.grapheme_alloc = .init(
++            buf.add(layout.grapheme_alloc_start),
++            layout.grapheme_alloc_layout,
++        );
++        metadata.grapheme_map = .init(
++            buf.add(layout.grapheme_map_start),
++            layout.grapheme_map_layout,
++        );
++        metadata.hyperlink_map = .init(
++            buf.add(layout.hyperlink_map_start),
++            layout.hyperlink_map_layout,
++        );
++        metadata.pauseIntegrityChecks(true);
++        try readGraphemeTable(r, &metadata, owned);
++        try readHyperlinkMapTable(r, &metadata, owned);
++        metadata.pauseIntegrityChecks(false);
++
++        // Upstream's integrity walk asserts (crashes) on set-membership
++        // violations instead of erroring, and raw row/cell bytes are
++        // untrusted. Validate every raw-region reference first: row cell
++        // offsets must match the canonical initBuf formula, cell style and
++        // hyperlink ids must be live rebuilt ids, and grapheme slices must
++        // stay inside their region.
++        {
++            const cell_size = @sizeOf(pagepkg.Cell);
++            const gr_start = layout.grapheme_alloc_start;
++            const gr_end = gr_start + layout.grapheme_alloc_layout.total_size;
++            const wire_rows = metadata.rows.ptr(owned)[0..metadata.size.rows];
++            for (wire_rows, 0..) |*row, y| {
++                const expected_cells = layout.cells_start +
++                    y * @as(usize, metadata.capacity.cols) * cell_size;
++                if (row.cells.offset != expected_cells)
++                    return error.InvalidCheckpoint;
++                const cells = row.cells.ptr(owned)[0..metadata.size.cols];
++                for (cells) |*cell| {
++                    if (cell.style_id != 0 and
++                        cell.style_id >= metadata.styles.next_id)
++                        return error.InvalidCheckpoint;
++                    if (cell.hyperlink) {
++                        if (metadata.lookupHyperlink(cell)) |link_id| {
++                            if (link_id == 0 or
++                                link_id >= metadata.hyperlink_set.next_id)
++                                return error.InvalidCheckpoint;
++                        }
++                    }
++                    if (cell.hasGrapheme()) {
++                        if (metadata.lookupGrapheme(cell)) |cps| {
++                            const off = @intFromPtr(cps.ptr) -| @intFromPtr(owned.ptr);
++                            const bytes = std.math.mul(
++                                usize,
++                                cps.len,
++                                @sizeOf(u21),
++                            ) catch return error.InvalidCheckpoint;
++                            if (off < gr_start or
++                                (std.math.add(usize, off, bytes) catch
++                                    return error.InvalidCheckpoint) > gr_end)
++                                return error.InvalidCheckpoint;
++                        }
++                    }
++                }
++            }
++        }
++
++        // Full cross-reference walk (styles, graphemes, hyperlinks,
++        // spacers): corrupt interior state is an invalid checkpoint, never
++        // illegal behavior.
++        metadata.verifyIntegrity(alloc) catch return error.InvalidCheckpoint;
 +
 +        const node = try pool.nodes.create();
 +        node.* = .{
@@ -1157,7 +1772,9 @@ index 0000000..ddb9a1c
 +        };
 +        list.append(node);
 +        page_size += memory.len;
++        rows_total += metadata.size.rows;
 +    }
++    if (rows_total != total_rows) return error.InvalidCheckpoint;
 +
 +    const viewport_pin = try pool.pins.create();
 +    viewport_pin.* = .{ .node = list.first.? };
@@ -1183,6 +1800,10 @@ index 0000000..ddb9a1c
 +    };
 +}
 +
++// The cursor's own style/hyperlink set references are NOT on the wire:
++// canonical pages renumber set ids, so restore rederives them from the
++// serialized values exactly as a live terminal would (manualStyleUpdate /
++// startHyperlink).
 +const CursorWire = struct {
 +    x: @TypeOf(@as(Screen.Cursor, undefined).x),
 +    y: @TypeOf(@as(Screen.Cursor, undefined).y),
@@ -1190,8 +1811,6 @@ index 0000000..ddb9a1c
 +    pending_wrap: bool,
 +    protected: bool,
 +    style: terminal.Style,
-+    style_id: @TypeOf(@as(Screen.Cursor, undefined).style_id),
-+    hyperlink_id: hyperlink.Id,
 +    hyperlink_implicit_id: @TypeOf(@as(Screen.Cursor, undefined).hyperlink_implicit_id),
 +    semantic_content: pagepkg.Cell.SemanticContent,
 +    semantic_content_clear_eol: bool,
@@ -1216,8 +1835,6 @@ index 0000000..ddb9a1c
 +        .pending_wrap = screen.cursor.pending_wrap,
 +        .protected = screen.cursor.protected,
 +        .style = screen.cursor.style,
-+        .style_id = screen.cursor.style_id,
-+        .hyperlink_id = screen.cursor.hyperlink_id,
 +        .hyperlink_implicit_id = screen.cursor.hyperlink_implicit_id,
 +        .semantic_content = screen.cursor.semantic_content,
 +        .semantic_content_clear_eol = screen.cursor.semantic_content_clear_eol,
@@ -1225,6 +1842,17 @@ index 0000000..ddb9a1c
 +    });
 +    try writeHyperlink(w, screen.cursor.hyperlink);
 +    try writeImages(w, screen);
++
++    if (screen.selection) |sel| {
++        const sel_start = screen.pages.pointFromPin(.screen, sel.start()) orelse
++            return error.InvalidCheckpoint;
++        const sel_end = screen.pages.pointFromPin(.screen, sel.end()) orelse
++            return error.InvalidCheckpoint;
++        try w.plain(true);
++        try w.plain(sel_start.screen);
++        try w.plain(sel_end.screen);
++        try w.plain(sel.rectangle);
++    } else try w.plain(false);
 +}
 +
 +fn readScreen(r: *Reader, alloc: Allocator) Error!*Screen {
@@ -1239,6 +1867,16 @@ index 0000000..ddb9a1c
 +    errdefer if (pages_owned) pages.deinit();
 +    const cursor = try r.plain(CursorWire);
 +    const cursor_pin = pages.pin(.{ .screen = cursor.pin }) orelse
++        return error.InvalidCheckpoint;
++    // Screen.assertIntegrity (reached via manualStyleUpdate/select below)
++    // asserts the cursor is in bounds and its x/y match the active-relative
++    // pin coordinate; validate those here so corrupt cursor state rejects
++    // rather than reaching an assert.
++    if (cursor.x >= pages.cols or cursor.y >= pages.rows)
++        return error.InvalidCheckpoint;
++    const cursor_active = pages.pointFromPin(.active, cursor_pin) orelse
++        return error.InvalidCheckpoint;
++    if (cursor_active.active.x != cursor.x or cursor_active.active.y != cursor.y)
 +        return error.InvalidCheckpoint;
 +    const tracked = try pages.trackPin(cursor_pin);
 +    // Once the struct move transfers PageList ownership to screen and
@@ -1260,8 +1898,8 @@ index 0000000..ddb9a1c
 +            .pending_wrap = cursor.pending_wrap,
 +            .protected = cursor.protected,
 +            .style = cursor.style,
-+            .style_id = cursor.style_id,
-+            .hyperlink_id = cursor.hyperlink_id,
++            .style_id = 0,
++            .hyperlink_id = 0,
 +            .hyperlink_implicit_id = cursor.hyperlink_implicit_id,
 +            .semantic_content = cursor.semantic_content,
 +            .semantic_content_clear_eol = cursor.semantic_content_clear_eol,
@@ -1277,8 +1915,40 @@ index 0000000..ddb9a1c
 +    };
 +    pages_owned = false;
 +    errdefer screen.deinit();
-+    screen.cursor.hyperlink = try readHyperlink(r, alloc);
++
++    // Rederive the cursor's set references against the restored page,
++    // exactly as a live terminal would: the canonical page only carries
++    // cell-held references, so the cursor's own style/hyperlink refs are
++    // re-added here (deduplicating against cell-held entries).
++    screen.manualStyleUpdate() catch return error.OutOfMemory;
++    if (try readHyperlink(r, alloc)) |link| {
++        defer {
++            link.deinit(alloc);
++            alloc.destroy(link);
++        }
++        switch (link.id) {
++            .implicit => |implicit_id| screen.cursor.hyperlink_implicit_id = implicit_id,
++            .explicit => {},
++        }
++        screen.startHyperlink(link.uri, switch (link.id) {
++            .explicit => |id| id,
++            .implicit => null,
++        }) catch return error.OutOfMemory;
++    }
++    screen.cursor.hyperlink_implicit_id = cursor.hyperlink_implicit_id;
++
 +    try readImages(r, alloc, screen);
++
++    if (try r.plain(bool)) {
++        const sel_start = try r.plain(point.Coordinate);
++        const sel_end = try r.plain(point.Coordinate);
++        const rectangle = try r.plain(bool);
++        const start_pin = screen.pages.pin(.{ .screen = sel_start }) orelse
++            return error.InvalidCheckpoint;
++        const end_pin = screen.pages.pin(.{ .screen = sel_end }) orelse
++            return error.InvalidCheckpoint;
++        try screen.select(Selection.init(start_pin, end_pin, rectangle));
++    }
 +    return screen;
 +}
 +
@@ -1329,17 +1999,13 @@ index 0000000..ddb9a1c
 +    var image_it = storage.images.iterator();
 +    while (image_it.next()) |entry| {
 +        try w.plain(entry.key_ptr.*);
-+        var image = entry.value_ptr.*;
-+        image.data = "";
-+        try w.plain(image);
++        try emitStructExcept(w, entry.value_ptr.*, &.{"data"});
 +        try w.slice(entry.value_ptr.data);
 +    }
 +
 +    try w.plain(storage.loading != null);
 +    if (storage.loading) |loading| {
-+        var image = loading.image;
-+        image.data = "";
-+        try w.plain(image);
++        try emitStructExcept(w, loading.image, &.{"data"});
 +        try w.slice(loading.image.data);
 +        try w.slice(loading.data.items);
 +        try w.plain(loading.display);
@@ -1350,7 +2016,7 @@ index 0000000..ddb9a1c
 +    var placement_it = storage.placements.iterator();
 +    while (placement_it.next()) |entry| {
 +        try w.plain(entry.key_ptr.*);
-+        var placement = entry.value_ptr.*;
++        const placement = entry.value_ptr.*;
 +        switch (placement.location) {
 +            .virtual => {
 +                try w.plain(@as(u8, 0));
@@ -1362,8 +2028,7 @@ index 0000000..ddb9a1c
 +                try w.plain(pt.screen);
 +            },
 +        }
-+        placement.location = .virtual;
-+        try w.plain(placement);
++        try emitStructExcept(w, placement, &.{"location"});
 +    }
 +}
 +
@@ -1379,7 +2044,7 @@ index 0000000..ddb9a1c
 +    const image_count = try r.plain(u32);
 +    for (0..image_count) |_| {
 +        const key = try r.plain(u32);
-+        var image = try r.plain(terminal.kitty.graphics.Image);
++        var image = try readStructExcept(r, terminal.kitty.graphics.Image, &.{"data"});
 +        image.data = try r.slice(alloc);
 +        errdefer image.deinit(alloc);
 +        try storage.images.put(alloc, key, image);
@@ -1389,7 +2054,7 @@ index 0000000..ddb9a1c
 +    if (try r.plain(bool)) {
 +        const loading = try alloc.create(terminal.kitty.graphics.LoadingImage);
 +        errdefer alloc.destroy(loading);
-+        var image = try r.plain(terminal.kitty.graphics.Image);
++        var image = try readStructExcept(r, terminal.kitty.graphics.Image, &.{"data"});
 +        image.data = try r.slice(alloc);
 +        errdefer image.deinit(alloc);
 +        const data = try r.slice(alloc);
@@ -1407,7 +2072,11 @@ index 0000000..ddb9a1c
 +    for (0..placement_count) |_| {
 +        const key = try r.plain(terminal.kitty.graphics.ImageStorage.PlacementKey);
 +        const location_tag = try r.plain(u8);
-+        var placement = try r.plain(terminal.kitty.graphics.ImageStorage.Placement);
++        var placement = try readStructExcept(
++            r,
++            terminal.kitty.graphics.ImageStorage.Placement,
++            &.{"location"},
++        );
 +        placement.location = switch (location_tag) {
 +            0 => .virtual,
 +            1 => pin: {
@@ -1451,13 +2120,21 @@ index 0000000..ddb9a1c
 +        const width = try r.plain(@TypeOf(@as(GlyphEntry, undefined).width));
 +        const constraint = try r.plain(@TypeOf(@as(GlyphEntry, undefined).constraint));
 +        const contour_count = try r.plain(u32);
++        const contour_bytes = try r.take(
++            std.math.mul(usize, contour_count, @sizeOf(u16)) catch
++                return error.InvalidCheckpoint,
++        );
 +        const contours = try alloc.alloc(u16, contour_count);
 +        errdefer alloc.free(contours);
-+        @memcpy(std.mem.sliceAsBytes(contours), try r.take(contours.len * @sizeOf(u16)));
++        @memcpy(std.mem.sliceAsBytes(contours), contour_bytes);
 +        const point_count = try r.plain(u32);
++        const point_bytes = try r.take(
++            std.math.mul(usize, point_count, @sizeOf(GlyphOutline.Point)) catch
++                return error.InvalidCheckpoint,
++        );
 +        const points = try alloc.alloc(GlyphOutline.Point, point_count);
 +        errdefer alloc.free(points);
-+        @memcpy(std.mem.sliceAsBytes(points), try r.take(points.len * @sizeOf(@TypeOf(points[0]))));
++        @memcpy(std.mem.sliceAsBytes(points), point_bytes);
 +        t.glyph_glossary.register(alloc, cp, .{
 +            .glyph = .{ .glyf = .{ .contours = contours, .points = points } },
 +            .design = design,
@@ -1491,6 +2168,366 @@ index 0000000..ddb9a1c
 +    try std.testing.expect(!std.mem.eql(u8, &LayoutDigest.of(Ordered), &LayoutDigest.of(Reordered)));
 +}
 +
++test "stored style union slack cannot reach the wire (B1.0 defect class)" {
++    // The inherited defect: SGR 31 stores a Style whose Color union carries
++    // undefined payload slack, and raw page-memory export shipped those
++    // bytes (fixtures case-00-split-005..012, offset 386207, value unstable
++    // across builds). The structural codec must emit exactly the tag and
++    // active payload — nothing else — for a style value read back from live
++    // page memory, where the slack is real runtime garbage.
++    const alloc = std.testing.allocator;
++    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("\x1b[31mred");
++
++    const screen = t.screens.active;
++    const page = screen.cursor.page_pin.node.page();
++    const style_id = screen.cursor.style_id;
++    try std.testing.expect(style_id != 0);
++    const stored = page.styles.get(page.memory, style_id).*;
++
++    var w: Writer = .{ .alloc = alloc };
++    defer w.deinit();
++    try w.plain(stored);
++    // Style = fg(tag=palette:1, payload 1) · bg(tag=none:0) ·
++    // underline(tag=none:0) · flags(u16=0)
++    try std.testing.expectEqualSlices(
++        u8,
++        &.{ 1, 1, 0, 0, 0, 0 },
++        w.bytes.items,
++    );
++}
++
++test "checkpoint canonical export renumbers style id holes and round trips" {
++    const alloc = std.testing.allocator;
++    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    var pending: std.ArrayList(u8) = .empty;
++    defer pending.deinit(alloc);
++    var valid = true;
++    // Style A gets a cell, the cell is overwritten plain (A dies, id hole),
++    // then style B is applied and left active on the cursor.
++    feed(&stream, &pending, alloc, &valid, "\x1b[31mA\x1b[0m\rZ\x1b[32mB\x1b[38;2;1;2;3m");
++    try std.testing.expect(valid);
++
++    const payload = try encode(alloc, &t, &stream, pending.items);
++    defer alloc.free(payload);
++    var snapshot = try decode(alloc, payload);
++    defer snapshot.deinit(alloc);
++    var restored: Stream = undefined;
++    restoreStream(&restored, &snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
++    defer restored.deinit();
++
++    // The restored cursor style must be the live truecolor style even
++    // though ids renumbered, and a re-encode must be byte-identical.
++    try std.testing.expectEqual(
++        terminal.Style.Color{ .rgb = .{ .r = 1, .g = 2, .b = 3 } },
++        snapshot.terminal.screens.active.cursor.style.fg_color,
++    );
++    const round_trip = try encode(alloc, &snapshot.terminal, &restored, snapshot.pending);
++    defer alloc.free(round_trip);
++    try std.testing.expectEqualSlices(u8, payload, round_trip);
++}
++
++test "checkpoint captures and restores selection" {
++    const alloc = std.testing.allocator;
++    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("select me\r\nsecond line");
++
++    const screen = t.screens.active;
++    const start_pin = screen.pages.pin(.{ .screen = .{ .x = 1, .y = 0 } }).?;
++    const end_pin = screen.pages.pin(.{ .screen = .{ .x = 3, .y = 1 } }).?;
++    try screen.select(Selection.init(start_pin, end_pin, false));
++
++    const payload = try encode(alloc, &t, &stream, "");
++    defer alloc.free(payload);
++    var snapshot = try decode(alloc, payload);
++    defer snapshot.deinit(alloc);
++
++    const restored_screen = snapshot.terminal.screens.active;
++    const sel = restored_screen.selection orelse return error.TestUnexpectedResult;
++    const sel_start = restored_screen.pages.pointFromPin(.screen, sel.start()).?;
++    const sel_end = restored_screen.pages.pointFromPin(.screen, sel.end()).?;
++    try std.testing.expectEqual(point.Coordinate{ .x = 1, .y = 0 }, sel_start.screen);
++    try std.testing.expectEqual(point.Coordinate{ .x = 3, .y = 1 }, sel_end.screen);
++    try std.testing.expect(!sel.rectangle);
++
++    // A selection-free checkpoint restores selection-free.
++    screen.clearSelection();
++    const bare = try encode(alloc, &t, &stream, "");
++    defer alloc.free(bare);
++    var bare_snapshot = try decode(alloc, bare);
++    defer bare_snapshot.deinit(alloc);
++    try std.testing.expect(bare_snapshot.terminal.screens.active.selection == null);
++}
++
++test "checkpoint decode rejects out-of-range enum, bool, and union tags" {
++    const alloc = std.testing.allocator;
++    var w: Writer = .{ .alloc = alloc };
++    defer w.deinit();
++    try w.plain(terminal.Style.Color{ .palette = 7 });
++    w.bytes.items[0] = 9; // no such Color tag
++    var r: Reader = .{ .bytes = w.bytes.items };
++    try std.testing.expectError(
++        error.InvalidCheckpoint,
++        r.plain(terminal.Style.Color),
++    );
++
++    var rb: Reader = .{ .bytes = &.{2} };
++    try std.testing.expectError(error.InvalidCheckpoint, rb.plain(bool));
++
++    var re: Reader = .{ .bytes = &.{255} };
++    try std.testing.expectError(error.InvalidCheckpoint, re.plain(Screen.CursorStyle));
++}
++
++test "checkpoint import survives deterministic byte flip fuzz" {
++    const alloc = std.testing.allocator;
++    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice(
++        "fuzz target\x1b[31mstyled\x1b[0m e\xcc\x81" ++
++            "\x1b]8;id=f;https://example.test/\x1b\\link\x1b]8;;\x1b\\" ++
++            "\x1b_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\x1b\\",
++    );
++    const payload = try encode(alloc, &t, &stream, "");
++    defer alloc.free(payload);
++
++    // Flip a fixed stride of positions plus the entire structured head.
++    // Oracle: never crash, never leak, either clean success or the single
++    // invalid-checkpoint error.
++    var mutated = try alloc.dupe(u8, payload);
++    defer alloc.free(mutated);
++    var index: usize = 0;
++    while (index < payload.len) : (index += if (index < 2048) 7 else 251) {
++        for ([_]u8{ 0x01, 0xFF }) |mask| {
++            mutated[index] = payload[index] ^ mask;
++            defer mutated[index] = payload[index];
++            var debug: std.heap.DebugAllocator(.{}) = .init;
++            const fuzz_alloc = debug.allocator();
++            if (decode(fuzz_alloc, mutated)) |value| {
++                var snapshot = value;
++                snapshot.deinit(fuzz_alloc);
++            } else |err| switch (err) {
++                error.InvalidCheckpoint,
++                error.CheckpointTooLarge,
++                error.OutOfMemory,
++                => {},
++            }
++            if (debug.deinit() != .ok) {
++                std.debug.print("fuzz leak at byte {d}\n", .{index});
++                return error.TestUnexpectedResult;
++            }
++        }
++    }
++
++    // Count/offset-bomb sweep under a BOUNDED arena: single bit flips rarely
++    // produce a large count or offset that still passes the size checks, so
++    // inject an explicit large u32 at strided aligned offsets. This exercises
++    // the page-count preheat bound AND the scrubbed grapheme/hyperlink-map
++    // regions (a large u32 in a grapheme_map offset formerly reached
++    // Offset.ptr's alignment assert). Every decode allocation is payload- or
++    // capacity-bounded, so a 128 MiB arena sits far above any legitimate
++    // small-payload decode; the arena both keeps the fuzz well under the
++    // memory watchdog and turns any unbounded allocation into a deterministic
++    // OutOfMemory (a bounded reject) rather than a runaway. Oracle: no crash,
++    // accepted error or clean success.
++    const arena_buf = try alloc.alloc(u8, 128 * 1024 * 1024);
++    defer alloc.free(arena_buf);
++    var offset: usize = 0;
++    while (offset + 4 <= payload.len) : (offset += 16) {
++        for ([_]u32{ 0x0000_4000, 0x00FF_FFFF, 0xFFFF_FFFF }) |value| {
++            std.mem.writeInt(u32, mutated[offset..][0..4], value, .little);
++            defer @memcpy(mutated[offset..][0..4], payload[offset..][0..4]);
++            var fba = std.heap.FixedBufferAllocator.init(arena_buf);
++            const fuzz_alloc = fba.allocator();
++            if (decode(fuzz_alloc, mutated)) |dec| {
++                var snapshot = dec;
++                snapshot.deinit(fuzz_alloc);
++            } else |err| switch (err) {
++                error.InvalidCheckpoint,
++                error.CheckpointTooLarge,
++                error.OutOfMemory,
++                => {},
++            }
++        }
++    }
++}
++
++test "checkpoint decode rejects corruption in scrubbed grapheme regions" {
++    // Deterministic corruption-(A) regression: over a payload whose page
++    // carries a combining grapheme + a hyperlink (populating grapheme_map/
++    // grapheme_alloc/hyperlink_map), every single-byte flip must either
++    // round-trip or reject with InvalidCheckpoint — never a deref assert,
++    // never a leak — and a meaningful fraction must reject.
++    const alloc = std.testing.allocator;
++    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    stream.nextSlice("e\xcc\x81\x1b]8;id=r;https://example.test/\x1b\\link\x1b]8;;\x1b\\");
++    const payload = try encode(alloc, &t, &stream, "");
++    defer alloc.free(payload);
++    {
++        var ok = try decode(alloc, payload);
++        ok.deinit(alloc);
++    }
++
++    var mutated = try alloc.dupe(u8, payload);
++    defer alloc.free(mutated);
++    var rejections: usize = 0;
++    for (0..payload.len) |i| {
++        mutated[i] = payload[i] ^ 0xFF;
++        defer mutated[i] = payload[i];
++        var debug: std.heap.DebugAllocator(.{}) = .init;
++        const a = debug.allocator();
++        if (decode(a, mutated)) |dec| {
++            var snap = dec;
++            snap.deinit(a);
++        } else |err| switch (err) {
++            error.InvalidCheckpoint => rejections += 1,
++            error.CheckpointTooLarge, error.OutOfMemory => {},
++        }
++        try std.testing.expectEqual(std.heap.Check.ok, debug.deinit());
++    }
++    try std.testing.expect(rejections > 0);
++}
++
++test "arch proof fingerprint dump for cross-slice qualification" {
++    // Backlog A: with the page-size input held equal and the concrete page
++    // layout excluded, the two architecture fingerprints must still differ.
++    // Each native slice dumps its value here; the qualification script
++    // compares them.
++    const fp = archProofFingerprint();
++    const path = std.process.getEnvVarOwned(
++        std.testing.allocator,
++        "HIVE_CHECKPOINT_ARCH_PROOF_PATH",
++    ) catch return;
++    defer std.testing.allocator.free(path);
++    const file = try std.fs.createFileAbsolute(path, .{});
++    defer file.close();
++    const hex = std.fmt.bytesToHex(fp, .lower);
++    try file.writeAll(&hex);
++}
++
++// Force stack reuse between restore and continuation, standing in for the
++// async tick that made the production use-after-move deterministic.
++fn clobberStack() void {
++    var noise: [4096]u8 = undefined;
++    for (&noise, 0..) |*byte, i| byte.* = @truncate(i *% 31);
++    std.mem.doNotOptimizeAway(&noise);
++}
++
++test "readPageList rejects a page-count bomb before any preheat" {
++    // Regression: readPageList validated count only against remaining
++    // payload SIZE (count <= remaining bytes), then MemoryPool.init
++    // preheated count * Page.layout(std_capacity) (~512 KiB each) BEFORE any
++    // page was validated. A crafted count within the 64 MiB byte cap drove a
++    // multi-terabyte preheat. The fix rejects an impossible count up front.
++    //
++    // A failing allocator that errors on its FIRST allocation proves the
++    // reject happens with ZERO allocations: the error must be
++    // InvalidCheckpoint, never OutOfMemory. Without the fix, execution
++    // reaches MemoryPool.init and the first allocation fails -> OutOfMemory,
++    // so this test is RED on the pre-fix code.
++    const alloc = std.testing.allocator;
++    var w: Writer = .{ .alloc = alloc };
++    defer w.deinit();
++    // A PageList header (writePageList order) with a large count and just
++    // enough trailing bytes that count <= remaining bytes (defeating the old
++    // size-only check) but count * page_size_min far exceeds remaining.
++    const bomb_count: u32 = 300_000;
++    try w.plain(@as(u64, 1)); // page_serial
++    try w.plain(@as(u64, 0)); // page_serial_epoch
++    try w.plain(@as(usize, 0)); // explicit_max_size
++    try w.plain(@as(usize, 0)); // min_max_size
++    try w.plain(@as(@TypeOf(@as(PageList, undefined).cols), 80));
++    try w.plain(@as(@TypeOf(@as(PageList, undefined).rows), 24));
++    try w.plain(@as(usize, 24)); // total_rows
++    try w.plain(bomb_count);
++    try w.bytes.appendNTimes(alloc, 0, bomb_count); // count <= remaining bytes
++
++    var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = 0 });
++    var r: Reader = .{ .bytes = w.bytes.items };
++    try std.testing.expectError(
++        error.InvalidCheckpoint,
++        readPageList(&r, failing.allocator()),
++    );
++    try std.testing.expectEqual(@as(usize, 0), failing.allocations);
++}
++
++test "restored partial-OSC capture is self-consistent in final storage" {
++    // Regression: restoreStream used to replay the pending tail into a
++    // local Stream and return it BY VALUE. A partial OSC engages the
++    // parser's capture, whose writer points into the stream's own storage;
++    // the move left it dangling and the OSC continuation wrote through the
++    // stale pointer (EXC_BAD_ACCESS under the async tick). Restore now
++    // initializes and replays in place; this test pins the invariant
++    // directly via pointer identity, then completes the OSC end-to-end.
++    const alloc = std.testing.allocator;
++    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
++    defer t.deinit(alloc);
++    var stream = t.vtStream();
++    defer stream.deinit();
++    var pending: std.ArrayList(u8) = .empty;
++    defer pending.deinit(alloc);
++    var valid = true;
++    feed(&stream, &pending, alloc, &valid, "before\x1b]2;par");
++    try std.testing.expect(valid);
++    try std.testing.expect(pending.items.len > 0);
++
++    const payload = try encode(alloc, &t, &stream, pending.items);
++    defer alloc.free(payload);
++    var snapshot = try decode(alloc, payload);
++    defer snapshot.deinit(alloc);
++
++    // Final storage on the heap: any stale pointer into a helper frame or
++    // a moved-from local cannot alias it.
++    const restored = try alloc.create(Stream);
++    defer alloc.destroy(restored);
++    restoreStream(restored, &snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
++    defer restored.deinit();
++
++    // The engaged capture's writer must point into THIS stream's own
++    // storage. With the old by-value restore this pointer identity fails
++    // deterministically (it references the moved-from frame).
++    {
++        const capture = &restored.parser.osc_parser.capture;
++        try std.testing.expect(capture.* != null);
++        const engaged = &capture.*.?;
++        switch (engaged.backing) {
++            .fixed => |*fixed_writer| try std.testing.expect(engaged.writer == fixed_writer),
++            .allocating => |*allocating| try std.testing.expect(engaged.writer == &allocating.writer),
++        }
++    }
++
++    clobberStack();
++
++    // The continuation must complete the title through the capture with no
++    // crash and no corruption.
++    var restored_pending: std.ArrayList(u8) = .{
++        .items = snapshot.pending,
++        .capacity = snapshot.pending.len,
++    };
++    snapshot.pending = &.{};
++    defer restored_pending.deinit(alloc);
++    var restored_valid = true;
++    feed(restored, &restored_pending, alloc, &restored_valid, "tial title\x07");
++    try std.testing.expect(restored_valid);
++    try std.testing.expectEqualStrings(
++        "partial title",
++        snapshot.terminal.getTitle() orelse "",
++    );
++}
++
 +test "checkpoint partial utf8 and alternate screen round trip" {
 +    const alloc = std.testing.allocator;
 +    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
@@ -1506,7 +2543,8 @@ index 0000000..ddb9a1c
 +    defer alloc.free(payload);
 +    var snapshot = try decode(alloc, payload);
 +    defer snapshot.deinit(alloc);
-+    var restored = try restoreStream(&snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
++    var restored: Stream = undefined;
++    restoreStream(&restored, &snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
 +    defer restored.deinit();
 +    restored.nextSlice("\x98\x84");
 +    stream.nextSlice("\x98\x84");
@@ -1565,12 +2603,8 @@ index 0000000..ddb9a1c
 +
 +    var snapshot = try decode(alloc, first);
 +    defer snapshot.deinit(alloc);
-+    var restored = try restoreStream(
-+        &snapshot.terminal,
-+        snapshot.handler,
-+        snapshot.pending,
-+        .readonly,
-+    );
++    var restored: Stream = undefined;
++    restoreStream(&restored, &snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
 +    defer restored.deinit();
 +    const round_trip = try encode(
 +        alloc,
@@ -1641,21 +2675,21 @@ index 0000000..ddb9a1c
 +}
 +
 +fn semanticScreen(w: *Writer, screen: *const Screen) !void {
-+    try w.plain(screen.no_scrollback);
-+    try w.plain(screen.saved_cursor != null);
-+    if (screen.saved_cursor) |saved| try w.plain(saved);
-+    try w.plain(screen.charset);
-+    try w.plain(screen.protected_mode);
-+    try w.plain(screen.kitty_keyboard);
-+    try w.plain(screen.semantic_prompt);
-+    try w.plain(screen.pages.page_serial);
-+    try w.plain(screen.pages.page_serial_epoch);
-+    try w.plain(screen.pages.explicit_max_size);
-+    try w.plain(screen.pages.min_max_size);
-+    try w.plain(screen.pages.total_rows);
-+    try w.plain(screen.cursor.pending_wrap);
-+    try w.plain(screen.cursor.semantic_content);
-+    try w.plain(screen.cursor.semantic_content_clear_eol);
++    try emitValue(w, screen.no_scrollback);
++    try emitValue(w, screen.saved_cursor != null);
++    if (screen.saved_cursor) |saved| try emitValue(w, saved);
++    try emitValue(w, screen.charset);
++    try emitValue(w, screen.protected_mode);
++    try emitValue(w, screen.kitty_keyboard);
++    try emitValue(w, screen.semantic_prompt);
++    try emitValue(w, screen.pages.page_serial);
++    try emitValue(w, screen.pages.page_serial_epoch);
++    try emitValue(w, screen.pages.explicit_max_size);
++    try emitValue(w, screen.pages.min_max_size);
++    try emitValue(w, screen.pages.total_rows);
++    try emitValue(w, screen.cursor.pending_wrap);
++    try emitValue(w, screen.cursor.semantic_content);
++    try emitValue(w, screen.cursor.semantic_content_clear_eol);
 +    try writeHyperlink(w, screen.cursor.hyperlink);
 +    try writeImages(w, screen);
 +
@@ -1675,39 +2709,39 @@ index 0000000..ddb9a1c
 +) ![]u8 {
 +    var w: Writer = .{ .alloc = alloc };
 +    errdefer w.deinit();
-+    try w.plain(t.status_display);
-+    try w.plain(t.rows);
-+    try w.plain(t.cols);
-+    try w.plain(t.width_px);
-+    try w.plain(t.height_px);
-+    try w.plain(t.scrolling_region);
++    try emitValue(&w, t.status_display);
++    try emitValue(&w, t.rows);
++    try emitValue(&w, t.cols);
++    try emitValue(&w, t.width_px);
++    try emitValue(&w, t.height_px);
++    try emitValue(&w, t.scrolling_region);
 +    try w.slice(t.getPwd() orelse "");
 +    try w.slice(t.getTitle() orelse "");
-+    try w.plain(t.colors);
-+    try w.plain(t.previous_char != null);
-+    if (t.previous_char) |cp| try w.plain(cp);
-+    try w.plain(t.modes);
-+    try w.plain(t.mouse_shape);
-+    try w.plain(t.flags.shell_redraws_prompt);
-+    try w.plain(t.flags.modify_other_keys_2);
-+    try w.plain(t.flags.mouse_event);
-+    try w.plain(t.flags.mouse_format);
-+    try w.plain(t.flags.mouse_shift_capture);
-+    try w.plain(t.flags.password_input);
-+    for (0..t.cols) |col| try w.plain(t.tabstops.get(col));
++    try emitValue(&w, t.colors);
++    try emitValue(&w, t.previous_char != null);
++    if (t.previous_char) |cp| try emitValue(&w, cp);
++    try emitValue(&w, t.modes);
++    try emitValue(&w, t.mouse_shape);
++    try emitValue(&w, t.flags.shell_redraws_prompt);
++    try emitValue(&w, t.flags.modify_other_keys_2);
++    try emitValue(&w, t.flags.mouse_event);
++    try emitValue(&w, t.flags.mouse_format);
++    try emitValue(&w, t.flags.mouse_shift_capture);
++    try emitValue(&w, t.flags.password_input);
++    for (0..t.cols) |col| try emitValue(&w, t.tabstops.get(col));
 +    try writeGlyphs(&w, t);
-+    try w.plain(t.screens.active_key);
-+    try w.plain(t.screens.generations.get(.primary).?);
-+    try w.plain(t.screens.generations.get(.alternate).?);
++    try emitValue(&w, t.screens.active_key);
++    try emitValue(&w, t.screens.generations.get(.primary).?);
++    try emitValue(&w, t.screens.generations.get(.alternate).?);
 +    try semanticScreen(&w, t.screens.get(.primary).?);
 +    const alternate = t.screens.get(.alternate);
-+    try w.plain(alternate != null);
++    try emitValue(&w, alternate != null);
 +    if (alternate) |screen| try semanticScreen(&w, screen);
-+    try w.plain(stream.handler.apc_handler.max_bytes);
-+    try w.plain(stream.handler.apc_handler.enabled);
-+    try w.plain(stream.handler.default_cursor);
-+    try w.plain(stream.handler.default_cursor_style);
-+    try w.plain(stream.handler.default_cursor_blink);
++    try emitValue(&w, stream.handler.apc_handler.max_bytes);
++    try emitValue(&w, stream.handler.apc_handler.enabled);
++    try emitValue(&w, stream.handler.default_cursor);
++    try emitValue(&w, stream.handler.default_cursor_style);
++    try emitValue(&w, stream.handler.default_cursor_blink);
 +    try w.slice(pending);
 +    return try w.finish();
 +}
@@ -1755,12 +2789,8 @@ index 0000000..ddb9a1c
 +    defer alloc.free(payload);
 +    var snapshot = try decode(alloc, payload);
 +    defer snapshot.deinit(alloc);
-+    var restored_stream = try restoreStream(
-+        &snapshot.terminal,
-+        snapshot.handler,
-+        snapshot.pending,
-+        .readonly,
-+    );
++    var restored_stream: Stream = undefined;
++    restoreStream(&restored_stream, &snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
 +    defer restored_stream.deinit();
 +    try expectSameCheckpoint(
 +        alloc,
@@ -1887,12 +2917,8 @@ index 0000000..ddb9a1c
 +            defer alloc.free(payload);
 +            var snapshot = try decode(alloc, payload);
 +            defer snapshot.deinit(alloc);
-+            var restored_stream = try restoreStream(
-+                &snapshot.terminal,
-+                snapshot.handler,
-+                snapshot.pending,
-+                test_effects,
-+            );
++            var restored_stream: Stream = undefined;
++            restoreStream(&restored_stream, &snapshot.terminal, snapshot.handler, snapshot.pending, test_effects);
 +            defer restored_stream.deinit();
 +            var restored_pending: std.ArrayList(u8) = .{
 +                .items = snapshot.pending,

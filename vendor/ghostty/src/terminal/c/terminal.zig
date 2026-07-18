@@ -460,34 +460,32 @@ pub fn checkpoint_import(
     var snapshot_owned = true;
     defer if (snapshot_owned) snapshot.deinit(alloc);
 
-    var stream = hive_checkpoint.restoreStream(
-        &snapshot.terminal,
-        snapshot.handler,
-        snapshot.pending,
-        .readonly,
-    ) catch |err| return switch (err) {
-        error.OutOfMemory => .out_of_memory,
-        error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
-    };
-    var stream_owned = true;
-    defer if (stream_owned) stream.deinit();
-    stream.handler.effects = checkpointHandler(&snapshot.terminal).effects;
+    const preserved_effects = checkpointHandler(&snapshot.terminal).effects;
 
+    // Point of no return: everything below is infallible. The restored
+    // stream is initialized and replayed IN PLACE in wrapper.stream so the
+    // OSC capture's self-referential pointers form at their final address
+    // (returning a replayed stream by value is a use-after-move).
     const t = wrapper.terminal;
     for (wrapper.tracked_grid_refs.keys()) |ref| ref.terminal = null;
     wrapper.stream.deinit();
     wrapper.checkpoint_pending.deinit(alloc);
     t.deinit(alloc);
     t.* = snapshot.terminal;
-    stream.handler.terminal = t;
-    wrapper.stream = stream;
+    hive_checkpoint.restoreStream(
+        &wrapper.stream,
+        t,
+        snapshot.handler,
+        snapshot.pending,
+        .readonly,
+    );
+    wrapper.stream.handler.effects = preserved_effects;
     wrapper.checkpoint_pending = .{
         .items = snapshot.pending,
         .capacity = snapshot.pending.len,
     };
     wrapper.checkpoint_valid = true;
     snapshot_owned = false;
-    stream_owned = false;
     return .success;
 }
 

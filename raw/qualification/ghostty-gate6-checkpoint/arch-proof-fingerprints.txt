@@ -1,0 +1,5 @@
+Gate 6 backlog A — arch-proof fingerprint (page-size input held equal at 4096, concrete Page.layout excluded) — NEW FORMAT
+generated: 2026-07-18, tree 6db702dc02dcfcfcbaba648882604fdf23a868bc, pinned zig 0.15.2
+arm64  = 5deeb9d50d328c0968ae38730ad9691213d5a610e9462cf92e9ede4080d67ac5
+x86_64 = c7db789377fd8309db4b62645c09666d4333e11268127586345ff8964dc59c5f
+verdict = UNEQUAL (architecture separation survives page-size equalization)

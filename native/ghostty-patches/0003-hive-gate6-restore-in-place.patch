@@ -1,0 +1,105 @@
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 8cbd5128..f258bb38 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -1227,34 +1227,33 @@ const HiveManual = struct {
+         var snapshot_owned = true;
+         defer if (snapshot_owned) snapshot.deinit(alloc);
+ 
+-        var stream = hive_checkpoint.restoreStream(
+-            &snapshot.terminal,
+-            snapshot.handler,
+-            snapshot.pending,
+-            .readonly,
+-        ) catch |err| return switch (err) {
+-            error.OutOfMemory => .out_of_memory,
+-            error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+-        };
+-        var stream_owned = true;
+-        defer if (stream_owned) stream.deinit();
+         const mutex = self.surface.core_surface.renderer_state.mutex;
+         {
+             mutex.lock();
+             defer mutex.unlock();
+-            stream.handler.effects = self.stream.handler.effects;
++            const preserved_effects = self.stream.handler.effects;
++            // Point of no return: everything below is infallible. The
++            // restored stream is initialized and replayed IN PLACE in
++            // self.stream so the OSC capture's self-referential pointers
++            // form at their final address (returning a replayed stream by
++            // value is a use-after-move).
+             self.stream.deinit();
+             self.pending.deinit(alloc);
+             self.surface.core_surface.io.terminal.deinit(alloc);
+             self.surface.core_surface.io.terminal = snapshot.terminal;
+-            stream.handler.terminal = &self.surface.core_surface.io.terminal;
+-            self.stream = stream;
++            hive_checkpoint.restoreStream(
++                &self.stream,
++                &self.surface.core_surface.io.terminal,
++                snapshot.handler,
++                snapshot.pending,
++                .readonly,
++            );
++            self.stream.handler.effects = preserved_effects;
+             self.pending = .{ .items = snapshot.pending, .capacity = snapshot.pending.len };
+             self.checkpoint_valid = true;
+             self.output_ranges.reset(through_seq);
+             self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+             snapshot_owned = false;
+-            stream_owned = false;
+         }
+         self.surface.core_surface.io.renderer_wakeup.notify() catch {};
+         self.emit(.title, self.surface.core_surface.io.terminal.getTitle() orelse "");
+diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
+index c520d4cd..ecb0a642 100644
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -460,34 +460,32 @@ pub fn checkpoint_import(
+     var snapshot_owned = true;
+     defer if (snapshot_owned) snapshot.deinit(alloc);
+ 
+-    var stream = hive_checkpoint.restoreStream(
+-        &snapshot.terminal,
+-        snapshot.handler,
+-        snapshot.pending,
+-        .readonly,
+-    ) catch |err| return switch (err) {
+-        error.OutOfMemory => .out_of_memory,
+-        error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+-    };
+-    var stream_owned = true;
+-    defer if (stream_owned) stream.deinit();
+-    stream.handler.effects = checkpointHandler(&snapshot.terminal).effects;
++    const preserved_effects = checkpointHandler(&snapshot.terminal).effects;
+ 
++    // Point of no return: everything below is infallible. The restored
++    // stream is initialized and replayed IN PLACE in wrapper.stream so the
++    // OSC capture's self-referential pointers form at their final address
++    // (returning a replayed stream by value is a use-after-move).
+     const t = wrapper.terminal;
+     for (wrapper.tracked_grid_refs.keys()) |ref| ref.terminal = null;
+     wrapper.stream.deinit();
+     wrapper.checkpoint_pending.deinit(alloc);
+     t.deinit(alloc);
+     t.* = snapshot.terminal;
+-    stream.handler.terminal = t;
+-    wrapper.stream = stream;
++    hive_checkpoint.restoreStream(
++        &wrapper.stream,
++        t,
++        snapshot.handler,
++        snapshot.pending,
++        .readonly,
++    );
++    wrapper.stream.handler.effects = preserved_effects;
+     wrapper.checkpoint_pending = .{
+         .items = snapshot.pending,
+         .capacity = snapshot.pending.len,
+     };
+     wrapper.checkpoint_valid = true;
+     snapshot_owned = false;
+-    stream_owned = false;
+     return .success;
+ }
+ 
