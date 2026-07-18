@@ -663,12 +663,22 @@ public enum GhosttyBridgeFactory {
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480
     ) throws -> GhosttyManualSurface {
-        if serializeCreation { creationLock.lock() }
+        // Snapshot the seam once: a mid-call flip of serializeCreation must
+        // not unlock a lock we never took (NSLock unlock-without-lock is UB).
+        let didLock = serializeCreation
+        if didLock { creationLock.lock() }
+        // LOAD-BEARING declaration order: `ownerToFreeAfterUnlock` MUST be
+        // declared BEFORE the defer below. The defer captures it and runs
+        // unlock-then-free on every exit. Declaring the var first keeps a
+        // strong ref so a failed owner is never deinit'd (and thus free'd
+        // via GhosttyAppOwner.deinit) while still under creationLock — that
+        // reorder would silently reintroduce free-under-lock with no test
+        // catching it (colin cross-vendor review 2026-07-18).
         // Free the failed owner AFTER unlock — free marshals to main via
         // DispatchQueue.main.sync and must not run under creationLock.
         var ownerToFreeAfterUnlock: GhosttyAppOwner?
         defer {
-            if serializeCreation { creationLock.unlock() }
+            if didLock { creationLock.unlock() }
             ownerToFreeAfterUnlock?.free()
         }
 
