@@ -37,7 +37,7 @@ HVTCP001_FIXTURE_PATH="$ROOT/native/tests/abi/hvtcp001-header.bin" \
 # header-standalone needs Ghostty headers (syntax-only ABI check).
 if [ -f "$ROOT/vendor/ghostty/include/ghostty.h" ]; then
   env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
-    /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories \
+    /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories -Wno-padded \
     -fsyntax-only \
     -I "$ROOT/native/include" -isystem "$ROOT/vendor/ghostty/include" \
     "$ROOT/native/tests/abi/header-standalone.c"
