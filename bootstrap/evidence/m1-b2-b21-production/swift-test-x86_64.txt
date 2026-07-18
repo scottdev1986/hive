@@ -1,0 +1,797 @@
+Test Suite 'All tests' started at 2026-07-18 19:34:05.075.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 19:34:05.077.
+Test Suite 'AgentActivityTests' started at 2026-07-18 19:34:05.077.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testDaemonVocabularyMapsToActivity]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testDaemonVocabularyMapsToActivity]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testFeedLossKeepsDisconnectedAppearance]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testFeedLossKeepsDisconnectedAppearance]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testFeedLossTurnsDotUnknown]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testFeedLossTurnsDotUnknown]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testFeedLossTurnsTheOrchestratorDotUnknownToo]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testFeedLossTurnsTheOrchestratorDotUnknownToo]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testNeedsUserComesOnlyFromMeasuredBlockedStates]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testNeedsUserComesOnlyFromMeasuredBlockedStates]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorCanNeverRenderNeedsUser]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorCanNeverRenderNeedsUser]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorExitOverridesAndOutlivesFeedStatus]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorExitOverridesAndOutlivesFeedStatus]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorIdleFromFeed]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorIdleFromFeed]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorIsSeededUnknownNotAFabricatedWord]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorIsSeededUnknownNotAFabricatedWord]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorRevertsToUnknownWhenTheFieldIsAbsent]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorRevertsToUnknownWhenTheFieldIsAbsent]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorWorkingFromFeed]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testOrchestratorWorkingFromFeed]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testUnifiedLegendMapsEveryActivityToOneAppearance]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testUnifiedLegendMapsEveryActivityToOneAppearance]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testUnknownWordsDegradeToUnknownNotAState]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testUnknownWordsDegradeToUnknownNotAState]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testUnrecognizedStatusIsUnknownAndNeverHealthy]' started.
+Test Case '-[WorkspaceCoreTests.AgentActivityTests testUnrecognizedStatusIsUnknownAndNeverHealthy]' passed (0.000 seconds).
+Test Suite 'AgentActivityTests' passed at 2026-07-18 19:34:05.080.
+	 Executed 14 tests, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+Test Suite 'AppDelegateLifecycleTests' started at 2026-07-18 19:34:05.080.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testAgentClosureDismissesItsKillFailureSheet]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testAgentClosureDismissesItsKillFailureSheet]' passed (0.732 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testCellGeometryCommitPropagatesSnappedPaneFrameToTerminal]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testCellGeometryCommitPropagatesSnappedPaneFrameToTerminal]' passed (0.045 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testExhaustedFeedRetriesCloseSurfacesBeforeTermination]' started.
+2026-07-18 19:34:05.873 xctest[11463:33501134] workspace-feed could not be restarted; terminating the workspace
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testExhaustedFeedRetriesCloseSurfacesBeforeTermination]' passed (0.020 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testOnlyAnOwnedAppModalSessionIsAborted]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testOnlyAnOwnedAppModalSessionIsAborted]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testPaneTitleTruncatesWithoutDrivingWindowWidth]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testPaneTitleTruncatesWithoutDrivingWindowWidth]' passed (0.009 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testProjectCloseEndsEverySheetBeforeClosingOtherWindows]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testProjectCloseEndsEverySheetBeforeClosingOtherWindows]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground]' passed (0.006 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminalEnvironmentPreservesPrivateTempDirectoryForCodexSocket]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminalEnvironmentPreservesPrivateTempDirectoryForCodexSocket]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTrackedMenuIsCancelledWhenTheInstanceCloses]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTrackedMenuIsCancelledWhenTheInstanceCloses]' passed (0.000 seconds).
+Test Suite 'AppDelegateLifecycleTests' passed at 2026-07-18 19:34:05.895.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.814 (0.815) seconds
+Test Suite 'AppWakeupLifecycleTests' started at 2026-07-18 19:34:05.895.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' passed (0.882 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' passed (0.041 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' passed (0.017 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' passed (0.116 seconds).
+Test Suite 'AppWakeupLifecycleTests' passed at 2026-07-18 19:34:06.952.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 1.056 (1.057) seconds
+Test Suite 'AttachReplayTests' started at 2026-07-18 19:34:06.952.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testCheckpointEnvelopeFixtureMatchesNativeAbi]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testCheckpointEnvelopeFixtureMatchesNativeAbi]' passed (0.032 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testCheckpointEnvelopeOffsetsMatchGeneratedProjection]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testCheckpointEnvelopeOffsetsMatchGeneratedProjection]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testFirstCorrectFrameAfterAttach]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testFirstCorrectFrameAfterAttach]' passed (0.014 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testForeignEngineCheckpointRejected]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testForeignEngineCheckpointRejected]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testFrameCodecRoundTripMatchesSection20Header]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testFrameCodecRoundTripMatchesSection20Header]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testMultiChunkSnapshotRestoresOnlyWhenComplete]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testMultiChunkSnapshotRestoresOnlyWhenComplete]' passed (0.157 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testPostRestoreDuplicateOutputIsIgnoredNotLost]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testPostRestoreDuplicateOutputIsIgnoredNotLost]' passed (0.002 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testViewAttachDoesNotStealFocusOnFirstFrame]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testViewAttachDoesNotStealFocusOnFirstFrame]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testWelcomeRequiredBeforeHostAttach]' started.
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testWelcomeRequiredBeforeHostAttach]' passed (0.066 seconds).
+Test Suite 'AttachReplayTests' passed at 2026-07-18 19:34:07.244.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.290 (0.292) seconds
+Test Suite 'AttentionQueueTests' started at 2026-07-18 19:34:07.244.
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testOrderedBySeverityThenAge]' started.
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testOrderedBySeverityThenAge]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testRaiseSameIDUpdatesInsteadOfDuplicating]' started.
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testRaiseSameIDUpdatesInsteadOfDuplicating]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testResolveAllForPaneLeavesOtherPanesAlone]' started.
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testResolveAllForPaneLeavesOtherPanesAlone]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testResolveIsExplicitAndTargeted]' started.
+Test Case '-[WorkspaceCoreTests.AttentionQueueTests testResolveIsExplicitAndTargeted]' passed (0.001 seconds).
+Test Suite 'AttentionQueueTests' passed at 2026-07-18 19:34:07.247.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
+Test Suite 'B20EngineContractTests' started at 2026-07-18 19:34:07.247.
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testProductionViewSuppressesRepliesAndPresentsOrderedNeutralReplay]' started.
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testProductionViewSuppressesRepliesAndPresentsOrderedNeutralReplay]' passed (0.034 seconds).
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testSwiftPinProjectionMatchesNativeToolchainLock]' started.
+Test Case '-[HiveTerminalKitTests.B20EngineContractTests testSwiftPinProjectionMatchesNativeToolchainLock]' passed (0.002 seconds).
+Test Suite 'B20EngineContractTests' passed at 2026-07-18 19:34:07.284.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.036 (0.037) seconds
+Test Suite 'CallbackDisciplineTests' started at 2026-07-18 19:34:07.284.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' passed (0.014 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' passed (0.124 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.011 seconds).
+Test Suite 'CallbackDisciplineTests' passed at 2026-07-18 19:34:07.485.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.199 (0.201) seconds
+Test Suite 'ChainEditorViewTests' started at 2026-07-18 19:34:07.485.
+Test Case '-[HiveWorkspaceTests.ChainEditorViewTests testNoEffortMenuItemWritesAnExplicitNone]' started.
+Test Case '-[HiveWorkspaceTests.ChainEditorViewTests testNoEffortMenuItemWritesAnExplicitNone]' passed (0.516 seconds).
+Test Suite 'ChainEditorViewTests' passed at 2026-07-18 19:34:08.001.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.516 (0.516) seconds
+Test Suite 'ComposerInputTests' started at 2026-07-18 19:34:08.001.
+Test Case '-[WorkspaceCoreTests.ComposerInputTests testEditsStartProtection]' started.
+Test Case '-[WorkspaceCoreTests.ComposerInputTests testEditsStartProtection]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ComposerInputTests testNavigationAndApplicationShortcutsDoNotInventDrafts]' started.
+Test Case '-[WorkspaceCoreTests.ComposerInputTests testNavigationAndApplicationShortcutsDoNotInventDrafts]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ComposerInputTests testSubmitAndCancelEndProtection]' started.
+Test Case '-[WorkspaceCoreTests.ComposerInputTests testSubmitAndCancelEndProtection]' passed (0.000 seconds).
+Test Suite 'ComposerInputTests' passed at 2026-07-18 19:34:08.001.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'ComposerLeaseStoreTests' started at 2026-07-18 19:34:08.001.
+Test Case '-[HiveWorkspaceTests.ComposerLeaseStoreTests testLeaseStartsBeforeEditingAndEndsAfterSubmissionGrace]' started.
+Test Case '-[HiveWorkspaceTests.ComposerLeaseStoreTests testLeaseStartsBeforeEditingAndEndsAfterSubmissionGrace]' passed (0.033 seconds).
+Test Case '-[HiveWorkspaceTests.ComposerLeaseStoreTests testNewDraftCannotBeClearedByPreviousSubmissionTimer]' started.
+Test Case '-[HiveWorkspaceTests.ComposerLeaseStoreTests testNewDraftCannotBeClearedByPreviousSubmissionTimer]' passed (0.036 seconds).
+Test Suite 'ComposerLeaseStoreTests' passed at 2026-07-18 19:34:08.071.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.069 (0.070) seconds
+Test Suite 'FocusStealTests' started at 2026-07-18 19:34:08.071.
+Test Case '-[HiveTerminalKitTests.FocusStealTests testExplicitClickBecomesFirstResponder]' started.
+Test Case '-[HiveTerminalKitTests.FocusStealTests testExplicitClickBecomesFirstResponder]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.FocusStealTests testOutputStatusReconnectNeverStealFocus]' started.
+Test Case '-[HiveTerminalKitTests.FocusStealTests testOutputStatusReconnectNeverStealFocus]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.FocusStealTests testPositiveControlBuggyPathWouldStealFocus]' started.
+Test Case '-[HiveTerminalKitTests.FocusStealTests testPositiveControlBuggyPathWouldStealFocus]' passed (0.007 seconds).
+Test Suite 'FocusStealTests' passed at 2026-07-18 19:34:08.097.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.026 (0.026) seconds
+Test Suite 'Gate10AccessibilityTests' started at 2026-07-18 19:34:08.097.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityLineTracksRealNewlines]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityLineTracksRealNewlines]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilitySelectedTextIsNilWithoutSelection]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilitySelectedTextIsNilWithoutSelection]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilitySelectedTextReflectsARealSelection]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilitySelectedTextReflectsARealSelection]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityStringForRangeReturnsRealSubstring]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityStringForRangeReturnsRealSubstring]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilitySurfaceSafeAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilitySurfaceSafeAfterFree]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityUsesUTF16UnitsForNonASCII]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityUsesUTF16UnitsForNonASCII]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityValueReflectsRealScreenContent]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testAccessibilityValueReflectsRealScreenContent]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testExposedAsTextAreaAccessibilityElement]' started.
+Test Case '-[HiveTerminalKitTests.Gate10AccessibilityTests testExposedAsTextAreaAccessibilityElement]' passed (0.009 seconds).
+Test Suite 'Gate10AccessibilityTests' passed at 2026-07-18 19:34:08.179.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.080 (0.081) seconds
+Test Suite 'Gate3ConcurrentCreationTests' started at 2026-07-18 19:34:08.179.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' passed (0.016 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' passed (0.072 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' passed (0.061 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' started.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' passed (0.313 seconds).
+Test Suite 'Gate3ConcurrentCreationTests' passed at 2026-07-18 19:34:08.641.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.462 (0.462) seconds
+Test Suite 'Gate3OperationDomainTests' started at 2026-07-18 19:34:08.641.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' started.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' started.
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' passed (0.009 seconds).
+Test Suite 'Gate3OperationDomainTests' passed at 2026-07-18 19:34:08.670.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.028 (0.029) seconds
+Test Suite 'Gate4ABIQualificationTests' started at 2026-07-18 19:34:08.670.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' started.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' passed (0.002 seconds).
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testEnabledPolicyCreatesLiveSurfaceAndReplies]' started.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testEnabledPolicyCreatesLiveSurfaceAndReplies]' passed (0.009 seconds).
+Test Suite 'Gate4ABIQualificationTests' passed at 2026-07-18 19:34:08.681.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.011 (0.011) seconds
+Test Suite 'Gate6SurfaceRestoreTests' started at 2026-07-18 19:34:08.681.
+Test Case '-[HiveTerminalKitTests.Gate6SurfaceRestoreTests testEveryLibVtAuthoredSplitRestoresIntoRealSurface]' started.
+Test Case '-[HiveTerminalKitTests.Gate6SurfaceRestoreTests testEveryLibVtAuthoredSplitRestoresIntoRealSurface]' passed (3.782 seconds).
+Test Suite 'Gate6SurfaceRestoreTests' passed at 2026-07-18 19:34:12.463.
+	 Executed 1 test, with 0 failures (0 unexpected) in 3.782 (3.782) seconds
+Test Suite 'Gate7RenderingTests' started at 2026-07-18 19:34:12.463.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testBackingDisplayAndOcclusionChangesReachRealSurface]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testBackingDisplayAndOcclusionChangesReachRealSurface]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testCloseCancelsDrawAlreadyQueuedByInvalidate]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testCloseCancelsDrawAlreadyQueuedByInvalidate]' passed (0.055 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testIdleSurfaceHasNoTimerDrivenOrAppKitDraws]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testIdleSurfaceHasNoTimerDrivenOrAppKitDraws]' passed (0.171 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testInvalidateCoalescesAndNeverDrawsAgainThroughAppKitDraw]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testInvalidateCoalescesAndNeverDrawsAgainThroughAppKitDraw]' passed (0.027 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testLiveResizeCommitsEveryDistinctFramebufferBeforeQuiescence]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testLiveResizeCommitsEveryDistinctFramebufferBeforeQuiescence]' passed (0.003 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testOcclusionSuppressesDrawAndPresentsOnePendingFrameWhenVisible]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testOcclusionSuppressesDrawAndPresentsOnePendingFrameWhenVisible]' passed (0.086 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testPhysicalMonitorScaleAndSleepWakeQualification]' started.
+/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/workspace/Tests/HiveTerminalKitTests/Gate7RenderingTests.swift:383: -[HiveTerminalKitTests.Gate7RenderingTests testPhysicalMonitorScaleAndSleepWakeQualification] : Test skipped - requires interactive multi-display qualification hardware
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testPhysicalMonitorScaleAndSleepWakeQualification]' skipped (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testProductionViewHostsPinnedGhosttyIOSurfaceLayer]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testProductionViewHostsPinnedGhosttyIOSurfaceLayer]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealOutputProducesGPUBackedLayerContents]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealOutputProducesGPUBackedLayerContents]' passed (0.025 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealViewAndRendererOwnerReleaseWithoutExplicitClose]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRealViewAndRendererOwnerReleaseWithoutExplicitClose]' passed (0.006 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRendererHealthIsSurfaceScopedDeferredAndRecoverable]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRendererHealthIsSurfaceScopedDeferredAndRecoverable]' passed (0.079 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRenderingStateUsesMainConfinedEngineWrappers]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRenderingStateUsesMainConfinedEngineWrappers]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testResizeUsesGhosttyReportedCellGeometryExactly]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testResizeUsesGhosttyReportedCellGeometryExactly]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRuntimeHealthActionTargetsOnlyItsRealSurface]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testRuntimeHealthActionTargetsOnlyItsRealSurface]' passed (0.027 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testSleepDefersPendingDrawAndWakeRefreshesExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testSleepDefersPendingDrawAndWakeRefreshesExactlyOnce]' passed (0.078 seconds).
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testZeroSizeCancelsPendingResizeInsteadOfCommittingStalePixels]' started.
+Test Case '-[HiveTerminalKitTests.Gate7RenderingTests testZeroSizeCancelsPendingResizeInsteadOfCommittingStalePixels]' passed (0.160 seconds).
+Test Suite 'Gate7RenderingTests' passed at 2026-07-18 19:34:13.240.
+	 Executed 16 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.772 (0.777) seconds
+Test Suite 'Gate9ActionPolicyTests' started at 2026-07-18 19:34:13.240.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testDefaultWindowBindingsAreStrippedFromManualConfig]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testDefaultWindowBindingsAreStrippedFromManualConfig]' passed (0.025 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader]' passed (0.004 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testHandleRoutesThroughTheVerdictNotABlanketFalse]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testHandleRoutesThroughTheVerdictNotABlanketFalse]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testLiveCallbackFiringsCarryTheCorrectVerdict]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testLiveCallbackFiringsCarryTheCorrectVerdict]' passed (0.550 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream]' passed (0.022 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testSecurityRulingsArePinned]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testSecurityRulingsArePinned]' passed (0.000 seconds).
+Test Suite 'Gate9ActionPolicyTests' passed at 2026-07-18 19:34:13.844.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.602 (0.603) seconds
+Test Suite 'Gate9CallbackMatrixTests' started at 2026-07-18 19:34:13.844.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb]' passed (0.341 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseSurfaceProbeObservesDirectInvocation]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseSurfaceProbeObservesDirectInvocation]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testKitSourcesContainNoPrivilegedOpeners]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testKitSourcesContainNoPrivilegedOpeners]' passed (0.047 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNoNotificationDeliveredAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNoNotificationDeliveredAfterFree]' passed (0.120 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime]' passed (0.127 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52ReadNeverReachesTheApprtReadCallback]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52ReadNeverReachesTheApprtReadCallback]' passed (0.342 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched]' passed (0.341 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testScrollOutputDeliversScrollbarNotificationWithPayload]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testScrollOutputDeliversScrollbarNotificationWithPayload]' passed (0.543 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testSelectionGestureDeliversSelectionChangedNotification]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testSelectionGestureDeliversSelectionChangedNotification]' passed (0.693 seconds).
+Test Suite 'Gate9CallbackMatrixTests' passed at 2026-07-18 19:34:16.402.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 2.555 (2.558) seconds
+Test Suite 'Gate9ReachabilityTraceTests' started at 2026-07-18 19:34:16.402.
+Test Case '-[HiveTerminalKitTests.Gate9ReachabilityTraceTests testTraceRecordsExactReachableActionSetFromUntrustedOutput]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ReachabilityTraceTests testTraceRecordsExactReachableActionSetFromUntrustedOutput]' passed (0.542 seconds).
+Test Suite 'Gate9ReachabilityTraceTests' passed at 2026-07-18 19:34:16.945.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.542 (0.542) seconds
+Test Suite 'GhosttyBridgeLinkTests' started at 2026-07-18 19:34:16.945.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testEngineBuildIdSymbolResolves]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testEngineBuildIdSymbolResolves]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testFactoryCreatesManualSurfaceWithRealCallbacks]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testFactoryCreatesManualSurfaceWithRealCallbacks]' passed (0.023 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testRealSurfaceProcessOutputUsesCopySafeEventTrampoline]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testRealSurfaceProcessOutputUsesCopySafeEventTrampoline]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testSurfaceStronglyRetainsHostViewAndCallbackContext]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testSurfaceStronglyRetainsHostViewAndCallbackContext]' passed (0.006 seconds).
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testTrampolineAssignableToFactoryTypedSlots]' started.
+Test Case '-[HiveTerminalKitTests.GhosttyBridgeLinkTests testTrampolineAssignableToFactoryTypedSlots]' passed (0.001 seconds).
+Test Suite 'GhosttyBridgeLinkTests' passed at 2026-07-18 19:34:16.994.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.048 (0.049) seconds
+Test Suite 'HeaderParityTests' started at 2026-07-18 19:34:16.994.
+Test Case '-[HiveTerminalKitTests.HeaderParityTests testGhosttyResultValuesMatchLibghosttyVtABI]' started.
+Test Case '-[HiveTerminalKitTests.HeaderParityTests testGhosttyResultValuesMatchLibghosttyVtABI]' passed (0.003 seconds).
+Test Case '-[HiveTerminalKitTests.HeaderParityTests testHiveGhosttyBridgeHeaderMatchesNativeAuthority]' started.
+Test Case '-[HiveTerminalKitTests.HeaderParityTests testHiveGhosttyBridgeHeaderMatchesNativeAuthority]' passed (0.000 seconds).
+Test Suite 'HeaderParityTests' passed at 2026-07-18 19:34:16.998.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'InputEncodingTests' started at 2026-07-18 19:34:16.998.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testConsumedModsExcludesControlAndCommand]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testConsumedModsExcludesControlAndCommand]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testControlCharacterIsExcludedFromKeyEventText]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testControlCharacterIsExcludedFromKeyEventText]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectFallsBackToViewBoundsWithoutARealSurface]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectFallsBackToViewBoundsWithoutARealSurface]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectQueriesRealSurfaceIMEPointNotJustViewBounds]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectQueriesRealSurfaceIMEPointNotJustViewBounds]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectShiftsWithWindowScreenOriginProvingScreenCoords]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectShiftsWithWindowScreenOriginProvingScreenCoords]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedIgnoresUnmappedKeyCodes]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedIgnoresUnmappedKeyCodes]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedSendsPressWhenTheCorrectSideModifierBecomesActive]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedSendsPressWhenTheCorrectSideModifierBecomesActive]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedSendsReleaseWhenTheModifierClears]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedSendsReleaseWhenTheModifierClears]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testKeyEventCarriesRealUnshiftedCodepointAndConsumedMods]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testKeyEventCarriesRealUnshiftedCodepointAndConsumedMods]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testKeyUpSendsReleaseAction]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testKeyUpSendsReleaseAction]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingDetectsRightSideShiftViaDeviceMask]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingDetectsRightSideShiftViaDeviceMask]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingIncludesCapsLock]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingIncludesCapsLock]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingUsesSymbolicGhosttyConstants]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingUsesSymbolicGhosttyConstants]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testPrintableCharacterIsEmbeddedInKeyEventNotSentSeparately]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testPrintableCharacterIsEmbeddedInKeyEventNotSentSeparately]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRepeatedKeyDownSendsRepeatActionNotPress]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRepeatedKeyDownSendsRepeatActionNotPress]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesMomentumPhaseInBits1Through3]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesMomentumPhaseInBits1Through3]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesPrecisionBit]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesPrecisionBit]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollWheelForwardsToEngine]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollWheelForwardsToEngine]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testSelectedRangeReflectsRealEngineSelectionNotAPlaceholder]' started.
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testSelectedRangeReflectsRealEngineSelectionNotAPlaceholder]' passed (0.000 seconds).
+Test Suite 'InputEncodingTests' passed at 2026-07-18 19:34:17.024.
+	 Executed 19 tests, with 0 failures (0 unexpected) in 0.026 (0.027) seconds
+Test Suite 'KittyKeyboardGoldenTests' started at 2026-07-18 19:34:17.024.
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' started.
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' passed (0.011 seconds).
+Test Suite 'KittyKeyboardGoldenTests' passed at 2026-07-18 19:34:17.047.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.023 (0.023) seconds
+Test Suite 'LateFrameRejectionTests' started at 2026-07-18 19:34:17.047.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testDifferentLocatorIsRejectedWithoutMutatingSurface]' started.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testDifferentLocatorIsRejectedWithoutMutatingSurface]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testLateFrameViaAttachClientHandleFrame]' started.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testLateFrameViaAttachClientHandleFrame]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testSameLocatorReconnectRejectsOldConnectionFrame]' started.
+Test Case '-[HiveTerminalKitTests.LateFrameRejectionTests testSameLocatorReconnectRejectsOldConnectionFrame]' passed (0.000 seconds).
+Test Suite 'LateFrameRejectionTests' passed at 2026-07-18 19:34:17.049.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'LayoutTransitionTests' started at 2026-07-18 19:34:17.049.
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testDurationIsRoughly180ms]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testDurationIsRoughly180ms]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testInterpolationEndpoints]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testInterpolationEndpoints]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testInterruptionRetargetsFromPresentationValue]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testInterruptionRetargetsFromPresentationValue]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testProgressClampsAndEases]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTransitionTests testProgressClampsAndEases]' passed (0.000 seconds).
+Test Suite 'LayoutTransitionTests' passed at 2026-07-18 19:34:17.050.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'LayoutTreeTests' started at 2026-07-18 19:34:17.050.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testCloseCollapsesOnlyParentSplit]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testCloseCollapsesOnlyParentSplit]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testCloseMasterPullsPreferredReplacement]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testCloseMasterPullsPreferredReplacement]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testFirstPaneBecomesMasterAndFillsBounds]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testFirstPaneBecomesMasterAndFillsBounds]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testFramesTileWithoutOverlap]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testFramesTileWithoutOverlap]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testInsertionSplitsLargestSatelliteLeaf]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testInsertionSplitsLargestSatelliteLeaf]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testLayoutIsDeterministic]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testLayoutIsDeterministic]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testMasterOccupiesConfiguredRatioWithSatellites]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testMasterOccupiesConfiguredRatioWithSatellites]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testMasterRatioStaysInBlueprintBand]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testMasterRatioStaysInBlueprintBand]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testPromoteMasterIsNoOp]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testPromoteMasterIsNoOp]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testPromoteSwapsWithMasterPreservingSatelliteOrder]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testPromoteSwapsWithMasterPreservingSatelliteOrder]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testReturnOrchestratorToMasterIsPromoteRoundTrip]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testReturnOrchestratorToMasterIsPromoteRoundTrip]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testSinglePaneAfterClosingEverythingElse]' started.
+Test Case '-[WorkspaceCoreTests.LayoutTreeTests testSinglePaneAfterClosingEverythingElse]' passed (0.000 seconds).
+Test Suite 'LayoutTreeTests' passed at 2026-07-18 19:34:17.052.
+	 Executed 12 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'ModelControlTests' started at 2026-07-18 19:34:17.052.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testAdvertisedLevelsSurviveVerbatimInVendorOrder]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testAdvertisedLevelsSurviveVerbatimInVendorOrder]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testAdvertisedSupportWithEmptyLevelListIsSurfacedNotGuessed]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testAdvertisedSupportWithEmptyLevelListIsSurfacedNotGuessed]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testBillingChipStates]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testBillingChipStates]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testBothOnIsEnabled]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testBothOnIsEnabled]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testCardMetersTheAccountPoolNotAModelScopedPool]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testCardMetersTheAccountPoolNotAModelScopedPool]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainLinkStatusModelDisabled]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainLinkStatusModelDisabled]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainLinkStatusProviderOffWins]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainLinkStatusProviderOffWins]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainLinkStatusUnresolvableWhenModelLeftCatalog]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainLinkStatusUnresolvableWhenModelLeftCatalog]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainReorderKeepsPrimaryAtIndexZero]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testChainReorderKeepsPrimaryAtIndexZero]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testCodeReviewLeadsWithADifferentVendor]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testCodeReviewLeadsWithADifferentVendor]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testDaemonUnreachableDerivesUnknownNotSilent]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testDaemonUnreachableDerivesUnknownNotSilent]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testEditsClearTheProvisionalFlag]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testEditsClearTheProvisionalFlag]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testEveryCategorySeedsAChainWithReasoning]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testEveryCategorySeedsAChainWithReasoning]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testExplicitUnknownBeatsTheInferenceEvenWithNoDuration]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testExplicitUnknownBeatsTheInferenceEvenWithNoDuration]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testFlippingSeededOffOnIsConsentAndOffAgainIsUserOffNotSeeded]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testFlippingSeededOffOnIsConsentAndOffAgainIsUserOffNotSeeded]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testHumanNameNeverDisplaysDefaultAsAModel]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testHumanNameNeverDisplaysDefaultAsAModel]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testHumanNamePrefersTheVendorsOwnDisplayName]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testHumanNamePrefersTheVendorsOwnDisplayName]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testHumanNamePrettifiesTheVendorIdMechanically]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testHumanNamePrettifiesTheVendorIdMechanically]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testKnownNoneAndUnknownAreDifferentFacts]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testKnownNoneAndUnknownAreDifferentFacts]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testManualUnitPoolIsNotRenderedAsAPercentMeter]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testManualUnitPoolIsNotRenderedAsAPercentMeter]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMCCCommandsCarryTheWindowDaemonPort]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMCCCommandsCarryTheWindowDaemonPort]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMeasuredZeroIsMeasuredZero]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMeasuredZeroIsMeasuredZero]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMeteredProviderWithPoolGetsWindows]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMeteredProviderWithPoolGetsWindows]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMeteredWindowWithNoReadingStaysMountedAsUnknown]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testMeteredWindowWithNoReadingStaysMountedAsUnknown]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testModelPoolExhaustionIsMeasuredOnlyAndUnknownIsNotExhausted]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testModelPoolExhaustionIsMeasuredOnlyAndUnknownIsNotExhausted]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNewlyDiscoveredModelUnderUnverifiedVendorArrivesSeededOff]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNewlyDiscoveredModelUnderUnverifiedVendorArrivesSeededOff]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNoReadingDerivesUnknownNeverZero]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNoReadingDerivesUnknownNeverZero]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNotMeteredAndUnknownAreDistinct]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNotMeteredAndUnknownAreDistinct]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNullReserveOnANotMeteredWindowDecodesAndDoesNotBlankTheSnapshot]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNullReserveOnANotMeteredWindowDecodesAndDoesNotBlankTheSnapshot]' passed (0.002 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNumericReserveFromTheCurrentDaemonStillDecodes]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testNumericReserveFromTheCurrentDaemonStillDecodes]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPartiallySilentClaudeFeedIsUnknownNotNotMetered]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPartiallySilentClaudeFeedIsUnknownNotNotMetered]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPlanLabelComesFromTheAccountPool]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPlanLabelComesFromTheAccountPool]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPlanWithNoFiveHourWindowSaysNotMeteredNotUnknown]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPlanWithNoFiveHourWindowSaysNotMeteredNotUnknown]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPoolWithNoReadingAnywhereKeepsBothWindows]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testPoolWithNoReadingAnywhereKeepsBothWindows]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testProviderOffDominatesSeededOff]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testProviderOffDominatesSeededOff]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testProviderOffOverridesModelOn]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testProviderOffOverridesModelOn]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testProviderOffPreservesStoredPreferenceForDisplay]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testProviderOffPreservesStoredPreferenceForDisplay]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testReaderActuallySeesAvailabilityOnTheRealEmittedWire]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testReaderActuallySeesAvailabilityOnTheRealEmittedWire]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testRemainingOnlyReadingFillsHonestly]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testRemainingOnlyReadingFillsHonestly]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSameModelSeedsAtDifferentEffortsInDifferentCategories]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSameModelSeedsAtDifferentEffortsInDifferentCategories]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSameProviderOnAPlanThatDoesMeterFiveHoursLightsItUp]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSameProviderOnAPlanThatDoesMeterFiveHoursLightsItUp]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSeededOffProviderIsExcludedFromTheSeededDefaultChain]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSeededOffProviderIsExcludedFromTheSeededDefaultChain]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSeedEnablesEveryDiscoveredProviderAndSkipsUnavailableInDefaultChain]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSeedEnablesEveryDiscoveredProviderAndSkipsUnavailableInDefaultChain]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSeedingNeverInventsAnEffortLevel]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSeedingNeverInventsAnEffortLevel]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSilentFeedDerivesSilentWithMeasuredReason]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSilentFeedDerivesSilentWithMeasuredReason]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSnapshotDecodesThreeValuedEffortAndFourthProvider]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSnapshotDecodesThreeValuedEffortAndFourthProvider]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSpendCaveatStates]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testSpendCaveatStates]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testStaleConfidenceDerivesStaleState]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testStaleConfidenceDerivesStaleState]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testThreeOffReasonsAreThreeDistinctStates]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testThreeOffReasonsAreThreeDistinctStates]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testTokenUsageDecodesOpenProviderAndUnknownSeparatelyFromZero]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testTokenUsageDecodesOpenProviderAndUnknownSeparatelyFromZero]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnavailableDominatesEverything]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnavailableDominatesEverything]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnknownAndMeasuredZeroAreDistinct]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnknownAndMeasuredZeroAreDistinct]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnmeteredSurfaceNeverGetsMeters]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnmeteredSurfaceNeverGetsMeters]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnreadableBillingSeedsModelsOffAwaitingConsent]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnreadableBillingSeedsModelsOffAwaitingConsent]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnreadableEffortIsUnknownWithReason]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testUnreadableEffortIsUnknownWithReason]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testVendorStatedNoEffortAxisIsKnownNone]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testVendorStatedNoEffortAxisIsKnownNone]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlTests testWarningsFireOnAllProvidersOffAndEmptyDefaultChain]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlTests testWarningsFireOnAllProvidersOffAndEmptyDefaultChain]' passed (0.000 seconds).
+Test Suite 'ModelControlTests' passed at 2026-07-18 19:34:17.065.
+	 Executed 57 tests, with 0 failures (0 unexpected) in 0.011 (0.013) seconds
+Test Suite 'ModelControlWireContractTests' started at 2026-07-18 19:34:17.065.
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testDecodesTheSnapshotTheCLIEmitsToday]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testDecodesTheSnapshotTheCLIEmitsToday]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testMalformedProviderAndQuotaSubtreesDoNotBlankValidProviders]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testMalformedProviderAndQuotaSubtreesDoNotBlankValidProviders]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testUnknownFactAndUsageSurfaceDegradeWithoutDroppingTheSnapshot]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testUnknownFactAndUsageSurfaceDegradeWithoutDroppingTheSnapshot]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testUnknownTokenReadingStateDegradesToUnknown]' started.
+Test Case '-[WorkspaceCoreTests.ModelControlWireContractTests testUnknownTokenReadingStateDegradesToUnknown]' passed (0.000 seconds).
+Test Suite 'ModelControlWireContractTests' passed at 2026-07-18 19:34:17.067.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
+Test Suite 'OrderedOutputEngineTests' started at 2026-07-18 19:34:17.067.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testConflictingBytesAtSameRangeIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testConflictingBytesAtSameRangeIsInvalid]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testCSISequenceSplitAcrossChunkBoundaryStillReplies]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testCSISequenceSplitAcrossChunkBoundaryStillReplies]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDuplicateExactRetransmitIsIdempotent]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDuplicateExactRetransmitIsIdempotent]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testEmptyBytesIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testEmptyBytesIsInvalid]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedGapDoesNotPoisonSubsequentValidCall]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedGapDoesNotPoisonSubsequentValidCall]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter]' passed (0.010 seconds).
+Test Suite 'OrderedOutputEngineTests' passed at 2026-07-18 19:34:17.134.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.067 (0.067) seconds
+Test Suite 'OrderedOutputStressTests' started at 2026-07-18 19:34:17.134.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' passed (0.767 seconds).
+Test Suite 'OrderedOutputStressTests' passed at 2026-07-18 19:34:17.901.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.767 (0.767) seconds
+Test Suite 'OutputRangeApplicatorTests' started at 2026-07-18 19:34:17.901.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testContiguousOrderedRangesAdvanceHighWater]' started.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testContiguousOrderedRangesAdvanceHighWater]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testDuplicateDigestConflictRequiresRebase]' started.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testDuplicateDigestConflictRequiresRebase]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testDuplicateEqualIgnored]' started.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testDuplicateEqualIgnored]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testEmptyBytesRejected]' started.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testEmptyBytesRejected]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testGapRequiresRebase]' started.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testGapRequiresRebase]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testPostRestoreRetransmitIgnored]' started.
+Test Case '-[HiveTerminalKitTests.OutputRangeApplicatorTests testPostRestoreRetransmitIgnored]' passed (0.000 seconds).
+Test Suite 'OutputRangeApplicatorTests' passed at 2026-07-18 19:34:17.902.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'PaneFocusTests' started at 2026-07-18 19:34:17.902.
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testFirstResponderPaneInKeyWindowIsActive]' started.
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testFirstResponderPaneInKeyWindowIsActive]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testFirstResponderPaneInNonKeyWindowIsInactive]' started.
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testFirstResponderPaneInNonKeyWindowIsInactive]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testNoFirstResponderPaneShowsNoIndicator]' started.
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testNoFirstResponderPaneShowsNoIndicator]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testOtherPanesShowNoIndicator]' started.
+Test Case '-[WorkspaceCoreTests.PaneFocusTests testOtherPanesShowNoIndicator]' passed (0.000 seconds).
+Test Suite 'PaneFocusTests' passed at 2026-07-18 19:34:17.903.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.000 (0.001) seconds
+Test Suite 'ProjectStateTests' started at 2026-07-18 19:34:17.903.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAcknowledgeSurvivesIdenticalSnapshots]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAcknowledgeSurvivesIdenticalSnapshots]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAgentHeaderHasEachFieldOnceAndUsesLiveActivity]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAgentHeaderHasEachFieldOnceAndUsesLiveActivity]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAgentVanishingFromSnapshotIsTreatedAsClosed]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAgentVanishingFromSnapshotIsTreatedAsClosed]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAttentionOrderedBySeverityNotPanePosition]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testAttentionOrderedBySeverityNotPanePosition]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClearingTheSuppressionBringsALiveAgentBack]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClearingTheSuppressionBringsALiveAgentBack]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClosedAgentNeverGetsAPane]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClosedAgentNeverGetsAPane]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClosedAtMarksClosePendingExactlyOnce]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClosedAtMarksClosePendingExactlyOnce]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClosePaneReturnsFocusToMasterAndClearsItsAttention]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testClosePaneReturnsFocusToMasterAndClearsItsAttention]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testContextOnlyFeedChangeRerendersHeader]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testContextOnlyFeedChangeRerendersHeader]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testDeadAgentWithoutPaneIsNeverInserted]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testDeadAgentWithoutPaneIsNeverInserted]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFeedLineDecodesErrorAndToleratesGarbage]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFeedLineDecodesErrorAndToleratesGarbage]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFeedLineKeepsAgentsWhenOptionalSiblingFieldsAreMalformed]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFeedLineKeepsAgentsWhenOptionalSiblingFieldsAreMalformed]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFeedLineRejectsOnlyTheAgentFieldWhenAnyIdentityIsMalformed]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFeedLineRejectsOnlyTheAgentFieldWhenAnyIdentityIsMalformed]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFocusAloneNeverClearsAttention]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testFocusAloneNeverClearsAttention]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testMarkFeedLostTurnsEveryPaneGrayIncludingTheOrchestrator]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testMarkFeedLostTurnsEveryPaneGrayIncludingTheOrchestrator]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testMissingAndWrongTypedAgentStatusStayUnknown]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testMissingAndWrongTypedAgentStatusStayUnknown]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testOrchestratorIsMasterAndFeedAgentsGetPanes]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testOrchestratorIsMasterAndFeedAgentsGetPanes]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testPaneCreationNeverStealsFocus]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testPaneCreationNeverStealsFocus]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testPromoteAndReturnOrchestrator]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testPromoteAndReturnOrchestrator]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testStatusTransitionResolvesStaleAttention]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testStatusTransitionResolvesStaleAttention]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testStatusWordsMapToSemanticStatus]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testStatusWordsMapToSemanticStatus]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testSwitcherCardIsSanitized]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testSwitcherCardIsSanitized]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalAllowsMouseReportingForBothPaneKinds]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalAllowsMouseReportingForBothPaneKinds]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalMouseFilterSuppressesOnlyMalformedNoButtonMotion]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalMouseFilterSuppressesOnlyMalformedNoButtonMotion]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalScrollRequestMapsWheelDirectionAndVelocity]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalScrollRequestMapsWheelDirectionAndVelocity]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalScrollSessionUsesFeedMetadataForAgent]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalScrollSessionUsesFeedMetadataForAgent]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalScrollSessionUsesLaunchMetadataForOrchestrator]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testTerminalScrollSessionUsesLaunchMetadataForOrchestrator]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testUnknownAutonomyDoesNotEnableKnownControls]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testUnknownAutonomyDoesNotEnableKnownControls]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testUserClosedAgentIsNotRebuiltByAFeedThatStillListsItAsLive]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testUserClosedAgentIsNotRebuiltByAFeedThatStillListsItAsLive]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testVisibilityInventoryPublishesExactSessiondPaneLifecycle]' started.
+Test Case '-[WorkspaceCoreTests.ProjectStateTests testVisibilityInventoryPublishesExactSessiondPaneLifecycle]' passed (0.000 seconds).
+Test Suite 'ProjectStateTests' passed at 2026-07-18 19:34:17.909.
+	 Executed 30 tests, with 0 failures (0 unexpected) in 0.005 (0.006) seconds
+Test Suite 'ProjectSwitcherTests' started at 2026-07-18 19:34:17.909.
+Test Case '-[HiveWorkspaceTests.ProjectSwitcherTests testProjectControllerPublishesStateChanges]' started.
+Test Case '-[HiveWorkspaceTests.ProjectSwitcherTests testProjectControllerPublishesStateChanges]' passed (0.012 seconds).
+Test Case '-[HiveWorkspaceTests.ProjectSwitcherTests testVisibleProjectCardRefreshesWithState]' started.
+Test Case '-[HiveWorkspaceTests.ProjectSwitcherTests testVisibleProjectCardRefreshesWithState]' passed (0.029 seconds).
+Test Suite 'ProjectSwitcherTests' passed at 2026-07-18 19:34:17.951.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.042 (0.042) seconds
+Test Suite 'RendererReplySuppressionTests' started at 2026-07-18 19:34:17.951.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' started.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' passed (3.264 seconds).
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' started.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' passed (0.245 seconds).
+Test Suite 'RendererReplySuppressionTests' passed at 2026-07-18 19:34:21.460.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 3.509 (3.509) seconds
+Test Suite 'RoutingPolicyDocumentTests' started at 2026-07-18 19:34:21.461.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testAbsentProviderDisablesAnUnconfiguredModel]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testAbsentProviderDisablesAnUnconfiguredModel]' passed (0.002 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testChainEntryCliSpellings]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testChainEntryCliSpellings]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testDecodesTheWireShape]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testDecodesTheWireShape]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testEffortOnlyRowDoesNotBlessEnablement]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testEffortOnlyRowDoesNotBlessEnablement]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testEffortWireSpellingsRoundTripAndMatchTheCli]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testEffortWireSpellingsRoundTripAndMatchTheCli]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testExplicitModelRowIsOnlyAPreferenceUnderAnUnconfiguredProvider]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testExplicitModelRowIsOnlyAPreferenceUnderAnUnconfiguredProvider]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testProviderDisabledDominatesAnEnabledModelRow]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testProviderDisabledDominatesAnEnabledModelRow]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testSelfDisabledUnderEnabledProviderIsUserOff]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyDocumentTests testSelfDisabledUnderEnabledProviderIsUserOff]' passed (0.000 seconds).
+Test Suite 'RoutingPolicyDocumentTests' passed at 2026-07-18 19:34:21.466.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.005 (0.006) seconds
+Test Suite 'RoutingPolicyWireContractTests' started at 2026-07-18 19:34:21.466.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testAMissingRequiredFieldStillFails]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testAMissingRequiredFieldStillFails]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testDecodesTheDocumentTheDaemonEmitsToday]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testDecodesTheDocumentTheDaemonEmitsToday]' passed (0.002 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testEveryDaemonCategoryIsNameableByThisApp]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testEveryDaemonCategoryIsNameableByThisApp]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testOlderDaemonWithoutSelectionDisablesOnlyItsControl]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testOlderDaemonWithoutSelectionDisablesOnlyItsControl]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testSelectionMirrorsTheDaemonContractAndIsWritable]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testSelectionMirrorsTheDaemonContractAndIsWritable]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testUnknownEffortModeAndUnknownFieldDoNotNukeTheDocument]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testUnknownEffortModeAndUnknownFieldDoNotNukeTheDocument]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testUnknownEffortModeRoundTripsWithoutCorruption]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testUnknownEffortModeRoundTripsWithoutCorruption]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testUnknownSelectionModeDisablesOnlyItsControl]' started.
+Test Case '-[WorkspaceCoreTests.RoutingPolicyWireContractTests testUnknownSelectionModeDisablesOnlyItsControl]' passed (0.001 seconds).
+Test Suite 'RoutingPolicyWireContractTests' passed at 2026-07-18 19:34:21.473.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.005 (0.006) seconds
+Test Suite 'SessionProtocolFixtureTests' started at 2026-07-18 19:34:21.473.
+Test Case '-[WorkspaceCoreTests.SessionProtocolFixtureTests testSharedCorporaAreBundledAndReadable]' started.
+Test Case '-[WorkspaceCoreTests.SessionProtocolFixtureTests testSharedCorporaAreBundledAndReadable]' passed (0.006 seconds).
+Test Suite 'SessionProtocolFixtureTests' passed at 2026-07-18 19:34:21.479.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.006 (0.006) seconds
+Test Suite 'SettingsWindowControllerTests' started at 2026-07-18 19:34:21.479.
+Test Case '-[HiveWorkspaceTests.SettingsWindowControllerTests testShowingAnExistingWindowRefreshesVendorState]' started.
+Test Case '-[HiveWorkspaceTests.SettingsWindowControllerTests testShowingAnExistingWindowRefreshesVendorState]' passed (1.050 seconds).
+Test Suite 'SettingsWindowControllerTests' passed at 2026-07-18 19:34:22.529.
+	 Executed 1 test, with 0 failures (0 unexpected) in 1.050 (1.050) seconds
+Test Suite 'SpatialNavigationTests' started at 2026-07-18 19:34:22.529.
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testDeterministicWithManyPanes]' started.
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testDeterministicWithManyPanes]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testMoveBackLeftReturnsToMaster]' started.
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testMoveBackLeftReturnsToMaster]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testMovesRightFromMasterIntoNearestSatellite]' started.
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testMovesRightFromMasterIntoNearestSatellite]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testNoPaneBeyondEdgeReturnsNil]' started.
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testNoPaneBeyondEdgeReturnsNil]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testVerticalMovementBetweenStackedSatellites]' started.
+Test Case '-[WorkspaceCoreTests.SpatialNavigationTests testVerticalMovementBetweenStackedSatellites]' passed (0.000 seconds).
+Test Suite 'SpatialNavigationTests' passed at 2026-07-18 19:34:22.530.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'TerminalReplyCorpusTests' started at 2026-07-18 19:34:22.530.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' passed (0.007 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' passed (0.008 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' passed (0.008 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' passed (0.008 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' passed (0.325 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.007 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.006 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' passed (0.006 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' passed (0.006 seconds).
+Test Suite 'TerminalReplyCorpusTests' passed at 2026-07-18 19:34:22.913.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.381 (0.383) seconds
+Test Suite 'TokenUsagePresentationTests' started at 2026-07-18 19:34:22.913.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testAnOrchestratorWithNoReadingStaysUnknownRatherThanZero]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testAnOrchestratorWithNoReadingStaysUnknownRatherThanZero]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testBackupGenerationsCollapseIntoOneOrchestratorRow]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testBackupGenerationsCollapseIntoOneOrchestratorRow]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testCacheDominatedSessionDoesNotHeadlineFiftyMillionTokens]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testCacheDominatedSessionDoesNotHeadlineFiftyMillionTokens]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testCodexReportsReadsWithoutWritesAndStillGetsAHeadline]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testCodexReportsReadsWithoutWritesAndStillGetsAHeadline]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testCollapsingGenerationsNeitherLosesNorDoubleCountsTokens]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testCollapsingGenerationsNeitherLosesNorDoubleCountsTokens]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testProviderWithoutACacheSplitGetsNoGuessedSplit]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testProviderWithoutACacheSplitGetsNoGuessedSplit]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testRawCumulativeTotalsStaySoTheUserCanStillSeeThem]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testRawCumulativeTotalsStaySoTheUserCanStillSeeThem]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testSubsetsThatContradictTheirTotalGetNoDerivedHeadline]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsagePresentationTests testSubsetsThatContradictTheirTotalGetNoDerivedHeadline]' passed (0.000 seconds).
+Test Suite 'TokenUsagePresentationTests' passed at 2026-07-18 19:34:22.914.
+	 Executed 8 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds
+Test Suite 'TokenUsageWireContractTests' started at 2026-07-18 19:34:22.915.
+Test Case '-[WorkspaceCoreTests.TokenUsageWireContractTests testDecodesTheSharedFixture]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsageWireContractTests testDecodesTheSharedFixture]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsageWireContractTests testUnknownFutureRoleStaysVisibleAndOutOfWorkers]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsageWireContractTests testUnknownFutureRoleStaysVisibleAndOutOfWorkers]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.TokenUsageWireContractTests testWorkerBucketToleratesNullCacheCreation]' started.
+Test Case '-[WorkspaceCoreTests.TokenUsageWireContractTests testWorkerBucketToleratesNullCacheCreation]' passed (0.000 seconds).
+Test Suite 'TokenUsageWireContractTests' passed at 2026-07-18 19:34:22.916.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'UsageMeterViewTests' started at 2026-07-18 19:34:22.916.
+Test Case '-[HiveWorkspaceTests.UsageMeterViewTests testMeterLabelsTruncateWithoutDrivingWindowWidth]' started.
+Test Case '-[HiveWorkspaceTests.UsageMeterViewTests testMeterLabelsTruncateWithoutDrivingWindowWidth]' passed (0.001 seconds).
+Test Case '-[HiveWorkspaceTests.UsageMeterViewTests testUnmeteredCopyNamesTheActualProvider]' started.
+Test Case '-[HiveWorkspaceTests.UsageMeterViewTests testUnmeteredCopyNamesTheActualProvider]' passed (0.000 seconds).
+Test Suite 'UsageMeterViewTests' passed at 2026-07-18 19:34:22.917.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.001 (0.001) seconds
+Test Suite 'WorkspaceFeedWireContractTests' started at 2026-07-18 19:34:22.917.
+Test Case '-[WorkspaceCoreTests.WorkspaceFeedWireContractTests testDecodesTheSnapshotTheCLIEmitsToday]' started.
+Test Case '-[WorkspaceCoreTests.WorkspaceFeedWireContractTests testDecodesTheSnapshotTheCLIEmitsToday]' passed (0.000 seconds).
+Test Suite 'WorkspaceFeedWireContractTests' passed at 2026-07-18 19:34:22.917.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.000 (0.000) seconds
+Test Suite 'WorkspaceStatusReducerTests' started at 2026-07-18 19:34:22.917.
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testAttentionComesOnlyFromUnresolvedTypedEvents]' started.
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testAttentionComesOnlyFromUnresolvedTypedEvents]' passed (0.000 seconds).
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testCanonicalSnapshotDigestsUseUTF16CodeUnitKeyOrder]' started.
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testCanonicalSnapshotDigestsUseUTF16CodeUnitKeyOrder]' passed (0.008 seconds).
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testMatchesEveryPrefixInSharedBunSwiftCorpus]' started.
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testMatchesEveryPrefixInSharedBunSwiftCorpus]' passed (0.010 seconds).
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testSnapshotVerificationAndResumeHighWater]' started.
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testSnapshotVerificationAndResumeHighWater]' passed (0.001 seconds).
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testVisibleCompositionUsesOnlyFreshReportProgressAndTypedAttention]' started.
+Test Case '-[WorkspaceCoreTests.WorkspaceStatusReducerTests testVisibleCompositionUsesOnlyFreshReportProgressAndTypedAttention]' passed (0.000 seconds).
+Test Suite 'WorkspaceStatusReducerTests' passed at 2026-07-18 19:34:22.937.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.020 (0.020) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 19:34:22.937.
+	 Executed 322 tests, with 1 test skipped and 0 failures (0 unexpected) in 17.823 (17.861) seconds
+Test Suite 'All tests' passed at 2026-07-18 19:34:22.938.
+	 Executed 322 tests, with 1 test skipped and 0 failures (0 unexpected) in 17.823 (17.863) seconds
+SWIFT_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 callconv=c symbols=6 build_id=4eb4c9f69ef85bf88de4fad52a4c1cb4f72a9e911a3fca285be00520a92d8a27
+GATE9-TRACE reachable-from-output action tags = ["26:SCROLLBAR"]
+B21_REPLY_SUPPRESSION answered_when_enabled_count=7
+B21_REPLY_SUPPRESSION vacuous_count=0

@@ -20,6 +20,7 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
 
         XCTAssertEqual(decoded.v, 1)
         let agent = try XCTUnwrap(decoded.agents?.first)
+        XCTAssertEqual(agent.id, "agent-indexer")
         XCTAssertEqual(agent.name, "indexer")
         XCTAssertEqual(agent.tool, "codex")
         XCTAssertEqual(agent.model, "gpt-5.4")

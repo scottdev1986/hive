@@ -777,9 +777,17 @@ export function createProgram(): Command {
     .command("workspace-feed", { hidden: true })
     .requiredOption("--port <number>", "daemon port")
     .requiredOption("--instance-id <id>", "expected Hive instance identity")
-    .action(async (options: { port: string; instanceId: string }) => {
+    .requiredOption("--workspace-session-id <id>", "Workspace launch identity")
+    .action(async (options: {
+      port: string;
+      instanceId: string;
+      workspaceSessionId: string;
+    }) => {
       await verifyDaemonInstance(parsePort(options.port), options.instanceId);
-      process.exitCode = await runWorkspaceFeedCli(parsePort(options.port));
+      process.exitCode = await runWorkspaceFeedCli(
+        parsePort(options.port),
+        options.workspaceSessionId,
+      );
     });
 
   // The Workspace master pane calls this private process boundary. Public

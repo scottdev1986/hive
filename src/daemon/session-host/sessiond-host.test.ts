@@ -170,6 +170,10 @@ const pendingBindings: TerminalHostBindingStore = {
     ...pendingBinding,
     createEvidence,
   }),
+  renewTerminalHostVisibility: (_locator, visibility, _lease) => ({
+    ...pendingBinding,
+    visibility,
+  }),
   recordTerminalHostTermination: (_locator, terminationAudit) => ({
     ...pendingBinding,
     terminationAudit,
@@ -816,6 +820,20 @@ describe("SessiondHost landed frozen operations", () => {
               return { schemaVersion: 1, entries: [transportInspection] };
             case "INSPECT":
               return { schemaVersion: 1, ...transportInspection };
+            case "VISIBILITY_RENEW":
+              expect(request.payload).toEqual({
+                schemaVersion: 1,
+                locator: brokerLocator,
+                ...brokerVisibility,
+                openTerminalRevision: "2",
+              });
+              return {
+                schemaVersion: 1,
+                locator: brokerLocator,
+                state: "active",
+                expiresAt: "2026-07-18T01:00:30.000Z",
+                openTerminalRevision: "2",
+              };
             default:
               throw new Error(`unexpected request: ${request.requestType}`);
           }
@@ -853,6 +871,25 @@ describe("SessiondHost landed frozen operations", () => {
         locatorSessionId: brokerLocator.sessionId,
         locatorGeneration: brokerLocator.generation,
       }]);
+      await expect(adapter.renewVisibility(brokerLocator, {
+        ...brokerVisibility,
+        openTerminalRevision: "2",
+      })).resolves.toEqual({
+        locator: brokerLocator,
+        state: "active",
+        expiresAt: "2026-07-18T01:00:30.000Z",
+        openTerminalRevision: "2",
+      });
+      expect(db.getTerminalHostBindingByLocator(brokerLocator)).toMatchObject({
+        visibility: { openTerminalRevision: "2" },
+        createEvidence: {
+          visibility: {
+            state: "visible",
+            openTerminalRevision: "2",
+            expiresAt: "2026-07-18T01:00:30.000Z",
+          },
+        },
+      });
       await expect(adapter.inspect(brokerLocator)).resolves.toEqual({
         schemaVersion: 1,
         locator: brokerLocator,
@@ -881,7 +918,12 @@ describe("SessiondHost landed frozen operations", () => {
           cellHeightPx: 20,
         },
         resources: {},
-        visibility: createdPayload.inspection.visibility,
+        visibility: {
+          state: "visible",
+          workspaceSessionId: brokerVisibility.workspaceSessionId,
+          openTerminalRevision: "2",
+          expiresAt: "2026-07-18T01:00:30.000Z",
+        },
         exit: null,
         survivors: [],
         evidenceAt: "2026-07-18T01:00:00.000Z",
@@ -896,7 +938,11 @@ describe("SessiondHost landed frozen operations", () => {
         initialInput: new Uint8Array(),
       }]);
       expect(brokers.flatMap((broker) => broker.requests)
-        .map((request) => request.requestType)).toEqual(["LIST", "INSPECT"]);
+        .map((request) => request.requestType)).toEqual([
+          "VISIBILITY_RENEW",
+          "LIST",
+          "INSPECT",
+        ]);
     } finally {
       db.close();
       await rm(directory, { recursive: true, force: true });

@@ -228,8 +228,9 @@ async function assertExpiryTearsDownExactTree(host: NeutralVisibilityHostFixture
   expect(replayed.lease.state).toBe("expired");
 }
 
-async function assertExpirySweepIsolatesTerminationErrors(): Promise<void> {
-  const host = new NeutralVisibilityHostFixture();
+async function assertExpirySweepIsolatesTerminationErrors(
+  host: NeutralVisibilityHostFixture,
+): Promise<void> {
   const identity = source("source-p-sweep", 6110, "6110:100");
   host.publishSnapshot({
     source: identity,
@@ -276,6 +277,30 @@ async function assertExpirySweepIsolatesTerminationErrors(): Promise<void> {
     reason: "duplicate-session-owner",
     createInvoked: false,
   });
+}
+
+async function assertCreateRejectionsAreSticky(
+  host: NeutralVisibilityHostFixture,
+): Promise<void> {
+  const identity = source("source-sticky", 6111, "6111:100");
+  host.publishSnapshot({
+    source: identity,
+    inventoryRevision: "2",
+    representedSessionKeys: ["visible-sticky"],
+  });
+  const rejected = await host.create({
+    terminal: terminal("visible-sticky", "sticky-idempotency"),
+    visibility: visibility(identity, "1"),
+  });
+  expect(rejected).toMatchObject({ state: "rejected", reason: "stale-revision" });
+  expect(await host.create({
+    terminal: terminal("visible-sticky", "sticky-idempotency"),
+    visibility: visibility(identity, "2"),
+  })).toEqual(rejected);
+  expect((await host.create({
+    terminal: terminal("visible-sticky", "corrected-idempotency"),
+    visibility: visibility(identity, "2"),
+  })).state).toBe("created");
 }
 
 async function assertIncompleteEvidenceStaysUnknown(
@@ -381,6 +406,8 @@ describe("neutral visibility fixture freeze L–S with mutation controls", () =>
     ["Q incomplete evidence stays unknown", assertIncompleteEvidenceStaysUnknown, "claim-incomplete-evidence"],
     ["R duplicate source ownership fails closed", assertDuplicateOwnershipFailsClosed, "allow-duplicate-owner"],
     ["S renewal fences the exact session generation", assertRenewalFencesSessionGeneration, "ignore-session-generation"],
+    ["P2 expiry sweep isolates teardown errors", assertExpirySweepIsolatesTerminationErrors, "abort-sweep-on-teardown-failure"],
+    ["T create rejections are sticky", assertCreateRejectionsAreSticky, "do-not-cache-create-rejection"],
   ];
 
   for (const [name, assertion, fault] of cases) {
@@ -390,30 +417,4 @@ describe("neutral visibility fixture freeze L–S with mutation controls", () =>
     });
   }
 
-  test("P: one throwing expiry teardown becomes unknown and does not skip later leases", async () => {
-    await assertExpirySweepIsolatesTerminationErrors();
-  });
-
-  test("create rejections are sticky for one idempotency pair", async () => {
-    const host = new NeutralVisibilityHostFixture();
-    const identity = source("source-sticky", 6111, "6111:100");
-    host.publishSnapshot({
-      source: identity,
-      inventoryRevision: "2",
-      representedSessionKeys: ["visible-sticky"],
-    });
-    const rejected = await host.create({
-      terminal: terminal("visible-sticky", "sticky-idempotency"),
-      visibility: visibility(identity, "1"),
-    });
-    expect(rejected).toMatchObject({ state: "rejected", reason: "stale-revision" });
-    expect(await host.create({
-      terminal: terminal("visible-sticky", "sticky-idempotency"),
-      visibility: visibility(identity, "2"),
-    })).toEqual(rejected);
-    expect((await host.create({
-      terminal: terminal("visible-sticky", "corrected-idempotency"),
-      visibility: visibility(identity, "2"),
-    })).state).toBe("created");
-  });
 });

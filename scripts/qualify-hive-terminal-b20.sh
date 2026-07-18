@@ -262,7 +262,35 @@ case "$public_probe_import_status" in
     exit 1
     ;;
   1)
-    printf 'imports=AppKit,Darwin,Foundation,HiveTerminalKit\n' \
+    observed_imports_file="$EVIDENCE/public-probe-imports.observed.txt"
+    if /usr/bin/grep -R -h -E '^[[:space:]]*import[[:space:]]+[A-Za-z_][A-Za-z0-9_]*' \
+      "$ROOT/workspace/Tests/HiveTerminalB20Probe" \
+      >"$observed_imports_file"; then
+      observed_import_status=0
+    else
+      observed_import_status=$?
+    fi
+    case "$observed_import_status" in
+      0) ;;
+      1)
+        echo "public B2.0 probe import observer found no imports" >&2
+        exit 1
+        ;;
+      *)
+        echo "public B2.0 probe import observer failed with status $observed_import_status" >&2
+        exit 1
+        ;;
+    esac
+    observed_imports=$(
+      /usr/bin/sed -E 's/^[[:space:]]*import[[:space:]]+//' "$observed_imports_file" \
+        | /usr/bin/sort -u \
+        | /usr/bin/paste -sd, -
+    )
+    if [[ -z "$observed_imports" ]]; then
+      echo "public B2.0 probe import observer produced an empty attestation" >&2
+      exit 1
+    fi
+    printf 'imports=%s\n' "$observed_imports" \
       >"$EVIDENCE/public-probe-import-audit.txt"
     ;;
   *)

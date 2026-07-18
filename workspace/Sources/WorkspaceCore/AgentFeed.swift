@@ -1,11 +1,45 @@
 import Foundation
 
+public struct AgentSessionSubject: Equatable, Codable {
+    public let kind: String
+    public let agentId: String?
+
+    public init(kind: String, agentId: String? = nil) {
+        self.kind = kind
+        self.agentId = agentId
+    }
+}
+
+public struct AgentSessionLocator: Equatable, Codable {
+    public let schemaVersion: Int
+    public let instanceId: String
+    public let subject: AgentSessionSubject
+    public let generation: Int
+    public let sessionId: String
+    public let hostKind: String
+    public let engineBuildId: String?
+
+    public init(schemaVersion: Int = 1, instanceId: String,
+                subject: AgentSessionSubject, generation: Int,
+                sessionId: String, hostKind: String,
+                engineBuildId: String?) {
+        self.schemaVersion = schemaVersion
+        self.instanceId = instanceId
+        self.subject = subject
+        self.generation = generation
+        self.sessionId = sessionId
+        self.hostKind = hostKind
+        self.engineBuildId = engineBuildId
+    }
+}
+
 /// One agent as reported by `hive workspace-feed` (NDJSON, one snapshot per
 /// line: `{"v":1,"agents":[...]}`). Decoding is deliberately tolerant: only
 /// `name` is required, unknown fields are ignored, and an absent or unreadable
 /// status stays `unknown` — the feed contract may grow without making an agent
 /// look healthy without evidence.
 public struct AgentSnapshot: Equatable, Decodable {
+    public let id: String?
     public let name: String
     public let tool: String?
     public let model: String?
@@ -15,11 +49,13 @@ public struct AgentSnapshot: Equatable, Decodable {
     public let contextPct: Double?
     /// ISO datetime; present means the agent is closed and must not get a pane.
     public let closedAt: String?
+    public let sessionLocator: AgentSessionLocator?
 
-    public init(name: String, tool: String? = nil, model: String? = nil,
+    public init(id: String? = nil, name: String, tool: String? = nil, model: String? = nil,
                 status: String = "working", taskDescription: String? = nil,
                 tmuxSession: String? = nil, contextPct: Double? = nil,
-                closedAt: String? = nil) {
+                closedAt: String? = nil, sessionLocator: AgentSessionLocator? = nil) {
+        self.id = id
         self.name = name
         self.tool = tool
         self.model = model
@@ -28,14 +64,17 @@ public struct AgentSnapshot: Equatable, Decodable {
         self.tmuxSession = tmuxSession
         self.contextPct = contextPct
         self.closedAt = closedAt
+        self.sessionLocator = sessionLocator
     }
 
     private enum CodingKeys: String, CodingKey {
-        case name, tool, model, status, taskDescription, tmuxSession, contextPct, closedAt
+        case id, name, tool, model, status, taskDescription, tmuxSession, contextPct
+        case closedAt, sessionLocator
     }
 
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
+        id = try? container.decodeIfPresent(String.self, forKey: .id)
         name = try container.decode(String.self, forKey: .name)
         tool = try? container.decodeIfPresent(String.self, forKey: .tool)
         model = try? container.decodeIfPresent(String.self, forKey: .model)
@@ -44,6 +83,30 @@ public struct AgentSnapshot: Equatable, Decodable {
         tmuxSession = try? container.decodeIfPresent(String.self, forKey: .tmuxSession)
         contextPct = try? container.decodeIfPresent(Double.self, forKey: .contextPct)
         closedAt = try? container.decodeIfPresent(String.self, forKey: .closedAt)
+        sessionLocator = try? container.decodeIfPresent(
+            AgentSessionLocator.self, forKey: .sessionLocator)
+    }
+}
+
+public enum WorkspaceTerminalVisibilityState: String, Equatable, Codable {
+    case pending, attaching, live, reconnecting, closing, exited, failed
+}
+
+public struct WorkspaceVisibleTerminal: Equatable, Encodable {
+    public let agentId: String
+    public let agentName: String
+    public let locator: AgentSessionLocator
+    public let state: WorkspaceTerminalVisibilityState
+}
+
+public struct WorkspaceVisibilityInventory: Equatable, Encodable {
+    public let schemaVersion = 1
+    public let inventoryRevision: String
+    public let terminals: [WorkspaceVisibleTerminal]
+
+    public init(inventoryRevision: String, terminals: [WorkspaceVisibleTerminal]) {
+        self.inventoryRevision = inventoryRevision
+        self.terminals = terminals
     }
 }
 

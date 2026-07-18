@@ -46,16 +46,20 @@ struct LaunchConfig {
 
     /// The feed subprocess invocation: the override binary verbatim, or
     /// `<hive> workspace-feed`, always with the daemon port appended.
-    var feedInvocation: (executable: String, arguments: [String], environment: [String: String])? {
+    func feedInvocation(
+        workspaceSessionID: String
+    ) -> (executable: String, arguments: [String], environment: [String: String])? {
         guard let port, let instanceID, let instanceHome else { return nil }
         var environment = ProcessInfo.processInfo.environment
         environment["HIVE_HOME"] = instanceHome
         if let feedOverride {
-            return (feedOverride, ["--port", String(port), "--instance-id", instanceID], environment)
+            return (feedOverride, ["--port", String(port), "--instance-id", instanceID,
+                                   "--workspace-session-id", workspaceSessionID], environment)
         }
         guard let hivePath else { return nil }
         return (hivePath, ["workspace-feed", "--port", String(port),
-                           "--instance-id", instanceID], environment)
+                           "--instance-id", instanceID,
+                           "--workspace-session-id", workspaceSessionID], environment)
     }
 
     static func parse(_ arguments: [String]) -> LaunchConfig {

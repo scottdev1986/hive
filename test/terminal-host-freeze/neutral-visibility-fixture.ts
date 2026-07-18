@@ -32,7 +32,9 @@ export type VisibilityFreezeFault =
   | "never-expire"
   | "claim-incomplete-evidence"
   | "allow-duplicate-owner"
-  | "ignore-session-generation";
+  | "ignore-session-generation"
+  | "abort-sweep-on-teardown-failure"
+  | "do-not-cache-create-rejection";
 
 type Snapshot = {
   source: VisibilitySourceIdentity;
@@ -125,7 +127,9 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
         session: null,
         lease: null,
       };
-      this.createResults.set(idempotency, result);
+      if (this.fault !== "do-not-cache-create-rejection") {
+        this.createResults.set(idempotency, result);
+      }
       return result;
     }
 
@@ -315,6 +319,7 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
         idempotencyKey: `visibility-expiry-${lease.session.incarnation}`,
       });
     } catch (error) {
+      if (this.fault === "abort-sweep-on-teardown-failure") throw error;
       result = {
         state: "unknown",
         exit: null,

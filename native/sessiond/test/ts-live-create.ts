@@ -17,7 +17,11 @@ import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "../../../src/daemon/session-host/hive-terminal-host";
-import { SessiondHost } from "../../../src/daemon/session-host/sessiond-host";
+import {
+  SessiondHost,
+  SessiondWireError,
+} from "../../../src/daemon/session-host/sessiond-host";
+import { WorkspaceVisibilityAuthority } from "../../../src/daemon/session-host/workspace-visibility";
 import { HiveSpawner } from "../../../src/daemon/spawner-impl";
 import { stopSessiondAgentSession } from "../../../src/daemon/teardown";
 import {
@@ -155,7 +159,24 @@ async function killExactProcess(pid: number, startToken: string): Promise<void> 
   throw new Error(`owned sessiond process ${pid} survived SIGKILL`);
 }
 
-test("TypeScript opts one agent into a real DirectHost while tmux remains default", async () => {
+async function waitForExactProcessAbsence(
+  pid: number,
+  startToken: string,
+  timeoutMs = 25_000,
+): Promise<void> {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    try {
+      if (macProcessIdentity(pid).startToken !== startToken) return;
+    } catch {
+      return;
+    }
+    await Bun.sleep(20);
+  }
+  throw new Error(`owned sessiond process ${pid} outlived visibility expiry`);
+}
+
+test("TypeScript gates a real DirectHost and publisher death expires its tree", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
   // Keep runtime/sessiond/broker.sock below macOS's AF_UNIX path limit.
   const home = await mkdtemp("/tmp/hsd.");
@@ -218,6 +239,12 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
         const db = new HiveDatabase(join(home, "hive.db"));
         let spawnedHost: { pid: number; startToken: string } | null = null;
         let spawnedProvider: { pid: number; startToken: string } | null = null;
+        const workspacePublisher = Bun.spawn(["/bin/sleep", "60"], {
+          stdin: "ignore",
+          stdout: "ignore",
+          stderr: "ignore",
+        });
+        const workspace = macProcessIdentity(workspacePublisher.pid);
 
         try {
           const host = new SessiondHost({
@@ -228,13 +255,23 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
           });
           const adapter = new HiveTerminalHostAdapter(host, db, handshake.instanceId);
           const engineBuildId = await host.discoverEngineBuildId();
-          const workspace = macProcessIdentity(process.pid);
           const visibility = {
             workspaceSessionId: "workspace-sessiond-live-harness",
-            workspacePid: process.pid,
+            workspacePid: workspacePublisher.pid,
             workspaceStartToken: workspace.startToken,
             openTerminalRevision: "1",
           };
+          const workspaceVisibility = new WorkspaceVisibilityAuthority({
+            expectedInstanceId: handshake.instanceId,
+            observeProcess: (pid) => {
+              try {
+                return macProcessIdentity(pid);
+              } catch {
+                return null;
+              }
+            },
+            discoverEngineBuildId: () => host.discoverEngineBuildId(),
+          });
 
           const tmux = new FakeTmux();
           const stopSpawnedSession = async (agent: AgentRecord) => {
@@ -271,10 +308,10 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
             tmux,
             sessiond: {
               terminalHost: adapter,
-              admit: async ({ agentName }) =>
-                agentName === "maya"
-                  ? { engineBuildId, visibility }
-                  : null,
+              prepare: (candidate) => candidate.agentName === "maya"
+                ? workspaceVisibility.prepare()
+                : Promise.resolve(null),
+              admit: (candidate) => workspaceVisibility.admit(candidate),
             },
             stopSession: stopSpawnedSession,
             createWorktree: async (_root, name, slug) => {
@@ -289,6 +326,29 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
             sleep: async () => {
               for (const agent of db.listAgents()) {
                 if (agent.status === "spawning") {
+                  const locator = requireSessiondAgentLocator(agent);
+                  if (workspaceVisibility.currentSnapshot() === null) {
+                    expect(workspaceVisibility.publish({
+                      schemaVersion: 1,
+                      source: {
+                        sessionId: visibility.workspaceSessionId,
+                        process: {
+                          processId: visibility.workspacePid,
+                          startToken: visibility.workspaceStartToken,
+                        },
+                      },
+                      inventoryRevision: visibility.openTerminalRevision,
+                      terminals: [{
+                        agentId: agent.id,
+                        agentName: agent.name,
+                        locator,
+                        state: "pending",
+                      }],
+                    })).toEqual({
+                      state: "accepted",
+                      inventoryRevision: visibility.openTerminalRevision,
+                    });
+                  }
                   db.insertAgent({ ...agent, status: "working" });
                 }
               }
@@ -382,6 +442,56 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
           expect(neutralReadback.session).toEqual(neutralSession);
           expect(neutralReadback.lifecycle).toBe("running");
 
+          const wrongToken = adapter.renewVisibility(sessiondLocator, {
+            ...visibility,
+            workspaceStartToken: "0:0",
+            openTerminalRevision: "2",
+          }).catch((error) => error);
+          await expect(wrongToken).resolves.toBeInstanceOf(SessiondWireError);
+          await expect(wrongToken).resolves.toMatchObject({ code: "UNAUTHENTICATED" });
+          expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility)
+            .toEqual(visibility);
+
+          const stale = adapter.renewVisibility(sessiondLocator, {
+            ...visibility,
+            openTerminalRevision: "0",
+          }).catch((error) => error);
+          await expect(stale).resolves.toBeInstanceOf(SessiondWireError);
+          await expect(stale).resolves.toMatchObject({ code: "GENERATION_MISMATCH" });
+          expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.visibility)
+            .toEqual(visibility);
+
+          const renewedVisibility = {
+            ...visibility,
+            openTerminalRevision: "2",
+          };
+          const renewed = await adapter.renewVisibility(
+            sessiondLocator,
+            renewedVisibility,
+          );
+          expect(renewed).toMatchObject({
+            locator: sessiondLocator,
+            state: "active",
+            openTerminalRevision: "2",
+          });
+          expect(Date.parse(renewed.expiresAt)).toBeGreaterThan(Date.now());
+          expect(db.getTerminalHostBindingByLocator(sessiondLocator)).toMatchObject({
+            visibility: renewedVisibility,
+            createEvidence: {
+              visibility: {
+                state: "visible",
+                openTerminalRevision: "2",
+                expiresAt: renewed.expiresAt,
+              },
+            },
+          });
+          expect((await adapter.inspect(sessiondLocator)).visibility).toEqual({
+            state: "visible",
+            workspaceSessionId: visibility.workspaceSessionId,
+            openTerminalRevision: "2",
+            expiresAt: renewed.expiresAt,
+          });
+
           const tmuxAgent = await spawner.spawn({
             task: "Exercise the default tmux backend",
             category: "complex_coding",
@@ -397,14 +507,18 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
             ),
           ).toHaveLength(1);
 
-          const stopped = await stopSpawnedSession(sessiondAgent);
-          expect(stopped.survivors).toEqual([]);
-          const terminated = await adapter.inspect(sessiondLocator);
-          expect(terminated.presence).not.toBe("present");
-          expect(
-            db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit,
-          ).toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
+          process.kill(workspacePublisher.pid, "SIGKILL");
+          await workspacePublisher.exited;
+          await Promise.all([
+            waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
+            waitForExactProcessAbsence(spawnedProvider.pid, spawnedProvider.startToken),
+          ]);
+          const expired = await adapter.inspect(sessiondLocator);
+          expect(expired.presence).not.toBe("present");
+          expect(expired.visibility.state).toBe("expired");
         } finally {
+          await killExactProcess(workspacePublisher.pid, workspace.startToken)
+            .catch(() => undefined);
           if (spawnedProvider !== null) {
             await killExactProcess(
               spawnedProvider.pid,
@@ -440,4 +554,4 @@ test("TypeScript opts one agent into a real DirectHost while tmux remains defaul
       await rm(home, { recursive: true, force: true });
     }
   }
-}, 30_000);
+}, 45_000);

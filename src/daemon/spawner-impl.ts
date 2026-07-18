@@ -259,6 +259,12 @@ export type CredentialIssuer = (
 
 export interface SessiondSpawnAdmission {
   terminalHost: Pick<HiveTerminalHostAdapter, "create" | "inspect">;
+  /** Availability only: reserves the engine identity before the new database
+   * row lets Workspace render the exact pending locator. */
+  prepare?(candidate: Readonly<{
+    agentId: string;
+    agentName: string;
+  }>): Promise<Readonly<{ engineBuildId: string }> | null>;
   /** Idempotent for one candidate: selection and the final create gate both
    * resolve the Workspace-owned evidence instead of caching it in the daemon. */
   admit(candidate: Readonly<{
@@ -269,6 +275,9 @@ export interface SessiondSpawnAdmission {
     visibility: HiveTerminalPolicy["visibility"];
   }> | null>;
 }
+
+const SESSIOND_VISIBILITY_WAIT_ATTEMPTS = 100;
+const SESSIOND_VISIBILITY_WAIT_MILLISECONDS = 100;
 
 /**
  * The only context-window evidence the catalogs publish today: Claude's
@@ -847,6 +856,24 @@ export class HiveSpawner implements Spawner {
       throw new Error(`Agent ${record.id} sessiond engine admission changed`);
     }
     return policy;
+  }
+
+  private async awaitInitialSessiondPolicy(record: AgentRecord): Promise<void> {
+    for (let attempt = 0; attempt < SESSIOND_VISIBILITY_WAIT_ATTEMPTS; attempt += 1) {
+      const policy = await this.dependencies.sessiond?.admit({
+        agentId: record.id,
+        agentName: record.name,
+      }) ?? null;
+      if (policy !== null) {
+        const locator = requireSessiondAgentLocator(record);
+        if (policy.engineBuildId !== locator.engineBuildId) {
+          throw new Error(`Agent ${record.id} sessiond engine admission changed`);
+        }
+        return;
+      }
+      await this.wait(SESSIOND_VISIBILITY_WAIT_MILLISECONDS);
+    }
+    throw new Error(`Agent ${record.id} never became visible in the Workspace inventory`);
   }
 
   private requireSessiondHost(
@@ -2133,10 +2160,14 @@ export class HiveSpawner implements Spawner {
     // reader, fixed there the same way.
     const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
     const agentId = crypto.randomUUID();
-    const sessiondPolicy = await this.dependencies.sessiond?.admit({
+    const sessiondCandidate = this.dependencies.sessiond;
+    const preparedSessiond = await sessiondCandidate?.prepare?.({
       agentId,
       agentName: name,
-    }) ?? null;
+    });
+    const sessiondPolicy = preparedSessiond === undefined
+      ? await sessiondCandidate?.admit({ agentId, agentName: name }) ?? null
+      : preparedSessiond;
     const sessionLocator = sessiondPolicy === null
       ? mintAgentTmuxSessionLocator(agentId)
       : {
@@ -2177,6 +2208,9 @@ export class HiveSpawner implements Spawner {
     });
 
     try {
+      if (preparedSessiond !== undefined && preparedSessiond !== null) {
+        await this.awaitInitialSessiondPolicy(record);
+      }
       const assignment = this.dependencies.assignments?.open(
         record.id,
         record.createdAt,

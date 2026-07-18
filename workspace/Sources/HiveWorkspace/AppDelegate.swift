@@ -43,6 +43,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// cannot dismiss it — the instance has to cancel it by hand on the way
     /// out. Weak, and per-instance: nothing here outlives this process.
     private weak var trackingMenu: NSMenu?
+    private let workspaceSessionID = UUID().uuidString
 
     init(config: LaunchConfig) {
         self.config = config
@@ -98,6 +99,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         controller.onStateChange = { [weak self] in
             self?.projectSwitcher.refresh()
+            self?.publishVisibility()
         }
         attentionCenter.activateHandler = { [weak controller] _, paneID in
             controller?.window?.makeKeyAndOrderFront(nil)
@@ -159,7 +161,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// The feed is a long-lived subprocess printing status snapshots. It dies
     /// with the app (`retireFeed()` below).
     private func startFeed() {
-        guard let invocation = config.feedInvocation else { return }
+        guard let invocation = config.feedInvocation(
+            workspaceSessionID: workspaceSessionID
+        ) else { return }
         let feed = FeedClient(executable: invocation.executable,
                               arguments: invocation.arguments,
                               environment: invocation.environment)
@@ -169,6 +173,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             self?.feedRestartDelay = 1
             self?.feedRestartsLeft = AppDelegate.feedRestartLimit
             self?.controller?.applyFeed(agents, orchestrator: orchestrator)
+            self?.publishVisibility()
         }
         feed.onAutonomy = { [weak self] autonomy in
             self?.currentAutonomy = autonomy
@@ -191,10 +196,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
     }
 
+    private func publishVisibility() {
+        guard let controller, let feedClient else { return }
+        do {
+            try feedClient.publishVisibility(controller.state.visibilityInventory())
+        } catch {
+            NSLog("workspace visibility publish failed: %@", error.localizedDescription)
+        }
+    }
+
     /// A live workspace must not retain stale status after a transient feed
     /// exit. Retries are bounded so a persistent failure becomes visible.
     private func scheduleFeedRestart() {
-        guard !feedRetired, config.feedInvocation != nil else { return }
+        guard !feedRetired,
+              config.feedInvocation(workspaceSessionID: workspaceSessionID) != nil else { return }
         guard feedRestartsLeft > 0 else {
             terminateAfterFeedFailure()
             return

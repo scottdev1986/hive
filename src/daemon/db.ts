@@ -22,6 +22,7 @@ import {
   type HookEvent,
   type Hv1CapabilityRecord,
 } from "../schemas";
+import { VisibilityLeaseSchema } from "../schemas/session-protocol";
 import {
   mintTmuxSessionLocator,
   sessionInstanceId,
@@ -1063,6 +1064,51 @@ export class HiveDatabase {
         binding.locator.generation,
       );
       return { ...binding, createEvidence: value };
+    });
+  }
+
+  renewTerminalHostVisibility(
+    locator: HiveTerminalBinding["locator"],
+    request: HiveTerminalBinding["visibility"],
+    lease: z.infer<typeof VisibilityLeaseSchema>,
+  ): HiveTerminalBinding {
+    const nextVisibility = HiveTerminalBindingSchema.unwrap().shape.visibility.parse(request);
+    const parsedLease = VisibilityLeaseSchema.parse(lease);
+    const nextLease = HiveTerminalCreateEvidenceSchema.unwrap().shape.visibility.parse({
+      state: "visible",
+      workspaceSessionId: nextVisibility.workspaceSessionId,
+      openTerminalRevision: parsedLease.openTerminalRevision,
+      expiresAt: parsedLease.expiresAt,
+    });
+    const expectedLocator = HiveTerminalBindingSchema.unwrap().shape.locator.parse(
+      parsedLease.locator,
+    );
+    return this.transaction(() => {
+      const binding = this.getTerminalHostBindingByLocator(locator);
+      if (binding === null) {
+        throw new Error("terminal host locator binding does not exist");
+      }
+      if (
+        binding.createEvidence === undefined ||
+        JSON.stringify(expectedLocator) !== JSON.stringify(binding.locator) ||
+        nextLease.workspaceSessionId !== nextVisibility.workspaceSessionId ||
+        nextLease.openTerminalRevision !== nextVisibility.openTerminalRevision
+      ) {
+        throw new TerminalHostBindingConflictError();
+      }
+      const createEvidence = { ...binding.createEvidence, visibility: nextLease };
+      this.database.query(`
+        UPDATE terminal_host_bindings
+        SET visibilityJson = ?, createEvidenceJson = ?
+        WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
+      `).run(
+        JSON.stringify(nextVisibility),
+        JSON.stringify(createEvidence),
+        binding.locator.instanceId,
+        binding.locator.sessionId,
+        binding.locator.generation,
+      );
+      return { ...binding, visibility: nextVisibility, createEvidence };
     });
   }
 

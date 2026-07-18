@@ -28,6 +28,11 @@
 import type { AgentRecord } from "../schemas";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import type { OrchestratorStatus } from "../daemon/orchestrator-status";
+import { macProcessIdentity } from "../daemon/lifecycle";
+import {
+  WorkspaceVisibilityInventoryInputSchema,
+  type WorkspaceVisibilityInventoryInput,
+} from "../daemon/session-host/workspace-visibility";
 import { fetchAgentStatus } from "./mcp";
 import { operatorFetch } from "./credential";
 
@@ -55,6 +60,49 @@ export interface WorkspaceFeedDeps {
   readonly signal?: AbortSignal;
   /** Overrides FEED_STATUS_TIMEOUT_MS; tests use a short one. */
   readonly statusTimeoutMs?: number;
+}
+
+export interface WorkspaceVisibilityPublishDeps {
+  readonly observeProcess?: (pid: number) => Readonly<{ startToken: string }>;
+  readonly post?: typeof operatorFetch;
+}
+
+/** Publishes exactly one Workspace-authored full inventory with the feed's
+ * operator credential. The daemon independently re-reads the same PID/token. */
+export async function publishWorkspaceVisibility(
+  port: number,
+  workspaceSessionId: string,
+  workspacePid: number,
+  inventory: WorkspaceVisibilityInventoryInput,
+  deps: WorkspaceVisibilityPublishDeps = {},
+): Promise<void> {
+  const parsed = WorkspaceVisibilityInventoryInputSchema.parse(inventory);
+  const processIdentity = (deps.observeProcess ?? macProcessIdentity)(workspacePid);
+  const response = await (deps.post ?? operatorFetch)(
+    `http://127.0.0.1:${port}/workspace-visibility`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        ...parsed,
+        source: {
+          sessionId: workspaceSessionId,
+          process: {
+            processId: workspacePid,
+            startToken: processIdentity.startToken,
+          },
+        },
+      }),
+    },
+  );
+  if (response.ok) return;
+  const body = await response.json().catch(() => null) as
+    | { error?: unknown; diagnostic?: unknown }
+    | null;
+  const detail = typeof body?.diagnostic === "string"
+    ? body.diagnostic
+    : typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
+  throw new Error(`workspace visibility publish failed: ${detail}`);
 }
 
 /** `GET /autonomy` with the operator credential: the live dial, or null when
@@ -212,19 +260,54 @@ export async function runWorkspaceFeed(
 /** Process wiring for the hidden CLI command: SIGINT, SIGTERM, and the app
  * closing its end of stdin all stop the loop through one AbortController, so
  * every exit path stops cleanly. */
-export async function runWorkspaceFeedCli(port: number): Promise<number> {
+export async function runWorkspaceFeedCli(
+  port: number,
+  workspaceSessionId: string,
+): Promise<number> {
   const controller = new AbortController();
   const stop = (): void => controller.abort();
+  // Capture the launching Workspace once. If it dies, this child may be
+  // reparented; a later process.ppid must never become a new visibility source.
+  const workspacePid = process.ppid;
+  let input = Buffer.alloc(0);
+  let publications = Promise.resolve();
+  const publishLine = (line: Uint8Array): void => {
+    if (line.byteLength === 0) return;
+    publications = publications.then(async () => {
+      const value = WorkspaceVisibilityInventoryInputSchema.parse(
+        JSON.parse(Buffer.from(line).toString("utf8")),
+      );
+      await publishWorkspaceVisibility(port, workspaceSessionId, workspacePid, value);
+    }).catch((error: unknown) => {
+      process.stdout.write(`${JSON.stringify({
+        v: FEED_VERSION,
+        error: error instanceof Error ? error.message : String(error),
+      })}\n`);
+    });
+  };
+  const consumeInput = (chunk: Buffer | string): void => {
+    input = Buffer.concat([input, typeof chunk === "string" ? Buffer.from(chunk) : chunk]);
+    let newline = input.indexOf(0x0a);
+    while (newline >= 0) {
+      publishLine(input.subarray(0, newline));
+      input = input.subarray(newline + 1);
+      newline = input.indexOf(0x0a);
+    }
+  };
   process.on("SIGINT", stop);
   process.on("SIGTERM", stop);
   process.stdin.resume();
+  process.stdin.on("data", consumeInput);
   process.stdin.on("end", stop);
   process.stdin.on("error", stop);
   try {
     return await runWorkspaceFeed(port, { signal: controller.signal });
   } finally {
+    if (input.byteLength > 0) publishLine(input);
+    await publications;
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
+    process.stdin.off("data", consumeInput);
     process.stdin.off("end", stop);
     process.stdin.off("error", stop);
     // A resumed stdin holds the event loop open; without this the process

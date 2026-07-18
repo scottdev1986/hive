@@ -55,6 +55,7 @@ export type Action =
   | "autonomy:write"
   | "routing-policy:read"
   | "routing-policy:write"
+  | "workspace-visibility:write"
   | "graphify:write";
 
 export interface RoleGrant {
@@ -88,6 +89,7 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   // Control Center and the user's own CLI edit it; an agent rewriting the
   // router that governs agents would be self-authorization.
   "routing-policy:read", "routing-policy:write",
+  "workspace-visibility:write",
   // Graphify is likewise the human's dial: opting a repo into a code-indexing
   // service (and the install that comes with it) is consent only the
   // operator's own CLI may express.

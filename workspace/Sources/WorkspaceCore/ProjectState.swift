@@ -18,6 +18,8 @@ public struct PaneState: Equatable {
     public var taskDescription: String?
     public var tmuxSession: String?
     public var contextPct: Double?
+    public var agentID: String?
+    public var sessionLocator: AgentSessionLocator?
     /// True once the feed reported `closedAt` (or dropped the agent): the pane
     /// is in its grace window and the UI will close it shortly.
     public var closePending: Bool
@@ -25,7 +27,9 @@ public struct PaneState: Equatable {
     public init(id: PaneID, kind: PaneKind, title: String, tool: String? = nil,
                 model: String? = nil, feedStatus: String, status: PaneStatus,
                 taskDescription: String? = nil, tmuxSession: String? = nil,
-                contextPct: Double? = nil, closePending: Bool = false) {
+                contextPct: Double? = nil, agentID: String? = nil,
+                sessionLocator: AgentSessionLocator? = nil,
+                closePending: Bool = false) {
         self.id = id
         self.kind = kind
         self.title = title
@@ -36,6 +40,8 @@ public struct PaneState: Equatable {
         self.taskDescription = taskDescription
         self.tmuxSession = tmuxSession
         self.contextPct = contextPct
+        self.agentID = agentID
+        self.sessionLocator = sessionLocator
         self.closePending = closePending
     }
 
@@ -100,11 +106,16 @@ public final class ProjectState {
     /// this the snapshot that lands a second after the X rebuilds the pane the
     /// user just closed.
     private var userClosed: Set<PaneID> = []
+    /// Close removal is scheduled only after a full feed confirms teardown.
+    /// A user's close request is visible as `closing` while the provider still
+    /// exists, but cannot remove its own visibility authority prematurely.
+    private var closeRemovalScheduled: Set<PaneID> = []
     /// A terminated root terminal is direct process evidence. Once observed,
     /// a delayed feed snapshot must not paint the dead root healthy again.
     /// A new ProjectState is created for every Workspace relaunch, so this
     /// latch naturally resets when a new root process is started.
     private var orchestratorChildExited = false
+    private var nextVisibilityRevision: UInt64 = 1
 
     public init(projectID: ProjectID, displayName: String,
                 layoutBounds: CGRect = CGRect(x: 0, y: 0, width: 1440, height: 900),
@@ -238,8 +249,52 @@ public final class ProjectState {
     /// The user closed this agent (the pane X, ⇧⌘W, or the accessibility
     /// action) and the daemon was asked to kill it. Its pane must not be rebuilt
     /// from the snapshots that arrive while the kill is in flight.
-    public func markUserClosed(_ paneID: PaneID) {
+    @discardableResult
+    public func markUserClosed(_ paneID: PaneID) -> [StateChange] {
         userClosed.insert(paneID)
+        return markClosePending(paneID, scheduleRemoval: false)
+    }
+
+    /** Full Workspace-owned terminal inventory. Every publication advances the
+     revision, including unchanged heartbeat re-attestations after reconnect. */
+    public func visibilityInventory() -> WorkspaceVisibilityInventory {
+        let terminals = panes.values.compactMap { pane -> WorkspaceVisibleTerminal? in
+            guard pane.kind == .agent,
+                  let agentID = pane.agentID,
+                  let locator = pane.sessionLocator,
+                  locator.hostKind == "sessiond",
+                  locator.subject.kind == "agent",
+                  locator.subject.agentId == agentID,
+                  locator.engineBuildId != nil else { return nil }
+            let visibilityState: WorkspaceTerminalVisibilityState
+            if pane.closePending {
+                visibilityState = .closing
+            } else if pane.feedStatus == "spawning" {
+                visibilityState = .pending
+            } else if pane.feedStatus == "dead" {
+                visibilityState = .exited
+            } else if case .failed = pane.status {
+                visibilityState = .failed
+            } else if case .disconnected = pane.status {
+                visibilityState = .reconnecting
+            } else {
+                visibilityState = .live
+            }
+            return WorkspaceVisibleTerminal(
+                agentId: agentID,
+                agentName: pane.title,
+                locator: locator,
+                state: visibilityState)
+        }.sorted { left, right in
+            left.agentId == right.agentId
+                ? left.locator.generation < right.locator.generation
+                : left.agentId < right.agentId
+        }
+        let inventory = WorkspaceVisibilityInventory(
+            inventoryRevision: String(nextVisibilityRevision),
+            terminals: terminals)
+        nextVisibilityRevision += 1
+        return inventory
     }
 
     /// The kill failed, so the agent is still alive and the user must see that:
@@ -305,7 +360,9 @@ public final class ProjectState {
             status: FeedStatusMap.paneStatus(for: agent.status),
             taskDescription: agent.taskDescription,
             tmuxSession: agent.tmuxSession,
-            contextPct: agent.contextPct)
+            contextPct: agent.contextPct,
+            agentID: agent.id,
+            sessionLocator: agent.sessionLocator)
         var changes: [StateChange] = []
         panes[paneID] = pane
         layout.insert(paneID, in: layoutBounds)
@@ -338,6 +395,11 @@ public final class ProjectState {
         pane.taskDescription = agent.taskDescription
         pane.tmuxSession = agent.tmuxSession
         pane.contextPct = agent.contextPct
+        pane.agentID = agent.id
+        pane.sessionLocator = agent.sessionLocator
+        if pane.closePending {
+            closeRemovalScheduled.remove(pane.id)
+        }
         pane.closePending = false // a live snapshot revives a pending close
 
         if statusWordChanged {
@@ -367,12 +429,21 @@ public final class ProjectState {
         return [.attentionChanged]
     }
 
-    private func markClosePending(_ paneID: PaneID) -> [StateChange] {
-        guard var pane = panes[paneID], !pane.closePending else { return [] }
-        pane.closePending = true
-        panes[paneID] = pane
-        // The final status border stays visible through the grace window.
-        return [.statusChanged(paneID), .paneClosePending(paneID)]
+    private func markClosePending(
+        _ paneID: PaneID,
+        scheduleRemoval: Bool = true
+    ) -> [StateChange] {
+        guard var pane = panes[paneID] else { return [] }
+        var changes: [StateChange] = []
+        if !pane.closePending {
+            pane.closePending = true
+            panes[paneID] = pane
+            changes.append(.statusChanged(paneID))
+        }
+        if scheduleRemoval, closeRemovalScheduled.insert(paneID).inserted {
+            changes.append(.paneClosePending(paneID))
+        }
+        return changes
     }
 
     // MARK: Sanitized switcher card
@@ -440,6 +511,7 @@ public final class ProjectState {
             layout.close(paneID, preferredMaster: orchestratorPane)
             panes.removeValue(forKey: paneID)
             acknowledged.remove(paneID)
+            closeRemovalScheduled.remove(paneID)
             attention.resolveAll(paneID: paneID, projectID: projectID)
             var changes: [StateChange] = [.paneRemoved(paneID), .layoutChanged, .attentionChanged]
             if orchestratorPane == paneID { orchestratorPane = nil }

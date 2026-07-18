@@ -33,6 +33,9 @@ import {
   MachineMutationCoordinator,
   type ProcessIdentityState,
 } from "./mutation-lease";
+import { mintAgentTmuxSessionLocator } from "./session-host/tmux-host";
+import { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
+import type { LandedTerminalHost } from "./session-host/sessiond-host";
 
 const home = mkdtempSync(join(tmpdir(), "hive-server-test-"));
 process.env.HIVE_HOME = home;
@@ -189,6 +192,181 @@ test("accepted selection CAS writes the ordinary preference; rejected and unrela
       mode: "auto",
     })).status).toBe(409);
     expect(persisted).toHaveLength(1);
+  } finally {
+    db.close();
+  }
+});
+
+test("only the operator may publish a live advancing Workspace inventory", async () => {
+  const db = new HiveDatabase(":memory:");
+  const agentId = "agent-visible";
+  const locator = {
+    ...mintAgentTmuxSessionLocator(agentId),
+    hostKind: "sessiond" as const,
+    engineBuildId: "engine-visible",
+  };
+  const visibility = new WorkspaceVisibilityAuthority({
+    expectedInstanceId: locator.instanceId,
+    observeProcess: (pid) => pid === 7301 ? { startToken: "7301:100" } : null,
+    discoverEngineBuildId: async () => "engine-visible",
+  });
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    workspaceVisibility: visibility,
+  });
+  const body = {
+    schemaVersion: 1,
+    source: {
+      sessionId: "workspace-visible",
+      process: { processId: 7301, startToken: "7301:100" },
+    },
+    inventoryRevision: "1",
+    terminals: [{
+      agentId,
+      agentName: "visible",
+      locator,
+      state: "pending",
+    }],
+  };
+  const request = (revision: string) => ({
+    method: "POST",
+    headers: { "content-type": "application/json" },
+    body: JSON.stringify({ ...body, inventoryRevision: revision }),
+  });
+  try {
+    expect((await actingAs(daemon, "maya", "writer")(
+      "http://hive/workspace-visibility",
+      request("1"),
+    )).status).toBe(403);
+    expect((await actingAs(daemon, "operator")(
+      "http://hive/workspace-visibility",
+      request("1"),
+    )).status).toBe(200);
+    expect((await actingAs(daemon, "operator")(
+      "http://hive/workspace-visibility",
+      request("1"),
+    )).status).toBe(409);
+    await expect(daemon.admitSessiondSpawn({ agentId, agentName: "visible" }))
+      .resolves.toMatchObject({
+        engineBuildId: "engine-visible",
+        visibility: { openTerminalRevision: "1" },
+      });
+  } finally {
+    db.close();
+  }
+});
+
+test("an accepted full inventory renews each exact completed sessiond binding", async () => {
+  const db = new HiveDatabase(":memory:");
+  const agentId = "agent-renewed";
+  const locator = {
+    ...mintAgentTmuxSessionLocator(agentId),
+    hostKind: "sessiond" as const,
+    engineBuildId: "engine-renewed",
+  };
+  const initialVisibility = {
+    workspaceSessionId: "workspace-renewed",
+    workspacePid: 7401,
+    workspaceStartToken: "7401:100",
+    openTerminalRevision: "1",
+  };
+  db.bindTerminalHostSession({ locator, visibility: initialVisibility });
+  db.completeTerminalHostSession(locator, {
+    expectedExecutable: "/bin/sh",
+    executableVerified: true,
+    verifiedProviderRoot: null,
+    geometry: {
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
+    },
+    visibility: {
+      state: "visible",
+      workspaceSessionId: initialVisibility.workspaceSessionId,
+      openTerminalRevision: "1",
+      expiresAt: "2026-07-18T12:00:15.000Z",
+    },
+  });
+  const renewals: unknown[] = [];
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected terminal-host operation");
+  };
+  const terminalHost: LandedTerminalHost = {
+    create: unsupported,
+    claimInput: unsupported,
+    submitInput: unsupported,
+    resize: unsupported,
+    inspect: unsupported,
+    list: async () => [],
+    terminate: unsupported,
+    renewVisibility: async (requestedLocator, request) => {
+      renewals.push({ locator: requestedLocator, request });
+      return {
+        locator: requestedLocator,
+        state: "active",
+        expiresAt: "2026-07-18T12:00:30.000Z",
+        openTerminalRevision: request.openTerminalRevision,
+      };
+    },
+  };
+  const visibility = new WorkspaceVisibilityAuthority({
+    expectedInstanceId: locator.instanceId,
+    observeProcess: (pid) => pid === 7401 ? { startToken: "7401:100" } : null,
+    discoverEngineBuildId: async () => "engine-renewed",
+  });
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    terminalHost,
+    workspaceVisibility: visibility,
+  });
+  try {
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/workspace-visibility",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schemaVersion: 1,
+          source: {
+            sessionId: initialVisibility.workspaceSessionId,
+            process: { processId: 7401, startToken: "7401:100" },
+          },
+          inventoryRevision: "2",
+          terminals: [{
+            agentId,
+            agentName: "renewed",
+            locator,
+            state: "live",
+          }],
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(await response.json()).toMatchObject({
+      state: "accepted",
+      renewals: { state: "complete", renewed: 1 },
+    });
+    expect(renewals).toEqual([{
+      locator,
+      request: { ...initialVisibility, openTerminalRevision: "2" },
+    }]);
+    expect(db.getTerminalHostBindingByLocator(locator)).toMatchObject({
+      visibility: { openTerminalRevision: "2" },
+      createEvidence: {
+        visibility: {
+          state: "visible",
+          openTerminalRevision: "2",
+          expiresAt: "2026-07-18T12:00:30.000Z",
+        },
+      },
+    });
   } finally {
     db.close();
   }

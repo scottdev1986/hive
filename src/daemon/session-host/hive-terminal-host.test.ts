@@ -179,6 +179,34 @@ class MemoryBindings implements TerminalHostBindingStore {
     return completed;
   }
 
+  renewTerminalHostVisibility(
+    locator: HiveTerminalBinding["locator"],
+    visibility: HiveTerminalBinding["visibility"],
+    lease: Parameters<TerminalHostBindingStore["renewTerminalHostVisibility"]>[2],
+  ): HiveTerminalBinding {
+    const index = this.values.findIndex((binding) =>
+      binding.locator.sessionId === locator.sessionId
+    );
+    if (index < 0 || this.values[index]!.createEvidence === undefined) {
+      throw new Error("missing completed binding");
+    }
+    const renewed = {
+      ...this.values[index]!,
+      visibility,
+      createEvidence: {
+        ...this.values[index]!.createEvidence!,
+        visibility: {
+          state: "visible" as const,
+          workspaceSessionId: visibility.workspaceSessionId,
+          openTerminalRevision: lease.openTerminalRevision,
+          expiresAt: lease.expiresAt,
+        },
+      },
+    };
+    this.values[index] = renewed;
+    return renewed;
+  }
+
   recordTerminalHostTermination(
     locator: HiveTerminalBinding["locator"],
     terminationAudit: NonNullable<HiveTerminalBinding["terminationAudit"]>,
@@ -207,12 +235,23 @@ class MemoryBindings implements TerminalHostBindingStore {
 }
 
 describe("HiveTerminalHostAdapter", () => {
+  const renewVisibility = async (
+    requestedLocator: typeof locator,
+    request: typeof visibility,
+  ) => ({
+    locator: requestedLocator,
+    state: "active" as const,
+    expiresAt: "2026-07-18T01:00:15.000Z",
+    openTerminalRevision: request.openTerminalRevision,
+  });
+
   test("projects bound neutral lifecycle evidence into the product contract", async () => {
     const bindings = new MemoryBindings();
     const unbound = { ...inspection, session: { key: "other", incarnation: "1" } };
     const terminateRequests: unknown[] = [];
     const directRequests: unknown[] = [];
     const host = {
+      renewVisibility,
       create: async (spec: SessionSpec, input: Uint8Array) => {
         expect(spec).toEqual(sessionSpec);
         expect(input).toEqual(new Uint8Array());
@@ -386,6 +425,7 @@ describe("HiveTerminalHostAdapter", () => {
     });
     const inspectedSessions: SessionRef[] = [];
     const host = {
+      renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
       submitInput: async () => ({
@@ -446,6 +486,7 @@ describe("HiveTerminalHostAdapter", () => {
       },
     };
     const host = {
+      renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
       submitInput: async () => ({
@@ -510,6 +551,7 @@ describe("HiveTerminalHostAdapter", () => {
   test("fails closed for missing, foreign, or mismatched bindings", async () => {
     const bindings = new MemoryBindings();
     const host = {
+      renewVisibility,
       create: async () => ({
         ...createResult,
         locator: { ...locator, sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000199" },

@@ -873,10 +873,16 @@ pub const GrantRegistration = struct {
     expires_mono_ns: u64,
 };
 
+pub const HostRenewalResult = union(enum) {
+    response: []u8,
+    failure: protocol.Failure,
+};
+
 pub const HostControl = struct {
     context: *anyopaque,
     adopt_fn: *const fn (*anyopaque, Locator, [32]u8, u64) ?AdoptionReadback,
     register_grant_fn: *const fn (*anyopaque, Locator, GrantRegistration) bool,
+    renew_visibility_fn: *const fn (*anyopaque, Locator, []const u8) HostRenewalResult,
     terminate_fn: *const fn (*anyopaque, Locator, TerminationCommand, HostProcessOwnership) TerminationReadback,
 
     pub fn adopt(self: HostControl, locator: Locator, secret: [32]u8, now_ns: u64) ?AdoptionReadback {
@@ -885,6 +891,14 @@ pub const HostControl = struct {
 
     pub fn registerGrant(self: HostControl, locator: Locator, grant: GrantRegistration) bool {
         return self.register_grant_fn(self.context, locator, grant);
+    }
+
+    pub fn renewVisibility(
+        self: HostControl,
+        locator: Locator,
+        payload: []const u8,
+    ) HostRenewalResult {
+        return self.renew_visibility_fn(self.context, locator, payload);
     }
 
     pub fn terminate(self: HostControl, locator: Locator, command: TerminationCommand) TerminationReadback {
@@ -1090,6 +1104,7 @@ pub const WireHostClient = struct {
             .context = self,
             .adopt_fn = adoptCallback,
             .register_grant_fn = registerGrantCallback,
+            .renew_visibility_fn = renewVisibilityCallback,
             .terminate_fn = terminateCallback,
         };
     }
@@ -1333,6 +1348,85 @@ pub const WireHostClient = struct {
         return parsed.value.schemaVersion == 1 and parsed.value.registered;
     }
 
+    fn renewalFailure(self: *WireHostClient, payload: []const u8) !protocol.Failure {
+        const ErrorPayload = struct {
+            schemaVersion: u8,
+            code: []const u8,
+            message: []const u8,
+            diagnosticId: ?[]const u8,
+        };
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.error_payload,
+            payload,
+        )) return error.InvalidHostResponsePayload;
+        var parsed = try std.json.parseFromSlice(ErrorPayload, self.allocator, payload, .{});
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1 or parsed.value.code.len > 64)
+            return error.InvalidHostResponsePayload;
+        var lower_storage: [64]u8 = undefined;
+        const lower = std.ascii.lowerString(
+            lower_storage[0..parsed.value.code.len],
+            parsed.value.code,
+        );
+        return .{
+            .code = std.meta.stringToEnum(protocol.WireError, lower) orelse
+                return error.InvalidHostResponsePayload,
+            .close_connection = false,
+        };
+    }
+
+    fn renewVisibility(
+        self: *WireHostClient,
+        locator: Locator,
+        payload: []const u8,
+    ) !HostRenewalResult {
+        if (!sameLocator(locator, self.expected_record.locator) or
+            !protocol.validateControlPayload(
+                self.allocator,
+                generated.wire_schema.visibility_renew_payload,
+                payload,
+            )) return error.InvalidHostRequest;
+        const stream = try self.connect();
+        defer stream.close();
+        try protocol.writeFrame(stream, .{
+            .minor = generated.protocol_minor,
+            .type_code = generated.frame_type.visibility_renew,
+            .flags = 0,
+            .payload_length = @intCast(payload.len),
+            .request_id = 2,
+            .stream_seq = 0,
+        }, payload);
+        const file: std.fs.File = .{ .handle = stream.handle };
+        const read = try protocol.readFrame(self.allocator, file.deprecatedReader());
+        const frame = switch (read) {
+            .frame => |frame| frame,
+            else => return error.InvalidHostResponse,
+        };
+        if (frame.header.request_id != 2 or
+            frame.header.flags & (generated.frame_flag.response | generated.frame_flag.final) !=
+                (generated.frame_flag.response | generated.frame_flag.final))
+        {
+            frame.deinit(self.allocator);
+            return error.InvalidHostResponseCorrelation;
+        }
+        if (frame.header.type_code == generated.frame_type.@"error") {
+            defer frame.deinit(self.allocator);
+            return .{ .failure = try self.renewalFailure(frame.payload) };
+        }
+        if (frame.header.type_code != generated.frame_type.renewed or
+            !protocol.validateControlPayload(
+                self.allocator,
+                generated.wire_schema.renewed_payload,
+                frame.payload,
+            ))
+        {
+            frame.deinit(self.allocator);
+            return error.InvalidHostResponsePayload;
+        }
+        return .{ .response = frame.payload };
+    }
+
     fn terminate(
         self: *WireHostClient,
         locator: Locator,
@@ -1443,6 +1537,18 @@ pub const WireHostClient = struct {
     ) bool {
         const self: *WireHostClient = @ptrCast(@alignCast(context));
         return self.registerGrant(locator, grant) catch false;
+    }
+
+    fn renewVisibilityCallback(
+        context: *anyopaque,
+        locator: Locator,
+        payload: []const u8,
+    ) HostRenewalResult {
+        const self: *WireHostClient = @ptrCast(@alignCast(context));
+        return self.renewVisibility(locator, payload) catch .{ .failure = .{
+            .code = .verification_unknown,
+            .close_connection = false,
+        } };
     }
 
     fn terminateCallback(
@@ -1721,6 +1827,35 @@ pub const Registry = struct {
         revision: u64,
         now_ns: u64,
     ) ?protocol.Failure {
+        if (self.validateVisibilityRenewal(
+            locator,
+            workspace_session_id,
+            revision,
+            now_ns,
+        )) |failure| return failure;
+        const result = self.lookup(locator).?;
+        const entry = switch (result) {
+            .failure => unreachable,
+            .entry => |entry| entry,
+        };
+        const expires_mono_ns = std.math.add(
+            u64,
+            now_ns,
+            generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
+        ) catch return .{ .code = .resource_exhausted, .close_connection = false };
+        entry.record.visibility.state = .visible;
+        entry.record.visibility.open_terminal_revision = revision;
+        entry.record.visibility.expires_mono_ns = expires_mono_ns;
+        return null;
+    }
+
+    pub fn validateVisibilityRenewal(
+        self: *Registry,
+        locator: Locator,
+        workspace_session_id: []const u8,
+        revision: u64,
+        now_ns: u64,
+    ) ?protocol.Failure {
         const result = self.lookup(locator) orelse return .{ .code = .not_found, .close_connection = false };
         const entry = switch (result) {
             .failure => |failure| return failure,
@@ -1733,14 +1868,6 @@ pub const Registry = struct {
             return .{ .code = .forbidden, .close_connection = false };
         if (revision < entry.record.visibility.open_terminal_revision)
             return .{ .code = .generation_mismatch, .close_connection = false };
-        const expires_mono_ns = std.math.add(
-            u64,
-            now_ns,
-            generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
-        ) catch return .{ .code = .resource_exhausted, .close_connection = false };
-        entry.record.visibility.state = .visible;
-        entry.record.visibility.open_terminal_revision = revision;
-        entry.record.visibility.expires_mono_ns = expires_mono_ns;
         return null;
     }
 
@@ -2943,6 +3070,8 @@ pub const ProductionBackend = struct {
             return self.inspect(allocator, payload);
         if (header.type_code == generated.frame_type.terminate)
             return self.terminate(allocator, payload);
+        if (header.type_code == generated.frame_type.visibility_renew)
+            return self.renewVisibility(allocator, payload, now_ns);
         return failure(.not_found);
     }
 
@@ -2989,6 +3118,63 @@ pub const ProductionBackend = struct {
         var controller = self.control_plane.controller(allocator);
         const response = controller.terminate(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
+    }
+
+    fn renewVisibility(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const VisibilityRenewal = struct {
+            schemaVersion: u8,
+            locator: DiskLocator,
+            workspaceSessionId: []const u8,
+            workspacePid: i32,
+            workspaceStartToken: []const u8,
+            openTerminalRevision: []const u8,
+        };
+        var parsed = std.json.parseFromSlice(VisibilityRenewal, allocator, payload, .{}) catch
+            return failure(.malformed_frame);
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1 or
+            parsed.value.workspacePid <= 0 or
+            parsed.value.workspaceStartToken.len == 0)
+            return failure(.malformed_frame);
+        const locator = locatorFromDisk(parsed.value.locator) catch
+            return failure(.malformed_frame);
+        const revision = std.fmt.parseInt(
+            u64,
+            parsed.value.openTerminalRevision,
+            10,
+        ) catch return failure(.malformed_frame);
+        if (self.registry.validateVisibilityRenewal(
+            locator,
+            parsed.value.workspaceSessionId,
+            revision,
+            now_ns,
+        )) |renewal_failure| return .{ .failure = renewal_failure };
+        const lookup = self.registry.lookup(locator).?;
+        const entry = switch (lookup) {
+            .failure => |lookup_failure| return .{ .failure = lookup_failure },
+            .entry => |value| value,
+        };
+        const host = entry.host orelse return failure(.verification_unknown);
+        switch (host.renewVisibility(locator, payload)) {
+            .failure => |host_failure| return .{ .failure = host_failure },
+            .response => |response| {
+                if (self.registry.renewVisibility(
+                    locator,
+                    parsed.value.workspaceSessionId,
+                    revision,
+                    now_ns,
+                )) |renewal_failure| {
+                    allocator.free(response);
+                    return .{ .failure = renewal_failure };
+                }
+                return .{ .response = response };
+            },
+        }
     }
 
     fn begin(self: *ProductionBackend, payload: []const u8) BackendResult {

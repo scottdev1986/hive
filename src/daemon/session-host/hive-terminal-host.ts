@@ -16,6 +16,8 @@ import type {
   SessionSpec,
   TerminationRequest,
   TerminationResult,
+  VisibilityLease,
+  VisibilityRequest,
 } from "./contract";
 import type { AgentRecord } from "../../schemas";
 import {
@@ -51,7 +53,7 @@ type TerminalLifecycleHost = Pick<
   | "inspect"
   | "list"
   | "terminate"
-> & Pick<SessionHost, "create">;
+> & Pick<SessionHost, "create" | "renewVisibility">;
 
 export type HiveTerminalPolicy = Pick<
   HiveTerminalBinding,
@@ -234,6 +236,26 @@ export class HiveTerminalHostAdapter {
     return this.host.resize({ ...request, session });
   }
 
+  async renewVisibility(
+    locator: HiveTerminalBinding["locator"],
+    request: VisibilityRequest,
+  ): Promise<VisibilityLease> {
+    const binding = this.requireBinding(locator);
+    if (binding.createEvidence === undefined) {
+      throw new TerminalHostBindingIncompleteError();
+    }
+    const lease = await this.host.renewVisibility(locator, request);
+    if (
+      !sameLocator(lease.locator, locator) ||
+      lease.state !== "active" ||
+      lease.openTerminalRevision !== request.openTerminalRevision
+    ) {
+      throw new TerminalHostBindingMismatchError();
+    }
+    this.bindings.renewTerminalHostVisibility(locator, request, lease);
+    return lease;
+  }
+
   async inspect(
     locator: HiveTerminalBinding["locator"],
   ): Promise<SessionInspection> {
@@ -317,6 +339,10 @@ export class HiveTerminalHostAdapter {
     if (pixelsDerived) {
       diagnostics.add("SESSIOND_PIXEL_GEOMETRY_DERIVED_NO_VIEWER");
     }
+    const visibility = inspection.lifecycle !== "running" &&
+        Date.parse(created.visibility.expiresAt) <= this.now().getTime()
+      ? { ...created.visibility, state: "expired" as const }
+      : created.visibility;
 
     return {
       schemaVersion: 1,
@@ -348,7 +374,7 @@ export class HiveTerminalHostAdapter {
         cellHeightPx: created.geometry.cellHeightPx,
       },
       resources: {},
-      visibility: created.visibility,
+      visibility,
       exit: inspection.exit,
       survivors: inspection.survivors.map(({ process, reason }) => ({
         pid: process.processId,

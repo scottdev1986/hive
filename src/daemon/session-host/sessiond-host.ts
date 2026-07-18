@@ -20,6 +20,8 @@ import type {
   CreateResult,
   SessionHost,
   SessionSpec,
+  VisibilityLease,
+  VisibilityRequest,
 } from "./contract";
 import {
   HiveTerminalBindingSchema,
@@ -50,6 +52,8 @@ import {
   TERMINAL_LIMITS,
   TerminatePayloadSchema,
   TerminatedPayloadSchema,
+  RenewedPayloadSchema,
+  VisibilityRenewPayloadSchema,
   WelcomePayloadSchema,
   type FrameTypeName,
   type WireErrorCode,
@@ -66,7 +70,7 @@ export type LandedTerminalHost = Pick<
   | "inspect"
   | "list"
   | "terminate"
-> & Pick<SessionHost, "create">;
+> & Pick<SessionHost, "create" | "renewVisibility">;
 
 export class SessiondProtocolError extends Error {
   constructor(message: string) {
@@ -684,6 +688,29 @@ export class SessiondHost implements LandedTerminalHost {
     const broker = await this.connectBroker();
     try {
       return this.requireEngineBuildId(broker);
+    } finally {
+      broker.close();
+    }
+  }
+
+  async renewVisibility(
+    locator: Parameters<SessionHost["renewVisibility"]>[0],
+    request: VisibilityRequest,
+  ): Promise<VisibilityLease> {
+    const payload = VisibilityRenewPayloadSchema.parse({
+      schemaVersion: 1,
+      locator,
+      ...request,
+    });
+    const broker = await this.connectBroker();
+    try {
+      const { schemaVersion: _, ...lease } = await broker.request({
+        requestType: "VISIBILITY_RENEW",
+        responseType: "RENEWED",
+        payload,
+        responseSchema: RenewedPayloadSchema,
+      });
+      return lease;
     } finally {
       broker.close();
     }

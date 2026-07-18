@@ -4,6 +4,7 @@ import {
   SessionLocatorSchema,
   SessionSpecSchema,
   TerminationRequestSchema,
+  VisibilityLeaseSchema,
   VisibilityRequestSchema,
 } from "../../schemas/session-protocol";
 
@@ -44,6 +45,11 @@ export interface TerminalHostBindingStore {
   completeTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
     evidence: HiveTerminalCreateEvidence,
+  ): HiveTerminalBinding;
+  renewTerminalHostVisibility(
+    locator: HiveTerminalBinding["locator"],
+    request: z.infer<typeof VisibilityRequestSchema>,
+    lease: z.infer<typeof VisibilityLeaseSchema>,
   ): HiveTerminalBinding;
   recordTerminalHostTermination(
     locator: HiveTerminalBinding["locator"],

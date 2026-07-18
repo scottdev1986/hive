@@ -66,6 +66,13 @@ final class FeedClient {
         }
     }
 
+    func publishVisibility(_ inventory: WorkspaceVisibilityInventory) throws {
+        guard !stopped else { return }
+        var data = try JSONEncoder().encode(inventory)
+        data.append(UInt8(ascii: "\n"))
+        try stdinPipe.fileHandleForWriting.write(contentsOf: data)
+    }
+
     private func consume(_ data: Data) {
         buffer.append(data)
         while let newline = buffer.firstIndex(of: UInt8(ascii: "\n")) {

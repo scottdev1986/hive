@@ -98,17 +98,20 @@ final class ProjectStateTests: XCTestCase {
         let state = drivenState()
         let paneID = ProjectState.paneID(forAgent: "indexer")
 
-        state.markUserClosed(paneID)
-        state.apply(.closePane(paneID))
-        XCTAssertNil(state.panes[paneID])
+        let requested = state.markUserClosed(paneID)
+        XCTAssertEqual(requested, [.statusChanged(paneID)])
+        XCTAssertEqual(state.panes[paneID]?.closePending, true)
 
         // The kill is in flight; the daemon still reports the agent as working.
         state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 2)
-        XCTAssertNil(state.panes[paneID], "a closed agent's pane must not come back")
+        XCTAssertEqual(state.panes[paneID]?.closePending, true,
+                       "the closing pane remains authoritative until teardown")
 
         // The agent is dead: the daemon stops reporting it, and the suppression
         // is forgotten so a future agent of the same name gets a pane again.
-        state.apply(feed: [agent("migrator"), agent("flaky-e2e")], now: 3)
+        let confirmed = state.apply(feed: [agent("migrator"), agent("flaky-e2e")], now: 3)
+        XCTAssertTrue(confirmed.contains(.paneClosePending(paneID)))
+        state.apply(.closePane(paneID))
         state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 4)
         XCTAssertNotNil(state.panes[paneID], "a new agent by that name gets its pane")
     }
@@ -119,11 +122,11 @@ final class ProjectStateTests: XCTestCase {
         let paneID = ProjectState.paneID(forAgent: "indexer")
 
         state.markUserClosed(paneID)
-        state.apply(.closePane(paneID))
         state.clearUserClosed(paneID)
 
         state.apply(feed: [agent("indexer"), agent("migrator"), agent("flaky-e2e")], now: 2)
         XCTAssertNotNil(state.panes[paneID], "an agent that survived its kill is shown again")
+        XCTAssertEqual(state.panes[paneID]?.closePending, false)
     }
 
     func testOrchestratorIsMasterAndFeedAgentsGetPanes() {
@@ -303,6 +306,47 @@ final class ProjectStateTests: XCTestCase {
         }
         XCTAssertEqual(focusChanges, [ProjectState.orchestratorPaneID],
                        "only the very first pane of an empty workspace takes focus")
+    }
+
+    func testVisibilityInventoryPublishesExactSessiondPaneLifecycle() throws {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        let locator = AgentSessionLocator(
+            instanceId: "instance",
+            subject: AgentSessionSubject(kind: "agent", agentId: "agent-visible"),
+            generation: 3,
+            sessionId: "ses_visible",
+            hostKind: "sessiond",
+            engineBuildId: "engine")
+        func snapshot(status: String, closedAt: String? = nil) -> AgentSnapshot {
+            AgentSnapshot(
+                id: "agent-visible",
+                name: "visible",
+                status: status,
+                closedAt: closedAt,
+                sessionLocator: locator)
+        }
+
+        state.apply(feed: [snapshot(status: "spawning")])
+        XCTAssertEqual(state.visibilityInventory(), WorkspaceVisibilityInventory(
+            inventoryRevision: "1",
+            terminals: [WorkspaceVisibleTerminal(
+                agentId: "agent-visible",
+                agentName: "visible",
+                locator: locator,
+                state: .pending)]))
+
+        state.apply(feed: [snapshot(status: "working")])
+        XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .live)
+        state.markFeedLost()
+        XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .reconnecting)
+        state.markUserClosed(ProjectState.paneID(forAgent: "visible"))
+        XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .closing)
+        state.apply(feed: [snapshot(
+            status: "done",
+            closedAt: "2026-07-18T12:00:00.000Z")])
+        let closing = state.visibilityInventory()
+        XCTAssertEqual(closing.inventoryRevision, "5")
+        XCTAssertEqual(closing.terminals.first?.state, .closing)
     }
 
     func testPromoteAndReturnOrchestrator() {

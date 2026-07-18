@@ -24,6 +24,12 @@ import {
   type LandedTerminalHost,
 } from "./session-host/sessiond-host";
 import {
+  WorkspaceVisibilityAuthority,
+  WorkspaceVisibilitySnapshotSchema,
+  type WorkspaceVisibilityAdmission,
+  type WorkspaceVisibilityCandidate,
+} from "./session-host/workspace-visibility";
+import {
   deleteMemoryFact as deleteMemoryFactFile,
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
@@ -447,6 +453,8 @@ export interface HiveDaemonOptions {
   sessionHost?: Pick<SessionHost, "capture">;
   /** Frozen neutral sessiond backend; Hive policy is applied by its binding adapter. */
   terminalHost?: LandedTerminalHost;
+  /** Live Workspace-owned full inventory. Absent keeps sessiond admission closed. */
+  workspaceVisibility?: WorkspaceVisibilityAuthority;
   resolveSessionLocator?: (
     sessionId: string,
     generation: number,
@@ -596,6 +604,7 @@ export class HiveDaemon {
   private readonly ownedMachineMutations: MachineMutationCoordinator | null;
   private readonly tmux: TmuxSessionHost;
   private readonly terminalHost: HiveTerminalHostAdapter;
+  private readonly workspaceVisibility: WorkspaceVisibilityAuthority | null;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: ClaudeTelemetryReader;
@@ -711,10 +720,14 @@ export class HiveDaemon {
       ? options.tmux
       : new TmuxSessionHost({ adapter: options.tmux });
     this.terminalHost = new HiveTerminalHostAdapter(
-      options.terminalHost ?? new SessiondHost({ repoRoot: options.repoRoot }),
+      options.terminalHost ?? new SessiondHost({
+        repoRoot: options.repoRoot,
+        pendingBindings: this.db,
+      }),
       this.db,
       hiveInstanceSuffix(),
     );
+    this.workspaceVisibility = options.workspaceVisibility ?? null;
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
@@ -1041,6 +1054,20 @@ export class HiveDaemon {
 
   get listeningPort(): number | null {
     return this.bunServer?.port ?? null;
+  }
+
+  get sessiondTerminalHost(): Pick<HiveTerminalHostAdapter, "create" | "inspect"> {
+    return this.terminalHost;
+  }
+
+  prepareSessiondSpawn(): Promise<Readonly<{ engineBuildId: string }> | null> {
+    return this.workspaceVisibility?.prepare() ?? Promise.resolve(null);
+  }
+
+  admitSessiondSpawn(
+    candidate: WorkspaceVisibilityCandidate,
+  ): Promise<WorkspaceVisibilityAdmission | null> {
+    return this.workspaceVisibility?.admit(candidate) ?? Promise.resolve(null);
   }
 
   start(): Server<undefined> {
@@ -2397,6 +2424,9 @@ export class HiveDaemon {
     if (url.pathname === "/orchestrator-status" && request.method === "GET") {
       return this.orchestratorStatusEndpoint(request);
     }
+    if (url.pathname === "/workspace-visibility" && request.method === "POST") {
+      return this.workspaceVisibilityEndpoint(request);
+    }
     if (url.pathname === "/token-usage" && request.method === "GET") {
       return this.tokenUsageEndpoint(url, request);
     }
@@ -2756,6 +2786,57 @@ export class HiveDaemon {
         this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
       ),
     });
+  }
+
+  private async workspaceVisibilityEndpoint(request: Request): Promise<Response> {
+    const route = "/workspace-visibility";
+    const authenticated = this.authenticate(request, route);
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      route,
+      "workspace-visibility:write",
+      undefined,
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (this.workspaceVisibility === null) {
+      return json({ error: "workspace visibility authority is unavailable" }, { status: 503 });
+    }
+    const body = WorkspaceVisibilitySnapshotSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!body.success) return json({ error: body.error.message }, { status: 400 });
+    const result = this.workspaceVisibility.publish(body.data);
+    if (result.state !== "accepted") return json(result, { status: 409 });
+    const renewals = await Promise.all(body.data.terminals.map(async (terminal) => {
+      const binding = this.db.getTerminalHostBindingByLocator(terminal.locator);
+      if (binding?.createEvidence === undefined) return null;
+      const admission = await this.workspaceVisibility!.admit({
+        agentId: terminal.agentId,
+        agentName: terminal.agentName,
+      });
+      if (admission === null) return null;
+      try {
+        await this.terminalHost.renewVisibility(
+          terminal.locator,
+          admission.visibility,
+        );
+        return { sessionId: terminal.locator.sessionId, state: "renewed" as const };
+      } catch {
+        return {
+          sessionId: terminal.locator.sessionId,
+          state: "unknown" as const,
+          diagnostic: "sessiond visibility renewal failed closed",
+        };
+      }
+    }));
+    const failures = renewals.filter((renewal) => renewal?.state === "unknown");
+    return json(
+      { ...result, renewals: failures.length === 0
+        ? { state: "complete", renewed: renewals.filter(Boolean).length }
+        : { state: "unknown", failures } },
+      { status: failures.length === 0 ? 200 : 409 },
+    );
   }
 
   private async tokenUsageEndpoint(

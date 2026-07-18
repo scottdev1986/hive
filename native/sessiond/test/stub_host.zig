@@ -18,6 +18,10 @@ const StubHost = struct {
     grant_hash: ?[32]u8 = null,
     grant_viewer_id: ?[]const u8 = null,
     grant_expires_ns: u64 = 0,
+    renewal_response: []const u8 = "",
+    renewal_failure: ?broker.protocol.Failure = null,
+    expected_workspace_start_token: ?[]const u8 = null,
+    renewal_calls: usize = 0,
     terminated: bool = false,
     termination: broker.TerminationReadback = .{
         .pty_closed = true,
@@ -31,6 +35,7 @@ const StubHost = struct {
             .context = self,
             .adopt_fn = adopt,
             .register_grant_fn = registerGrant,
+            .renew_visibility_fn = renewVisibility,
             .terminate_fn = terminate,
         };
     }
@@ -50,6 +55,33 @@ const StubHost = struct {
         self.grant_viewer_id = grant.viewer_id;
         self.grant_expires_ns = grant.expires_mono_ns;
         return true;
+    }
+
+    fn renewVisibility(
+        context: *anyopaque,
+        locator: broker.Locator,
+        payload: []const u8,
+    ) broker.HostRenewalResult {
+        const self: *StubHost = @ptrCast(@alignCast(context));
+        if (!self.visible or !sameLocator(locator, self.readback.locator) or payload.len == 0)
+            return .{ .failure = .{ .code = .not_found, .close_connection = false } };
+        self.renewal_calls += 1;
+        if (self.expected_workspace_start_token) |expected| {
+            const RenewalIdentity = struct { workspaceStartToken: []const u8 };
+            var parsed = std.json.parseFromSlice(
+                RenewalIdentity,
+                std.testing.allocator,
+                payload,
+                .{ .ignore_unknown_fields = true },
+            ) catch return .{ .failure = .{ .code = .malformed_frame, .close_connection = false } };
+            defer parsed.deinit();
+            if (!std.mem.eql(u8, expected, parsed.value.workspaceStartToken))
+                return .{ .failure = .{ .code = .unauthenticated, .close_connection = false } };
+        }
+        if (self.renewal_failure) |failure| return .{ .failure = failure };
+        const response = std.testing.allocator.dupe(u8, self.renewal_response) catch
+            return .{ .failure = .{ .code = .resource_exhausted, .close_connection = false } };
+        return .{ .response = response };
     }
 
     fn terminate(
@@ -424,6 +456,50 @@ fn recordJsonForTest(
         },
         .outputSeq = try std.fmt.bufPrint(&output_storage, "{d}", .{record.output_seq}),
         .checkpointSeq = try std.fmt.bufPrint(&checkpoint_storage, "{d}", .{record.checkpoint_seq}),
+    }, .{});
+}
+
+fn visibilityRenewalForTest(
+    allocator: std.mem.Allocator,
+    record: broker.HostRecord,
+    workspace_start_token: []const u8,
+    revision: u64,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var revision_storage: [32]u8 = undefined;
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = try wireLocatorValue(arena.allocator(), record.locator),
+        .workspaceSessionId = record.visibility.workspace_session_id,
+        .workspacePid = c.getpid(),
+        .workspaceStartToken = workspace_start_token,
+        .openTerminalRevision = try std.fmt.bufPrint(
+            &revision_storage,
+            "{d}",
+            .{revision},
+        ),
+    }, .{});
+}
+
+fn renewedPayloadForTest(
+    allocator: std.mem.Allocator,
+    record: broker.HostRecord,
+    revision: u64,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var revision_storage: [32]u8 = undefined;
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = try wireLocatorValue(arena.allocator(), record.locator),
+        .state = "active",
+        .expiresAt = "2026-07-18T12:00:15.000Z",
+        .openTerminalRevision = try std.fmt.bufPrint(
+            &revision_storage,
+            "{d}",
+            .{revision},
+        ),
     }, .{});
 }
 
@@ -1122,6 +1198,129 @@ test "production CREATE reaches CREATED only after Registry admission" {
     startup_client.close();
     startup_thread.join();
     try std.testing.expect(!startup_harness.failed.load(.acquire));
+}
+
+test "production VISIBILITY_RENEW forwards exact bytes and mutates only after host proof" {
+    var path_storage: [96]u8 = undefined;
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hv-{x}", .{std.crypto.random.int(u64)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var runtime = try broker.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+
+    const lifetime = broker.generated.limits.visibility_expiry_ms * std.time.ns_per_ms;
+    var record = fixtureCreateRecord(1_000 + lifetime);
+    record.visibility.state = .visible;
+    record.visibility.open_terminal_revision = 7;
+    const renewed = try renewedPayloadForTest(std.testing.allocator, record, 8);
+    defer std.testing.allocator.free(renewed);
+    var host = fixtureHost(record);
+    host.renewal_response = renewed;
+    host.expected_workspace_start_token = "workspace-token";
+    var registry: broker.Registry = .{};
+    try std.testing.expect(registry.registerCreatedHost(record, host.control()) == null);
+    var launcher: LaunchDouble = .{
+        .record = record,
+        .record_json = "unused",
+        .created_payload = "unused",
+        .host = host.control(),
+    };
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
+    var backend = broker.ProductionBackend.init(
+        std.testing.allocator,
+        &runtime,
+        &registry,
+        &control_plane,
+        launcher.launcher(),
+    );
+    defer backend.deinit();
+
+    const valid = try visibilityRenewalForTest(
+        std.testing.allocator,
+        record,
+        "workspace-token",
+        8,
+    );
+    defer std.testing.allocator.free(valid);
+    const accepted = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.visibility_renew,
+        40,
+        0,
+        valid,
+        2_000,
+    );
+    switch (accepted) {
+        .response => |response| {
+            defer response.deinit(std.testing.allocator);
+            try std.testing.expectEqual(broker.generated.frame_type.renewed, response.header.type_code);
+            try std.testing.expectEqualStrings(renewed, response.payload);
+        },
+        else => return error.ExpectedVisibilityRenewal,
+    }
+    try std.testing.expectEqual(@as(usize, 1), host.renewal_calls);
+    const entry = registry.lookup(record.locator).?.entry;
+    try std.testing.expectEqual(@as(u64, 8), entry.record.visibility.open_terminal_revision);
+    const renewed_expiry = entry.record.visibility.expires_mono_ns;
+
+    const stale = try visibilityRenewalForTest(
+        std.testing.allocator,
+        record,
+        "workspace-token",
+        6,
+    );
+    defer std.testing.allocator.free(stale);
+    const stale_result = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.visibility_renew,
+        41,
+        0,
+        stale,
+        3_000,
+    );
+    try std.testing.expectEqual(
+        broker.protocol.WireError.generation_mismatch,
+        stale_result.failure.code,
+    );
+    try std.testing.expectEqual(@as(usize, 1), host.renewal_calls);
+    try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
+
+    const wrong_token = try visibilityRenewalForTest(
+        std.testing.allocator,
+        record,
+        "wrong-token",
+        9,
+    );
+    defer std.testing.allocator.free(wrong_token);
+    const unauthenticated = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.visibility_renew,
+        42,
+        0,
+        wrong_token,
+        4_000,
+    );
+    try std.testing.expectEqual(
+        broker.protocol.WireError.unauthenticated,
+        unauthenticated.failure.code,
+    );
+    try std.testing.expectEqual(@as(usize, 2), host.renewal_calls);
+    try std.testing.expectEqual(@as(u64, 8), entry.record.visibility.open_terminal_revision);
+    try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
+
+    const expired = dispatchCreateFrame(
+        backend.backend(),
+        broker.generated.frame_type.visibility_renew,
+        43,
+        0,
+        valid,
+        renewed_expiry,
+    );
+    try std.testing.expectEqual(broker.protocol.WireError.not_found, expired.failure.code);
+    try std.testing.expectEqual(@as(usize, 2), host.renewal_calls);
+    try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
 }
 
 test "production wire reaches neutral Controller for LIST INSPECT and TERMINATE" {

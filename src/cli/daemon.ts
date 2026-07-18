@@ -14,6 +14,7 @@ import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import {
   acquireDaemonLock,
+  macProcessIdentity,
   readConfiguredPort,
   releaseDaemonLock,
 } from "../daemon/lifecycle";
@@ -57,6 +58,8 @@ import {
 import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
+import { SessiondHost } from "../daemon/session-host/sessiond-host";
+import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
 
 export async function runDaemon(): Promise<void> {
   await acquireDaemonLock();
@@ -128,6 +131,12 @@ export async function runDaemon(): Promise<void> {
     ],
   );
   const sessions = new TmuxSessionHost();
+  const sessiond = new SessiondHost({ repoRoot, pendingBindings: db });
+  const workspaceVisibility = new WorkspaceVisibilityAuthority({
+    expectedInstanceId: hiveInstanceSuffix(),
+    observeProcess: (pid) => macProcessIdentity(pid),
+    discoverEngineBuildId: () => sessiond.discoverEngineBuildId(),
+  });
   const port = readConfiguredPort();
   let daemon: HiveDaemon;
   const codexAppServer = new CodexAppServerManager({
@@ -191,6 +200,11 @@ export async function runDaemon(): Promise<void> {
     // require a durable accounting lifecycle.
     quota,
     codexAppServer,
+    sessiond: {
+      get terminalHost() { return daemon.sessiondTerminalHost; },
+      prepare: () => daemon.prepareSessiondSpawn(),
+      admit: (candidate) => daemon.admitSessiondSpawn(candidate),
+    },
   });
   // Not a hand-rolled lambda. The previous one was `(session, text) =>
   // the legacy sender could not forward the delivery options, so urgent input
@@ -211,6 +225,8 @@ export async function runDaemon(): Promise<void> {
     statusStore,
     tmuxSender,
     tmux: sessions,
+    terminalHost: sessiond,
+    workspaceVisibility,
     repoRoot,
     graphify,
     port,

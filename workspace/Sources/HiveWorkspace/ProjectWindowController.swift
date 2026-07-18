@@ -141,8 +141,9 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         // orchestrator is told.
         if case .closePane(let paneID) = command,
            let pane = state.panes[paneID], pane.kind == .agent {
-            state.markUserClosed(paneID)
+            react(to: state.markUserClosed(paneID))
             killAgent(pane.title)
+            return
         }
         react(to: state.apply(command))
     }

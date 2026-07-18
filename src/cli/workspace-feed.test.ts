@@ -11,6 +11,7 @@ import {
   FEED_POLL_MS,
   FEED_RETRY_MAX_MS,
   parseOrchestratorStatus,
+  publishWorkspaceVisibility,
   runWorkspaceFeed,
 } from "./workspace-feed";
 import type { OrchestratorStatus } from "../daemon/orchestrator-status";
@@ -104,6 +105,37 @@ const lastFailure = (message: string): Step => (abort) => {
 };
 
 describe("runWorkspaceFeed", () => {
+  test("publishes the observed Workspace PID identity with its full inventory", async () => {
+    const requests: Request[] = [];
+    await publishWorkspaceVisibility(
+      4483,
+      "workspace-launch",
+      7210,
+      { schemaVersion: 1, inventoryRevision: "1", terminals: [] },
+      {
+        observeProcess: (pid) => {
+          expect(pid).toBe(7210);
+          return { startToken: "7210:500" };
+        },
+        post: async (input, init) => {
+          requests.push(new Request(input, init));
+          return Response.json({ state: "accepted", inventoryRevision: "1" });
+        },
+      },
+    );
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.url).toBe("http://127.0.0.1:4483/workspace-visibility");
+    expect(await requests[0]!.json()).toEqual({
+      schemaVersion: 1,
+      source: {
+        sessionId: "workspace-launch",
+        process: { processId: 7210, startToken: "7210:500" },
+      },
+      inventoryRevision: "1",
+      terminals: [],
+    });
+  });
+
   test("preserves every known orchestrator lifecycle word", () => {
     for (const status of ["spawning", "working", "idle", "exited"] as const) {
       expect(parseOrchestratorStatus(status)).toEqual(status);

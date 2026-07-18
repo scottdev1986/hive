@@ -62,6 +62,7 @@ Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrat
 | `autonomy:write` | O | an agent raising it is a sandbox escape |
 | `routing-policy:read` | O | |
 | `routing-policy:write` | O | an agent rewriting the router is self-authorization |
+| `workspace-visibility:write` | O | only the credential-holding Workspace feed may attest UI inventory |
 | `graphify:write` | O | opting a repo into an indexing service is consent |
 
 `anySubject` (`src/daemon/capabilities.ts:62-67`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
@@ -111,6 +112,7 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `POST /autonomy` | `autonomy:write` | — | yes | `src/daemon/server.ts:2357-2362` |
 | `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2363-2368` |
 | `POST /routing/policy` | `routing-policy:write` | — | yes | `src/daemon/server.ts:2363-2368` |
+| `POST /workspace-visibility` | `workspace-visibility:write` | — | yes | `src/daemon/server.ts` |
 | `POST /graphify` | `graphify:write` | — | yes | `src/daemon/server.ts:2392-2394` |
 | `GET /orchestrator-status` | `status:read` | — | no | `src/daemon/server.ts:2369-2371` |
 | `GET /token-usage` | `token-usage:read` | — | no | `src/daemon/server.ts:2372-2374` |
