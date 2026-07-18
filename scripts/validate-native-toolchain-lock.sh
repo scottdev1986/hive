@@ -35,7 +35,7 @@ assert_equal() {
 assert_equal schemaVersion 1
 assert_equal ghostty.commit 73534c4680a809398b396c94ac7f12fcccb7963d
 assert_equal ghostty.upstreamTree 0aeaa44eda9efaf41523c3c0d4f6851eb81e536e
-assert_equal ghostty.patchedTree 7a199af1796ec6681d7a462b5a64ec889552f16d
+assert_equal ghostty.patchedTree c179fb717a1b63f907e80d698c28baa3dbff6aa5
 assert_equal ghostty.declaredVersion 1.3.2-dev
 assert_equal zig.version 0.15.2
 assert_equal zig.arm64Url https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz

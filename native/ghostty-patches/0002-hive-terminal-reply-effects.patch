@@ -1,5 +1,5 @@
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index d107ef8..9a6c250 100644
+index f683855..293171f 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -23,6 +23,7 @@ const CoreApp = @import("../App.zig");
@@ -10,29 +10,56 @@ index d107ef8..9a6c250 100644
  const Config = configpkg.Config;
  const String = @import("../main_c.zig").String;
  
-@@ -1064,13 +1065,13 @@ const HiveManual = struct {
+@@ -45,10 +46,15 @@ const HiveEvent = extern struct {
+ 
+ const HiveWriteFn = *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void;
+ const HiveEventFn = *const fn (?*anyopaque, *const HiveEvent) callconv(.c) void;
++const HiveTerminalReplyPolicy = enum(c_uint) {
++    disabled = 0,
++    enabled = 1,
++};
+ 
+ const HiveManualInit = struct {
+     event: HiveEventFn,
+     event_context: ?*anyopaque,
++    terminal_reply_policy: HiveTerminalReplyPolicy,
+ };
+ 
+ threadlocal var hive_manual_init: ?HiveManualInit = null;
+@@ -1060,17 +1066,18 @@ const HiveManual = struct {
+ 
+     fn init(surface: *Surface, opts: HiveManualInit) !HiveManual {
+         var handler = surface.core_surface.io.terminal.vtHandler();
++        const replies_enabled = opts.terminal_reply_policy == .enabled;
+         handler.effects = .{
              .bell = &bell,
              .clipboard_write = &clipboardWrite,
              .color_scheme = null,
 -            .device_attributes = null,
 -            .enquiry = null,
 -            .size = null,
-+            .device_attributes = &deviceAttributes,
-+            .enquiry = &enquiry,
-+            .size = &sizeReport,
++            .device_attributes = if (replies_enabled) &deviceAttributes else null,
++            .enquiry = if (replies_enabled) &enquiry else null,
++            .size = if (replies_enabled) &sizeReport else null,
              .title_changed = &titleChanged,
              .pwd_changed = &pwdChanged,
 -            .write_pty = null,
 -            .xtversion = null,
-+            .write_pty = &writePty,
-+            .xtversion = &xtversion,
++            .write_pty = if (replies_enabled) &writePty else null,
++            .xtversion = if (replies_enabled) &xtversion else null,
          };
          return .{
              .surface = surface,
-@@ -1123,6 +1124,71 @@ const HiveManual = struct {
+@@ -1123,29 +1130,90 @@ const HiveManual = struct {
          return .denied;
      }
  
+-    fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
+-        const alloc = self.surface.app.core_app.alloc;
+-        switch (self.output_ranges.classify(bytes, stream_seq)) {
+-            .duplicate => return .success,
+-            .invalid => return .invalid_value,
+-            .accept => {},
 +    /// Routes a terminal-generated reply through the same single ordered
 +    /// write callback used for host-originated input (HiveManual has no
 +    /// child PTY, so this is the only channel toward the host). Mirrors
@@ -43,7 +70,11 @@ index d107ef8..9a6c250 100644
 +        switch (self.surface.core_surface.io.backend) {
 +            .manual => |manual| manual.callback(manual.context, data.ptr, data.len),
 +            .exec => {},
-+        }
+         }
+-        self.pending.ensureUnusedCapacity(alloc, bytes.len) catch
+-            return .out_of_memory;
+-        self.output_ranges.commit(alloc, bytes, stream_seq) catch
+-            return .out_of_memory;
 +    }
 +
 +    /// DA1/DA2 values match termio/stream_handler.zig's exec-mode
@@ -51,20 +82,8 @@ index d107ef8..9a6c250 100644
 +    /// level 2 conformance, ANSI color, no clipboard feature (52) because
 +    /// clipboardWrite above always denies.
 +    ///
-+    /// KNOWN DIVERGENCE (cross-vendor review 2026-07-17, deferred with
-+    /// queen's authorization, not fixed): DA3 (CSI = c) gets a default
-+    /// Tertiary reply here (unit_id 0), but the pinned exec-mode
-+    /// reportDeviceAttributes has no tertiary case and replies to DA3 with
-+    /// nothing. This effect's signature — `fn (*Handler)
-+    /// device_attributes.Attributes`, called once regardless of which DA
-+    /// variant is being asked — has no way to know the request type and
-+    /// suppress just the tertiary reply; only the caller (stream_terminal
-+    /// .zig's reportDeviceAttributes) knows it. Matching exec-mode exactly
-+    /// would mean patching that upstream file too, past ADR-0002's
-+    /// six-file budget for a query xterm ctlseqs marks legacy/rare (no
-+    /// mainstream TUI negotiation depends on DA3). Revisit if budget ever
-+    /// allows a second Zig-side hunk, or if upstream adds a req-aware
-+    /// device_attributes effect signature.
++    /// stream_terminal suppresses tertiary DA to match the pinned exec-mode
++    /// handler, which implements only primary and secondary DA.
 +    fn deviceAttributes(handler: *terminal.TerminalStream.Handler) terminal.device_attributes.Attributes {
 +        _ = handler;
 +        return .{ .secondary = .{ .firmware_version = 10 } };
@@ -97,7 +116,293 @@ index d107ef8..9a6c250 100644
 +            .cell_height = cell.height,
 +        };
 +    }
+ 
++    fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
++        const alloc = self.surface.app.core_app.alloc;
+         const mutex = self.surface.core_surface.renderer_state.mutex;
+-        mutex.lock();
+-        hive_checkpoint.feed(
+-            &self.stream,
+-            &self.pending,
+-            alloc,
+-            &self.checkpoint_valid,
+-            bytes,
+-        );
+-        self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+-        mutex.unlock();
++        var accepted = false;
++        const result: GhosttyResult = result: {
++            mutex.lock();
++            defer mutex.unlock();
 +
-     fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
-         const alloc = self.surface.app.core_app.alloc;
-         switch (self.output_ranges.classify(bytes, stream_seq)) {
++            switch (self.output_ranges.classify(bytes, stream_seq)) {
++                .duplicate => break :result .success,
++                .invalid => break :result .invalid_value,
++                .accept => {},
++            }
++            self.pending.ensureUnusedCapacity(alloc, bytes.len) catch
++                break :result .out_of_memory;
++            self.output_ranges.commit(alloc, bytes, stream_seq) catch
++                break :result .out_of_memory;
++
++            hive_checkpoint.feed(
++                &self.stream,
++                &self.pending,
++                alloc,
++                &self.checkpoint_valid,
++                bytes,
++            );
++            self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
++            accepted = true;
++            break :result .success;
++        };
++        if (result != .success) return result;
++        if (!accepted) return .success;
+         self.surface.core_surface.io.renderer_wakeup.notify() catch {};
+         self.emit(.invalidate, "");
+         return .success;
+@@ -1171,24 +1239,24 @@ const HiveManual = struct {
+         };
+         var stream_owned = true;
+         defer if (stream_owned) stream.deinit();
+-        stream.handler.effects = self.stream.handler.effects;
+-
+         const mutex = self.surface.core_surface.renderer_state.mutex;
+-        mutex.lock();
+-        self.stream.deinit();
+-        self.pending.deinit(alloc);
+-        self.surface.core_surface.io.terminal.deinit(alloc);
+-        self.surface.core_surface.io.terminal = snapshot.terminal;
+-        stream.handler.terminal = &self.surface.core_surface.io.terminal;
+-        self.stream = stream;
+-        self.pending = .{ .items = snapshot.pending, .capacity = snapshot.pending.len };
+-        self.checkpoint_valid = true;
+-        self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+-        mutex.unlock();
+-
+-        self.output_ranges.reset(through_seq);
+-        snapshot_owned = false;
+-        stream_owned = false;
++        {
++            mutex.lock();
++            defer mutex.unlock();
++            stream.handler.effects = self.stream.handler.effects;
++            self.stream.deinit();
++            self.pending.deinit(alloc);
++            self.surface.core_surface.io.terminal.deinit(alloc);
++            self.surface.core_surface.io.terminal = snapshot.terminal;
++            stream.handler.terminal = &self.surface.core_surface.io.terminal;
++            self.stream = stream;
++            self.pending = .{ .items = snapshot.pending, .capacity = snapshot.pending.len };
++            self.checkpoint_valid = true;
++            self.output_ranges.reset(through_seq);
++            self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
++            snapshot_owned = false;
++            stream_owned = false;
++        }
+         self.surface.core_surface.io.renderer_wakeup.notify() catch {};
+         self.emit(.title, self.surface.core_surface.io.terminal.getTitle() orelse "");
+         self.emit(.pwd, self.surface.core_surface.io.terminal.getPwd() orelse "");
+@@ -1765,6 +1833,7 @@ pub const CAPI = struct {
+     export fn hive_ghostty_surface_new_manual_v1(
+         app_: ?*App,
+         opts_: ?*const apprt.Surface.Options,
++        terminal_reply_policy_: c_uint,
+         write_: ?HiveWriteFn,
+         write_context: ?*anyopaque,
+         event_: ?HiveEventFn,
+@@ -1774,6 +1843,10 @@ pub const CAPI = struct {
+         const opts = opts_ orelse return null;
+         const write = write_ orelse return null;
+         const event = event_ orelse return null;
++        const terminal_reply_policy = std.meta.intToEnum(
++            HiveTerminalReplyPolicy,
++            terminal_reply_policy_,
++        ) catch return null;
+         if (CoreSurface.hive_manual_backend != null or hive_manual_init != null)
+             return null;
+ 
+@@ -1784,6 +1857,7 @@ pub const CAPI = struct {
+         hive_manual_init = .{
+             .event = event,
+             .event_context = event_context,
++            .terminal_reply_policy = terminal_reply_policy,
+         };
+         defer {
+             CoreSurface.hive_manual_backend = null;
+diff --git a/src/hive_checkpoint.zig b/src/hive_checkpoint.zig
+index e095e1b..15e9985 100644
+--- a/src/hive_checkpoint.zig
++++ b/src/hive_checkpoint.zig
+@@ -32,6 +32,7 @@ const identity_sources = [_][]const u8{
+     @embedFile("Surface.zig"),
+     @embedFile("termio/backend.zig"),
+     @embedFile("lib_vt.zig"),
++    @embedFile("terminal/stream_terminal.zig"),
+ };
+ 
+ const Sha256 = std.crypto.hash.sha2.Sha256;
+@@ -386,7 +387,8 @@ pub fn feed(
+         stream.next(byte);
+         if (stream.parser.state == .ground and
+             stream.utf8decoder.state == 0 and
+-            stream.handler.apc_handler.state == .inactive)
++            stream.handler.apc_handler.state == .inactive and
++            stream.handler.dcs_handler.state == .inactive)
+         {
+             pending.clearRetainingCapacity();
+         }
+diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
+index 91cfb21..846c6ab 100644
+--- a/src/terminal/stream_terminal.zig
++++ b/src/terminal/stream_terminal.zig
+@@ -4,6 +4,7 @@ const testing = std.testing;
+ const apc = @import("apc.zig");
+ const clipboard = @import("clipboard.zig");
+ const csi = @import("csi.zig");
++const dcs = @import("dcs.zig");
+ const device_attributes = @import("device_attributes.zig");
+ const device_status = @import("device_status.zig");
+ const stream = @import("stream.zig");
+@@ -15,6 +16,7 @@ const osc = @import("osc.zig");
+ const osc_color = @import("osc/parsers/color.zig");
+ const kitty_color = @import("kitty/color.zig");
+ const size_report = @import("size_report.zig");
++const terminfo = @import("../terminfo/main.zig");
+ const Terminal = @import("Terminal.zig");
+ 
+ const log = std.log.scoped(.stream_terminal);
+@@ -46,6 +48,9 @@ pub const Handler = struct {
+     /// the kitty graphics protocol.
+     apc_handler: apc.Handler = .{},
+ 
++    /// DCS parsing state for reply-producing DECRQSS and XTGETTCAP.
++    dcs_handler: dcs.Handler = .{},
++
+     /// Default cursor style used by DECSCUSR reset (CSI 0 q).
+     default_cursor: bool = true,
+     default_cursor_style: Screen.CursorStyle = .block,
+@@ -136,6 +141,7 @@ pub const Handler = struct {
+ 
+     pub fn deinit(self: *Handler) void {
+         self.apc_handler.deinit();
++        self.dcs_handler.deinit();
+     }
+ 
+     pub fn vt(
+@@ -298,12 +304,9 @@ pub const Handler = struct {
+             .xtversion => self.reportXtversion(),
+             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
+ 
+-            // No supported DCS commands have any terminal-modifying effects,
+-            // but they may in the future. For now we just ignore it.
+-            .dcs_hook,
+-            .dcs_put,
+-            .dcs_unhook,
+-            => {},
++            .dcs_hook => try self.dcsHook(value),
++            .dcs_put => try self.dcsPut(value),
++            .dcs_unhook => try self.dcsUnhook(),
+ 
+             // Have no terminal-modifying effect
+             .show_desktop_notification,
+@@ -319,6 +322,90 @@ pub const Handler = struct {
+         func(self, data);
+     }
+ 
++    inline fn dcsHook(self: *Handler, value: Action.Value(.dcs_hook)) !void {
++        var cmd = self.dcs_handler.hook(self.terminal.gpa(), value) orelse return;
++        defer cmd.deinit();
++        try self.dcsCommand(&cmd);
++    }
++
++    inline fn dcsPut(self: *Handler, value: u8) !void {
++        var cmd = self.dcs_handler.put(value) orelse return;
++        defer cmd.deinit();
++        try self.dcsCommand(&cmd);
++    }
++
++    inline fn dcsUnhook(self: *Handler) !void {
++        var cmd = self.dcs_handler.unhook() orelse return;
++        defer cmd.deinit();
++        try self.dcsCommand(&cmd);
++    }
++
++    fn dcsCommand(self: *Handler, cmd: *dcs.Command) !void {
++        // Reply policy is expressed by the write effect. Do not even encode
++        // protocol replies when the embedding role disabled that effect.
++        if (self.effects.write_pty == null) return;
++
++        switch (cmd.*) {
++            .xtgettcap => |*gettcap| {
++                const alloc = self.terminal.gpa();
++                const map = comptime terminfo.ghostty.xtgettcapMap();
++                while (gettcap.next()) |key| {
++                    const response = map.get(key) orelse continue;
++                    const terminated = try alloc.dupeZ(u8, response);
++                    defer alloc.free(terminated);
++                    self.writePty(terminated);
++                }
++            },
++
++            .decrqss => |request| {
++                var response: [129]u8 = undefined;
++                var output = std.io.fixedBufferStream(&response);
++                const writer = output.writer();
++
++                const prefix_fmt = "\x1bP{d}$r";
++                const prefix_len = std.fmt.comptimePrint(prefix_fmt, .{0}).len;
++                output.pos = prefix_len;
++
++                switch (request) {
++                    .none => {},
++                    .sgr => {
++                        const buf = try self.terminal.printAttributes(output.buffer[output.pos..]);
++                        output.pos += buf.len;
++                        try writer.writeByte('m');
++                    },
++                    .decscusr => {
++                        const blink = self.terminal.modes.get(.cursor_blinking);
++                        const style: u8 = switch (self.terminal.screens.active.cursor.cursor_style) {
++                            .block => if (blink) 1 else 2,
++                            .underline => if (blink) 3 else 4,
++                            .bar => if (blink) 5 else 6,
++                            .block_hollow => if (blink) 1 else 2,
++                        };
++                        try writer.print("{d} q", .{style});
++                    },
++                    .decstbm => try writer.print("{d};{d}r", .{
++                        self.terminal.scrolling_region.top + 1,
++                        self.terminal.scrolling_region.bottom + 1,
++                    }),
++                    .decslrm => if (self.terminal.modes.get(.enable_left_and_right_margin)) {
++                        try writer.print("{d};{d}s", .{
++                            self.terminal.scrolling_region.left + 1,
++                            self.terminal.scrolling_region.right + 1,
++                        });
++                    },
++                }
++
++                const valid = output.pos > prefix_len;
++                try writer.writeAll("\x1b\\");
++                _ = try std.fmt.bufPrint(response[0..prefix_len], prefix_fmt, .{@intFromBool(valid)});
++                response[output.pos] = 0;
++                self.writePty(response[0..output.pos :0]);
++            },
++
++            .tmux => {},
++        }
++    }
++
+     fn bell(self: *Handler) void {
+         const func = self.effects.bell orelse return;
+         func(self);
+@@ -363,6 +450,8 @@ pub const Handler = struct {
+     }
+ 
+     fn reportDeviceAttributes(self: *Handler, req: device_attributes.Req) void {
++        // Match Ghostty's exec-mode handler: tertiary DA is unsupported.
++        if (req == .tertiary) return;
+         const func = self.effects.device_attributes orelse return;
+         const attrs = func(self);
+ 

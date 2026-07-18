@@ -34,7 +34,7 @@ final class Gate4ABIQualificationTests: XCTestCase {
         XCTAssertNotNil(buildID.range(of: "^[0-9a-f]{64}$", options: .regularExpression))
 
         XCTAssertNil(hive_ghostty_surface_new_manual_v1(
-            nil, nil, HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED, nil, nil, nil, nil
+            nil, nil, hive_ghostty_terminal_reply_policy_e(HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED), nil, nil, nil, nil
         ))
         XCTAssertEqual(
             hive_ghostty_surface_process_output_v1(nil, nil, 0, 0),
