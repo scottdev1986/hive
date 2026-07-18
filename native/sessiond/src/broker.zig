@@ -1000,6 +1000,18 @@ fn wallExpiryToMonotonic(value: []const u8, now_ns: u64, maximum_ms: u64) !u64 {
 /// Production broker-side implementation of the WP4 seam. Every operation
 /// reconnects and authenticates the exact recorded host before speaking v1 on
 /// host.sock; the test double exercises this code over a real UDS.
+fn copyNeutralSessionRef(
+    allocator: std.mem.Allocator,
+    session: neutral_host.SessionRef,
+) !neutral_host.SessionRef {
+    const key = try allocator.dupe(u8, session.key);
+    errdefer allocator.free(key);
+    return .{
+        .key = key,
+        .incarnation = try allocator.dupe(u8, session.incarnation),
+    };
+}
+
 pub const WireHostClient = struct {
     allocator: std.mem.Allocator,
     arena: std.heap.ArenaAllocator,
@@ -1008,6 +1020,7 @@ pub const WireHostClient = struct {
     expected_socket: SocketEvidence,
     expected_record: HostRecord,
     broker_build_id: []u8,
+    neutral_home: ?[]u8 = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -1038,7 +1051,13 @@ pub const WireHostClient = struct {
         self.directory.close();
         self.allocator.free(self.socket_path);
         self.allocator.free(self.broker_build_id);
+        if (self.neutral_home) |home| self.allocator.free(home);
         self.arena.deinit();
+    }
+
+    pub fn enableNeutralControl(self: *WireHostClient, hive_home: []const u8) !void {
+        if (self.neutral_home != null) return error.NeutralControlAlreadyEnabled;
+        self.neutral_home = try self.allocator.dupe(u8, hive_home);
     }
 
     pub fn control(self: *WireHostClient) HostControl {
@@ -1296,38 +1315,50 @@ pub const WireHostClient = struct {
         ownership: HostProcessOwnership,
     ) !TerminationReadback {
         if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
+        const hive_home = self.neutral_home orelse return error.NeutralControlUnavailable;
+        var runtime = try neutral_host.Runtime.open(self.allocator, hive_home);
+        defer runtime.deinit();
+        var registry = try neutral_host.Registry.open(self.allocator, &runtime);
+        defer registry.deinit();
+        try registry.recover();
+
+        const session = blk: {
+            for (registry.list()) |record| {
+                const child = record.child orelse continue;
+                if (!std.mem.eql(u8, record.session.key, locator.session_id) or
+                    child.processId != self.expected_record.process_root.pid or
+                    !std.mem.eql(u8, child.startToken, self.expected_record.process_root.start_token))
+                    continue;
+                break :blk try copyNeutralSessionRef(self.allocator, record.session);
+            }
+            return error.NeutralSessionNotFound;
+        };
+        defer self.allocator.free(session.incarnation);
+        defer self.allocator.free(session.key);
+
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
         const a = payload_arena.allocator();
-        // Frozen A0 TERMINATE on the broker→host wire. reason/request_id map onto
-        // target/idempotencyKey for the legacy HostControl command surface.
+        var deadline_storage: [24]u8 = undefined;
         const payload = try std.json.Stringify.valueAlloc(a, .{
             .schemaVersion = @as(u8, 1),
-            .session = .{
-                .key = locator.session_id,
-                .incarnation = try std.fmt.allocPrint(a, "{d}", .{locator.generation}),
-            },
+            .session = session,
             .mode = command.mode,
             .target = "process-tree",
-            .deadline = "2099-01-01T00:00:00.000Z",
+            .deadline = try wallDeadline(
+                &deadline_storage,
+                generated.limits.control_rpc_timeout_ms,
+            ),
             .idempotencyKey = command.request_id,
         }, .{});
-        if (!protocol.validateControlPayload(
-            self.allocator,
-            generated.wire_schema.terminate_payload,
-            payload,
-        )) return error.InvalidHostRequest;
-        const stream = try self.connect();
-        errdefer stream.close();
-        const response = try self.exchange(
-            stream,
-            2,
-            generated.frame_type.terminate,
-            payload,
-            generated.frame_type.terminated,
-            generated.wire_schema.terminated_payload,
-        );
-        stream.close();
+        var platform = process_inspector.RealPlatform.init();
+        var controller: neutral_control_plane.Controller = .{
+            .allocator = self.allocator,
+            .registry = &registry,
+            .platform = platform.platform(),
+            .clock = neutral_control_plane.EvidenceClock.system(),
+        };
+        const response = try controller.terminate(payload);
         defer self.allocator.free(response);
         var parsed = try std.json.parseFromSlice(WireTerminationReadback, self.allocator, response, .{
             .ignore_unknown_fields = true,
@@ -1335,7 +1366,10 @@ pub const WireHostClient = struct {
         defer parsed.deinit();
         if (parsed.value.schemaVersion != 1) return error.InvalidHostResponse;
         if (std.mem.eql(u8, parsed.value.state, "terminated") and
-            parsed.value.survivors.len == 0)
+            parsed.value.survivors.len == 0 and
+            parsed.value.reap.reaped and
+            std.mem.eql(u8, parsed.value.reap.completeness, "complete") and
+            std.mem.eql(u8, parsed.value.completeness, "complete"))
         {
             const host_exited = waitForExactProcessAbsence(
                 self.expected_record.host_pid,
@@ -1480,6 +1514,11 @@ pub const WireRecoveryConnector = struct {
             record,
             self.broker_build_id,
         ) catch {
+            self.allocator.destroy(client);
+            return null;
+        };
+        client.enableNeutralControl(self.canonical_home) catch {
+            client.deinit();
             self.allocator.destroy(client);
             return null;
         };

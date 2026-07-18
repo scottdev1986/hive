@@ -297,7 +297,18 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     )) return error.InvalidRealInspection;
     const InspectedProjection = struct {
         lifecycle: []const u8,
+        completeness: []const u8,
         child: ?struct { processId: i32 },
+        jobControl: ?struct {
+            foregroundProcessGroupId: i32,
+            completeness: []const u8,
+        },
+        inputOwner: ?struct {
+            token: []const u8,
+            writer: []const u8,
+            kind: []const u8,
+            leaseExpiresAt: []const u8,
+        },
         diagnostics: []const []const u8,
     };
     var parsed_inspected = try std.json.parseFromSlice(
@@ -307,10 +318,22 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .{ .ignore_unknown_fields = true },
     );
     defer parsed_inspected.deinit();
+    if (std.mem.indexOf(u8, inspected, "neutral-host-control-unavailable") != null)
+        return error.NeutralHostControlUnavailable;
+    if (std.mem.indexOf(u8, inspected, "live-evidence-provider-unavailable") != null)
+        return error.LiveEvidenceProviderUnavailable;
     if (!std.mem.eql(u8, parsed_inspected.value.lifecycle, "running") or
+        !std.mem.eql(u8, parsed_inspected.value.completeness, "complete") or
+        parsed_inspected.value.jobControl == null or
+        parsed_inspected.value.jobControl.?.foregroundProcessGroupId <= 0 or
+        !std.mem.eql(u8, parsed_inspected.value.jobControl.?.completeness, "complete") or
+        parsed_inspected.value.inputOwner == null or
+        !std.mem.eql(u8, parsed_inspected.value.inputOwner.?.writer, "golden-viewer") or
+        !std.mem.eql(u8, parsed_inspected.value.inputOwner.?.kind, "human") or
+        parsed_inspected.value.inputOwner.?.token.len == 0 or
+        parsed_inspected.value.inputOwner.?.leaseExpiresAt.len == 0 or
         parsed_inspected.value.child == null or
-        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid or
-        std.mem.indexOf(u8, inspected, "neutral-host-control-unavailable") == null)
+        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid)
         return error.InvalidRealInspection;
 
     const terminate_payload = try std.json.Stringify.valueAlloc(allocator, .{
@@ -336,29 +359,32 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         allocator,
         generated.wire_schema.terminated_payload,
         terminated,
-    ) or std.mem.indexOf(u8, terminated, "\"state\":\"unknown\"") == null or
-        std.mem.indexOf(
-            u8,
-            terminated,
-            "neutral-host-control-unavailable-during-termination",
-        ) == null)
+    )) return error.HostTerminationFailed;
+    const TerminatedProjection = struct {
+        state: []const u8,
+        reap: struct { authority: []const u8, reaped: bool, completeness: []const u8 },
+        survivors: []const std.json.Value,
+        completeness: []const u8,
+        diagnostics: []const []const u8,
+    };
+    var parsed_terminated = try std.json.parseFromSlice(
+        TerminatedProjection,
+        allocator,
+        terminated,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_terminated.deinit();
+    if (!std.mem.eql(u8, parsed_terminated.value.state, "terminated") or
+        !std.mem.eql(u8, parsed_terminated.value.reap.authority, "direct-parent") or
+        !parsed_terminated.value.reap.reaped or
+        !std.mem.eql(u8, parsed_terminated.value.reap.completeness, "complete") or
+        parsed_terminated.value.survivors.len != 0 or
+        !std.mem.eql(u8, parsed_terminated.value.completeness, "complete") or
+        parsed_terminated.value.diagnostics.len != 0 or
+        std.mem.indexOf(u8, terminated, "neutral-host-control-unavailable") != null)
         return error.HostTerminationFailed;
-    // The neutral HostOperations endpoint is a later increment. Until it is
-    // served by the host process, Controller truthfully returns UNKNOWN and
-    // this golden uses the legacy locator-bound control only for cleanup.
-    if (recovered.registry.terminate(locator, .{
-        .mode = "immediate",
-        .reason = "real-host-golden cleanup after neutral fallback",
-        .request_id = "req_018f1e90-7b5a-7cc0-8000-0000000000f6",
-    }) != .terminated) return error.HostCleanupFailed;
-    switch (process_inspector.observeProcess(parsed_created.value.inspection.providerRoot.pid)) {
-        .absent => {},
-        .present, .unobservable => return error.ProviderStillPresent,
-    }
-    switch (process_inspector.observeProcess(parsed_created.value.inspection.hostPid)) {
-        .absent => {},
-        .present, .unobservable => return error.HostStillPresent,
-    }
+    try waitForProcessAbsence(parsed_created.value.inspection.providerRoot.pid);
+    try waitForProcessAbsence(parsed_created.value.inspection.hostPid);
 
     const final_path = try std.fs.path.join(allocator, &.{
         root,
@@ -417,6 +443,17 @@ fn writeViewerRequest(
         .request_id = request_id,
         .stream_seq = 0,
     }, payload);
+}
+
+fn waitForProcessAbsence(pid: i32) !void {
+    var timer = try std.time.Timer.start();
+    while (timer.read() < generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms) {
+        switch (process_inspector.observeProcess(pid)) {
+            .absent => return,
+            .present, .unobservable => std.Thread.sleep(5 * std.time.ns_per_ms),
+        }
+    }
+    return error.ProcessStillPresent;
 }
 
 fn readViewerResponse(

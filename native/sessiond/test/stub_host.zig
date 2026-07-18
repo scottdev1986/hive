@@ -446,7 +446,6 @@ const WireStubServer = struct {
         for ([_]u16{
             broker.generated.frame_type.host_adopt,
             broker.generated.frame_type.grant_register,
-            broker.generated.frame_type.terminate,
         }) |expected_type| try self.serveOne(expected_type);
     }
 
@@ -678,7 +677,7 @@ test "security corpus rejects replay stale generation and foreign instance" {
     );
 }
 
-test "TERMINATED response does not prove the still-live host exited" {
+test "unavailable neutral termination does not kill a legacy live host" {
     var root_storage: [48]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/h{x}", .{std.crypto.random.int(u32)});
     try std.fs.makeDirAbsolute(root);
@@ -768,7 +767,7 @@ test "TERMINATED response does not prove the still-live host exited" {
     try std.testing.expect(!server.failed.load(.acquire));
 }
 
-test "broker reaps its own exited host child and reports TERMINATED" {
+test "legacy host wire cannot fabricate a neutral TERMINATED result" {
     var root_storage: [48]u8 = undefined;
     const root = try std.fmt.bufPrint(&root_storage, "/tmp/h{x}", .{std.crypto.random.int(u32)});
     try std.fs.makeDirAbsolute(root);
@@ -841,7 +840,7 @@ test "broker reaps its own exited host child and reports TERMINATED" {
     defer client.deinit();
     var registry: broker.Registry = .{};
     try std.testing.expect(registry.registerCreatedHost(record, client.control()) == null);
-    try std.testing.expectEqual(broker.TerminationState.terminated, registry.terminate(
+    try std.testing.expectEqual(broker.TerminationState.unknown, registry.terminate(
         record.locator,
         .{
             .mode = "graceful",

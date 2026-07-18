@@ -548,6 +548,27 @@ pub const TerminalState = struct {
         return self.reconnect_available and self.checkpoints.newest() != null;
     }
 
+    pub fn retainedOutputStart(self: *const TerminalState) u64 {
+        return self.journal.start_seq;
+    }
+
+    pub fn outputClosed(self: *const TerminalState) bool {
+        return self.closed;
+    }
+
+    pub fn retainedCheckpointCount(self: *const TerminalState) u32 {
+        var count: u32 = 0;
+        for (self.checkpoints.slots) |slot| if (slot != null) {
+            count += 1;
+        };
+        return count;
+    }
+
+    pub fn newestCheckpoint(self: *const TerminalState) ?*const StoredCheckpoint {
+        if (!self.reconnect_available) return null;
+        return self.checkpoints.newest();
+    }
+
     /// Feed PTY output: journal first (durability), then VT. On journal pressure,
     /// checkpoint-first then keep draining (§18). Never drops bytes silently.
     pub fn feedOutput(self: *TerminalState, data: []const u8) Error!void {

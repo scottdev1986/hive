@@ -1063,6 +1063,11 @@ pub const HostOperations = struct {
             const status = reap.status orelse return error.InvalidReapEvidence;
             _ = try self.registry.update(self.session, .{
                 .lifecycle = .reaped,
+                .output = .{
+                    .retainedStart = record.output.retainedStart,
+                    .retainedEndExclusive = record.output.retainedEndExclusive,
+                    .closed = true,
+                },
                 .exit = .{
                     .code = status.code,
                     .signal = status.signal,
@@ -1107,6 +1112,11 @@ pub const HostOperations = struct {
                 const status = reap.status orelse return error.InvalidReapEvidence;
                 record = try self.registry.update(self.session, .{
                     .lifecycle = .reaped,
+                    .output = .{
+                        .retainedStart = record.output.retainedStart,
+                        .retainedEndExclusive = record.output.retainedEndExclusive,
+                        .closed = true,
+                    },
                     .exit = .{
                         .code = status.code,
                         .signal = status.signal,

@@ -13,6 +13,7 @@ const process_inspector = @import("process_inspector");
 const protocol = @import("protocol");
 const pty_host = @import("pty_host");
 const neutral_host = @import("neutral_host");
+const neutral_control_plane = @import("neutral_control_plane");
 const terminal_state = @import("terminal_state");
 
 const c = @cImport({
@@ -1679,6 +1680,7 @@ pub const ProductionHostLauncher = struct {
             build_id,
         );
         errdefer wire.deinit();
+        try wire.enableNeutralControl(self.canonical_home);
         const created_payload = try allocator.dupe(u8, pending.parsed.created_payload);
         errdefer allocator.free(created_payload);
 
@@ -3359,6 +3361,143 @@ pub const HostCore = struct {
         self.terminated = true;
         return response;
     }
+
+    fn finishNeutralReap(
+        self: *HostCore,
+        exit_code: ?i32,
+        exit_signal: ?i32,
+        final_state: []const u8,
+        evidence_error: ?FinalError,
+    ) !void {
+        if (self.terminated) return;
+        const binding = self.termination orelse return error.TerminationNotReady;
+        var errors: [2]FinalError = undefined;
+        var error_count: usize = 0;
+        if (evidence_error) |value| {
+            errors[0] = value;
+            error_count = 1;
+        }
+        if (binding.arbiter) |arbiter| {
+            arbiter.terminate() catch |err| {
+                errors[error_count] = .{
+                    .phase = "input-arbiter-close",
+                    .code = @errorName(err),
+                };
+                error_count += 1;
+            };
+        }
+        try binding.pty.recordExternalReap(self.registration.record.process_root.pid);
+        binding.pty.closeMaster();
+
+        var output_storage: [32]u8 = undefined;
+        var checkpoint_storage: [32]u8 = undefined;
+        const output_seq = try std.fmt.bufPrint(
+            &output_storage,
+            "{d}",
+            .{self.registration.record.output_seq},
+        );
+        const checkpoint_seq = try std.fmt.bufPrint(
+            &checkpoint_storage,
+            "{d}",
+            .{self.registration.record.checkpoint_seq},
+        );
+        try writeFinalExclusive(self.allocator, binding.directory, .{
+            .state = final_state,
+            .exitCode = if (exit_code) |code| std.math.cast(u8, code) else null,
+            .exitSignal = exit_signal,
+            .waitObserved = true,
+            .outputSeq = output_seq,
+            .checkpointSeq = checkpoint_seq,
+            .survivors = &.{},
+            .errors = errors[0..error_count],
+            .failureCode = null,
+        });
+        self.registration.record.state = .exited;
+        self.terminated = true;
+    }
+
+    fn reconcileNeutralOperationFailure(self: *HostCore, operation_error: anyerror) !void {
+        if (self.terminated) return;
+        const child_pid = self.registration.record.process_root.pid;
+        var raw_status: c_int = 0;
+        const waited = c.waitpid(child_pid, &raw_status, c.WNOHANG);
+        var exit_code: ?i32 = null;
+        var exit_signal: ?i32 = null;
+        if (waited == child_pid) {
+            const status_bits: u32 = @bitCast(raw_status);
+            if (std.posix.W.IFEXITED(status_bits))
+                exit_code = @intCast(std.posix.W.EXITSTATUS(status_bits));
+            if (std.posix.W.IFSIGNALED(status_bits))
+                exit_signal = @intCast(std.posix.W.TERMSIG(status_bits));
+        } else if (waited == 0) {
+            return;
+        } else if (std.posix.errno(waited) != .CHILD) {
+            return;
+        }
+        try self.finishNeutralReap(
+            exit_code,
+            exit_signal,
+            "unknown",
+            .{
+                .phase = "neutral-control-operation",
+                .code = @errorName(operation_error),
+            },
+        );
+    }
+
+    fn acceptNeutralInspection(self: *HostCore, payload: []const u8) !void {
+        var parsed = try std.json.parseFromSlice(
+            neutral_control_plane.WireInspectionPayload,
+            self.allocator,
+            payload,
+            .{},
+        );
+        defer parsed.deinit();
+        const inspection = parsed.value;
+        if (inspection.schemaVersion != 1 or
+            inspection.reap.authority != .@"direct-parent" or
+            !inspection.reap.reaped or inspection.reap.status == null)
+            return;
+        try self.finishNeutralReap(
+            inspection.reap.status.?.code,
+            inspection.reap.status.?.signal,
+            "unknown",
+            .{
+                .phase = "process-tree-inspection",
+                .code = "descendant-completeness-unavailable-after-root-reap",
+            },
+        );
+    }
+
+    fn acceptNeutralTermination(self: *HostCore, payload: []const u8) !void {
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.terminated_payload,
+            payload,
+        )) return error.InvalidTerminationResponse;
+        var parsed = try std.json.parseFromSlice(
+            neutral_control_plane.WireTerminationPayload,
+            self.allocator,
+            payload,
+            .{},
+        );
+        defer parsed.deinit();
+        const result = parsed.value;
+        if (result.schemaVersion != 1 or result.reap.authority != .@"direct-parent" or
+            !result.reap.reaped or result.reap.status == null)
+            return;
+        const complete = result.state == .terminated and result.survivors.len == 0 and
+            result.completeness == .complete and result.reap.completeness == .complete;
+        try self.finishNeutralReap(
+            result.reap.status.?.code,
+            result.reap.status.?.signal,
+            if (complete) "terminated" else "unknown",
+            if (complete) null else .{
+                .phase = "neutral-control-operation",
+                .code = "incomplete-after-root-reap",
+            },
+        );
+    }
 };
 
 const ExpectedPeerRole = enum { broker, viewer, either };
@@ -3910,8 +4049,141 @@ fn queueInitialInput(
     try sink.arbiterSink().write(encoded.items);
 }
 
+const NeutralLiveEvidenceSource = struct {
+    core: *HostCore,
+    pty: *pty_host.PtyHost,
+    state: *terminal_state.TerminalState,
+
+    fn provider(self: *NeutralLiveEvidenceSource) neutral_control_plane.EvidenceProvider {
+        return .{ .context = self, .measureFn = measure };
+    }
+
+    fn measure(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+    ) !neutral_control_plane.LiveEvidence {
+        const self: *NeutralLiveEvidenceSource = @ptrCast(@alignCast(context));
+        var diagnostics: std.ArrayList([]const u8) = .{};
+        const foreground_process_group_id: ?i32 = self.pty.foregroundProcessGroupId() catch null;
+        const newest_checkpoint: ?neutral_control_plane.CheckpointSnapshot =
+            if (self.state.newestCheckpoint()) |checkpoint| .{
+                .contentType = "application/vnd.hive.terminal-checkpoint",
+                .schemaVersion = "HVTCP001",
+                .throughEventSequence = checkpoint.header.through_seq,
+                .throughOutputOffset = checkpoint.header.through_seq,
+                .opaqueBytes = checkpoint.opaquePayload(),
+            } else null;
+        var input_owner: ?neutral_control_plane.WireInputClaim = null;
+        if (self.core.active_claim) |claim| {
+            const kind = std.meta.stringToEnum(
+                @FieldType(neutral_control_plane.WireInputClaim, "kind"),
+                claim.kind,
+            );
+            if (kind) |value| {
+                input_owner = .{
+                    .token = try allocator.dupe(u8, claim.token),
+                    .writer = try allocator.dupe(u8, claim.writer),
+                    .kind = value,
+                    .leaseExpiresAt = try allocator.dupe(u8, claim.lease_expires_at),
+                };
+            } else {
+                try diagnostics.append(allocator, "input-owner-kind-invalid");
+            }
+        }
+        return .{
+            .foregroundProcessGroupId = foreground_process_group_id,
+            .newestCheckpoint = newest_checkpoint,
+            .inputOwner = input_owner,
+            .diagnostics = try diagnostics.toOwnedSlice(allocator),
+        };
+    }
+};
+
+fn refreshNeutralRecord(
+    registry: *neutral_host.Registry,
+    session: neutral_host.SessionRef,
+    core: *HostCore,
+    pty: *pty_host.PtyHost,
+    state: *terminal_state.TerminalState,
+) !void {
+    const checkpoint = state.newestCheckpoint();
+    _ = try registry.update(session, .{
+        .window = .{
+            .columns = core.registration.record.geometry.columns,
+            .rows = core.registration.record.geometry.rows,
+            .widthPixels = core.registration.record.geometry.width_px,
+            .heightPixels = core.registration.record.geometry.height_px,
+        },
+        .windowRevision = pty.resizeRevision(),
+        .eventSequenceHighWater = state.outputSeq(),
+        .output = .{
+            .retainedStart = state.retainedOutputStart(),
+            .retainedEndExclusive = state.outputSeq(),
+            .closed = state.outputClosed(),
+        },
+        .checkpoints = .{
+            .retained = state.retainedCheckpointCount(),
+            .newestThroughEventSequence = if (checkpoint) |value| value.header.through_seq else null,
+            .newestThroughOutputOffset = if (checkpoint) |value| value.header.through_seq else null,
+        },
+    });
+}
+
+const NeutralHostServing = struct {
+    operations: *neutral_control_plane.HostOperations,
+    core: *HostCore,
+
+    fn handler(self: *NeutralHostServing) neutral_host.OperationHandler {
+        return .{ .context = self, .callFn = call };
+    }
+
+    fn call(
+        context: *anyopaque,
+        request: neutral_host.OperationRequest,
+    ) !neutral_host.OperationResponse {
+        const self: *NeutralHostServing = @ptrCast(@alignCast(context));
+        const response = self.operations.handler().call(request) catch |err| {
+            switch (request.operation) {
+                .inspect, .terminate => self.core.reconcileNeutralOperationFailure(err) catch {},
+                else => {},
+            }
+            return err;
+        };
+        if (response.accepted) switch (request.operation) {
+            .inspect => self.core.acceptNeutralInspection(response.payload) catch |err| {
+                self.core.reconcileNeutralOperationFailure(err) catch {};
+                return err;
+            },
+            .terminate => self.core.acceptNeutralTermination(response.payload) catch |err| {
+                self.core.reconcileNeutralOperationFailure(err) catch {};
+                return err;
+            },
+            else => {},
+        };
+        return response;
+    }
+};
+
+fn serveNeutralAccepted(
+    endpoint: *neutral_host.HostEndpoint,
+    stream: std.net.Stream,
+    handler: neutral_host.OperationHandler,
+    timeout_ms: u64,
+) !void {
+    defer stream.close();
+    const flags = c.fcntl(stream.handle, c.F_GETFL);
+    if (flags < 0 or
+        c.fcntl(stream.handle, c.F_SETFL, flags & ~@as(c_int, c.O_NONBLOCK)) < 0)
+        return error.SocketBlockingFailed;
+    try setControlTimeoutMs(stream.handle, timeout_ms);
+    try endpoint.serveAccepted(stream, handler);
+}
+
 fn runHostLoop(
     runtime: *HostRuntime,
+    neutral_registry: *neutral_host.Registry,
+    neutral_endpoint: *neutral_host.HostEndpoint,
+    neutral_serving: *NeutralHostServing,
     core: *HostCore,
     timer: *std.time.Timer,
     pty: *pty_host.PtyHost,
@@ -3943,6 +4215,31 @@ fn runHostLoop(
             );
             serveSessionConnection(core.allocator, stream, core, timer) catch |err| {
                 std.log.err("host connection refused: {s}", .{@errorName(err)});
+            };
+            continue;
+        }
+
+        if (try neutral_endpoint.acceptIfReady()) |stream| {
+            refreshNeutralRecord(
+                neutral_registry,
+                neutral_endpoint.session,
+                core,
+                pty,
+                state,
+            ) catch |err| {
+                std.log.err("neutral host evidence refresh failed: {s}", .{@errorName(err)});
+                stream.close();
+                continue;
+            };
+            serveNeutralAccepted(
+                neutral_endpoint,
+                stream,
+                neutral_serving.handler(),
+                try leaseBoundControlTimeoutMs(core.lease, now_ns),
+            ) catch |err| {
+                // A timeout after any partial frame is fatal to this stream;
+                // serveNeutralAccepted closes it; the next request is fresh.
+                std.log.err("neutral host operation refused: {s}", .{@errorName(err)});
             };
             continue;
         }
@@ -4095,6 +4392,12 @@ pub fn runHostRole(
     };
     // Evidence the frozen create result does not carry, measured by the create.
     const launch_evidence = direct.launch_evidence orelse return error.ProviderExecFailed;
+    var neutral_endpoint = try neutral_host.HostEndpoint.open(
+        allocator,
+        &neutral_runtime,
+        created.session,
+    );
+    defer neutral_endpoint.deinit();
     var sink: PtyQueueSink = .{ .pty = &pty };
     const real_engine = try RealVtEngine.create(
         allocator,
@@ -4209,6 +4512,25 @@ pub fn runHostRole(
         .directory = runtime.directory,
         .arbiter = &arbiter,
     });
+    var neutral_evidence: NeutralLiveEvidenceSource = .{
+        .core = &core,
+        .pty = &pty,
+        .state = &state,
+    };
+    var neutral_platform = process_inspector.RealPlatform.init();
+    var neutral_operations = try neutral_control_plane.HostOperations.init(
+        allocator,
+        &neutral_registry,
+        neutral_endpoint.session,
+        neutral_platform.platform(),
+        neutral_evidence.provider(),
+        neutral_control_plane.EvidenceClock.system(),
+    );
+    defer neutral_operations.deinit();
+    var neutral_serving: NeutralHostServing = .{
+        .operations = &neutral_operations,
+        .core = &core,
+    };
     boot.deinit(allocator);
     boot_owned = false;
     errdefer if (!core.terminated) {
@@ -4225,7 +4547,87 @@ pub fn runHostRole(
     );
     defer allocator.free(broker_build_id);
     core.broker_build_id = broker_build_id;
-    try runHostLoop(&runtime, &core, &timer, &pty, &state, &persistence);
+    try runHostLoop(
+        &runtime,
+        &neutral_registry,
+        &neutral_endpoint,
+        &neutral_serving,
+        &core,
+        &timer,
+        &pty,
+        &state,
+        &persistence,
+    );
+}
+
+test "ready neutral endpoint drops a timed-out partial frame" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(
+        &root_storage,
+        "/tmp/nho-{x}",
+        .{std.crypto.random.int(u64)},
+    );
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{});
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try neutral_host.Runtime.open(std.testing.allocator, root);
+    defer runtime.deinit();
+    var registry = try neutral_host.Registry.open(std.testing.allocator, &runtime);
+    defer registry.deinit();
+    const reserved = try registry.reserve(
+        "partial-frame-proof",
+        "partial-frame-proof-create",
+        @splat(0x41),
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    );
+    const session = switch (reserved) {
+        .reserved => |record| record.session,
+        .existing => return error.UnexpectedNeutralSessionReplay,
+    };
+    var endpoint = try neutral_host.HostEndpoint.open(
+        std.testing.allocator,
+        &runtime,
+        session,
+    );
+    defer endpoint.deinit();
+    try std.testing.expect((try endpoint.acceptIfReady()) == null);
+
+    const client = try std.net.connectUnixSocket(endpoint.socketPath);
+    defer client.close();
+    var accepted: ?std.net.Stream = null;
+    var attempts: usize = 0;
+    while (accepted == null and attempts < 100) : (attempts += 1) {
+        accepted = try endpoint.acceptIfReady();
+        if (accepted == null) std.Thread.sleep(std.time.ns_per_ms);
+    }
+    const server = accepted orelse return error.NeutralEndpointNotReady;
+    try client.writeAll("NHOP");
+
+    const NeverCalled = struct {
+        called: bool = false,
+
+        fn operation(
+            context: *anyopaque,
+            _: neutral_host.OperationRequest,
+        ) !neutral_host.OperationResponse {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.called = true;
+            return .{ .payload = "unexpected" };
+        }
+
+        fn handler(self: *@This()) neutral_host.OperationHandler {
+            return .{ .context = self, .callFn = operation };
+        }
+    };
+    var handler: NeverCalled = .{};
+    if (serveNeutralAccepted(&endpoint, server, handler.handler(), 5)) |_| {
+        return error.PartialOperationFrameAccepted;
+    } else |_| {}
+    try std.testing.expect(!handler.called);
 }
 
 test "visibility lease self-expires at the generated fifteen second bound" {

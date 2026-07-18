@@ -676,6 +676,20 @@ pub const PtyHost = struct {
         };
     }
 
+    pub fn foregroundProcessGroupId(self: *const PtyHost) Error!i32 {
+        try self.requireOpen();
+        const process_group_id = c.tcgetpgrp(self.master_fd);
+        if (process_group_id <= 0) return error.IdentityUnavailable;
+        return process_group_id;
+    }
+
+    /// A sibling authority performed the direct-parent waitpid for this exact
+    /// child. Forget the pid before deinit so it can never target a reused pid.
+    pub fn recordExternalReap(self: *PtyHost, child_pid: i32) Error!void {
+        if (child_pid <= 0 or self.pid != child_pid) return error.IdentityUnavailable;
+        self.pid = -1;
+    }
+
     /// Close the PTY master (does not wait the child). Positive exit uses waitExit.
     pub fn closeMaster(self: *PtyHost) void {
         if (self.master_fd >= 0) {

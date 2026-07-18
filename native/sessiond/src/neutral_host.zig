@@ -1777,9 +1777,37 @@ pub const HostEndpoint = struct {
             return error.SocketSubstitution;
         const connection = try self.server.accept();
         defer connection.stream.close();
+        try self.serveAccepted(connection.stream, handler);
+    }
+
+    /// Returns one ready connection without changing serveOne's blocking
+    /// contract. The caller owns the stream and its transport timeouts.
+    pub fn acceptIfReady(self: *HostEndpoint) !?std.net.Stream {
         if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
             return error.SocketSubstitution;
-        const file: std.fs.File = .{ .handle = connection.stream.handle };
+        var poll_fds = [_]std.posix.pollfd{.{
+            .fd = self.server.stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        if (try std.posix.poll(&poll_fds, 0) == 0) return null;
+        if (poll_fds[0].revents & std.posix.POLL.IN == 0)
+            return error.HostEndpointUnavailable;
+        const connection = try self.server.accept();
+        errdefer connection.stream.close();
+        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
+            return error.SocketSubstitution;
+        return connection.stream;
+    }
+
+    pub fn serveAccepted(
+        self: *HostEndpoint,
+        stream: std.net.Stream,
+        handler: OperationHandler,
+    ) !void {
+        if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
+            return error.SocketSubstitution;
+        const file: std.fs.File = .{ .handle = stream.handle };
         var header: [request_header_bytes]u8 = undefined;
         try readExact(file, &header);
         if (!std.mem.eql(u8, header[0..4], request_magic) or header[4] != schema_version)
