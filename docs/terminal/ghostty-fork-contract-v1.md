@@ -112,6 +112,11 @@ target than macOS 14.0. The build runs offline from verified, bundled toolchain
 and dependency caches; a user-installed Ghostty or Zig is neither searched nor
 used.
 
+Every qualification run performs three clean source builds and hashes the full
+shipped runtime set (XCFramework, lib-vt slices, notices, and SBOM). The guard
+fails on any byte drift, including metadata ordering, and retains all three
+manifests and hash lists as evidence.
+
 The notarization carrier is signed with a Developer ID Application identity,
 secure timestamp, and hardened runtime, then strictly verified and packaged as
 the exact ZIP submitted by `notarytool`. Apple requires Developer ID signing,

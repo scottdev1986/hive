@@ -1,7 +1,7 @@
-p48008
+p3773
 f0
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.dDZQp2/arm64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.QQRcEF/arm64.control
 f1
 tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/derek/raw/qualification/ghostty-b1-foundation/arm64-protocol.jsonl
@@ -10,4 +10,4 @@ tREG
 n/Users/scottkellar/Projects/hive/.hive/worktrees/derek/raw/qualification/ghostty-b1-foundation/arm64-probe.stderr.txt
 f3
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.dDZQp2/arm64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.QQRcEF/arm64.control

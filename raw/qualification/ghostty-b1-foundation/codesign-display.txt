@@ -1,4 +1,4 @@
-Executable=/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.dDZQp2/GhosttyManualIsolationProbe
+Executable=/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.QQRcEF/GhosttyManualIsolationProbe
 Identifier=GhosttyManualIsolationProbe
 Format=Mach-O universal (x86_64 arm64)
 CodeDirectory v=20500 size=39431 flags=0x10000(runtime) hashes=1226+2 location=embedded
@@ -6,21 +6,21 @@ VersionPlatform=1
 VersionMin=917504
 VersionSDK=1705216
 Hash type=sha256 size=32
-CandidateCDHash sha256=9bbdfaa6e4fcbba69b7913616746d46901b1a577
-CandidateCDHashFull sha256=9bbdfaa6e4fcbba69b7913616746d46901b1a57703e3f3c3980d81784d7b63a9
+CandidateCDHash sha256=40c7f61081abd882beb9ebb0aac2be93bb2e71df
+CandidateCDHashFull sha256=40c7f61081abd882beb9ebb0aac2be93bb2e71df16be10935b26ec125c255ede
 Hash choices=sha256
-CMSDigest=9bbdfaa6e4fcbba69b7913616746d46901b1a57703e3f3c3980d81784d7b63a9
+CMSDigest=40c7f61081abd882beb9ebb0aac2be93bb2e71df16be10935b26ec125c255ede
 CMSDigestType=2
 Executable Segment base=0
 Executable Segment limit=16252928
 Executable Segment flags=0x1
 Page size=16384
-CDHash=9bbdfaa6e4fcbba69b7913616746d46901b1a577
-Signature size=8973
+CDHash=40c7f61081abd882beb9ebb0aac2be93bb2e71df
+Signature size=8974
 Authority=Developer ID Application: Scott Kellar (6R32MFYW6F)
 Authority=Developer ID Certification Authority
 Authority=Apple Root CA
-Timestamp=Jul 18, 2026 at 12:01:51 PM
+Timestamp=Jul 18, 2026 at 12:32:20 PM
 Info.plist=not bound
 TeamIdentifier=6R32MFYW6F
 Runtime Version=26.5.0

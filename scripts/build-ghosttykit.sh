@@ -127,6 +127,16 @@ if [[ -f "$mac_lib" && "$mac_binary_path" != lib* ]]; then
   /usr/libexec/PlistBuddy -c "Set :AvailableLibraries:$mac_index:LibraryPath $mac_binary_path" "$mac_plist"
 fi
 
+# create-xcframework receives slices from independent build jobs, so its
+# AvailableLibraries array reflects completion order. Normalize that order
+# before the artifact is shipped; LibraryIdentifier is the stable key.
+plist_json="$WORK/GhosttyKit.Info.plist.json"
+plist_sorted_json="$WORK/GhosttyKit.Info.plist.sorted.json"
+/usr/bin/plutil -convert json -o "$plist_json" "$mac_plist"
+/usr/bin/jq '.AvailableLibraries |= sort_by(.LibraryIdentifier)' \
+  "$plist_json" >"$plist_sorted_json"
+/usr/bin/plutil -convert xml1 -o "$mac_plist" "$plist_sorted_json"
+
 for target in aarch64:arm64 x86_64:x86_64; do
   zig_arch=${target%%:*}
   hive_arch=${target#*:}

@@ -1,11 +1,11 @@
-Test Suite 'Selected tests' started at 2026-07-18 12:01:47.725.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 12:01:47.727.
-Test Suite 'AttachReplayTests' started at 2026-07-18 12:01:47.727.
+Test Suite 'Selected tests' started at 2026-07-18 12:32:16.487.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 12:32:16.489.
+Test Suite 'AttachReplayTests' started at 2026-07-18 12:32:16.489.
 Test Case '-[HiveTerminalKitTests.AttachReplayTests testForeignEngineCheckpointRejected]' started.
-Test Case '-[HiveTerminalKitTests.AttachReplayTests testForeignEngineCheckpointRejected]' passed (0.018 seconds).
-Test Suite 'AttachReplayTests' passed at 2026-07-18 12:01:47.745.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.018 (0.018) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 12:01:47.745.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.018 (0.018) seconds
-Test Suite 'Selected tests' passed at 2026-07-18 12:01:47.745.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.018 (0.020) seconds
+Test Case '-[HiveTerminalKitTests.AttachReplayTests testForeignEngineCheckpointRejected]' passed (0.019 seconds).
+Test Suite 'AttachReplayTests' passed at 2026-07-18 12:32:16.509.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.019 (0.020) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 12:32:16.509.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.019 (0.020) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 12:32:16.509.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.019 (0.022) seconds

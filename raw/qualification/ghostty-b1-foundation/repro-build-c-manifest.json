@@ -9133,49 +9133,49 @@
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-005.hvgcp",
-      "sha256": "7fc73a2dd4345a0d12162a988e2e5e9ca3a0ca05090f830d684d826082206d6f",
+      "sha256": "483df7f43ac1b2bd4f3482b1c872af1571a759d6780cf45e4ab5cd1820b78d4f",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-006.hvgcp",
-      "sha256": "0115c8b488a8cd3c59cca9034221825bec5a2ee9c74a4c765363531c02a3e623",
+      "sha256": "4990a595e14637784ebf7bf792649925ebe91789292ccd26bff1186de51dbfde",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-007.hvgcp",
-      "sha256": "62ae7677ad9e45043842c9810d0989af598b0196e1547d706f23c58565e30935",
+      "sha256": "4f34039d23499df2894fa3d9038d84bc850b4a96529c678c702aa6e8d0e35e4f",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-008.hvgcp",
-      "sha256": "ed6a00f4b90e6b45c77878438bc5e6d5395b65b140bc1bebcd037c55c295cc12",
+      "sha256": "546744f76347cd92adfb161af330fc5b194ad31989be932e81488a80214441d0",
       "size": 412636,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-009.hvgcp",
-      "sha256": "12e9f46b41824ee420045dff69c502b201b718191b45110df3ee871ba333ec09",
+      "sha256": "60a9678b60e1c8b33a150491efc8754a8a46b51a81bdfc5d28c815e3cf1488a9",
       "size": 412637,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-010.hvgcp",
-      "sha256": "386b2884f205009568caecb15ae00fac92e42c0a11833f4a452bff8e9fd67dbb",
+      "sha256": "8eba43a504113bc3ab9a9b8c79a9b5b22badb6984af5ef84a9ed3e88623c839e",
       "size": 412638,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-011.hvgcp",
-      "sha256": "967dcdead489c29f5d5f403b05292f0cf0b99a52d83ce564b3dee9410dbf4557",
+      "sha256": "af5f1d5ac95b1e896b69e35214ca188173bc648d1ad8f91e91b110a645b89df3",
       "size": 412639,
       "type": "file"
     },
     {
       "path": "checkpoint-fixtures/arm64/case-00-split-012.hvgcp",
-      "sha256": "ca9d8cef071c23fd976a4afea855e070d450ec1b565a1c769f969bb06c138736",
+      "sha256": "b317b1ad577e0de3e2b9fb096b213375a79a2fe0da6f050a6f648c5227e8b06c",
       "size": 412636,
       "type": "file"
     },
@@ -11371,7 +11371,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/Info.plist",
-      "sha256": "0878671a33feec8538a5bab8969481204f221b838162a9e917b123f52751dad5",
+      "sha256": "6a62eb8c3ddae6e4fdd8827966dcc67907fe46d04cce97bc459dd95b6a5cfab7",
       "size": 1725,
       "type": "file"
     },
@@ -11389,7 +11389,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/ios-arm64/libghostty-internal-fat.a",
-      "sha256": "8b53a3f840add637e06ae537ff1ea3ec96f2f635406ed3a9d13ac59d4c11dcd2",
+      "sha256": "a14c4d9d0918eaf5b6e1b23a625b104ba0ac9f76e17c479a92c6b63af3157ab3",
       "size": 141098304,
       "type": "file"
     },
@@ -11407,7 +11407,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/ios-arm64-simulator/libghostty-internal-fat.a",
-      "sha256": "fa48ca4de483e0d83be584f3b04f25c3f5271c94061bcb16ed7a27b841f16581",
+      "sha256": "3a28db4bb6ed5d554378d88315555200969842fc7bef066224322ce6965132ec",
       "size": 141121616,
       "type": "file"
     },
@@ -11425,7 +11425,7 @@
     },
     {
       "path": "GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a",
-      "sha256": "d80d320152beb37114bcf9633c4b5df354e7ed060ceee38057bf68cf999922b2",
+      "sha256": "2c1e921ce5cab46db8a51f8ffe5fcb2261ce34529d3e9f0bd77a167356541f8f",
       "size": 286909160,
       "type": "file"
     },
@@ -11629,13 +11629,13 @@
     },
     {
       "path": "lib-vt/arm64/libghostty-vt.a",
-      "sha256": "22dd12b18f6ecc72ece6d4df1dafc8795c8a789b1ccca8df7dc9836397e9e16c",
+      "sha256": "6b85368b7363c8fee39f1b608c76ae586a746956bfa761ad5e0e157f9d02a9f3",
       "size": 10166640,
       "type": "file"
     },
     {
       "path": "lib-vt/x86_64/libghostty-vt.a",
-      "sha256": "d3dbf8dc0b3dd2db7b450c161b196644ccdbf15bd10643645b637ef81baa108d",
+      "sha256": "6089dbe64cb7630e64403d41d40a861df1ebed2900e67b7b6d7796e19dcc5e50",
       "size": 11223400,
       "type": "file"
     },
