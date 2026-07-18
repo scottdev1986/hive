@@ -1,25 +1,25 @@
 --- build-b-files
 +++ build-c-files
 @@ -3,14 +3,14 @@
- checkpoint-fixtures/arm64/case-00-split-002.hvgcp	680546a7c992465ab55d80fd38c951997341aff8e48f43f557441da35a33e624	412638	file
- checkpoint-fixtures/arm64/case-00-split-003.hvgcp	b8d5eb3ac2fb7dd3800ccac467a34b8e59b92dc001efd1ab5ad0f8f750895298	412639	file
- checkpoint-fixtures/arm64/case-00-split-004.hvgcp	c308ac5bbeb309d49c1ef678f7f2957482a7f2778f92d84b064855b46c2ee77a	412640	file
--checkpoint-fixtures/arm64/case-00-split-005.hvgcp	4f7ace21409026c2a9b7a1d5ac3ccdbf317b4cbbfc04d5b75700bf92e7a0f74e	412636	file
--checkpoint-fixtures/arm64/case-00-split-006.hvgcp	a81465b9bcae195028b51acb36f29847c3d13d96d271a3cdbeb6d5e9076ae4be	412636	file
--checkpoint-fixtures/arm64/case-00-split-007.hvgcp	8c8c96479d279e0f776e50be591a87abd1587bfe72b47f34d690aec6dfc79e22	412636	file
--checkpoint-fixtures/arm64/case-00-split-008.hvgcp	9f029e63faf54c7dcdb9f221968d3f218aacf420d4d3cbb50293b2e1fdeb2623	412636	file
--checkpoint-fixtures/arm64/case-00-split-009.hvgcp	92eb6332ad685233280f2aff11821f14734b139292d0496ef14574c06daee9e0	412637	file
--checkpoint-fixtures/arm64/case-00-split-010.hvgcp	bf51585489284ceb391d394ac755ca58a99250364e5dadc50576c02c6d968ffe	412638	file
--checkpoint-fixtures/arm64/case-00-split-011.hvgcp	caf2f82a54ae69a22d8e4f0434e269b8c211bfd8274dd1bef39d84bdca164511	412639	file
--checkpoint-fixtures/arm64/case-00-split-012.hvgcp	cb302a59d1712232ad7f4747335221a8444f03ce458dfd8a60e0385e8e3b0198	412636	file
-+checkpoint-fixtures/arm64/case-00-split-005.hvgcp	59c2b9b7d77f995ee2f4a0847668d581682a5e8493db561c46b20c425dd9f6b1	412636	file
-+checkpoint-fixtures/arm64/case-00-split-006.hvgcp	3781f2fd48b97f96f840216feaf41d89ec591e37a439b7dbcdb6707548787ad9	412636	file
-+checkpoint-fixtures/arm64/case-00-split-007.hvgcp	27133c67d2a16368e396543f1ab3fd4c4da30d62075c18940e55ffa810588176	412636	file
-+checkpoint-fixtures/arm64/case-00-split-008.hvgcp	542b43e24ea80bdbcfb4965e952542f04930e8de9fde4766a79df15e5fc0c942	412636	file
-+checkpoint-fixtures/arm64/case-00-split-009.hvgcp	4625d288ea5c516b178db5f94406f56f5bc60777b9ffc777976e377e55b7a77c	412637	file
-+checkpoint-fixtures/arm64/case-00-split-010.hvgcp	ff25bb525320c9b89cd8449d687db69a1fb2a2368013ded3e46df2f5f8a778ca	412638	file
-+checkpoint-fixtures/arm64/case-00-split-011.hvgcp	1d9eeb40b8f09c5cc5cc45e58a7ae2cbc3355618c0488cb2fe1cdd23ab309885	412639	file
-+checkpoint-fixtures/arm64/case-00-split-012.hvgcp	0e08f91806269bc2474ad37250c93289827d9db13498fa3f0106c0afaac4a8a3	412636	file
- checkpoint-fixtures/arm64/case-01-split-000.hvgcp	ff2b0d7b945bbfce87d59226a14da8700375bc64f24811933d8d1ecb120d62c1	412636	file
- checkpoint-fixtures/arm64/case-01-split-001.hvgcp	5d493e03f0e105b28520c161a59d22892675b10b7a3f163fc813d836a74276ac	412637	file
- checkpoint-fixtures/arm64/case-01-split-002.hvgcp	12b64c4fb2031c9d3341c31bf7a513edcc57a54ad4dc0e2a6fc4d27f3af5e8a5	412638	file
+ checkpoint-fixtures/arm64/case-00-split-002.hvgcp	3b0854041840c7bc38ab29ba54d6958a066a7f2b52086a6a0895d2767c572cd5	412638	file
+ checkpoint-fixtures/arm64/case-00-split-003.hvgcp	4f964de88ede61fa40495fb4ee57ebddb63f07384101d50c11fcabee4d906930	412639	file
+ checkpoint-fixtures/arm64/case-00-split-004.hvgcp	f87c6637b69ab2afedb5d949439c9f6c5758dfc4dc4c5501b605ca84711c6a5f	412640	file
+-checkpoint-fixtures/arm64/case-00-split-005.hvgcp	3c8cd8bfd9cdb191cf28afa8da54bec294d9bfbdad154ac5939048c9981acf45	412636	file
+-checkpoint-fixtures/arm64/case-00-split-006.hvgcp	7f0f80e8e60cd456187e1008fe7a7b46ce4ff937946b15936fbe0efb370d42ca	412636	file
+-checkpoint-fixtures/arm64/case-00-split-007.hvgcp	a1c69875e79e997615fd96804c10dddb20736983fedd5460f3f18a4d4fa5e9ea	412636	file
+-checkpoint-fixtures/arm64/case-00-split-008.hvgcp	e805f6d6de714eb92c5fb88a8147f04b7cd168b8d90825f8029710b6f945f906	412636	file
+-checkpoint-fixtures/arm64/case-00-split-009.hvgcp	3e5eeb150e5f0b8c85c49e3e845d0bd7c275b2565f5245dc9a1e84e5764f4ea0	412637	file
+-checkpoint-fixtures/arm64/case-00-split-010.hvgcp	940878fb9803b2decc300f8ba6e258c5739d48779c8391849df95ce803ef1281	412638	file
+-checkpoint-fixtures/arm64/case-00-split-011.hvgcp	9a668da1f2ecf3df46516eb86bf6f1bd3bac6eb5e7e1b802c359282213da8987	412639	file
+-checkpoint-fixtures/arm64/case-00-split-012.hvgcp	823829d8f8d019c03fa854891e99b0085c1f4aa80e834c3af99dd67737a4a482	412636	file
++checkpoint-fixtures/arm64/case-00-split-005.hvgcp	b078a0d80b97a23a4265d47e1e872e751f26e7f5009f3ecae9188b5fc07a7e55	412636	file
++checkpoint-fixtures/arm64/case-00-split-006.hvgcp	c2c21bd73afb65fac7e2549d087e287ead76b79fb2799dff98d9a20b2e781a91	412636	file
++checkpoint-fixtures/arm64/case-00-split-007.hvgcp	492990f1488e940a22f33f6a11ef267942652b00e2ad1035a8e62422b104715f	412636	file
++checkpoint-fixtures/arm64/case-00-split-008.hvgcp	bf44577850f4eceddbebb027f6370056575dae2dbd0f08f5d3032e1c675956f9	412636	file
++checkpoint-fixtures/arm64/case-00-split-009.hvgcp	033d0cc4749e575e9880bfce9b6756bd9ef460e97d94aa036bdee3f105eae00a	412637	file
++checkpoint-fixtures/arm64/case-00-split-010.hvgcp	e7fb527bffc98e896c0d56c466c815a16b081680fbf7f530ff6a69a628b64c96	412638	file
++checkpoint-fixtures/arm64/case-00-split-011.hvgcp	3e5e8463ade11457bf3c80678709966e3f40c17b746a64cceed99bd455aa2f44	412639	file
++checkpoint-fixtures/arm64/case-00-split-012.hvgcp	a8f152b44459f251cd18f346fc1cae93e976842be1ac62986f7e0a8f3f46cb0d	412636	file
+ checkpoint-fixtures/arm64/case-01-split-000.hvgcp	17397ebde0f0a4197a3130d9efeb4c0184bdee4a74be4244331a4825a5f66b74	412636	file
+ checkpoint-fixtures/arm64/case-01-split-001.hvgcp	ef61f2544f5e81213603e0e65eac08d329b1a30202cfc6a047f024fc9b4528b2	412637	file
+ checkpoint-fixtures/arm64/case-01-split-002.hvgcp	77a24381289d454c58260e89eca310bb841dcc396ccfe8c165ba249a9a605e0c	412638	file

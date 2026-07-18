@@ -1,0 +1,11 @@
+qualification=Gate 4 post-patch reproducibility rerun
+current_main=33760753be400047e4be69ed59497ded52cfda8b
+qualification_head=01ec391fa73e7417d8c610e71b5280b0f1d28d2a
+started_utc=2026-07-18T21:53:46Z
+capture=direct_stdout_stderr_redirection_no_pipeline
+clean build a/3
+clean build b/3
+clean build c/3
+shipped runtime reproducibility qualified; evidence: /Users/scottkellar/Projects/hive/.hive/worktrees/emil/.cache/native/qualification/gate4-post-patch-repro-33760753-direct
+qualification_exit_code=0
+completed_utc=2026-07-18T21:57:22Z

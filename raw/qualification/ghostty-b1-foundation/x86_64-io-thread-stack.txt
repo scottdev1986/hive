@@ -1,5 +1,5 @@
-    712 Thread_28353608: io
-    + 712 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
-    +   712 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x1031e64a3]
-    +     712 ???  (in <unknown binary>)  [0x7ff89a5b1198]
-    +       712 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    810 Thread_32339066: io
+    + 810 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   810 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x102eed023]
+    +     810 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    +       810 ???  (in <unknown binary>)  [0x7ff89a03eb80]

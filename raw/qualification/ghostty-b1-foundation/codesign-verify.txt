@@ -1,2 +1,2 @@
-/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.PFPMto/GhosttyManualIsolationProbe: valid on disk
-/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.PFPMto/GhosttyManualIsolationProbe: satisfies its Designated Requirement
+/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.3f9019/GhosttyManualIsolationProbe: valid on disk
+/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.3f9019/GhosttyManualIsolationProbe: satisfies its Designated Requirement

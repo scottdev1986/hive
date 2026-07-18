@@ -1,9 +1,10 @@
 USER          PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND
-scottkellar 55189   ??    1.0 S    31T   0:00.02   0:00.06 /var/fo 55189 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.PFPMto/build-x86_64/x86_64-apple-macosx/debug/GhosttyManualIsolationProbe
-            55189         0.0 S    31T   0:00.00   0:00.00         55189 S
-            55189         0.1 S    31T   0:00.00   0:00.00         55189 S
-            55189         0.0 S    31T   0:00.00   0:00.00         55189 S
-            55189         0.0 S     4T   0:00.00   0:00.00         55189 S
-            55189         0.0 S    31T   0:00.00   0:00.00         55189 S
-            55189         0.0 S    31T   0:00.01   0:00.00         55189 S
-            55189         0.0 S    31T   0:00.00   0:00.00         55189 S
+scottkellar 46651 s134    1.1 S    31T   0:00.03   0:00.08 /var/fo 46651 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.3f9019/build-x86_64/x86_64-apple-macosx/debug/GhosttyManualIsolationProbe
+            46651         0.0 S    31T   0:00.00   0:00.00         46651 S
+            46651         0.0 S    31T   0:00.00   0:00.00         46651 S
+            46651         0.0 S     4T   0:00.00   0:00.00         46651 S
+            46651         0.0 S    31T   0:00.00   0:00.00         46651 S
+            46651         0.0 S    31T   0:00.00   0:00.00         46651 S
+            46651         0.0 S    31T   0:00.01   0:00.00         46651 S
+            46651         0.0 S    20T   0:00.00   0:00.00         46651 S
+            46651         0.0 S    20T   0:00.00   0:00.00         46651 S

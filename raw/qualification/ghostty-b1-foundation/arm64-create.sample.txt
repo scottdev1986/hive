@@ -1,119 +1,114 @@
-Analysis of sampling GhosttyManualIsolationProbe (pid 54261) every 1 millisecond
-Process:         GhosttyManualIsolationProbe [54261]
+Analysis of sampling GhosttyManualIsolationProbe (pid 45218) every 1 millisecond
+Process:         GhosttyManualIsolationProbe [45218]
 Path:            /private/var/folders/*/GhosttyManualIsolationProbe
-Load Address:    0x104cac000
+Load Address:    0x100f60000
 Identifier:      GhosttyManualIsolationProbe
 Version:         0
 Code Type:       ARM64
 Platform:        macOS
-Parent Process:  bash [53249]
+Parent Process:  bash [42470]
 Target Type:     live task
 
-Date/Time:       2026-07-18 13:00:16.320 -0400
-Launch Time:     2026-07-18 13:00:15.590 -0400
+Date/Time:       2026-07-18 17:58:07.816 -0400
+Launch Time:     2026-07-18 17:58:07.031 -0400
 OS Version:      macOS 26.3.1 (25D2128)
 Report Version:  7
 Analysis Tool:   /usr/bin/sample
 
-Physical footprint:         256.3M
-Physical footprint (peak):  256.3M
+Physical footprint:         256.5M
+Physical footprint (peak):  256.5M
 Idle exit:                  untracked
 ----
 
 Call graph:
-    610 Thread_28350097   DispatchQueue_1: com.apple.main-thread  (serial)
-    + 610 start  (in dyld) + 7184  [0x19c4e1d54]
-    +   610 GhosttyManualIsolationProbe_main  (in GhosttyManualIsolationProbe) + 4624  [0x104caecf8]  main.swift:163
-    +     610 awaitNext()  (in GhosttyManualIsolationProbe) + 32  [0x104cb0000]  main.swift:42
-    +       610 readLine(strippingNewline:)  (in libswiftCore.dylib) + 56  [0x1aff19450]
-    +         610 swift_stdlib_readLine_stdin  (in libswiftCore.dylib) + 56  [0x1afdea5f4]
-    +           610 getdelim  (in libsystem_c.dylib) + 272  [0x19c76374c]
-    +             610 __srefill1  (in libsystem_c.dylib) + 36  [0x19c74318c]
-    +               610 _sread  (in libsystem_c.dylib) + 32  [0x19c7431f8]
-    +                 610 __sread  (in libsystem_c.dylib) + 24  [0x19c7666e4]
-    +                   610 __read_nocancel  (in libsystem_kernel.dylib) + 8  [0x19c86ac98]
-    610 Thread_28350184
-    + 610 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
-    +   610 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
-    +     610 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
-    610 Thread_28350185
-    + 610 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
-    +   610 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
-    +     610 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
-    610 Thread_28350208
-    + 610 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
-    +   610 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x19c8abc08]
-    +     610 google_breakpad::ExceptionHandler::WaitForMessage(void*)  (in GhosttyManualIsolationProbe) + 88  [0x1050aa5b0]  exception_handler.cc:495
-    +       610 mach_msg  (in libsystem_kernel.dylib) + 24  [0x19c868fb4]
-    +         610 mach_msg_overwrite  (in libsystem_kernel.dylib) + 484  [0x19c87198c]
-    +           610 mach_msg2_internal  (in libsystem_kernel.dylib) + 76  [0x19c87b028]
-    +             610 mach_msg2_trap  (in libsystem_kernel.dylib) + 8  [0x19c868c34]
-    610 Thread_28350227: cf_release
-    + 610 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
-    +   610 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1053a430c]
-    +     610 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
-    610 Thread_28350248: renderer
-    + 610 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
-    +   603 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1053a430c]
-    +   ! 603 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
-    +   3 object.Object.getProperty__anon_542355  (in GhosttyManualIsolationProbe) + 40  [0x1053e9518]
-    +   ! 1 class_getProperty  (in libobjc.A.dylib) + 376  [0x19c464ce0]
-    +   ! : 1 list_array_tt<property_t, property_list_t, RawPtr>::begin() const  (in libobjc.A.dylib) + 168  [0x19c487178]
-    +   ! 1 class_getProperty  (in libobjc.A.dylib) + 388  [0x19c464cec]
-    +   ! : 1 list_array_tt<property_t, property_list_t, RawPtr>::end() const  (in libobjc.A.dylib) + 224  [0x19c4873bc]
-    +   ! :   1 list_array_tt<property_t, property_list_t, RawPtr>::iteratorImpl<false>::iteratorImpl(list_array_tt<property_t, property_list_t, RawPtr>::ListIterator, list_array_tt<property_t, property_list_t, RawPtr>::ListIterator)  (in libobjc.A.dylib) + 0  [0x19c487ad0]
-    +   ! 1 class_getProperty  (in libobjc.A.dylib) + 420  [0x19c464d0c]
-    +   !   1 _platform_strcmp$VARIANT$Base  (in libsystem_platform.dylib) + 28  [0x19c8b678c]
-    +   1 object.Object.getProperty__anon_542355  (in GhosttyManualIsolationProbe) + 56  [0x1053e9528]
-    +   ! 1 property_copyAttributeValue  (in libobjc.A.dylib) + 140  [0x19c471734]
-    +   !   1 iteratePropertyAttributes(char const*, bool (*)(unsigned int, void*, void*, char const*, unsigned long, char const*, unsigned long), void*, void*)  (in libobjc.A.dylib) + 88  [0x19c46eef0]
-    +   !     1 strcspn  (in libsystem_c.dylib) + 60  [0x19c7493ec]
-    +   1 object.Object.getProperty__anon_542355  (in GhosttyManualIsolationProbe) + 168  [0x1053e9598]
-    +   ! 1 __sel_registerName(char const*, bool, bool)  (in libobjc.A.dylib) + 0  [0x19c458448]
-    +   1 renderer.generic.Renderer(renderer.Metal).syncAtlasTexture  (in GhosttyManualIsolationProbe) + 232  [0x1053e9ee8]
-    +   ! 1 -[IOGPUMetalTexture replaceRegion:mipmapLevel:withBytes:bytesPerRow:]  (in IOGPU) + 56  [0x1c121a9ec]
-    +   !   1 -[AGXG16XFamilyTexture replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:]  (in AGXMetalG16X) + 92  [0x10cffd050]
-    +   !     1 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::writeRegion(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, void*, unsigned long, unsigned long)  (in AGXMetalG16X) + 1684  [0x10cffd6f0]
-    +   !       1 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::processCompressedRegion2D<AGX::AppleCompressionGen2::Compressor<(AGX::AppleCompressionGen2::PixelFormat)0, 1u, (unsigned char)1, (AGX::AppleCompressionGen2::SubblockOrder)0, (AGXTextureFootprint)0>, false, (AGXHardwareTextureMemoryOrder)2>(void*, void const*, void*, MTLPixelFormat, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 3344  [0x10d02f5d8]
-    +   !         1 AGX::AppleCompressionGen2::Compressor<(AGX::AppleCompressionGen2::PixelFormat)0, 1u, (unsigned char)1, (AGX::AppleCompressionGen2::SubblockOrder)0, (AGXTextureFootprint)0>::compressMacroblock(unsigned char const*, unsigned long, unsigned char*, unsigned char*, unsigned char, unsigned char, eAGXTextureFormatComponentType)  (in AGXMetalG16X) + 52  [0x10ccd5fe4]
-    +   1 watcher.async.AsyncMachPort(api.Xev(.kqueue,backend.kqueue)).drain  (in GhosttyManualIsolationProbe) + 76  [0x1053aa84c]
-    +     1 mach_msg  (in libsystem_kernel.dylib) + 24  [0x19c868fb4]
-    +       1 mach_msg_overwrite  (in libsystem_kernel.dylib) + 484  [0x19c87198c]
-    +         1 mach_msg2_internal  (in libsystem_kernel.dylib) + 76  [0x19c87b028]
-    +           1 mach_msg2_trap  (in libsystem_kernel.dylib) + 4  [0x19c868c30]
-    610 Thread_28350249: io
-    + 610 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
-    +   610 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1053a430c]
-    +     610 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
-    610 Thread_28350250: CVDisplayLink
-    + 610 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
-    +   610 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x19c8abc08]
-    +     607 CVDisplayLink::runIOThread()  (in CoreVideo) + 500  [0x1a6f4dc24]
-    +     ! 607 CVDisplayLink::waitUntil(unsigned long long)  (in CoreVideo) + 336  [0x1a6f4eb3c]
-    +     !   607 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1028  [0x19c8ac108]
-    +     !     607 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x19c86c4f8]
-    +     1 CVDisplayLink::runIOThread()  (in CoreVideo) + 412  [0x1a6f4dbcc]
-    +     ! 1 CVDisplayLink::calculateNextWakeUpTime(CVTimeStamp*, CVTimeStamp*, bool)  (in CoreVideo) + 220  [0x1a6f4e588]
-    +     !   1 CVXTime::translateTime(CVTimeStamp const*, CVTimeStamp*) const  (in CoreVideo) + 260  [0x1a6f4e8d8]
-    +     1 CVDisplayLink::runIOThread()  (in CoreVideo) + 608  [0x1a6f4dc90]
-    +     ! 1 CVXTime::update()  (in CoreVideo) + 56  [0x1a6f4de10]
-    +     !   1 CVHWTime::update(double, bool*, bool*)  (in CoreVideo) + 516  [0x1a6f4e134]
-    +     !     1 CVHWTime::processTimeStamp(unsigned int, unsigned long long)  (in CoreVideo) + 0  [0x1a6f91a90]
-    +     1 CVDisplayLink::runIOThread()  (in CoreVideo) + 660  [0x1a6f4dcc4]
-    +       1 CVDisplayLink::performIO(CVTimeStamp*)  (in CoreVideo) + 308  [0x1a6f4ed00]
-    +         1 video.display_link.DisplayLink.setOutputCallback__anon_536926__struct_538792.callback  (in GhosttyManualIsolationProbe) + 0  [0x1053da0f0]
-    610 Thread_28350251
-    + 610 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
-    +   610 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
-    +     610 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
-    610 Thread_28350253
-    + 610 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
-    +   610 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
-    +     610 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
-    610 Thread_28350254
-      610 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
-        610 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
-          610 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
+    662 Thread_32332240   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 662 start  (in dyld) + 7184  [0x19c4e1d54]
+    +   662 GhosttyManualIsolationProbe_main  (in GhosttyManualIsolationProbe) + 4548  [0x100f62cac]  main.swift:170
+    +     662 awaitNext()  (in GhosttyManualIsolationProbe) + 32  [0x100f641f8]  main.swift:49
+    +       662 readLine(strippingNewline:)  (in libswiftCore.dylib) + 56  [0x1aff19450]
+    +         662 swift_stdlib_readLine_stdin  (in libswiftCore.dylib) + 56  [0x1afdea5f4]
+    +           662 getdelim  (in libsystem_c.dylib) + 272  [0x19c76374c]
+    +             662 __srefill1  (in libsystem_c.dylib) + 36  [0x19c74318c]
+    +               662 _sread  (in libsystem_c.dylib) + 32  [0x19c7431f8]
+    +                 662 __sread  (in libsystem_c.dylib) + 24  [0x19c7666e4]
+    +                   662 __read_nocancel  (in libsystem_kernel.dylib) + 8  [0x19c86ac98]
+    662 Thread_32332473
+    + 662 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
+    +   662 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
+    +     662 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
+    662 Thread_32332474
+    + 662 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
+    +   662 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
+    +     662 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
+    662 Thread_32332520
+    + 662 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   662 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x19c8abc08]
+    +     662 google_breakpad::ExceptionHandler::WaitForMessage(void*)  (in GhosttyManualIsolationProbe) + 88  [0x101376950]  exception_handler.cc:495
+    +       662 mach_msg  (in libsystem_kernel.dylib) + 24  [0x19c868fb4]
+    +         662 mach_msg_overwrite  (in libsystem_kernel.dylib) + 484  [0x19c87198c]
+    +           662 mach_msg2_internal  (in libsystem_kernel.dylib) + 76  [0x19c87b028]
+    +             662 mach_msg2_trap  (in libsystem_kernel.dylib) + 8  [0x19c868c34]
+    662 Thread_32332542: cf_release
+    + 662 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   662 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1016706f4]
+    +     662 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
+    662 Thread_32332558: renderer
+    + 662 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   661 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1016706f4]
+    +   ! 661 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
+    +   1 object.Object.getProperty__anon_542359  (in GhosttyManualIsolationProbe) + 168  [0x1016b5a48]
+    +     1 __sel_registerName(char const*, bool, bool)  (in libobjc.A.dylib) + 48  [0x19c458478]
+    +       1 _dyld_get_objc_selector  (in libdyld.dylib) + 0  [0x19c4a8ea8]
+    662 Thread_32332559: io
+    + 662 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   662 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1016706f4]
+    +     662 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
+    662 Thread_32332560: CVDisplayLink
+    + 662 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   662 _pthread_start  (in libsystem_pthread.dylib) + 136  [0x19c8abc08]
+    +     629 CVDisplayLink::runIOThread()  (in CoreVideo) + 500  [0x1a6f4dc24]
+    +     ! 629 CVDisplayLink::waitUntil(unsigned long long)  (in CoreVideo) + 336  [0x1a6f4eb3c]
+    +     !   629 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1028  [0x19c8ac108]
+    +     !     629 __psynch_cvwait  (in libsystem_kernel.dylib) + 8  [0x19c86c4f8]
+    +     14 CVDisplayLink::runIOThread()  (in CoreVideo) + 412  [0x1a6f4dbcc]
+    +     ! 7 CVDisplayLink::calculateNextWakeUpTime(CVTimeStamp*, CVTimeStamp*, bool)  (in CoreVideo) + 268  [0x1a6f4e5b8]
+    +     ! : 7 CVDisplayLink::calculateNextWakeUpTime(CVTimeStamp*, CVTimeStamp*, bool)  (in CoreVideo) + 548  [0x1a6f4e6d0]
+    +     ! 7 CVDisplayLink::runIOThread()  (in CoreVideo) + 412  [0x1a6f4dbcc]
+    +     !   7 CVDisplayLink::calculateNextWakeUpTime(CVTimeStamp*, CVTimeStamp*, bool)  (in CoreVideo) + 80  [0x1a6f4e4fc]
+    +     10 CVDisplayLink::runIOThread()  (in CoreVideo) + 288,500  [0x1a6f4db50,0x1a6f4dc24]
+    +     3 CVDisplayLink::runIOThread()  (in CoreVideo) + 332  [0x1a6f4db7c]
+    +     ! 2 CVDisplayLink::getCurrentTime(CVTimeStamp*)  (in CoreVideo) + 56  [0x1a6f4e2d8]
+    +     ! : 2 CVXTime::getCurrentTime(CVTimeStamp*) const  (in CoreVideo) + 60  [0x1a6f4e3b4]
+    +     ! :   2 mach_absolute_time  (in libsystem_kernel.dylib) + 108  [0x19c8690fc]
+    +     ! 1 pthread_mutex_unlock  (in libsystem_pthread.dylib) + 172  [0x19c8a6978]
+    +     3 CVDisplayLink::runIOThread()  (in CoreVideo) + 608  [0x1a6f4dc90]
+    +     ! 2 CVXTime::update()  (in CoreVideo) + 56  [0x1a6f4de10]
+    +     ! : 2 CVHWTime::update(double, bool*, bool*)  (in CoreVideo) + 112  [0x1a6f4dfa0]
+    +     ! :   2 CVCGDisplayLink::getDisplayTimes(unsigned long long*, unsigned long long*, unsigned long long*)  (in CoreVideo) + 80  [0x1a6f4e188]
+    +     ! :     1 CVCGDisplayLink::updateDisplayTiming()  (in CoreVideo) + 80  [0x1a6f7c1c8]
+    +     ! :     1 cv_note  (in CoreVideo) + 136  [0x1a6f66f04]
+    +     ! 1 CVXTime::update()  (in CoreVideo) + 192  [0x1a6f4de98]
+    +     3 CVDisplayLink::runIOThread()  (in CoreVideo) + 660  [0x1a6f4dcc4]
+    +       2 watcher.async.AsyncMachPort(api.Xev(.kqueue,backend.kqueue)).notify  (in GhosttyManualIsolationProbe) + 80  [0x101620308]
+    +       : 1 DYLD-STUB$$mach_msg  (in GhosttyManualIsolationProbe) + 0  [0x1018327ec]
+    +       : 1 mach_msg  (in libsystem_kernel.dylib) + 24  [0x19c868fb4]
+    +       :   1 mach_msg_overwrite  (in libsystem_kernel.dylib) + 484  [0x19c87198c]
+    +       :     1 mach_msg2_internal  (in libsystem_kernel.dylib) + 76  [0x19c87b028]
+    +       :       1 mach_msg2_trap  (in libsystem_kernel.dylib) + 8  [0x19c868c34]
+    +       1 video.display_link.DisplayLink.setOutputCallback__anon_536930__struct_538796.callback  (in GhosttyManualIsolationProbe) + 16  [0x1016a65b0]
+    +         1 watcher.async.AsyncMachPort(api.Xev(.kqueue,backend.kqueue)).notify  (in GhosttyManualIsolationProbe) + 0  [0x1016202b8]
+    662 Thread_32332561
+    + 662 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
+    +   662 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
+    +     662 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
+    662 Thread_32332563
+    + 662 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
+    +   662 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
+    +     662 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
+    662 Thread_32332564
+      662 start_wqthread  (in libsystem_pthread.dylib) + 8  [0x19c8a6b9c]
+        662 _pthread_wqthread  (in libsystem_pthread.dylib) + 368  [0x19c8a7e98]
+          662 __workq_kernreturn  (in libsystem_kernel.dylib) + 8  [0x19c86a9dc]
 
 Total number in stack (recursive counted multiple, when >=5):
         5       __workq_kernreturn  (in libsystem_kernel.dylib) + 0  [0x19c86a9d4]
@@ -122,16 +117,18 @@ Total number in stack (recursive counted multiple, when >=5):
         5       thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
 
 Sort by top of stack, same collapsed (when >= 5):
-        __workq_kernreturn  (in libsystem_kernel.dylib)        3050
-        kevent64  (in libsystem_kernel.dylib)        1823
-        mach_msg2_trap  (in libsystem_kernel.dylib)        611
-        __read_nocancel  (in libsystem_kernel.dylib)        610
-        __psynch_cvwait  (in libsystem_kernel.dylib)        607
+        __workq_kernreturn  (in libsystem_kernel.dylib)        3310
+        kevent64  (in libsystem_kernel.dylib)        1985
+        mach_msg2_trap  (in libsystem_kernel.dylib)        663
+        __read_nocancel  (in libsystem_kernel.dylib)        662
+        __psynch_cvwait  (in libsystem_kernel.dylib)        629
+        CVDisplayLink::calculateNextWakeUpTime(CVTimeStamp*, CVTimeStamp*, bool)  (in CoreVideo)        14
+        CVDisplayLink::runIOThread()  (in CoreVideo)        10
 
 Binary Images:
-       0x104cac000 -        0x105c2a24b +GhosttyManualIsolationProbe (0) <9CFD10D9-3378-302C-8D4E-1A60CE9B2C93> /var/folders/*/GhosttyManualIsolationProbe
-       0x106114000 -        0x10611c03f  libobjc-trampolines.dylib (951.1) <F26AF954-D1F7-31AA-9981-1BAD216149D9> /usr/lib/libobjc-trampolines.dylib
-       0x10ccd0000 -        0x10d504b9f  com.apple.AGXMetalG16X (345.20.4 - 345.20.4) <F3801A6F-CFB2-3EE3-A8A0-320185AA69B6> /System/Library/Extensions/AGXMetalG16X.bundle/Contents/MacOS/AGXMetalG16X
+       0x100f60000 -        0x101f14a7b +GhosttyManualIsolationProbe (0) <9159BE7F-B4C0-3F94-9045-AADE24137AA0> /var/folders/*/GhosttyManualIsolationProbe
+       0x108fcc000 -        0x108fd403f  libobjc-trampolines.dylib (951.1) <F26AF954-D1F7-31AA-9981-1BAD216149D9> /usr/lib/libobjc-trampolines.dylib
+       0x108fe0000 -        0x109814b9f  com.apple.AGXMetalG16X (345.20.4 - 345.20.4) <F3801A6F-CFB2-3EE3-A8A0-320185AA69B6> /System/Library/Extensions/AGXMetalG16X.bundle/Contents/MacOS/AGXMetalG16X
        0x19c454000 -        0x19c4a74bb  libobjc.A.dylib (951.1) <9E66CFF2-3EBD-3242-8166-D5D0C204755B> /usr/lib/libobjc.A.dylib
        0x19c4a8000 -        0x19c4d8bcb  libdyld.dylib (1340) <D0CBB392-9301-3174-8904-D869F1D973CF> /usr/lib/system/libdyld.dylib
        0x19c4d9000 -        0x19c578713  dyld (1.0.0 - 1340) <044CD67E-3A0A-3CA4-8BB3-A9687D5328FE> /usr/lib/dyld
