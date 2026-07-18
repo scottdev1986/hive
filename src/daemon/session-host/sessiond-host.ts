@@ -12,8 +12,10 @@ import type {
   CreateResult,
   InputReceipt,
   ResizeResult,
+  SessionInspection,
   SessionRef,
   TerminalHost,
+  TerminationResult,
 } from "./terminal-host-contract";
 import {
   AppliedPayloadSchema,
@@ -24,7 +26,11 @@ import {
   FRAME_HEADER,
   FRAME_TYPES,
   HelloPayloadSchema,
+  InspectPayloadSchema,
+  InspectedPayloadSchema,
   InputSubmitPayloadSchema,
+  ListPayloadSchema,
+  ListedPayloadSchema,
   PingPongPayloadSchema,
   ResizePayloadSchema,
   SESSION_PROTOCOL_MINOR_RANGE,
@@ -32,6 +38,8 @@ import {
   TERMINAL_LIMITS,
   TerminalHostCreateRequestSchema,
   TerminalHostCreateResultSchema,
+  TerminatePayloadSchema,
+  TerminatedPayloadSchema,
   WelcomePayloadSchema,
   type FrameTypeName,
   type WireErrorCode,
@@ -40,9 +48,15 @@ import {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
-type LandedTerminalHost = Pick<
+export type LandedTerminalHost = Pick<
   TerminalHost,
-  "create" | "claimInput" | "submitInput" | "resize"
+  | "create"
+  | "claimInput"
+  | "submitInput"
+  | "resize"
+  | "inspect"
+  | "list"
+  | "terminate"
 >;
 
 export class SessiondProtocolError extends Error {
@@ -533,6 +547,56 @@ export class SessiondHost implements LandedTerminalHost {
       return response.result;
     } finally {
       host.close();
+    }
+  }
+
+  async inspect(session: SessionRef): Promise<SessionInspection> {
+    const payload = InspectPayloadSchema.parse({ schemaVersion: 1, session });
+    const broker = await this.connectBroker();
+    try {
+      const { schemaVersion: _, ...inspection } = await broker.request({
+        requestType: "INSPECT",
+        responseType: "INSPECTED",
+        payload,
+        responseSchema: InspectedPayloadSchema,
+      });
+      return inspection;
+    } finally {
+      broker.close();
+    }
+  }
+
+  async list(): Promise<readonly SessionInspection[]> {
+    const payload = ListPayloadSchema.parse({ schemaVersion: 1 });
+    const broker = await this.connectBroker();
+    try {
+      const response = await broker.request({
+        requestType: "LIST",
+        responseType: "LISTED",
+        payload,
+        responseSchema: ListedPayloadSchema,
+      });
+      return response.entries;
+    } finally {
+      broker.close();
+    }
+  }
+
+  async terminate(
+    request: Parameters<TerminalHost["terminate"]>[0],
+  ): Promise<TerminationResult> {
+    const payload = TerminatePayloadSchema.parse({ schemaVersion: 1, ...request });
+    const broker = await this.connectBroker();
+    try {
+      const { schemaVersion: _, ...result } = await broker.request({
+        requestType: "TERMINATE",
+        responseType: "TERMINATED",
+        payload,
+        responseSchema: TerminatedPayloadSchema,
+      });
+      return result;
+    } finally {
+      broker.close();
     }
   }
 }

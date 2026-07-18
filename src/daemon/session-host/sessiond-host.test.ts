@@ -16,7 +16,9 @@ import type {
   CreateResult,
   InputReceipt,
   ResizeResult,
+  SessionInspection,
   SessionRef,
+  TerminationResult,
 } from "./terminal-host-contract";
 import {
   encodeSessiondFrame,
@@ -135,6 +137,82 @@ const resize: ResizeResult = {
   },
   orderedAt: "2",
   foregroundProcessObservation: "not-claimed",
+};
+
+const checkpointBytes = new TextEncoder().encode("terminal-checkpoint");
+const inspection: SessionInspection = {
+  session,
+  lifecycle: "running",
+  completeness: "complete",
+  host: { processId: 4_000, startToken: "4000:123400" },
+  child: { processId: 4_100, startToken: "4100:123456" },
+  jobControl: createResult.outcome.state === "running"
+    ? createResult.outcome.jobControl
+    : null,
+  window: {
+    value: resize.state === "applied" ? resize.readback : createRequest.initialWindow,
+    revision: "2",
+  },
+  output: { closed: false, retained: { start: "0", endExclusive: "19" } },
+  checkpoints: {
+    retained: 1,
+    newest: {
+      contentType: "application/vnd.hive.terminal-checkpoint",
+      schemaVersion: "1",
+      hashAlgorithm: "sha256",
+      hash: "b".repeat(64),
+      throughEventSequence: "2",
+      throughOutputOffset: "19",
+      opaqueBytes: checkpointBytes,
+    },
+  },
+  inputOwner: claim.state === "granted" ? claim.claim : null,
+  exit: null,
+  reap: {
+    authority: "direct-parent",
+    reaped: false,
+    status: null,
+    completeness: "complete",
+  },
+  descendants: [],
+  survivors: [],
+  evidenceAt: "2026-07-18T01:00:00.000Z",
+  diagnostics: [],
+};
+
+const inspectionWire = {
+  ...inspection,
+  checkpoints: {
+    ...inspection.checkpoints,
+    newest: inspection.checkpoints.newest === null
+      ? null
+      : {
+        ...inspection.checkpoints.newest,
+        opaqueBytes: Buffer.from(checkpointBytes).toString("base64"),
+      },
+  },
+};
+
+const termination: TerminationResult = {
+  state: "terminated",
+  exit: {
+    code: null,
+    signal: 9,
+    observedAt: "2026-07-18T01:00:01.000Z",
+  },
+  reap: {
+    authority: "direct-parent",
+    reaped: true,
+    status: {
+      code: null,
+      signal: 9,
+      observedAt: "2026-07-18T01:00:01.000Z",
+    },
+    completeness: "complete",
+  },
+  survivors: [],
+  completeness: "complete",
+  diagnostics: [],
 };
 
 class RecordingClient implements SessiondControlClient {
@@ -412,6 +490,54 @@ describe("SessiondHost landed frozen operations", () => {
     });
     expect(directClients).toHaveLength(4);
     expect(directClients.every((client) => client.closed)).toBe(true);
+  });
+
+  test("projects frozen list, inspect, and terminate through the broker", async () => {
+    const brokers: RecordingClient[] = [];
+    const host = new SessiondHost({
+      connectBroker: async () => {
+        const broker = new RecordingClient((request) => {
+          switch (request.requestType) {
+            case "LIST":
+              expect(request.payload).toEqual({ schemaVersion: 1 });
+              return { schemaVersion: 1, entries: [inspectionWire] };
+            case "INSPECT":
+              expect(request.payload).toEqual({ schemaVersion: 1, session });
+              return { schemaVersion: 1, ...inspectionWire };
+            case "TERMINATE":
+              expect(request.payload).toEqual({
+                schemaVersion: 1,
+                session,
+                mode: "immediate",
+                target: "process-tree",
+                deadline: "2026-07-18T01:00:02.000Z",
+                idempotencyKey: "terminate-idempotency-1",
+              });
+              return { schemaVersion: 1, ...termination };
+            default:
+              throw new Error(`unexpected request: ${request.requestType}`);
+          }
+        });
+        brokers.push(broker);
+        return broker;
+      },
+    });
+
+    await expect(host.list()).resolves.toEqual([inspection]);
+    const inspected = await host.inspect(session);
+    expect(inspected).toEqual(inspection);
+    expect(Object.hasOwn(inspected, "schemaVersion")).toBe(false);
+    const terminated = await host.terminate({
+      session,
+      mode: "immediate",
+      target: "process-tree",
+      deadline: "2026-07-18T01:00:02.000Z",
+      idempotencyKey: "terminate-idempotency-1",
+    });
+    expect(terminated).toEqual(termination);
+    expect(Object.hasOwn(terminated, "schemaVersion")).toBe(false);
+    expect(brokers).toHaveLength(3);
+    expect(brokers.every((broker) => broker.closed)).toBe(true);
   });
 
   test("fails direct operations at the frozen wire-3 boundary by default", async () => {

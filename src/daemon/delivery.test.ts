@@ -9,11 +9,14 @@ import {
 } from "../schemas";
 import { HiveDatabase } from "./db";
 import {
+  CoexistingSessionSender,
   MessageDelivery,
   queuedDeliveryNote,
   type NativeAgentControl,
+  type SessionSender,
   type TmuxSender,
 } from "./delivery";
+import { SessiondWireNotReadyError } from "./session-host/sessiond-host";
 import { HiveDaemon } from "./server";
 import { actingAs } from "./testing";
 import type { Spawner } from "./spawner";
@@ -175,6 +178,39 @@ const unusedSpawner: Spawner = {
 };
 
 describe("MessageDelivery", () => {
+  test("routes sessiond delivery to the explicit frozen-attach boundary", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-not-ready.db"));
+    const tmuxCalls: AgentRecord[] = [];
+    const tmux: SessionSender = {
+      async sendSessionMessage(recipient) {
+        tmuxCalls.push(recipient);
+      },
+    };
+    const delivery = new MessageDelivery(db, new CoexistingSessionSender(tmux));
+    try {
+      const recipient = {
+        ...agent("idle"),
+        sessionLocator: {
+          schemaVersion: 1 as const,
+          instanceId: "hive-fixture",
+          subject: { kind: "agent" as const, agentId: "agent-maya" },
+          generation: 1,
+          sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+          hostKind: "sessiond" as const,
+          engineBuildId: "engine-fixture",
+        },
+      };
+      db.insertAgent(recipient);
+
+      await expect(delivery.send("sam", "maya", "Please review this."))
+        .rejects.toBeInstanceOf(SessiondWireNotReadyError);
+      expect(tmuxCalls).toEqual([]);
+      expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
   test("steers a working native Codex session and interrupts it for urgent control", async () => {
     const db = new HiveDatabase(join(home, "native-codex.db"));
     const tmux = new RecordingTmuxSender();

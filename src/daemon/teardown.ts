@@ -32,6 +32,10 @@ import {
   runPsState,
   type CommandOutput,
 } from "./resources";
+import {
+  requireSessiondAgentLocator,
+  type HiveTerminalHostAdapter,
+} from "./session-host/hive-terminal-host";
 
 export interface ReapDependencies {
   /** `ps -axo pid=,ppid=,rss=,command=` — the tree, with commands for the report. */
@@ -66,6 +70,14 @@ export interface VerifiedStopDependencies {
   sessionRoots?: (agent: AgentRecord) => Promise<readonly number[]>;
   legacySessionRoots?: (session: string) => Promise<readonly number[]>;
   selfPid?: number;
+}
+
+export interface VerifiedSessiondStopDependencies {
+  terminalHost: Pick<HiveTerminalHostAdapter, "terminate">;
+  reap?: ReapDependencies;
+  readHostPid?: (agent: AgentRecord) => Promise<number | null>;
+  selfPid?: number;
+  now?: () => number;
 }
 
 export type StopAgentSession = (
@@ -295,6 +307,64 @@ export async function stopAgentSession(
     );
   }
   return outcome.reaped;
+}
+
+export async function stopSessiondAgentSession(
+  agent: AgentRecord,
+  dependencies: VerifiedSessiondStopDependencies,
+  beforeKill?: () => void | Promise<void>,
+): Promise<ReapOutcome> {
+  const reap = dependencies.reap ?? defaultReapDependencies();
+  const selfPid = dependencies.selfPid ?? process.pid;
+  const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+  const captured = await captureProcessTree(
+    hostPid === null ? [] : [hostPid],
+    reap,
+    selfPid,
+  );
+  await beforeKill?.();
+
+  let terminalError: unknown;
+  try {
+    const result = await dependencies.terminalHost.terminate(
+      requireSessiondAgentLocator(agent),
+      {
+        mode: "immediate",
+        target: "process-tree",
+        deadline: new Date((dependencies.now ?? Date.now)() + 10_000).toISOString(),
+        idempotencyKey: crypto.randomUUID(),
+      },
+    );
+    if (
+      result.state !== "terminated" ||
+      result.survivors.length !== 0 ||
+      !result.reap.reaped ||
+      result.completeness !== "complete"
+    ) {
+      terminalError = new Error(
+        `Sessiond termination was not positively verified for ${agent.name}: ${
+          result.diagnostics.join(", ") || result.state
+        }`,
+      );
+    }
+  } catch (error) {
+    terminalError = error;
+  }
+
+  let reaped: ReapOutcome;
+  try {
+    reaped = await reapCapturedTree(captured, reap, selfPid);
+  } catch (error) {
+    if (terminalError === undefined) throw error;
+    throw new Error(
+      `Sessiond and process readback both failed for ${agent.name}: ${
+        error instanceof Error ? error.message : "unknown process error"
+      }`,
+      { cause: terminalError },
+    );
+  }
+  if (terminalError !== undefined) throw terminalError;
+  return reaped;
 }
 
 export function verifiedAgentStop(

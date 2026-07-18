@@ -3,6 +3,7 @@ import {
   captureProcessTree,
   reapCapturedTree,
   stopAgentSession,
+  stopSessiondAgentSession,
   type ReapDependencies,
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
@@ -292,6 +293,92 @@ describe("reapProcessTree", () => {
       unrelated.kill("SIGKILL");
       await Promise.all([host.exited, unrelated.exited]);
     }
+  });
+
+  test("sessiond teardown requires frozen termination and reap readback", async () => {
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const record = {
+      id: "agent-maya",
+      name: "maya",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/maya",
+      branch: "hive/maya-test",
+      tmuxSession: "hive-maya",
+      sessionLocator,
+      contextPct: null,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      lastEventAt: "2026-07-13T00:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    let capabilityRevoked = false;
+    const requests: unknown[] = [];
+
+    await expect(stopSessiondAgentSession(record, {
+      terminalHost: {
+        terminate: async (locator, request) => {
+          expect(capabilityRevoked).toBe(true);
+          expect(locator).toEqual(sessionLocator);
+          requests.push(request);
+          return {
+            state: "terminated",
+            exit: null,
+            reap: {
+              authority: "direct-parent",
+              reaped: true,
+              status: null,
+              completeness: "complete",
+            },
+            survivors: [],
+            completeness: "complete",
+            diagnostics: [],
+          };
+        },
+      },
+      readHostPid: async () => null,
+      now: () => Date.parse("2026-07-18T01:00:00.000Z"),
+    }, () => {
+      capabilityRevoked = true;
+    })).resolves.toEqual({ killed: [], survivors: [] });
+    expect(requests).toHaveLength(1);
+    expect(requests[0]).toMatchObject({
+      mode: "immediate",
+      target: "process-tree",
+      deadline: "2026-07-18T01:00:10.000Z",
+    });
+
+    await expect(stopSessiondAgentSession(record, {
+      terminalHost: {
+        terminate: async () => ({
+          state: "unknown",
+          exit: null,
+          reap: {
+            authority: "unavailable",
+            reaped: false,
+            status: null,
+            completeness: "unknown",
+          },
+          survivors: [],
+          completeness: "unknown",
+          diagnostics: ["no positive readback"],
+        }),
+      },
+      readHostPid: async () => null,
+    })).rejects.toThrow("not positively verified");
   });
 
   test("refuses capture after the root has vanished", async () => {

@@ -18,6 +18,8 @@ import {
   requireAgentSessionLocator,
   TmuxSessionHost,
 } from "./session-host/tmux-host";
+import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
+import { SessiondWireNotReadyError } from "./session-host/sessiond-host";
 
 /** Senders to probe for idempotency: root aliases during the rename window. */
 function idempotencySenders(from: string): readonly string[] {
@@ -25,7 +27,9 @@ function idempotencySenders(from: string): readonly string[] {
 }
 
 function agentSessionLockKey(agent: AgentRecord): string {
-  const locator = requireAgentSessionLocator(agent);
+  const locator = agent.sessionLocator?.hostKind === "sessiond"
+    ? requireSessiondAgentLocator(agent)
+    : requireAgentSessionLocator(agent);
   return [
     locator.instanceId,
     locator.subject.kind === "root" ? "root" : locator.subject.agentId,
@@ -260,6 +264,25 @@ export class BunSessionSender implements SessionSender, TmuxSender {
 }
 
 export { BunSessionSender as BunTmuxSender };
+
+/** Coexistence router while sessiond's neutral attach projection is not landed. */
+export class CoexistingSessionSender implements SessionSender {
+  constructor(private readonly tmux: SessionSender) {}
+
+  async sendSessionMessage(
+    recipient: AgentRecord,
+    text: string,
+    options: { messageId: string; interrupt?: boolean },
+  ): Promise<InputReceipt | void> {
+    if (recipient.sessionLocator?.hostKind === "sessiond") {
+      requireSessiondAgentLocator(recipient);
+      throw new SessiondWireNotReadyError(
+        "sessiond delivery requires the frozen host attach projection",
+      );
+    }
+    return this.tmux.sendSessionMessage(recipient, text, options);
+  }
+}
 
 export class MessageDelivery {
   private readonly sessionLocks = new Map<string, Promise<void>>();

@@ -43,6 +43,10 @@ import {
   TmuxSessionHost,
   type TmuxEngine,
 } from "./session-host/tmux-host";
+import {
+  requireSessiondAgentLocator,
+  type HiveTerminalHostAdapter,
+} from "./session-host/hive-terminal-host";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -90,6 +94,7 @@ type Sleep = (milliseconds: number) => Promise<void>;
 export interface CrashRecoveryDependencies {
   db: RecoveryStore;
   tmux: TmuxSessionHost | TmuxEngine;
+  terminalHost?: Pick<HiveTerminalHostAdapter, "inspect">;
   /** Resolved lazily because a daemon configured with port 0 learns its
    * ephemeral listening port only after Bun.serve() binds. */
   port: number | (() => number);
@@ -226,6 +231,24 @@ export class CrashRecovery {
   }
 
   private async sessionPresent(agent: AgentRecord): Promise<boolean> {
+    if (agent.sessionLocator?.hostKind === "sessiond") {
+      if (this.deps.terminalHost === undefined) {
+        throw new Error("sessiond recovery inspection is not configured");
+      }
+      const { inspection } = await this.deps.terminalHost.inspect(
+        requireSessiondAgentLocator(agent),
+      );
+      switch (inspection.lifecycle) {
+        case "creating":
+        case "running":
+          return true;
+        case "exited":
+        case "lost":
+          return false;
+        case "unknown":
+          throw new Error(`Session presence is unknown for ${agent.name}`);
+      }
+    }
     const inspection = await this.sessions.inspect(
       bindAgentSession(this.sessions, agent),
     );
@@ -236,6 +259,9 @@ export class CrashRecovery {
   }
 
   private async captureVisible(agent: AgentRecord): Promise<string> {
+    if (agent.sessionLocator?.hostKind === "sessiond") {
+      throw new Error("sessiond visible capture requires the frozen attach stream");
+    }
     return (await this.sessions.capture(
       bindAgentSession(this.sessions, agent),
       { include: "visible-text", maxRows: 50_000 },

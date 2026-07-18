@@ -18,6 +18,11 @@ import {
   TmuxSessionHost,
   type TmuxEngine,
 } from "./session-host/tmux-host";
+import { HiveTerminalHostAdapter } from "./session-host/hive-terminal-host";
+import {
+  SessiondHost,
+  type LandedTerminalHost,
+} from "./session-host/sessiond-host";
 import {
   deleteMemoryFact as deleteMemoryFactFile,
   readMemoryFact,
@@ -97,6 +102,7 @@ import type { SelectionPreferenceControl } from "./selection-preferences";
 import { MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
+  CoexistingSessionSender,
   MessageDelivery,
   queuedDeliveryNote,
   type RootProtocolDeliverer,
@@ -147,6 +153,7 @@ import {
   defaultReapDependencies,
   reapCapturedTree,
   stopAgentSession,
+  stopSessiondAgentSession,
   stopTmuxSession,
   type ReapDependencies,
   type ReapOutcome,
@@ -438,6 +445,8 @@ export interface HiveDaemonOptions {
   statusStore?: StatusStore;
   /** WP2/WP3 bind these seams. Observation itself only calls capture. */
   sessionHost?: Pick<SessionHost, "capture">;
+  /** Frozen neutral sessiond backend; Hive policy is applied by its binding adapter. */
+  terminalHost?: LandedTerminalHost;
   resolveSessionLocator?: (
     sessionId: string,
     generation: number,
@@ -586,6 +595,7 @@ export class HiveDaemon {
     | null;
   private readonly ownedMachineMutations: MachineMutationCoordinator | null;
   private readonly tmux: TmuxSessionHost;
+  private readonly terminalHost: HiveTerminalHostAdapter;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: ClaudeTelemetryReader;
@@ -700,6 +710,11 @@ export class HiveDaemon {
     this.tmux = options.tmux instanceof TmuxSessionHost
       ? options.tmux
       : new TmuxSessionHost({ adapter: options.tmux });
+    this.terminalHost = new HiveTerminalHostAdapter(
+      options.terminalHost ?? new SessiondHost({ repoRoot: options.repoRoot }),
+      this.db,
+      hiveInstanceSuffix(),
+    );
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
@@ -707,10 +722,11 @@ export class HiveDaemon {
     this.autonomy = options.autonomy;
     this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
-    const tmuxSender = options.tmuxSender ?? new BunTmuxSender(this.tmux);
+    const defaultTmuxSender = new BunTmuxSender(this.tmux);
+    const tmuxSender = options.tmuxSender ?? defaultTmuxSender;
     this.delivery = new MessageDelivery(
       this.db,
-      tmuxSender,
+      options.tmuxSender ?? new CoexistingSessionSender(defaultTmuxSender),
       {
         interruptAndRestart: async (agent, message) => {
           const sameControlAttempt = agent.status === "control-paused" &&
@@ -833,15 +849,24 @@ export class HiveDaemon {
     this.reapDependencies = options.resourceRunners?.reap ??
       defaultReapDependencies();
     this.stopAgentProcesses = (agent, beforeKill) =>
-      stopAgentSession(
-        agent,
-        {
-          sessions: this.tmux,
-          reap: this.reapDependencies,
-          sessionRoots: (record) => this.panePids(record.tmuxSession),
-        },
-        beforeKill,
-      );
+      agent.sessionLocator?.hostKind === "sessiond"
+        ? stopSessiondAgentSession(
+          agent,
+          {
+            terminalHost: this.terminalHost,
+            reap: this.reapDependencies,
+          },
+          beforeKill,
+        )
+        : stopAgentSession(
+          agent,
+          {
+            sessions: this.tmux,
+            reap: this.reapDependencies,
+            sessionRoots: (record) => this.panePids(record.tmuxSession),
+          },
+          beforeKill,
+        );
     this.stopTmuxProcesses = (session) =>
       stopTmuxSession(session, {
         sessions: this.tmux,
@@ -880,6 +905,7 @@ export class HiveDaemon {
     this.recovery = new CrashRecovery({
       db: this.db,
       tmux: this.tmux,
+      terminalHost: this.terminalHost,
       port: () => this.listeningPort ?? this.port,
       revokeCapabilities: (agentName) => {
         this.capabilities.revokeSubject(agentName);

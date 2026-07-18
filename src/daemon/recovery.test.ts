@@ -21,6 +21,7 @@ import {
 } from "./recovery";
 import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
+import type { SessionInspection } from "./session-host/terminal-host-contract";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
 
@@ -270,6 +271,69 @@ describe("crash classification", () => {
     h.tmux.sessions.add("hive-maya");
 
     expect(await h.recovery.sweep()).toEqual([]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("working");
+  });
+
+  test("a bound running sessiond agent is inspected through the frozen host", async () => {
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const inspection: SessionInspection = {
+      session: { key: "neutral-key", incarnation: "incarnation-1" },
+      lifecycle: "running",
+      completeness: "partial",
+      host: null,
+      child: null,
+      jobControl: null,
+      window: {
+        value: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+        revision: "0",
+      },
+      output: { closed: false, retained: { start: "0", endExclusive: "0" } },
+      checkpoints: { retained: 0, newest: null },
+      inputOwner: null,
+      exit: null,
+      reap: {
+        authority: "unavailable",
+        reaped: false,
+        status: null,
+        completeness: "unavailable",
+      },
+      descendants: [],
+      survivors: [],
+      evidenceAt: timestamp,
+      diagnostics: [],
+    };
+    const h = harness({
+      terminalHost: {
+        inspect: async (requested) => {
+          expect(requested).toEqual(sessionLocator);
+          return {
+            binding: {
+              session: inspection.session,
+              locator: sessionLocator,
+              visibility: {
+                workspaceSessionId: "workspace-fixture",
+                workspacePid: 4_000,
+                workspaceStartToken: "4000:123400",
+                openTerminalRevision: "1",
+              },
+            },
+            inspection,
+          };
+        },
+      },
+    });
+    h.db.insertAgent(agent({ status: "working", sessionLocator }));
+
+    expect(await h.recovery.sweep()).toEqual([]);
+    expect(h.tmux.sessions).toEqual(new Set());
     expect(h.db.getAgentByName("maya")?.status).toEqual("working");
   });
 
