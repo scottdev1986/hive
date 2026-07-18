@@ -123,6 +123,7 @@ pub const TerminationResult = struct {
     members: []MemberResult,
     /// Snapshot completeness at capture time.
     snapshot_status: SnapshotStatus,
+    deadline_expired: bool = false,
 
     pub fn deinit(self: *TerminationResult, allocator: std.mem.Allocator) void {
         allocator.free(self.members);
@@ -428,9 +429,39 @@ pub fn snapshotTree(
     root_pid: i32,
     expected_root_token: ?StartToken,
 ) Error!Snapshot {
+    return snapshotTreeBefore(platform, allocator, root_pid, expected_root_token, null);
+}
+
+pub fn snapshotTreeUntil(
+    platform: Platform,
+    allocator: std.mem.Allocator,
+    root_pid: i32,
+    expected_root_token: ?StartToken,
+    operation_deadline_ns: u64,
+) Error!Snapshot {
+    return snapshotTreeBefore(
+        platform,
+        allocator,
+        root_pid,
+        expected_root_token,
+        operation_deadline_ns,
+    );
+}
+
+fn snapshotTreeBefore(
+    platform: Platform,
+    allocator: std.mem.Allocator,
+    root_pid: i32,
+    expected_root_token: ?StartToken,
+    operation_deadline_ns: ?u64,
+) Error!Snapshot {
     if (root_pid <= 1) return error.InvalidRoot;
 
-    const deadline = platform.monoNow() +% inspection_deadline_ns;
+    const inspection_deadline = platform.monoNow() +% inspection_deadline_ns;
+    const deadline = if (operation_deadline_ns) |operation_deadline|
+        @min(inspection_deadline, operation_deadline)
+    else
+        inspection_deadline;
     var prev: ?[]ProcessIdentity = null;
     defer if (prev) |p| allocator.free(p);
 
@@ -552,7 +583,62 @@ pub fn terminateTree(
     expected_root_token: ?StartToken,
     mode: TerminationMode,
 ) Error!TerminationResult {
-    var snap = try snapshotTree(platform, allocator, root_pid, expected_root_token);
+    return terminateTreeBefore(platform, allocator, root_pid, expected_root_token, mode, null);
+}
+
+pub fn terminateTreeUntil(
+    platform: Platform,
+    allocator: std.mem.Allocator,
+    root_pid: i32,
+    expected_root_token: ?StartToken,
+    mode: TerminationMode,
+    operation_deadline_ns: u64,
+) Error!TerminationResult {
+    return terminateTreeBefore(
+        platform,
+        allocator,
+        root_pid,
+        expected_root_token,
+        mode,
+        operation_deadline_ns,
+    );
+}
+
+fn deadlineReached(platform: Platform, deadline_ns: ?u64) bool {
+    return if (deadline_ns) |deadline| platform.monoNow() >= deadline else false;
+}
+
+fn sleepBeforeDeadline(platform: Platform, duration_ns: u64, deadline_ns: ?u64) void {
+    const deadline = deadline_ns orelse {
+        platform.sleep(duration_ns);
+        return;
+    };
+    const now = platform.monoNow();
+    if (now >= deadline) return;
+    platform.sleep(@min(duration_ns, deadline - now));
+}
+
+fn terminateTreeBefore(
+    platform: Platform,
+    allocator: std.mem.Allocator,
+    root_pid: i32,
+    expected_root_token: ?StartToken,
+    mode: TerminationMode,
+    operation_deadline_ns: ?u64,
+) Error!TerminationResult {
+    if (deadlineReached(platform, operation_deadline_ns)) return .{
+        .state = .unknown,
+        .members = try allocator.alloc(MemberResult, 0),
+        .snapshot_status = .unknown,
+        .deadline_expired = true,
+    };
+    var snap = try snapshotTreeBefore(
+        platform,
+        allocator,
+        root_pid,
+        expected_root_token,
+        operation_deadline_ns,
+    );
     defer snap.deinit(allocator);
 
     // Work on a mutable deepest-first copy of verified members.
@@ -564,22 +650,28 @@ pub fn terminateTree(
         .graceful => {
             // Provider-side graceful action is the host's job; here we
             // TERM each verified member deepest-first, wait 2s, then KILL survivors.
-            for (ordered) |m| {
-                _ = platform.kill(m.pid, c.SIGTERM);
+            if (!deadlineReached(platform, operation_deadline_ns)) {
+                for (ordered) |m| {
+                    _ = platform.kill(m.pid, c.SIGTERM);
+                }
             }
-            platform.sleep(graceful_term_wait_ns);
-            for (ordered) |m| {
-                if (revalidate(platform, m).fate == .survivor) {
+            sleepBeforeDeadline(platform, graceful_term_wait_ns, operation_deadline_ns);
+            if (!deadlineReached(platform, operation_deadline_ns)) {
+                for (ordered) |m| {
+                    if (revalidate(platform, m).fate == .survivor) {
+                        _ = platform.kill(m.pid, c.SIGKILL);
+                    }
+                }
+            }
+            sleepBeforeDeadline(platform, graceful_kill_wait_ns, operation_deadline_ns);
+        },
+        .immediate => {
+            if (!deadlineReached(platform, operation_deadline_ns)) {
+                for (ordered) |m| {
                     _ = platform.kill(m.pid, c.SIGKILL);
                 }
             }
-            platform.sleep(graceful_kill_wait_ns);
-        },
-        .immediate => {
-            for (ordered) |m| {
-                _ = platform.kill(m.pid, c.SIGKILL);
-            }
-            platform.sleep(immediate_kill_wait_ns);
+            sleepBeforeDeadline(platform, immediate_kill_wait_ns, operation_deadline_ns);
         },
     }
 
@@ -621,6 +713,7 @@ pub fn terminateTree(
         .state = state,
         .members = try results.toOwnedSlice(allocator),
         .snapshot_status = snap.status,
+        .deadline_expired = deadlineReached(platform, operation_deadline_ns),
     };
 }
 
@@ -1148,6 +1241,73 @@ test "B1 positive control: EPERM unobservable is unknown not terminated" {
     try testing.expectEqual(TerminationState.unknown, result.state);
     // Must NOT claim wait-or-absence without wait/absence evidence.
     try testing.expect(!std.mem.eql(u8, result.members[0].reason, "wait-or-absence"));
+}
+
+test "termination deadline bounds the settle wait and preserves survivors" {
+    const DeadlinePlatform = struct {
+        root: ProcessIdentity,
+        now: u64 = 0,
+        signals: usize = 0,
+
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+        fn monoNow(context: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return self.now;
+        }
+        fn sleep(context: *anyopaque, ns: u64) void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.now += ns;
+        }
+        fn kill(context: *anyopaque, _: i32, _: i32) bool {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            self.signals += 1;
+            return true;
+        }
+        fn observe(context: *anyopaque, pid: i32) ObserveResult {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (pid == self.root.pid) return .{ .present = self.root };
+            return .absent;
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            return false;
+        }
+        fn listChildren(_: *anyopaque, allocator: std.mem.Allocator, _: i32) ![]i32 {
+            return allocator.alloc(i32, 0);
+        }
+    };
+
+    var simulated = DeadlinePlatform{ .root = .{
+        .pid = 8080,
+        .start_token = .{ .seconds = 8, .microseconds = 80 },
+        .parent = 1,
+        .pgid = 8080,
+        .session = 8080,
+    } };
+    const deadline = 10 * std.time.ns_per_ms;
+    var result = try terminateTreeUntil(
+        simulated.platform(),
+        testing.allocator,
+        simulated.root.pid,
+        simulated.root.start_token,
+        .immediate,
+        deadline,
+    );
+    defer result.deinit(testing.allocator);
+
+    try testing.expectEqual(deadline, simulated.now);
+    try testing.expectEqual(@as(usize, 1), simulated.signals);
+    try testing.expect(result.deadline_expired);
+    try testing.expectEqual(TerminationState.survivors, result.state);
 }
 
 test "M1: absent root with empty tree reports terminated not unknown" {
