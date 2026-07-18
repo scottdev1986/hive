@@ -1,0 +1,57 @@
+Positive control PC1 — reintroduce the by-value/dangling carrier shape in
+GhosttyClipboardContext.write (ClipboardContext.swift). Applied to a private
+clone of pin e6606a35; the pin itself was never modified.
+
+Replace the eager-copy body with a deferred read of the C-owned carrier:
+
+-        let copied: [GhosttyClipboardContent]
+-        if let content, count > 0 {
+-            copied = (0..<count).compactMap { index in
+-                guard let mime = content[index].mime, let data = content[index].data else { return nil }
+-                return GhosttyClipboardContent(mime: String(cString: mime), data: String(cString: data))
+-            }
+-        } else {
+-            copied = []
+-        }
+-        guard acceptingCompletions,
+-              location == GHOSTTY_CLIPBOARD_STANDARD,
+-              !confirm,
+-              !copied.isEmpty else { return }
+-        DispatchQueue.main.async { [weak self] in
+-            guard let self, self.acceptingCompletions else { return }
+-            self.writeHandler(location, copied)
+-        }
++        guard acceptingCompletions,
++              location == GHOSTTY_CLIPBOARD_STANDARD,
++              !confirm,
++              let content, count > 0 else { return }
++        DispatchQueue.main.async { [weak self] in
++            guard let self, self.acceptingCompletions else { return }
++            let copied: [GhosttyClipboardContent] = (0..<count).compactMap { index in
++                guard let mime = content[index].mime, let data = content[index].data else { return nil }
++                return GhosttyClipboardContent(mime: String(cString: mime), data: String(cString: data))
++            }
++            guard !copied.isEmpty else { return }
++            self.writeHandler(location, copied)
++        }
+
+Result under `swift test --filter Gate8ClipboardTests --sanitize=address`:
+
+==68315==ERROR: AddressSanitizer: heap-use-after-free on address 0x6030000c0e80
+SUMMARY: AddressSanitizer: heap-use-after-free ClipboardContext.swift:140 in
+  closure #1 in closure #1 in GhosttyClipboardContext.write(location:content:count:confirm:)
+0x6030000c0e80 is located 0 bytes inside of 32-byte region
+  [0x6030000c0e80,0x6030000c0ea0)
+freed by thread T0 here:
+    #1 Surface.copySelectionToClipboards
+    #7 Gate8ClipboardTests.testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite()
+      Gate8ClipboardTests.swift:158
+previously allocated by thread T0 here:
+    #7 Gate8ClipboardTests.testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite()
+      Gate8ClipboardTests.swift:158
+
+Baseline (unmutated pin, same command): 7 tests, 0 failures, ASan clean.
+Without ASan the mutation hard-crashes the suite mid-test (exit 1).
+
+Conclusion: the carrier region is genuinely reclaimed by the engine on callback
+return, so the eager copy is load-bearing and the no-UAF assertion bites.

@@ -1,0 +1,15 @@
+--- pin/workspace/Sources/HiveTerminalKit/View/HiveTerminalView+Input.swift	2026-07-18 17:31:02
++++ mut/workspace/Sources/HiveTerminalKit/View/HiveTerminalView+Input.swift	2026-07-18 17:43:41
+@@ -590,7 +590,11 @@
+     @discardableResult
+     func forwardMouse(_ event: NSEvent, state: ghostty_input_mouse_state_e) -> Bool {
+         let p = convert(event.locationInWindow, from: nil)
+-        engine.sendMousePos(x: p.x, y: bounds.height - p.y, mods: mapMods(event.modifierFlags))
++        // POSITIVE CONTROL (reviewer emmett, NOT the author's code): the
++        // mis-mapping shape — scale at the Swift boundary, which the engine
++        // then scales again.
++        let s = window?.backingScaleFactor ?? 1
++        engine.sendMousePos(x: p.x * s, y: (bounds.height - p.y) * s, mods: mapMods(event.modifierFlags))
+         return engine.sendMouseButton(
+             state: state,
+             button: Self.mouseButton(forNSEventButtonNumber: event.buttonNumber),

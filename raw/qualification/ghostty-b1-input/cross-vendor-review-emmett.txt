@@ -1,0 +1,192 @@
+Cross-vendor review of M1-B1 Gate 8 (input/IME/mouse) + deferred clipboard/deny
+Reviewer: emmett (Claude Opus 4.8). Author: donna (Codex). Cross-vendor: satisfied.
+Date: 2026-07-18
+Pin reviewed: e6606a35 (frozen), parent merge a89c20db, landed Gate 9 parent 89969341
+
+MATERIALIZATION
+  git archive e6606a35 into a scratch tree; HEAD never moved. The materialized
+  tree was verified blob-for-blob against the pin for all seven Gate-8 source
+  and test files both before and after every experiment, so the parallel
+  auditors read pristine bytes. All mutations were made in a separate clone.
+
+  Warm cache cloned from a sibling worktree whose native/ and vendor/ghostty
+  are byte-identical to the pin (diff -r clean) and whose recorded patched-tree
+  is a27fc0e76555552cf7202c98fb1a31b2021bcf26.
+  Materialized macOS universal library sha256
+    9c40903c3a6baaa253a4f59780f879bae34c342bb4f2d97ae877a2393d229fed
+  matches the value recorded in final-verification.txt; lipo reports x86_64 +
+  arm64. The Makefile currency markers (lib-prefixed archive, per-arch gate-6
+  fixture corpus, patch-series sha vs lock) all accepted the cached artifact,
+  so no silent rebuild occurred.
+
+REPRODUCED INDEPENDENTLY (all exit codes captured, no pipes)
+  swift test                       353 executed / 2 skipped / 0 failures, exit 0
+                                   — exactly donna's reported figures.
+                                   Both skips pre-date Gate 8 and are documented
+                                   (Gate6SurfaceRestoreTests async delivery;
+                                   Gate7 interactive multi-display hardware).
+  bun test                         exit 0
+  bun run typecheck                exit 0
+  bun run test:sessiond            exit 0 (C/Zig ABI + headless harness)
+  scripts/check-ghostty-abi.sh     exit 0
+  swift build --arch arm64  --build-tests   exit 0
+  swift build --arch x86_64 --build-tests   exit 0
+  native/abi/ghostty-bridge.exports          exactly 6 symbols, unchanged
+  git diff --name-only 89969341...e6606a35   touches no native/ and no vendor/
+                                   path — no fork-surface growth, no patch drift.
+  Boundary: HiveWorkspace does not import HiveGhosttyC anywhere, so no upstream
+  C input/mouse type crosses the Hive boundary. The four new `public` decls
+  carrying ghostty_ types are intra-package bridge/test-double plumbing.
+
+POSITIVE CONTROLS RUN BY THIS REVIEW (each mutation applied only to the
+separate clone; each reverted and re-verified afterwards)
+
+  PC1 — async clipboard carrier-region lifetime (the deferred attestation a
+  prior agent could not finish; completed here independently).
+    Baseline: Gate8ClipboardTests under -sanitize=address, 7/7 green, clean.
+    Mutation: reintroduce the by-value/dangling carrier shape — capture the
+    C `content` pointer across the DispatchQueue.main.async boundary and defer
+    the String(cString:) reads.
+    Result: RED, decisively.
+      AddressSanitizer: heap-use-after-free, ClipboardContext.swift:140
+      32-byte region [0x6030000c0e80, 0x6030000c0ea0)
+      freed by Surface.copySelectionToClipboards
+      allocated and freed within
+        Gate8ClipboardTests.testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite
+    Without ASan the same mutation hard-crashes the suite mid-test (exit 1),
+    so the committed test bites in the default configuration too.
+    This is the measured region-diff: the carrier region is genuinely reclaimed
+    by the engine the moment the callback returns, which makes donna's eager
+    copy load-bearing rather than defensive. The no-UAF property is real and
+    the assertion guarding it bites. ATTESTATION COMPLETE.
+    It also proves the clipboard suite runs against the REAL engine: the
+    freeing frame is Ghostty's own Zig, not a fake.
+
+  PC2 — 2x backing-scale mouse button coordinates.
+    Mutation: multiply button-path coordinates by window.backingScaleFactor.
+    Result: RED — testMouseButtonCoordinatesDoNotMultiplyByBackingScale
+      x: 50.0 != 25.0 ; y: 520.0 != 260.0
+    The guard bites. Separately confirmed against upstream that UNSCALED is the
+    correct shape: apprt/embedded.zig cursorPosToPixels ("Convert our unscaled
+    x/y to scaled") applies content scale inside the engine, so a Swift-side
+    multiply would be the defect.
+
+SECURITY / DENY AXIS — VERIFIED CLEAN
+  Gate-9 probe callbacks remain the FIRST statement in all four runtime
+  callbacks (ManualSurface.swift:1076, 1084, 1092, 1100). Probe-first ordering
+  preserved; Gate 8's clipboard-write path depends on it and does not disturb it.
+  OSC 52 read and write are denied at the Ghostty config layer
+  (clipboard-read = deny, clipboard-write = deny) in BOTH the production and the
+  headless-test policy — the two configs differ only by window-vsync — so the
+  security property under test is the production one. Unreachability is proven
+  by probe counts that do not advance, and those probes have in-suite positive
+  controls proving they DO advance when genuinely reached (readClipboard and
+  confirmReadClipboard in testUnsafePasteConfirmationFailsClosed, writeClipboard
+  in testConfirmedClipboardWriteIsDropped... and testSelectionCopy...). The
+  negative assertions are therefore not vacuous.
+  Unsafe-confirm fails closed: confirmRead completes empty + confirmed, consuming
+  the preserved request without authorizing the original.
+  A confirmed write is dropped (`!confirm` guard).
+  Disabled-reply key, text and bracketed paste all travel one real-engine write
+  callback, asserted as exact concatenated bytes in order, with the device-
+  attributes query proven silent first.
+
+FINDINGS
+
+  F1 (RECORD ACCURACY — required correction, not an author defect)
+  The "2x backing-scale mouse BUTTON coordinate regression donna fixed" has no
+  production-code component. The coordinate expression
+    engine.sendMousePos(x: p.x, y: bounds.height - p.y, ...)
+  is byte-identical at 89969341 and at e6606a35; no committed revision ever
+  scaled mouse coordinates. Gate 8 refactored forwardMouse to return Bool and
+  extracted forwardMousePosition, leaving the arithmetic untouched, and added a
+  guard test for behavior that was already correct.
+  donna's own evidence claims COVERAGE ("the 2x backing-scale button path"),
+  not a fix, so the "regression fixed" framing appears to have entered upstream
+  of the author. The record should be corrected; nothing needs repairing in the
+  code.
+
+  F2 (REAL DEFECT, INTRODUCED BY THIS GATE — required follow-up)
+  HiveTerminalView+Input.swift:398-400, firstRect(forCharacterRange:):
+    viewRect.origin.x += viewRect.width * Double(range.location + range.length)
+  Upstream advances by cellSize.width (SurfaceView_AppKit.swift, the #8493
+  dictation fix). Two compounding divergences, both confirmed in engine source:
+    - Surface.zig imePoint returns width = preedit_width * cell.width, so a
+      multi-cell composition over-advances by the preedit width.
+    - Surface.zig scales x, y and height by content_scale but deliberately does
+      NOT scale width ("we don't apply content scale here ... on purpose"), so
+      an unscaled backing-pixel width is added to a point-space origin —
+      doubled at 2x.
+  Correct only in the common single-cell-at-1x case. Newly introduced: the
+  range.length == 0 block does not exist at 89969341. Enshrined by
+  InputEncodingTests.swift:875-887, which asserts the wrong shape and so can
+  never go red. Impact is IME candidate-window / dictation-indicator placement
+  — cosmetic, no data or security consequence — but it is on the very axis this
+  gate qualifies, and the weak multi-stage CJK coverage (F4) is why it survived.
+
+  F3 (UNDOCUMENTED DIVERGENCE — pre-existing, carried through a rewrite)
+  insertText omits upstream's `guard NSApp.currentEvent != nil else { return }`
+  ("We must have an associated event"). The synchronous double-injection guard
+  (keyTextAccumulator) is correct and I could not break it on any traced path —
+  ctrl-modified, function, dead-key, IME-commit, encodeKey. But the eventless
+  subset upstream rejects — dictation, Character Viewer, Services menu, an IME
+  committing on a later runloop turn — reaches engine.sendText unguarded here.
+  The guard was already absent at 89969341, so this is not a Gate-8 regression;
+  Gate 8 did rewrite this function and did not restore it, and no "Not ported"
+  comment marks the omission the way the file does elsewhere.
+  Note: the committed tests call insertText directly under XCTest, where
+  NSApp.currentEvent is nil — so restoring upstream's guard would turn several
+  Gate-8 tests red. The test harness depends on the divergence; that coupling
+  should be resolved deliberately, not by quietly keeping the gap.
+
+  F4 (COVERAGE GAPS — recommended)
+  - CJK "multi-stage" composition is single-stage: one setMarkedText(prefix(1))
+    then commit, never through handleKeyDown. RTL is byte-identity only, with
+    nothing RTL-specific. Dead keys and emoji/ZWJ are genuinely well covered.
+  - Every Kitty golden calls encodeKey/flagsChanged directly; the real
+    keyDown -> handleKeyDown -> interpretKeyEvents accumulator path has no
+    real-engine byte coverage.
+  - Goldens depending on characters(byApplyingModifiers:) re-translate through
+    the runner's active keyboard layout and would go red on a non-US default,
+    which undercuts the file's own layout-independence seam.
+  - Non-load-bearing assertions: InputEncodingTests.swift:848-857 asserts only
+    isFinite while its name claims a bounds fallback; :222-250 place every
+    assertion inside the interpret closure and go green if it is never invoked;
+    :252-261 is negative-only with no positive control.
+  - pressureChange's stage latch is never executed by a test (the seam is called
+    directly), and momentum never reaches scrollWheel through a real NSEvent.
+
+  F5 (DEAD CONTROL — pre-existing, worth a comment fix)
+  pendingAuthoringHeld is written twice and read nowhere in the entire workspace
+  tree (grep-complete: decl HiveTerminalView.swift:69, writes +Input.swift:160,
+  162). The comment "§22: first authoring key held until claim" describes gating
+  that does not exist — handleKeyDown runs unconditionally. Behavior is
+  unchanged from 89969341, where encodeKey was likewise called in both branches,
+  but Gate 8 removed the comment that used to explain the gap ("production waits
+  for CLAIM_RESULT"), leaving a claim of a control with no implementation.
+
+HONEST-LABELING AUDIT — PASS
+  No hardware capability is overstated. Force Touch / pressure is labeled an
+  automated surface-contract seam plus an explicit pending human hardware
+  acceptance in every surface: final-verification.txt states "No hardware Force
+  Touch claim is made"; live-proof.jsonl carries hardware_force_click_claimed:
+  false twice, proof "deterministic_surface_contract", and status
+  "pending_human_hardware_run" with a written human procedure; the test name is
+  scoped to "...ReachTheSurfaceContract". This is the correct shape.
+  One caveat for the record: live-proof.jsonl has no generator and is
+  hand-transcribed, and its fake-engine geometry rows sit undifferentiated
+  beside real-engine byte goldens. Every transcribed value checked was accurate.
+
+VERDICT: PASS — land-authorized at e6606a35.
+
+  Every gate-critical claim was reproduced independently and the two axes that
+  carry risk — clipboard security/deny and async carrier lifetime — are clean
+  with positive controls that bite. The deferred lifetime attestation is now
+  complete: the carrier region is provably freed on callback return and the
+  eager copy is provably necessary.
+  F2 is a genuine port error introduced by this gate, but it is cosmetic
+  placement, correct in the common case, and disproportionate to block a green,
+  security-clean gate. It must be fixed before B1 closes, together with the F4
+  multi-stage CJK coverage that would have caught it, and the F1 record
+  correction. The gate's IME sub-claim of exact upstream fidelity is NOT fully
+  supported until F2 lands.
