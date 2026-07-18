@@ -1018,7 +1018,7 @@ test "production CREATE reaches CREATED only after Registry admission" {
     ;
 
     var path_storage: [96]u8 = undefined;
-    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-create-{x}", .{std.crypto.random.int(u64)});
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hc-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
     var runtime = try broker.Runtime.open(std.testing.allocator, root);
@@ -1048,10 +1048,14 @@ test "production CREATE reaches CREATED only after Registry admission" {
         .registry = &registry,
         .expected_initial_input = "hello",
     };
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
     var backend = broker.ProductionBackend.init(
         std.testing.allocator,
         &runtime,
         &registry,
+        &control_plane,
         launcher.launcher(),
     );
     defer backend.deinit();
@@ -1121,9 +1125,9 @@ test "production CREATE reaches CREATED only after Registry admission" {
     try std.testing.expect(!startup_harness.failed.load(.acquire));
 }
 
-test "production wire exposes LIST INSPECT and TERMINATE through Registry evidence" {
+test "production wire reaches neutral Controller for LIST INSPECT and TERMINATE" {
     var path_storage: [96]u8 = undefined;
-    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-lifecycle-{x}", .{std.crypto.random.int(u64)});
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hl-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
     var runtime = try broker.Runtime.open(std.testing.allocator, root);
@@ -1139,13 +1143,65 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         .created_payload = "unused",
         .host = host.control(),
     };
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
     var backend = broker.ProductionBackend.init(
         std.testing.allocator,
         &runtime,
         &registry,
+        &control_plane,
         launcher.launcher(),
     );
     defer backend.deinit();
+
+    // Simulate a host process creating through the neutral ledger after the
+    // broker has opened its own handle. ProductionBackend must recover this
+    // cross-process write before LIST/INSPECT instead of returning stale empty
+    // state from startup.
+    var writer: broker.ProductionControlPlane = undefined;
+    try writer.init(std.testing.allocator, root);
+    defer writer.deinit();
+    const reserved = try writer.registry.reserve(
+        "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "create-neutral-controller-proof",
+        @splat(0x42),
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    );
+    const borrowed = switch (reserved) {
+        .reserved => |value| value,
+        .existing => return error.UnexpectedNeutralSessionReplay,
+    };
+    // register/commitCreate recover the registry and free the arena backing
+    // `borrowed`, so retain an owned SessionRef before either mutation.
+    const session_key = try std.testing.allocator.dupe(u8, borrowed.session.key);
+    defer std.testing.allocator.free(session_key);
+    const session_incarnation = try std.testing.allocator.dupe(u8, borrowed.session.incarnation);
+    defer std.testing.allocator.free(session_incarnation);
+    const process = try broker.inspectProcess(c.getpid());
+    var token_storage: [64]u8 = undefined;
+    const process_token = try broker.formatStartToken(process.start_token, &token_storage);
+    _ = try writer.registry.register(.{
+        .key = session_key,
+        .incarnation = session_incarnation,
+    }, .{
+        .host = .{ .processId = process.pid, .startToken = process_token },
+        .child = .{ .processId = process.pid, .startToken = process_token },
+        .childSessionId = process.pid,
+        .childProcessGroupId = process.pid,
+        .foregroundProcessGroupId = process.pid,
+        .terminalIdentity = "neutral-controller-proof",
+        .sessionLeader = false,
+        .controllingTerminal = false,
+        .standardStreamsShareTerminal = false,
+        .initialProfileAppliedBeforeExec = true,
+        .initialWindowAppliedBeforeExec = true,
+        .window = .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    });
+    _ = try writer.registry.commitCreate(.{
+        .key = session_key,
+        .incarnation = session_incarnation,
+    }, "{}");
 
     var sockets: [2]c_int = undefined;
     if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
@@ -1175,11 +1231,14 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         broker.generated.wire_schema.listed_payload,
         listed.payload,
     ));
-    try std.testing.expect(std.mem.indexOf(u8, listed.payload, record.locator.session_id) != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed.payload, session_key) != null);
     try std.testing.expect(std.mem.indexOf(u8, listed.payload, "\"lifecycle\":\"running\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, listed.payload, "\"completeness\":\"partial\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, listed.payload, "neutral-host-control-unavailable") != null);
 
-    const inspect = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.inspect_payload);
+    const inspect = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_key, .incarnation = session_incarnation },
+    }, .{});
     defer std.testing.allocator.free(inspect);
     try writeCreateFrame(client, broker.generated.frame_type.inspect, 22, 0, inspect);
     const inspected_read = try broker.protocol.readFrame(std.testing.allocator, file.deprecatedReader());
@@ -1192,11 +1251,36 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         broker.generated.wire_schema.inspected_payload,
         inspected.payload,
     ));
-    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, record.host_start_token) != null);
+    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, process_token) != null);
     try std.testing.expect(std.mem.indexOf(u8, inspected.payload, "\"lifecycle\":\"running\"") != null);
-    try std.testing.expect(std.mem.indexOf(u8, inspected.payload, "sessiond-registry-projection") != null);
+    const InspectionProjection = struct { diagnostics: []const []const u8 };
+    var inspection = try std.json.parseFromSlice(
+        InspectionProjection,
+        std.testing.allocator,
+        inspected.payload,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer inspection.deinit();
+    var control_diagnostic: ?[]const u8 = null;
+    for (inspection.value.diagnostics) |diagnostic| {
+        if (std.mem.startsWith(u8, diagnostic, "neutral-")) {
+            control_diagnostic = diagnostic;
+            break;
+        }
+    }
+    try std.testing.expectEqualStrings(
+        "neutral-host-control-unavailable",
+        control_diagnostic orelse return error.MissingNeutralControlDiagnostic,
+    );
 
-    const terminate = try corpusPayload(std.testing.allocator, broker.generated.wire_schema.terminate_payload);
+    const terminate = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_key, .incarnation = session_incarnation },
+        .mode = "immediate",
+        .target = "process-tree",
+        .deadline = "2099-01-01T00:00:00.000Z",
+        .idempotencyKey = "terminate-neutral-controller-proof",
+    }, .{});
     defer std.testing.allocator.free(terminate);
     try writeCreateFrame(client, broker.generated.frame_type.terminate, 23, 0, terminate);
     const terminated_read = try broker.protocol.readFrame(std.testing.allocator, file.deprecatedReader());
@@ -1209,9 +1293,14 @@ test "production wire exposes LIST INSPECT and TERMINATE through Registry eviden
         broker.generated.wire_schema.terminated_payload,
         terminated.payload,
     ));
-    try std.testing.expect(std.mem.indexOf(u8, terminated.payload, "\"state\":\"terminated\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, terminated.payload, "\"state\":\"unknown\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, terminated.payload, "\"reap\"") != null);
-    try std.testing.expect(host.terminated);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        terminated.payload,
+        "neutral-host-control-unavailable-during-termination",
+    ) != null);
+    try std.testing.expect(!host.terminated);
 
     client.close();
     thread.join();
@@ -1228,7 +1317,7 @@ test "pre-admission CREATE rejection leaves Registry empty and tears down" {
         \\{"schemaVersion":1,"totalLength":5,"sha256":"2cf24dba5fb0a30e26e83b2ac5b9e29e1b161e5c1fa7425e73043362938b9824"}
     ;
     var path_storage: [96]u8 = undefined;
-    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-reject-{x}", .{std.crypto.random.int(u64)});
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hr-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
     var runtime = try broker.Runtime.open(std.testing.allocator, root);
@@ -1254,10 +1343,14 @@ test "pre-admission CREATE rejection leaves Registry empty and tears down" {
         .registry = &registry,
         .expected_initial_input = "hello",
     };
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
     var backend = broker.ProductionBackend.init(
         std.testing.allocator,
         &runtime,
         &registry,
+        &control_plane,
         launcher.launcher(),
     );
     defer backend.deinit();
@@ -1313,7 +1406,7 @@ test "post-admission finalize failure suppresses CREATED and quarantines unknown
         \\{"schemaVersion":1,"totalLength":0,"sha256":"e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855"}
     ;
     var path_storage: [96]u8 = undefined;
-    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-finalize-{x}", .{std.crypto.random.int(u64)});
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hf-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
     var runtime = try broker.Runtime.open(std.testing.allocator, root);
@@ -1343,10 +1436,14 @@ test "post-admission finalize failure suppresses CREATED and quarantines unknown
         .registry = &registry,
         .finalize_succeeds = false,
     };
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
     var backend = broker.ProductionBackend.init(
         std.testing.allocator,
         &runtime,
         &registry,
+        &control_plane,
         launcher.launcher(),
     );
     defer backend.deinit();
@@ -1393,7 +1490,7 @@ test "production CREATE rejects ordering length and digest before launch" {
         \\{"schemaVersion":1,"totalLength":5,"sha256":"0000000000000000000000000000000000000000000000000000000000000000"}
     ;
     var path_storage: [96]u8 = undefined;
-    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hive-controls-{x}", .{std.crypto.random.int(u64)});
+    const root = try std.fmt.bufPrint(&path_storage, "/tmp/hx-{x}", .{std.crypto.random.int(u64)});
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
     var runtime = try broker.Runtime.open(std.testing.allocator, root);
@@ -1407,10 +1504,14 @@ test "production CREATE rejects ordering length and digest before launch" {
         .host = host.control(),
     };
     var registry: broker.Registry = .{};
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(std.testing.allocator, root);
+    defer control_plane.deinit();
     var backend = broker.ProductionBackend.init(
         std.testing.allocator,
         &runtime,
         &registry,
+        &control_plane,
         launcher.launcher(),
     );
     defer backend.deinit();

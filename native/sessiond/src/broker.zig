@@ -1,4 +1,7 @@
 const std = @import("std");
+const neutral_control_plane = @import("neutral_control_plane");
+const neutral_host = @import("neutral_host");
+const process_inspector = @import("process_inspector");
 pub const protocol = @import("protocol");
 pub const generated = @import("session_protocol_generated");
 
@@ -2718,303 +2721,46 @@ const CreateTransaction = struct {
     }
 };
 
-fn inspectionGeometryValue(
-    allocator: std.mem.Allocator,
-    geometry: Geometry,
-) !std.json.Value {
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("columns", .{ .integer = geometry.columns });
-    try value.put("rows", .{ .integer = geometry.rows });
-    try value.put("widthPx", .{ .integer = geometry.width_px });
-    try value.put("heightPx", .{ .integer = geometry.height_px });
-    try value.put("cellWidthPx", .{ .float = geometry.cell_width_px });
-    try value.put("cellHeightPx", .{ .float = geometry.cell_height_px });
-    return .{ .object = value };
-}
+pub const ProductionControlPlane = struct {
+    runtime: neutral_host.Runtime,
+    registry: neutral_host.Registry,
+    platform: process_inspector.RealPlatform,
 
-fn inspectionProcessRootValue(
-    allocator: std.mem.Allocator,
-    root: ProcessRoot,
-) !std.json.Value {
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("pid", .{ .integer = root.pid });
-    try value.put("startToken", .{ .string = root.start_token });
-    try value.put("processGroupId", .{ .integer = root.process_group_id });
-    return .{ .object = value };
-}
+    pub fn init(
+        self: *ProductionControlPlane,
+        allocator: std.mem.Allocator,
+        hive_home: []const u8,
+    ) !void {
+        self.runtime = try neutral_host.Runtime.open(allocator, hive_home);
+        errdefer self.runtime.deinit();
+        self.registry = try neutral_host.Registry.open(allocator, &self.runtime);
+        self.platform = process_inspector.RealPlatform.init();
+    }
 
-fn inspectionVisibilityValue(
-    allocator: std.mem.Allocator,
-    visibility: Visibility,
-    now_ns: u64,
-) !std.json.Value {
-    const remaining_ns = visibility.expires_mono_ns -| now_ns;
-    const remaining_ms = std.math.divCeil(
-        u64,
-        remaining_ns,
-        std.time.ns_per_ms,
-    ) catch return error.InvalidVisibility;
-    var expiry_storage: [24]u8 = undefined;
-    const expiry = try wallDeadline(&expiry_storage, remaining_ms);
-    var revision_storage: [32]u8 = undefined;
-    const revision = try std.fmt.bufPrint(&revision_storage, "{d}", .{
-        visibility.open_terminal_revision,
-    });
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("state", .{ .string = @tagName(visibility.state) });
-    try value.put("workspaceSessionId", .{ .string = visibility.workspace_session_id });
-    try value.put("openTerminalRevision", .{ .string = try allocator.dupe(u8, revision) });
-    try value.put("expiresAt", .{ .string = try allocator.dupe(u8, expiry) });
-    return .{ .object = value };
-}
+    pub fn deinit(self: *ProductionControlPlane) void {
+        self.registry.deinit();
+        self.runtime.deinit();
+        self.* = undefined;
+    }
 
-fn sessionRefJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.json.Value {
-    var incarnation_storage: [32]u8 = undefined;
-    const incarnation = try std.fmt.bufPrint(&incarnation_storage, "{d}", .{locator.generation});
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("key", .{ .string = locator.session_id });
-    try value.put("incarnation", .{ .string = try allocator.dupe(u8, incarnation) });
-    return .{ .object = value };
-}
-
-fn sessionMatchesLocator(session_key: []const u8, session_incarnation: []const u8, locator: Locator) bool {
-    if (!std.mem.eql(u8, session_key, locator.session_id)) return false;
-    var incarnation_storage: [32]u8 = undefined;
-    const incarnation = std.fmt.bufPrint(&incarnation_storage, "{d}", .{locator.generation}) catch return false;
-    return std.mem.eql(u8, session_incarnation, incarnation);
-}
-
-fn processIdentityJsonValue(
-    allocator: std.mem.Allocator,
-    process_id: i32,
-    start_token: []const u8,
-) !std.json.Value {
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("processId", .{ .integer = process_id });
-    try value.put("startToken", .{ .string = start_token });
-    return .{ .object = value };
-}
-
-fn windowSizeJsonValue(allocator: std.mem.Allocator, geometry: Geometry) !std.json.Value {
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("columns", .{ .integer = geometry.columns });
-    try value.put("rows", .{ .integer = geometry.rows });
-    try value.put("widthPixels", .{ .integer = geometry.width_px });
-    try value.put("heightPixels", .{ .integer = geometry.height_px });
-    return .{ .object = value };
-}
-
-/// Frozen A0 SessionInspection projection from the legacy broker registry.
-/// Completeness is never complete here: the broker does not own live host
-/// arbiter/job-control/descendant evidence.
-fn frozenInspectionValue(
-    allocator: std.mem.Allocator,
-    entry: *const Entry,
-    now_ns: u64,
-) !std.json.Value {
-    _ = now_ns;
-    const record = entry.record;
-    const lifecycle: []const u8 = if (entry.quarantined or record.state == .unknown)
-        "unknown"
-    else if (record.state == .starting)
-        "creating"
-    else if (record.state == .exited)
-        "exited"
-    else
-        "running";
-    var revision_storage: [32]u8 = undefined;
-    const revision = try std.fmt.bufPrint(
-        &revision_storage,
-        "{d}",
-        .{record.visibility.open_terminal_revision},
-    );
-    var start_storage: [32]u8 = undefined;
-    var end_storage: [32]u8 = undefined;
-    const retained_start = try std.fmt.bufPrint(&start_storage, "{d}", .{record.checkpoint_seq});
-    const retained_end = try std.fmt.bufPrint(&end_storage, "{d}", .{record.output_seq});
-    var evidence_storage: [24]u8 = undefined;
-    const evidence_at = try wallDeadline(&evidence_storage, 0);
-
-    var diagnostics = std.json.Array.init(allocator);
-    try diagnostics.append(.{ .string = "sessiond-registry-projection" });
-    try diagnostics.append(.{ .string = "job-control-evidence-unavailable" });
-    try diagnostics.append(.{ .string = "descendant-inspection-unavailable" });
-
-    var window = std.json.ObjectMap.init(allocator);
-    try window.put("value", try windowSizeJsonValue(allocator, record.geometry));
-    try window.put("revision", .{ .string = try allocator.dupe(u8, revision) });
-
-    var retained = std.json.ObjectMap.init(allocator);
-    try retained.put("start", .{ .string = try allocator.dupe(u8, retained_start) });
-    try retained.put("endExclusive", .{ .string = try allocator.dupe(u8, retained_end) });
-    var output = std.json.ObjectMap.init(allocator);
-    try output.put("closed", .{ .bool = record.state == .exited });
-    try output.put("retained", .{ .object = retained });
-
-    var checkpoints = std.json.ObjectMap.init(allocator);
-    try checkpoints.put("retained", .{ .integer = if (record.checkpoint_seq > 0) 1 else 0 });
-    try checkpoints.put("newest", .null);
-
-    var reap = std.json.ObjectMap.init(allocator);
-    try reap.put("authority", .{ .string = "unavailable" });
-    try reap.put("reaped", .{ .bool = false });
-    try reap.put("status", .null);
-    try reap.put("completeness", .{ .string = "unknown" });
-
-    const descendants = std.json.Array.init(allocator);
-    const survivors = std.json.Array.init(allocator);
-
-    var value = std.json.ObjectMap.init(allocator);
-    try value.put("session", try sessionRefJsonValue(allocator, record.locator));
-    try value.put("lifecycle", .{ .string = lifecycle });
-    try value.put("completeness", .{ .string = "partial" });
-    try value.put("host", if (record.state == .exited)
-        .null
-    else
-        try processIdentityJsonValue(allocator, record.host_pid, record.host_start_token));
-    try value.put("child", if (record.state == .exited)
-        .null
-    else
-        try processIdentityJsonValue(
-            allocator,
-            record.process_root.pid,
-            record.process_root.start_token,
-        ));
-    try value.put("jobControl", .null);
-    try value.put("window", .{ .object = window });
-    try value.put("output", .{ .object = output });
-    try value.put("checkpoints", .{ .object = checkpoints });
-    try value.put("inputOwner", .null);
-    try value.put("exit", .null);
-    try value.put("reap", .{ .object = reap });
-    try value.put("descendants", .{ .array = descendants });
-    try value.put("survivors", .{ .array = survivors });
-    try value.put("evidenceAt", .{ .string = try allocator.dupe(u8, evidence_at) });
-    try value.put("diagnostics", .{ .array = diagnostics });
-    return .{ .object = value };
-}
-
-fn encodeListedPayload(
-    allocator: std.mem.Allocator,
-    registry: *Registry,
-    now_ns: u64,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var entries = std.json.Array.init(a);
-    // Frozen A0 LIST is deliberately unscoped; Hive filtering stays above.
-    for (&registry.entries) |*slot| if (slot.*) |*entry| {
-        try entries.append(try frozenInspectionValue(a, entry, now_ns));
-    };
-    var root = std.json.ObjectMap.init(a);
-    try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("entries", .{ .array = entries });
-    const payload = try std.json.Stringify.valueAlloc(
-        allocator,
-        std.json.Value{ .object = root },
-        .{},
-    );
-    errdefer allocator.free(payload);
-    if (!protocol.validateControlPayload(
-        allocator,
-        generated.wire_schema.listed_payload,
-        payload,
-    )) return error.InvalidListedPayload;
-    return payload;
-}
-
-fn encodeInspectedPayload(
-    allocator: std.mem.Allocator,
-    entry: *const Entry,
-    now_ns: u64,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    var root = try frozenInspectionValue(a, entry, now_ns);
-    try root.object.put("schemaVersion", .{ .integer = 1 });
-    const payload = try std.json.Stringify.valueAlloc(
-        allocator,
-        root,
-        .{},
-    );
-    errdefer allocator.free(payload);
-    if (!protocol.validateControlPayload(
-        allocator,
-        generated.wire_schema.inspected_payload,
-        payload,
-    )) return error.InvalidInspectedPayload;
-    return payload;
-}
-
-fn encodeTerminatedPayload(
-    allocator: std.mem.Allocator,
-    state: TerminationState,
-) ![]u8 {
-    var arena = std.heap.ArenaAllocator.init(allocator);
-    defer arena.deinit();
-    const a = arena.allocator();
-    const state_name: []const u8 = switch (state) {
-        .terminated => "terminated",
-        .survivors => "survivors",
-        .unknown => "unknown",
-    };
-    // Broker registry readback is not waitpid authority. Preserve measured
-    // absence of exit status rather than fabricating direct-parent reaps.
-    var reap = std.json.ObjectMap.init(a);
-    try reap.put("authority", .{ .string = "unavailable" });
-    try reap.put("reaped", .{ .bool = false });
-    try reap.put("status", .null);
-    try reap.put("completeness", .{ .string = "unknown" });
-    var diagnostics = std.json.Array.init(a);
-    try diagnostics.append(.{ .string = "broker-registry-termination-readback" });
-    if (state == .survivors)
-        try diagnostics.append(.{ .string = "survivor-details-unavailable" });
-    if (state == .unknown)
-        try diagnostics.append(.{ .string = "verification-unknown" });
-    const survivors = std.json.Array.init(a);
-    var root = std.json.ObjectMap.init(a);
-    try root.put("schemaVersion", .{ .integer = 1 });
-    try root.put("state", .{ .string = state_name });
-    try root.put("exit", .null);
-    try root.put("reap", .{ .object = reap });
-    try root.put("survivors", .{ .array = survivors });
-    try root.put("completeness", .{ .string = if (state == .terminated) "partial" else "unknown" });
-    try root.put("diagnostics", .{ .array = diagnostics });
-    const payload = try std.json.Stringify.valueAlloc(
-        allocator,
-        std.json.Value{ .object = root },
-        .{},
-    );
-    errdefer allocator.free(payload);
-    if (!protocol.validateControlPayload(
-        allocator,
-        generated.wire_schema.terminated_payload,
-        payload,
-    )) return error.InvalidTerminatedPayload;
-    return payload;
-}
-
-fn lookupEntryBySession(
-    registry: *Registry,
-    session_key: []const u8,
-    session_incarnation: []const u8,
-) LookupResult {
-    for (&registry.entries) |*slot| if (slot.*) |*entry| {
-        if (!sessionMatchesLocator(session_key, session_incarnation, entry.record.locator))
-            continue;
-        if (entry.quarantined)
-            return .{ .failure = .{ .code = .not_found, .close_connection = false } };
-        return .{ .entry = entry };
-    };
-    return .{ .failure = .{ .code = .not_found, .close_connection = false } };
-}
+    fn controller(
+        self: *ProductionControlPlane,
+        allocator: std.mem.Allocator,
+    ) neutral_control_plane.Controller {
+        return .{
+            .allocator = allocator,
+            .registry = &self.registry,
+            .platform = self.platform.platform(),
+            .clock = neutral_control_plane.EvidenceClock.system(),
+        };
+    }
+};
 
 pub const ProductionBackend = struct {
     allocator: std.mem.Allocator,
     runtime: *Runtime,
     registry: *Registry,
+    control_plane: *ProductionControlPlane,
     launcher: HostLauncher,
     create: ?CreateTransaction = null,
 
@@ -3022,12 +2768,14 @@ pub const ProductionBackend = struct {
         allocator: std.mem.Allocator,
         runtime: *Runtime,
         registry: *Registry,
+        control_plane: *ProductionControlPlane,
         launcher: HostLauncher,
     ) ProductionBackend {
         return .{
             .allocator = allocator,
             .runtime = runtime,
             .registry = registry,
+            .control_plane = control_plane,
             .launcher = launcher,
         };
     }
@@ -3058,34 +2806,34 @@ pub const ProductionBackend = struct {
         if (header.type_code == generated.frame_type.create_commit)
             return self.commit(allocator, payload, now_ns);
         if (header.type_code == generated.frame_type.list)
-            return self.list(allocator, payload, now_ns);
+            return self.list(allocator, payload);
         if (header.type_code == generated.frame_type.inspect)
-            return self.inspect(allocator, payload, now_ns);
+            return self.inspect(allocator, payload);
         if (header.type_code == generated.frame_type.terminate)
             return self.terminate(allocator, payload);
         return failure(.not_found);
+    }
+
+    fn controlPlaneFailure(err: anyerror) BackendResult {
+        return failure(switch (err) {
+            error.OutOfMemory => .resource_exhausted,
+            error.SessionNotFound => .not_found,
+            error.InvalidListRequest,
+            error.InvalidInspectRequest,
+            error.InvalidTerminationRequest,
+            => .malformed_frame,
+            else => .internal,
+        });
     }
 
     fn list(
         self: *ProductionBackend,
         allocator: std.mem.Allocator,
         payload: []const u8,
-        now_ns: u64,
     ) BackendResult {
-        // Frozen A0 LIST is unscoped: schemaVersion only.
-        const Request = struct { schemaVersion: u8 };
-        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
-            return failure(.malformed_frame);
-        defer parsed.deinit();
-        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
-        const response = encodeListedPayload(
-            allocator,
-            self.registry,
-            now_ns,
-        ) catch |err| return failure(if (err == error.OutOfMemory)
-            .resource_exhausted
-        else
-            .internal);
+        self.control_plane.registry.recover() catch |err| return controlPlaneFailure(err);
+        var controller = self.control_plane.controller(allocator);
+        const response = controller.list(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
     }
 
@@ -3093,27 +2841,10 @@ pub const ProductionBackend = struct {
         self: *ProductionBackend,
         allocator: std.mem.Allocator,
         payload: []const u8,
-        now_ns: u64,
     ) BackendResult {
-        const Request = struct {
-            schemaVersion: u8,
-            session: struct { key: []const u8, incarnation: []const u8 },
-        };
-        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
-            return failure(.malformed_frame);
-        defer parsed.deinit();
-        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
-        const found = lookupEntryBySession(
-            self.registry,
-            parsed.value.session.key,
-            parsed.value.session.incarnation,
-        );
-        const entry = switch (found) {
-            .failure => |lookup_failure| return .{ .failure = lookup_failure },
-            .entry => |entry| entry,
-        };
-        const response = encodeInspectedPayload(allocator, entry, now_ns) catch |err|
-            return failure(if (err == error.OutOfMemory) .resource_exhausted else .internal);
+        self.control_plane.registry.recover() catch |err| return controlPlaneFailure(err);
+        var controller = self.control_plane.controller(allocator);
+        const response = controller.inspect(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
     }
 
@@ -3122,43 +2853,9 @@ pub const ProductionBackend = struct {
         allocator: std.mem.Allocator,
         payload: []const u8,
     ) BackendResult {
-        const Request = struct {
-            schemaVersion: u8,
-            session: struct { key: []const u8, incarnation: []const u8 },
-            mode: []const u8,
-            target: []const u8,
-            deadline: []const u8,
-            idempotencyKey: []const u8,
-        };
-        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{}) catch
-            return failure(.malformed_frame);
-        defer parsed.deinit();
-        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
-        if (!std.mem.eql(u8, parsed.value.mode, "graceful") and
-            !std.mem.eql(u8, parsed.value.mode, "immediate"))
-            return failure(.malformed_frame);
-        if (!std.mem.eql(u8, parsed.value.target, "process-tree") and
-            !std.mem.eql(u8, parsed.value.target, "foreground-group") and
-            !std.mem.eql(u8, parsed.value.target, "session-members"))
-            return failure(.malformed_frame);
-        const found = lookupEntryBySession(
-            self.registry,
-            parsed.value.session.key,
-            parsed.value.session.incarnation,
-        );
-        const entry = switch (found) {
-            .failure => |lookup_failure| return .{ .failure = lookup_failure },
-            .entry => |entry| entry,
-        };
-        // Legacy HostControl remains locator-addressed; the frozen wire maps
-        // SessionRef onto the exact registered locator.
-        const state = self.registry.terminate(entry.record.locator, .{
-            .mode = parsed.value.mode,
-            .reason = parsed.value.target,
-            .request_id = parsed.value.idempotencyKey,
-        });
-        const response = encodeTerminatedPayload(allocator, state) catch |err|
-            return failure(if (err == error.OutOfMemory) .resource_exhausted else .internal);
+        self.control_plane.registry.recover() catch |err| return controlPlaneFailure(err);
+        var controller = self.control_plane.controller(allocator);
+        const response = controller.terminate(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
     }
 
@@ -3290,10 +2987,14 @@ pub fn serve(
     var recovery_wire = WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
     defer recovery_wire.deinit();
     try recovered.recover(&runtime, timer.read(), recovery_wire.connector());
+    var control_plane: ProductionControlPlane = undefined;
+    try control_plane.init(allocator, hive_home);
+    defer control_plane.deinit();
     var production_backend = ProductionBackend.init(
         allocator,
         &runtime,
         &recovered.registry,
+        &control_plane,
         launcher,
     );
     defer production_backend.deinit();

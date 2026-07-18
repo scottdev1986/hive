@@ -147,6 +147,9 @@ pub fn build(b: *std.Build) void {
     neutral_control_plane_module.addImport("neutral_host", neutral_host_module);
     neutral_control_plane_module.addImport("process_inspector", process_inspector_module);
     neutral_control_plane_module.addImport("session_protocol_generated", generated);
+    broker_module.addImport("neutral_control_plane", neutral_control_plane_module);
+    broker_module.addImport("neutral_host", neutral_host_module);
+    broker_module.addImport("process_inspector", process_inspector_module);
     const neutral_control_plane_tests = b.addTest(.{ .root_module = neutral_control_plane_module });
     const run_neutral_control_plane_tests = b.addRunArtifact(neutral_control_plane_tests);
     test_step.dependOn(&run_neutral_control_plane_tests.step);

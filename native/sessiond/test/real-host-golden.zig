@@ -204,10 +204,14 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     }
     var lifecycle_launcher = try session_host.ProductionHostLauncher.init(allocator, root);
     defer lifecycle_launcher.deinit();
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(allocator, root);
+    defer control_plane.deinit();
     var lifecycle_backend = broker.ProductionBackend.init(
         allocator,
         &runtime,
         &recovered.registry,
+        &control_plane,
         lifecycle_launcher.launcher(),
     );
     defer lifecycle_backend.deinit();
@@ -252,13 +256,28 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         generated.wire_schema.listed_payload,
         listed,
     ) or std.mem.indexOf(u8, listed, session_id) == null) return error.InvalidRealList;
+    const ListedProjection = struct {
+        entries: []const struct {
+            session: struct { key: []const u8, incarnation: []const u8 },
+        },
+    };
+    var parsed_listed = try std.json.parseFromSlice(
+        ListedProjection,
+        allocator,
+        listed,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_listed.deinit();
+    const control_session = blk: {
+        for (parsed_listed.value.entries) |entry| {
+            if (std.mem.eql(u8, entry.session.key, session_id)) break :blk entry.session;
+        }
+        return error.RealSessionRefMissing;
+    };
 
     const inspect_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = session_id,
-            .incarnation = "1",
-        },
+        .session = control_session,
     }, .{});
     defer allocator.free(inspect_payload);
     const inspected = switch (backend.call(
@@ -279,6 +298,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     const InspectedProjection = struct {
         lifecycle: []const u8,
         child: ?struct { processId: i32 },
+        diagnostics: []const []const u8,
     };
     var parsed_inspected = try std.json.parseFromSlice(
         InspectedProjection,
@@ -289,15 +309,13 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     defer parsed_inspected.deinit();
     if (!std.mem.eql(u8, parsed_inspected.value.lifecycle, "running") or
         parsed_inspected.value.child == null or
-        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid)
+        parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid or
+        std.mem.indexOf(u8, inspected, "neutral-host-control-unavailable") == null)
         return error.InvalidRealInspection;
 
     const terminate_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
-        .session = .{
-            .key = session_id,
-            .incarnation = "1",
-        },
+        .session = control_session,
         .mode = "immediate",
         .target = "process-tree",
         .deadline = "2099-01-01T00:00:00.000Z",
@@ -318,8 +336,21 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         allocator,
         generated.wire_schema.terminated_payload,
         terminated,
-    ) or std.mem.indexOf(u8, terminated, "\"state\":\"terminated\"") == null)
+    ) or std.mem.indexOf(u8, terminated, "\"state\":\"unknown\"") == null or
+        std.mem.indexOf(
+            u8,
+            terminated,
+            "neutral-host-control-unavailable-during-termination",
+        ) == null)
         return error.HostTerminationFailed;
+    // The neutral HostOperations endpoint is a later increment. Until it is
+    // served by the host process, Controller truthfully returns UNKNOWN and
+    // this golden uses the legacy locator-bound control only for cleanup.
+    if (recovered.registry.terminate(locator, .{
+        .mode = "immediate",
+        .reason = "real-host-golden cleanup after neutral fallback",
+        .request_id = "req_018f1e90-7b5a-7cc0-8000-0000000000f6",
+    }) != .terminated) return error.HostCleanupFailed;
     switch (process_inspector.observeProcess(parsed_created.value.inspection.providerRoot.pid)) {
         .absent => {},
         .present, .unobservable => return error.ProviderStillPresent,
@@ -817,10 +848,14 @@ fn runCreateBroker(
     var registry: broker.Registry = .{};
     var launcher = try session_host.ProductionHostLauncher.init(allocator, root);
     defer launcher.deinit();
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(allocator, root);
+    defer control_plane.deinit();
     var backend = broker.ProductionBackend.init(
         allocator,
         &runtime,
         &registry,
+        &control_plane,
         launcher.launcher(),
     );
     defer backend.deinit();
