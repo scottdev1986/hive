@@ -6,6 +6,7 @@ import type {
   Sequence,
   SessionRef,
   TerminalHost,
+  TerminationResult,
 } from "./terminal-host-contract";
 
 /**
@@ -24,14 +25,25 @@ export type VisibilityRequest = Readonly<{
   inventoryRevision: Sequence;
 }>;
 
-export type VisibilityLease = Readonly<{
+type VisibilityLeaseBase = Readonly<{
   session: SessionRef;
   source: VisibilitySourceIdentity;
   acceptedRevision: Sequence;
-  state: "active";
   issuedAt: string;
   expiresAt: string;
 }>;
+
+export type ActiveVisibilityLease = VisibilityLeaseBase & Readonly<{
+  state: "active";
+}>;
+
+export type ExpiredVisibilityLease = VisibilityLeaseBase & Readonly<{
+  state: "expired";
+  expiredAt: string;
+  teardown: TerminationResult;
+}>;
+
+export type VisibilityLease = ActiveVisibilityLease | ExpiredVisibilityLease;
 
 export type VisibilityRejectionReason =
   | "invalid-revision"
@@ -88,7 +100,7 @@ type VisibilityRenewalFailurePostconditions = Readonly<{
 }>;
 
 export type VisibilityRenewalResult =
-  | Readonly<{ state: "active"; lease: VisibilityLease }>
+  | Readonly<{ state: "active"; lease: ActiveVisibilityLease }>
   | ((VisibilityRejected | VisibilityUnknown) & VisibilityRenewalFailurePostconditions);
 
 export interface VisibilityAdmissionHost {

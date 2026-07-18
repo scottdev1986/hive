@@ -7,6 +7,7 @@ import type {
   TerminationResult,
 } from "../../src/daemon/session-host/terminal-host-contract";
 import type {
+  ActiveVisibilityLease,
   VisibilityAdmissionHost,
   VisibilityCreateRequest,
   VisibilityCreateResult,
@@ -68,7 +69,8 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
   private nowMilliseconds = START_TIME;
   private readonly snapshots = new Map<string, Snapshot>();
   private readonly owners = new Map<string, string>();
-  private readonly leases = new Map<string, VisibilityLease>();
+  private readonly leases = new Map<string, ActiveVisibilityLease>();
+  private readonly leaseStates = new Map<string, VisibilityLease>();
   private readonly createResults = new Map<string, VisibilityCreateResult>();
   private readonly expiryResults = new Map<string, TerminationResult>();
 
@@ -105,7 +107,11 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
   async create(request: VisibilityCreateRequest): Promise<VisibilityCreateResult> {
     const idempotency = `${request.terminal.key}\0${request.terminal.idempotencyKey}`;
     const prior = this.createResults.get(idempotency);
-    if (prior) return prior;
+    if (prior) {
+      if (prior.state !== "created") return prior;
+      const lease = this.leaseStates.get(leaseKey(prior.result.session));
+      return lease ? { ...prior, lease } : prior;
+    }
 
     const validation = this.validate(
       request.terminal.key,
@@ -123,13 +129,12 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
       return result;
     }
 
-    const owner = this.owners.get(request.terminal.key);
-    if (owner && owner !== request.visibility.source.sessionId &&
+    if (this.owners.has(request.terminal.key) &&
         this.fault !== "allow-duplicate-owner") {
       const result = this.createFailure(this.rejected(
         "duplicate-session-owner",
         validation.snapshot.revisionText,
-        "session key is already leased to another source",
+        "session key already has a leased or unreconciled generation",
       ));
       this.createResults.set(idempotency, result);
       return result;
@@ -139,6 +144,7 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     const lease = this.issueLease(created.session, request.visibility);
     this.owners.set(request.terminal.key, request.visibility.source.sessionId);
     this.leases.set(leaseKey(created.session), lease);
+    this.leaseStates.set(leaseKey(created.session), lease);
     const result: VisibilityCreateResult = { state: "created", result: created, lease };
     this.createResults.set(idempotency, result);
     return result;
@@ -189,6 +195,7 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
 
     const renewed = this.issueLease(lease.session, request.visibility);
     this.leases.set(leaseKey(lease.session), renewed);
+    this.leaseStates.set(leaseKey(lease.session), renewed);
     return { state: "active", lease: renewed };
   }
 
@@ -204,7 +211,7 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
   }
 
   currentLease(session: SessionRef): VisibilityLease | null {
-    return this.leases.get(leaseKey(session)) ?? null;
+    return this.leaseStates.get(leaseKey(session)) ?? null;
   }
 
   expiryResult(session: SessionRef): TerminationResult | null {
@@ -284,7 +291,7 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     return { state: "valid", snapshot };
   }
 
-  private issueLease(session: SessionRef, request: VisibilityRequest): VisibilityLease {
+  private issueLease(session: SessionRef, request: VisibilityRequest): ActiveVisibilityLease {
     return {
       session,
       source: request.source,
@@ -295,19 +302,49 @@ export class NeutralVisibilityHostFixture implements VisibilityAdmissionHost {
     };
   }
 
-  private async expireLease(lease: VisibilityLease): Promise<void> {
+  private async expireLease(lease: ActiveVisibilityLease): Promise<void> {
     const key = leaseKey(lease.session);
     if (!this.leases.has(key)) return;
-    const result = await this.terminal.terminate({
-      session: lease.session,
-      mode: "immediate",
-      target: "process-tree",
-      deadline: new Date(this.nowMilliseconds).toISOString(),
-      idempotencyKey: `visibility-expiry-${lease.session.incarnation}`,
-    });
+    let result: TerminationResult;
+    try {
+      result = await this.terminal.terminate({
+        session: lease.session,
+        mode: "immediate",
+        target: "process-tree",
+        deadline: new Date(this.nowMilliseconds).toISOString(),
+        idempotencyKey: `visibility-expiry-${lease.session.incarnation}`,
+      });
+    } catch (error) {
+      result = {
+        state: "unknown",
+        exit: null,
+        reap: {
+          authority: "unavailable",
+          reaped: false,
+          status: null,
+          completeness: "unknown",
+        },
+        survivors: [],
+        completeness: "unknown",
+        diagnostics: [
+          `visibility expiry teardown failed: ${error instanceof Error ? error.message : String(error)}`,
+        ],
+      };
+    }
     this.expiryResults.set(key, result);
     this.leases.delete(key);
-    if (this.owners.get(lease.session.key) === lease.source.sessionId) {
+    this.leaseStates.set(key, {
+      ...lease,
+      state: "expired",
+      expiredAt: new Date(this.nowMilliseconds).toISOString(),
+      teardown: result,
+    });
+    const verifiedAbsent = result.state === "terminated" &&
+      result.completeness === "complete" &&
+      result.survivors.length === 0 &&
+      result.reap.reaped &&
+      result.reap.completeness === "complete";
+    if (verifiedAbsent && this.owners.get(lease.session.key) === lease.source.sessionId) {
       this.owners.delete(lease.session.key);
     }
   }

@@ -249,14 +249,27 @@ run_probe() {
   fi
 }
 
-if rg -n 'import (HiveGhosttyC|GhosttyKit)' "$ROOT/workspace/Tests/HiveTerminalB20Probe" \
+if /usr/bin/grep -R -n -E 'import (HiveGhosttyC|GhosttyKit)' \
+  "$ROOT/workspace/Tests/HiveTerminalB20Probe" \
   >"$EVIDENCE/public-probe-import-audit.txt"; then
-  echo "public B2.0 probe imports the upstream boundary" >&2
-  exit 1
+  public_probe_import_status=0
 else
-  printf 'imports=AppKit,Darwin,Foundation,HiveTerminalKit\n' \
-    >"$EVIDENCE/public-probe-import-audit.txt"
+  public_probe_import_status=$?
 fi
+case "$public_probe_import_status" in
+  0)
+    echo "public B2.0 probe imports the upstream boundary" >&2
+    exit 1
+    ;;
+  1)
+    printf 'imports=AppKit,Darwin,Foundation,HiveTerminalKit\n' \
+      >"$EVIDENCE/public-probe-import-audit.txt"
+    ;;
+  *)
+    echo "public B2.0 probe import audit failed with status $public_probe_import_status" >&2
+    exit 1
+    ;;
+esac
 
 for arch in arm64 x86_64; do
   if [[ "$arch" == x86_64 ]] && ! /usr/bin/arch -x86_64 /usr/bin/true; then

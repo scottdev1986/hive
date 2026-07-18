@@ -195,10 +195,11 @@ async function assertRenewalRequiresCurrentRepresentation(
 async function assertExpiryTearsDownExactTree(host: NeutralVisibilityHostFixture): Promise<void> {
   const identity = source("source-p", 6105, "6105:100");
   host.publishSnapshot({ source: identity, inventoryRevision: "1", representedSessionKeys: ["visible-p"] });
-  const { session } = requireCreated(await host.create({
+  const createRequest = {
     terminal: terminal("visible-p"),
     visibility: visibility(identity, "1"),
-  }));
+  } as const;
+  const { session } = requireCreated(await host.create(createRequest));
   host.setSourceLive(identity.sessionId, false);
   expect(await host.renewVisibility({ session, visibility: visibility(identity, "1") }))
     .toMatchObject({ state: "rejected", reason: "source-not-live", renewed: false });
@@ -207,7 +208,10 @@ async function assertExpiryTearsDownExactTree(host: NeutralVisibilityHostFixture
   expect(host.currentLease(session)?.state).toBe("active");
   expect((await host.inspect(session)).lifecycle).toBe("running");
   await host.advance(1);
-  expect(host.currentLease(session)).toBeNull();
+  expect(host.currentLease(session)).toMatchObject({
+    state: "expired",
+    teardown: { state: "terminated", completeness: "complete" },
+  });
   expect(host.expiryResult(session)).toMatchObject({
     state: "terminated",
     reap: { authority: "direct-parent", reaped: true, completeness: "complete" },
@@ -218,6 +222,59 @@ async function assertExpiryTearsDownExactTree(host: NeutralVisibilityHostFixture
     lifecycle: "exited",
     descendants: [],
     survivors: [],
+  });
+  const replayed = requireCreated(await host.create(createRequest));
+  expect(replayed.session).toEqual(session);
+  expect(replayed.lease.state).toBe("expired");
+}
+
+async function assertExpirySweepIsolatesTerminationErrors(): Promise<void> {
+  const host = new NeutralVisibilityHostFixture();
+  const identity = source("source-p-sweep", 6110, "6110:100");
+  host.publishSnapshot({
+    source: identity,
+    inventoryRevision: "1",
+    representedSessionKeys: ["visible-p-failed-launch", "visible-p-running"],
+  });
+  const failedTerminal = terminal("visible-p-failed-launch");
+  const failed = requireCreated(await host.create({
+    terminal: {
+      ...failedTerminal,
+      command: { ...failedTerminal.command, executable: "missing:command" },
+    },
+    visibility: visibility(identity, "1"),
+  }));
+  const running = requireCreated(await host.create({
+    terminal: terminal("visible-p-running"),
+    visibility: visibility(identity, "1"),
+  }));
+
+  await expect(host.advance(VISIBILITY_LEASE_MILLISECONDS)).resolves.toBeUndefined();
+  expect(host.expiryResult(failed.session)).toMatchObject({
+    state: "unknown",
+    completeness: "unknown",
+    reap: { authority: "unavailable", reaped: false, completeness: "unknown" },
+  });
+  expect(host.currentLease(failed.session)).toMatchObject({
+    state: "expired",
+    teardown: { state: "unknown", completeness: "unknown" },
+  });
+  expect(host.expiryResult(running.session)).toMatchObject({
+    state: "terminated",
+    completeness: "complete",
+  });
+  expect(host.currentLease(running.session)).toMatchObject({
+    state: "expired",
+    teardown: { state: "terminated", completeness: "complete" },
+  });
+  expect((await host.inspect(running.session)).lifecycle).toBe("exited");
+  expect(await host.create({
+    terminal: terminal("visible-p-failed-launch", "unreconciled-generation"),
+    visibility: visibility(identity, "1"),
+  })).toMatchObject({
+    state: "rejected",
+    reason: "duplicate-session-owner",
+    createInvoked: false,
   });
 }
 
@@ -255,6 +312,14 @@ async function assertDuplicateOwnershipFailsClosed(
     terminal: terminal("visible-r", "create-visible-r-one"),
     visibility: visibility(first, "1"),
   }));
+  expect(await host.create({
+    terminal: terminal("visible-r", "create-visible-r-same-source"),
+    visibility: visibility(first, "1"),
+  })).toMatchObject({
+    state: "rejected",
+    reason: "duplicate-session-owner",
+    createInvoked: false,
+  });
   expect(await host.create({
     terminal: terminal("visible-r", "create-visible-r-two"),
     visibility: visibility(second, "1"),
@@ -324,4 +389,31 @@ describe("neutral visibility fixture freeze L–S with mutation controls", () =>
       await expect(assertion(new NeutralVisibilityHostFixture(fault))).rejects.toBeDefined();
     });
   }
+
+  test("P: one throwing expiry teardown becomes unknown and does not skip later leases", async () => {
+    await assertExpirySweepIsolatesTerminationErrors();
+  });
+
+  test("create rejections are sticky for one idempotency pair", async () => {
+    const host = new NeutralVisibilityHostFixture();
+    const identity = source("source-sticky", 6111, "6111:100");
+    host.publishSnapshot({
+      source: identity,
+      inventoryRevision: "2",
+      representedSessionKeys: ["visible-sticky"],
+    });
+    const rejected = await host.create({
+      terminal: terminal("visible-sticky", "sticky-idempotency"),
+      visibility: visibility(identity, "1"),
+    });
+    expect(rejected).toMatchObject({ state: "rejected", reason: "stale-revision" });
+    expect(await host.create({
+      terminal: terminal("visible-sticky", "sticky-idempotency"),
+      visibility: visibility(identity, "2"),
+    })).toEqual(rejected);
+    expect((await host.create({
+      terminal: terminal("visible-sticky", "corrected-idempotency"),
+      visibility: visibility(identity, "2"),
+    })).state).toBe("created");
+  });
 });
