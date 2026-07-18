@@ -121,6 +121,16 @@ policy (douglas/donna converged, queen approved):
   clipboard callback) is a SECURITY invariant; host-gesture paste
   reachability is a FEATURE path Gate 8 qualifies, with its own fail-closed
   denial. This table's probe-flat evidence covers the byte side only.
+- Same distinction for WRITE (donna correction, 2026-07-18): the explicit
+  host/menu copy_to_clipboard gesture DOES reach `write_clipboard_cb`
+  (confirm=false, standard location) — Gate 8 qualifies selection/copy
+  there, preserving `HiveGhosttyRuntimeCallbackProbes.record(.writeClipboard)`
+  as the first statement and denying confirm=true. The byte path stays
+  dead independent of config: the manual patch's vt `clipboardWrite`
+  handler denies OSC 52 before the apprt layer. My earlier "leave
+  write_clipboard_cb as no-op" instruction to Gate 8 is retracted; the
+  byte-scoped flat-probe controls here are unaffected by gesture-path
+  invocations (deltas are scoped to byte feeds).
 
 ## Residual risk / honesty notes
 
