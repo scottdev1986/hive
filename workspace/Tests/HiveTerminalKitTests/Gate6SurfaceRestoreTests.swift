@@ -47,9 +47,19 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
             .deletingLastPathComponent() // workspace
             .deletingLastPathComponent() // repo root
         let artifacts = root.appendingPathComponent(".cache/native/artifacts")
-        return ((try? FileManager.default.contentsOfDirectory(
+        var candidates = ((try? FileManager.default.contentsOfDirectory(
             at: artifacts, includingPropertiesForKeys: nil
         )) ?? []).sorted { $0.path < $1.path }
+        // The per-arch, engine-id-bound fixtures are BUILD OUTPUT: `make
+        // ghosttykit` stages them into workspace/Vendor/checkpoint-fixtures
+        // alongside the GhosttyKit.xcframework this test already links. That
+        // is the clean-checkout path — the fixtures travel WITH the built
+        // artifact rather than a separate .cache dir that a checkout/snapshot
+        // may not carry. Determinism keeps the staged corpus in sync with the
+        // freshly-built embedded engine id; the fixtureDirectory engine-id
+        // match still gates acceptance.
+        candidates.append(root.appendingPathComponent("workspace/Vendor"))
+        return candidates
     }
 
     private func checkpointEngineId(_ payload: Data) -> String? {

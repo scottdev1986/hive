@@ -85,7 +85,9 @@ ghosttykit: | toolchain
 	  "$(ROOT)/scripts/build-ghosttykit.sh"; \
 	  dir=$$(ls -td "$(ROOT)"/.cache/native/artifacts/ghostty-* | head -1); \
 	fi; \
-	/usr/bin/ditto "$$dir/GhosttyKit.xcframework" "$(GHOSTTYKIT)"
+	/usr/bin/ditto "$$dir/GhosttyKit.xcframework" "$(GHOSTTYKIT)"; \
+	/bin/rm -rf "$(ROOT)/workspace/Vendor/checkpoint-fixtures"; \
+	/usr/bin/ditto "$$dir/checkpoint-fixtures" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
 
 # Same pipeline the real installer consumes (src/release/build.ts), unsigned
 # because no Developer ID is in the environment, then staged in the exact
