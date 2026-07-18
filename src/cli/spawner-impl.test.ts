@@ -3103,9 +3103,8 @@ describe("scoped brief in the spawn prompt", () => {
  * The karpathy guidelines are a *guarantee*, not an offer.
  *
  * They used to live only in the progressively-disclosed `karpathy-guidelines`
- * skill, which an agent had to elect to open — and measured across every agent
- * spawned on 2026-07-11 that was offered it, only 5 of 23 did (21% claude, 22%
- * codex). An agent that declined never learned the rules and nothing failed.
+ * skill, which an agent had to elect to open. An agent that declined never
+ * learned the rules and nothing failed.
  * These tests are what makes the silence loud: they assert the rules are in the
  * prompt Hive actually hands the vendor, on every launch path and category, so
  * no agent can start without them.

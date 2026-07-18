@@ -85,7 +85,7 @@ Measured: `--sandbox read-only` (documented as *"FS Write: `~/.grok/` only"*) wi
 
 > **Permission rules are the only measured-real write barrier.** Treat `--sandbox` as unproven defense-in-depth, never as the enforcement layer.
 
-This is exactly why `GROK_SAFETY_DIRECTIVE` (`src/daemon/spawner-impl.ts:607-621`) is **injected into every Grok agent's prompt** (`:690`) rather than shipped as a skill: safety cannot depend on the ~22% of agents that open a shipped skill. The directive tells the agent (a) the sandbox is not a barrier so its assigned scope is a rule it must keep, (b) a "User cancelled…" result with no prompt is a Hive launch-configuration bug — report it, do not retry, and (c) a `--deny` refusal is normal operation.
+This is exactly why `GROK_SAFETY_DIRECTIVE` (`src/daemon/spawner-impl.ts:607-621`) is **injected into every Grok agent's prompt** (`:690`) rather than shipped as a skill: safety cannot depend on an agent electing to open a shipped skill. The directive tells the agent (a) the sandbox is not a barrier so its assigned scope is a rule it must keep, (b) a "User cancelled…" result with no prompt is a Hive launch-configuration bug — report it, do not retry, and (c) a `--deny` refusal is normal operation.
 
 ## Permissions are evaluated per-invocation
 

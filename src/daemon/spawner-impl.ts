@@ -466,10 +466,8 @@ const CONTINUOUS_EXECUTION =
  * `karpathy-guidelines` skill to be self-invoked.
  *
  * Skills are progressively disclosed: an agent sees a name and a description and
- * chooses whether to open the body. Measured over every agent spawned on
- * 2026-07-11 that was actually offered the skill, 5 of 23 opened it — 21% of
- * claude agents, 22% of codex. So four agents in five never read a rule Hive
- * believed it had given them, and nothing failed loudly when they didn't. A
+ * chooses whether to open the body, so an agent that declines never reads a rule
+ * Hive believed it had given it, and nothing fails loudly when it doesn't. A
  * behavioural guarantee that depends on the agent electing to receive it is not
  * a guarantee, which is why these rules travel with the prompt: every agent has
  * them before its first turn, on both vendors, at a cost of ~560 tokens a spawn.
@@ -568,7 +566,7 @@ export interface AgentPromptOptions {
  * in the spawn prompt every agent demonstrably reads — not a skill.
  * Graph-first is the product decision; the concrete fallback criteria are
  * what keep it honest — a mandate agents catch being wrong is a mandate they
- * learn to skip (measured: 22% skill adoption). */
+ * learn to skip. */
 const GRAPHIFY_DIRECTIVE =
   "This repo serves a graphify knowledge graph over MCP, and the Graph locate " +
   "section of your brief was built from it for your task. Work graph-first: start " +
@@ -586,7 +584,7 @@ const GRAPHIFY_DIRECTIVE =
   "Every graph answer is a lead — confirm it in source before building on it.";
 
 /** Grok-specific facts measured from the CLI and carried in the prompt because
- * safety cannot depend on the 22% of agents that open a shipped skill. */
+ * safety cannot depend on an agent electing to open a shipped skill. */
 export const GROK_SAFETY_DIRECTIVE =
   "Grok safety facts: the sandbox is not a write barrier — on macOS Grok's " +
   "Write tool created a file while the session recorded sandbox_profile " +
@@ -606,7 +604,7 @@ export const GROK_SAFETY_DIRECTIVE =
  * narrow" and widened the pattern, walking back into the wall twice. The
  * allocation lives in the CLI's own bundled search binary, so Hive cannot patch
  * it — the only lever is telling every agent the rule before it searches, in
- * the prompt they demonstrably read rather than a skill (22% adoption). */
+ * the prompt they demonstrably read rather than a skill they may never open. */
 export const SEARCH_HYGIENE =
   "Search hygiene: a repo-wide search with an unanchored pattern — one leading " +
   "with `.*` or `.{0,N}` — can allocate tens of GB on a large tree, and Hive's " +
