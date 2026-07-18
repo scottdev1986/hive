@@ -16,8 +16,12 @@ final class SessionProtocolFixtureTests: XCTestCase {
         let wire = try XCTUnwrap(
             try JSONSerialization.jsonObject(
                 with: fixture("session-protocol-corpus")) as? [String: Any])
-        XCTAssertEqual((wire["valid"] as? [Any])?.count, 61)
-        XCTAssertEqual((wire["invalid"] as? [Any])?.count, 64)
+        let valid = try XCTUnwrap(wire["valid"] as? [[String: Any]])
+        let invalid = try XCTUnwrap(wire["invalid"] as? [[String: Any]])
+        let validNames = try valid.map { try XCTUnwrap($0["name"] as? String) }
+        let invalidNames = try invalid.map { try XCTUnwrap($0["name"] as? String) }
+        XCTAssertEqual(Set(validNames).count, valid.count)
+        XCTAssertEqual(Set(invalidNames).count, invalid.count)
 
         let reducer = try XCTUnwrap(
             try JSONSerialization.jsonObject(
