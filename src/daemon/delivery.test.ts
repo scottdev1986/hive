@@ -1511,6 +1511,7 @@ describe("a live idle agent hears", () => {
       spawner: unusedSpawner,
       tmux: sessions,
       tmuxSender: tmux,
+      listUnmergedHiveBranches: async () => [],
     });
     try {
       db.insertAgent(grok("working"));
