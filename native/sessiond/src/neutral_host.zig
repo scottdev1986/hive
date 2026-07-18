@@ -336,6 +336,12 @@ fn hashCreateRequest(request: CreateRequest, out: *[32]u8) void {
     hasher.final(out);
 }
 
+pub const LaunchEvidence = struct {
+    /// Image the child is actually running, as resolved after exec.
+    executable: []const u8,
+    rootSnapshotStatus: process_inspector.SnapshotStatus,
+};
+
 /// Production `Host`: opens its own terminal and launches the frozen command
 /// directly. It owns the resulting PTY, so it must run in the process that will
 /// go on to serve the session. Create is exactly-once by the registry ledger —
@@ -348,6 +354,11 @@ pub const DirectHost = struct {
     /// Spawn attempts actually issued to the terminal layer. The ledger must
     /// hold this at one per created session; replays may never advance it.
     spawns: usize = 0,
+    /// Launch evidence the frozen CreateResult does not carry. A product host
+    /// above this module records the resolved image and the process-tree
+    /// snapshot status on its own record, so keep them from the readback rather
+    /// than making it re-derive what this create already measured.
+    launch_evidence: ?LaunchEvidence = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -477,6 +488,10 @@ pub const DirectHost = struct {
                 evidence.os_code,
                 "terminal launch failed before the child reached exec",
             )),
+        };
+        self.launch_evidence = .{
+            .executable = try self.arena.allocator().dupe(u8, spawned.executablePath()),
+            .rootSnapshotStatus = spawned.root_snapshot_status,
         };
 
         const host_identity = process_inspector.observeProcessPresent(c.getpid()) orelse

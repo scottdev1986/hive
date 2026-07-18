@@ -12,6 +12,7 @@ const input_arbiter = @import("input_arbiter");
 const process_inspector = @import("process_inspector");
 const protocol = @import("protocol");
 const pty_host = @import("pty_host");
+const neutral_host = @import("neutral_host");
 const terminal_state = @import("terminal_state");
 
 const c = @cImport({
@@ -3761,6 +3762,35 @@ const WireCreateSpec = struct {
     },
 };
 
+/// Same validation as `environmentStrings`, but kept as name/value pairs for
+/// the neutral create request, which joins them itself.
+fn environmentEntries(
+    allocator: std.mem.Allocator,
+    value: std.json.Value,
+) ![]const neutral_host.EnvironmentEntry {
+    const object = switch (value) {
+        .object => |object| object,
+        else => return error.InvalidEnvironment,
+    };
+    const result = try allocator.alloc(neutral_host.EnvironmentEntry, object.count());
+    var iterator = object.iterator();
+    var index: usize = 0;
+    while (iterator.next()) |entry| : (index += 1) {
+        if (entry.key_ptr.*.len == 0 or
+            std.mem.indexOfScalar(u8, entry.key_ptr.*, '=') != null or
+            std.mem.indexOfScalar(u8, entry.key_ptr.*, 0) != null)
+            return error.InvalidEnvironment;
+        const item = switch (entry.value_ptr.*) {
+            .string => |item| item,
+            else => return error.InvalidEnvironment,
+        };
+        if (std.mem.indexOfScalar(u8, item, 0) != null)
+            return error.InvalidEnvironment;
+        result[index] = .{ .name = entry.key_ptr.*, .value = item };
+    }
+    return result;
+}
+
 fn environmentStrings(
     allocator: std.mem.Allocator,
     value: std.json.Value,
@@ -4004,28 +4034,67 @@ pub fn runHostRole(
 
     var pty = try pty_host.PtyHost.init(allocator);
     defer pty.deinit();
-    const envp = try environmentStrings(a, spec.value.environment);
-    const spawn_outcome = try pty.spawn(.{
-        .argv = spec.value.argv,
-        .cwd = spec.value.cwd,
-        .envp = envp,
-        .geometry = .{
+
+    // Production create runs through the neutral host, so a created session is
+    // recorded in the registry the neutral control plane enumerates and is
+    // covered by the create-idempotency ledger. The terminal itself is still
+    // this process's `pty`; the neutral host borrows it.
+    var neutral_runtime = try neutral_host.Runtime.open(allocator, hive_home);
+    defer neutral_runtime.deinit();
+    var neutral_registry = try neutral_host.Registry.open(allocator, &neutral_runtime);
+    defer neutral_registry.deinit();
+    var direct = neutral_host.DirectHost.init(allocator, &neutral_registry, &pty);
+    defer direct.deinit();
+
+    const created = try direct.host().create(.{
+        // The neutral host never interprets the key; the Hive session id is
+        // simply the opaque name the adapter above already chose.
+        .key = locator.session_id,
+        // The frozen create-begin payload carries no idempotency key, so it is
+        // derived from the create attempt this boot envelope represents: a
+        // respawned host replaying the same attempt replays the ledger entry
+        // instead of launching a second child.
+        .idempotencyKey = spec.value.visibility.openTerminalRevision,
+        .command = .{
+            .executable = spec.value.argv[0],
+            .arguments = spec.value.argv[1..],
+            .workingDirectory = spec.value.cwd,
+            .completeEnvironment = try environmentEntries(a, spec.value.environment),
+            .descriptorMap = &.{},
+        },
+        // Spelled out to preserve the behaviour of the bare spawn this
+        // replaced, which passed no profile and so took the terminal layer's
+        // defaults. The frozen spec carries no profile to honour yet.
+        .terminalProfile = .{
+            .inputMode = .literal,
+            .echo = false,
+            .signalCharacters = false,
+            .softwareFlowControl = false,
+            .eofByte = 4,
+            .startByte = 17,
+            .stopByte = 19,
+            .hangupOnLastClose = true,
+        },
+        .initialWindow = .{
             .columns = spec.value.geometry.columns,
             .rows = spec.value.geometry.rows,
-            .width_px = spec.value.geometry.widthPx,
-            .height_px = spec.value.geometry.heightPx,
+            .widthPixels = spec.value.geometry.widthPx,
+            .heightPixels = spec.value.geometry.heightPx,
         },
     });
-    const spawn = switch (spawn_outcome) {
-        .running => |readback| readback,
-        .exec_failed => |failure| {
-            std.log.err("provider exec failed at {s}: errno={d}", .{
+    const launch = switch (created.outcome) {
+        .running => |value| value,
+        .@"exec-failed" => |failure| {
+            std.log.err("provider exec failed at {s}: {s}", .{
                 @tagName(failure.layer),
-                failure.os_code,
+                failure.diagnostic,
             });
             return error.ProviderExecFailed;
         },
+        .exited, .unknown => return error.ProviderExecFailed,
     };
+    // Evidence the frozen create result does not carry, measured by the create.
+    const launch_evidence = direct.launch_evidence orelse return error.ProviderExecFailed;
     var sink: PtyQueueSink = .{ .pty = &pty };
     const real_engine = try RealVtEngine.create(
         allocator,
@@ -4066,8 +4135,8 @@ pub fn runHostRole(
     };
     var host_token_storage: [64]u8 = undefined;
     const host_token = try host_identity.start_token.format(&host_token_storage);
-    var root_token_storage: [64]u8 = undefined;
-    const root_token = try spawn.start_token.format(&root_token_storage);
+    // Already formatted by the create that measured it.
+    const root_token = launch.child.startToken;
     const host_executable = host_identity.executablePath();
     if (host_executable.len == 0) return error.HostIdentityUnavailable;
     const host_build_id = try executableBuildHash(allocator, host_executable);
@@ -4085,9 +4154,9 @@ pub fn runHostRole(
             .host_pid = c.getpid(),
             .host_start_token = try a.dupe(u8, host_token),
             .process_root = .{
-                .pid = spawn.pid,
+                .pid = launch.child.processId,
                 .start_token = try a.dupe(u8, root_token),
-                .process_group_id = spawn.pgid,
+                .process_group_id = launch.jobControl.childProcessGroupId,
             },
             .expected_executable = spec.value.expectedExecutable,
             .executable_build_hash = try a.dupe(u8, host_build_id),
@@ -4121,10 +4190,10 @@ pub fn runHostRole(
         .checkpoint_available = state.checkpointAvailable(),
         .executable_verified = std.mem.eql(
             u8,
-            spawn.executablePath(),
+            launch_evidence.executable,
             spec.value.expectedExecutable,
         ),
-        .complete = spawn.root_snapshot_status == .stable,
+        .complete = launch_evidence.rootSnapshotStatus == .stable,
     };
     var core = try HostCore.init(
         allocator,

@@ -198,6 +198,7 @@ pub fn build(b: *std.Build) void {
     session_host_module.addImport("input_arbiter", input_arbiter_module);
     session_host_module.addImport("process_inspector", process_inspector_module);
     session_host_module.addImport("pty_host", pty_host_module);
+    session_host_module.addImport("neutral_host", neutral_host_module);
     session_host_module.addImport("terminal_state", terminal_state_module);
     session_host_module.addIncludePath(ghostty.path("include"));
     session_host_module.addIncludePath(b.path("../include"));
