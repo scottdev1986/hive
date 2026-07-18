@@ -1429,6 +1429,86 @@
       }
     },
     {
+      "name": "frozen neutral create request",
+      "schema": "terminalHostCreateRequest",
+      "value": {
+        "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "idempotencyKey": "create-fixture-key",
+        "command": {
+          "executable": "/usr/bin/env",
+          "arguments": [
+            "env"
+          ],
+          "workingDirectory": "/tmp/hive-fixture",
+          "completeEnvironment": [
+            {
+              "name": "LANG",
+              "value": "en_US.UTF-8"
+            },
+            {
+              "name": "TERM",
+              "value": "xterm-ghostty"
+            }
+          ],
+          "descriptorMap": []
+        },
+        "terminalProfile": {
+          "inputMode": "literal",
+          "echo": false,
+          "signalCharacters": true,
+          "softwareFlowControl": false,
+          "eofByte": 4,
+          "startByte": 17,
+          "stopByte": 19,
+          "hangupOnLastClose": true
+        },
+        "initialWindow": {
+          "columns": 120,
+          "rows": 40,
+          "widthPixels": 1200,
+          "heightPixels": 800
+        }
+      }
+    },
+    {
+      "name": "frozen neutral create result",
+      "schema": "terminalHostCreateResult",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "outcome": {
+          "state": "running",
+          "child": {
+            "processId": 4101,
+            "startToken": "4101:123457"
+          },
+          "execProof": "replacement-observed",
+          "jobControl": {
+            "sessionLeader": true,
+            "controllingTerminal": true,
+            "standardStreamsShareTerminal": true,
+            "childSessionId": 4101,
+            "childProcessGroupId": 4101,
+            "foregroundProcessGroupId": 4101,
+            "terminalIdentity": "/dev/ttys001",
+            "initialProfileAppliedBeforeExec": true,
+            "initialWindowAppliedBeforeExec": true,
+            "completeness": "complete"
+          }
+        },
+        "limits": {
+          "maxInputTransactionBytes": 131072,
+          "maxInputQueueBytes": 131072,
+          "maxOutputFrameBytes": 65536,
+          "outputLowWaterBytes": 2097152,
+          "outputHighWaterBytes": 4194304,
+          "outputRetentionBytes": 67108864
+        }
+      }
+    },
+    {
       "name": "CLAIM_ACQUIRE frozen request",
       "schema": "claimAcquirePayload",
       "value": {
@@ -3097,6 +3177,75 @@
           "heightPx": 800,
           "cellWidthPx": 10,
           "cellHeightPx": 20
+        }
+      }
+    },
+    {
+      "name": "frozen create request rejects Hive policy",
+      "schema": "terminalHostCreateRequest",
+      "value": {
+        "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+        "idempotencyKey": "create-fixture-key",
+        "command": {
+          "executable": "/usr/bin/env",
+          "arguments": [
+            "env"
+          ],
+          "workingDirectory": "/tmp/hive-fixture",
+          "completeEnvironment": [
+            {
+              "name": "LANG",
+              "value": "en_US.UTF-8"
+            },
+            {
+              "name": "TERM",
+              "value": "xterm-ghostty"
+            }
+          ],
+          "descriptorMap": []
+        },
+        "terminalProfile": {
+          "inputMode": "literal",
+          "echo": false,
+          "signalCharacters": true,
+          "softwareFlowControl": false,
+          "eofByte": 4,
+          "startByte": 17,
+          "stopByte": 19,
+          "hangupOnLastClose": true
+        },
+        "initialWindow": {
+          "columns": 120,
+          "rows": 40,
+          "widthPixels": 1200,
+          "heightPixels": 800
+        },
+        "visibility": {
+          "workspaceSessionId": "workspace-fixture",
+          "workspacePid": 4000,
+          "workspaceStartToken": "4000:123455",
+          "openTerminalRevision": "7"
+        }
+      }
+    },
+    {
+      "name": "frozen create result rejects collapsed launch failure",
+      "schema": "terminalHostCreateResult",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "outcome": {
+          "state": "failed"
+        },
+        "limits": {
+          "maxInputTransactionBytes": 131072,
+          "maxInputQueueBytes": 131072,
+          "maxOutputFrameBytes": 65536,
+          "outputLowWaterBytes": 2097152,
+          "outputHighWaterBytes": 4194304,
+          "outputRetentionBytes": 67108864
         }
       }
     },

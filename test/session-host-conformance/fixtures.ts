@@ -223,6 +223,59 @@ const fixtureVisibilityLease = {
 const fixtureTerminationRequest = { mode: "graceful", reason: "terminal closed", requestId: FIXTURE_IDS.request };
 const fixtureTerminationResult = { locator: fixtureLocator, state: "terminated", exit: null, survivors: [], errors: [] };
 const fixtureTerminalHostSession = { key: fixtureLocator.sessionId, incarnation: "3" };
+const fixtureTerminalHostCreateRequest = {
+  key: fixtureTerminalHostSession.key,
+  idempotencyKey: "create-fixture-key",
+  command: {
+    executable: "/usr/bin/env",
+    arguments: ["env"],
+    workingDirectory: "/tmp/hive-fixture",
+    completeEnvironment: [
+      { name: "LANG", value: "en_US.UTF-8" },
+      { name: "TERM", value: "xterm-ghostty" },
+    ],
+    descriptorMap: [],
+  },
+  terminalProfile: {
+    inputMode: "literal",
+    echo: false,
+    signalCharacters: true,
+    softwareFlowControl: false,
+    eofByte: 4,
+    startByte: 17,
+    stopByte: 19,
+    hangupOnLastClose: true,
+  },
+  initialWindow: { columns: 120, rows: 40, widthPixels: 1_200, heightPixels: 800 },
+};
+const fixtureTerminalHostCreateResult = {
+  session: fixtureTerminalHostSession,
+  outcome: {
+    state: "running",
+    child: { processId: 4101, startToken: "4101:123457" },
+    execProof: "replacement-observed",
+    jobControl: {
+      sessionLeader: true,
+      controllingTerminal: true,
+      standardStreamsShareTerminal: true,
+      childSessionId: 4101,
+      childProcessGroupId: 4101,
+      foregroundProcessGroupId: 4101,
+      terminalIdentity: "/dev/ttys001",
+      initialProfileAppliedBeforeExec: true,
+      initialWindowAppliedBeforeExec: true,
+      completeness: "complete",
+    },
+  },
+  limits: {
+    maxInputTransactionBytes: TERMINAL_LIMITS.inputTransactionBytes,
+    maxInputQueueBytes: TERMINAL_LIMITS.inputTransactionBytes,
+    maxOutputFrameBytes: TERMINAL_LIMITS.streamChunkBytes,
+    outputLowWaterBytes: 2 * 1024 * 1024,
+    outputHighWaterBytes: 4 * 1024 * 1024,
+    outputRetentionBytes: TERMINAL_LIMITS.replayJournalBytesPerGeneration,
+  },
+};
 const fixtureTerminalHostClaim = {
   token: "claim-fixture-token",
   writer: "viewer-fixture",
@@ -548,6 +601,16 @@ const validCases: readonly WireCorpusCase[] = [
   { name: "GRANT_REGISTER request", schema: "grantRegisterPayload", value: fixtureGrantRegistration },
   { name: "GRANT_REGISTER accepted", schema: "grantRegisterPayload", value: { schemaVersion: 1, registered: true } },
   {
+    name: "frozen neutral create request",
+    schema: "terminalHostCreateRequest",
+    value: fixtureTerminalHostCreateRequest,
+  },
+  {
+    name: "frozen neutral create result",
+    schema: "terminalHostCreateResult",
+    value: fixtureTerminalHostCreateResult,
+  },
+  {
     name: "CLAIM_ACQUIRE frozen request",
     schema: "claimAcquirePayload",
     value: {
@@ -677,6 +740,16 @@ const invalidCases: readonly WireCorpusCase[] = [
   { name: "HOST_ADOPT rejects malformed secret", schema: "hostAdoptPayload", value: { ...fixtureAdoptRequest, adoptionSecretHex: "not-a-secret" } },
   { name: "GRANT_REGISTER rejects unknown field", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, rawToken: "forbidden" } },
   { name: "GRANT_REGISTER rejects untagged hash", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, grantTokenSha256: "b".repeat(64) } },
+  {
+    name: "frozen create request rejects Hive policy",
+    schema: "terminalHostCreateRequest",
+    value: { ...fixtureTerminalHostCreateRequest, visibility: fixtureVisibilityRequest },
+  },
+  {
+    name: "frozen create result rejects collapsed launch failure",
+    schema: "terminalHostCreateResult",
+    value: { ...fixtureTerminalHostCreateResult, outcome: { state: "failed" } },
+  },
   {
     name: "CLAIM_ACQUIRE rejects absent session fencing",
     schema: "claimAcquirePayload",

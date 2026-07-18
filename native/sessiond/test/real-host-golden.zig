@@ -400,6 +400,37 @@ fn readViewerResponse(
     return frame;
 }
 
+fn readViewerError(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    request_id: u64,
+    expected_code: []const u8,
+) !void {
+    const file: std.fs.File = .{ .handle = stream.handle };
+    var frame = switch (try protocol.readFrame(allocator, file.deprecatedReader())) {
+        .frame => |frame| frame,
+        else => return error.InvalidViewerError,
+    };
+    defer frame.deinit(allocator);
+    if (frame.header.type_code != generated.frame_type.@"error" or
+        frame.header.request_id != request_id or
+        frame.header.flags != (generated.frame_flag.response |
+            generated.frame_flag.final |
+            generated.frame_flag.error_flag) or
+        !protocol.validateControlPayload(
+            allocator,
+            generated.wire_schema.error_payload,
+            frame.payload,
+        )) return error.InvalidViewerError;
+    const ErrorPayload = struct { code: []const u8 };
+    var parsed = try std.json.parseFromSlice(ErrorPayload, allocator, frame.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    if (!std.mem.eql(u8, parsed.value.code, expected_code))
+        return error.InvalidViewerError;
+}
+
 fn waitForSingleInputEffect(
     allocator: std.mem.Allocator,
     path: []const u8,
@@ -510,6 +541,24 @@ fn driveViewerWire(
     }, .{});
     defer allocator.free(attach);
     try writeViewerRequest(stream, generated.frame_type.host_attach, 11, 0, attach);
+
+    const wrong_generation_claim = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "2" },
+        .writer = "golden-viewer",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 10_000),
+        .idempotencyKey = "domain-claim-wrong-generation",
+    }, .{});
+    defer allocator.free(wrong_generation_claim);
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.claim_acquire,
+        19,
+        0,
+        wrong_generation_claim,
+    );
+    try readViewerError(allocator, stream, 19, "GENERATION_MISMATCH");
 
     const claim = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -673,6 +722,41 @@ fn driveViewerWire(
         parsed_resize.value.result.readback.widthPixels != 1110 or
         parsed_resize.value.result.readback.heightPixels != 740)
         return error.InvalidResizeReceipt;
+
+    const stale_resize = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .window = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPixels = @as(u32, 800),
+            .heightPixels = @as(u32, 480),
+        },
+        .revision = "40",
+        .idempotencyKey = "domain-resize-stale",
+    }, .{});
+    defer allocator.free(stale_resize);
+    try writeViewerRequest(stream, generated.frame_type.resize, 41, 0, stale_resize);
+    var stale_result = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.applied,
+        41,
+        generated.wire_schema.applied_payload,
+    );
+    defer stale_result.deinit(allocator);
+    const StaleResize = struct {
+        resultKind: []const u8,
+        result: struct { state: []const u8, currentRevision: []const u8 },
+    };
+    var parsed_stale = try std.json.parseFromSlice(StaleResize, allocator, stale_result.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_stale.deinit();
+    if (!std.mem.eql(u8, parsed_stale.value.resultKind, "resize") or
+        !std.mem.eql(u8, parsed_stale.value.result.state, "stale") or
+        !std.mem.eql(u8, parsed_stale.value.result.currentRevision, "41"))
+        return error.InvalidStaleResizeReceipt;
 
     const eof = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),

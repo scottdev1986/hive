@@ -532,6 +532,109 @@ export const TerminalHostWindowSizeSchema = z.strictObject({
   "active terminal cells exceed the v1 limit",
 ).meta({ "x-hive-max-active-cells": TERMINAL_LIMITS.terminalActiveCellsMax }).readonly();
 const TerminalHostCompletenessSchema = z.enum(["complete", "partial", "unavailable", "unknown"]);
+export const TerminalHostProcessIdentitySchema = z.strictObject({
+  processId: z.number().int().positive(),
+  startToken: z.string().min(1),
+}).readonly();
+export const TerminalHostTerminalProfileSchema = z.strictObject({
+  inputMode: z.enum(["canonical", "literal"]),
+  echo: z.boolean(),
+  signalCharacters: z.boolean(),
+  softwareFlowControl: z.boolean(),
+  eofByte: z.number().int().min(0).max(255),
+  startByte: z.number().int().min(0).max(255),
+  stopByte: z.number().int().min(0).max(255),
+  hangupOnLastClose: z.boolean(),
+}).readonly();
+export const TerminalHostEnvironmentEntrySchema = z.strictObject({
+  name: z.string().min(1),
+  value: z.string(),
+}).readonly();
+export const TerminalHostTransferableHandleSchema = z.strictObject({
+  token: z.string().min(1),
+  sourceDisposition: z.enum(["retain", "close-after-transfer"]),
+}).readonly();
+export const TerminalHostDescriptorMappingSchema = z.strictObject({
+  handle: TerminalHostTransferableHandleSchema,
+  targetDescriptor: z.number().int().min(3),
+}).readonly();
+export const TerminalHostCommandSchema = z.strictObject({
+  executable: z.string().min(1),
+  arguments: z.array(z.string()).readonly(),
+  workingDirectory: z.string().min(1),
+  completeEnvironment: z.array(TerminalHostEnvironmentEntrySchema).readonly(),
+  descriptorMap: z.array(TerminalHostDescriptorMappingSchema).readonly(),
+}).readonly();
+export const TerminalHostLimitsSchema = z.strictObject({
+  maxInputTransactionBytes: SafeUintSchema,
+  maxInputQueueBytes: SafeUintSchema,
+  maxOutputFrameBytes: SafeUintSchema,
+  outputLowWaterBytes: SafeUintSchema,
+  outputHighWaterBytes: SafeUintSchema,
+  outputRetentionBytes: SafeUintSchema,
+}).readonly();
+export const TerminalHostJobControlEvidenceSchema = z.strictObject({
+  sessionLeader: z.boolean(),
+  controllingTerminal: z.boolean(),
+  standardStreamsShareTerminal: z.boolean(),
+  childSessionId: z.number().int().positive(),
+  childProcessGroupId: z.number().int().positive(),
+  foregroundProcessGroupId: z.number().int().positive(),
+  terminalIdentity: z.string().min(1),
+  initialProfileAppliedBeforeExec: z.boolean(),
+  initialWindowAppliedBeforeExec: z.boolean(),
+  completeness: TerminalHostCompletenessSchema,
+}).readonly();
+export const TerminalHostExitStatusSchema = z.strictObject({
+  code: z.number().int().nullable(),
+  signal: z.number().int().nonnegative().nullable(),
+  observedAt: Rfc3339UtcMillisecondsSchema,
+}).readonly();
+export const TerminalHostReapEvidenceSchema = z.strictObject({
+  authority: z.enum(["direct-parent", "durable-parent-record", "unavailable"]),
+  reaped: z.boolean(),
+  status: TerminalHostExitStatusSchema.nullable(),
+  completeness: TerminalHostCompletenessSchema,
+}).readonly();
+export const TerminalHostLaunchOutcomeSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("running"),
+    child: TerminalHostProcessIdentitySchema,
+    execProof: z.literal("replacement-observed"),
+    jobControl: TerminalHostJobControlEvidenceSchema,
+  }).readonly(),
+  z.strictObject({
+    state: z.literal("exec-failed"),
+    layer: z.enum([
+      "command",
+      "working-directory",
+      "environment",
+      "descriptor-transfer",
+      "terminal-setup",
+      "exec-transition",
+    ]),
+    osCode: z.union([z.string(), z.number().int(), z.null()]),
+    diagnostic: z.string().min(1),
+  }).readonly(),
+  z.strictObject({
+    state: z.literal("exited"),
+    exit: TerminalHostExitStatusSchema,
+    reap: TerminalHostReapEvidenceSchema,
+  }).readonly(),
+  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+]);
+export const TerminalHostCreateRequestSchema = z.strictObject({
+  key: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  command: TerminalHostCommandSchema,
+  terminalProfile: TerminalHostTerminalProfileSchema,
+  initialWindow: TerminalHostWindowSizeSchema,
+}).readonly();
+export const TerminalHostCreateResultSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  outcome: TerminalHostLaunchOutcomeSchema,
+  limits: TerminalHostLimitsSchema,
+}).readonly();
 export const TerminalHostInputClaimSchema = z.strictObject({
   token: z.string().min(1),
   writer: z.string().min(1),
@@ -1022,6 +1125,8 @@ export const SESSION_WIRE_SCHEMAS = {
   inputSubmitPayload: InputSubmitPayloadSchema,
   resizePayload: ResizePayloadSchema,
   appliedPayload: AppliedPayloadSchema,
+  terminalHostCreateRequest: TerminalHostCreateRequestSchema,
+  terminalHostCreateResult: TerminalHostCreateResultSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
@@ -1064,6 +1169,19 @@ type VisibilityLeaseSchemaMatchesContract = Assert<Equals<z.infer<typeof Visibil
 type ResizeResultSchemaMatchesContract = Assert<Equals<z.infer<typeof ResizeResultSchema>, SessionHostContract.ResizeResult>>;
 type TerminalHostSessionRefSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostSessionRefSchema>, TerminalHostContract.SessionRef>>;
 type TerminalHostWindowSizeSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostWindowSizeSchema>, TerminalHostContract.WindowSize>>;
+type TerminalHostProcessIdentitySchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostProcessIdentitySchema>, TerminalHostContract.ProcessIdentity>>;
+type TerminalHostTerminalProfileSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostTerminalProfileSchema>, TerminalHostContract.TerminalProfile>>;
+type TerminalHostEnvironmentEntrySchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostEnvironmentEntrySchema>, TerminalHostContract.EnvironmentEntry>>;
+type TerminalHostTransferableHandleSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostTransferableHandleSchema>, TerminalHostContract.TransferableHandle>>;
+type TerminalHostDescriptorMappingSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostDescriptorMappingSchema>, TerminalHostContract.DescriptorMapping>>;
+type TerminalHostCommandSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostCommandSchema>, TerminalHostContract.Command>>;
+type TerminalHostLimitsSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostLimitsSchema>, TerminalHostContract.HostLimits>>;
+type TerminalHostJobControlEvidenceSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostJobControlEvidenceSchema>, TerminalHostContract.JobControlEvidence>>;
+type TerminalHostExitStatusSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostExitStatusSchema>, TerminalHostContract.ExitStatus>>;
+type TerminalHostReapEvidenceSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostReapEvidenceSchema>, TerminalHostContract.ReapEvidence>>;
+type TerminalHostLaunchOutcomeSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostLaunchOutcomeSchema>, TerminalHostContract.LaunchOutcome>>;
+type TerminalHostCreateRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostCreateRequestSchema>, TerminalHostContract.CreateRequest>>;
+type TerminalHostCreateResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostCreateResultSchema>, TerminalHostContract.CreateResult>>;
 type TerminalHostInputClaimSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostInputClaimSchema>, TerminalHostContract.InputClaim>>;
 type TerminalHostClaimResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostClaimResultSchema>, TerminalHostContract.ClaimResult>>;
 type TerminalHostInputReceiptSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostInputReceiptSchema>, TerminalHostContract.InputReceipt>>;

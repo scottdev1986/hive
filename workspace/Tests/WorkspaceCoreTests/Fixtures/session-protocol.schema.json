@@ -5167,6 +5167,595 @@
         }
       ]
     },
+    "terminalHostCreateRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "key": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "command": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "executable": {
+              "type": "string",
+              "minLength": 1
+            },
+            "arguments": {
+              "readOnly": true,
+              "type": "array",
+              "items": {
+                "type": "string"
+              }
+            },
+            "workingDirectory": {
+              "type": "string",
+              "minLength": 1
+            },
+            "completeEnvironment": {
+              "readOnly": true,
+              "type": "array",
+              "items": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "name": {
+                    "type": "string",
+                    "minLength": 1
+                  },
+                  "value": {
+                    "type": "string"
+                  }
+                },
+                "required": [
+                  "name",
+                  "value"
+                ],
+                "additionalProperties": false
+              }
+            },
+            "descriptorMap": {
+              "readOnly": true,
+              "type": "array",
+              "items": {
+                "readOnly": true,
+                "type": "object",
+                "properties": {
+                  "handle": {
+                    "readOnly": true,
+                    "type": "object",
+                    "properties": {
+                      "token": {
+                        "type": "string",
+                        "minLength": 1
+                      },
+                      "sourceDisposition": {
+                        "type": "string",
+                        "enum": [
+                          "retain",
+                          "close-after-transfer"
+                        ]
+                      }
+                    },
+                    "required": [
+                      "token",
+                      "sourceDisposition"
+                    ],
+                    "additionalProperties": false
+                  },
+                  "targetDescriptor": {
+                    "type": "integer",
+                    "minimum": 3,
+                    "maximum": 9007199254740991
+                  }
+                },
+                "required": [
+                  "handle",
+                  "targetDescriptor"
+                ],
+                "additionalProperties": false
+              }
+            }
+          },
+          "required": [
+            "executable",
+            "arguments",
+            "workingDirectory",
+            "completeEnvironment",
+            "descriptorMap"
+          ],
+          "additionalProperties": false
+        },
+        "terminalProfile": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "inputMode": {
+              "type": "string",
+              "enum": [
+                "canonical",
+                "literal"
+              ]
+            },
+            "echo": {
+              "type": "boolean"
+            },
+            "signalCharacters": {
+              "type": "boolean"
+            },
+            "softwareFlowControl": {
+              "type": "boolean"
+            },
+            "eofByte": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "startByte": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "stopByte": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "hangupOnLastClose": {
+              "type": "boolean"
+            }
+          },
+          "required": [
+            "inputMode",
+            "echo",
+            "signalCharacters",
+            "softwareFlowControl",
+            "eofByte",
+            "startByte",
+            "stopByte",
+            "hangupOnLastClose"
+          ],
+          "additionalProperties": false
+        },
+        "initialWindow": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPixels": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "heightPixels": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPixels",
+            "heightPixels"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        }
+      },
+      "required": [
+        "key",
+        "idempotencyKey",
+        "command",
+        "terminalProfile",
+        "initialWindow"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostCreateResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "outcome": {
+          "oneOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "running"
+                },
+                "child": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "processId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "startToken": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "processId",
+                    "startToken"
+                  ],
+                  "additionalProperties": false
+                },
+                "execProof": {
+                  "type": "string",
+                  "const": "replacement-observed"
+                },
+                "jobControl": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "sessionLeader": {
+                      "type": "boolean"
+                    },
+                    "controllingTerminal": {
+                      "type": "boolean"
+                    },
+                    "standardStreamsShareTerminal": {
+                      "type": "boolean"
+                    },
+                    "childSessionId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "childProcessGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "foregroundProcessGroupId": {
+                      "type": "integer",
+                      "exclusiveMinimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    "terminalIdentity": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "initialProfileAppliedBeforeExec": {
+                      "type": "boolean"
+                    },
+                    "initialWindowAppliedBeforeExec": {
+                      "type": "boolean"
+                    },
+                    "completeness": {
+                      "type": "string",
+                      "enum": [
+                        "complete",
+                        "partial",
+                        "unavailable",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "sessionLeader",
+                    "controllingTerminal",
+                    "standardStreamsShareTerminal",
+                    "childSessionId",
+                    "childProcessGroupId",
+                    "foregroundProcessGroupId",
+                    "terminalIdentity",
+                    "initialProfileAppliedBeforeExec",
+                    "initialWindowAppliedBeforeExec",
+                    "completeness"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "state",
+                "child",
+                "execProof",
+                "jobControl"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "exec-failed"
+                },
+                "layer": {
+                  "type": "string",
+                  "enum": [
+                    "command",
+                    "working-directory",
+                    "environment",
+                    "descriptor-transfer",
+                    "terminal-setup",
+                    "exec-transition"
+                  ]
+                },
+                "osCode": {
+                  "anyOf": [
+                    {
+                      "type": "string"
+                    },
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "state",
+                "layer",
+                "osCode",
+                "diagnostic"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "exited"
+                },
+                "exit": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "code": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "signal": {
+                      "anyOf": [
+                        {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "observedAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "code",
+                    "signal",
+                    "observedAt"
+                  ],
+                  "additionalProperties": false
+                },
+                "reap": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "authority": {
+                      "type": "string",
+                      "enum": [
+                        "direct-parent",
+                        "durable-parent-record",
+                        "unavailable"
+                      ]
+                    },
+                    "reaped": {
+                      "type": "boolean"
+                    },
+                    "status": {
+                      "anyOf": [
+                        {
+                          "readOnly": true,
+                          "type": "object",
+                          "properties": {
+                            "code": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": -9007199254740991,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "signal": {
+                              "anyOf": [
+                                {
+                                  "type": "integer",
+                                  "minimum": 0,
+                                  "maximum": 9007199254740991
+                                },
+                                {
+                                  "type": "null"
+                                }
+                              ]
+                            },
+                            "observedAt": {
+                              "type": "string",
+                              "format": "date-time",
+                              "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                            }
+                          },
+                          "required": [
+                            "code",
+                            "signal",
+                            "observedAt"
+                          ],
+                          "additionalProperties": false
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "completeness": {
+                      "type": "string",
+                      "enum": [
+                        "complete",
+                        "partial",
+                        "unavailable",
+                        "unknown"
+                      ]
+                    }
+                  },
+                  "required": [
+                    "authority",
+                    "reaped",
+                    "status",
+                    "completeness"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "state",
+                "exit",
+                "reap"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "state",
+                "diagnostic"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        },
+        "limits": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "maxInputTransactionBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "maxInputQueueBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "maxOutputFrameBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "outputLowWaterBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "outputHighWaterBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "outputRetentionBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "maxInputTransactionBytes",
+            "maxInputQueueBytes",
+            "maxOutputFrameBytes",
+            "outputLowWaterBytes",
+            "outputHighWaterBytes",
+            "outputRetentionBytes"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "session",
+        "outcome",
+        "limits"
+      ],
+      "additionalProperties": false
+    },
     "sessionLocator": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,
