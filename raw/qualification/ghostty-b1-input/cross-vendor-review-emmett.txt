@@ -258,3 +258,75 @@ GATE LANGUAGE: F2 is a fidelity DEFECT to fix; F3 is a fidelity DIVERGENCE to
 declare. They must not be reported under one heading, or the gate reads as
 claiming exact upstream fidelity on an axis where we deliberately do not have
 it.
+
+================================================================================
+DELTA RE-REVIEW at updated pin 0f844f4a (emmett, 2026-07-18)
+Parent = e6606a35 (the frozen pin), so the delta is a clean 458-line diff over
+six files. No native/ or vendor/ path touched; universal artifact sha256 still
+9c40903c3a6b...; materialized tree verified blob-for-blob against 0f844f4a.
+
+REPRODUCED
+  swift test                     354 executed / 2 skipped / 0 failures, exit 0
+  swift build --arch arm64  --build-tests   exit 0
+  swift build --arch x86_64 --build-tests   exit 0
+  (donna additionally ran the x86_64 bundle under Rosetta — an actual EXECUTION
+  on the second arch, not just a link. That exceeds what this review asked for
+  and materially strengthens the both-arches claim.)
+
+POSITIVE CONTROLS — all four run by this reviewer against donna's claims, not
+taken on report. Each applied to a private clone; tree reverted and re-verified.
+
+  PC-A (F2 load-bearing): restore the old whole-preedit-width shape ->
+    RED, testFirstRectUsesZeroWidthAndRangeOffsetForDictationInsertion.
+  PC-B (F3 biting): add `guard associatedEvent != nil` to the shared impl ->
+    RED across FOUR tests including the named eventless control. Broader bite
+    than claimed.
+  PC-C (F3 covers PRODUCTION — this reviewer's own concern, not donna's claim):
+    the committed control calls the 3-arg seam directly, so I tested whether a
+    guard added to the PUBLIC 2-arg entry point — the exact mutation a future
+    "restore upstream fidelity" change would make — could slip through green.
+    It cannot: 10 failures suite-wide. The concern was unfounded; the
+    production entry is covered by the dead-key and real-engine CJK paths.
+  PC-D (F4 real keyDown): remove the accumulator fold ->
+    RED, testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint.
+
+FINDINGS CLOSED
+  F2 CLOSED, and closed well. Fixed via Gate 7 reportedSize().cellWidthPx /
+    appliedContentScale.width — the recommended route; Gate 9's engineInert
+    action table was NOT touched, so no closed security review was reopened.
+    The test was corrected IN PLACE (the old 36 expectation is gone, not
+    supplemented) and is non-degenerate by construction: three-cell 24pt
+    preedit, 8pt cell, 2x scale, location 2. It also carries
+    XCTAssertNotEqual(imePoint.width, cellWidthPoints), an explicit assertion
+    that the two candidate multipliers DIFFER — a self-guard against the exact
+    degenerate-point failure that let the original defect hide. The assertion
+    is a delta against a location-0 baseline, so it is externally observable
+    rather than dependent on absolute window position.
+  F3 CLOSED as a declared divergence, all three sign-off conditions met:
+    documented at the code site naming the upstream line; TESTED with a control
+    that genuinely bites (PC-B, PC-C); harness coupling recorded in the comment.
+  F4 CLOSED. Goldens now enter through keyDown/keyUp (six call sites; the one
+    residual "encodeKey" match is prose in a comment, not a call). Multi-stage
+    CJK is genuinely multi-stage and asserts zero PTY bytes before commit.
+  F5 CLOSED for the field: pendingAuthoringHeld and both writes removed.
+
+RESIDUALS (neither blocks; both are trivia for a later touch)
+  R1 — F5's comment outlived its field. HiveTerminalView+Input.swift:156 still
+    reads "§22: first authoring key held until claim" while nothing holds and
+    the flag is gone. The clause "for L2 we acquire then encode" is accurate;
+    the "held until claim" half is not. This is the same class of defect F5
+    named — a comment asserting a control that does not exist — and is now
+    ungreppable, since there is no longer a field to discover.
+  R2 — the F2 fallback branch is silent and untested. If reportedSize() is nil,
+    cellWidthPx == 0, or appliedContentScale.width == 0, the offset is skipped
+    entirely while width is still zeroed. The degradation is benign (no offset
+    beats a wrong offset) but nothing asserts it, so a future regression that
+    always takes the fallback would land green.
+
+VERDICT: PASS — land-authorized at 0f844f4a.
+  Every finding I raised is closed, each verified by a control I ran myself
+  rather than by report. F2's fix took the route that avoids reopening Gate 9,
+  and its test is now self-guarding against the degeneracy that hid the bug.
+  The gate language separates F2 (fidelity defect fixed) from F3 (fidelity
+  divergence declared), so the record no longer overclaims exact upstream
+  fidelity on an axis where Hive deliberately diverges.
