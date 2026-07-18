@@ -616,6 +616,21 @@ export const SEARCH_HYGIENE =
   "for memory, never re-run it wider: a wider pattern is a bigger allocation, " +
   "not a better search.";
 
+/** The code-review skill's load-bearing rules, carried in the spawn prompt for
+ * the same reason the coding guidelines are (see CODING_GUIDELINES): a skill
+ * reaches only the agents that elect to open it, and a reviewer that never
+ * learns these rules fails silently — approving on unverified claims, or
+ * leaving a blocker unflagged for an author who self-lands. A rewrite, not a
+ * subset; the code-review skill keeps the long form. */
+export const CODE_REVIEW_RULES = [
+  "Code review rules (Hive has no PRs; the code-review skill holds the long form):",
+  "1. Pin before reading: resolve the branch under review to an exact SHA and its merge-base with main, then review `git diff <base>..<sha>` from your own worktree — worktrees share one object database, so never check the branch out. Your verdict binds that SHA: if the branch moves, later commits are unreviewed — say so, never silently re-pin.",
+  "2. Scope is the footprint — `git diff --name-only <base>..<sha>` — not the commit messages. Review every changed file, including ones the task never mentioned.",
+  "3. Always report code the branch adds that nothing consumes: uncalled functions, unconsumed exports, unread config or flags, dead code paths. The finding is that it exists; whether it changes is the author's and the orchestrator's call. Note any justification the branch already gives.",
+  "4. Verdict on evidence, never on the author's say-so: APPROVE requires verified green at the pinned SHA — a suite you ran with its exit code captured directly (never through a pager or `| tail`), or the author's recorded test output at that SHA. Missing evidence is NEEDS_DISCUSSION, naming exactly what is unverified. A green run does not prove a new test executed; confirm it ran by name or flag it.",
+  `5. Report with one durable hive_send message to ${ORCHESTRATOR_NAME}: verdict (APPROVE / REQUEST_CHANGES / NEEDS_DISCUSSION), reviewed SHA, test evidence, then blocking and non-blocking findings as path:line, each naming a concrete failure. The author self-lands via hive_land once green — for any blocker, explicitly ask ${ORCHESTRATOR_NAME} to hold landing; an unflagged blocker lands.`,
+].join("\n");
+
 const assignmentPrompt = (
   assignment: Pick<FlatAssignment, "assignmentId" | "assignmentGeneration">,
 ): string =>
@@ -671,6 +686,7 @@ export function buildAgentPrompt(
       : [buildLandingProtocol(
           worktree.branch, repoRoot, "main", name, 0, concise,
         )]),
+    ...(options.category === "code_review" ? [CODE_REVIEW_RULES] : []),
     ...(options.brief === undefined || options.brief === ""
       ? []
       : [options.brief]),

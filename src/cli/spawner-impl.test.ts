@@ -40,6 +40,7 @@ import type {
 import {
   buildAgentPrompt,
   buildLandingProtocol,
+  CODE_REVIEW_RULES,
   CODING_GUIDELINES,
   HIVE_PROTOCOL_RULES,
   HiveSpawner,
@@ -3016,6 +3017,42 @@ describe("agent landing protocol", () => {
     expect(protocol).toContain("is pre-existing, not yours to fix, and does not block");
     expect(protocol).toContain("Any other red");
     expect(protocol).toContain("blocks like any other");
+  });
+});
+
+describe("code review rules in the spawn prompt", () => {
+  const worktree = {
+    path: "/repo/.hive/worktrees/sarah",
+    branch: "hive/sarah-review",
+  };
+
+  test("ride every code_review spawn, alongside the read-only tail", () => {
+    const prompt = buildAgentPrompt("sarah", "Review maya's branch", worktree, "/repo", "", {
+      category: "code_review",
+      readOnly: true,
+    });
+    expect(prompt).toContain(CODE_REVIEW_RULES);
+    expect(prompt).toContain("capability-enforced read-only");
+  });
+
+  test("carry the load-bearing rules: pin, footprint, unused code, evidence, hold", () => {
+    expect(CODE_REVIEW_RULES).toContain("exact SHA");
+    expect(CODE_REVIEW_RULES).toContain("merge-base with main");
+    expect(CODE_REVIEW_RULES).toContain("never silently re-pin");
+    expect(CODE_REVIEW_RULES).toContain("git diff --name-only");
+    expect(CODE_REVIEW_RULES).toContain("code the branch adds that nothing consumes");
+    expect(CODE_REVIEW_RULES).toContain("APPROVE requires verified green at the pinned SHA");
+    expect(CODE_REVIEW_RULES).toContain("hive_send message to queen");
+    expect(CODE_REVIEW_RULES).toContain("ask queen to hold landing");
+  });
+
+  test("are absent from every other category", () => {
+    const bare = buildAgentPrompt("maya", "Build auth API", worktree, "/repo");
+    const coding = buildAgentPrompt("maya", "Build auth API", worktree, "/repo", "", {
+      category: "simple_coding",
+    });
+    expect(bare).not.toContain("Code review rules");
+    expect(coding).not.toContain("Code review rules");
   });
 });
 
