@@ -496,7 +496,7 @@ new file mode 100644
 index 0000000..ddb9a1c
 --- /dev/null
 +++ b/src/hive_checkpoint.zig
-@@ -0,0 +1,1496 @@
+@@ -0,0 +1,1498 @@
 +const std = @import("std");
 +const builtin = @import("builtin");
 +const terminal = @import("terminal/main.zig");
@@ -615,17 +615,19 @@ index 0000000..ddb9a1c
 +    }) |T| hashTypeLayout(hash, T);
 +    inline for (.{
 +        @TypeOf(@as(Handler, undefined).apc_handler.max_bytes), @TypeOf(@as(Handler, undefined).apc_handler.enabled),
-+        @TypeOf(@as(Terminal, undefined).status_display),       @TypeOf(@as(Terminal, undefined).rows),
-+        @TypeOf(@as(Terminal, undefined).cols),                 Terminal.ScrollingRegion,
-+        Terminal.Colors,                                        @TypeOf(@as(Terminal, undefined).modes),
-+        @TypeOf(@as(Terminal, undefined).mouse_shape),          @TypeOf(@as(Terminal, undefined).flags),
-+        ScreenSet.Key,                                          @TypeOf(@as(PageList, undefined).cols),
-+        @TypeOf(@as(PageList, undefined).rows),                 Page,
-+        Page.Layout,                                            pagepkg.Row,
-+        pagepkg.Cell,                                           ?Screen.SavedCursor,
-+        Screen.CharsetState,                                    @TypeOf(@as(Screen, undefined).protected_mode),
-+        @TypeOf(@as(Screen, undefined).kitty_keyboard),         Screen.SemanticPrompt,
-+        CursorWire,
++        @TypeOf(@as(Handler, undefined).default_cursor),        @TypeOf(@as(Handler, undefined).default_cursor_style),
++        @TypeOf(@as(Handler, undefined).default_cursor_blink),  @TypeOf(@as(Terminal, undefined).status_display),
++        @TypeOf(@as(Terminal, undefined).rows),                 @TypeOf(@as(Terminal, undefined).cols),
++        Terminal.ScrollingRegion,                               Terminal.Colors,
++        @TypeOf(@as(Terminal, undefined).modes),                @TypeOf(@as(Terminal, undefined).mouse_shape),
++        @TypeOf(@as(Terminal, undefined).flags),                ScreenSet.Key,
++        @TypeOf(@as(PageList, undefined).cols),                 @TypeOf(@as(PageList, undefined).rows),
++        Page,                                                   Page.Layout,
++        pagepkg.Row,                                            pagepkg.Cell,
++        ?Screen.SavedCursor,                                    Screen.CharsetState,
++        @TypeOf(@as(Screen, undefined).protected_mode),         @TypeOf(@as(Screen, undefined).kitty_keyboard),
++        Screen.SemanticPrompt,                                  CursorWire,
++        point.Coordinate,
 +    }) |T| hashTypeLayout(hash, T);
 +    inline for (.{
 +        terminal.kitty.graphics.Image,                                         @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits),
