@@ -1,5 +1,5 @@
-{"pid":46651,"stage":"before"}
-{"engineBuildId":"e8e456c5ac7481d52c255517fea236403715b52f3194d0cdd98e89bf29f06f19","foregroundPid":"0","initialInputVisible":false,"pid":46651,"processExited":false,"stage":"create","ttyLength":0,"writeCallbacks":0}
-{"hostInputVisible":false,"pid":46651,"remoteOutputVisible":true,"stage":"use","writeCallbacks":1,"writeHex":["484f53545f494e5055545f43414c4c4241434b"]}
-{"pid":46651,"stage":"free","writeCallbacks":1}
-{"pid":46651,"stage":"done"}
+{"pid":32755,"stage":"before"}
+{"engineBuildId":"af2179c53633d87811009ead8dd2117ef3ded70f47fe66e7578ebf0adfafae1c","foregroundPid":"0","initialInputVisible":false,"pid":32755,"processExited":false,"stage":"create","ttyLength":0,"writeCallbacks":0}
+{"hostInputVisible":false,"pid":32755,"remoteOutputVisible":true,"stage":"use","writeCallbacks":1,"writeHex":["484f53545f494e5055545f43414c4c4241434b"]}
+{"pid":32755,"stage":"free","writeCallbacks":1}
+{"pid":32755,"stage":"done"}

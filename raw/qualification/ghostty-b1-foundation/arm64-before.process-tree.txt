@@ -1,3 +1,3 @@
-stage=before arch=arm64 root_pid=45218
-45218 42470 42464      0 S+   /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.3f9019/build-arm64/arm64-apple-macosx/debug/GhosttyManualIsolationProbe
+stage=before arch=arm64 root_pid=31726
+31726 30502 30500      0 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.c5DBXI/build-arm64/arm64-apple-macosx/debug/GhosttyManualIsolationProbe
 children=0

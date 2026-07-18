@@ -1,1 +1,1 @@
-47f620c3efa74a865aef43ba178273c8fcb99ff2014ff1111bc46bc2ec719d39  /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.3f9019/GhosttyManualIsolationProbe
+2d2b27c7bc946f3eb668b757d200a77bbf0148a1b37c9d020563d345e41b3f3a  /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.c5DBXI/GhosttyManualIsolationProbe

@@ -1,12 +1,12 @@
-Test Suite 'Selected tests' started at 2026-07-18 17:58:06.913.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 17:58:06.914.
-Test Suite 'Gate4ABIQualificationTests' started at 2026-07-18 17:58:06.914.
+Test Suite 'Selected tests' started at 2026-07-18 19:41:07.785.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 19:41:07.786.
+Test Suite 'Gate4ABIQualificationTests' started at 2026-07-18 19:41:07.786.
 Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' started.
-Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' passed (0.002 seconds).
-Test Suite 'Gate4ABIQualificationTests' passed at 2026-07-18 17:58:06.916.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 17:58:06.916.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.002) seconds
-Test Suite 'Selected tests' passed at 2026-07-18 17:58:06.916.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.002 (0.003) seconds
-SWIFT_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 callconv=c symbols=6 build_id=0762764116c83a45a14251322dc2a3b34e9b67851797ec60e199466352799972
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' passed (0.003 seconds).
+Test Suite 'Gate4ABIQualificationTests' passed at 2026-07-18 19:41:07.789.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 19:41:07.789.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 19:41:07.789.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+SWIFT_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7 build_id=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300

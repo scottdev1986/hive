@@ -1,19 +1,19 @@
-p46651
+p32755
 f0
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.3f9019/x86_64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.c5DBXI/x86_64.control
 f1
 tREG
-n/Users/scottkellar/Projects/hive/.hive/worktrees/emil/.cache/native/qualification/gate4-post-patch-foundation-33760753-direct/x86_64-protocol.jsonl
+n/Users/scottkellar/Projects/hive/.hive/worktrees/esther/raw/qualification/ghostty-b1-foundation/x86_64-protocol.jsonl
 f2
 tREG
-n/Users/scottkellar/Projects/hive/.hive/worktrees/emil/.cache/native/qualification/gate4-post-patch-foundation-33760753-direct/x86_64-probe.stderr.txt
+n/Users/scottkellar/Projects/hive/.hive/worktrees/esther/raw/qualification/ghostty-b1-foundation/x86_64-probe.stderr.txt
 f3
 tFIFO
-n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.3f9019/x86_64.control
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.c5DBXI/x86_64.control
 f4
 tREG
-n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/d89f6bb3-72d9-4fe9-d22d-362ed34ae618.run.lock
+n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/40debad5-843b-4095-2245-9951c15e271d.run.lock
 f5
 tKQUEUE
 ncount=0, state=0x12

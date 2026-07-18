@@ -1,9 +1,9 @@
-C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8
-C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8
-1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 callconv=c symbols=6
+C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 symbols=7
+C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 symbols=7
+1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7
 OK
 All 1 tests passed.
-1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 callconv=c symbols=6
+1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7
 OK
 All 1 tests passed.
 Ghostty bridge ABI skeleton validated

@@ -1,0 +1,4 @@
+removed_entry=0001-hive-manual-io-checkpoint.patch
+exit_status=1
+stdout=[]
+stderr=[patch series entry is missing: 0001-hive-manual-io-checkpoint.patch]

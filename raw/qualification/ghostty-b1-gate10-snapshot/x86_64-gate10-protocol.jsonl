@@ -1,0 +1,5 @@
+{"allocatorCalls":0,"pid":28969,"stage":"null-arguments"}
+{"allocationLength":7742,"columns":49,"generation":1,"pid":28969,"rows":17,"stage":"alloc-contract"}
+{"allocatorCalls":1,"pid":28969,"stage":"failing-allocator"}
+{"bytesProcessed":24968,"finalGeneration":301,"iterations":300,"pid":28969,"snapshots":300,"stage":"stress"}
+{"engineBuildId":"af2179c53633d87811009ead8dd2117ef3ded70f47fe66e7578ebf0adfafae1c","pid":28969,"snapshots":301,"stage":"complete"}

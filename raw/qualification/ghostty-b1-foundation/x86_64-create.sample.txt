@@ -1,166 +1,155 @@
-Analysis of sampling GhosttyManualIsolationProbe (pid 46651) every 1 millisecond
-Process:         GhosttyManualIsolationProbe [46651]
+Analysis of sampling GhosttyManualIsolationProbe (pid 32755) every 1 millisecond
+Process:         GhosttyManualIsolationProbe [32755]
 Path:            /private/var/folders/*/GhosttyManualIsolationProbe
-Load Address:    0x10268f000
+Load Address:    0x10286a000
 Identifier:      GhosttyManualIsolationProbe
 Version:         0
 Code Type:       X86-64 (translated)
 Platform:        macOS
-Parent Process:  bash [42470]
+Parent Process:  bash [30502]
 Target Type:     live task
 
-Date/Time:       2026-07-18 17:58:31.082 -0400
-Launch Time:     2026-07-18 17:58:29.270 -0400
+Date/Time:       2026-07-18 19:41:27.777 -0400
+Launch Time:     2026-07-18 19:41:26.101 -0400
 OS Version:      macOS 26.3.1 (25D2128)
 Report Version:  7
 Analysis Tool:   /usr/bin/sample
 
-Physical footprint:         261.0M
-Physical footprint (peak):  261.0M
+Physical footprint:         259.9M
+Physical footprint (peak):  259.9M
 Idle exit:                  untracked
 ----
 
 Call graph:
-    810 Thread_32338449   DispatchQueue_1: com.apple.main-thread  (serial)
-    + 810 start  (in dyld) + 3457  [0x203bee781]
-    +   810 GhosttyManualIsolationProbe_main  (in GhosttyManualIsolationProbe) + 5036  [0x102691e0c]  main.swift:170
-    +     810 awaitNext()  (in GhosttyManualIsolationProbe) + 21  [0x102693495]  main.swift:49
-    +       810 readLine(strippingNewline:)  (in libswiftCore.dylib) + 50  [0x7ff8224bc732]
-    +         810 swift_stdlib_readLine_stdin  (in libswiftCore.dylib) + 63  [0x7ff8223cc1af]
-    +           810 getdelim  (in libsystem_c.dylib) + 245  [0x7ff80e1360e7]
-    +             810 __srefill1  (in libsystem_c.dylib) + 24  [0x7ff80e112744]
-    +               810 _sread  (in libsystem_c.dylib) + 16  [0x7ff80e112795]
-    +                 810 ???  (in <unknown binary>)  [0x7ff89a5a2b9c]
-    +                   810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32338791: com.apple.rosetta.exceptionserver
-    + 810 ???  (in <unknown binary>)  [0x7ff7ffc5ced0]
-    810 Thread_32338792
-    + 810 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
-    +   810 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
-    +     810 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
-    +       810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32338793
-    + 810 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
-    +   810 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
-    +     810 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
-    +       810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32338817
-    + 810 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
-    +   810 _pthread_start  (in libsystem_pthread.dylib) + 115  [0x7ff80e275e4d]
-    +     810 google_breakpad::ExceptionHandler::WaitForMessage(void*)  (in GhosttyManualIsolationProbe) + 101  [0x102b402c5]  exception_handler.cc:495
-    +       810 mach_msg  (in libsystem_kernel.dylib) + 19  [0x7ff80e232e47]
-    +         810 mach_msg_overwrite  (in libsystem_kernel.dylib) + 574  [0x7ff80e239ba3]
-    +           810 mach_msg2_internal  (in libsystem_kernel.dylib) + 83  [0x7ff80e240f4c]
-    +             810 ???  (in <unknown binary>)  [0x7ff89a59fc6c]
-    +               810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32339020: cf_release
-    + 810 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x102eed023]
-    +   810 ???  (in <unknown binary>)  [0x7ff89a5b1198]
-    +     810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32339065: renderer
-    + 794 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
-    + ! 794 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x102eed023]
-    + !   794 ???  (in <unknown binary>)  [0x7ff89a5b1198]
-    + !     794 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    + 11 ???  (in <unknown binary>)  [0xb0300000000]
-    + ! 11 ???  (in <unknown binary>)  [0x20]
-    + !   11 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x102eed023]
-    + !     11 ???  (in <unknown binary>)  [0x7ff89a5b1198]
-    + !       11 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    + 2 object.Object.getProperty__anon_542043  (in GhosttyManualIsolationProbe) + 40  [0x102f40408]
-    + ! 2 class_getProperty  (in libobjc.A.dylib) + 384  [0x7ff80de2fd33]
-    + !   1 ???  (in <unknown binary>)  [0x7ff89a07c6b4]
-    + !   1 list_array_tt<property_t, property_list_t, RawPtr>::begin() const  (in libobjc.A.dylib) + 365  [0x7ff80de487d9]
-    + !     1 ???  (in <unknown binary>)  [0x7ff89a07cda0]
-    + 1 -[IOGPUMetalTexture replaceRegion:mipmapLevel:withBytes:bytesPerRow:]  (in IOGPU) + 64  [0x7ff911860f8d]
-    + ! 1 -[AGXG16XFamilyTexture replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:]  (in AGXMetalG16X) + 67  [0x11de10343]
-    + !   1 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::writeRegion(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, void*, unsigned long, unsigned long)  (in AGXMetalG16X) + 2136  [0x11de14738]
-    + !     1 std::enable_if<true, void>::type AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::writeCompressedRegion2D<true>(void*, void const*, void*, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 19013  [0x11de1b245]
-    + !       1 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::processCompressedRegion2D<AGX::AppleCompressionGen2::Compressor<(AGX::AppleCompressionGen2::PixelFormat)0, 1u, (unsigned char)1, (AGX::AppleCompressionGen2::SubblockOrder)0, (AGXTextureFootprint)0>, false, (AGXHardwareTextureMemoryOrder)2>(void*, void const*, void*, MTLPixelFormat, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 2799  [0x11de48cff]
-    + !         1 ???  (in <unknown binary>)  [0x11e603efc]
-    + 1 ???  (in <unknown binary>)  [0x7ff295d071d0]
-    + ! 1 ???  (in <unknown binary>)  [0x7ff264f085f0]
-    + !   1 renderer.metal.RenderPass.begin  (in GhosttyManualIsolationProbe) + 1584  [0x102f44420]
-    + !     1 -[AGXG16XFamilyCommandBuffer renderCommandEncoderWithDescriptor:]  (in AGXMetalG16X) + 168  [0x11dd2a4e8]
-    + !       1 -[AGXG16XFamilyRenderContext initWithCommandBuffer:descriptor:subEncoderIndex:framebuffer:]  (in AGXMetalG16X) + 8158  [0x11e22b34e]
-    + !         1 AGX::RenderContext<AGX::HAL200::Encoders, AGX::HAL200::Classes, AGX::HAL200::ObjClasses, AGX::HAL200::CommandEncoding>::beginRenderPass()  (in AGXMetalG16X) + 162  [0x11e242e72]
-    + !           1 ???  (in <unknown binary>)  [0x11eaa9c94]
-    + 1 renderer.Metal.initTarget  (in GhosttyManualIsolationProbe) + 423  [0x102efc767]
-    +   1 IOSurfaceCreate  (in IOSurface) + 16  [0x7ff81a8db117]
-    +     1 _iosCreateDictionaryAddingMissingProperties  (in IOSurface) + 801  [0x7ff81a8e7774]
-    +       1 _NSFileSystemRepresentationString  (in Foundation) + 53  [0x7ff80ff677f5]
-    +         1 CFStringCreateWithBytes  (in CoreFoundation) + 41  [0x7ff80e2c32b9]
-    +           1 __CFStringCreateImmutableFunnel3  (in CoreFoundation) + 3003  [0x7ff80e2b8d4d]
-    +             1 ???  (in Rosetta JIT)  [0x104b885c8]
-    810 Thread_32339066: io
-    + 810 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
-    +   810 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x102eed023]
-    +     810 ???  (in <unknown binary>)  [0x7ff89a5b1198]
-    +       810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32339067: CVDisplayLink
-    + 810 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
-    +   810 _pthread_start  (in libsystem_pthread.dylib) + 115  [0x7ff80e275e4d]
-    +     805 CVDisplayLink::runIOThread()  (in CoreVideo) + 524  [0x7ff818d9080e]
-    +     ! 805 CVDisplayLink::waitUntil(unsigned long long)  (in CoreVideo) + 375  [0x7ff818d91877]
-    +     !   803 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1039  [0x7ff80e276329]
-    +     !   : 802 ???  (in <unknown binary>)  [0x7ff89a5a4f48]
-    +     !   : | 802 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    +     !   : 1 ???  (in <unknown binary>)  [0x7ff89a5a0c94]
-    +     !   1 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1104  [0x7ff80e27636a]
-    +     !   : 1 ???  (in <unknown binary>)  [0x7ff89a5ef1bc]
-    +     !   1 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1134  [0x7ff80e276388]
-    +     !     1 ???  (in <unknown binary>)  [0x7ff89a5eb738]
-    +     2 CVDisplayLink::runIOThread()  (in CoreVideo) + 569  [0x7ff818d9083b]
-    +     ! 1 CVDisplayLink::getCurrentTime(CVTimeStamp*)  (in CoreVideo) + 28  [0x7ff818d90e88]
-    +     ! : 1 ???  (in <unknown binary>)  [0x7ff8a8de54a4]
-    +     ! 1 CVDisplayLink::getCurrentTime(CVTimeStamp*)  (in CoreVideo) + 53  [0x7ff818d90ea1]
-    +     !   1 ???  (in <unknown binary>)  [0x7ff8a8d3c2b8]
-    +     1 ???  (in <unknown binary>)  [0x7ff8a1e919f8]
-    +     1 CVDisplayLink::runIOThread()  (in CoreVideo) + 625  [0x7ff818d90873]
-    +     ! 1 CVXTime::update()  (in CoreVideo) + 48  [0x7ff818d909d2]
-    +     !   1 CVHWTime::update(double, bool*, bool*)  (in CoreVideo) + 71  [0x7ff818d90b99]
-    +     !     1 CVCGDisplayLink::getDisplayTimes(unsigned long long*, unsigned long long*, unsigned long long*)  (in CoreVideo) + 35  [0x7ff818d90d85]
-    +     !       1 CVCGDisplayLink::updateDisplayTiming()  (in CoreVideo) + 73  [0x7ff818db805d]
-    +     !         1 SLSDisplayGetCurrentVBLDelta  (in SkyLight) + 61  [0x7ff8146e762e]
-    +     !           1 ???  (in <unknown binary>)  [0x7ff89a5fe954]
-    +     1 CVDisplayLink::runIOThread()  (in CoreVideo) + 665  [0x7ff818d9089b]
-    +       1 watcher.async.AsyncMachPort(api.Xev(.kqueue,backend.kqueue)).notify  (in GhosttyManualIsolationProbe) + 93  [0x102e8c8ad]
-    +         1 mach_msg  (in libsystem_kernel.dylib) + 19  [0x7ff80e232e47]
-    +           1 mach_msg_overwrite  (in libsystem_kernel.dylib) + 574  [0x7ff80e239ba3]
-    +             1 mach_msg2_internal  (in libsystem_kernel.dylib) + 83  [0x7ff80e240f4c]
-    +               1 ???  (in <unknown binary>)  [0x7ff89a59fc6c]
-    +                 1 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32339074
-    + 810 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
-    +   810 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
-    +     810 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
-    +       810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32339076
-    + 810 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
-    +   810 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
-    +     810 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
-    +       810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
-    810 Thread_32339077
-      810 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
-        810 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
-          810 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
-            810 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581042   DispatchQueue_1: com.apple.main-thread  (serial)
+    + 754 start  (in dyld) + 3457  [0x204171781]
+    +   754 GhosttyManualIsolationProbe_main  (in GhosttyManualIsolationProbe) + 5036  [0x10286ce0c]  main.swift:170
+    +     754 awaitNext()  (in GhosttyManualIsolationProbe) + 21  [0x10286e495]  main.swift:49
+    +       754 readLine(strippingNewline:)  (in libswiftCore.dylib) + 50  [0x7ff8224bc732]
+    +         754 swift_stdlib_readLine_stdin  (in libswiftCore.dylib) + 63  [0x7ff8223cc1af]
+    +           754 getdelim  (in libsystem_c.dylib) + 245  [0x7ff80e1360e7]
+    +             754 __srefill1  (in libsystem_c.dylib) + 24  [0x7ff80e112744]
+    +               754 _sread  (in libsystem_c.dylib) + 16  [0x7ff80e112795]
+    +                 754 ???  (in <unknown binary>)  [0x7ff89a5a2b9c]
+    +                   754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581281: com.apple.rosetta.exceptionserver
+    + 754 ???  (in <unknown binary>)  [0x7ff7ffe07ed0]
+    754 Thread_33581282
+    + 754 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
+    +   754 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
+    +     754 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
+    +       754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581283
+    + 754 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
+    +   754 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
+    +     754 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
+    +       754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581284
+    + 754 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
+    +   754 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
+    +     754 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
+    +       754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581309
+    + 754 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   754 _pthread_start  (in libsystem_pthread.dylib) + 115  [0x7ff80e275e4d]
+    +     754 google_breakpad::ExceptionHandler::WaitForMessage(void*)  (in GhosttyManualIsolationProbe) + 101  [0x102d2fb45]  exception_handler.cc:495
+    +       754 mach_msg  (in libsystem_kernel.dylib) + 19  [0x7ff80e232e47]
+    +         754 mach_msg_overwrite  (in libsystem_kernel.dylib) + 574  [0x7ff80e239ba3]
+    +           754 mach_msg2_internal  (in libsystem_kernel.dylib) + 83  [0x7ff80e240f4c]
+    +             754 ???  (in <unknown binary>)  [0x7ff89a59fc6c]
+    +               754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581339: cf_release
+    + 754 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x1030dc933]
+    +   754 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    +     754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581353: renderer
+    + 734 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    + ! 733 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x1030dc933]
+    + ! : 732 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    + ! : | 732 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    + ! : 1 ???  (in <unknown binary>)  [0x104a0f6a8]
+    + ! 1 ???  (in <unknown binary>)  [0x1047b17bc]
+    + !   1 ???  (in <unknown binary>)  [0x7ff7ffe0c27c]
+    + 14 ???  (in <unknown binary>)  [0x1c0300000000]
+    + ! 14 ???  (in <unknown binary>)  [0x20]
+    + !   14 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x1030dc933]
+    + !     14 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    + !       14 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    + 3 object.Object.getProperty__anon_542057  (in GhosttyManualIsolationProbe) + 40  [0x10312fd58]
+    + ! 2 class_getProperty  (in libobjc.A.dylib) + 409  [0x7ff80de2fd4c]
+    + ! : 1 ???  (in Rosetta JIT)  [0x104e6fc60]
+    + ! : 1 ???  (in Rosetta JIT)  [0x104e6fd90]
+    + ! 1 ???  (in <unknown binary>)  [0x7ff89a053b7c]
+    + 2 -[IOGPUMetalTexture replaceRegion:mipmapLevel:withBytes:bytesPerRow:]  (in IOGPU) + 64  [0x7ff911860f8d]
+    + ! 2 -[AGXG16XFamilyTexture replaceRegion:mipmapLevel:slice:withBytes:bytesPerRow:bytesPerImage:]  (in AGXMetalG16X) + 67  [0x11e102343]
+    + !   2 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::writeRegion(unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, void*, unsigned long, unsigned long)  (in AGXMetalG16X) + 2136  [0x11e106738]
+    + !     1 std::enable_if<true, void>::type AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::writeCompressedRegion2D<true>(void*, void const*, void*, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 19013  [0x11e10d245]
+    + !     : 1 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::processCompressedRegion2D<AGX::AppleCompressionGen2::Compressor<(AGX::AppleCompressionGen2::PixelFormat)0, 1u, (unsigned char)1, (AGX::AppleCompressionGen2::SubblockOrder)0, (AGXTextureFootprint)0>, false, (AGXHardwareTextureMemoryOrder)2>(void*, void const*, void*, MTLPixelFormat, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 2799  [0x11e13acff]
+    + !     :   1 ???  (in <unknown binary>)  [0x11e8f6088]
+    + !     1 std::enable_if<true, void>::type AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::writeCompressedRegion2D<true>(void*, void const*, void*, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 23966  [0x11e10e59e]
+    + !       1 AGX::Texture<(AGXTextureMemoryLayout)3, AGX::HAL200::Encoders, AGX::HAL200::Classes>::processCompressedRegion2D<AGX::AppleCompressionGen2::Compressor<(AGX::AppleCompressionGen2::PixelFormat)15, 1u, (unsigned char)1, (AGX::AppleCompressionGen2::SubblockOrder)0, (AGXTextureFootprint)0>, false, (AGXHardwareTextureMemoryOrder)2>(void*, void const*, void*, MTLPixelFormat, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned int, unsigned long, unsigned int, unsigned int) const  (in AGXMetalG16X) + 2607  [0x11e1416cf]
+    + !         1 ???  (in <unknown binary>)  [0x11e92f9cc]
+    + 1 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3423  [0x1030dca7f]
+    +   1 ???  (in <unknown binary>)  [0x10480a8b4]
+    754 Thread_33581354: io
+    + 754 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   754 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x1030dc933]
+    +     754 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    +       754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    754 Thread_33581355: CVDisplayLink
+    + 754 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   754 _pthread_start  (in libsystem_pthread.dylib) + 115  [0x7ff80e275e4d]
+    +     745 CVDisplayLink::runIOThread()  (in CoreVideo) + 524  [0x7ff818d9080e]
+    +     ! 745 CVDisplayLink::waitUntil(unsigned long long)  (in CoreVideo) + 375  [0x7ff818d91877]
+    +     !   743 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1039  [0x7ff80e276329]
+    +     !   : 743 ???  (in <unknown binary>)  [0x7ff89a5a4f48]
+    +     !   :   743 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    +     !   2 _pthread_cond_wait  (in libsystem_pthread.dylib) + 1134  [0x7ff80e276388]
+    +     !     1 ???  (in <unknown binary>)  [0x7ff89a5eb4bc]
+    +     !     1 ???  (in <unknown binary>)  [0x7ff89a5eb818]
+    +     5 CVDisplayLink::runIOThread()  (in CoreVideo) + 665  [0x7ff818d9089b]
+    +     ! 4 watcher.async.AsyncMachPort(api.Xev(.kqueue,backend.kqueue)).notify  (in GhosttyManualIsolationProbe) + 93  [0x10307c12d]
+    +     ! : 3 mach_msg  (in libsystem_kernel.dylib) + 19  [0x7ff80e232e47]
+    +     ! : | 3 mach_msg_overwrite  (in libsystem_kernel.dylib) + 574  [0x7ff80e239ba3]
+    +     ! : |   3 mach_msg2_internal  (in libsystem_kernel.dylib) + 83  [0x7ff80e240f4c]
+    +     ! : |     3 ???  (in <unknown binary>)  [0x7ff89a59fc6c]
+    +     ! : |       3 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+    +     ! : 1 ???  (in <unknown binary>)  [0x7ff89a5a0410]
+    +     ! 1 CVDisplayLink::performIO(CVTimeStamp*)  (in CoreVideo) + 273  [0x7ff818d91a0d]
+    +     !   1 ???  (in <unknown binary>)  [0x7ff8a8d3d450]
+    +     3 CVDisplayLink::runIOThread()  (in CoreVideo) + 625  [0x7ff818d90873]
+    +     ! 3 CVXTime::update()  (in CoreVideo) + 48  [0x7ff818d909d2]
+    +     !   3 CVHWTime::update(double, bool*, bool*)  (in CoreVideo) + 71  [0x7ff818d90b99]
+    +     !     2 CVCGDisplayLink::getDisplayTimes(unsigned long long*, unsigned long long*, unsigned long long*)  (in CoreVideo) + 35  [0x7ff818d90d85]
+    +     !     : 2 CVCGDisplayLink::updateDisplayTiming()  (in CoreVideo) + 73  [0x7ff818db805d]
+    +     !     :   1 SLSDisplayGetCurrentVBLDelta  (in SkyLight) + 61  [0x7ff8146e762e]
+    +     !     :   | 1 ???  (in <unknown binary>)  [0x7ff8a3567480]
+    +     !     :   1 SLSDisplayGetCurrentVBLDelta  (in SkyLight) + 70  [0x7ff8146e7637]
+    +     !     :     1 realtime_data_for_display(int, bool)  (in SkyLight) + 85  [0x7ff8146e6424]
+    +     !     :       1 ???  (in <unknown binary>)  [0x7ff8a2eb1ddc]
+    +     !     1 ???  (in <unknown binary>)  [0x7ff8a1e91a10]
+    +     1 CVDisplayLink::runIOThread()  (in CoreVideo) + 569  [0x7ff818d9083b]
+    +       1 CVDisplayLink::getCurrentTime(CVTimeStamp*)  (in CoreVideo) + 53  [0x7ff818d90ea1]
+    +         1 CVXTime::getCurrentTime(CVTimeStamp*) const  (in CoreVideo) + 65  [0x7ff818d90f55]
+    +           1 ???  (in <unknown binary>)  [0x7ff8a8de4d50]
+    754 Thread_33581362
+      754 start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
+        754 _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
+          754 ???  (in <unknown binary>)  [0x7ff89a5a27d0]
+            754 ???  (in <unknown binary>)  [0x7ff89a03eb80]
 
 Total number in stack (recursive counted multiple, when >=5):
-        13       ???  (in <unknown binary>)  [0x7ff89a03eb80]
-        5       ???  (in <unknown binary>)  [0x7ff89a5a27d0]
-        5       _pthread_wqthread  (in libsystem_pthread.dylib) + 387  [0x7ff80e2728c2]
-        5       start_wqthread  (in libsystem_pthread.dylib) + 15  [0x7ff80e271843]
+        12       ???  (in <unknown binary>)  [0x7ff89a03eb80]
 
 Sort by top of stack, same collapsed (when >= 5):
-        ???  (in <unknown binary>)  [0x7ff89a03eb80]        8898
-        ???  (in <unknown binary>)  [0x7ff7ffc5ced0]        810
+        ???  (in <unknown binary>)  [0x7ff89a03eb80]        7524
+        ???  (in <unknown binary>)  [0x7ff7ffe07ed0]        754
 
 Binary Images:
-       0x10268f000 -        0x103735367 +GhosttyManualIsolationProbe (0) <F72031EA-33CE-396A-ABAA-E0726032E7CB> /var/folders/*/GhosttyManualIsolationProbe
-       0x10f522000 -        0x10f52e03f  libobjc-trampolines.dylib (951.1) <A4EAD2C4-BE26-3595-92C1-5E819C28E258> /usr/lib/libobjc-trampolines.dylib
-       0x11d9c5000 -        0x11e3618a2  com.apple.AGXMetalG16X (345.20.4 - 345.20.4) <BBD85208-4980-3679-9B96-8DA87A55C88F> /System/Library/Extensions/AGXMetalG16X.bundle/Contents/MacOS/AGXMetalG16X
-       0x203be8000 -        0x203c85627  dyld (1.0.0 - 1340) <734C5EC7-3286-329F-B95C-55C9080D31DB> /usr/lib/dyld
+       0x10286a000 -        0x103952d5f +GhosttyManualIsolationProbe (0) <E8BFDFA9-A344-33C9-9CE4-7A45962DE791> /var/folders/*/GhosttyManualIsolationProbe
+       0x10f7dd000 -        0x10f7e903f  libobjc-trampolines.dylib (951.1) <A4EAD2C4-BE26-3595-92C1-5E819C28E258> /usr/lib/libobjc-trampolines.dylib
+       0x11dcb7000 -        0x11e6538a2  com.apple.AGXMetalG16X (345.20.4 - 345.20.4) <BBD85208-4980-3679-9B96-8DA87A55C88F> /System/Library/Extensions/AGXMetalG16X.bundle/Contents/MacOS/AGXMetalG16X
+       0x20416b000 -        0x204208627  dyld (1.0.0 - 1340) <734C5EC7-3286-329F-B95C-55C9080D31DB> /usr/lib/dyld
     0x7ff80de23000 -     0x7ff80de67f13  libobjc.A.dylib (951.1) <CD5FB77F-F9D8-35C7-9B9A-427DA2A59B20> /usr/lib/libobjc.A.dylib
     0x7ff80de68000 -     0x7ff80de976e7  libdyld.dylib (1340) <ECD3E6F2-BD78-3E5F-AA29-9AFDFC7A64FA> /usr/lib/system/libdyld.dylib
     0x7ff80df36000 -     0x7ff80df396d8  libsystem_blocks.dylib (96) <730E0988-5B9B-3ECE-9D6D-4D03E69CC34F> /usr/lib/system/libsystem_blocks.dylib
