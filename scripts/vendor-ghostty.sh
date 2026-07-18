@@ -9,7 +9,8 @@ SERIES="$PATCH_DIR/series"
 CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
 UPSTREAM_REPO="$CACHE/ghostty-upstream"
 EXPECTED_COMMIT=$(/usr/bin/plutil -extract ghostty.commit raw -o - "$LOCK")
-EXPECTED_TREE=$(/usr/bin/awk '$1 == "tree" { print $2 }' "$ROOT/native/ghostty-upstream-tree.txt")
+EXPECTED_TREE=$(/usr/bin/plutil -extract ghostty.upstreamTree raw -o - "$LOCK")
+EXPECTED_PATCHED_TREE=$(/usr/bin/plutil -extract ghostty.patchedTree raw -o - "$LOCK")
 
 usage() {
   echo "usage: $0 fetch|verify|patch-series-sha256" >&2
@@ -72,13 +73,21 @@ verify_vendor() {
 
   /bin/rm -rf "$tmp/.git"
   apply_series "$tmp"
+  git -C "$tmp" init -q
+  git -C "$tmp" add -f .
+  actual_patched_tree=$(git -C "$tmp" write-tree)
+  if [ "$actual_patched_tree" != "$EXPECTED_PATCHED_TREE" ]; then
+    echo "patched Ghostty tree mismatch: expected $EXPECTED_PATCHED_TREE, found $actual_patched_tree" >&2
+    exit 1
+  fi
+  /bin/rm -rf "$tmp/.git"
   if ! /usr/bin/diff -qr "$tmp" "$VENDOR" >/dev/null; then
     echo "vendored Ghostty tree differs from commit $EXPECTED_COMMIT plus ordered patch series" >&2
     /usr/bin/diff -qr "$tmp" "$VENDOR" | /usr/bin/sed -n '1,40p' >&2
     exit 1
   fi
 
-  echo "vendored Ghostty verified: commit=$EXPECTED_COMMIT tree=$EXPECTED_TREE patches=$(patch_series_sha256)"
+  echo "vendored Ghostty verified: commit=$EXPECTED_COMMIT tree=$EXPECTED_TREE patched_tree=$EXPECTED_PATCHED_TREE patches=$(patch_series_sha256)"
 }
 
 case "${1:-}" in

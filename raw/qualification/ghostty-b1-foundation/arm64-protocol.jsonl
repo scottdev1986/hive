@@ -1,0 +1,5 @@
+{"pid":48008,"stage":"before"}
+{"engineBuildId":"5d16444f20de51bccb38b76530c864036f6fccb34177ef50602be0e201b4641c","foregroundPid":"0","initialInputVisible":false,"pid":48008,"processExited":false,"stage":"create","ttyLength":0,"writeCallbacks":0}
+{"hostInputVisible":false,"pid":48008,"remoteOutputVisible":true,"stage":"use","writeCallbacks":1,"writeHex":["484f53545f494e5055545f43414c4c4241434b"]}
+{"pid":48008,"stage":"free","writeCallbacks":1}
+{"pid":48008,"stage":"done"}

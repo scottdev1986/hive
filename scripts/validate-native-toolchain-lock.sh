@@ -34,6 +34,8 @@ assert_equal() {
 /usr/bin/plutil -convert json -o /dev/null "$LOCK"
 assert_equal schemaVersion 1
 assert_equal ghostty.commit 73534c4680a809398b396c94ac7f12fcccb7963d
+assert_equal ghostty.upstreamTree 0aeaa44eda9efaf41523c3c0d4f6851eb81e536e
+assert_equal ghostty.patchedTree 7a199af1796ec6681d7a462b5a64ec889552f16d
 assert_equal ghostty.declaredVersion 1.3.2-dev
 assert_equal zig.version 0.15.2
 assert_equal zig.arm64Url https://ziglang.org/download/0.15.2/zig-aarch64-macos-0.15.2.tar.xz
@@ -49,7 +51,17 @@ assert_equal deploymentTarget 14.0
 assert_equal architectures.0 arm64
 assert_equal architectures.1 x86_64
 
-for key in patchSeriesSha256 publicHeaderSha256 symbolListSha256; do
+recorded_commit=$(/usr/bin/awk '$1 == "commit" { print $2 }' "$ROOT/native/ghostty-upstream-tree.txt")
+recorded_tree=$(/usr/bin/awk '$1 == "tree" { print $2 }' "$ROOT/native/ghostty-upstream-tree.txt")
+recorded_patched_tree=$(/usr/bin/awk '$1 == "patched-tree" { print $2 }' "$ROOT/native/ghostty-upstream-tree.txt")
+if [ "$recorded_commit" != "$(lock_value ghostty.commit)" ] || \
+   [ "$recorded_tree" != "$(lock_value ghostty.upstreamTree)" ] || \
+   [ "$recorded_patched_tree" != "$(lock_value ghostty.patchedTree)" ]; then
+  echo "Ghostty tree provenance record differs from the toolchain lock" >&2
+  exit 1
+fi
+
+for key in patchSeriesSha256 upstreamPublicHeaderSha256 bridgeHeaderSha256 symbolListSha256; do
   value=$(lock_value "ghostty.$key") || {
     echo "toolchain lock is missing ghostty.$key" >&2
     exit 1

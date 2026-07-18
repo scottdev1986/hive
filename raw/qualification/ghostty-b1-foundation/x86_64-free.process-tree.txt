@@ -1,0 +1,3 @@
+stage=free arch=x86_64 root_pid=48820
+48820 46882 46874      0 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.dDZQp2/build-x86_64/x86_64-apple-macosx/debug/GhosttyManualIsolationProbe
+children=0

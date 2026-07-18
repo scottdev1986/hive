@@ -1,0 +1,12 @@
+Test Suite 'Selected tests' started at 2026-07-18 12:01:30.192.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-18 12:01:30.193.
+Test Suite 'Gate4ABIQualificationTests' started at 2026-07-18 12:01:30.193.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' started.
+Test Case '-[HiveTerminalKitTests.Gate4ABIQualificationTests testBridgeValuesLayoutAndCSignaturesAtRuntime]' passed (0.003 seconds).
+Test Suite 'Gate4ABIQualificationTests' passed at 2026-07-18 12:01:30.196.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-18 12:01:30.196.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.003 (0.003) seconds
+Test Suite 'Selected tests' passed at 2026-07-18 12:01:30.196.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.003 (0.004) seconds
+SWIFT_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 callconv=c symbols=6 build_id=5d16444f20de51bccb38b76530c864036f6fccb34177ef50602be0e201b4641c

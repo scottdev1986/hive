@@ -13,6 +13,7 @@ let package = Package(
         .executable(name: "HiveWorkspace", targets: ["HiveWorkspace"]),
         .library(name: "WorkspaceCore", targets: ["WorkspaceCore"]),
         .library(name: "HiveTerminalKit", targets: ["HiveTerminalKit"]),
+        .executable(name: "GhosttyManualIsolationProbe", targets: ["GhosttyManualIsolationProbe"]),
     ],
     dependencies: [
         // Provides LocalProcessTerminalView, the AppKit terminal view that
@@ -86,6 +87,11 @@ let package = Package(
         .testTarget(
             name: "HiveTerminalKitTests",
             dependencies: ["HiveTerminalKit", "HiveGhosttyC"]
+        ),
+        .executableTarget(
+            name: "GhosttyManualIsolationProbe",
+            dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
+            path: "Tests/GhosttyManualIsolationProbe"
         ),
     ]
 )

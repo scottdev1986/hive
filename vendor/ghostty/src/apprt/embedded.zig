@@ -1824,7 +1824,7 @@ pub const CAPI = struct {
         };
     }
 
-    export fn hive_ghostty_engine_build_id_v1() [*:0]const u8 {
+    export fn hive_ghostty_engine_build_id_v1() callconv(.c) [*:0]const u8 {
         return c_terminal.engine_build_id();
     }
 
@@ -1835,7 +1835,7 @@ pub const CAPI = struct {
         write_context: ?*anyopaque,
         event_: ?HiveEventFn,
         event_context: ?*anyopaque,
-    ) ?*Surface {
+    ) callconv(.c) ?*Surface {
         const app = app_ orelse return null;
         const opts = opts_ orelse return null;
         const write = write_ orelse return null;
@@ -1863,7 +1863,7 @@ pub const CAPI = struct {
         bytes_: ?[*]const u8,
         length: usize,
         stream_seq: u64,
-    ) GhosttyResult {
+    ) callconv(.c) GhosttyResult {
         const surface = surface_ orelse return .invalid_value;
         const manual = surface.hive_manual orelse return .invalid_value;
         // An output range must carry bytes; null is invalid for every length.
@@ -1876,7 +1876,7 @@ pub const CAPI = struct {
         payload_: ?[*]const u8,
         length: usize,
         through_seq: u64,
-    ) GhosttyResult {
+    ) callconv(.c) GhosttyResult {
         const surface = surface_ orelse return .invalid_value;
         const manual = surface.hive_manual orelse return .invalid_value;
         // A checkpoint is never empty; null is invalid for every length.
@@ -1890,7 +1890,7 @@ pub const CAPI = struct {
         context: ?*anyopaque,
         out_payload: ?*?[*]u8,
         out_length: ?*usize,
-    ) GhosttyResult {
+    ) callconv(.c) GhosttyResult {
         return c_terminal.checkpoint_export(
             terminal_,
             alloc_fn,
@@ -1904,7 +1904,7 @@ pub const CAPI = struct {
         terminal_: c_terminal.Terminal,
         payload: ?[*]const u8,
         length: usize,
-    ) GhosttyResult {
+    ) callconv(.c) GhosttyResult {
         return c_terminal.checkpoint_import(terminal_, payload, length);
     }
 
@@ -1955,6 +1955,9 @@ pub const CAPI = struct {
 
     /// Returns true if the surface process has exited.
     export fn ghostty_surface_process_exited(surface: *Surface) bool {
+        // Manual surfaces have no process. False is the documented safe
+        // unsupported sentinel, not a claim that a child is alive.
+        if (surface.hive_manual != null) return false;
         return surface.core_surface.child_exited;
     }
 
@@ -2071,12 +2074,16 @@ pub const CAPI = struct {
 
     /// Returns the PID of the foreground process for the surface PTY.
     export fn ghostty_surface_foreground_pid(surface: *Surface) u64 {
+        // Manual surfaces have no PTY process. Zero means unsupported.
+        if (surface.hive_manual != null) return 0;
         return surface.core_surface.getProcessInfo(.foreground_pid) orelse 0;
     }
 
     /// Returns the PTY name for the surface. The returned string must be
     /// freed by the caller via ghostty_string_free.
     export fn ghostty_surface_tty_name(surface: *Surface) String {
+        // Manual surfaces have no PTY. Empty means unsupported.
+        if (surface.hive_manual != null) return .empty;
         const tty_name = surface.core_surface.getProcessInfo(.tty_name) orelse return .empty;
         const copy = surface.app.core_app.alloc.dupeZ(u8, tty_name) catch |err| {
             log.err("error allocating tty name err={}", .{err});

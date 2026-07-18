@@ -1,0 +1,4 @@
+USER          PID   TT   %CPU STAT PRI     STIME     UTIME COMMAND
+scottkellar 48008   ??    0.2 S    31T   0:00.01   0:00.01 /var/fo 48008 S    /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-foundation.dDZQp2/build-arm64/arm64-apple-macosx/debug/GhosttyManualIsolationProbe
+            48008         0.0 S    31T   0:00.00   0:00.00         48008 S
+            48008         0.0 S    31T   0:00.00   0:00.00         48008 S

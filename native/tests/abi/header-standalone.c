@@ -2,6 +2,11 @@
 
 #include <stddef.h>
 
+typedef struct { char prefix; hive_ghostty_event_e value; } hive_event_align_probe;
+typedef struct { char prefix; int value; } hive_int_align_probe;
+typedef struct { char prefix; hive_ghostty_event_s value; } hive_event_struct_align_probe;
+typedef struct { char prefix; void *value; } hive_pointer_align_probe;
+
 /* Gate 4 (M1-B1): freeze every wire-visible value and layout of the
  * Hive-owned fork contract. These are the CONTRACT constants — Swift's
  * GhosttyBridgeResult raw values and BridgeEvent mapping assume them —
@@ -30,6 +35,9 @@ enum {
    * struct size is unchanged, but the type field would overlap what Zig
    * wrote as padding (cross-vendor review brenda, 2026-07-18). */
   hive_event_enum_is_c_int_sized = 1 / (sizeof(hive_ghostty_event_e) == 4),
+  hive_event_enum_is_c_int_aligned =
+      1 / (offsetof(hive_event_align_probe, value) ==
+           offsetof(hive_int_align_probe, value)),
 
   /* Layout of the only aggregate Hive defines on the wire. Field order,
    * offsets, and the 4-byte enum→pointer padding are ABI: the Zig
@@ -40,10 +48,34 @@ enum {
       1 / (offsetof(hive_ghostty_event_s, bytes) - sizeof(hive_ghostty_event_e) == 4),
   hive_event_struct_bytes_at_ptr = 1 / (offsetof(hive_ghostty_event_s, bytes) == sizeof(void *)),
   hive_event_struct_length_after = 1 / (offsetof(hive_ghostty_event_s, length) == 2 * sizeof(void *)),
-  hive_event_struct_total_size = 1 / (sizeof(hive_ghostty_event_s) == 3 * sizeof(void *))
+  hive_event_struct_total_size = 1 / (sizeof(hive_ghostty_event_s) == 3 * sizeof(void *)),
+  hive_event_struct_pointer_aligned =
+      1 / (offsetof(hive_event_struct_align_probe, value) ==
+           offsetof(hive_pointer_align_probe, value))
 };
 
+static void test_write(void *context, const uint8_t *bytes, size_t length) {
+  (void)context;
+  (void)bytes;
+  (void)length;
+}
+
+static void *test_alloc(void *context, size_t length, size_t alignment) {
+  (void)context;
+  (void)length;
+  (void)alignment;
+  return NULL;
+}
+
+static void test_event(void *context, const hive_ghostty_event_s *event) {
+  (void)context;
+  (void)event;
+}
+
 int main(void) {
+  hive_ghostty_write_fn write_callback = test_write;
+  hive_ghostty_alloc_fn alloc_callback = test_alloc;
+  hive_ghostty_event_fn event_callback = test_event;
   const char *(*build_id)(void) = hive_ghostty_engine_build_id_v1;
   ghostty_surface_t (*new_manual)(
     ghostty_app_t, const ghostty_surface_config_s *, hive_ghostty_write_fn,
@@ -67,5 +99,8 @@ int main(void) {
   (void)restore_surface;
   (void)export_terminal;
   (void)import_terminal;
+  (void)write_callback;
+  (void)alloc_callback;
+  (void)event_callback;
   return 0;
 }

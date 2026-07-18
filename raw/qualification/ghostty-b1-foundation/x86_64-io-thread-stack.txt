@@ -1,0 +1,5 @@
+    723 Thread_27927185: io
+    + 723 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   723 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x10543e4a3]
+    +     723 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    +       723 ???  (in <unknown binary>)  [0x7ff89a03eb80]

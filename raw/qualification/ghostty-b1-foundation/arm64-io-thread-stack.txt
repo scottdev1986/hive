@@ -1,0 +1,4 @@
+    605 Thread_27923905: io
+    + 605 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   605 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x10091c30c]
+    +     605 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]

@@ -47,9 +47,10 @@ if [[ "$actual_version" != "$declared_version" ]]; then
 fi
 
 PATCH_SHA=$("$ROOT/scripts/vendor-ghostty.sh" patch-series-sha256)
-HEADER_SHA=$(/usr/bin/shasum -a 256 "$ROOT/native/include/hive_ghostty_bridge.h" | /usr/bin/awk '{ print $1 }')
+UPSTREAM_HEADER_SHA=$(/usr/bin/shasum -a 256 "$ROOT/vendor/ghostty/include/ghostty.h" | /usr/bin/awk '{ print $1 }')
+BRIDGE_HEADER_SHA=$(/usr/bin/shasum -a 256 "$ROOT/native/include/hive_ghostty_bridge.h" | /usr/bin/awk '{ print $1 }')
 SYMBOL_SHA=$(/usr/bin/shasum -a 256 "$ROOT/native/abi/ghostty-bridge.exports" | /usr/bin/awk '{ print $1 }')
-for pair in "patchSeriesSha256:$PATCH_SHA" "publicHeaderSha256:$HEADER_SHA" "symbolListSha256:$SYMBOL_SHA"; do
+for pair in "patchSeriesSha256:$PATCH_SHA" "upstreamPublicHeaderSha256:$UPSTREAM_HEADER_SHA" "bridgeHeaderSha256:$BRIDGE_HEADER_SHA" "symbolListSha256:$SYMBOL_SHA"; do
   key=${pair%%:*}
   actual=${pair#*:}
   expected=$(lock_value "ghostty.$key")
@@ -187,7 +188,8 @@ fi
 
 export HIVE_MAC_XCFRAMEWORK_ARCHIVE="GhosttyKit.xcframework/$mac_identifier/$mac_binary_path"
 export HIVE_PATCH_SERIES_SHA256="$PATCH_SHA"
-export HIVE_PUBLIC_HEADER_SHA256="$HEADER_SHA"
+export HIVE_UPSTREAM_PUBLIC_HEADER_SHA256="$UPSTREAM_HEADER_SHA"
+export HIVE_BRIDGE_HEADER_SHA256="$BRIDGE_HEADER_SHA"
 export HIVE_SYMBOL_LIST_SHA256="$SYMBOL_SHA"
 export HIVE_METAL_TOOLCHAIN="$METAL_TOOLCHAIN"
 export HIVE_METAL_BUILD="$METAL_BUILD"

@@ -172,11 +172,12 @@ const xcodeStub = process.env.HIVE_XCODE_LIBSYSTEM_STUB;
 if (!bundledStub || !xcodeStub) throw new Error("build did not provide Darwin stub provenance paths");
 const patchSeriesSha256 = process.env.HIVE_PATCH_SERIES_SHA256;
 const metalToolchain = process.env.HIVE_METAL_TOOLCHAIN;
-const publicHeaderSha256 = process.env.HIVE_PUBLIC_HEADER_SHA256;
+const upstreamPublicHeaderSha256 = process.env.HIVE_UPSTREAM_PUBLIC_HEADER_SHA256;
+const bridgeHeaderSha256 = process.env.HIVE_BRIDGE_HEADER_SHA256;
 const symbolListSha256 = process.env.HIVE_SYMBOL_LIST_SHA256;
 const metalBuild = process.env.HIVE_METAL_BUILD;
 const zigArchiveSha256 = process.env.HIVE_ZIG_ARCHIVE_SHA256;
-if (!patchSeriesSha256 || !publicHeaderSha256 || !symbolListSha256) {
+if (!patchSeriesSha256 || !upstreamPublicHeaderSha256 || !bridgeHeaderSha256 || !symbolListSha256) {
   throw new Error("build did not provide source/ABI provenance hashes");
 }
 if (!metalToolchain || !metalBuild || !zigArchiveSha256) {
@@ -189,9 +190,11 @@ const artifactManifest = {
     repository: "https://github.com/ghostty-org/ghostty.git",
     commit: lock.ghostty.commit,
     declaredVersion: lock.ghostty.declaredVersion,
-    upstreamTree: "0aeaa44eda9efaf41523c3c0d4f6851eb81e536e",
+    upstreamTree: lock.ghostty.upstreamTree,
+    patchedTree: lock.ghostty.patchedTree,
     patchSeriesSha256,
-    publicHeaderSha256,
+    upstreamPublicHeaderSha256,
+    bridgeHeaderSha256,
     symbolListSha256,
   },
   toolchain: lock,

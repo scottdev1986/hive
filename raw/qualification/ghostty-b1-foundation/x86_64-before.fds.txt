@@ -1,0 +1,13 @@
+p48820
+f0
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.dDZQp2/x86_64.control
+f1
+tREG
+n/Users/scottkellar/Projects/hive/.hive/worktrees/derek/raw/qualification/ghostty-b1-foundation/x86_64-protocol.jsonl
+f2
+tREG
+n/Users/scottkellar/Projects/hive/.hive/worktrees/derek/raw/qualification/ghostty-b1-foundation/x86_64-probe.stderr.txt
+f3
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-foundation.dDZQp2/x86_64.control

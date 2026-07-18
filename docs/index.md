@@ -49,6 +49,14 @@ The control plane: who may do what, and what happens when state is missing.
 | [Isolated rebuild bootstrap](daemon/bootstrap.md) | The immutable old-release control plane used while main carries the rebuild: exact artifact pin, full process-home and runtime isolation, operating contract, and simultaneous live proof. | 2026-07-17 |
 | [Agent teardown](daemon/agent-teardown.md) | Capture the owned process tree before killing tmux, reap it, verify post-state, and preserve work whenever cleanup cannot be proved. | 2026-07-14 |
 
+## terminal
+
+The native terminal engine contract and the evidence required before Hive may embed it.
+
+| Article | Summary | Updated |
+| --- | --- | --- |
+| [Ghostty manual bridge fork contract v1](terminal/ghostty-fork-contract-v1.md) | The six Hive-owned manual-I/O operations, isolation sentinels, frozen ABI and supply chain, shipment rules, and upgrade/rollback procedure. | 2026-07-18 |
+
 ## workspace
 
 The native macOS app, its visual language, and the platform underneath it.

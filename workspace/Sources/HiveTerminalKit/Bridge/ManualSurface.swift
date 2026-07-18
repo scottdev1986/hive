@@ -432,12 +432,11 @@ public let ghosttyAppWakeupTrampoline: ghostty_runtime_wakeup_cb = { userdata in
 /// including a real byte-triggerable action routed to its verdict.
 ///
 /// UPGRADE-TIME GUARANTEE (corrected after cross-vendor review 2026-07-18 —
-/// the earlier claim that toolchain-lock's publicHeaderSha256 forced this
-/// was WRONG: that pin hashes native/include/hive_ghostty_bridge.h, which
-/// does not contain the action enum). The real two-part guarantee: (1) the
-/// whole vendored tree is pinned by ghostty-upstream-tree.txt's patched-
-/// tree hash and checked by scripts/vendor-ghostty.sh verify, so any change
-/// to vendor/ghostty/include/ghostty.h fails the build chain; and (2)
+/// the old ambiguous public-header field actually hashed the bridge header,
+/// which does not contain the action enum). The lock now carries distinct
+/// upstream and bridge header hashes. The two-part completeness guarantee is:
+/// (1) the whole vendored tree and upstream header are pinned, so any change
+/// fails the build chain; and (2)
 /// Gate9ActionPolicyTests parses the `ghostty_action_tag_e` enum block
 /// directly from that pinned header and asserts its member count equals the
 /// classified-set size, so a bump that appends a tag turns RED and demands

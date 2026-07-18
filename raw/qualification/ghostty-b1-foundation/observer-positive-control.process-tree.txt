@@ -1,0 +1,3 @@
+observer_parent=46882 observer_child=46907
+46882 46874 46874      0 S    /bin/bash
+46907 46882 46874      0 S    /bin/sleep

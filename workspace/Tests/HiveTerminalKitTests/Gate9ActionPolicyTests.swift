@@ -19,12 +19,11 @@ final class Gate9ActionPolicyTests: XCTestCase {
 
     /// Parses ONLY the `ghostty_action_tag_e` enum block out of the PINNED
     /// vendored header and counts its members. Cross-vendor review
-    /// (2026-07-18) corrected the earlier claim that publicHeaderSha256
-    /// guarded this — that pin hashes the BRIDGE header, which has no action
-    /// enum, so a bump appending tag 66 passed every check. This reads the
-    /// real enum from vendor/ghostty/include/ghostty.h (itself pinned by the
-    /// tree hash in ghostty-upstream-tree.txt), so a new tag changes this
-    /// count and turns the completeness test RED.
+    /// (2026-07-18) corrected the earlier claim that the old ambiguous
+    /// public-header field guarded this — it hashed the bridge header, which
+    /// has no action enum. The build lock now carries separate upstream and
+    /// bridge header hashes. This still reads the real upstream enum so a new
+    /// tag changes the count and turns the completeness test RED.
     private func pinnedActionEnumMemberCount() throws -> Int {
         let repoRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // HiveTerminalKitTests
