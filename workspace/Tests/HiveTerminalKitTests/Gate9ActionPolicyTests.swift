@@ -162,13 +162,16 @@ final class Gate9ActionPolicyTests: XCTestCase {
                       ".engineInert; observed \(firings)")
 
         // And NOTHING gesture-class or unclassified may reach the callback
-        // from scroll output — every firing must be an engine-inert
-        // notification, routed to its real verdict.
+        // from scroll output — every firing must route to the CONCRETE
+        // .engineInert verdict. (Asserting verdict == classify(raw) here
+        // would be circular — the observer verdict IS classify's result — so
+        // it's a hard-coded expected value, not self-comparison.)
+        let deniedGestureRaws = Set(HiveGhosttyActionPolicy.deniedGestureTags.map(\.rawValue))
         for (raw, verdict) in firings {
             XCTAssertEqual(verdict, .engineInert,
                            "scroll output must only emit engine-inert actions; rawValue \(raw) routed \(String(describing: verdict))")
-            XCTAssertEqual(verdict, HiveGhosttyActionPolicy.classify(ghostty_action_tag_e(rawValue: raw)),
-                           "the verdict handle routed must match classify() for rawValue \(raw)")
+            XCTAssertFalse(deniedGestureRaws.contains(raw),
+                           "no gesture-class action (rawValue \(raw)) may reach the callback from scroll output")
         }
     }
 
