@@ -16,6 +16,14 @@ public enum GhosttyBridgeResult: Int32, Equatable, Sendable {
     }
 }
 
+/// Whether parser-generated terminal protocol replies are enabled for this
+/// manual surface. Sessiond enables them as the canonical PTY authority;
+/// renderer display copies disable them to prevent duplicate replies.
+public enum GhosttyTerminalReplyPolicy: UInt32, Equatable, Sendable {
+    case disabled = 0
+    case enabled = 1
+}
+
 /// L0 surface engine seam — production uses Ghostty; tests inject fakes.
 public protocol ManualSurfaceEngine: AnyObject {
     var callbackContext: BridgeCallbackContext { get }
@@ -80,7 +88,8 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     public func processOutput(bytes: Data, streamSeq: UInt64) -> GhosttyBridgeResult {
         if bytes.isEmpty { return .invalidValue }
         let digest = sha256(bytes)
-        let end = streamSeq + UInt64(bytes.count)
+        let (end, overflow) = streamSeq.addingReportingOverflow(UInt64(bytes.count))
+        if overflow { return .invalidValue }
         if let existing = committed.first(where: { $0.streamSeq == streamSeq && $0.bytes.count == bytes.count }) {
             return existing.digest == digest ? .success : .invalidValue
         }
@@ -660,12 +669,14 @@ public enum GhosttyBridgeFactory {
     public static func makeManualSurface(
         hostView: NSView,
         widthPx: UInt32 = 800,
-        heightPx: UInt32 = 480
+        heightPx: UInt32 = 480,
+        terminalReplies: GhosttyTerminalReplyPolicy = .disabled
     ) throws -> GhosttyManualSurface {
         try makeManualSurface(
             hostView: hostView,
             widthPx: widthPx,
             heightPx: heightPx,
+            terminalReplies: terminalReplies,
             configPolicyPath: manualConfigPolicyPath
         )
     }
@@ -674,6 +685,7 @@ public enum GhosttyBridgeFactory {
         hostView: NSView,
         widthPx: UInt32,
         heightPx: UInt32,
+        terminalReplies: GhosttyTerminalReplyPolicy,
         configPolicyPath: UnsafePointer<CChar>
     ) throws -> GhosttyManualSurface {
         // Snapshot the seam once: a mid-call flip of serializeCreation must
@@ -738,6 +750,7 @@ public enum GhosttyBridgeFactory {
         guard let surface = hive_ghostty_surface_new_manual_v1(
             app,
             &surfaceConfig,
+            terminalReplies.rawValue,
             hiveBridgeWriteTrampoline,
             writeCtx,
             hiveBridgeEventTrampoline,
@@ -785,13 +798,15 @@ public enum GhosttyBridgeFactory {
     /// Convenience for tests: host view is retained by the returned surface (SF1).
     public static func makeManualSurfaceForTesting(
         widthPx: UInt32 = 800,
-        heightPx: UInt32 = 480
+        heightPx: UInt32 = 480,
+        terminalReplies: GhosttyTerminalReplyPolicy = .disabled
     ) throws -> GhosttyManualSurface {
         let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
         return try makeManualSurface(
             hostView: host,
             widthPx: widthPx,
             heightPx: heightPx,
+            terminalReplies: terminalReplies,
             configPolicyPath: headlessTestConfigPolicyPath
         )
     }

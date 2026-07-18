@@ -4,6 +4,7 @@ const testing = std.testing;
 const apc = @import("apc.zig");
 const clipboard = @import("clipboard.zig");
 const csi = @import("csi.zig");
+const dcs = @import("dcs.zig");
 const device_attributes = @import("device_attributes.zig");
 const device_status = @import("device_status.zig");
 const stream = @import("stream.zig");
@@ -15,6 +16,7 @@ const osc = @import("osc.zig");
 const osc_color = @import("osc/parsers/color.zig");
 const kitty_color = @import("kitty/color.zig");
 const size_report = @import("size_report.zig");
+const terminfo = @import("../terminfo/main.zig");
 const Terminal = @import("Terminal.zig");
 
 const log = std.log.scoped(.stream_terminal);
@@ -45,6 +47,9 @@ pub const Handler = struct {
     /// to send commands to the terminal emulator. This is used by
     /// the kitty graphics protocol.
     apc_handler: apc.Handler = .{},
+
+    /// DCS parsing state for reply-producing DECRQSS and XTGETTCAP.
+    dcs_handler: dcs.Handler = .{},
 
     /// Default cursor style used by DECSCUSR reset (CSI 0 q).
     default_cursor: bool = true,
@@ -136,6 +141,7 @@ pub const Handler = struct {
 
     pub fn deinit(self: *Handler) void {
         self.apc_handler.deinit();
+        self.dcs_handler.deinit();
     }
 
     pub fn vt(
@@ -298,12 +304,9 @@ pub const Handler = struct {
             .xtversion => self.reportXtversion(),
             .clipboard_contents => try self.clipboardContents(value.kind, value.data),
 
-            // No supported DCS commands have any terminal-modifying effects,
-            // but they may in the future. For now we just ignore it.
-            .dcs_hook,
-            .dcs_put,
-            .dcs_unhook,
-            => {},
+            .dcs_hook => try self.dcsHook(value),
+            .dcs_put => try self.dcsPut(value),
+            .dcs_unhook => try self.dcsUnhook(),
 
             // Have no terminal-modifying effect
             .show_desktop_notification,
@@ -317,6 +320,90 @@ pub const Handler = struct {
     inline fn writePty(self: *Handler, data: [:0]const u8) void {
         const func = self.effects.write_pty orelse return;
         func(self, data);
+    }
+
+    inline fn dcsHook(self: *Handler, value: Action.Value(.dcs_hook)) !void {
+        var cmd = self.dcs_handler.hook(self.terminal.gpa(), value) orelse return;
+        defer cmd.deinit();
+        try self.dcsCommand(&cmd);
+    }
+
+    inline fn dcsPut(self: *Handler, value: u8) !void {
+        var cmd = self.dcs_handler.put(value) orelse return;
+        defer cmd.deinit();
+        try self.dcsCommand(&cmd);
+    }
+
+    inline fn dcsUnhook(self: *Handler) !void {
+        var cmd = self.dcs_handler.unhook() orelse return;
+        defer cmd.deinit();
+        try self.dcsCommand(&cmd);
+    }
+
+    fn dcsCommand(self: *Handler, cmd: *dcs.Command) !void {
+        // Reply policy is expressed by the write effect. Do not even encode
+        // protocol replies when the embedding role disabled that effect.
+        if (self.effects.write_pty == null) return;
+
+        switch (cmd.*) {
+            .xtgettcap => |*gettcap| {
+                const alloc = self.terminal.gpa();
+                const map = comptime terminfo.ghostty.xtgettcapMap();
+                while (gettcap.next()) |key| {
+                    const response = map.get(key) orelse continue;
+                    const terminated = try alloc.dupeZ(u8, response);
+                    defer alloc.free(terminated);
+                    self.writePty(terminated);
+                }
+            },
+
+            .decrqss => |request| {
+                var response: [129]u8 = undefined;
+                var output = std.io.fixedBufferStream(&response);
+                const writer = output.writer();
+
+                const prefix_fmt = "\x1bP{d}$r";
+                const prefix_len = std.fmt.comptimePrint(prefix_fmt, .{0}).len;
+                output.pos = prefix_len;
+
+                switch (request) {
+                    .none => {},
+                    .sgr => {
+                        const buf = try self.terminal.printAttributes(output.buffer[output.pos..]);
+                        output.pos += buf.len;
+                        try writer.writeByte('m');
+                    },
+                    .decscusr => {
+                        const blink = self.terminal.modes.get(.cursor_blinking);
+                        const style: u8 = switch (self.terminal.screens.active.cursor.cursor_style) {
+                            .block => if (blink) 1 else 2,
+                            .underline => if (blink) 3 else 4,
+                            .bar => if (blink) 5 else 6,
+                            .block_hollow => if (blink) 1 else 2,
+                        };
+                        try writer.print("{d} q", .{style});
+                    },
+                    .decstbm => try writer.print("{d};{d}r", .{
+                        self.terminal.scrolling_region.top + 1,
+                        self.terminal.scrolling_region.bottom + 1,
+                    }),
+                    .decslrm => if (self.terminal.modes.get(.enable_left_and_right_margin)) {
+                        try writer.print("{d};{d}s", .{
+                            self.terminal.scrolling_region.left + 1,
+                            self.terminal.scrolling_region.right + 1,
+                        });
+                    },
+                }
+
+                const valid = output.pos > prefix_len;
+                try writer.writeAll("\x1b\\");
+                _ = try std.fmt.bufPrint(response[0..prefix_len], prefix_fmt, .{@intFromBool(valid)});
+                response[output.pos] = 0;
+                self.writePty(response[0..output.pos :0]);
+            },
+
+            .tmux => {},
+        }
     }
 
     fn bell(self: *Handler) void {
@@ -363,6 +450,8 @@ pub const Handler = struct {
     }
 
     fn reportDeviceAttributes(self: *Handler, req: device_attributes.Req) void {
+        // Match Ghostty's exec-mode handler: tertiary DA is unsupported.
+        if (req == .tertiary) return;
         const func = self.effects.device_attributes orelse return;
         const attrs = func(self);
 

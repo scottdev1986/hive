@@ -78,7 +78,8 @@ int main(void) {
   hive_ghostty_event_fn event_callback = test_event;
   const char *(*build_id)(void) = hive_ghostty_engine_build_id_v1;
   ghostty_surface_t (*new_manual)(
-    ghostty_app_t, const ghostty_surface_config_s *, hive_ghostty_write_fn,
+    ghostty_app_t, const ghostty_surface_config_s *,
+    hive_ghostty_terminal_reply_policy_e, hive_ghostty_write_fn,
     void *, hive_ghostty_event_fn, void *) = hive_ghostty_surface_new_manual_v1;
   ghostty_result_e (*process_output)(
     ghostty_surface_t, const uint8_t *, size_t, uint64_t) =

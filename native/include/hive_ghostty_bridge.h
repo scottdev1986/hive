@@ -29,6 +29,11 @@ typedef struct hive_ghostty_event_s {
 } hive_ghostty_event_s;
 typedef void (*hive_ghostty_event_fn)(
   void *context, const hive_ghostty_event_s *event);
+typedef uint32_t hive_ghostty_terminal_reply_policy_e;
+enum {
+  HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED = 0,
+  HIVE_GHOSTTY_TERMINAL_REPLIES_ENABLED = 1
+};
 
 /* Hive fork contract v1. The returned lowercase hexadecimal identity binds
  * checkpoints and attach/replay to one engine build and architecture. */
@@ -41,6 +46,7 @@ const char *hive_ghostty_engine_build_id_v1(void);
  * process_exited=false, foreground_pid=0, and tty_name empty. */
 ghostty_surface_t hive_ghostty_surface_new_manual_v1(
   ghostty_app_t, const ghostty_surface_config_s *,
+  hive_ghostty_terminal_reply_policy_e,
   hive_ghostty_write_fn, void *write_context,
   hive_ghostty_event_fn, void *event_context);
 

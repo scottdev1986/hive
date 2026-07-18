@@ -17,6 +17,10 @@ int main(void) {
   CHECK(HIVE_GHOSTTY_EVENT_BELL == 4);
   CHECK(HIVE_GHOSTTY_EVENT_CLIPBOARD_DENIED == 5);
   CHECK(HIVE_GHOSTTY_EVENT_CLOSE_REQUEST == 6);
+  CHECK(HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED == 0);
+  CHECK(HIVE_GHOSTTY_TERMINAL_REPLIES_ENABLED == 1);
+  CHECK(sizeof(hive_ghostty_terminal_reply_policy_e) == sizeof(uint32_t));
+  CHECK(_Alignof(hive_ghostty_terminal_reply_policy_e) == _Alignof(uint32_t));
   CHECK(sizeof(hive_ghostty_event_e) == sizeof(int));
   CHECK(_Alignof(hive_ghostty_event_e) == _Alignof(int));
   CHECK(offsetof(hive_ghostty_event_s, type) == 0);

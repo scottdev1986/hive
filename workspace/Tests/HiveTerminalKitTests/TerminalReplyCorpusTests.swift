@@ -211,4 +211,27 @@ final class TerminalReplyCorpusTests: XCTestCase {
                       "XTVERSION must be second, matching stream order")
         XCTAssertEqual(writes[2], Data("\u{1B}[>1;10;0c".utf8), "DA2 must be third, matching stream order")
     }
+
+    /// DCS queries use the same stream parser as CSI/OSC. The pre-gate
+    /// manual path discarded dcs_hook/dcs_put/dcs_unhook, so these produced
+    /// no bytes even though Ghostty's exec-mode handler supports both.
+    func testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        var writes: [Data] = []
+        surface.callbackContext.onWrite = { writes.append($0) }
+
+        let decrqss = Data("\u{1B}P$qm\u{1B}\\".utf8)
+        let xtgettcap = Data("\u{1B}P+q544E\u{1B}\\".utf8) // TN
+        XCTAssertEqual(
+            surface.processOutput(bytes: decrqss + xtgettcap, streamSeq: 0),
+            .success
+        )
+
+        XCTAssertEqual(writes, [
+            Data("\u{1B}P1$r0m\u{1B}\\".utf8),
+            Data("\u{1B}P1+r544E=67686F73747479\u{1B}\\".utf8),
+        ], "DECRQSS then XTGETTCAP must each reply once in parser order")
+    }
 }

@@ -132,6 +132,7 @@ let surface: ghostty_surface_t? = withUnsafeMutablePointer(to: &environment) { e
     return hive_ghostty_surface_new_manual_v1(
         app,
         &surfaceConfig,
+        UInt32(HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED),
         hiveBridgeWriteTrampoline,
         callbackContext.unownedContextPointer,
         hiveBridgeEventTrampoline,

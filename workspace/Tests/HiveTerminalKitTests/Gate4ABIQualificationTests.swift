@@ -16,6 +16,10 @@ final class Gate4ABIQualificationTests: XCTestCase {
         XCTAssertEqual(HIVE_GHOSTTY_EVENT_BELL.rawValue, 4)
         XCTAssertEqual(HIVE_GHOSTTY_EVENT_CLIPBOARD_DENIED.rawValue, 5)
         XCTAssertEqual(HIVE_GHOSTTY_EVENT_CLOSE_REQUEST.rawValue, 6)
+        XCTAssertEqual(HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED, 0)
+        XCTAssertEqual(HIVE_GHOSTTY_TERMINAL_REPLIES_ENABLED, 1)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_terminal_reply_policy_e>.size, 4)
+        XCTAssertEqual(MemoryLayout<hive_ghostty_terminal_reply_policy_e>.alignment, 4)
 
         XCTAssertEqual(MemoryLayout<hive_ghostty_event_e>.size, 4)
         XCTAssertEqual(MemoryLayout<hive_ghostty_event_e>.alignment, 4)
@@ -29,7 +33,9 @@ final class Gate4ABIQualificationTests: XCTestCase {
         let buildID = String(cString: hive_ghostty_engine_build_id_v1())
         XCTAssertNotNil(buildID.range(of: "^[0-9a-f]{64}$", options: .regularExpression))
 
-        XCTAssertNil(hive_ghostty_surface_new_manual_v1(nil, nil, nil, nil, nil, nil))
+        XCTAssertNil(hive_ghostty_surface_new_manual_v1(
+            nil, nil, HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED, nil, nil, nil, nil
+        ))
         XCTAssertEqual(
             hive_ghostty_surface_process_output_v1(nil, nil, 0, 0),
             GHOSTTY_INVALID_VALUE

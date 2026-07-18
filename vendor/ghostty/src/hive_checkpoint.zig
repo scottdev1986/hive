@@ -32,6 +32,7 @@ const identity_sources = [_][]const u8{
     @embedFile("Surface.zig"),
     @embedFile("termio/backend.zig"),
     @embedFile("lib_vt.zig"),
+    @embedFile("terminal/stream_terminal.zig"),
 };
 
 const Sha256 = std.crypto.hash.sha2.Sha256;
@@ -386,7 +387,8 @@ pub fn feed(
         stream.next(byte);
         if (stream.parser.state == .ground and
             stream.utf8decoder.state == 0 and
-            stream.handler.apc_handler.state == .inactive)
+            stream.handler.apc_handler.state == .inactive and
+            stream.handler.dcs_handler.state == .inactive)
         {
             pending.clearRetainingCapacity();
         }

@@ -46,10 +46,15 @@ const HiveEvent = extern struct {
 
 const HiveWriteFn = *const fn (?*anyopaque, [*]const u8, usize) callconv(.c) void;
 const HiveEventFn = *const fn (?*anyopaque, *const HiveEvent) callconv(.c) void;
+const HiveTerminalReplyPolicy = enum(c_uint) {
+    disabled = 0,
+    enabled = 1,
+};
 
 const HiveManualInit = struct {
     event: HiveEventFn,
     event_context: ?*anyopaque,
+    terminal_reply_policy: HiveTerminalReplyPolicy,
 };
 
 threadlocal var hive_manual_init: ?HiveManualInit = null;
@@ -1061,17 +1066,18 @@ const HiveManual = struct {
 
     fn init(surface: *Surface, opts: HiveManualInit) !HiveManual {
         var handler = surface.core_surface.io.terminal.vtHandler();
+        const replies_enabled = opts.terminal_reply_policy == .enabled;
         handler.effects = .{
             .bell = &bell,
             .clipboard_write = &clipboardWrite,
             .color_scheme = null,
-            .device_attributes = &deviceAttributes,
-            .enquiry = &enquiry,
-            .size = &sizeReport,
+            .device_attributes = if (replies_enabled) &deviceAttributes else null,
+            .enquiry = if (replies_enabled) &enquiry else null,
+            .size = if (replies_enabled) &sizeReport else null,
             .title_changed = &titleChanged,
             .pwd_changed = &pwdChanged,
-            .write_pty = &writePty,
-            .xtversion = &xtversion,
+            .write_pty = if (replies_enabled) &writePty else null,
+            .xtversion = if (replies_enabled) &xtversion else null,
         };
         return .{
             .surface = surface,
@@ -1142,20 +1148,8 @@ const HiveManual = struct {
     /// level 2 conformance, ANSI color, no clipboard feature (52) because
     /// clipboardWrite above always denies.
     ///
-    /// KNOWN DIVERGENCE (cross-vendor review 2026-07-17, deferred with
-    /// queen's authorization, not fixed): DA3 (CSI = c) gets a default
-    /// Tertiary reply here (unit_id 0), but the pinned exec-mode
-    /// reportDeviceAttributes has no tertiary case and replies to DA3 with
-    /// nothing. This effect's signature — `fn (*Handler)
-    /// device_attributes.Attributes`, called once regardless of which DA
-    /// variant is being asked — has no way to know the request type and
-    /// suppress just the tertiary reply; only the caller (stream_terminal
-    /// .zig's reportDeviceAttributes) knows it. Matching exec-mode exactly
-    /// would mean patching that upstream file too, past ADR-0002's
-    /// six-file budget for a query xterm ctlseqs marks legacy/rare (no
-    /// mainstream TUI negotiation depends on DA3). Revisit if budget ever
-    /// allows a second Zig-side hunk, or if upstream adds a req-aware
-    /// device_attributes effect signature.
+    /// stream_terminal suppresses tertiary DA to match the pinned exec-mode
+    /// handler, which implements only primary and secondary DA.
     fn deviceAttributes(handler: *terminal.TerminalStream.Handler) terminal.device_attributes.Attributes {
         _ = handler;
         return .{ .secondary = .{ .firmware_version = 10 } };
@@ -1191,27 +1185,35 @@ const HiveManual = struct {
 
     fn process(self: *HiveManual, bytes: []const u8, stream_seq: u64) GhosttyResult {
         const alloc = self.surface.app.core_app.alloc;
-        switch (self.output_ranges.classify(bytes, stream_seq)) {
-            .duplicate => return .success,
-            .invalid => return .invalid_value,
-            .accept => {},
-        }
-        self.pending.ensureUnusedCapacity(alloc, bytes.len) catch
-            return .out_of_memory;
-        self.output_ranges.commit(alloc, bytes, stream_seq) catch
-            return .out_of_memory;
-
         const mutex = self.surface.core_surface.renderer_state.mutex;
-        mutex.lock();
-        hive_checkpoint.feed(
-            &self.stream,
-            &self.pending,
-            alloc,
-            &self.checkpoint_valid,
-            bytes,
-        );
-        self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
-        mutex.unlock();
+        var accepted = false;
+        const result: GhosttyResult = result: {
+            mutex.lock();
+            defer mutex.unlock();
+
+            switch (self.output_ranges.classify(bytes, stream_seq)) {
+                .duplicate => break :result .success,
+                .invalid => break :result .invalid_value,
+                .accept => {},
+            }
+            self.pending.ensureUnusedCapacity(alloc, bytes.len) catch
+                break :result .out_of_memory;
+            self.output_ranges.commit(alloc, bytes, stream_seq) catch
+                break :result .out_of_memory;
+
+            hive_checkpoint.feed(
+                &self.stream,
+                &self.pending,
+                alloc,
+                &self.checkpoint_valid,
+                bytes,
+            );
+            self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+            accepted = true;
+            break :result .success;
+        };
+        if (result != .success) return result;
+        if (!accepted) return .success;
         self.surface.core_surface.io.renderer_wakeup.notify() catch {};
         self.emit(.invalidate, "");
         return .success;
@@ -1237,24 +1239,24 @@ const HiveManual = struct {
         };
         var stream_owned = true;
         defer if (stream_owned) stream.deinit();
-        stream.handler.effects = self.stream.handler.effects;
-
         const mutex = self.surface.core_surface.renderer_state.mutex;
-        mutex.lock();
-        self.stream.deinit();
-        self.pending.deinit(alloc);
-        self.surface.core_surface.io.terminal.deinit(alloc);
-        self.surface.core_surface.io.terminal = snapshot.terminal;
-        stream.handler.terminal = &self.surface.core_surface.io.terminal;
-        self.stream = stream;
-        self.pending = .{ .items = snapshot.pending, .capacity = snapshot.pending.len };
-        self.checkpoint_valid = true;
-        self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
-        mutex.unlock();
-
-        self.output_ranges.reset(through_seq);
-        snapshot_owned = false;
-        stream_owned = false;
+        {
+            mutex.lock();
+            defer mutex.unlock();
+            stream.handler.effects = self.stream.handler.effects;
+            self.stream.deinit();
+            self.pending.deinit(alloc);
+            self.surface.core_surface.io.terminal.deinit(alloc);
+            self.surface.core_surface.io.terminal = snapshot.terminal;
+            stream.handler.terminal = &self.surface.core_surface.io.terminal;
+            self.stream = stream;
+            self.pending = .{ .items = snapshot.pending, .capacity = snapshot.pending.len };
+            self.checkpoint_valid = true;
+            self.output_ranges.reset(through_seq);
+            self.surface.core_surface.renderer_state.terminal.flags.dirty.clear = true;
+            snapshot_owned = false;
+            stream_owned = false;
+        }
         self.surface.core_surface.io.renderer_wakeup.notify() catch {};
         self.emit(.title, self.surface.core_surface.io.terminal.getTitle() orelse "");
         self.emit(.pwd, self.surface.core_surface.io.terminal.getPwd() orelse "");
@@ -1831,6 +1833,7 @@ pub const CAPI = struct {
     export fn hive_ghostty_surface_new_manual_v1(
         app_: ?*App,
         opts_: ?*const apprt.Surface.Options,
+        terminal_reply_policy_: c_uint,
         write_: ?HiveWriteFn,
         write_context: ?*anyopaque,
         event_: ?HiveEventFn,
@@ -1840,6 +1843,10 @@ pub const CAPI = struct {
         const opts = opts_ orelse return null;
         const write = write_ orelse return null;
         const event = event_ orelse return null;
+        const terminal_reply_policy = std.meta.intToEnum(
+            HiveTerminalReplyPolicy,
+            terminal_reply_policy_,
+        ) catch return null;
         if (CoreSurface.hive_manual_backend != null or hive_manual_init != null)
             return null;
 
@@ -1850,6 +1857,7 @@ pub const CAPI = struct {
         hive_manual_init = .{
             .event = event,
             .event_context = event_context,
+            .terminal_reply_policy = terminal_reply_policy,
         };
         defer {
             CoreSurface.hive_manual_backend = null;
