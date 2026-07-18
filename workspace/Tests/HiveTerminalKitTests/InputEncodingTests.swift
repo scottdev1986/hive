@@ -340,6 +340,50 @@ final class InputEncodingTests: XCTestCase {
                        "must not just be the old hardcoded whole-view-bounds placeholder")
     }
 
+    /// NSTextInputClient's firstRect contract is SCREEN coordinates, not
+    /// window coordinates — the pinned Surface View converts view→window
+    /// and then window.convertToScreen. Cross-vendor review (bram,
+    /// 2026-07-18) caught the port stopping at window coords, displacing
+    /// the IME candidate window in any window with a nonzero screen
+    /// origin, and the prior control being blind to it (unattached view:
+    /// window == screen trivially). This control observes the screen
+    /// conversion directly: the SAME view in the SAME window must report
+    /// a rect that SHIFTS by exactly the window's origin delta when the
+    /// window moves — window-coordinate output shifts by nothing and
+    /// goes RED.
+    func testFirstRectShiftsWithWindowScreenOriginProvingScreenCoords() throws {
+        let surface: GhosttyManualSurface
+        do {
+            surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        } catch {
+            XCTFail("real manual surface required for gate 8 live proof, got: \(error)")
+            throw error
+        }
+        defer { surface.free() }
+        let terminal = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
+
+        let window = NSWindow(
+            contentRect: NSRect(x: 100, y: 100, width: 500, height: 400),
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: true
+        )
+        defer { window.orderOut(nil) }
+        window.contentView?.addSubview(terminal)
+
+        let range = NSRange(location: 0, length: 0)
+        let before = terminal.firstRect(forCharacterRange: range, actualRange: nil)
+        window.setFrameOrigin(NSPoint(x: 400, y: 350))
+        let after = terminal.firstRect(forCharacterRange: range, actualRange: nil)
+
+        XCTAssertEqual(after.origin.x - before.origin.x, 300, accuracy: 0.5,
+                       "moving the window +300pt in screen x must shift the IME rect by exactly that " +
+                       "— a window-coordinate rect would not move at all")
+        XCTAssertEqual(after.origin.y - before.origin.y, 250, accuracy: 0.5,
+                       "moving the window +250pt in screen y must shift the IME rect by exactly that " +
+                       "— a window-coordinate rect would not move at all")
+    }
+
     // MARK: Kitty keyboard protocol byte golden — NOT YET DONE, see below
 
     // Attempted: enable Kitty disambiguate mode via CSI > 1 u

@@ -215,7 +215,7 @@ extension HiveTerminalView {
     /// detail, not a defect this gate's "placeholder IME ranges" names.
     public func firstRect(forCharacterRange range: NSRange, actualRange: NSRangePointer?) -> NSRect {
         guard let handle = engine.surfaceHandle else {
-            return convert(bounds, to: nil)
+            return toScreen(convert(bounds, to: nil))
         }
 
         var x: Double = 0
@@ -225,7 +225,18 @@ extension HiveTerminalView {
         ghostty_surface_ime_point(handle, &x, &y, &width, &height)
 
         let viewRect = NSRect(x: x, y: frame.size.height - y, width: width, height: height)
-        return convert(viewRect, to: nil)
+        return toScreen(convert(viewRect, to: nil))
+    }
+
+    /// NSTextInputClient's firstRect contract is SCREEN coordinates.
+    /// Cross-vendor review (bram, 2026-07-18) caught this returning window
+    /// coordinates — in a window with nonzero screen origin every IME
+    /// candidate window rendered displaced. Matches the pinned Surface
+    /// View exactly: view→window via convert(_:to: nil), then
+    /// window.convertToScreen, window rect as the no-window fallback.
+    private func toScreen(_ winRect: NSRect) -> NSRect {
+        guard let window else { return winRect }
+        return window.convertToScreen(winRect)
     }
     public override func doCommand(by selector: Selector) {
         // Fall through to key encoding path; Ghostty owns terminal commands.

@@ -161,10 +161,19 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: Data([0xA9]), streamSeq: 1), .success)
         XCTAssertEqual(surface.throughSeq, 2)
 
+        // Exactness (cross-vendor review bram, 2026-07-18 — this control's
+        // third round): hasPrefix("é") stayed green for "é" plus a stray
+        // replacement/duplicate glyph, so extra-byte corruption passed.
+        // The grid's blank cells and row separators are the read API's
+        // expected fill; after stripping ONLY that whitespace/newline
+        // padding, the ENTIRE meaningful screen content must equal "é" —
+        // any additional glyph (U+FFFD, "Ã©", a duplicated "é") survives
+        // the trim and goes RED.
         let screen = readScreenText(surface)
-        XCTAssertTrue(screen.hasPrefix("é"),
-                      "the split lead+continuation bytes must decode to exactly 'é', not garbled/replacement " +
-                      "characters — got screen text starting with \(String(screen.prefix(4)).debugDescription)")
+        let meaningful = screen.trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertEqual(meaningful, "é",
+                       "the split lead+continuation bytes must decode to EXACTLY one 'é' and nothing else " +
+                       "— got \(meaningful.debugDescription) (full screen \(String(screen.prefix(8)).debugDescription)…)")
     }
 
     /// Failures must never poison later calls: a rejected gap is followed
