@@ -609,6 +609,29 @@ public enum GhosttyBridgeFactory {
         }
     }
 
+    /// Serializes Ghostty app/surface construction across threads.
+    ///
+    /// Two independent reasons this is load-bearing for multi-pane:
+    /// 1. `ghostty_app_new` touches HIToolbox TIS/TSM (keyboard layout) which
+    ///    aborts if called concurrently from multiple threads.
+    /// 2. `hive_ghostty_surface_new_manual_v1` installs the manual backend
+    ///    into a per-thread construction slot for the duration of
+    ///    `app.newSurface`; serializing constructors also closes any
+    ///    same-thread re-entry window and keeps the Workspace's concurrent
+    ///    surface creation path robust.
+    ///
+    /// CRITICAL: never hold this lock across `GhosttyAppOwner.free()` /
+    /// `GhosttyManualSurface.free()` — those may `DispatchQueue.main.sync`.
+    /// Holding the lock across a main.sync deadlocks when main itself is
+    /// blocked waiting to create (the boris prototype failure mode).
+    private static let creationLock = NSLock()
+
+    /// Test seam only (gate 3 positive control): when `false`, skips the
+    /// creation lock so a concurrent-create test can measure the unlocked
+    /// failure mode. Production callers always see `true`; tests that flip
+    /// this must restore it in `defer`.
+    static var serializeCreation = true
+
     /// Builds the runtime config passed to `ghostty_app_new` — pulled out of
     /// `makeManualSurface` so gate 3 tests can assert the REAL factory wires
     /// `wakeup_cb`/`userdata` to the real trampoline/context, not a stub.
@@ -640,6 +663,15 @@ public enum GhosttyBridgeFactory {
         widthPx: UInt32 = 800,
         heightPx: UInt32 = 480
     ) throws -> GhosttyManualSurface {
+        if serializeCreation { creationLock.lock() }
+        // Free the failed owner AFTER unlock — free marshals to main via
+        // DispatchQueue.main.sync and must not run under creationLock.
+        var ownerToFreeAfterUnlock: GhosttyAppOwner?
+        defer {
+            if serializeCreation { creationLock.unlock() }
+            ownerToFreeAfterUnlock?.free()
+        }
+
         // ghostty_init is idempotent for process lifetime.
         _ = ghostty_init(0, nil)
 
@@ -688,7 +720,8 @@ public enum GhosttyBridgeFactory {
             hiveBridgeEventTrampoline,
             eventCtx
         ) else {
-            owner.free()
+            // Defer free until after creationLock.unlock (see defer above).
+            ownerToFreeAfterUnlock = owner
             throw FactoryError.surfaceFailed
         }
 
