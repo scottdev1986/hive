@@ -9724,6 +9724,7 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
+            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -9789,6 +9790,7 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
+            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -9854,6 +9856,7 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
+            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -9919,6 +9922,7 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
+            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -9986,6 +9990,7 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
+            "freshForSeconds",
             "phase",
             "blocker"
           ],
@@ -10051,6 +10056,7 @@
             "assignmentGeneration",
             "summary",
             "evidenceRefs",
+            "freshForSeconds",
             "phase",
             "blocker"
           ],

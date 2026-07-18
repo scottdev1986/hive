@@ -54,13 +54,20 @@ export const WIRE_SCHEMA_CATALOG = {
   ...MESSAGE_TERMINAL_WIRE_SCHEMAS,
 } as const;
 
+const BYTE_CODEC_SCHEMA_NAMES = new Set([
+  "listedPayload",
+  "inspectedPayload",
+  "terminalHostCheckpoint",
+  "terminalHostSessionInspection",
+]);
+
 const prettyJson = (value: unknown): string => `${JSON.stringify(value, null, 2)}\n`;
 
 function renderSchemaDocument(): string {
   const schemas = Object.fromEntries(
     Object.entries(WIRE_SCHEMA_CATALOG).map(([name, schema]) => [
       name,
-      z.toJSONSchema(schema, { io: "input" }),
+      z.toJSONSchema(schema, BYTE_CODEC_SCHEMA_NAMES.has(name) ? { io: "input" } : undefined),
     ]),
   );
   return prettyJson({
