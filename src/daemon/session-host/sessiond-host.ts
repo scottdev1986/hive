@@ -1,3 +1,4 @@
+import { createHash } from "node:crypto";
 import { connect, type Socket } from "node:net";
 import { join } from "node:path";
 import type { z } from "zod";
@@ -21,6 +22,9 @@ import {
   AppliedPayloadSchema,
   ClaimAcquirePayloadSchema,
   ClaimResultPayloadSchema,
+  CreateBeginPayloadSchema,
+  CreateCommitPayloadSchema,
+  CreatedPayloadSchema,
   ErrorPayloadSchema,
   FRAME_FLAGS,
   FRAME_HEADER,
@@ -219,14 +223,28 @@ type PendingRequest = {
   timeout: ReturnType<typeof setTimeout>;
 };
 
+type ActiveCreate = {
+  readonly requestIds: Set<bigint>;
+  reject: (error: Error) => void;
+};
+
+export type SessiondNegotiatedLimits = Readonly<{
+  controlFrameMaxBytes: number;
+  streamChunkMaxBytes: number;
+  automatedMessageMaxBytes: number;
+}>;
+
 export class SessiondSocketClient implements SessiondControlClient {
   private nextRequestId = 1n;
   private readonly pending = new Map<bigint, PendingRequest>();
   private readonly decoder = new SessiondFrameDecoder();
   private closed = false;
   private controlFrameMaxBytes = TERMINAL_LIMITS.controlJsonBytesPerFrame;
+  private streamChunkMaxBytes = TERMINAL_LIMITS.streamChunkBytes;
+  private automatedMessageMaxBytes = TERMINAL_LIMITS.automatedMessageBytes;
+  private activeCreate: ActiveCreate | null = null;
 
-  private constructor(private readonly socket: Socket) {
+  constructor(private readonly socket: Socket) {
     socket.on("data", (chunk) =>
       this.receive(typeof chunk === "string" ? Buffer.from(chunk) : chunk));
     socket.on("error", (error) => this.fail(error));
@@ -285,6 +303,40 @@ export class SessiondSocketClient implements SessiondControlClient {
     });
   }
 
+  createTransaction(
+    beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
+    initialInput: Uint8Array,
+  ): Promise<z.infer<typeof CreatedPayloadSchema>> {
+    if (this.closed) return Promise.reject(new Error("sessiond connection is closed"));
+    if (this.activeCreate !== null) {
+      return Promise.reject(new SessiondProtocolError(
+        "sessiond create transaction is already active",
+      ));
+    }
+    if (initialInput.byteLength > this.automatedMessageMaxBytes) {
+      return Promise.reject(new SessiondWireError(
+        "PAYLOAD_TOO_LARGE",
+        "create input exceeds the negotiated automated-message cap",
+        null,
+      ));
+    }
+    const input = initialInput.slice();
+
+    let rejectActive!: (error: Error) => void;
+    const interrupted = new Promise<never>((_, reject) => {
+      rejectActive = reject;
+    });
+    const active: ActiveCreate = {
+      requestIds: new Set(),
+      reject: rejectActive,
+    };
+    this.activeCreate = active;
+    const operation = this.writeCreateTransaction(beginPayload, input);
+    return Promise.race([operation, interrupted]).finally(() => {
+      if (this.activeCreate === active) this.activeCreate = null;
+    });
+  }
+
   close(): void {
     if (this.closed) return;
     this.closed = true;
@@ -295,6 +347,79 @@ export class SessiondSocketClient implements SessiondControlClient {
   setControlFrameMaxBytes(value: number): void {
     this.controlFrameMaxBytes = value;
     this.decoder.setControlFrameMaxBytes(value);
+  }
+
+  setNegotiatedLimits(limits: SessiondNegotiatedLimits): void {
+    this.setControlFrameMaxBytes(limits.controlFrameMaxBytes);
+    this.streamChunkMaxBytes = limits.streamChunkMaxBytes;
+    this.automatedMessageMaxBytes = limits.automatedMessageMaxBytes;
+  }
+
+  private async writeCreateTransaction(
+    beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
+    initialInput: Uint8Array,
+  ): Promise<z.infer<typeof CreatedPayloadSchema>> {
+    await this.writeNoResponseFrame(
+      "CREATE_BEGIN",
+      0,
+      0n,
+      textEncoder.encode(JSON.stringify(beginPayload)),
+    );
+    for (let offset = 0; offset < initialInput.byteLength; offset += this.streamChunkMaxBytes) {
+      await this.writeNoResponseFrame(
+        "CREATE_INPUT",
+        FRAME_FLAGS.contentSensitive,
+        BigInt(offset),
+        initialInput.slice(offset, offset + this.streamChunkMaxBytes),
+      );
+    }
+    const commit = CreateCommitPayloadSchema.parse({
+      schemaVersion: 1,
+      totalLength: initialInput.byteLength,
+      sha256: createHash("sha256").update(initialInput).digest("hex"),
+    });
+    return this.request({
+      requestType: "CREATE_COMMIT",
+      responseType: "CREATED",
+      payload: commit,
+      responseSchema: CreatedPayloadSchema,
+    });
+  }
+
+  private writeNoResponseFrame(
+    type: "CREATE_BEGIN" | "CREATE_INPUT",
+    flags: number,
+    streamSeq: bigint,
+    payload: Uint8Array,
+  ): Promise<void> {
+    if (this.closed) return Promise.reject(new Error("sessiond connection is closed"));
+    const cap = type === "CREATE_INPUT"
+      ? this.streamChunkMaxBytes
+      : this.controlFrameMaxBytes;
+    if (payload.byteLength > cap) {
+      return Promise.reject(new SessiondProtocolError(
+        "sessiond frame exceeds the negotiated v1 cap",
+      ));
+    }
+    const requestId = this.nextRequestId++;
+    this.activeCreate?.requestIds.add(requestId);
+    const bytes = encodeSessiondFrame({
+      type,
+      flags,
+      requestId,
+      streamSeq,
+      payload,
+    });
+    return new Promise((resolve, reject) => {
+      this.socket.write(bytes, (error) => {
+        if (error === null || error === undefined) {
+          resolve();
+          return;
+        }
+        this.activeCreate?.requestIds.delete(requestId);
+        reject(error);
+      });
+    });
   }
 
   private receive(chunk: Uint8Array): void {
@@ -330,6 +455,10 @@ export class SessiondSocketClient implements SessiondControlClient {
       }));
       return;
     }
+    if (this.activeCreate?.requestIds.has(frame.requestId)) {
+      this.fail(this.errorFromFrame(frame));
+      return;
+    }
     const pending = this.pending.get(frame.requestId);
     if (pending === undefined) {
       this.fail(new SessiondProtocolError("sessiond returned an uncorrelated response"));
@@ -337,31 +466,15 @@ export class SessiondSocketClient implements SessiondControlClient {
     }
     clearTimeout(pending.timeout);
     this.pending.delete(frame.requestId);
+    if (frame.type === "ERROR") {
+      pending.reject(this.errorFromFrame(frame));
+      return;
+    }
     let decoded: unknown;
     try {
       decoded = JSON.parse(textDecoder.decode(frame.payload));
     } catch {
       pending.reject(new SessiondProtocolError("sessiond returned invalid JSON"));
-      return;
-    }
-    if (frame.type === "ERROR") {
-      if (
-        frame.flags !==
-          (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)
-      ) {
-        pending.reject(new SessiondProtocolError("sessiond returned an invalid error frame"));
-        return;
-      }
-      const error = ErrorPayloadSchema.safeParse(decoded);
-      if (!error.success) {
-        pending.reject(new SessiondProtocolError("sessiond returned an invalid error payload"));
-        return;
-      }
-      pending.reject(new SessiondWireError(
-        error.data.code,
-        error.data.message,
-        error.data.diagnosticId,
-      ));
       return;
     }
     if (
@@ -379,11 +492,36 @@ export class SessiondSocketClient implements SessiondControlClient {
     pending.resolve(result.data);
   }
 
+  private errorFromFrame(frame: SessiondFrame): Error {
+    if (
+      frame.type !== "ERROR" ||
+      frame.flags !== (FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error)
+    ) {
+      return new SessiondProtocolError("sessiond returned a response to a no-response frame");
+    }
+    let decoded: unknown;
+    try {
+      decoded = JSON.parse(textDecoder.decode(frame.payload));
+    } catch {
+      return new SessiondProtocolError("sessiond returned invalid JSON");
+    }
+    const error = ErrorPayloadSchema.safeParse(decoded);
+    return error.success
+      ? new SessiondWireError(
+          error.data.code,
+          error.data.message,
+          error.data.diagnosticId,
+        )
+      : new SessiondProtocolError("sessiond returned an invalid error payload");
+  }
+
   private fail(error: Error): void {
     if (!this.closed) {
       this.closed = true;
       this.socket.destroy();
     }
+    this.activeCreate?.reject(error);
+    this.activeCreate = null;
     for (const pending of this.pending.values()) {
       clearTimeout(pending.timeout);
       pending.reject(error);
@@ -447,7 +585,7 @@ async function connectBroker(
     ) {
       throw new SessiondProtocolError("sessiond broker WELCOME does not match this daemon");
     }
-    client.setControlFrameMaxBytes(welcome.limits.controlFrameMaxBytes);
+    client.setNegotiatedLimits(welcome.limits);
     return client;
   } catch (error) {
     client.close();

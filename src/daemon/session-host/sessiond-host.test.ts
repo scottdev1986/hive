@@ -1,11 +1,15 @@
 import { describe, expect, test } from "bun:test";
+import { EventEmitter } from "node:events";
 import { mkdir, mkdtemp, rm } from "node:fs/promises";
-import { createServer } from "node:net";
+import { createServer, type Socket } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  CreateBeginPayloadSchema,
+  CreatedPayloadSchema,
   FRAME_FLAGS,
   FRAME_HEADER,
+  FRAME_TYPES,
   HelloPayloadSchema,
   TerminalHostCreateRequestSchema,
 } from "../../schemas/session-protocol";
@@ -26,9 +30,12 @@ import {
   SessiondFrameDecoder,
   SessiondHost,
   SessiondProtocolError,
+  SessiondSocketClient,
+  SessiondWireError,
   SessiondWireNotReadyError,
   type SessiondControlClient,
   type SessiondControlRequest,
+  type SessiondFrame,
 } from "./sessiond-host";
 
 const session: SessionRef = {
@@ -105,6 +112,79 @@ const createResult: CreateResult = {
     outputRetentionBytes: 67_108_864,
   },
 };
+
+const brokerLocator = {
+  schemaVersion: 1 as const,
+  instanceId: "instance-fixture",
+  subject: { kind: "agent" as const, agentId: "agent-fixture" },
+  generation: 1,
+  sessionId: "ses_01890f6a-7b1c-7abc-8def-0123456789ab",
+  hostKind: "sessiond" as const,
+  engineBuildId: null,
+};
+const brokerGeometry = {
+  columns: 80,
+  rows: 24,
+  widthPx: 800,
+  heightPx: 480,
+  cellWidthPx: 10,
+  cellHeightPx: 20,
+};
+const brokerVisibility = {
+  workspaceSessionId: "workspace-session-fixture",
+  workspacePid: 4_200,
+  workspaceStartToken: "4200:123400",
+  openTerminalRevision: "1",
+};
+const createBeginPayload = CreateBeginPayloadSchema.parse({
+  schemaVersion: 1,
+  locator: brokerLocator,
+  provider: "codex",
+  toolSessionId: null,
+  cwd: "/tmp",
+  argv: ["/bin/sh", "-lc", "printf ready"],
+  environment: { PATH: "/usr/bin:/bin" },
+  expectedExecutable: "/bin/sh",
+  readOnly: false,
+  capabilityEpoch: 0,
+  geometry: brokerGeometry,
+  launchGrantId: "launch-grant-fixture",
+  launchGrantRevision: 1,
+  visibility: brokerVisibility,
+});
+const createdPayload = CreatedPayloadSchema.parse({
+  schemaVersion: 1,
+  locator: brokerLocator,
+  created: true,
+  inspection: {
+    schemaVersion: 1,
+    locator: brokerLocator,
+    presence: "present",
+    complete: true,
+    hostPid: 4_000,
+    hostStartToken: "4000:123400",
+    providerRoot: { pid: 4_100, startToken: "4100:123456", processGroupId: 4_100 },
+    expectedExecutable: "/bin/sh",
+    executableVerified: true,
+    outputSeq: "0",
+    checkpointSeq: "0",
+    checkpointAvailable: false,
+    input: { state: "FREE", ownerViewerId: null, claimId: null },
+    viewerCount: 0,
+    geometry: brokerGeometry,
+    resources: {},
+    visibility: {
+      state: "attaching",
+      workspaceSessionId: brokerVisibility.workspaceSessionId,
+      openTerminalRevision: brokerVisibility.openTerminalRevision,
+      expiresAt: "2026-07-18T01:00:15.000Z",
+    },
+    exit: null,
+    survivors: [],
+    evidenceAt: "2026-07-18T01:00:00.000Z",
+    diagnosticIds: [],
+  },
+});
 
 const claim: ClaimResult = {
   state: "granted",
@@ -232,6 +312,63 @@ class RecordingClient implements SessiondControlClient {
   }
 }
 
+class MockSocket extends EventEmitter {
+  readonly writes: Uint8Array[] = [];
+  destroyed = false;
+
+  constructor(
+    private readonly onFrame: (frame: SessiondFrame, socket: MockSocket) => void,
+  ) {
+    super();
+  }
+
+  write(
+    chunk: Uint8Array,
+    callback?: (error?: Error | null) => void,
+  ): boolean {
+    const bytes = new Uint8Array(chunk);
+    this.writes.push(bytes);
+    callback?.(null);
+    const view = new DataView(bytes.buffer, bytes.byteOffset, bytes.byteLength);
+    const typeCode = view.getUint16(FRAME_HEADER.offsets.type);
+    const type = Object.entries(FRAME_TYPES)
+      .find(([, code]) => code === typeCode)?.[0] as SessiondFrame["type"] | undefined;
+    if (type === undefined) throw new Error(`unexpected frame type ${typeCode}`);
+    const payloadLength = view.getUint32(FRAME_HEADER.offsets.payloadLength);
+    const frame: SessiondFrame = {
+      type,
+      flags: view.getUint16(FRAME_HEADER.offsets.flags),
+      requestId: view.getBigUint64(FRAME_HEADER.offsets.requestId),
+      streamSeq: view.getBigUint64(FRAME_HEADER.offsets.streamSeq),
+      payload: bytes.slice(FRAME_HEADER.bytes, FRAME_HEADER.bytes + payloadLength),
+    };
+    queueMicrotask(() => this.onFrame(frame, this));
+    return true;
+  }
+
+  receive(frame: SessiondFrame): void {
+    this.emit("data", encodeSessiondFrame(frame));
+  }
+
+  destroy(): this {
+    this.destroyed = true;
+    return this;
+  }
+}
+
+const encodeJson = (value: unknown): Uint8Array =>
+  new TextEncoder().encode(JSON.stringify(value));
+
+function createdResponse(frame: SessiondFrame): SessiondFrame {
+  return {
+    type: "CREATED",
+    flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
+    requestId: frame.requestId,
+    streamSeq: 0n,
+    payload: encodeJson(createdPayload),
+  };
+}
+
 describe("sessiond wire framing", () => {
   test("encodes network-order headers and decodes split frames", () => {
     const payload = new TextEncoder().encode('{"schemaVersion":1,"monoNanos":"7"}');
@@ -299,6 +436,169 @@ describe("sessiond wire framing", () => {
       FRAME_HEADER.optionalTypeBit | 1,
     );
     expect(new SessiondFrameDecoder().push(encoded)).toEqual([]);
+  });
+
+  test("writes exact BEGIN then empty-input COMMIT bytes and correlates CREATED to COMMIT", async () => {
+    const socket = new MockSocket((frame, peer) => {
+      if (frame.type === "CREATE_COMMIT") peer.receive(createdResponse(frame));
+    });
+    const client = new SessiondSocketClient(socket as unknown as Socket);
+
+    await expect(client.createTransaction(
+      createBeginPayload,
+      new Uint8Array(),
+    )).resolves.toEqual(createdPayload);
+
+    expect(socket.writes).toEqual([
+      encodeSessiondFrame({
+        type: "CREATE_BEGIN",
+        flags: 0,
+        requestId: 1n,
+        streamSeq: 0n,
+        payload: encodeJson(createBeginPayload),
+      }),
+      encodeSessiondFrame({
+        type: "CREATE_COMMIT",
+        flags: 0,
+        requestId: 2n,
+        streamSeq: 0n,
+        payload: encodeJson({
+          schemaVersion: 1,
+          totalLength: 0,
+          sha256: "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+        }),
+      }),
+    ]);
+  });
+
+  test("chunks exact raw CREATE_INPUT bytes at accumulated byte offsets", async () => {
+    const socket = new MockSocket((frame, peer) => {
+      if (frame.type === "CREATE_COMMIT") peer.receive(createdResponse(frame));
+    });
+    const client = new SessiondSocketClient(socket as unknown as Socket);
+    client.setNegotiatedLimits({
+      controlFrameMaxBytes: 262_144,
+      streamChunkMaxBytes: 3,
+      automatedMessageMaxBytes: 8,
+    });
+    const input = new TextEncoder().encode("abcdefg");
+
+    await expect(client.createTransaction(createBeginPayload, input))
+      .resolves.toEqual(createdPayload);
+
+    expect(socket.writes).toEqual([
+      encodeSessiondFrame({
+        type: "CREATE_BEGIN",
+        flags: 0,
+        requestId: 1n,
+        streamSeq: 0n,
+        payload: encodeJson(createBeginPayload),
+      }),
+      encodeSessiondFrame({
+        type: "CREATE_INPUT",
+        flags: FRAME_FLAGS.contentSensitive,
+        requestId: 2n,
+        streamSeq: 0n,
+        payload: new TextEncoder().encode("abc"),
+      }),
+      encodeSessiondFrame({
+        type: "CREATE_INPUT",
+        flags: FRAME_FLAGS.contentSensitive,
+        requestId: 3n,
+        streamSeq: 3n,
+        payload: new TextEncoder().encode("def"),
+      }),
+      encodeSessiondFrame({
+        type: "CREATE_INPUT",
+        flags: FRAME_FLAGS.contentSensitive,
+        requestId: 4n,
+        streamSeq: 6n,
+        payload: new TextEncoder().encode("g"),
+      }),
+      encodeSessiondFrame({
+        type: "CREATE_COMMIT",
+        flags: 0,
+        requestId: 5n,
+        streamSeq: 0n,
+        payload: encodeJson({
+          schemaVersion: 1,
+          totalLength: 7,
+          sha256: "7d1a54127b222502f5b79b5fb0803061152a44f92b37e23c6527baf665d4da9a",
+        }),
+      }),
+    ]);
+  });
+
+  test("surfaces in_doubt from COMMIT without retrying", async () => {
+    const socket = new MockSocket((frame, peer) => {
+      if (frame.type !== "CREATE_COMMIT") return;
+      peer.receive({
+        type: "ERROR",
+        flags: FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error,
+        requestId: frame.requestId,
+        streamSeq: 0n,
+        payload: encodeJson({
+          schemaVersion: 1,
+          code: "IN_DOUBT",
+          message: "host launch state is indeterminate",
+          diagnosticId: null,
+        }),
+      });
+    });
+    const client = new SessiondSocketClient(socket as unknown as Socket);
+
+    const failure = client.createTransaction(createBeginPayload, new Uint8Array())
+      .catch((error) => error);
+    await expect(failure).resolves.toBeInstanceOf(SessiondWireError);
+    await expect(failure).resolves.toMatchObject({ code: "IN_DOUBT" });
+    expect(socket.writes).toHaveLength(2);
+  });
+
+  test("surfaces an ERROR correlated to no-response CREATE_BEGIN", async () => {
+    const socket = new MockSocket((frame, peer) => {
+      if (frame.type !== "CREATE_BEGIN") return;
+      peer.receive({
+        type: "ERROR",
+        flags: FRAME_FLAGS.response | FRAME_FLAGS.final | FRAME_FLAGS.error,
+        requestId: frame.requestId,
+        streamSeq: 0n,
+        payload: encodeJson({
+          schemaVersion: 1,
+          code: "NOT_READY",
+          message: "production backend is not ready",
+          diagnosticId: null,
+        }),
+      });
+    });
+    const client = new SessiondSocketClient(socket as unknown as Socket);
+
+    const failure = client.createTransaction(createBeginPayload, new Uint8Array())
+      .catch((error) => error);
+    await expect(failure).resolves.toBeInstanceOf(SessiondWireError);
+    await expect(failure).resolves.toMatchObject({ code: "NOT_READY" });
+    expect(socket.destroyed).toBe(true);
+  });
+
+  test("rejects oversized or overlapping create transactions before writing", async () => {
+    const socket = new MockSocket(() => undefined);
+    const client = new SessiondSocketClient(socket as unknown as Socket);
+    client.setNegotiatedLimits({
+      controlFrameMaxBytes: 262_144,
+      streamChunkMaxBytes: 3,
+      automatedMessageMaxBytes: 3,
+    });
+    const oversized = client.createTransaction(
+      createBeginPayload,
+      new Uint8Array(4),
+    ).catch((error) => error);
+    await expect(oversized).resolves.toMatchObject({ code: "PAYLOAD_TOO_LARGE" });
+    expect(socket.writes).toEqual([]);
+
+    const first = client.createTransaction(createBeginPayload, new Uint8Array());
+    await expect(client.createTransaction(createBeginPayload, new Uint8Array()))
+      .rejects.toThrow("create transaction is already active");
+    client.close();
+    await expect(first).rejects.toThrow("sessiond connection closed");
   });
 
   test("handshakes and creates over the production Unix-socket path", async () => {
