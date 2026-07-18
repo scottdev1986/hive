@@ -1,24 +1,21 @@
 import { z } from "zod";
 import {
   SessionLocatorSchema,
-  TerminalHostSessionRefSchema,
   VisibilityRequestSchema,
 } from "../../schemas/session-protocol";
 
-/** Hive-owned policy bound to one project-neutral terminal-host identity. */
+/** Hive-owned policy bound to one exact sessiond locator. */
 export const HiveTerminalBindingSchema = z.strictObject({
-  session: TerminalHostSessionRefSchema,
   locator: SessionLocatorSchema.unwrap().extend({ hostKind: z.literal("sessiond") }).readonly(),
   visibility: VisibilityRequestSchema,
 }).readonly();
 
 export type HiveTerminalBinding = z.infer<typeof HiveTerminalBindingSchema>;
-export type TerminalHostSessionRef = HiveTerminalBinding["session"];
 
 export interface TerminalHostBindingStore {
   bindTerminalHostSession(binding: HiveTerminalBinding): HiveTerminalBinding;
-  getTerminalHostBinding(session: TerminalHostSessionRef): HiveTerminalBinding | null;
   getTerminalHostBindingByLocator(locator: HiveTerminalBinding["locator"]): HiveTerminalBinding | null;
+  listTerminalHostBindings(instanceId: string): readonly HiveTerminalBinding[];
 }
 
 export class TerminalHostBindingConflictError extends Error {

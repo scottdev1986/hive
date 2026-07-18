@@ -9,8 +9,6 @@ import {
 import { resolveHiveHome } from "../tmux-sessions";
 import type {
   ClaimResult,
-  CreateRequest,
-  CreateResult,
   InputReceipt,
   ResizeResult,
   SessionInspection,
@@ -18,6 +16,15 @@ import type {
   TerminalHost,
   TerminationResult,
 } from "./terminal-host-contract";
+import type {
+  CreateResult,
+  SessionHost,
+  SessionSpec,
+} from "./contract";
+import {
+  HiveTerminalBindingSchema,
+  type TerminalHostBindingStore,
+} from "./terminal-host-binding";
 import {
   AppliedPayloadSchema,
   ClaimAcquirePayloadSchema,
@@ -39,9 +46,8 @@ import {
   ResizePayloadSchema,
   SESSION_PROTOCOL_MINOR_RANGE,
   SESSION_PROTOCOL_VERSION,
+  SessionSpecSchema,
   TERMINAL_LIMITS,
-  TerminalHostCreateRequestSchema,
-  TerminalHostCreateResultSchema,
   TerminatePayloadSchema,
   TerminatedPayloadSchema,
   WelcomePayloadSchema,
@@ -54,14 +60,13 @@ const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
 export type LandedTerminalHost = Pick<
   TerminalHost,
-  | "create"
   | "claimInput"
   | "submitInput"
   | "resize"
   | "inspect"
   | "list"
   | "terminate"
->;
+> & Pick<SessionHost, "create">;
 
 export class SessiondProtocolError extends Error {
   constructor(message: string) {
@@ -92,6 +97,15 @@ export class SessiondBrokerUnavailableError extends Error {
   constructor(readonly socketPath: string, cause: unknown) {
     super(`sessiond broker is unavailable at ${socketPath}`, { cause });
     this.name = "SessiondBrokerUnavailableError";
+  }
+}
+
+export class SessiondCreateAdmissionDisabledError extends Error {
+  constructor() {
+    super(
+      "sessiond create admission requires a Workspace-owned pending open-terminal binding",
+    );
+    this.name = "SessiondCreateAdmissionDisabledError";
   }
 }
 
@@ -215,6 +229,14 @@ export interface SessiondControlClient {
   close(): void;
 }
 
+export interface SessiondBrokerClient extends SessiondControlClient {
+  readonly engineBuildId: string | null;
+  createTransaction(
+    beginPayload: z.infer<typeof CreateBeginPayloadSchema>,
+    initialInput: Uint8Array,
+  ): Promise<z.infer<typeof CreatedPayloadSchema>>;
+}
+
 type PendingRequest = {
   responseType: FrameTypeName;
   responseSchema: z.ZodType<unknown>;
@@ -234,7 +256,7 @@ export type SessiondNegotiatedLimits = Readonly<{
   automatedMessageMaxBytes: number;
 }>;
 
-export class SessiondSocketClient implements SessiondControlClient {
+export class SessiondSocketClient implements SessiondBrokerClient {
   private nextRequestId = 1n;
   private readonly pending = new Map<bigint, PendingRequest>();
   private readonly decoder = new SessiondFrameDecoder();
@@ -243,6 +265,11 @@ export class SessiondSocketClient implements SessiondControlClient {
   private streamChunkMaxBytes = TERMINAL_LIMITS.streamChunkBytes;
   private automatedMessageMaxBytes = TERMINAL_LIMITS.automatedMessageBytes;
   private activeCreate: ActiveCreate | null = null;
+  private negotiatedEngineBuildId: string | null = null;
+
+  get engineBuildId(): string | null {
+    return this.negotiatedEngineBuildId;
+  }
 
   constructor(private readonly socket: Socket) {
     socket.on("data", (chunk) =>
@@ -353,6 +380,10 @@ export class SessiondSocketClient implements SessiondControlClient {
     this.setControlFrameMaxBytes(limits.controlFrameMaxBytes);
     this.streamChunkMaxBytes = limits.streamChunkMaxBytes;
     this.automatedMessageMaxBytes = limits.automatedMessageMaxBytes;
+  }
+
+  setNegotiatedEngineBuildId(engineBuildId: string | null): void {
+    this.negotiatedEngineBuildId = engineBuildId;
   }
 
   private async writeCreateTransaction(
@@ -534,14 +565,15 @@ export interface SessiondHostOptions {
   repoRoot?: string;
   hiveHome?: string;
   handshake?: () => Promise<DaemonHandshake>;
-  connectBroker?: () => Promise<SessiondControlClient>;
+  connectBroker?: () => Promise<SessiondBrokerClient>;
   connectDirect?: (session: SessionRef) => Promise<SessiondControlClient>;
+  pendingBindings?: TerminalHostBindingStore;
 }
 
 async function connectBroker(
   path: string,
   handshake: DaemonHandshake,
-): Promise<SessiondControlClient> {
+): Promise<SessiondBrokerClient> {
   let client: SessiondSocketClient;
   try {
     client = await SessiondSocketClient.connect(path);
@@ -586,6 +618,7 @@ async function connectBroker(
       throw new SessiondProtocolError("sessiond broker WELCOME does not match this daemon");
     }
     client.setNegotiatedLimits(welcome.limits);
+    client.setNegotiatedEngineBuildId(welcome.engineBuildId);
     return client;
   } catch (error) {
     client.close();
@@ -594,10 +627,11 @@ async function connectBroker(
 }
 
 export class SessiondHost implements LandedTerminalHost {
-  private readonly connectBroker: () => Promise<SessiondControlClient>;
+  private readonly connectBroker: () => Promise<SessiondBrokerClient>;
   private readonly connectDirect: (
     session: SessionRef,
   ) => Promise<SessiondControlClient>;
+  private readonly pendingBindings: TerminalHostBindingStore | null;
 
   constructor(options: SessiondHostOptions = {}) {
     const hiveHome = resolveHiveHome(options.hiveHome);
@@ -611,21 +645,57 @@ export class SessiondHost implements LandedTerminalHost {
     this.connectDirect = options.connectDirect ?? (async () => {
       throw new SessiondWireNotReadyError("direct host operations");
     });
+    this.pendingBindings = options.pendingBindings ?? null;
   }
 
-  async create(request: CreateRequest): Promise<CreateResult> {
-    const payload = TerminalHostCreateRequestSchema.parse(request);
+  async create(spec: SessionSpec, initialInput: Uint8Array): Promise<CreateResult> {
+    if (this.pendingBindings === null) {
+      throw new SessiondCreateAdmissionDisabledError();
+    }
+    const parsedSpec = SessionSpecSchema.parse(spec);
+    const locator = HiveTerminalBindingSchema.unwrap().shape.locator.parse(
+      parsedSpec.locator,
+    );
+    const binding = this.pendingBindings.getTerminalHostBindingByLocator(locator);
+    if (binding === null) throw new SessiondCreateAdmissionDisabledError();
+    const payload = CreateBeginPayloadSchema.parse({
+      ...parsedSpec,
+      visibility: binding.visibility,
+    });
     const broker = await this.connectBroker();
     try {
-      return await broker.request({
-        requestType: "CREATE_BEGIN",
-        responseType: "CREATED",
+      const engineBuildId = this.requireEngineBuildId(broker);
+      if (engineBuildId !== parsedSpec.locator.engineBuildId) {
+        throw new SessiondProtocolError(
+          "sessiond broker engine build changed before create",
+        );
+      }
+      const { schemaVersion: _, ...result } = await broker.createTransaction(
         payload,
-        responseSchema: TerminalHostCreateResultSchema,
-      });
+        initialInput,
+      );
+      return result;
     } finally {
       broker.close();
     }
+  }
+
+  async discoverEngineBuildId(): Promise<string> {
+    const broker = await this.connectBroker();
+    try {
+      return this.requireEngineBuildId(broker);
+    } finally {
+      broker.close();
+    }
+  }
+
+  private requireEngineBuildId(broker: SessiondBrokerClient): string {
+    if (broker.engineBuildId === null) {
+      throw new SessiondProtocolError(
+        "sessiond broker did not publish its engine build",
+      );
+    }
+    return broker.engineBuildId;
   }
 
   async claimInput(

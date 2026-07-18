@@ -11,9 +11,11 @@ import {
   FRAME_HEADER,
   FRAME_TYPES,
   HelloPayloadSchema,
-  TerminalHostCreateRequestSchema,
+  SessionSpecSchema,
 } from "../../schemas/session-protocol";
 import type { DaemonHandshake } from "../handshake";
+import type { SessionSpec } from "./contract";
+import type { TerminalHostBindingStore } from "./terminal-host-binding";
 import type {
   ClaimResult,
   CreateRequest,
@@ -27,6 +29,8 @@ import type {
 import {
   encodeSessiondFrame,
   SessiondBrokerUnavailableError,
+  type SessiondBrokerClient,
+  SessiondCreateAdmissionDisabledError,
   SessiondFrameDecoder,
   SessiondHost,
   SessiondProtocolError,
@@ -120,7 +124,7 @@ const brokerLocator = {
   generation: 1,
   sessionId: "ses_01890f6a-7b1c-7abc-8def-0123456789ab",
   hostKind: "sessiond" as const,
-  engineBuildId: null,
+  engineBuildId: "engine-build-fixture",
 };
 const brokerGeometry = {
   columns: 80,
@@ -152,6 +156,19 @@ const createBeginPayload = CreateBeginPayloadSchema.parse({
   launchGrantRevision: 1,
   visibility: brokerVisibility,
 });
+const { visibility: _createVisibility, ...sessionSpecPayload } = createBeginPayload;
+const sessionSpec: SessionSpec = SessionSpecSchema.parse(sessionSpecPayload);
+const pendingBinding = {
+  locator: brokerLocator,
+  visibility: brokerVisibility,
+};
+const pendingBindings: TerminalHostBindingStore = {
+  bindTerminalHostSession: (binding) => binding,
+  getTerminalHostBindingByLocator: (locator) =>
+    locator.sessionId === brokerLocator.sessionId ? pendingBinding : null,
+  listTerminalHostBindings: (instanceId) =>
+    instanceId === brokerLocator.instanceId ? [pendingBinding] : [],
+};
 const createdPayload = CreatedPayloadSchema.parse({
   schemaVersion: 1,
   locator: brokerLocator,
@@ -296,15 +313,31 @@ const termination: TerminationResult = {
   diagnostics: [],
 };
 
-class RecordingClient implements SessiondControlClient {
+class RecordingClient implements SessiondBrokerClient {
   readonly requests: SessiondControlRequest<unknown>[] = [];
+  readonly creates: Array<Readonly<{
+    beginPayload: typeof createBeginPayload;
+    initialInput: Uint8Array;
+  }>> = [];
   closed = false;
 
-  constructor(private readonly respond: (request: SessiondControlRequest<unknown>) => unknown) {}
+  constructor(
+    private readonly respond: (request: SessiondControlRequest<unknown>) => unknown,
+    private readonly createRespond: () => unknown = () => createdPayload,
+    readonly engineBuildId: string | null = null,
+  ) {}
 
   async request<Result>(request: SessiondControlRequest<Result>): Promise<Result> {
     this.requests.push(request as SessiondControlRequest<unknown>);
     return request.responseSchema.parse(this.respond(request as SessiondControlRequest<unknown>));
+  }
+
+  async createTransaction(
+    beginPayload: typeof createBeginPayload,
+    initialInput: Uint8Array,
+  ): Promise<typeof createdPayload> {
+    this.creates.push({ beginPayload, initialInput: initialInput.slice() });
+    return CreatedPayloadSchema.parse(this.createRespond());
   }
 
   close(): void {
@@ -601,7 +634,7 @@ describe("sessiond wire framing", () => {
     await expect(first).rejects.toThrow("sessiond connection closed");
   });
 
-  test("handshakes and creates over the production Unix-socket path", async () => {
+  test("handshakes and runs product create over the production Unix-socket path", async () => {
     const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-host-test-"));
     const runtime = join(directory, "runtime", "sessiond");
     await mkdir(runtime, { recursive: true });
@@ -638,7 +671,7 @@ describe("sessiond wire framing", () => {
                   instanceId: handshake.instanceId,
                   endpointRole: "broker",
                   buildId: "sessiond-build-hash",
-                  engineBuildId: null,
+                  engineBuildId: brokerLocator.engineBuildId,
                   connectionId: "1",
                   serverEpoch: "1",
                   limits: {
@@ -650,13 +683,13 @@ describe("sessiond wire framing", () => {
                   },
                 })),
             }));
-          } else {
+          } else if (frame.type === "CREATE_COMMIT") {
             socket.write(encodeSessiondFrame({
               type: "CREATED",
               flags: FRAME_FLAGS.response | FRAME_FLAGS.final,
               requestId: frame.requestId,
               streamSeq: 0n,
-              payload: new TextEncoder().encode(JSON.stringify(createResult)),
+              payload: new TextEncoder().encode(JSON.stringify(createdPayload)),
             }));
           }
         }
@@ -670,12 +703,18 @@ describe("sessiond wire framing", () => {
       const host = new SessiondHost({
         hiveHome: directory,
         handshake: async () => handshake,
+        pendingBindings,
       });
-      await expect(host.create(createRequest)).resolves.toEqual(createResult);
+      await expect(host.create(sessionSpec, new Uint8Array())).resolves.toEqual({
+        locator: brokerLocator,
+        inspection: createdPayload.inspection,
+        created: true,
+      });
       expect(received.map((frame) => frame.type)).toEqual([
         "HELLO",
         "PONG",
         "CREATE_BEGIN",
+        "CREATE_COMMIT",
       ]);
       expect(HelloPayloadSchema.parse(JSON.parse(
         new TextDecoder().decode(received[0]?.payload),
@@ -694,9 +733,8 @@ describe("sessiond wire framing", () => {
           repoFamilyKey: handshake.repoFamilyKey,
         },
       });
-      expect(JSON.parse(new TextDecoder().decode(received[2]?.payload))).toEqual(
-        createRequest,
-      );
+      expect(JSON.parse(new TextDecoder().decode(received[2]?.payload)))
+        .toEqual(createBeginPayload);
     } finally {
       await new Promise<void>((resolve, reject) =>
         server.close((error) => error === undefined ? resolve() : reject(error)));
@@ -724,18 +762,95 @@ describe("SessiondHost landed frozen operations", () => {
     }
   });
 
-  test("sends create as one exact CREATE_BEGIN and returns exact CREATED", async () => {
-    const broker = new RecordingClient((request) => {
-      expect(request.requestType).toBe("CREATE_BEGIN");
-      expect(request.responseType).toBe("CREATED");
-      expect(request.payload).toEqual(TerminalHostCreateRequestSchema.parse(createRequest));
-      return createResult;
+  test("creates from a product spec and its pre-bound Workspace visibility", async () => {
+    const broker = new RecordingClient(() => {
+      throw new Error("product create must use the transactional seam");
+    }, () => createdPayload, brokerLocator.engineBuildId);
+    const host = new SessiondHost({
+      connectBroker: async () => broker,
+      pendingBindings,
     });
-    const host = new SessiondHost({ connectBroker: async () => broker });
+    const initialInput = new TextEncoder().encode("initial input\n");
 
-    await expect(host.create(createRequest)).resolves.toEqual(createResult);
-    expect(broker.requests).toHaveLength(1);
+    await expect(host.create(sessionSpec, initialInput)).resolves.toEqual({
+      locator: brokerLocator,
+      inspection: createdPayload.inspection,
+      created: true,
+    });
+    expect(broker.creates).toEqual([{
+      beginPayload: createBeginPayload,
+      initialInput,
+    }]);
+    expect(broker.requests).toHaveLength(0);
     expect(broker.closed).toBe(true);
+  });
+
+  test("keeps production sessiond create admission explicitly disabled by default", async () => {
+    const host = new SessiondHost({
+      connectBroker: async () => new RecordingClient(() => createdPayload),
+    });
+    await expect(host.create(sessionSpec, new Uint8Array()))
+      .rejects.toBeInstanceOf(SessiondCreateAdmissionDisabledError);
+  });
+
+  test("discovers the broker engine without caching and closes the connection", async () => {
+    const first = new RecordingClient(
+      () => createdPayload,
+      () => createdPayload,
+      "engine-first",
+    );
+    const second = new RecordingClient(
+      () => createdPayload,
+      () => createdPayload,
+      "engine-second",
+    );
+    const brokers = [first, second];
+    const host = new SessiondHost({
+      connectBroker: async () => brokers.shift()!,
+    });
+
+    await expect(host.discoverEngineBuildId()).resolves.toBe("engine-first");
+    await expect(host.discoverEngineBuildId()).resolves.toBe("engine-second");
+    expect(brokers).toEqual([]);
+    expect(first.closed).toBe(true);
+    expect(second.closed).toBe(true);
+  });
+
+  test("refuses an absent or changed broker engine before CREATE_BEGIN", async () => {
+    const absent = new RecordingClient(
+      () => createdPayload,
+      () => createdPayload,
+      null,
+    );
+    const discovered = new RecordingClient(
+      () => createdPayload,
+      () => createdPayload,
+      brokerLocator.engineBuildId,
+    );
+    const changed = new RecordingClient(
+      () => createdPayload,
+      () => createdPayload,
+      "replacement-engine",
+    );
+    const absentHost = new SessiondHost({
+      connectBroker: async () => absent,
+      pendingBindings,
+    });
+    const brokers = [discovered, changed];
+    const changedHost = new SessiondHost({
+      connectBroker: async () => brokers.shift()!,
+      pendingBindings,
+    });
+
+    await expect(absentHost.discoverEngineBuildId())
+      .rejects.toThrow("did not publish its engine build");
+    await expect(changedHost.discoverEngineBuildId())
+      .resolves.toBe(brokerLocator.engineBuildId);
+    await expect(changedHost.create(sessionSpec, new Uint8Array()))
+      .rejects.toThrow("engine build changed before create");
+    expect(absent.creates).toEqual([]);
+    expect(changed.creates).toEqual([]);
+    expect(brokers).toEqual([]);
   });
 
   test("projects claim, idempotent input, and resize onto an attached neutral host", async () => {

@@ -54,10 +54,9 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 describe("HiveDatabase", () => {
-  test("persists the exact neutral terminal identity to Hive policy binding", () => {
+  test("persists terminal policy binding by the exact Hive locator", () => {
     const path = join(home, "terminal-host-bindings.db");
     const binding: HiveTerminalBinding = {
-      session: { key: "opaque-terminal-key", incarnation: "host-incarnation-1" },
       locator: {
         schemaVersion: 1,
         instanceId: "hive-fixture",
@@ -84,16 +83,72 @@ describe("HiveDatabase", () => {
 
     db = new HiveDatabase(path);
     try {
-      expect(db.getTerminalHostBinding(binding.session)).toEqual(binding);
       expect(db.getTerminalHostBindingByLocator(binding.locator)).toEqual(binding);
+      expect(db.listTerminalHostBindings(binding.locator.instanceId)).toEqual([binding]);
+      expect(db.listTerminalHostBindings("another-hive")).toEqual([]);
       expect(() => db.bindTerminalHostSession({
         ...binding,
         visibility: { ...binding.visibility, openTerminalRevision: "8" },
       })).toThrow(TerminalHostBindingConflictError);
-      expect(() => db.bindTerminalHostSession({
-        ...binding,
-        session: { ...binding.session, incarnation: "host-incarnation-2" },
-      })).toThrow(TerminalHostBindingConflictError);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("migrates neutral-ref bindings to locator-only bindings without losing policy", () => {
+    const path = join(home, "terminal-host-bindings-legacy.db");
+    new HiveDatabase(path).close();
+    const legacy = new Database(path);
+    legacy.exec(`
+      DROP TABLE terminal_host_bindings;
+      CREATE TABLE terminal_host_bindings (
+        sessionKey TEXT NOT NULL,
+        sessionIncarnation TEXT NOT NULL,
+        locatorInstanceId TEXT NOT NULL,
+        locatorSessionId TEXT NOT NULL,
+        locatorGeneration INTEGER NOT NULL CHECK (locatorGeneration > 0),
+        locatorJson TEXT NOT NULL,
+        visibilityJson TEXT NOT NULL,
+        PRIMARY KEY (sessionKey, sessionIncarnation),
+        UNIQUE (locatorInstanceId, locatorSessionId, locatorGeneration)
+      );
+    `);
+    const locator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-legacy",
+      subject: { kind: "agent" as const, agentId: "agent-legacy" },
+      generation: 3,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000102",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-build-legacy",
+    };
+    const visibility = {
+      workspaceSessionId: "workspace-legacy",
+      workspacePid: 4200,
+      workspaceStartToken: "4200:123456",
+      openTerminalRevision: "9",
+    };
+    legacy.query(`
+      INSERT INTO terminal_host_bindings (
+        sessionKey, sessionIncarnation,
+        locatorInstanceId, locatorSessionId, locatorGeneration,
+        locatorJson, visibilityJson
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+    `).run(
+      "neutral-key", "neutral-incarnation", locator.instanceId,
+      locator.sessionId, locator.generation, JSON.stringify(locator),
+      JSON.stringify(visibility),
+    );
+    legacy.close();
+
+    const db = new HiveDatabase(path);
+    try {
+      expect(db.getTerminalHostBindingByLocator(locator)).toEqual({ locator, visibility });
+      expect(db.database.query("PRAGMA table_info(terminal_host_bindings)").all())
+        .not.toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: "sessionKey" }),
+          expect.objectContaining({ name: "sessionIncarnation" }),
+        ]));
     } finally {
       db.close();
     }
