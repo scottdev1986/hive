@@ -132,6 +132,25 @@ policy (douglas/donna converged, queen approved):
   byte-scoped flat-probe controls here are unaffected by gesture-path
   invocations (deltas are scoped to byte feeds).
 
+## Integration verification (2026-07-18, rebase onto main 4f3dd06e)
+
+- Registry migration executed per planning/gate9-sink-registry-migration.md:
+  the carrier rides BridgeCallbackContext (acceptingCallbacks execution-time
+  gate) via GhosttySurfaceCallbackRegistry; private plumbing deleted; public
+  API unchanged. Lifetime tests drive the production notifySurface path.
+- Fresh GhosttyKit.xcframework rebuilt from the landed patched tree (stale
+  pre-Gate-2/5 artifact crashed live-surface tests — ABI moved, confirming
+  the rebuild requirement). Full unfiltered suite: 316 tests, 0 failures
+  (2 pre-existing deliberate skips owned by Gates 6/7).
+- Mutation replays on the MIGRATED code: registry enqueue no-op'd → both
+  delivery-asserting carrier tests RED; forbiddenOpeners emptied → scan
+  detector control RED. Both restored.
+- Scan refinement forced by landed Gate 7: HiveTerminalView legitimately
+  observes sleep/wake via NSWorkspace.shared.notificationCenter. NSWorkspace
+  is now judged per code line with that narrow benign allowlist; a bare
+  alias (`let ws = NSWorkspace.shared`, the opener-evasion shape) is pinned
+  as a positive control alongside the benign-line exemption.
+
 ## Residual risk / honesty notes
 
 - The hostile corpus is finite; the classification's exhaustiveness

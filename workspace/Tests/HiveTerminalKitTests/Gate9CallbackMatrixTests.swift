@@ -235,13 +235,30 @@ final class Gate9CallbackMatrixTests: XCTestCase {
     /// the DETECTION path itself: first forbidden symbol found on a code
     /// (non-comment) line, or nil. Comment lines may NAME a forbidden symbol
     /// (the policy docs do); only code lines can call one.
+    ///
+    /// NSWorkspace is judged PER LINE with a narrow benign allowlist: the
+    /// landed Gate-7 view legitimately observes sleep/wake via
+    /// `NSWorkspace.shared.notificationCenter` (read-only system events,
+    /// not an opener). Any other NSWorkspace code line — including a bare
+    /// alias like `let ws = NSWorkspace.shared`, which is how an opener
+    /// would evade a call-site pattern — is still a violation.
     private static let forbiddenOpeners = ["NSWorkspace", "UserNotifications", "UNUserNotificationCenter",
                                            "EnableSecureEventInput", "DisableSecureEventInput"]
+    private static let benignNSWorkspaceMarkers = [".notificationCenter",
+                                                   "willSleepNotification", "didWakeNotification"]
     private func firstForbiddenOpener(in text: String) -> String? {
-        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+        let codeLines = text.split(separator: "\n", omittingEmptySubsequences: false)
             .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-            .joined(separator: "\n")
-        return Self.forbiddenOpeners.first { code.contains($0) }
+        for line in codeLines {
+            for symbol in Self.forbiddenOpeners where line.contains(symbol) {
+                if symbol == "NSWorkspace",
+                   Self.benignNSWorkspaceMarkers.contains(where: { line.contains($0) }) {
+                    continue
+                }
+                return symbol
+            }
+        }
+        return nil
     }
 
     /// SECURITY: no code path in HiveTerminalKit can open URLs, post user
@@ -261,9 +278,15 @@ final class Gate9CallbackMatrixTests: XCTestCase {
                        "detector must catch a planted forbidden opener — nil means forbidden-symbol " +
                        "detection is disabled and every scan result below is vacuous")
         XCTAssertEqual(firstForbiddenOpener(in: "EnableSecureEventInput()"), "EnableSecureEventInput")
-        // Positive control 2: the intentional comment exemption still holds.
+        // Positive control 2: an ALIAS evasion is still caught — the benign
+        // allowlist must not open a hole for `let ws = NSWorkspace.shared`.
+        XCTAssertEqual(firstForbiddenOpener(in: "let ws = NSWorkspace.shared"), "NSWorkspace",
+                       "a bare NSWorkspace alias (opener-evasion shape) must be flagged")
+        // Positive control 3: the intentional exemptions still hold.
         XCTAssertNil(firstForbiddenOpener(in: "/// OPEN_URL (no NSWorkspace.open from terminal content in B1)."),
                      "a comment-only mention must not trip the scan")
+        XCTAssertNil(firstForbiddenOpener(in: "let center = NSWorkspace.shared.notificationCenter"),
+                     "the Gate-7 sleep/wake observation line must stay exempt")
 
         let sourcesRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // HiveTerminalKitTests
