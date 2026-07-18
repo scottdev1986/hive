@@ -420,6 +420,111 @@ public let ghosttyAppWakeupTrampoline: ghostty_runtime_wakeup_cb = { userdata in
     ctx.scheduleTick()
 }
 
+/// Gate 9 (M1-B1) action policy for manual surfaces: every
+/// `ghostty_action_tag_e` at the PINNED header (66 tags) is classified —
+/// never a blanket false. B1 handles no action at the apprt level (the
+/// callback always returns false), but the FALSE IS TYPED: each tag has an
+/// explicit verdict, tests walk the full range for completeness, and the
+/// upgrade-time guarantee is mechanical — the vendored header is
+/// sha-pinned (toolchain-lock publicHeaderSha256), so upstream cannot add
+/// a tag without failing the build chain, at which point the completeness
+/// test demands a verdict for it.
+///
+/// Verdicts (queen rulings 2026-07-18):
+/// - handledByEffects: visible behavior already flows through the manual
+///   vt Handler effects → bridge events (TITLE/PWD/BELL); the action-cb
+///   arm of the same signal is deliberately a no-op duplicate.
+/// - deniedPolicy: security denials. DESKTOP_NOTIFICATION (raw OSC 9/777
+///   from untrusted agent bytes is a spam/spoof vector; attention signals
+///   belong to Hive's own attributed system), SECURE_INPUT (agent output
+///   must not flip system secure-input; revisit for human-attach mode),
+///   OPEN_URL (no NSWorkspace.open from terminal content in B1).
+/// - deniedGesture: Ghostty window/tab/split/quit/inspector management
+///   Hive does not delegate. Their KEYBINDS are stripped from the manual
+///   config (`keybind = clear`), so these are unreachable-by-construction
+///   from input; the verdict remains as defense in depth.
+/// - engineInert: engine housekeeping notifications with no B1 consumer
+///   (rendering geometry flows through gate-7's own APIs, not actions).
+public enum HiveGhosttyActionPolicy {
+    public enum Verdict: Equatable {
+        case handledByEffects
+        case deniedPolicy
+        case deniedGesture
+        case engineInert
+    }
+
+    static let handledByEffectsTags: [ghostty_action_tag_e] = [
+        GHOSTTY_ACTION_SET_TITLE, GHOSTTY_ACTION_PWD, GHOSTTY_ACTION_RING_BELL,
+    ]
+    static let deniedPolicyTags: [ghostty_action_tag_e] = [
+        GHOSTTY_ACTION_DESKTOP_NOTIFICATION, GHOSTTY_ACTION_SECURE_INPUT,
+        GHOSTTY_ACTION_OPEN_URL,
+    ]
+    static let deniedGestureTags: [ghostty_action_tag_e] = [
+        GHOSTTY_ACTION_QUIT, GHOSTTY_ACTION_NEW_WINDOW, GHOSTTY_ACTION_NEW_TAB,
+        GHOSTTY_ACTION_CLOSE_TAB, GHOSTTY_ACTION_NEW_SPLIT,
+        GHOSTTY_ACTION_CLOSE_ALL_WINDOWS, GHOSTTY_ACTION_TOGGLE_MAXIMIZE,
+        GHOSTTY_ACTION_TOGGLE_FULLSCREEN, GHOSTTY_ACTION_TOGGLE_TAB_OVERVIEW,
+        GHOSTTY_ACTION_TOGGLE_WINDOW_DECORATIONS,
+        GHOSTTY_ACTION_TOGGLE_QUICK_TERMINAL,
+        GHOSTTY_ACTION_TOGGLE_COMMAND_PALETTE, GHOSTTY_ACTION_TOGGLE_VISIBILITY,
+        GHOSTTY_ACTION_TOGGLE_BACKGROUND_OPACITY, GHOSTTY_ACTION_MOVE_TAB,
+        GHOSTTY_ACTION_GOTO_TAB, GHOSTTY_ACTION_GOTO_SPLIT,
+        GHOSTTY_ACTION_GOTO_WINDOW, GHOSTTY_ACTION_RESIZE_SPLIT,
+        GHOSTTY_ACTION_EQUALIZE_SPLITS, GHOSTTY_ACTION_TOGGLE_SPLIT_ZOOM,
+        GHOSTTY_ACTION_PRESENT_TERMINAL, GHOSTTY_ACTION_INSPECTOR,
+        GHOSTTY_ACTION_SHOW_GTK_INSPECTOR, GHOSTTY_ACTION_RENDER_INSPECTOR,
+        GHOSTTY_ACTION_OPEN_CONFIG, GHOSTTY_ACTION_RELOAD_CONFIG,
+        GHOSTTY_ACTION_CLOSE_WINDOW, GHOSTTY_ACTION_UNDO, GHOSTTY_ACTION_REDO,
+        GHOSTTY_ACTION_CHECK_FOR_UPDATES, GHOSTTY_ACTION_START_SEARCH,
+        GHOSTTY_ACTION_END_SEARCH, GHOSTTY_ACTION_FLOAT_WINDOW,
+        GHOSTTY_ACTION_PROMPT_TITLE, GHOSTTY_ACTION_SET_TAB_TITLE,
+        GHOSTTY_ACTION_COPY_TITLE_TO_CLIPBOARD,
+        GHOSTTY_ACTION_SHOW_ON_SCREEN_KEYBOARD, GHOSTTY_ACTION_READONLY,
+    ]
+    static let engineInertTags: [ghostty_action_tag_e] = [
+        GHOSTTY_ACTION_SIZE_LIMIT, GHOSTTY_ACTION_RESET_WINDOW_SIZE,
+        GHOSTTY_ACTION_INITIAL_SIZE, GHOSTTY_ACTION_CELL_SIZE,
+        GHOSTTY_ACTION_SCROLLBAR, GHOSTTY_ACTION_RENDER,
+        GHOSTTY_ACTION_RENDERER_HEALTH, GHOSTTY_ACTION_QUIT_TIMER,
+        GHOSTTY_ACTION_KEY_SEQUENCE, GHOSTTY_ACTION_KEY_TABLE,
+        GHOSTTY_ACTION_COLOR_CHANGE, GHOSTTY_ACTION_CONFIG_CHANGE,
+        GHOSTTY_ACTION_SELECTION_CHANGED, GHOSTTY_ACTION_SHOW_CHILD_EXITED,
+        GHOSTTY_ACTION_PROGRESS_REPORT, GHOSTTY_ACTION_COMMAND_FINISHED,
+        GHOSTTY_ACTION_SEARCH_TOTAL, GHOSTTY_ACTION_SEARCH_SELECTED,
+        GHOSTTY_ACTION_MOUSE_SHAPE, GHOSTTY_ACTION_MOUSE_VISIBILITY,
+        GHOSTTY_ACTION_MOUSE_OVER_LINK,
+    ]
+
+    public static func classify(_ tag: ghostty_action_tag_e) -> Verdict? {
+        if handledByEffectsTags.contains(where: { $0 == tag }) { return .handledByEffects }
+        if deniedPolicyTags.contains(where: { $0 == tag }) { return .deniedPolicy }
+        if deniedGestureTags.contains(where: { $0 == tag }) { return .deniedGesture }
+        if engineInertTags.contains(where: { $0 == tag }) { return .engineInert }
+        return nil
+    }
+
+    /// Test spy (nil in production): observes every action-callback firing
+    /// with its tag, so controls can prove the callback genuinely runs —
+    /// same discipline as GhosttyAppWakeupContext.tickOverride.
+    private static let observerLock = NSLock()
+    private static var observer: ((ghostty_action_tag_e) -> Void)?
+    static func setObserver(_ body: ((ghostty_action_tag_e) -> Void)?) {
+        observerLock.lock(); observer = body; observerLock.unlock()
+    }
+
+    /// The real callback body. Always returns false in B1 — nothing is
+    /// apprt-handled — but through the typed verdict, never as a blanket.
+    static func handle(_ tag: ghostty_action_tag_e) -> Bool {
+        observerLock.lock()
+        let spy = observer
+        observerLock.unlock()
+        spy?(tag)
+        _ = classify(tag) // nil = unknown tag; completeness test owns it
+        return false
+    }
+}
+
 /// Owns a Ghostty app + config for manual surface creation (M2).
 public final class GhosttyAppOwner {
     public let app: ghostty_app_t
@@ -476,7 +581,9 @@ public enum GhosttyBridgeFactory {
             userdata: wakeupContext.unownedContextPointer,
             supports_selection_clipboard: false,
             wakeup_cb: ghosttyAppWakeupTrampoline,
-            action_cb: { _, _, _ in false },
+            // Gate 9: typed per-tag policy, not a blanket false — see
+            // HiveGhosttyActionPolicy.
+            action_cb: { _, _, action in HiveGhosttyActionPolicy.handle(action.tag) },
             read_clipboard_cb: { _, _, _ in false },
             confirm_read_clipboard_cb: { _, _, _, _ in },
             write_clipboard_cb: { _, _, _, _, _ in },
@@ -498,6 +605,17 @@ public enum GhosttyBridgeFactory {
         _ = ghostty_init(0, nil)
 
         guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
+        // Gate 9 (queen ruling 2026-07-18): STRIP every Ghostty keybind from
+        // the manual-surface config. Hive owns window/pane/split management;
+        // an embedded agent-terminal provides none of Ghostty's ~37
+        // window/tab/split/quit/inspector actions, so making their bindings
+        // unreachable-by-construction beats denying them at the action
+        // callback — an unbound key falls through to normal terminal
+        // encoding instead of being swallowed by an action nobody provides.
+        // `keybind = clear` empties the root set and all tables
+        // (config/Config.zig keybind parser). The pinned C API has no
+        // load_string, so the one-line policy is loaded via a temp file.
+        ghostty_config_load_file(config, Self.manualConfigPolicyPath)
         ghostty_config_finalize(config)
 
         let wakeupContext = GhosttyAppWakeupContext()
@@ -548,6 +666,17 @@ public enum GhosttyBridgeFactory {
             ownsSurface: true
         )
     }
+
+    /// One-line manual-surface config policy, written once per process.
+    /// Contents are the gate-9 ruling, not user preference — never merge
+    /// user config files into a manual surface.
+    static let manualConfigPolicyPath: UnsafePointer<CChar> = {
+        let url = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hive-ghostty-manual-config-\(ProcessInfo.processInfo.processIdentifier).conf")
+        try? Data("keybind = clear\n".utf8).write(to: url)
+        // Intentionally leaked: valid for process lifetime, handed to C.
+        return UnsafePointer(strdup(url.path))
+    }()
 
     /// Convenience for tests: host view is retained by the returned surface (SF1).
     public static func makeManualSurfaceForTesting(
