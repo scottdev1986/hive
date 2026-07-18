@@ -54,3 +54,4 @@ if [ "$MIN_OS" != "14.0" ]; then
 fi
 cd "$ROOT"
 bun test ./native/sessiond/test/identity-parity.ts
+bun test ./native/sessiond/test/ts-live-create.ts
