@@ -58,7 +58,7 @@ the probe observes (a dead probe cannot fake a negative).
 | close_surface_cb | UNREACHABLE for manual surfaces — the patched `apprt/embedded.zig Surface.close` takes the `hive_manual` branch, emits the CLOSE_REQUEST bridge event, and RETURNS before `app.opts.close_surface`; close requests are HANDLED as the visible CLOSE_REQUEST event | `testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb` (real `ghostty_surface_request_close` → event observed, probe flat) + `testCloseSurfaceProbeObservesDirectInvocation` |
 | read_clipboard_cb | DENIED (returns false) AND unreachable from untrusted bytes — OSC 52 read is answered with protocol silence before the apprt layer | `testOSC52ReadNeverReachesTheApprtReadCallback` (direct-invoke: probe + false; byte-fire: probe flat) + `TerminalReplyCorpusTests.testOSC52ClipboardReadIsDeniedNoReplyEver` (silence, with a DA1 liveness control proving the write channel was alive) |
 | write_clipboard_cb | UNREACHABLE from bytes — OSC 52 write is denied in the patched vt handler (`clipboardWrite` → emit CLIPBOARD_DENIED, return .denied) before the apprt layer | `testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched`: CLIPBOARD_DENIED event observed, `NSPasteboard.general.changeCount` unchanged, write/confirm probes flat |
-| confirm_read_clipboard_cb | No-op; no paste-confirmation flow exists in B1 (paste is host-originated input, not a clipboard read) | probe flat across the hostile corpus and OSC 52 controls |
+| confirm_read_clipboard_cb | No-op at this pin; see the 2026-07-18 amendment below — Gate 8 makes it reachable ONLY behind an explicit host paste gesture, and unsafe confirm FAILS CLOSED | probe flat across the hostile corpus and OSC 52 controls (byte-side; unchanged by the amendment) |
 
 ## Security-invariant coverage per story item
 
@@ -100,6 +100,27 @@ Both blocking findings fixed in one follow-up commit:
    predicate + list — dylan's disabling mutation (empty `forbiddenOpeners`)
    was replayed and now turns `testKitSourcesContainNoPrivilegedOpeners`
    RED ("detector must catch a planted forbidden opener").
+
+## Amendment (2026-07-18, queen-blessed clipboard/paste policy)
+
+The original prose "no paste-confirmation flow exists in B1" described the
+pin's own code truthfully but is superseded by the blessed cross-gate
+policy (douglas/donna converged, queen approved):
+
+- The manual config's `keybind = clear` strip stays FROZEN. Gate 8's host
+  paste is `HiveTerminalView.paste(_:)` programmatically calling
+  `ghostty_surface_binding_action("paste_from_clipboard")` — an explicit
+  HOST gesture, not a config keybind, so the gate-9 stripped-bindings
+  control remains valid and green.
+- Behind that gesture (and ONLY there), Ghostty's async clipboard path may
+  invoke `read_clipboard_cb` / `confirm_read_clipboard_cb`. When
+  paste-protection flags unsafe content, the confirm FAILS CLOSED (deny,
+  empty completion) until a host confirmation UI exists.
+- The two claims must not be conflated: OSC-52-FROM-BYTES unreachability
+  (proven here, unchanged — untrusted terminal bytes never reach any
+  clipboard callback) is a SECURITY invariant; host-gesture paste
+  reachability is a FEATURE path Gate 8 qualifies, with its own fail-closed
+  denial. This table's probe-flat evidence covers the byte side only.
 
 ## Residual risk / honesty notes
 
