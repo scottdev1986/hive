@@ -166,6 +166,14 @@ const pendingBinding = {
 };
 const pendingBindings: TerminalHostBindingStore = {
   bindTerminalHostSession: (binding) => binding,
+  completeTerminalHostSession: (_locator, createEvidence) => ({
+    ...pendingBinding,
+    createEvidence,
+  }),
+  recordTerminalHostTermination: (_locator, terminationAudit) => ({
+    ...pendingBinding,
+    terminationAudit,
+  }),
   getTerminalHostBindingByLocator: (locator) =>
     locator.sessionId === brokerLocator.sessionId ? pendingBinding : null,
   listTerminalHostBindings: (instanceId) =>
@@ -828,8 +836,15 @@ describe("SessiondHost landed frozen operations", () => {
         inspection: createdPayload.inspection,
         created: true,
       });
+      const createEvidence = {
+        expectedExecutable: sessionSpec.expectedExecutable,
+        executableVerified: createdPayload.inspection.executableVerified,
+        verifiedProviderRoot: createdPayload.inspection.providerRoot,
+        geometry: sessionSpec.geometry,
+        visibility: createdPayload.inspection.visibility,
+      };
       expect(db.getTerminalHostBindingByLocator(brokerLocator))
-        .toEqual(pendingBinding);
+        .toEqual({ ...pendingBinding, createEvidence });
       expect(db.database.query(`
         SELECT locatorInstanceId, locatorSessionId, locatorGeneration
         FROM terminal_host_bindings
@@ -839,8 +854,42 @@ describe("SessiondHost landed frozen operations", () => {
         locatorGeneration: brokerLocator.generation,
       }]);
       await expect(adapter.inspect(brokerLocator)).resolves.toEqual({
-        binding: pendingBinding,
-        inspection: { ...inspection, session: transportSession },
+        schemaVersion: 1,
+        locator: brokerLocator,
+        presence: "present",
+        complete: false,
+        hostPid: 4_000,
+        hostStartToken: "4000:123400",
+        providerRoot: {
+          pid: 4_100,
+          startToken: "4100:123456",
+          processGroupId: 4_100,
+        },
+        expectedExecutable: "/bin/sh",
+        executableVerified: true,
+        outputSeq: "19",
+        checkpointSeq: "2",
+        checkpointAvailable: true,
+        input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+        viewerCount: 0,
+        geometry: {
+          columns: 111,
+          rows: 37,
+          widthPx: 1_110,
+          heightPx: 740,
+          cellWidthPx: 10,
+          cellHeightPx: 20,
+        },
+        resources: {},
+        visibility: createdPayload.inspection.visibility,
+        exit: null,
+        survivors: [],
+        evidenceAt: "2026-07-18T01:00:00.000Z",
+        diagnosticIds: [
+          "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
+          "SESSIOND_RESOURCES_UNAVAILABLE",
+          "SESSIOND_INPUT_STATE_UNAVAILABLE",
+        ],
       });
       expect(brokers.flatMap((broker) => broker.creates)).toEqual([{
         beginPayload: createBeginPayload,

@@ -196,7 +196,17 @@ test("TypeScript creates and binds a real DirectHost session", async () => {
           expect(macProcessIdentity(providerRoot.pid).startToken)
             .toBe(providerRoot.startToken);
 
-          const binding = { locator, visibility };
+          const binding = {
+            locator,
+            visibility,
+            createEvidence: {
+              expectedExecutable: spec.expectedExecutable,
+              executableVerified: created.inspection.executableVerified,
+              verifiedProviderRoot: created.inspection.providerRoot,
+              geometry: spec.geometry,
+              visibility: created.inspection.visibility,
+            },
+          };
           expect(db.getTerminalHostBindingByLocator(locator)).toEqual(binding);
           expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([binding]);
           expect(db.database.query(`
@@ -208,13 +218,29 @@ test("TypeScript creates and binds a real DirectHost session", async () => {
             locatorGeneration: locator.generation,
           }]);
 
+          const neutralMatches = (await host.list()).filter(
+            (inspection) => inspection.session.key === locator.sessionId,
+          );
+          expect(neutralMatches).toHaveLength(1);
+          const neutralSession = neutralMatches[0]!.session;
+          expect(neutralSession.incarnation).not.toBe(String(locator.generation));
+          const neutralReadback = await host.inspect(neutralSession);
+          expect(neutralReadback.session).toEqual(neutralSession);
+          expect(neutralReadback.lifecycle).toBe("running");
+
           const readback = await adapter.inspect(locator);
-          expect(readback.binding).toEqual(binding);
-          expect(readback.inspection.session.key).toBe(locator.sessionId);
-          expect(readback.inspection.lifecycle).toBe("running");
-          if (readback.inspection.completeness !== "complete") {
-            expect(readback.inspection.diagnostics.length).toBeGreaterThan(0);
-          }
+          expect(readback.locator).toEqual(locator);
+          expect(readback.presence).toBe("present");
+          expect(readback.hostPid).toBe(hostPid);
+          expect(readback.providerRoot?.pid).toBe(providerRoot.pid);
+          expect(readback.expectedExecutable).toBe(spec.expectedExecutable);
+          expect(readback.complete).toBe(false);
+          expect(readback.diagnosticIds).toContain(
+            "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
+          );
+          expect(readback.diagnosticIds).toContain(
+            "SESSIOND_RESOURCES_UNAVAILABLE",
+          );
         } finally {
           if (created?.inspection.providerRoot !== null &&
               created?.inspection.providerRoot !== undefined) {

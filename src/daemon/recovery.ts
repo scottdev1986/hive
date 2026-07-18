@@ -235,12 +235,11 @@ export class CrashRecovery {
       if (this.deps.terminalHost === undefined) {
         throw new Error("sessiond recovery inspection is not configured");
       }
-      const { inspection } = await this.deps.terminalHost.inspect(
+      const inspection = await this.deps.terminalHost.inspect(
         requireSessiondAgentLocator(agent),
       );
-      switch (inspection.lifecycle) {
-        case "creating":
-        case "running":
+      switch (inspection.presence) {
+        case "present":
           return true;
         case "exited":
         case "lost":

@@ -1,17 +1,21 @@
+import { createHash } from "node:crypto";
 import type {
   ClaimResult,
   InputReceipt,
   ResizeResult,
-  SessionInspection,
+  SessionInspection as NeutralSessionInspection,
   SessionRef,
   TerminalHost,
-  TerminationResult,
+  TerminationResult as NeutralTerminationResult,
 } from "./terminal-host-contract";
 import type {
   CreateResult,
   SessionHost,
+  SessionInspection,
   SessionLocator,
   SessionSpec,
+  TerminationRequest,
+  TerminationResult,
 } from "./contract";
 import type { AgentRecord } from "../../schemas";
 import {
@@ -49,12 +53,14 @@ type TerminalLifecycleHost = Pick<
   | "terminate"
 > & Pick<SessionHost, "create">;
 
-export type HiveTerminalPolicy = HiveTerminalBinding;
+export type HiveTerminalPolicy = Pick<
+  HiveTerminalBinding,
+  "locator" | "visibility"
+>;
 
-export type BoundTerminalInspection = Readonly<{
-  binding: HiveTerminalBinding;
-  inspection: SessionInspection;
-}>;
+export interface HiveTerminalHostAdapterOptions {
+  now?: () => Date;
+}
 
 export class TerminalHostBindingNotFoundError extends Error {
   constructor() {
@@ -69,6 +75,18 @@ export class TerminalHostBindingMismatchError extends Error {
     this.name = "TerminalHostBindingMismatchError";
   }
 }
+
+export class TerminalHostBindingIncompleteError extends Error {
+  constructor() {
+    super("sessiond locator binding has no completed create evidence");
+    this.name = "TerminalHostBindingIncompleteError";
+  }
+}
+
+const TERMINATION_DEADLINE_MS = 10_000;
+const VIEWER_COUNT_DIAGNOSTIC = "SESSIOND_VIEWER_COUNT_UNAVAILABLE";
+const RESOURCES_DIAGNOSTIC = "SESSIOND_RESOURCES_UNAVAILABLE";
+const INPUT_STATE_DIAGNOSTIC = "SESSIOND_INPUT_STATE_UNAVAILABLE";
 
 function sameSession(left: SessionRef, right: SessionRef): boolean {
   return left.key === right.key && left.incarnation === right.incarnation;
@@ -92,13 +110,45 @@ function sameLocator(
     left.engineBuildId === right.engineBuildId;
 }
 
+function presenceForLifecycle(
+  lifecycle: NeutralSessionInspection["lifecycle"],
+): SessionInspection["presence"] {
+  switch (lifecycle) {
+    case "creating":
+    case "running":
+      return "present";
+    case "exited":
+      return "exited";
+    case "lost":
+      return "lost";
+    case "unknown":
+      return "unknown";
+  }
+}
+
+function terminationIdempotencyKey(requestId: string, session: SessionRef): string {
+  return createHash("sha256")
+    .update("hive-sessiond-terminate-v1\0")
+    .update(requestId)
+    .update("\0")
+    .update(session.key)
+    .update("\0")
+    .update(session.incarnation)
+    .digest("hex");
+}
+
 /** Hive policy adapter over the project-neutral frozen TerminalHost contract. */
 export class HiveTerminalHostAdapter {
   constructor(
     private readonly host: TerminalLifecycleHost,
     private readonly bindings: TerminalHostBindingStore,
     private readonly instanceId: string,
-  ) {}
+    options: HiveTerminalHostAdapterOptions = {},
+  ) {
+    this.now = options.now ?? (() => new Date());
+  }
+
+  private readonly now: () => Date;
 
   async create(
     spec: SessionSpec,
@@ -113,23 +163,51 @@ export class HiveTerminalHostAdapter {
     }
     this.bindings.bindTerminalHostSession(policy);
     const result = await this.host.create(spec, initialInput);
-    if (!sameLocator(result.locator, policy.locator)) {
+    if (
+      !sameLocator(result.locator, policy.locator) ||
+      !sameLocator(result.inspection.locator, policy.locator) ||
+      result.inspection.expectedExecutable !== spec.expectedExecutable ||
+      result.inspection.visibility.workspaceSessionId !==
+        policy.visibility.workspaceSessionId ||
+      result.inspection.visibility.openTerminalRevision !==
+        policy.visibility.openTerminalRevision
+    ) {
       throw new TerminalHostBindingMismatchError();
     }
+    this.bindings.completeTerminalHostSession(policy.locator, {
+      expectedExecutable: spec.expectedExecutable,
+      executableVerified: result.inspection.executableVerified,
+      verifiedProviderRoot: result.inspection.providerRoot,
+      geometry: spec.geometry,
+      visibility: result.inspection.visibility,
+    });
     return result;
   }
 
-  async list(): Promise<readonly BoundTerminalInspection[]> {
-    const bindings = new Map(
-      this.bindings.listTerminalHostBindings(this.instanceId)
-        .map((binding) => [binding.locator.sessionId, binding]),
-    );
-    const bound: BoundTerminalInspection[] = [];
-    for (const inspection of await this.host.list()) {
-      const binding = bindings.get(inspection.session.key);
-      if (binding !== undefined) bound.push({ binding, inspection });
+  async list(instanceId: string): Promise<readonly SessionInspection[]> {
+    if (instanceId !== this.instanceId) return [];
+    const listed = await this.host.list();
+    const inspections: SessionInspection[] = [];
+    for (const binding of this.bindings.listTerminalHostBindings(instanceId)) {
+      const matches = listed.filter(
+        (inspection) => inspection.session.key === binding.locator.sessionId,
+      );
+      if (matches.length === 0) continue;
+      if (matches.length !== 1) throw new TerminalHostBindingMismatchError();
+      let inspection = matches[0]!;
+      if (
+        inspection.checkpoints.retained > 0 &&
+        inspection.checkpoints.newest === null
+      ) {
+        const inspected = await this.host.inspect(inspection.session);
+        if (!sameSession(inspected.session, inspection.session)) {
+          throw new TerminalHostBindingMismatchError();
+        }
+        inspection = inspected;
+      }
+      inspections.push(this.projectInspection(binding, inspection));
     }
-    return bound;
+    return inspections;
   }
 
   async claimInput(
@@ -158,21 +236,159 @@ export class HiveTerminalHostAdapter {
 
   async inspect(
     locator: HiveTerminalBinding["locator"],
-  ): Promise<BoundTerminalInspection> {
+  ): Promise<SessionInspection> {
     const { binding, session } = await this.requireTransportBinding(locator);
     const inspection = await this.host.inspect(session);
     if (!sameSession(inspection.session, session)) {
       throw new TerminalHostBindingMismatchError();
     }
-    return { binding, inspection };
+    return this.projectInspection(binding, inspection);
   }
 
   async terminate(
     locator: HiveTerminalBinding["locator"],
-    request: Omit<Parameters<TerminalHost["terminate"]>[0], "session">,
+    request: TerminationRequest,
   ): Promise<TerminationResult> {
     const { session } = await this.requireTransportBinding(locator);
-    return this.host.terminate({ ...request, session });
+    const requestedAt = this.now();
+    this.bindings.recordTerminalHostTermination(locator, {
+      reason: request.reason,
+      requestId: request.requestId,
+      requestedAt: requestedAt.toISOString(),
+    });
+    const result = await this.host.terminate({
+      session,
+      mode: request.mode,
+      target: "process-tree",
+      deadline: new Date(
+        requestedAt.getTime() + TERMINATION_DEADLINE_MS,
+      ).toISOString(),
+      idempotencyKey: terminationIdempotencyKey(request.requestId, session),
+    });
+    return this.projectTermination(locator, result);
+  }
+
+  private projectInspection(
+    binding: HiveTerminalBinding,
+    inspection: NeutralSessionInspection,
+  ): SessionInspection {
+    const created = binding.createEvidence;
+    if (created === undefined) throw new TerminalHostBindingIncompleteError();
+    const diagnostics = new Set(inspection.diagnostics);
+    diagnostics.add(VIEWER_COUNT_DIAGNOSTIC);
+    diagnostics.add(RESOURCES_DIAGNOSTIC);
+
+    const providerRoot = inspection.child !== null &&
+        inspection.jobControl?.completeness === "complete"
+      ? {
+          pid: inspection.child.processId,
+          startToken: inspection.child.startToken,
+          processGroupId: inspection.jobControl.childProcessGroupId,
+        }
+      : null;
+    if (inspection.lifecycle === "running" && providerRoot === null) {
+      diagnostics.add("SESSIOND_PROVIDER_ROOT_UNAVAILABLE");
+    }
+
+    const executableVerified = inspection.lifecycle === "running" &&
+      created.executableVerified &&
+      created.verifiedProviderRoot !== null &&
+      inspection.child?.processId === created.verifiedProviderRoot.pid &&
+      inspection.child.startToken === created.verifiedProviderRoot.startToken;
+    if (!executableVerified) {
+      diagnostics.add(created.executableVerified
+        ? "SESSIOND_EXECUTABLE_EVIDENCE_STALE"
+        : "SESSIOND_EXECUTABLE_UNVERIFIED");
+    }
+
+    const checkpoint = inspection.checkpoints.newest;
+    if (inspection.checkpoints.retained > 0 && checkpoint === null) {
+      diagnostics.add("SESSIOND_CHECKPOINT_CURSOR_UNAVAILABLE");
+    }
+
+    const inputFree = inspection.inputOwner === null &&
+      inspection.lifecycle === "running" &&
+      inspection.completeness === "complete" &&
+      inspection.diagnostics.length === 0;
+    if (!inputFree) diagnostics.add(INPUT_STATE_DIAGNOSTIC);
+
+    return {
+      schemaVersion: 1,
+      locator: binding.locator,
+      presence: presenceForLifecycle(inspection.lifecycle),
+      complete: inspection.completeness === "complete" && diagnostics.size === 0,
+      hostPid: inspection.host?.processId ?? null,
+      hostStartToken: inspection.host?.startToken ?? null,
+      providerRoot,
+      expectedExecutable: created.expectedExecutable,
+      executableVerified,
+      outputSeq: inspection.output.retained.endExclusive,
+      checkpointSeq: checkpoint?.throughEventSequence ?? "0",
+      checkpointAvailable: checkpoint !== null,
+      input: {
+        state: inputFree ? "FREE" : "UNKNOWN",
+        ownerViewerId: null,
+        claimId: null,
+      },
+      viewerCount: 0,
+      geometry: {
+        columns: inspection.window.value.columns,
+        rows: inspection.window.value.rows,
+        widthPx: inspection.window.value.columns * created.geometry.cellWidthPx,
+        heightPx: inspection.window.value.rows * created.geometry.cellHeightPx,
+        cellWidthPx: created.geometry.cellWidthPx,
+        cellHeightPx: created.geometry.cellHeightPx,
+      },
+      resources: {},
+      visibility: created.visibility,
+      exit: inspection.exit,
+      survivors: inspection.survivors.map(({ process, reason }) => ({
+        pid: process.processId,
+        startToken: process.startToken,
+        reason,
+      })),
+      evidenceAt: inspection.evidenceAt,
+      diagnosticIds: [...diagnostics],
+    };
+  }
+
+  private projectTermination(
+    locator: HiveTerminalBinding["locator"],
+    result: NeutralTerminationResult,
+  ): TerminationResult {
+    const diagnostics = new Set(result.diagnostics);
+    const complete = result.completeness === "complete" &&
+      result.reap.completeness === "complete";
+    const terminated = result.state === "terminated" &&
+      complete &&
+      result.reap.reaped &&
+      result.survivors.length === 0;
+    if (!complete) diagnostics.add("SESSIOND_TERMINATION_INCOMPLETE");
+    if (result.state === "terminated" && !result.reap.reaped) {
+      diagnostics.add("SESSIOND_TERMINATION_UNREAPED");
+    }
+    if (result.state === "unknown" && diagnostics.size === 0) {
+      diagnostics.add("SESSIOND_TERMINATION_UNKNOWN");
+    }
+    return {
+      locator,
+      state: terminated
+        ? "terminated"
+        : result.state === "survivors" || result.survivors.length > 0
+          ? "survivors"
+          : "unknown",
+      exit: result.exit ?? result.reap.status,
+      survivors: result.survivors.map(({ process, reason }) => ({
+        pid: process.processId,
+        startToken: process.startToken,
+        reason,
+      })),
+      errors: [...diagnostics].map((diagnosticId) => ({
+        phase: "neutral-control",
+        code: "UNKNOWN",
+        diagnosticId,
+      })),
+    };
   }
 
   private async requireTransportBinding(

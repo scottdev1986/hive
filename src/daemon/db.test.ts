@@ -73,19 +73,57 @@ describe("HiveDatabase", () => {
         openTerminalRevision: "7",
       },
     };
+    const createEvidence = {
+      expectedExecutable: "/bin/sh",
+      executableVerified: true,
+      verifiedProviderRoot: {
+        pid: 4300,
+        startToken: "4300:123456",
+        processGroupId: 4300,
+      },
+      geometry: {
+        columns: 80,
+        rows: 24,
+        widthPx: 800,
+        heightPx: 480,
+        cellWidthPx: 10,
+        cellHeightPx: 20,
+      },
+      visibility: {
+        state: "attaching" as const,
+        workspaceSessionId: binding.visibility.workspaceSessionId,
+        openTerminalRevision: binding.visibility.openTerminalRevision,
+        expiresAt: "2026-07-18T12:00:15.000Z",
+      },
+    };
+    const terminationAudit = {
+      reason: "stop fixture agent",
+      requestId: "req_018f1e90-7b5a-7cc0-8000-000000000103",
+      requestedAt: "2026-07-18T12:00:00.000Z",
+    };
     let db = new HiveDatabase(path);
     try {
       expect(db.bindTerminalHostSession(binding)).toEqual(binding);
       expect(db.bindTerminalHostSession(binding)).toEqual(binding);
+      expect(db.completeTerminalHostSession(binding.locator, createEvidence))
+        .toEqual({ ...binding, createEvidence });
+      expect(db.recordTerminalHostTermination(binding.locator, terminationAudit))
+        .toEqual({ ...binding, createEvidence, terminationAudit });
     } finally {
       db.close();
     }
 
     db = new HiveDatabase(path);
     try {
-      expect(db.getTerminalHostBindingByLocator(binding.locator)).toEqual(binding);
-      expect(db.listTerminalHostBindings(binding.locator.instanceId)).toEqual([binding]);
+      const completed = { ...binding, createEvidence, terminationAudit };
+      expect(db.getTerminalHostBindingByLocator(binding.locator)).toEqual(completed);
+      expect(db.listTerminalHostBindings(binding.locator.instanceId)).toEqual([completed]);
       expect(db.listTerminalHostBindings("another-hive")).toEqual([]);
+      expect(db.bindTerminalHostSession(binding)).toEqual(completed);
+      expect(() => db.completeTerminalHostSession(binding.locator, {
+        ...createEvidence,
+        expectedExecutable: "/usr/bin/false",
+      })).toThrow(TerminalHostBindingConflictError);
       expect(() => db.bindTerminalHostSession({
         ...binding,
         visibility: { ...binding.visibility, openTerminalRevision: "8" },
@@ -148,6 +186,11 @@ describe("HiveDatabase", () => {
         .not.toEqual(expect.arrayContaining([
           expect.objectContaining({ name: "sessionKey" }),
           expect.objectContaining({ name: "sessionIncarnation" }),
+        ]));
+      expect(db.database.query("PRAGMA table_info(terminal_host_bindings)").all())
+        .toEqual(expect.arrayContaining([
+          expect.objectContaining({ name: "createEvidenceJson" }),
+          expect.objectContaining({ name: "terminationAuditJson" }),
         ]));
     } finally {
       db.close();

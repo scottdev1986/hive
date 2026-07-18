@@ -31,6 +31,10 @@ export function mintTmuxSessionLocator(
   };
 }
 
+export function mintSessionRequestId(now = Date.now()): string {
+  return `req_${uuidV7(now)}`;
+}
+
 function uuidV7(now: number): string {
   if (!Number.isSafeInteger(now) || now < 0 || now > 0xffffffffffff) {
     throw new Error("UUIDv7 timestamp is outside the 48-bit range");

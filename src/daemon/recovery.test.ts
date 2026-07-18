@@ -21,7 +21,7 @@ import {
 } from "./recovery";
 import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
-import type { SessionInspection } from "./session-host/terminal-host-contract";
+import type { SessionInspection } from "./session-host/contract";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
 
@@ -285,48 +285,45 @@ describe("crash classification", () => {
       engineBuildId: "engine-fixture",
     };
     const inspection: SessionInspection = {
-      session: { key: "neutral-key", incarnation: "incarnation-1" },
-      lifecycle: "running",
-      completeness: "partial",
-      host: null,
-      child: null,
-      jobControl: null,
-      window: {
-        value: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
-        revision: "0",
+      schemaVersion: 1,
+      locator: sessionLocator,
+      presence: "present",
+      complete: false,
+      hostPid: null,
+      hostStartToken: null,
+      providerRoot: null,
+      expectedExecutable: "claude",
+      executableVerified: false,
+      outputSeq: "0",
+      checkpointSeq: "0",
+      checkpointAvailable: false,
+      input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+      viewerCount: 0,
+      geometry: {
+        columns: 80,
+        rows: 24,
+        widthPx: 800,
+        heightPx: 480,
+        cellWidthPx: 10,
+        cellHeightPx: 20,
       },
-      output: { closed: false, retained: { start: "0", endExclusive: "0" } },
-      checkpoints: { retained: 0, newest: null },
-      inputOwner: null,
+      resources: {},
+      visibility: {
+        state: "attaching",
+        workspaceSessionId: "workspace-fixture",
+        openTerminalRevision: "1",
+        expiresAt: "2026-07-10T09:00:15.000Z",
+      },
       exit: null,
-      reap: {
-        authority: "unavailable",
-        reaped: false,
-        status: null,
-        completeness: "unavailable",
-      },
-      descendants: [],
       survivors: [],
       evidenceAt: timestamp,
-      diagnostics: [],
+      diagnosticIds: ["SESSIOND_VIEWER_COUNT_UNAVAILABLE"],
     };
     const h = harness({
       terminalHost: {
         inspect: async (requested) => {
           expect(requested).toEqual(sessionLocator);
-          return {
-            binding: {
-              session: inspection.session,
-              locator: sessionLocator,
-              visibility: {
-                workspaceSessionId: "workspace-fixture",
-                workspacePid: 4_000,
-                workspaceStartToken: "4000:123400",
-                openTerminalRevision: "1",
-              },
-            },
-            inspection,
-          };
+          return inspection;
         },
       },
     });

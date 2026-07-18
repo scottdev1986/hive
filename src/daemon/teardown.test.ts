@@ -8,6 +8,7 @@ import {
 } from "./teardown";
 import { parseProcessTable, runPs } from "./resources";
 import type { AgentRecord } from "../schemas";
+import { TerminationRequestSchema } from "../schemas/session-protocol";
 import {
   mintAgentTmuxSessionLocator,
   TmuxSessionHost,
@@ -335,46 +336,37 @@ describe("reapProcessTree", () => {
           expect(locator).toEqual(sessionLocator);
           requests.push(request);
           return {
+            locator: sessionLocator,
             state: "terminated",
             exit: null,
-            reap: {
-              authority: "direct-parent",
-              reaped: true,
-              status: null,
-              completeness: "complete",
-            },
             survivors: [],
-            completeness: "complete",
-            diagnostics: [],
+            errors: [],
           };
         },
       },
       readHostPid: async () => null,
-      now: () => Date.parse("2026-07-18T01:00:00.000Z"),
     }, () => {
       capabilityRevoked = true;
     })).resolves.toEqual({ killed: [], survivors: [] });
     expect(requests).toHaveLength(1);
-    expect(requests[0]).toMatchObject({
+    expect(TerminationRequestSchema.parse(requests[0])).toMatchObject({
       mode: "immediate",
-      target: "process-tree",
-      deadline: "2026-07-18T01:00:10.000Z",
+      reason: `stop agent ${record.id}`,
+      requestId: expect.stringMatching(/^req_[0-9a-f-]+$/),
     });
 
     await expect(stopSessiondAgentSession(record, {
       terminalHost: {
         terminate: async () => ({
+          locator: sessionLocator,
           state: "unknown",
           exit: null,
-          reap: {
-            authority: "unavailable",
-            reaped: false,
-            status: null,
-            completeness: "unknown",
-          },
           survivors: [],
-          completeness: "unknown",
-          diagnostics: ["no positive readback"],
+          errors: [{
+            phase: "neutral-control",
+            code: "UNKNOWN",
+            diagnosticId: "no positive readback",
+          }],
         }),
       },
       readHostPid: async () => null,

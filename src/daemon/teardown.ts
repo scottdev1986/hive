@@ -36,6 +36,7 @@ import {
   requireSessiondAgentLocator,
   type HiveTerminalHostAdapter,
 } from "./session-host/hive-terminal-host";
+import { mintSessionRequestId } from "./session-host/locators";
 
 export interface ReapDependencies {
   /** `ps -axo pid=,ppid=,rss=,command=` — the tree, with commands for the report. */
@@ -77,7 +78,6 @@ export interface VerifiedSessiondStopDependencies {
   reap?: ReapDependencies;
   readHostPid?: (agent: AgentRecord) => Promise<number | null>;
   selfPid?: number;
-  now?: () => number;
 }
 
 export type StopAgentSession = (
@@ -330,20 +330,17 @@ export async function stopSessiondAgentSession(
       requireSessiondAgentLocator(agent),
       {
         mode: "immediate",
-        target: "process-tree",
-        deadline: new Date((dependencies.now ?? Date.now)() + 10_000).toISOString(),
-        idempotencyKey: crypto.randomUUID(),
+        reason: `stop agent ${agent.id}`,
+        requestId: mintSessionRequestId(),
       },
     );
     if (
       result.state !== "terminated" ||
-      result.survivors.length !== 0 ||
-      !result.reap.reaped ||
-      result.completeness !== "complete"
+      result.survivors.length !== 0
     ) {
       terminalError = new Error(
         `Sessiond termination was not positively verified for ${agent.name}: ${
-          result.diagnostics.join(", ") || result.state
+          result.errors.map((error) => error.diagnosticId).join(", ") || result.state
         }`,
       );
     }
