@@ -84,6 +84,13 @@ export class SessiondWireNotReadyError extends Error {
   }
 }
 
+export class SessiondBrokerUnavailableError extends Error {
+  constructor(readonly socketPath: string, cause: unknown) {
+    super(`sessiond broker is unavailable at ${socketPath}`, { cause });
+    this.name = "SessiondBrokerUnavailableError";
+  }
+}
+
 export type SessiondFrame = Readonly<{
   type: FrameTypeName;
   flags: number;
@@ -397,7 +404,12 @@ async function connectBroker(
   path: string,
   handshake: DaemonHandshake,
 ): Promise<SessiondControlClient> {
-  const client = await SessiondSocketClient.connect(path);
+  let client: SessiondSocketClient;
+  try {
+    client = await SessiondSocketClient.connect(path);
+  } catch (error) {
+    throw new SessiondBrokerUnavailableError(path, error);
+  }
   try {
     const hello = HelloPayloadSchema.parse({
       schemaVersion: 1,

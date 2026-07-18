@@ -22,6 +22,7 @@ import type {
 } from "./terminal-host-contract";
 import {
   encodeSessiondFrame,
+  SessiondBrokerUnavailableError,
   SessiondFrameDecoder,
   SessiondHost,
   SessiondProtocolError,
@@ -405,6 +406,20 @@ describe("sessiond wire framing", () => {
 });
 
 describe("SessiondHost landed frozen operations", () => {
+  test("reports an absent production broker as explicit not-ready evidence", async () => {
+    const directory = await mkdtemp(join(tmpdir(), "hive-sessiond-absent-"));
+    const host = new SessiondHost({
+      hiveHome: directory,
+      handshake: async () => handshake,
+    });
+
+    const failure = host.list().catch((error) => error);
+    await expect(failure).resolves.toBeInstanceOf(SessiondBrokerUnavailableError);
+    await expect(failure).resolves.toMatchObject({
+      socketPath: join(directory, "runtime", "sessiond", "broker.sock"),
+    });
+  });
+
   test("sends create as one exact CREATE_BEGIN and returns exact CREATED", async () => {
     const broker = new RecordingClient((request) => {
       expect(request.requestType).toBe("CREATE_BEGIN");
