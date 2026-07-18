@@ -1,5 +1,5 @@
 import { expect, test } from "bun:test";
-import { chmod, mkdtemp, readFile, rm, stat } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { HiveDatabase } from "../../../src/daemon/db";
 import {
@@ -13,10 +13,107 @@ import {
   releaseDaemonLock,
   writeLifecycleFiles,
 } from "../../../src/daemon/lifecycle";
-import { HiveTerminalHostAdapter } from "../../../src/daemon/session-host/hive-terminal-host";
-import { mintTmuxSessionLocator } from "../../../src/daemon/session-host/locators";
+import {
+  HiveTerminalHostAdapter,
+  requireSessiondAgentLocator,
+} from "../../../src/daemon/session-host/hive-terminal-host";
 import { SessiondHost } from "../../../src/daemon/session-host/sessiond-host";
-import type { CreateResult } from "../../../src/daemon/session-host/contract";
+import { HiveSpawner } from "../../../src/daemon/spawner-impl";
+import { stopSessiondAgentSession } from "../../../src/daemon/teardown";
+import {
+  known,
+  unknown,
+  type AgentRecord,
+  type CapabilityRecord,
+  type RoutingPolicy,
+} from "../../../src/schemas";
+
+class FakeTmux {
+  readonly sessions: Array<[string, string, string]> = [];
+  readonly active = new Set<string>();
+
+  async newSession(name: string, cwd: string, command: string): Promise<void> {
+    this.sessions.push([name, cwd, command]);
+    this.active.add(name);
+  }
+
+  async hasSession(name: string): Promise<boolean> {
+    return this.active.has(name);
+  }
+
+  async capturePane(): Promise<string> {
+    return "";
+  }
+
+  async paneState(): Promise<{
+    columns: number;
+    rows: number;
+    cursorColumn: number;
+    cursorRow: number;
+    cursorVisible: boolean;
+  }> {
+    return {
+      columns: 80,
+      rows: 24,
+      cursorColumn: 0,
+      cursorRow: 0,
+      cursorVisible: false,
+    };
+  }
+
+  async listPanePids(): Promise<number[]> {
+    return [];
+  }
+
+  async killSession(name: string): Promise<void> {
+    this.active.delete(name);
+  }
+}
+
+const observedAt = "2026-07-18T12:00:00.000Z";
+
+function codexCapability(): CapabilityRecord {
+  return {
+    provider: "codex",
+    accountFingerprint: "sessiond-live-harness",
+    cliVersion: "test",
+    canonicalId: "gpt-sessiond-live",
+    variant: null,
+    launchToken: "gpt-sessiond-live",
+    displayName: null,
+    aliases: [],
+    entitled: known(true, "codex.model/list", observedAt),
+    hidden: unknown("surface-silent", "codex.model/list", observedAt),
+    supportsEffort: unknown("surface-silent", "codex.model/list", observedAt),
+    supportedEffortLevels: known(["medium"], "codex.model/list", observedAt),
+    defaultEffort: known("medium", "codex.model/list", observedAt),
+    observedAt,
+  };
+}
+
+function codexRoutingPolicy(): RoutingPolicy {
+  return {
+    schemaVersion: 2,
+    revision: 1,
+    updatedAt: observedAt,
+    provisional: false,
+    providers: { codex: "enabled" },
+    models: [{
+      provider: "codex",
+      model: "gpt-sessiond-live",
+      state: "enabled",
+      effort: { mode: "exact", value: "medium" },
+    }],
+    chains: {
+      default: [{
+        provider: "codex",
+        model: "gpt-sessiond-live",
+        effort: { mode: "exact", value: "medium" },
+      }],
+    },
+    selection: { global: "choice", categories: {} },
+  };
+}
 
 async function waitForBrokerSocket(
   socketPath: string,
@@ -58,7 +155,7 @@ async function killExactProcess(pid: number, startToken: string): Promise<void> 
   throw new Error(`owned sessiond process ${pid} survived SIGKILL`);
 }
 
-test("TypeScript creates and binds a real DirectHost session", async () => {
+test("TypeScript opts one agent into a real DirectHost while tmux remains default", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
   // Keep runtime/sessiond/broker.sock below macOS's AF_UNIX path limit.
   const home = await mkdtemp("/tmp/hsd.");
@@ -119,7 +216,8 @@ test("TypeScript creates and binds a real DirectHost session", async () => {
           () => broker.exitCode !== null,
         );
         const db = new HiveDatabase(join(home, "hive.db"));
-        let created: CreateResult | null = null;
+        let spawnedHost: { pid: number; startToken: string } | null = null;
+        let spawnedProvider: { pid: number; startToken: string } | null = null;
 
         try {
           const host = new SessiondHost({
@@ -130,15 +228,6 @@ test("TypeScript creates and binds a real DirectHost session", async () => {
           });
           const adapter = new HiveTerminalHostAdapter(host, db, handshake.instanceId);
           const engineBuildId = await host.discoverEngineBuildId();
-          const locator = {
-            ...mintTmuxSessionLocator(
-              handshake.instanceId,
-              { kind: "agent", agentId: "agent-sessiond-live-harness" },
-              1,
-            ),
-            hostKind: "sessiond" as const,
-            engineBuildId,
-          };
           const workspace = macProcessIdentity(process.pid);
           const visibility = {
             workspaceSessionId: "workspace-sessiond-live-harness",
@@ -146,116 +235,183 @@ test("TypeScript creates and binds a real DirectHost session", async () => {
             workspaceStartToken: workspace.startToken,
             openTerminalRevision: "1",
           };
-          const spec = {
-            schemaVersion: 1 as const,
-            locator,
-            provider: "codex" as const,
-            toolSessionId: null,
-            cwd: home,
-            argv: [
-              "/bin/sh",
-              "-c",
-              "while IFS= read -r line; do :; done",
-            ] as const,
-            environment: { PATH: "/usr/bin:/bin" },
-            expectedExecutable: "/bin/sh",
-            readOnly: false,
-            capabilityEpoch: 0,
-            geometry: {
-              columns: 80,
-              rows: 24,
-              widthPx: 800,
-              heightPx: 480,
-              cellWidthPx: 10,
-              cellHeightPx: 20,
-            },
-            launchGrantId: "sessiond-live-harness-authorized-launch",
-            launchGrantRevision: 1,
+
+          const tmux = new FakeTmux();
+          const stopSpawnedSession = async (agent: AgentRecord) => {
+            if (agent.sessionLocator?.hostKind === "sessiond") {
+              return await stopSessiondAgentSession(agent, {
+                terminalHost: adapter,
+                readHostPid: async (record) =>
+                  (await adapter.inspect(requireSessiondAgentLocator(record))).hostPid,
+              });
+            }
+            await tmux.killSession(agent.tmuxSession);
+            return { killed: [], survivors: [] };
           };
-
-          created = await adapter.create(spec, new Uint8Array(), { locator, visibility });
-          expect(created.created).toBe(true);
-          expect(created.locator).toEqual(locator);
-          expect(created.inspection.presence).toBe("present");
-          expect(created.inspection.complete).toBe(false);
-          expect(created.inspection.visibility.state).toBe("attaching");
-          expect(created.inspection.hostPid).not.toBe(process.pid);
-          expect(created.inspection.hostPid).not.toBe(broker.pid);
-          expect(created.inspection.providerRoot?.pid).not.toBe(process.pid);
-          expect(created.inspection.providerRoot?.pid).not.toBe(broker.pid);
-          expect(created.inspection.providerRoot?.pid)
-            .not.toBe(created.inspection.hostPid);
-
-          const hostPid = created.inspection.hostPid;
-          const hostStartToken = created.inspection.hostStartToken;
-          const providerRoot = created.inspection.providerRoot;
-          if (hostPid === null || hostStartToken === null || providerRoot === null) {
-            throw new Error("CREATED omitted measured host or provider identity");
-          }
-          expect(macProcessIdentity(hostPid).startToken).toBe(hostStartToken);
-          expect(macProcessIdentity(providerRoot.pid).startToken)
-            .toBe(providerRoot.startToken);
-
-          const binding = {
-            locator,
-            visibility,
-            createEvidence: {
-              expectedExecutable: spec.expectedExecutable,
-              executableVerified: created.inspection.executableVerified,
-              verifiedProviderRoot: created.inspection.providerRoot,
-              geometry: spec.geometry,
-              visibility: created.inspection.visibility,
+          const spawner = new HiveSpawner({
+            db,
+            repoRoot,
+            port: handshakeServer.port,
+            config: { codex: { driver: "app-server" } },
+            readRoutingPolicy: codexRoutingPolicy,
+            discoverCapabilities: async () => ({
+              status: "ok",
+              records: [codexCapability()],
+              effectiveDefault: {
+                provider: "codex",
+                model: known(
+                  "gpt-sessiond-live",
+                  "codex.model/list",
+                  observedAt,
+                ),
+                effort: known("medium", "codex.model/list", observedAt),
+              },
+            }),
+            isModelEnabled: async () => true,
+            tmux,
+            sessiond: {
+              terminalHost: adapter,
+              admit: async ({ agentName }) =>
+                agentName === "maya"
+                  ? { engineBuildId, visibility }
+                  : null,
             },
-          };
-          expect(db.getTerminalHostBindingByLocator(locator)).toEqual(binding);
-          expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([binding]);
+            stopSession: stopSpawnedSession,
+            createWorktree: async (_root, name, slug) => {
+              const path = join(home, `worktree-${name}`);
+              await mkdir(path, { recursive: true });
+              return { path, branch: `hive/${name}-${slug}` };
+            },
+            removeWorktree: async () => {},
+            unavailableAgentNames: async () => new Set(),
+            listCodexMcpServers: async () => [],
+            readCodexActivity: async () => null,
+            sleep: async () => {
+              for (const agent of db.listAgents()) {
+                if (agent.status === "spawning") {
+                  db.insertAgent({ ...agent, status: "working" });
+                }
+              }
+            },
+            codexAppServer: {
+              isAvailable: async () => true,
+              buildHostCommand: () => [
+                "/bin/sh",
+                "-c",
+                "while IFS= read -r line; do :; done",
+              ],
+              startAgent: async () => {},
+              disconnect: () => undefined,
+            },
+          });
+
+          const sessiondAgent = await spawner.spawn({
+            task: "Exercise the admitted sessiond backend",
+            category: "complex_coding",
+            name: "maya",
+            tool: "codex",
+            model: "gpt-sessiond-live",
+          });
+          expect(sessiondAgent.sessionLocator?.hostKind).toBe("sessiond");
+          expect(sessiondAgent.status).toBe("working");
+          const sessiondLocator = requireSessiondAgentLocator(sessiondAgent);
+          const sessiondBinding = db.getTerminalHostBindingByLocator(
+            sessiondLocator,
+          );
+          expect(sessiondBinding?.locator).toEqual(sessiondLocator);
+          expect(sessiondBinding?.visibility).toEqual(visibility);
+          expect(sessiondBinding?.createEvidence).toBeDefined();
+          expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([
+            sessiondBinding,
+          ]);
           expect(db.database.query(`
             SELECT locatorInstanceId, locatorSessionId, locatorGeneration
             FROM terminal_host_bindings
           `).all()).toEqual([{
-            locatorInstanceId: locator.instanceId,
-            locatorSessionId: locator.sessionId,
-            locatorGeneration: locator.generation,
+            locatorInstanceId: sessiondLocator.instanceId,
+            locatorSessionId: sessiondLocator.sessionId,
+            locatorGeneration: sessiondLocator.generation,
           }]);
 
+          const sessiondInspection = await adapter.inspect(sessiondLocator);
+          expect(sessiondInspection.presence).toBe("present");
+          expect(sessiondInspection.complete).toBe(false);
+          expect(sessiondInspection.visibility.state).toBe("attaching");
+          expect(sessiondInspection.hostPid).not.toBeNull();
+          expect(sessiondInspection.hostStartToken).not.toBeNull();
+          expect(sessiondInspection.providerRoot).not.toBeNull();
+          if (
+            sessiondInspection.hostPid === null ||
+            sessiondInspection.hostStartToken === null ||
+            sessiondInspection.providerRoot === null
+          ) {
+            throw new Error("sessiond spawner omitted measured process identity");
+          }
+          spawnedHost = {
+            pid: sessiondInspection.hostPid,
+            startToken: sessiondInspection.hostStartToken,
+          };
+          spawnedProvider = sessiondInspection.providerRoot;
+          expect(spawnedHost.pid).not.toBe(process.pid);
+          expect(spawnedHost.pid).not.toBe(broker.pid);
+          expect(spawnedProvider.pid).not.toBe(process.pid);
+          expect(spawnedProvider.pid).not.toBe(broker.pid);
+          expect(spawnedProvider.pid).not.toBe(spawnedHost.pid);
+          expect(macProcessIdentity(spawnedHost.pid).startToken)
+            .toBe(spawnedHost.startToken);
+          expect(macProcessIdentity(spawnedProvider.pid).startToken)
+            .toBe(spawnedProvider.startToken);
+          expect(sessiondInspection.expectedExecutable)
+            .toBe(sessiondBinding?.createEvidence?.expectedExecutable);
+          expect(sessiondInspection.diagnosticIds).toContain(
+            "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
+          );
+          expect(sessiondInspection.diagnosticIds).toContain(
+            "SESSIOND_RESOURCES_UNAVAILABLE",
+          );
+
           const neutralMatches = (await host.list()).filter(
-            (inspection) => inspection.session.key === locator.sessionId,
+            (inspection) => inspection.session.key === sessiondLocator.sessionId,
           );
           expect(neutralMatches).toHaveLength(1);
           const neutralSession = neutralMatches[0]!.session;
-          expect(neutralSession.incarnation).not.toBe(String(locator.generation));
+          expect(neutralSession.incarnation)
+            .not.toBe(String(sessiondLocator.generation));
           const neutralReadback = await host.inspect(neutralSession);
           expect(neutralReadback.session).toEqual(neutralSession);
           expect(neutralReadback.lifecycle).toBe("running");
 
-          const readback = await adapter.inspect(locator);
-          expect(readback.locator).toEqual(locator);
-          expect(readback.presence).toBe("present");
-          expect(readback.hostPid).toBe(hostPid);
-          expect(readback.providerRoot?.pid).toBe(providerRoot.pid);
-          expect(readback.expectedExecutable).toBe(spec.expectedExecutable);
-          expect(readback.complete).toBe(false);
-          expect(readback.diagnosticIds).toContain(
-            "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
-          );
-          expect(readback.diagnosticIds).toContain(
-            "SESSIOND_RESOURCES_UNAVAILABLE",
-          );
+          const tmuxAgent = await spawner.spawn({
+            task: "Exercise the default tmux backend",
+            category: "complex_coding",
+            name: "theo",
+            tool: "codex",
+            model: "gpt-sessiond-live",
+          });
+          expect(tmuxAgent.sessionLocator?.hostKind).toBe("tmux");
+          expect(tmux.sessions).toHaveLength(1);
+          expect(
+            db.listAgents().filter(
+              (agent) => agent.sessionLocator?.hostKind === "sessiond",
+            ),
+          ).toHaveLength(1);
+
+          const stopped = await stopSpawnedSession(sessiondAgent);
+          expect(stopped.survivors).toEqual([]);
+          const terminated = await adapter.inspect(sessiondLocator);
+          expect(terminated.presence).not.toBe("present");
+          expect(
+            db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit,
+          ).toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
         } finally {
-          if (created?.inspection.providerRoot !== null &&
-              created?.inspection.providerRoot !== undefined) {
+          if (spawnedProvider !== null) {
             await killExactProcess(
-              created.inspection.providerRoot.pid,
-              created.inspection.providerRoot.startToken,
+              spawnedProvider.pid,
+              spawnedProvider.startToken,
             );
           }
-          if (created?.inspection.hostPid !== null &&
-              created?.inspection.hostPid !== undefined &&
-              created.inspection.hostStartToken !== null) {
-            await killExactProcess(
-              created.inspection.hostPid,
-              created.inspection.hostStartToken,
-            );
+          if (spawnedHost !== null) {
+            await killExactProcess(spawnedHost.pid, spawnedHost.startToken);
           }
           db.close();
         }

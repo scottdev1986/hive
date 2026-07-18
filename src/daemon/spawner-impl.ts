@@ -26,6 +26,7 @@ import { provisionSkills } from "../adapters/skills";
 import { readCodexTelemetry } from "./tool-telemetry";
 import {
   bindAgentSession,
+  DEFAULT_TMUX_GEOMETRY,
   mintAgentTmuxSessionLocator,
   nextAgentSessionLocator,
   shellJoin,
@@ -33,6 +34,12 @@ import {
   TmuxSessionHost,
   type TmuxEngine,
 } from "./session-host/tmux-host";
+import {
+  requireSessiondAgentLocator,
+  type HiveTerminalHostAdapter,
+  type HiveTerminalPolicy,
+} from "./session-host/hive-terminal-host";
+import type { SessionLocator, SessionSpec } from "./session-host/contract";
 import {
   modelVendor,
 } from "../adapters/tools/models";
@@ -250,6 +257,19 @@ export type CredentialIssuer = (
   epoch: number,
 ) => string;
 
+export interface SessiondSpawnAdmission {
+  terminalHost: Pick<HiveTerminalHostAdapter, "create" | "inspect">;
+  /** Idempotent for one candidate: selection and the final create gate both
+   * resolve the Workspace-owned evidence instead of caching it in the daemon. */
+  admit(candidate: Readonly<{
+    agentId: string;
+    agentName: string;
+  }>): Promise<Readonly<{
+    engineBuildId: string;
+    visibility: HiveTerminalPolicy["visibility"];
+  }> | null>;
+}
+
 /**
  * The only context-window evidence the catalogs publish today: Claude's
  * `[1m]` variant tag names a one-million-token entitlement. Everything else
@@ -288,6 +308,12 @@ export interface HiveSpawnerDependencies {
    */
   readRoutingPolicy?: () => RoutingPolicy;
   tmux: TmuxSessionManager;
+  /**
+   * Narrow sessiond coexistence seam. Production leaves this absent until
+   * Workspace owns a real visibility registration; a harness may admit one
+   * exact candidate with that evidence. Absence preserves the tmux path.
+   */
+  sessiond?: SessiondSpawnAdmission;
   stopSession: StopAgentSession;
   createWorktree?: WorktreeCreator;
   unavailableAgentNames?: typeof unavailableAgentNames;
@@ -752,17 +778,30 @@ export class HiveSpawner implements Spawner {
     expectedExecutable: string,
     launchGrantId: string,
   ): Promise<void> {
-    bindAgentSession(this.sessions, record);
-    await this.sessions.create(
-      tmuxSessionSpec(record, command, expectedExecutable, launchGrantId),
+    const locator = this.requireAgentLocator(record);
+    if (locator.hostKind === "tmux") {
+      bindAgentSession(this.sessions, record);
+      await this.sessions.create(
+        tmuxSessionSpec(record, command, expectedExecutable, launchGrantId),
+        new Uint8Array(),
+      );
+      return;
+    }
+    const admission = await this.requireSessiondPolicy(record);
+    await this.requireSessiondHost(record).create(
+      this.sessiondSpec(record, command, expectedExecutable, launchGrantId),
       new Uint8Array(),
+      { locator: requireSessiondAgentLocator(record), visibility: admission.visibility },
     );
   }
 
   private async sessionPresent(record: AgentRecord): Promise<boolean> {
-    const inspection = await this.sessions.inspect(
-      bindAgentSession(this.sessions, record),
-    );
+    const locator = this.requireAgentLocator(record);
+    const inspection = locator.hostKind === "sessiond"
+      ? await this.requireSessiondHost(record).inspect(
+        requireSessiondAgentLocator(record),
+      )
+      : await this.sessions.inspect(bindAgentSession(this.sessions, record));
     if (inspection.presence === "unknown") {
       throw new Error(`Session presence is unknown for ${record.name}`);
     }
@@ -770,10 +809,92 @@ export class HiveSpawner implements Spawner {
   }
 
   private async captureVisible(record: AgentRecord): Promise<string> {
+    if (this.requireAgentLocator(record).hostKind === "sessiond") {
+      throw new Error("sessiond visible capture is not available");
+    }
     return (await this.sessions.capture(
       bindAgentSession(this.sessions, record),
       { include: "visible-text", maxRows: 50_000 },
     )).text ?? "";
+  }
+
+  private requireAgentLocator(record: AgentRecord): SessionLocator {
+    const locator = record.sessionLocator;
+    if (
+      locator === undefined || locator.subject.kind !== "agent" ||
+      locator.subject.agentId !== record.id
+    ) {
+      throw new Error(`Agent ${record.id} has a mismatched SessionLocator`);
+    }
+    return locator;
+  }
+
+  private async requireSessiondPolicy(
+    record: AgentRecord,
+  ): Promise<Readonly<{
+    engineBuildId: string;
+    visibility: HiveTerminalPolicy["visibility"];
+  }>> {
+    const locator = requireSessiondAgentLocator(record);
+    const policy = await this.dependencies.sessiond?.admit({
+      agentId: record.id,
+      agentName: record.name,
+    }) ?? null;
+    if (policy === null) {
+      throw new Error(`Agent ${record.id} has no sessiond spawn admission`);
+    }
+    if (policy.engineBuildId !== locator.engineBuildId) {
+      throw new Error(`Agent ${record.id} sessiond engine admission changed`);
+    }
+    return policy;
+  }
+
+  private requireSessiondHost(
+    record: AgentRecord,
+  ): SessiondSpawnAdmission["terminalHost"] {
+    const host = this.dependencies.sessiond?.terminalHost;
+    if (host === undefined) {
+      throw new Error(`Agent ${record.id} has no sessiond host`);
+    }
+    return host;
+  }
+
+  private sessiondSpec(
+    record: AgentRecord,
+    command: string,
+    expectedExecutable: string,
+    launchGrantId: string,
+  ): SessionSpec {
+    if (record.worktreePath === null) {
+      throw new Error(`Agent ${record.id} has no worktree for session creation`);
+    }
+    return {
+      schemaVersion: 1,
+      locator: requireSessiondAgentLocator(record),
+      provider: record.tool,
+      toolSessionId: record.toolSessionId ?? null,
+      cwd: record.worktreePath,
+      argv: ["/bin/sh", "-lc", command],
+      environment: {},
+      expectedExecutable,
+      readOnly: record.readOnly,
+      capabilityEpoch: record.capabilityEpoch,
+      geometry: DEFAULT_TMUX_GEOMETRY,
+      launchGrantId,
+      launchGrantRevision: 1,
+    };
+  }
+
+  private nextSessionLocator(record: AgentRecord): SessionLocator {
+    const current = this.requireAgentLocator(record);
+    const next = nextAgentSessionLocator(record);
+    return current.hostKind === "sessiond"
+      ? {
+        ...next,
+        hostKind: "sessiond",
+        engineBuildId: requireSessiondAgentLocator(record).engineBuildId,
+      }
+      : next;
   }
 
   /** Servers a Codex spawn would inherit from the user's global config. Read
@@ -1160,7 +1281,7 @@ export class HiveSpawner implements Spawner {
           prepared = {
             record: this.dependencies.db.insertAgent({
               ...prepared.record,
-              sessionLocator: nextAgentSessionLocator(prepared.record),
+              sessionLocator: this.nextSessionLocator(prepared.record),
               lastEventAt: new Date().toISOString(),
             }),
           };
@@ -1271,7 +1392,7 @@ export class HiveSpawner implements Spawner {
     }
     const record = this.dependencies.db.insertAgent({
       ...current,
-      sessionLocator: nextAgentSessionLocator(current),
+      sessionLocator: this.nextSessionLocator(current),
       status: "control-paused",
       readOnly: true,
       writeRevoked: true,
@@ -1300,7 +1421,9 @@ export class HiveSpawner implements Spawner {
     record: AgentRecord,
     launchedCommand: string,
   ): Promise<string | null> {
-    const locator = bindAgentSession(this.sessions, record);
+    const locator = this.requireAgentLocator(record).hostKind === "sessiond"
+      ? requireSessiondAgentLocator(record)
+      : bindAgentSession(this.sessions, record);
     const proof = await watchForProofOfLife(locator, record.lastEventAt, {
       hasSession: () => this.sessionPresent(record),
       capturePane: () => this.captureVisible(record),
@@ -1329,9 +1452,16 @@ export class HiveSpawner implements Spawner {
     command: string,
   ): Promise<boolean | null> {
     try {
-      const rootPids = await this.sessions.sessionProcessRoots(
-        bindAgentSession(this.sessions, record),
-      );
+      const locator = this.requireAgentLocator(record);
+      const rootPids = locator.hostKind === "sessiond"
+        ? [
+          (await this.requireSessiondHost(record).inspect(
+            requireSessiondAgentLocator(record),
+          )).providerRoot?.pid,
+        ].filter((pid): pid is number => pid !== undefined && pid !== null)
+        : await this.sessions.sessionProcessRoots(
+          bindAgentSession(this.sessions, record),
+        );
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(
         await (this.dependencies.ps ?? runPs)(),
@@ -1999,12 +2129,23 @@ export class HiveSpawner implements Spawner {
     // reader, fixed there the same way.
     const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
     const agentId = crypto.randomUUID();
+    const sessiondPolicy = await this.dependencies.sessiond?.admit({
+      agentId,
+      agentName: name,
+    }) ?? null;
+    const sessionLocator = sessiondPolicy === null
+      ? mintAgentTmuxSessionLocator(agentId)
+      : {
+        ...mintAgentTmuxSessionLocator(agentId),
+        hostKind: "sessiond" as const,
+        engineBuildId: sessiondPolicy.engineBuildId,
+      };
     let record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
       // its row — erasing the very closure record that lets history tell the
       // two agents apart.
       id: agentId,
-      sessionLocator: mintAgentTmuxSessionLocator(agentId),
+      sessionLocator,
       ...(grokSessionId === undefined ? {} : { toolSessionId: grokSessionId }),
       name,
       tool,
@@ -2225,7 +2366,7 @@ export class HiveSpawner implements Spawner {
           );
           record = this.dependencies.db.insertAgent({
             ...record,
-            sessionLocator: nextAgentSessionLocator(record),
+            sessionLocator: this.nextSessionLocator(record),
             status: "spawning",
             lastEventAt: new Date().toISOString(),
           });
@@ -2308,7 +2449,9 @@ export class HiveSpawner implements Spawner {
       this.dependencies.db.getAgentById(record.id)?.lastEventAt ??
         record.lastEventAt;
 
-    const locator = bindAgentSession(this.sessions, record);
+    const locator = this.requireAgentLocator(record).hostKind === "sessiond"
+      ? requireSessiondAgentLocator(record)
+      : bindAgentSession(this.sessions, record);
     const proof = await watchForProofOfLife(locator, baselineEventAt, {
       hasSession: () => this.sessionPresent(record),
       capturePane: () => this.captureVisible(record),
