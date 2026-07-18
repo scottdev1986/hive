@@ -276,9 +276,7 @@ export class CoexistingSessionSender implements SessionSender {
   ): Promise<InputReceipt | void> {
     if (recipient.sessionLocator?.hostKind === "sessiond") {
       requireSessiondAgentLocator(recipient);
-      throw new SessiondWireNotReadyError(
-        "sessiond delivery requires the frozen host attach projection",
-      );
+      throw new SessiondWireNotReadyError("message delivery");
     }
     return this.tmux.sendSessionMessage(recipient, text, options);
   }
