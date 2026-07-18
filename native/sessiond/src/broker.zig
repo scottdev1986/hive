@@ -313,7 +313,13 @@ pub fn loadDaemonLock(allocator: std.mem.Allocator, canonical_home: []const u8) 
     defer home.close();
     const contents = try readOwnedFileAt(allocator, home, "daemon.lock", generated.limits.control_json_bytes);
     defer allocator.free(contents);
-    return std.json.parseFromSlice(DaemonLock, allocator, contents, .{}) catch error.DaemonIdentityUnavailable;
+    return parseOwnedDaemonLock(allocator, contents);
+}
+
+fn parseOwnedDaemonLock(allocator: std.mem.Allocator, contents: []const u8) !std.json.Parsed(DaemonLock) {
+    return std.json.parseFromSlice(DaemonLock, allocator, contents, .{
+        .allocate = .alloc_always,
+    }) catch error.DaemonIdentityUnavailable;
 }
 
 fn daemonPort(allocator: std.mem.Allocator, canonical_home: []const u8) !u16 {
@@ -365,7 +371,13 @@ pub fn loadDaemonHandshake(
         return error.InvalidDaemonHandshakeResponse;
     const body = response[separator + 4 ..];
     if (body.len > generated.limits.control_json_bytes) return error.InvalidDaemonHandshakeResponse;
-    return std.json.parseFromSlice(DaemonHandshake, allocator, body, .{}) catch error.InvalidDaemonHandshakeResponse;
+    return parseOwnedDaemonHandshake(allocator, body);
+}
+
+fn parseOwnedDaemonHandshake(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(DaemonHandshake) {
+    return std.json.parseFromSlice(DaemonHandshake, allocator, body, .{
+        .allocate = .alloc_always,
+    }) catch error.InvalidDaemonHandshakeResponse;
 }
 
 pub fn verifyDaemonPeer(
@@ -3128,6 +3140,41 @@ test "daemon claims never override kernel identity" {
         .start_token = "11:2",
         .executable = "hive",
     }, claims).?.code == .unauthenticated);
+}
+
+test "daemon lock parsing owns strings beyond source lifetime" {
+    const lock_json =
+        \\{"pid":42,"instanceId":"instance-a","startedAt":"2026-07-18T00:00:00Z","startToken":"10:2","executablePath":"/opt/hive/bin/hive"}
+    ;
+    var lock_source: [lock_json.len]u8 = undefined;
+    @memcpy(lock_source[0..], lock_json);
+    var lock = try parseOwnedDaemonLock(std.testing.allocator, lock_source[0..]);
+    defer lock.deinit();
+    @memset(lock_source[0..], 0xaa);
+
+    try std.testing.expectEqualStrings("instance-a", lock.value.instanceId);
+    try std.testing.expectEqualStrings("2026-07-18T00:00:00Z", lock.value.startedAt);
+    try std.testing.expectEqualStrings("10:2", lock.value.startToken);
+    try std.testing.expectEqualStrings("/opt/hive/bin/hive", lock.value.executablePath);
+}
+
+test "daemon handshake parsing owns strings beyond source lifetime" {
+    const handshake_json =
+        \\{"productVersion":"0.0.0-dev","buildHash":"daemon-build","wireProtocol":{"min":1,"max":1},"schemaEpoch":1,"capabilities":["daemon-handshake-v1"],"instanceId":"instance-a","hiveUuid":"hive-a","identityKey":"project-a","repoFamilyKey":"family-a","generation":1}
+    ;
+    var handshake_source: [handshake_json.len]u8 = undefined;
+    @memcpy(handshake_source[0..], handshake_json);
+    var handshake = try parseOwnedDaemonHandshake(std.testing.allocator, handshake_source[0..]);
+    defer handshake.deinit();
+    @memset(handshake_source[0..], 0xaa);
+
+    try std.testing.expectEqualStrings("0.0.0-dev", handshake.value.productVersion);
+    try std.testing.expectEqualStrings("daemon-build", handshake.value.buildHash);
+    try std.testing.expectEqualStrings("daemon-handshake-v1", handshake.value.capabilities[0]);
+    try std.testing.expectEqualStrings("instance-a", handshake.value.instanceId);
+    try std.testing.expectEqualStrings("hive-a", handshake.value.hiveUuid);
+    try std.testing.expectEqualStrings("project-a", handshake.value.identityKey);
+    try std.testing.expectEqualStrings("family-a", handshake.value.repoFamilyKey.?);
 }
 
 test "daemon HELLO matches all six existing handshake identities" {
