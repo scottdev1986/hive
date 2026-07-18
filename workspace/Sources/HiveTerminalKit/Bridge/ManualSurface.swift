@@ -277,7 +277,19 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         actionRegistryLock.unlock()
         guard let surface = box?.value else { return }
         DispatchQueue.main.async { [weak surface] in
-            surface?.onActionNotification?(note)
+            guard let surface else { return }
+            // EXECUTION-time gate (dylan cross-vendor review 2026-07-18): a
+            // note enqueued before free() must deliver NOTHING once free()
+            // has run, even while the wrapper is still retained — an
+            // enqueue-time check alone races free(). The registry is the
+            // lock-protected truth (free() deregisters before the C free),
+            // and the identity compare also drops a note whose handle value
+            // was reused by a NEWER surface.
+            Self.actionRegistryLock.lock()
+            let stillRegistered = Self.actionRegistry[handle]?.value === surface
+            Self.actionRegistryLock.unlock()
+            guard stillRegistered else { return }
+            surface.onActionNotification?(note)
         }
     }
 

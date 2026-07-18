@@ -85,6 +85,22 @@ the probe observes (a dead probe cannot fake a negative).
   fired from the hostile corpus (hard pin); M-track item for a real
   NSCursor consumer remains open deliberately.
 
+## Re-review fixes (2026-07-18, after dylan cross-vendor review of 509ca3b8)
+
+Both blocking findings fixed in one follow-up commit:
+1. Carrier delivery-after-free race: `deliverActionNotification` now
+   re-checks the lock-protected registry (identity compare, which also
+   drops notes whose handle value was reused) INSIDE the queued main.async
+   closure — a note enqueued before `free()` delivers nothing. Regression
+   test `testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime`
+   reproduces dylan's exploit ordering; mutation control (enqueue-time
+   check only) turns it RED.
+2. Dead forbidden-detector: the opener scan's predicate is factored and the
+   committed suite plants synthetic forbidden code lines through the SAME
+   predicate + list — dylan's disabling mutation (empty `forbiddenOpeners`)
+   was replayed and now turns `testKitSourcesContainNoPrivilegedOpeners`
+   RED ("detector must catch a planted forbidden opener").
+
 ## Residual risk / honesty notes
 
 - The hostile corpus is finite; the classification's exhaustiveness

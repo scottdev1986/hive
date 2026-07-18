@@ -179,6 +179,31 @@ final class Gate9CallbackMatrixTests: XCTestCase {
                         "the dragged selection must be readable via ghostty_surface_read_selection")
     }
 
+    /// Lifetime ORDERING (dylan cross-vendor review 2026-07-18): a note
+    /// ENQUEUED while the surface is alive, with free() running before the
+    /// main queue drains (wrapper still retained), must deliver nothing.
+    /// The enqueue-time registry check alone passed here and delivered
+    /// after free; only the execution-time gate makes this hold.
+    func testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime() throws {
+        let surface = try makeSurface()
+        guard let handle = surface.surfaceHandle else { return XCTFail("real surface required") }
+
+        var received = 0
+        surface.onActionNotification = { _ in received += 1 }
+
+        // Enqueue while alive and registered — the enqueue-time check passes.
+        GhosttyManualSurface.deliverActionNotification(.selectionChanged, toSurfaceHandle: handle)
+        // free() runs on main BEFORE the queued delivery closure can (this
+        // test body occupies the main thread; the async closure is behind us).
+        surface.free()
+        drainMain(0.1)
+
+        XCTAssertEqual(received, 0,
+                       "a notification enqueued before free() must be dropped at execution time — " +
+                       "delivery after free is the dylan-review blocking defect")
+        withExtendedLifetime(surface) {} // wrapper retained across the drain, as in the exploit
+    }
+
     /// Lifetime: after free(), a late action routed at the old handle value
     /// must be dropped — never delivered (no callback after free).
     func testNoNotificationDeliveredAfterFree() throws {
@@ -197,12 +222,40 @@ final class Gate9CallbackMatrixTests: XCTestCase {
 
     // MARK: static privileged-opener scan
 
+    /// The scanner predicate, factored so the suite can positively control
+    /// the DETECTION path itself: first forbidden symbol found on a code
+    /// (non-comment) line, or nil. Comment lines may NAME a forbidden symbol
+    /// (the policy docs do); only code lines can call one.
+    private static let forbiddenOpeners = ["NSWorkspace", "UserNotifications", "UNUserNotificationCenter",
+                                           "EnableSecureEventInput", "DisableSecureEventInput"]
+    private func firstForbiddenOpener(in text: String) -> String? {
+        let code = text.split(separator: "\n", omittingEmptySubsequences: false)
+            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .joined(separator: "\n")
+        return Self.forbiddenOpeners.first { code.contains($0) }
+    }
+
     /// SECURITY: no code path in HiveTerminalKit can open URLs, post user
     /// notifications, or flip macOS secure input — the symbols simply do not
     /// occur. Complements the live denials: even a misrouted verdict has no
-    /// privileged sink to reach. Positive controls: the scanner must see a
-    /// known-present symbol and a plausible file count, or the scan is dead.
+    /// privileged sink to reach.
+    ///
+    /// SELF-CHECKING (dylan cross-vendor review 2026-07-18, second pass): the
+    /// committed suite plants a synthetic forbidden opener through the SAME
+    /// predicate + symbol list the scan uses, so disabling detection
+    /// (emptying the list, breaking the predicate) turns THIS test red —
+    /// it can no longer stay green when the answer is NO.
     func testKitSourcesContainNoPrivilegedOpeners() throws {
+        // Positive control 1: a planted forbidden CODE line IS detected.
+        XCTAssertEqual(firstForbiddenOpener(in: "let opener = NSWorkspace.shared.open(url)"),
+                       "NSWorkspace",
+                       "detector must catch a planted forbidden opener — nil means forbidden-symbol " +
+                       "detection is disabled and every scan result below is vacuous")
+        XCTAssertEqual(firstForbiddenOpener(in: "EnableSecureEventInput()"), "EnableSecureEventInput")
+        // Positive control 2: the intentional comment exemption still holds.
+        XCTAssertNil(firstForbiddenOpener(in: "/// OPEN_URL (no NSWorkspace.open from terminal content in B1)."),
+                     "a comment-only mention must not trip the scan")
+
         let sourcesRoot = URL(fileURLWithPath: #filePath)
             .deletingLastPathComponent() // HiveTerminalKitTests
             .deletingLastPathComponent() // Tests
@@ -213,21 +266,12 @@ final class Gate9CallbackMatrixTests: XCTestCase {
             .filter { $0.pathExtension == "swift" }
         XCTAssertGreaterThanOrEqual(files.count, 5, "scanner must see the kit's sources (dead-scan control)")
 
-        let forbidden = ["NSWorkspace", "UserNotifications", "UNUserNotificationCenter",
-                         "EnableSecureEventInput", "DisableSecureEventInput"]
         var sawKnownSymbol = false
         for file in files {
             let text = try String(contentsOf: file, encoding: .utf8)
-            // Comment lines may NAME a forbidden symbol (the policy docs do);
-            // only code lines can call one.
-            let code = text.split(separator: "\n", omittingEmptySubsequences: false)
-                .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
-                .joined(separator: "\n")
-            if code.contains("GhosttyManualSurface") { sawKnownSymbol = true }
-            for symbol in forbidden {
-                XCTAssertFalse(code.contains(symbol),
-                               "\(file.lastPathComponent) must not reference privileged opener \(symbol) in code")
-            }
+            if text.contains("GhosttyManualSurface") { sawKnownSymbol = true }
+            XCTAssertNil(firstForbiddenOpener(in: text),
+                         "\(file.lastPathComponent) must not reference a privileged opener in code")
         }
         XCTAssertTrue(sawKnownSymbol, "scanner must find a known-present symbol (dead-scan control)")
     }
