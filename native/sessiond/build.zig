@@ -104,6 +104,36 @@ pub fn build(b: *std.Build) void {
     const run_pty_host_tests = b.addRunArtifact(pty_host_tests);
     test_step.dependOn(&run_pty_host_tests.step);
 
+    const neutral_host_module = b.createModule(.{
+        .root_source_file = b.path("src/neutral_host.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    neutral_host_module.addImport("pty_host", pty_host_module);
+    neutral_host_module.addImport("process_inspector", process_inspector_module);
+    const neutral_host_tests = b.addTest(.{ .root_module = neutral_host_module });
+    const run_neutral_host_tests = b.addRunArtifact(neutral_host_tests);
+    test_step.dependOn(&run_neutral_host_tests.step);
+    const neutral_host_golden_module = b.createModule(.{
+        .root_source_file = b.path("test/neutral-host-golden.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    neutral_host_golden_module.addImport("neutral_host", neutral_host_module);
+    const neutral_host_golden = b.addExecutable(.{
+        .name = "sessiond-neutral-host-golden",
+        .root_module = neutral_host_golden_module,
+    });
+    const run_neutral_host_golden = b.addRunArtifact(neutral_host_golden);
+    test_step.dependOn(&run_neutral_host_golden.step);
+    const neutral_host_proof_step = b.step(
+        "neutral-host-proof",
+        "Run the live neutral lifecycle/recovery proof",
+    );
+    neutral_host_proof_step.dependOn(&run_neutral_host_golden.step);
+
     // A1 contract-freeze-facing real-host discriminators. Keep the named step
     // for focused qualification and include it in the ordinary native suite.
     const pending_a1_module = b.createModule(.{
