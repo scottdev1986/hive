@@ -26,6 +26,12 @@ import {
   mintTmuxSessionLocator,
   sessionInstanceId,
 } from "./session-host/locators";
+import {
+  HiveTerminalBindingSchema,
+  TerminalHostBindingConflictError,
+  type HiveTerminalBinding,
+  type TerminalHostSessionRef,
+} from "./session-host/terminal-host-binding";
 
 const StoredCapabilityRowSchema = z.object({
   id: z.string().min(1),
@@ -154,6 +160,25 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   readOnly: z.union([z.boolean(), z.number().int()]).default(0),
   writeRevoked: z.union([z.boolean(), z.number().int()]).default(0),
 });
+
+const StoredTerminalHostBindingRowSchema = z.object({
+  sessionKey: z.string().min(1),
+  sessionIncarnation: z.string().min(1),
+  locatorJson: z.string().min(1),
+  visibilityJson: z.string().min(1),
+});
+
+function parseTerminalHostBindingRow(row: unknown): HiveTerminalBinding {
+  const stored = StoredTerminalHostBindingRowSchema.parse(row);
+  return HiveTerminalBindingSchema.parse({
+    session: {
+      key: stored.sessionKey,
+      incarnation: stored.sessionIncarnation,
+    },
+    locator: JSON.parse(stored.locatorJson),
+    visibility: JSON.parse(stored.visibilityJson),
+  });
+}
 
 function parseAgentRow(row: unknown): AgentRecord {
   const value = AgentDatabaseRowSchema.parse(row);
@@ -484,6 +509,17 @@ export class HiveDatabase {
       CREATE TABLE IF NOT EXISTS meta (
         key TEXT PRIMARY KEY,
         value TEXT NOT NULL
+      );
+      CREATE TABLE IF NOT EXISTS terminal_host_bindings (
+        sessionKey TEXT NOT NULL,
+        sessionIncarnation TEXT NOT NULL,
+        locatorInstanceId TEXT NOT NULL,
+        locatorSessionId TEXT NOT NULL,
+        locatorGeneration INTEGER NOT NULL CHECK (locatorGeneration > 0),
+        locatorJson TEXT NOT NULL,
+        visibilityJson TEXT NOT NULL,
+        PRIMARY KEY (sessionKey, sessionIncarnation),
+        UNIQUE (locatorInstanceId, locatorSessionId, locatorGeneration)
       );
       -- Only sha256(secret) is stored, so a database or WAL leak yields no
       -- usable credential. The id is a lookup key, not a secret.
@@ -917,6 +953,64 @@ export class HiveDatabase {
 
   transaction<T>(operation: () => T): T {
     return this.database.transaction(operation)();
+  }
+
+  bindTerminalHostSession(binding: HiveTerminalBinding): HiveTerminalBinding {
+    const value = HiveTerminalBindingSchema.parse(binding);
+    const locatorJson = JSON.stringify(value.locator);
+    const visibilityJson = JSON.stringify(value.visibility);
+    return this.transaction(() => {
+      const bySession = this.getTerminalHostBinding(value.session);
+      const byLocator = this.getTerminalHostBindingByLocator(value.locator);
+      if (bySession !== null || byLocator !== null) {
+        if (
+          bySession !== null && byLocator !== null &&
+          JSON.stringify(bySession) === JSON.stringify(value) &&
+          JSON.stringify(byLocator) === JSON.stringify(value)
+        ) return value;
+        throw new TerminalHostBindingConflictError();
+      }
+      this.database.query(`
+        INSERT INTO terminal_host_bindings (
+          sessionKey, sessionIncarnation,
+          locatorInstanceId, locatorSessionId, locatorGeneration,
+          locatorJson, visibilityJson
+        ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      `).run(
+        value.session.key,
+        value.session.incarnation,
+        value.locator.instanceId,
+        value.locator.sessionId,
+        value.locator.generation,
+        locatorJson,
+        visibilityJson,
+      );
+      return value;
+    });
+  }
+
+  getTerminalHostBinding(
+    session: TerminalHostSessionRef,
+  ): HiveTerminalBinding | null {
+    const value = HiveTerminalBindingSchema.unwrap().shape.session.parse(session);
+    const row = this.database.query(`
+      SELECT sessionKey, sessionIncarnation, locatorJson, visibilityJson
+      FROM terminal_host_bindings
+      WHERE sessionKey = ? AND sessionIncarnation = ?
+    `).get(value.key, value.incarnation);
+    return row === null ? null : parseTerminalHostBindingRow(row);
+  }
+
+  getTerminalHostBindingByLocator(
+    locator: HiveTerminalBinding["locator"],
+  ): HiveTerminalBinding | null {
+    const value = HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+    const row = this.database.query(`
+      SELECT sessionKey, sessionIncarnation, locatorJson, visibilityJson
+      FROM terminal_host_bindings
+      WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
+    `).get(value.instanceId, value.sessionId, value.generation);
+    return row === null ? null : parseTerminalHostBindingRow(row);
   }
 
   upsertAgent(agent: AgentRecord): AgentRecord {

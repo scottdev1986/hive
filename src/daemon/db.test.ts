@@ -14,6 +14,10 @@ import {
   type Approval,
 } from "./db";
 import {
+  TerminalHostBindingConflictError,
+  type HiveTerminalBinding,
+} from "./session-host/terminal-host-binding";
+import {
   deleteAgentRow,
   deleteApprovalRow,
   deleteEventRows,
@@ -50,6 +54,51 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 describe("HiveDatabase", () => {
+  test("persists the exact neutral terminal identity to Hive policy binding", () => {
+    const path = join(home, "terminal-host-bindings.db");
+    const binding: HiveTerminalBinding = {
+      session: { key: "opaque-terminal-key", incarnation: "host-incarnation-1" },
+      locator: {
+        schemaVersion: 1,
+        instanceId: "hive-fixture",
+        subject: { kind: "agent", agentId: "agent-maya" },
+        generation: 2,
+        sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+        hostKind: "sessiond",
+        engineBuildId: "engine-build-fixture",
+      },
+      visibility: {
+        workspaceSessionId: "workspace-fixture",
+        workspacePid: 4100,
+        workspaceStartToken: "4100:123456",
+        openTerminalRevision: "7",
+      },
+    };
+    let db = new HiveDatabase(path);
+    try {
+      expect(db.bindTerminalHostSession(binding)).toEqual(binding);
+      expect(db.bindTerminalHostSession(binding)).toEqual(binding);
+    } finally {
+      db.close();
+    }
+
+    db = new HiveDatabase(path);
+    try {
+      expect(db.getTerminalHostBinding(binding.session)).toEqual(binding);
+      expect(db.getTerminalHostBindingByLocator(binding.locator)).toEqual(binding);
+      expect(() => db.bindTerminalHostSession({
+        ...binding,
+        visibility: { ...binding.visibility, openTerminalRevision: "8" },
+      })).toThrow(TerminalHostBindingConflictError);
+      expect(() => db.bindTerminalHostSession({
+        ...binding,
+        session: { ...binding.session, incarnation: "host-incarnation-2" },
+      })).toThrow(TerminalHostBindingConflictError);
+    } finally {
+      db.close();
+    }
+  });
+
   test("opens read-only without creating or migrating schema", () => {
     const path = join(home, "readonly-schema.db");
     const initial = new Database(path, { create: true });
