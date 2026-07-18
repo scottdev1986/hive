@@ -46,23 +46,40 @@ final class OrderedOutputStressTests: XCTestCase {
         var writes: [Data] = []
         surface.callbackContext.onWrite = { writes.append($0) }
 
-        let blocks = 512
-        // Each block: filler text, a UNIQUE numbered sentinel line
-        // (ASCII "SENT<n>END"), and an alternating query (DA1 on even
-        // blocks, DA2 on odd).
+        // PHASE 1 — VOLUME + REPLY ORDER. Blocks of ~16 KiB filler each,
+        // each ending in an alternating query (DA1 even, DA2 odd), until the
+        // stream exceeds 8 MiB. The filler bulks the volume; the alternating
+        // queries make reply ORDER observable (the reply array encodes the
+        // query order — identical replies could not).
+        let minBytes = 8 * 1024 * 1024
+        let fillerRow = "\u{1B}[32mfiller row of ordered-stream stress content padding the volume\u{1B}[0m\r\n"
         var pending = Data()
         var expectedReplies: [Data] = []
-        for i in 0..<blocks {
-            pending.append(Data("\u{1B}[32mfiller row for ordered-stream stress block \(i)\u{1B}[0m\r\n".utf8))
+        var blockIndex = 0
+        while pending.count < minBytes {
+            var block = Data()
+            while block.count < 16 * 1024 { block.append(Data(fillerRow.utf8)) }
+            pending.append(block)
+            let even = (blockIndex % 2 == 0)
+            pending.append(Data((even ? "\u{1B}[c" : "\u{1B}[>c").utf8))
+            expectedReplies.append(even ? da1 : da2)
+            blockIndex += 1
+        }
+        let volumeBytes = pending.count
+        XCTAssertGreaterThanOrEqual(volumeBytes, minBytes,
+                                    "the stress stream must be at least 8 MiB, was \(volumeBytes)")
+
+        // PHASE 2 — LOSSLESS ORDERED CONTENT. A dense run of unique numbered
+        // sentinels (no filler between them) so the last full screen is a
+        // contiguous suffix of them — the readback proves ordered, lossless
+        // landing, not merely accepted bytes.
+        let sentinelCount = 48
+        for i in 0..<sentinelCount {
             pending.append(Data("SENT\(i)END\r\n".utf8))
-            let query = (i % 2 == 0) ? "\u{1B}[c" : "\u{1B}[>c"
-            pending.append(Data(query.utf8))
-            expectedReplies.append((i % 2 == 0) ? da1 : da2)
         }
 
-        // Uneven chunk sizes that never align with block/query/sequence
-        // boundaries — the parser must be indifferent to chunking (queries
-        // and the UTF-8 sentinel get split mid-sequence).
+        // Uneven chunk sizes that never align with block/query/sentinel or
+        // sequence boundaries — the parser must be indifferent to chunking.
         let chunkSizes = [1, 7, 1023, 4096, 65_537]
         var seq: UInt64 = 0
         var fed = 0
@@ -82,17 +99,16 @@ final class OrderedOutputStressTests: XCTestCase {
                        "through_seq must advance by exactly the total byte count")
 
         // ORDER PROOF: the reply stream must be EXACTLY the alternating
-        // DA1/DA2 sequence, in order. A dropped, duplicated, or reordered
-        // reply changes this list — indistinguishable identical replies
-        // could not catch that.
-        XCTAssertEqual(writes.count, blocks, "each query must reply exactly once")
+        // DA1/DA2 sequence — a dropped, duplicated, or reordered reply
+        // changes this list; identical replies could not catch that.
+        XCTAssertEqual(writes.count, expectedReplies.count, "each query must reply exactly once")
         XCTAssertEqual(writes, expectedReplies,
                        "the reply sequence must match the alternating DA1/DA2 query order byte-for-byte")
 
-        // LOSSLESS CONTENT PROOF: the sentinels visible on the final screen
-        // must be strictly increasing and end at the last block — proving the
-        // tail landed in order and un-garbled, not merely that bytes were
-        // accepted.
+        // LOSSLESS CONTENT PROOF: the visible sentinels must form a
+        // CONTIGUOUS ascending run (each exactly +1 — no duplicates, no gaps)
+        // ending at the final sentinel. `== sorted()` alone would permit
+        // duplicates/gaps; adjacency +1 does not.
         let screen = readScreenText(surface)
         var sentinelNums: [Int] = []
         var rest = Substring(screen)
@@ -102,11 +118,14 @@ final class OrderedOutputStressTests: XCTestCase {
             if let n = Int(after[after.startIndex..<end.lowerBound]) { sentinelNums.append(n) }
             rest = after[end.upperBound...]
         }
-        XCTAssertFalse(sentinelNums.isEmpty, "the final screen must show sentinel lines, got \(screen.suffix(80).debugDescription)")
-        XCTAssertEqual(sentinelNums, sentinelNums.sorted(),
-                       "visible sentinels must be in strictly increasing order — a reorder/garble breaks this: \(sentinelNums)")
-        XCTAssertEqual(sentinelNums.last, blocks - 1,
-                       "the last visible sentinel must be the final block \(blocks - 1), got \(String(describing: sentinelNums.last))")
+        XCTAssertGreaterThanOrEqual(sentinelNums.count, 2,
+                                    "the final screen must show multiple sentinel lines, got \(screen.suffix(120).debugDescription)")
+        for i in 1..<sentinelNums.count {
+            XCTAssertEqual(sentinelNums[i], sentinelNums[i - 1] + 1,
+                           "visible sentinels must be contiguous (+1 each) — a gap/dup/reorder breaks this: \(sentinelNums)")
+        }
+        XCTAssertEqual(sentinelNums.last, sentinelCount - 1,
+                       "the last visible sentinel must be the final one \(sentinelCount - 1), got \(String(describing: sentinelNums.last))")
 
         // Still fully functional after the stress.
         writes.removeAll()

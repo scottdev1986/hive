@@ -122,34 +122,46 @@ final class Gate10AccessibilityTests: XCTestCase {
         XCTAssertGreaterThan(range.length, 0, "a real selection's range length must be > 0")
     }
 
-    /// Non-ASCII: NSRange is UTF-16-based while String.count is grapheme-
-    /// based, and they DIVERGE for astral characters (an emoji is 1 grapheme
-    /// but 2 UTF-16 units). Cross-vendor review flagged this untested. The
-    /// a11y APIs must stay internally consistent and not crash on non-ASCII —
-    /// visibleCharacterRange.length must equal numberOfCharacters, and a
-    /// range read must not trap.
-    func testAccessibilityHandlesNonASCIIWithoutRangeCountDivergence() throws {
+    /// Non-ASCII UTF-16 correctness (cross-vendor review 2026-07-18): the
+    /// NSAccessibility text APIs are UTF-16-indexed (accessibilityString
+    /// consumes NSRange), so numberOfCharacters MUST be the UTF-16 length,
+    /// not the grapheme count — they diverge for astral characters (😀 is 1
+    /// grapheme, 2 UTF-16 units). The earlier test compared two APIs that
+    /// both used String.count (tautological) and read NSRange(0,1) which
+    /// only covers 'é'. This asserts numberOfCharacters == (value as
+    /// NSString).length and reads 😀 at its ACTUAL UTF-16 NSRange, so it
+    /// goes RED if the implementation reverts to grapheme units.
+    func testAccessibilityUsesUTF16UnitsForNonASCII() throws {
         let view = try makeView()
         let surface = surface(of: view)
         defer { surface.free() }
 
-        // Grapheme é (1 UTF-16), astral emoji 😀 (2 UTF-16), ZWJ family (many).
-        XCTAssertEqual(surface.processOutput(bytes: Data("é😀 abc".utf8), streamSeq: 0), .success)
+        // é (1 UTF-16), 😀 (2 UTF-16 units / 1 grapheme).
+        XCTAssertEqual(surface.processOutput(bytes: Data("é😀xy".utf8), streamSeq: 0), .success)
 
         let value = view.accessibilityValue() as? String ?? ""
-        XCTAssertTrue(value.contains("é"), "non-ASCII content must be exposed, got \(value.prefix(16).debugDescription)")
+        XCTAssertTrue(value.contains("😀"), "astral content must be exposed, got \(value.prefix(16).debugDescription)")
+        let ns = value as NSString
 
-        // Internal consistency: the range the surface advertises as visible
-        // must match the count it advertises — a mismatch means one uses
-        // UTF-16 length and the other grapheme count.
-        XCTAssertEqual(view.accessibilityVisibleCharacterRange().length,
-                       view.accessibilityNumberOfCharacters(),
-                       "visible range length and character count must agree on the same unit")
+        // The a11y character count MUST be the UTF-16 length. For content
+        // containing an emoji, UTF-16 length > grapheme count, so this fails
+        // if numberOfCharacters returns String.count.
+        XCTAssertEqual(view.accessibilityNumberOfCharacters(), ns.length,
+                       "numberOfCharacters must be the UTF-16 length \(ns.length), not the grapheme count " +
+                       "\(value.count) — a screen reader indexes in UTF-16")
+        XCTAssertGreaterThan(ns.length, value.count,
+                             "sanity: this fixture must actually contain a UTF-16/grapheme divergence")
+        XCTAssertEqual(view.accessibilityVisibleCharacterRange(),
+                       NSRange(location: 0, length: ns.length),
+                       "visible range must span the full UTF-16 length")
 
-        // A bounded range read across the non-ASCII content must not trap and
-        // must return a real substring.
-        let sub = view.accessibilityString(for: NSRange(location: 0, length: 1))
-        XCTAssertNotNil(sub, "reading the first character of non-ASCII content must not return nil/crash")
+        // Read the emoji at its REAL UTF-16 NSRange (location = UTF-16 index
+        // of 😀, length = 2) and assert it round-trips to exactly "😀" — a
+        // grapheme-indexed implementation would return the wrong slice.
+        let emojiRange = ns.range(of: "😀")
+        XCTAssertEqual(emojiRange.length, 2, "😀 must be 2 UTF-16 units")
+        let read = view.accessibilityString(for: emojiRange)
+        XCTAssertEqual(read, "😀", "reading the emoji's UTF-16 NSRange must return exactly the emoji, got \(String(describing: read))")
     }
 
     /// Degenerate surface (freed): the a11y surface must stay safe — empty

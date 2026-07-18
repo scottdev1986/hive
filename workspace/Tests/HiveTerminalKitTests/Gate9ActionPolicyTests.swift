@@ -151,8 +151,22 @@ final class Gate9ActionPolicyTests: XCTestCase {
         XCTAssertFalse(firings.isEmpty,
                        "the real action callback must fire from scrolling output — an empty set makes the " +
                        "per-verdict assertion vacuous")
+
+        // The scroll stimulus specifically drives SCROLLBAR (rawValue 26,
+        // engineInert). Assert it is actually observed routed through
+        // .engineInert — a generic "every firing is classified" check would
+        // pass even for a gesture tag, which for scrolling output would be a
+        // real leak.
+        XCTAssertTrue(firings.contains { $0.0 == GHOSTTY_ACTION_SCROLLBAR.rawValue && $0.1 == .engineInert },
+                      "scrolling output must route SCROLLBAR (raw \(GHOSTTY_ACTION_SCROLLBAR.rawValue)) through " +
+                      ".engineInert; observed \(firings)")
+
+        // And NOTHING gesture-class or unclassified may reach the callback
+        // from scroll output — every firing must be an engine-inert
+        // notification, routed to its real verdict.
         for (raw, verdict) in firings {
-            XCTAssertNotNil(verdict, "a real action reaching the callback must be classified, rawValue \(raw)")
+            XCTAssertEqual(verdict, .engineInert,
+                           "scroll output must only emit engine-inert actions; rawValue \(raw) routed \(String(describing: verdict))")
             XCTAssertEqual(verdict, HiveGhosttyActionPolicy.classify(ghostty_action_tag_e(rawValue: raw)),
                            "the verdict handle routed must match classify() for rawValue \(raw)")
         }

@@ -75,22 +75,29 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         let throughSeq: UInt64 = 1_000
         let result = surface.restoreCheckpoint(payload: payload, throughSeq: throughSeq)
 
-        // KNOWN DEFECT until option D (boris audit 2026-07-18; cross-vendor
-        // review 2026-07-18 narrowed this from an over-broad XCTExpectFailure
-        // that masked ANY later regression): the lib-vt-authored payload is
-        // REJECTED by the embedded surface's restore because lib-vt (c_abi=
-        // true) and the embedded core (c_abi=false) serialize the same
-        // structs with divergent enum backing, while the source-only build
-        // id falsely promises compatibility. So the ONLY assertion the
-        // current snapshot can make is the exact rejection — scoped here,
-        // masking nothing. When option D aligns c_abi and restore returns
-        // .success, this guard falls through and the FULL proof below
-        // becomes the real gate (that fall-through is itself the loud
-        // signal Calvin's D work must complete this test).
+        // LOUD-ON-FIX PIN (cross-vendor review 2026-07-18, second pass): the
+        // strict closure form wraps ONLY the success assertion. Pre-D the
+        // restore returns .invalidValue, so the inner assert fails and the
+        // expectation is FULFILLED (green). The moment option D makes restore
+        // return .success, the inner assert PASSES, the strict expectation
+        // goes UNFULFILLED, and the test turns RED — forcing Calvin to remove
+        // this expectation and let the full proof below stand as the gate. A
+        // bare guard (my first attempt) would instead stay silently green
+        // once D works — the exact masking this avoids.
+        //
+        // Root cause (HIVE-B1-G6-XLIB): lib-vt (c_abi=true) and the embedded
+        // core (c_abi=false) serialize the same structs with divergent enum
+        // backing, while the source-only build id falsely promises
+        // compatibility.
+        XCTExpectFailure("HIVE-B1-G6-XLIB: cross-library restore rejected until option D aligns c_abi",
+                         strict: true) {
+            XCTAssertEqual(result, .success,
+                           "the lib-vt-authored payload must restore into the embedded surface")
+        }
+
         guard result == .success else {
             XCTAssertEqual(result, .invalidValue,
-                           "HIVE-B1-G6-XLIB: until option D aligns c_abi, cross-library restore is rejected " +
-                           "with .invalidValue; when this starts returning .success the full proof below runs")
+                           "until option D, cross-library restore is rejected with .invalidValue")
             XCTAssertEqual(surface.throughSeq, 0, "a rejected restore must not advance through_seq")
             return
         }
@@ -104,14 +111,11 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         // meaningful, not a race.
         XCTAssertTrue(writes.isEmpty, "restore must not emit bytes toward the host, got \(writes)")
 
-        // Restore DOES emit the state-sync events the embedded restore path
-        // fires (embedded.zig ~1259-1261: title, pwd, invalidate) — these
-        // are surface-internal, not host-bound bytes.
-        let eventTypes = Set(events.map(\.type))
-        XCTAssertTrue(eventTypes.contains(.invalidate),
-                      "restore must invalidate so the first frame repaints, got \(eventTypes)")
-        XCTAssertTrue(eventTypes.contains(.title) && eventTypes.contains(.pwd),
-                      "restore must re-emit title+pwd from the restored terminal, got \(eventTypes)")
+        // Restore emits EXACTLY the state-sync events the embedded restore
+        // path fires (embedded.zig ~1259-1261: title, pwd, invalidate) — no
+        // more (a spurious extra event type would be a regression), no fewer.
+        XCTAssertEqual(Set(events.map(\.type)), Set([.title, .pwd, .invalidate]),
+                       "restore must emit exactly {title, pwd, invalidate}, got \(events.map(\.type))")
 
         // First frame: the authored content (harness `content` constant —
         // fixture contract, keep in sync) is on screen.

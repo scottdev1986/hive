@@ -57,19 +57,26 @@ extension HiveTerminalView {
         return str.isEmpty ? nil : str
     }
 
+    /// NSAccessibility text APIs are UTF-16/NSString-indexed: character
+    /// count, visible range, and line(for:) all speak the SAME unit that
+    /// accessibilityString(for:) consumes (NSRange). Using grapheme
+    /// `String.count` here (cross-vendor review 2026-07-18) diverged for
+    /// astral characters — an emoji is 1 grapheme but 2 UTF-16 units — so a
+    /// screen reader iterating 0..<numberOfCharacters would fall short of the
+    /// real range accessibilityString accepts. All UTF-16 now.
     public override func accessibilityNumberOfCharacters() -> Int {
-        accessibilityScreenContents().count
+        (accessibilityScreenContents() as NSString).length
     }
 
     /// Terminals show all content as visible (no off-screen text model).
     public override func accessibilityVisibleCharacterRange() -> NSRange {
-        NSRange(location: 0, length: accessibilityScreenContents().count)
+        NSRange(location: 0, length: (accessibilityScreenContents() as NSString).length)
     }
 
     public override func accessibilityLine(for index: Int) -> Int {
-        let content = accessibilityScreenContents()
-        let clamped = max(0, min(index, content.count))
-        let prefix = String(content.prefix(clamped))
+        let content = accessibilityScreenContents() as NSString
+        let clamped = max(0, min(index, content.length))
+        let prefix = content.substring(to: clamped)
         return prefix.components(separatedBy: .newlines).count - 1
     }
 
