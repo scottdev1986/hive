@@ -190,3 +190,71 @@ VERDICT: PASS — land-authorized at e6606a35.
   multi-stage CJK coverage that would have caught it, and the F1 record
   correction. The gate's IME sub-claim of exact upstream fidelity is NOT fully
   supported until F2 lands.
+
+================================================================================
+FOLLOW-UP DISPOSITION (emmett, 2026-07-18, after queen routed F2-F5 to donna)
+Author closes the findings; this reviewer verifies. Recorded here because the
+next person to touch F2 needs it BEFORE starting, not after.
+
+F4 — the agreed proof is: multiple setMarkedText stages (real multi-stage),
+commit through the REAL keyDown -> interpretKeyEvents accumulator path, preedit
+clear, one keycode-0 non-composing commit, no raw sendText, exact real-engine
+UTF-8 bytes. That closes the byte-coverage and multi-stage-CJK gaps as stated.
+
+F2 — NOT covered by the F4 proof. F2 is GEOMETRY (where the IME candidate
+window is drawn); F4 is CHOREOGRAPHY (which bytes are emitted). firstRect
+influences no emitted byte, so a byte-exact proof passes identically before and
+after the fix. They are disjoint; F2 needs its own test.
+
+  Property to prove:
+    firstRect x-offset == (one cell width in POINTS) * (location + length)
+
+  Test conditions are load-bearing and easy to get wrong:
+    - preedit width MUST be != 1 cell, AND
+    - it MUST be exercised at 2x backing scale.
+  At single-cell-at-1x the correct and incorrect shapes are NUMERICALLY
+  IDENTICAL. A test that varies neither cannot distinguish them — which is
+  exactly how InputEncodingTests.swift:875-887 asserts 36 and stays green while
+  enshrining the defect. That test must be CORRECTED, not supplemented; if it
+  goes red against the fix, the expectation is the thing that is wrong.
+  Required positive control: apply the OLD shape and require the new test to go
+  RED. A green run against the old shape means the fix is unproven no matter how
+  the production code reads.
+
+  PREREQUISITE — read before writing any code. There is NO cell-size source in
+  HiveTerminalKit (grep for cellSize/cell_size returns nothing). Cell width also
+  cannot be derived from the returned rect: Surface.zig returns
+  width = preedit_width * cell.width and deliberately does NOT content-scale it,
+  while x/y/height ARE scaled, and preedit width is not visible at the Swift
+  layer. Height is one cell HEIGHT and is not a substitute for width.
+    Recommended: source cell width from the Gate-7 rendering-geometry APIs, or
+    extend the imePoint bridge to return cell width in points beside the rect.
+    NOT recommended: promoting GHOSTTY_ACTION_CELL_SIZE out of `engineInert` in
+    HiveGhosttyActionPolicy. That table is Gate 9's security-classified action
+    surface; moving a tag out of it reopens a closed security review for a
+    cosmetic IME fix. It is the most obvious-looking route and the most
+    expensive one.
+
+F3 — documented exception ACCEPTED in place of restoring upstream's
+`guard NSApp.currentEvent != nil`. The reviewer's own finding was that the
+double-injection guard is correct without it; keyTextAccumulator genuinely is
+the routing boundary (inside keyDown folds once, outside is an external
+commit). Accepting eventless commits is a capability WIN over upstream —
+dictation, Character Viewer and Services work in Hive where upstream drops
+them. Restoring the guard would delete working behavior to match a fidelity we
+do not want here.
+  Sign-off conditions:
+    1. Documented at the code site, naming the upstream line diverged from and
+       the routing-boundary rationale, so the next porter sees intent.
+    2. TESTED, not merely commented: an eventless commit is accepted AND folds
+       exactly once, so a future double-injection regression goes red. A comment
+       alone is not a control — that is precisely the F5 failure mode found in
+       this very review (a comment describing gating that does not exist).
+    3. The harness coupling recorded (the tests call insertText with
+       currentEvent nil and depend on the guard's absence), so nobody later
+       "restores upstream fidelity" and silently breaks it.
+
+GATE LANGUAGE: F2 is a fidelity DEFECT to fix; F3 is a fidelity DIVERGENCE to
+declare. They must not be reported under one heading, or the gate reads as
+claiming exact upstream fidelity on an axis where we deliberately do not have
+it.
