@@ -205,9 +205,10 @@ const direct_host_limits: HostLimits = .{
     .outputRetentionBytes = pty_host.write_queue_cap_bytes,
 };
 
-/// Ledger encoding of `LaunchOutcome`. Null fields are omitted on write, so the
-/// stored bytes are exactly the frozen flattened wire shape — and reading them
-/// back is the single path by which any create result is returned.
+/// Ledger encoding of `LaunchOutcome`. The stored bytes are exactly the frozen
+/// flattened wire shape, and reading them back is the single path by which any
+/// create result is returned. This struct is the permissive READ shape; writes
+/// go through `stringify`, which emits one variant at a time.
 const StoredOutcome = struct {
     state: enum { running, @"exec-failed", unknown },
     child: ?ProcessIdentity = null,
@@ -228,6 +229,33 @@ const StoredOutcome = struct {
 
     fn unknown(diagnostic: []const u8) StoredOutcome {
         return .{ .state = .unknown, .diagnostic = diagnostic };
+    }
+
+    /// Written one variant at a time. The frozen create-result schema marks
+    /// every field of a variant required — including `osCode`, which is
+    /// nullable but must still be PRESENT on exec-failed. Emitting the flat
+    /// struct with nulls dropped omits it; emitting it with nulls kept adds
+    /// fields the schema forbids on the other variants (additionalProperties
+    /// is false), so neither flat form validates.
+    fn stringify(self: StoredOutcome, allocator: std.mem.Allocator) ![]u8 {
+        return switch (self.state) {
+            .running => std.json.Stringify.valueAlloc(allocator, .{
+                .state = self.state,
+                .child = self.child orelse return error.InvalidCreateResult,
+                .execProof = self.execProof orelse return error.InvalidCreateResult,
+                .jobControl = self.jobControl orelse return error.InvalidCreateResult,
+            }, .{}),
+            .@"exec-failed" => std.json.Stringify.valueAlloc(allocator, .{
+                .state = self.state,
+                .layer = self.layer orelse return error.InvalidCreateResult,
+                .osCode = self.osCode,
+                .diagnostic = self.diagnostic orelse return error.InvalidCreateResult,
+            }, .{}),
+            .unknown => std.json.Stringify.valueAlloc(allocator, .{
+                .state = self.state,
+                .diagnostic = self.diagnostic orelse return error.InvalidCreateResult,
+            }, .{}),
+        };
     }
 
     fn toOutcome(self: StoredOutcome) !LaunchOutcome {
@@ -406,11 +434,7 @@ pub const DirectHost = struct {
     }
 
     fn commit(self: *DirectHost, session: SessionRef, outcome: StoredOutcome) !CreateResult {
-        const json = try std.json.Stringify.valueAlloc(
-            self.allocator,
-            outcome,
-            .{ .emit_null_optional_fields = false },
-        );
+        const json = try outcome.stringify(self.allocator);
         defer self.allocator.free(json);
         _ = try self.registry.commitCreate(session, json);
         return self.replay(session);
@@ -2151,6 +2175,27 @@ fn proveDirectCreateIdempotency(allocator: std.mem.Allocator) !void {
     const refused_record = registry.get(refused.session) orelse
         return error.DescriptorMapNotRefused;
     if (refused_record.lifecycle != .create_failed) return error.DescriptorMapNotRefused;
+
+    // The frozen create-result schema marks every field of the exec-failed
+    // variant required, and `osCode` is required-but-NULLABLE: a refusal that
+    // carries no OS code must still emit the key. Checked against the raw JSON
+    // object, because parsing into StoredOutcome cannot tell an absent field
+    // from an explicit null — the round trip alone would hide the omission.
+    var refusal_arena = std.heap.ArenaAllocator.init(allocator);
+    defer refusal_arena.deinit();
+    const refusal_document = try std.json.parseFromSliceLeaky(
+        std.json.Value,
+        refusal_arena.allocator(),
+        refused_record.createResultJson orelse return error.DescriptorMapNotRefused,
+        .{},
+    );
+    const refusal_fields = switch (refusal_document) {
+        .object => |object| object,
+        else => return error.CreateResultMissingRequiredField,
+    };
+    for ([_][]const u8{ "state", "layer", "osCode", "diagnostic" }) |field|
+        if (!refusal_fields.contains(field)) return error.CreateResultMissingRequiredField;
+    if (refusal_fields.count() != 4) return error.CreateResultMissingRequiredField;
 }
 
 fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
