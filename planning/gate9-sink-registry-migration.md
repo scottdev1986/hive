@@ -63,3 +63,14 @@ Observed shapes at e6d5413c:
 
 6. Run: full workspace suite + the Gate-9 mutation replays (registration
    disabled → carrier tests RED; forbiddenOpeners emptied → scan RED).
+
+7. Doc-comment amendment (queen ruling c1784ed2, do in the same edit):
+   `HiveGhosttyActionNotification`'s comment currently tells consumers to
+   pull selection via `readSelection()` on `.selectionChanged`. For
+   ACCESSIBILITY consumers that is superseded: selection range/text must
+   come from the atomic semantic snapshot
+   (hive_ghostty_surface_semantic_snapshot_v1, duncan's ruled Gate-10
+   surface) so it cannot tear against text/cursor/viewport; the
+   notification is strictly the async-main invalidation signal.
+   `readSelection()` stays valid for non-tree consumers. Reword the
+   comment accordingly; do not remove the API.
