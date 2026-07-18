@@ -236,24 +236,35 @@ final class Gate9CallbackMatrixTests: XCTestCase {
     /// (non-comment) line, or nil. Comment lines may NAME a forbidden symbol
     /// (the policy docs do); only code lines can call one.
     ///
-    /// NSWorkspace is judged PER LINE with a narrow benign allowlist: the
-    /// landed Gate-7 view legitimately observes sleep/wake via
-    /// `NSWorkspace.shared.notificationCenter` (read-only system events,
-    /// not an opener). Any other NSWorkspace code line — including a bare
-    /// alias like `let ws = NSWorkspace.shared`, which is how an opener
-    /// would evade a call-site pattern — is still a violation.
+    /// NSWorkspace is judged PER LINE by SUBTRACTION, not marker presence
+    /// (eleanor integration review 2026-07-18: a marker-presence allowlist
+    /// was evadable by co-locating a benign marker on a mixed line or in an
+    /// inline comment): inline comments are stripped first, then the exact
+    /// benign observer expressions (Gate 7's sleep/wake observation) are
+    /// REMOVED from the line — if any NSWorkspace residue remains (an
+    /// opener call, a bare alias, anything else) the line is flagged.
     private static let forbiddenOpeners = ["NSWorkspace", "UserNotifications", "UNUserNotificationCenter",
                                            "EnableSecureEventInput", "DisableSecureEventInput"]
-    private static let benignNSWorkspaceMarkers = [".notificationCenter",
-                                                   "willSleepNotification", "didWakeNotification"]
+    private static let benignNSWorkspaceExpressions = ["NSWorkspace.shared.notificationCenter",
+                                                       "NSWorkspace.willSleepNotification",
+                                                       "NSWorkspace.didWakeNotification"]
     private func firstForbiddenOpener(in text: String) -> String? {
+        // Strip inline comments so a benign marker inside one can never
+        // exempt code on the same line, and a symbol appearing only inside
+        // a comment can never flag it (the policy docs name these symbols).
         let codeLines = text.split(separator: "\n", omittingEmptySubsequences: false)
-            .filter { !$0.trimmingCharacters(in: .whitespaces).hasPrefix("//") }
+            .map { line -> Substring in
+                if let slash = line.range(of: "//") { return line[line.startIndex..<slash.lowerBound] }
+                return line
+            }
         for line in codeLines {
             for symbol in Self.forbiddenOpeners where line.contains(symbol) {
-                if symbol == "NSWorkspace",
-                   Self.benignNSWorkspaceMarkers.contains(where: { line.contains($0) }) {
-                    continue
+                if symbol == "NSWorkspace" {
+                    var residual = String(line)
+                    for expr in Self.benignNSWorkspaceExpressions {
+                        residual = residual.replacingOccurrences(of: expr, with: "")
+                    }
+                    if !residual.contains("NSWorkspace") { continue }
                 }
                 return symbol
             }
@@ -282,7 +293,16 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         // allowlist must not open a hole for `let ws = NSWorkspace.shared`.
         XCTAssertEqual(firstForbiddenOpener(in: "let ws = NSWorkspace.shared"), "NSWorkspace",
                        "a bare NSWorkspace alias (opener-evasion shape) must be flagged")
-        // Positive control 3: the intentional exemptions still hold.
+        // Positive controls 3+4 (eleanor integration review): co-locating a
+        // benign marker must NOT exempt an opener on the same line.
+        XCTAssertEqual(firstForbiddenOpener(
+                           in: "let opened = NSWorkspace.shared.open(url); let center = NSWorkspace.shared.notificationCenter"),
+                       "NSWorkspace",
+                       "a mixed line (opener + benign observer) must flag the opener")
+        XCTAssertEqual(firstForbiddenOpener(in: "NSWorkspace.shared.open(url) // .notificationCenter"),
+                       "NSWorkspace",
+                       "a benign marker inside an inline comment must not exempt the opener before it")
+        // Positive control 5: the intentional exemptions still hold.
         XCTAssertNil(firstForbiddenOpener(in: "/// OPEN_URL (no NSWorkspace.open from terminal content in B1)."),
                      "a comment-only mention must not trip the scan")
         XCTAssertNil(firstForbiddenOpener(in: "let center = NSWorkspace.shared.notificationCenter"),

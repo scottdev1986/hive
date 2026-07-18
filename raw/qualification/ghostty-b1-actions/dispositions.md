@@ -150,6 +150,14 @@ policy (douglas/donna converged, queen approved):
   is now judged per code line with that narrow benign allowlist; a bare
   alias (`let ws = NSWorkspace.shared`, the opener-evasion shape) is pinned
   as a positive control alongside the benign-line exemption.
+- Allowlist hardened after eleanor's integration review (2026-07-18): the
+  marker-presence check was evadable (benign marker co-located on a mixed
+  line, or inside an inline comment, exempted an opener). The predicate now
+  strips inline comments per line and SUBTRACTS the exact benign observer
+  expressions — any NSWorkspace residue flags. Both evasion shapes are
+  committed positive controls (mixed-line and inline-comment openers must
+  flag RED); the empty-list disabling mutation was replayed and turns all
+  three detector controls RED.
 
 ## Residual risk / honesty notes
 
