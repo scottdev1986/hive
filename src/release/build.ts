@@ -5,9 +5,10 @@
  * `bun run src/release/build.ts --version 0.0.7 --commit abc1234 --out dist`
  *
  * Two CLI binaries (`darwin-arm64`, `darwin-x64`) and one universal Workspace
- * application. The app is universal rather than sliced because `swift build
- * --arch arm64 --arch x86_64` produces one bundle that runs everywhere, and a
- * 3 MB duplicate is cheaper than a second bundle to sign and notarize.
+ * application. The app is universal rather than sliced because one lipo'd
+ * bundle runs everywhere, and a 3 MB duplicate is cheaper than a second
+ * bundle to sign and notarize. See compileWorkspace for why the slices are
+ * built per-arch and joined rather than via one two-`--arch` invocation.
  *
  * The build hash is a content address of the *inputs*: source tree, version,
  * commit, and target triple. It cannot be a hash of the output, because the
@@ -185,15 +186,28 @@ const INFO_PLIST = (version: string): string =>
 </plist>
 `;
 
-/** Build the universal .app bundle and leave it on disk; return its path. */
+/**
+ * Build the universal .app bundle and leave it on disk; return its path.
+ *
+ * Each architecture is built separately with SwiftPM's native build system
+ * and the executables are joined with `lipo -create`. The single-invocation
+ * form (`swift build --arch arm64 --arch x86_64`) hands the build to xcbuild,
+ * which links the GhosttyKit binary target's lib-prefixed archive as
+ * `-lghostty-internal` while emitting no library search path on the object
+ * libraries it partial-links, so the build fails with "library not found"
+ * (Xcode 26.6; the native build system passes the archive by full path). The
+ * output is the same one universal bundle either way.
+ */
 async function compileWorkspace(options: Options): Promise<string> {
   const workspace = join(options.repoRoot, "workspace");
-  await sh(
-    ["swift", "build", "-c", "release", "--arch", "arm64", "--arch", "x86_64"],
-    workspace,
-  );
-  const binPath = (await Bun.$`swift build -c release --arch arm64 --arch x86_64 --show-bin-path`
-    .cwd(workspace).text()).trim();
+  const binPaths: string[] = [];
+  for (const arch of ["arm64", "x86_64"]) {
+    await sh(["swift", "build", "-c", "release", "--arch", arch], workspace);
+    binPaths.push(
+      (await Bun.$`swift build -c release --arch ${arch} --show-bin-path`
+        .cwd(workspace).text()).trim(),
+    );
+  }
 
   const bundle = join(options.out, WORKSPACE_BUNDLE);
   const macos = join(bundle, "Contents", "MacOS");
@@ -206,12 +220,20 @@ async function compileWorkspace(options: Options): Promise<string> {
   await copyFile(join(workspace, "Resources", "Assets.car"), join(resources, "Assets.car"));
   // SPM target resources (vendor marks for the Model Control Center).
   // Bundle.module resolves against Bundle.main.resourceURL in a bundled app,
-  // so the generated bundle must ship inside Contents/Resources.
+  // so the generated bundle must ship inside Contents/Resources. The bundle
+  // is architecture-independent; either slice's copy is the same bytes.
   await sh(
-    ["cp", "-R", join(binPath, "HiveWorkspace_HiveWorkspace.bundle"), resources],
+    ["cp", "-R", join(binPaths[0]!, "HiveWorkspace_HiveWorkspace.bundle"), resources],
     options.repoRoot,
   );
-  await sh(["cp", join(binPath, "HiveWorkspace"), join(macos, "HiveWorkspace")], options.repoRoot);
+  await sh(
+    [
+      "lipo", "-create",
+      ...binPaths.map((binPath) => join(binPath, "HiveWorkspace")),
+      "-output", join(macos, "HiveWorkspace"),
+    ],
+    options.repoRoot,
+  );
   return bundle;
 }
 
