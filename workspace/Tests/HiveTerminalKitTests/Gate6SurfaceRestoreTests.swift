@@ -156,6 +156,16 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         return String(cString: text.text)
     }
 
+    /// Drive the main queue so Gate 3's async callback delivery actually
+    /// runs before we read the captured writes/events. Without this the
+    /// callback arrays are trivially empty (delivery is deferred), which is
+    /// exactly the false-green this test guards against.
+    private func pumpMainQueue() {
+        let delivered = expectation(description: "main-thread callback delivery")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 5)
+    }
+
     private func verify(
         directory: URL,
         bytes: Data,
@@ -188,6 +198,9 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
                 )
             }
             XCTAssertEqual(reference.throughSeq, UInt64(split))
+            // Drain the prefix's async delivery before clearing, so deferred
+            // prefix callbacks do not leak into the suffix comparison.
+            pumpMainQueue()
             prefixScreen = readScreenText(reference)
             referenceWrites.removeAll()
             referenceEvents.removeAll()
@@ -197,8 +210,17 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
                 "case \(caseIndex) split \(split): uninterrupted suffix"
             )
             XCTAssertEqual(reference.throughSeq, finalSequence)
+            pumpMainQueue()
             finalScreen = readScreenText(reference)
         }
+        // The suffix ends in ESC[6n (DSR) under the enabled reply policy, so a
+        // real reply byte must have reached the write callback — this makes
+        // the restored-vs-reference write comparison below non-vacuous rather
+        // than empty == empty.
+        XCTAssertFalse(
+            referenceWrites.isEmpty,
+            "case \(caseIndex) split \(split): reference suffix must produce real reply bytes"
+        )
 
         let payload = try fixture(directory, caseIndex: caseIndex, split: split)
         XCTAssertEqual(
@@ -220,6 +242,11 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
             XCTFail("case \(caseIndex) split \(split): restore returned \(restoreResult)")
             return
         }
+        // Drive restore's deferred title/pwd/invalidate delivery before
+        // asserting — otherwise restoredWrites/restoredEvents are trivially
+        // empty (the false-green) and a spurious restore-time write would go
+        // undetected.
+        pumpMainQueue()
 
         XCTAssertEqual(restored.throughSeq, UInt64(split))
         XCTAssertTrue(
@@ -245,6 +272,14 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
             "case \(caseIndex) split \(split): restored suffix"
         )
         XCTAssertEqual(restored.throughSeq, finalSequence)
+        pumpMainQueue()
+        // Non-vacuous: referenceWrites was already proven non-empty above, so
+        // this equality asserts the restored surface reproduced the SAME real
+        // reply bytes, not empty == empty.
+        XCTAssertFalse(
+            restoredWrites.isEmpty,
+            "case \(caseIndex) split \(split): restored suffix must produce real reply bytes"
+        )
         XCTAssertEqual(
             restoredWrites,
             referenceWrites,
@@ -268,13 +303,6 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
     }
 
     func testEveryLibVtAuthoredSplitRestoresIntoRealSurface() throws {
-        try XCTSkipIf(
-            true,
-            "Gate 3 async delivery requires this test to pump main-queue delivery AND requires the "
-                + "Gate-6 checkpoint UAF fix (latent on main, exposed by the async tick); re-enabled "
-                + "and proven under async at Gate 6's landing."
-        )
-
         if let expected = ProcessInfo.processInfo.environment["HIVE_EXPECTED_TEST_ARCH"] {
             XCTAssertEqual(runtimeArchitecture, expected, "release lock ran wrong slice")
         }

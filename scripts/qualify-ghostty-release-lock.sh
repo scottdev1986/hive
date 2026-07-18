@@ -55,9 +55,36 @@ for arch in arm64 x86_64; do
       --scratch-path "$TMP/build-$arch" \
       --triple "$arch-apple-macosx14.0"
     bundle="$TMP/build-$arch/$arch-apple-macosx/debug/HiveWorkspacePackageTests.xctest"
+    testid='HiveTerminalKitTests.Gate6SurfaceRestoreTests/testEveryLibVtAuthoredSplitRestoresIntoRealSurface'
+    out="$TMP/xctest-$arch.log"
     HIVE_GHOSTTY_ARTIFACT="$ARTIFACT" HIVE_EXPECTED_TEST_ARCH="$arch" \
       /usr/bin/arch "-$arch" /usr/bin/xcrun xctest \
-        -XCTest 'HiveTerminalKitTests.Gate6SurfaceRestoreTests/testEveryLibVtAuthoredSplitRestoresIntoRealSurface' \
-        "$bundle"
+        -XCTest "$testid" "$bundle" 2>&1 | /usr/bin/tee "$out"
+    xctest_status="${PIPESTATUS[0]}"
+    if [[ "$xctest_status" -ne 0 ]]; then
+      echo "release lock: xctest exited $xctest_status on $arch" >&2
+      exit "$xctest_status"
+    fi
+    # EXECUTED + NOT-SKIPPED enforcement. xctest exits 0 even when a test is
+    # XCTSkip'd or when zero tests match the -XCTest selector, so a bare exit
+    # code is a false-green (the exact failure mode this lock guards). Require
+    # the test case to PASS-execute, forbid any "skipped", and require exactly
+    # one executed test with no failures.
+    if ! /usr/bin/grep -q \
+      "Test Case '-\[HiveTerminalKitTests.Gate6SurfaceRestoreTests testEveryLibVtAuthoredSplitRestoresIntoRealSurface\]' passed" \
+      "$out"; then
+      echo "release lock: Gate6SurfaceRestoreTests did not PASS-execute on $arch (skipped or zero-matched?)" >&2
+      /usr/bin/grep -iE "skipped|Executed [0-9]+ test" "$out" >&2 || true
+      exit 1
+    fi
+    if /usr/bin/grep -qi "skipped" "$out"; then
+      echo "release lock: Gate6SurfaceRestoreTests reported a skip on $arch" >&2
+      exit 1
+    fi
+    if ! /usr/bin/grep -q "Executed 1 test, with 0 failures" "$out"; then
+      echo "release lock: expected exactly one executed test with no failures on $arch" >&2
+      exit 1
+    fi
+    echo "release lock: Gate6SurfaceRestoreTests executed and passed (not skipped) on $arch"
   )
 done
