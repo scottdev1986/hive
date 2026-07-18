@@ -2511,15 +2511,19 @@ fn executableBuildId(allocator: std.mem.Allocator) ![]u8 {
     return allocator.dupe(u8, &hex);
 }
 
-fn writeWelcome(
+const BuiltWelcome = struct {
+    header: protocol.Header,
+    payload: []u8,
+};
+
+fn buildWelcome(
     allocator: std.mem.Allocator,
-    stream: std.net.Stream,
     request: protocol.Header,
     instance_id: []const u8,
     build_id: []const u8,
     server_epoch: u64,
     selected_minor: u8,
-) !void {
+) !BuiltWelcome {
     var connection_storage: [32]u8 = undefined;
     var epoch_storage: [32]u8 = undefined;
     const connection_id = try std.fmt.bufPrint(&connection_storage, "{d}", .{std.crypto.random.int(u64)});
@@ -2543,12 +2547,26 @@ fn writeWelcome(
         },
     };
     const payload = try std.json.Stringify.valueAlloc(allocator, welcome, .{});
-    defer allocator.free(payload);
+    errdefer allocator.free(payload);
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.welcome_payload, payload))
         return error.InvalidWelcome;
     var header = responseHeader(request, generated.frame_type.welcome, payload.len);
     header.minor = selected_minor;
-    try protocol.writeFrame(stream, header, payload);
+    return .{ .header = header, .payload = payload };
+}
+
+fn writeWelcome(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    request: protocol.Header,
+    instance_id: []const u8,
+    build_id: []const u8,
+    server_epoch: u64,
+    selected_minor: u8,
+) !void {
+    const welcome = try buildWelcome(allocator, request, instance_id, build_id, server_epoch, selected_minor);
+    defer allocator.free(welcome.payload);
+    try protocol.writeFrame(stream, welcome.header, welcome.payload);
 }
 
 fn writeFailure(
@@ -2735,12 +2753,32 @@ fn serveDaemonConnection(
         });
         return;
     };
-    var daemon_lock = try loadDaemonLock(allocator, runtime.canonical_home);
+    // Pre-WELCOME logical failures send a best-effort typed ERROR before the
+    // close; the original error still propagates so serve() logs the reason,
+    // and a dead transport must never mask it.
+    var daemon_lock = loadDaemonLock(allocator, runtime.canonical_home) catch |err| {
+        writeFailure(allocator, stream, hello_frame.header, .{
+            .code = .not_ready,
+            .close_connection = true,
+        }) catch {};
+        return err;
+    };
     defer daemon_lock.deinit();
-    var daemon_handshake = try loadDaemonHandshake(allocator, runtime.canonical_home);
+    var daemon_handshake = loadDaemonHandshake(allocator, runtime.canonical_home) catch |err| {
+        writeFailure(allocator, stream, hello_frame.header, .{
+            .code = .not_ready,
+            .close_connection = true,
+        }) catch {};
+        return err;
+    };
     defer daemon_handshake.deinit();
-    if (!std.mem.eql(u8, daemon_lock.value.instanceId, daemon_handshake.value.instanceId))
+    if (!std.mem.eql(u8, daemon_lock.value.instanceId, daemon_handshake.value.instanceId)) {
+        writeFailure(allocator, stream, hello_frame.header, .{
+            .code = .instance_mismatch,
+            .close_connection = true,
+        }) catch {};
         return error.DaemonEvidenceMismatch;
+    }
     const peer_failure = verifyDaemonPeer(observed, .{
         .uid = std.posix.getuid(),
         .gid = @intCast(c.getgid()),
@@ -2763,15 +2801,25 @@ fn serveDaemonConnection(
         try writeFailure(allocator, stream, hello_frame.header, failure);
         return;
     }
-    try writeWelcome(
+    // A typed ERROR is only legal while zero WELCOME bytes are on the wire:
+    // build and validate the frame first, and once writeFrame starts, any
+    // failure is transport-fatal and closes bare.
+    const welcome = buildWelcome(
         allocator,
-        stream,
         hello_frame.header,
         daemon_handshake.value.instanceId,
         build_id,
         timer.read(),
         selected_minor,
-    );
+    ) catch |err| {
+        writeFailure(allocator, stream, hello_frame.header, .{
+            .code = .internal,
+            .close_connection = true,
+        }) catch {};
+        return err;
+    };
+    defer allocator.free(welcome.payload);
+    try protocol.writeFrame(stream, welcome.header, welcome.payload);
     try serveAuthenticatedFrames(allocator, stream, timer, selected_minor, backend);
 }
 
@@ -3260,6 +3308,7 @@ const DaemonWireHarness = struct {
     stream: std.net.Stream,
     observed: *const ObservedPeer,
     timer: *std.time.Timer,
+    build_id: []const u8 = "test-build",
     failed: std.atomic.Value(bool) = std.atomic.Value(bool).init(false),
 
     fn run(self: *DaemonWireHarness) void {
@@ -3270,7 +3319,7 @@ const DaemonWireHarness = struct {
             self.runtime,
             self.stream,
             self.observed,
-            "test-build",
+            self.build_id,
             self.timer,
             backend.backend(),
         ) catch self.failed.store(true, .release);
@@ -3325,6 +3374,273 @@ test "daemon UDS returns a correlated typed header failure before closing" {
     try std.testing.expectEqualStrings(expected_code, error_payload.value.code);
     thread.join();
     try std.testing.expect(!harness.failed.load(.acquire));
+}
+
+const test_daemon_hello_json =
+    \\{"schemaVersion":1,"buildId":"daemon-build","instanceId":"instance-a","protocol":{"major":1,"minMinor":0,"maxMinor":0},"clientRole":"daemon","daemonControl":{"productVersion":"0.0.0-dev","buildHash":"daemon-build","wireProtocol":{"min":1,"max":1},"schemaEpoch":1,"instanceId":"instance-a","hiveUuid":"hive-a","identityKey":"project-a","repoFamilyKey":"family-a"}}
+;
+
+const test_daemon_lock_json =
+    \\{"pid":42,"instanceId":"instance-a","startedAt":"2026-07-18T00:00:00Z","startToken":"10:2","executablePath":"/opt/hive/bin/hive"}
+;
+
+const test_daemon_handshake_json =
+    \\{"productVersion":"0.0.0-dev","buildHash":"daemon-build","wireProtocol":{"min":1,"max":1},"schemaEpoch":1,"capabilities":["daemon-handshake-v1"],"instanceId":"instance-a","hiveUuid":"hive-a","identityKey":"project-a","repoFamilyKey":"family-a","generation":1}
+;
+
+const test_daemon_handshake_mismatch_json =
+    \\{"productVersion":"0.0.0-dev","buildHash":"daemon-build","wireProtocol":{"min":1,"max":1},"schemaEpoch":1,"capabilities":["daemon-handshake-v1"],"instanceId":"instance-b","hiveUuid":"hive-a","identityKey":"project-a","repoFamilyKey":"family-a","generation":1}
+;
+
+const TestHandshakeServer = struct {
+    listener: std.net.Server,
+    body: []const u8,
+
+    fn run(self: *TestHandshakeServer) void {
+        var connection = self.listener.accept() catch return;
+        defer connection.stream.close();
+        var request_storage: [1024]u8 = undefined;
+        _ = connection.stream.read(&request_storage) catch return;
+        var response_storage: [2048]u8 = undefined;
+        const response = std.fmt.bufPrint(
+            &response_storage,
+            "HTTP/1.1 200 OK\r\nContent-Length: {d}\r\nConnection: close\r\n\r\n{s}",
+            .{ self.body.len, self.body },
+        ) catch return;
+        connection.stream.writeAll(response) catch return;
+    }
+};
+
+fn writeDaemonEvidenceFixture(directory: std.fs.Dir, port: u16) !void {
+    try directory.writeFile(.{ .sub_path = "daemon.lock", .data = test_daemon_lock_json });
+    var port_storage: [8]u8 = undefined;
+    const port_text = try std.fmt.bufPrint(&port_storage, "{d}", .{port});
+    try directory.writeFile(.{ .sub_path = "daemon.port", .data = port_text });
+}
+
+fn testObservedDaemonPeer() ObservedPeer {
+    const executable = "/opt/hive/bin/hive";
+    var observed: ObservedPeer = .{
+        .uid = std.posix.getuid(),
+        .gid = @intCast(c.getgid()),
+        .pid = 42,
+        .start_token = .{ .seconds = 10, .microseconds = 2 },
+        .executable = @splat(0),
+        .executable_len = executable.len,
+    };
+    @memcpy(observed.executable[0..executable.len], executable);
+    return observed;
+}
+
+fn writeTestDaemonHello(client: std.net.Stream, request_id: u64) !void {
+    try protocol.writeFrame(client, .{
+        .minor = generated.protocol_minor,
+        .type_code = generated.frame_type.hello,
+        .flags = 0,
+        .payload_length = test_daemon_hello_json.len,
+        .request_id = request_id,
+        .stream_seq = 0,
+    }, test_daemon_hello_json);
+}
+
+fn expectTypedErrorFrame(client: std.net.Stream, request_id: u64, code: protocol.WireError) !void {
+    const file: std.fs.File = .{ .handle = client.handle };
+    const response = try protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    defer response.frame.deinit(std.testing.allocator);
+    try std.testing.expectEqual(generated.frame_type.@"error", response.frame.header.type_code);
+    try std.testing.expectEqual(request_id, response.frame.header.request_id);
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.error_payload,
+        response.frame.payload,
+    ));
+    const ErrorPayload = struct { code: []const u8 };
+    var error_payload = try std.json.parseFromSlice(ErrorPayload, std.testing.allocator, response.frame.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer error_payload.deinit();
+    var code_storage: [64]u8 = undefined;
+    const tag = @tagName(code);
+    const expected_code = std.ascii.upperString(code_storage[0..tag.len], tag);
+    try std.testing.expectEqualStrings(expected_code, error_payload.value.code);
+}
+
+test "pre-WELCOME evidence failure sends a correlated typed ERROR" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(home);
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed: ObservedPeer = undefined;
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+    try writeTestDaemonHello(client, 81);
+    try expectTypedErrorFrame(client, 81, .not_ready);
+    thread.join();
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+    try std.testing.expect(harness.failed.load(.acquire));
+}
+
+test "daemon evidence instance mismatch sends a correlated typed ERROR" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(home);
+
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var handshake_server: TestHandshakeServer = .{
+        .listener = try address.listen(.{}),
+        .body = test_daemon_handshake_mismatch_json,
+    };
+    defer handshake_server.listener.deinit();
+    try writeDaemonEvidenceFixture(tmp.dir, handshake_server.listener.listen_address.in.getPort());
+    const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
+    defer {
+        // macOS does not wake a blocked accept() when the listener closes, so
+        // unblock it in case the broker never fetched the handshake.
+        if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
+            unblock.close()
+        else |_| {}
+        handshake_thread.join();
+    }
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed: ObservedPeer = undefined;
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+    try writeTestDaemonHello(client, 82);
+    try expectTypedErrorFrame(client, 82, .instance_mismatch);
+    thread.join();
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+    try std.testing.expect(harness.failed.load(.acquire));
+}
+
+test "WELCOME validation failure sends a typed ERROR with no WELCOME bytes" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(home);
+
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var handshake_server: TestHandshakeServer = .{
+        .listener = try address.listen(.{}),
+        .body = test_daemon_handshake_json,
+    };
+    defer handshake_server.listener.deinit();
+    try writeDaemonEvidenceFixture(tmp.dir, handshake_server.listener.listen_address.in.getPort());
+    const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
+    defer {
+        // macOS does not wake a blocked accept() when the listener closes, so
+        // unblock it in case the broker never fetched the handshake.
+        if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
+            unblock.close()
+        else |_| {}
+        handshake_thread.join();
+    }
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed = testObservedDaemonPeer();
+    var timer = try std.time.Timer.start();
+    // An empty broker build id fails welcomePayload validation before any
+    // WELCOME byte is written, so the client must see the typed ERROR as the
+    // first and only frame.
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+        .build_id = "",
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+    try writeTestDaemonHello(client, 83);
+    try expectTypedErrorFrame(client, 83, .internal);
+    thread.join();
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+    try std.testing.expect(harness.failed.load(.acquire));
+}
+
+test "WELCOME transport failure closes bare with no ERROR frame" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(home);
+
+    const address = try std.net.Address.parseIp("127.0.0.1", 0);
+    var handshake_server: TestHandshakeServer = .{
+        .listener = try address.listen(.{}),
+        .body = test_daemon_handshake_json,
+    };
+    defer handshake_server.listener.deinit();
+    try writeDaemonEvidenceFixture(tmp.dir, handshake_server.listener.listen_address.in.getPort());
+    const handshake_thread = try std.Thread.spawn(.{}, TestHandshakeServer.run, .{&handshake_server});
+    defer {
+        // macOS does not wake a blocked accept() when the listener closes, so
+        // unblock it in case the broker never fetched the handshake.
+        if (std.net.tcpConnectToAddress(handshake_server.listener.listen_address)) |unblock|
+            unblock.close()
+        else |_| {}
+        handshake_thread.join();
+    }
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    // Shutting down the broker's write side before it serves makes the WELCOME
+    // transport write fail while HELLO still arrives; the broker must close
+    // bare without attempting an ERROR frame over the failed transport.
+    try std.posix.shutdown(sockets[1], .send);
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed = testObservedDaemonPeer();
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+    };
+    const thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+    try writeTestDaemonHello(client, 84);
+    thread.join();
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+    try std.testing.expect(harness.failed.load(.acquire));
 }
 
 test "WELCOME publishes the real engine build id" {
