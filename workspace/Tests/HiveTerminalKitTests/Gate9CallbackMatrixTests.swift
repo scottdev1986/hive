@@ -179,11 +179,20 @@ final class Gate9CallbackMatrixTests: XCTestCase {
                         "the dragged selection must be readable via ghostty_surface_read_selection")
     }
 
+    /// Builds the surface-targeted C value the production dispatch receives,
+    /// so the lifetime tests drive the REAL notifySurface path (registry
+    /// lookup + context admission gate), not a test-only shortcut.
+    private func surfaceTarget(_ handle: ghostty_surface_t) -> ghostty_target_s {
+        ghostty_target_s(tag: GHOSTTY_TARGET_SURFACE, target: ghostty_target_u(surface: handle))
+    }
+
     /// Lifetime ORDERING (dylan cross-vendor review 2026-07-18): a note
     /// ENQUEUED while the surface is alive, with free() running before the
     /// main queue drains (wrapper still retained), must deliver nothing.
     /// The enqueue-time registry check alone passed here and delivered
-    /// after free; only the execution-time gate makes this hold.
+    /// after free; only the execution-time gate (the context's
+    /// acceptingCallbacks recheck, closed by beginTeardown in free) makes
+    /// this hold.
     func testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime() throws {
         let surface = try makeSurface()
         guard let handle = surface.surfaceHandle else { return XCTFail("real surface required") }
@@ -192,7 +201,7 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         surface.onActionNotification = { _ in received += 1 }
 
         // Enqueue while alive and registered — the enqueue-time check passes.
-        GhosttyManualSurface.deliverActionNotification(.selectionChanged, toSurfaceHandle: handle)
+        HiveGhosttyActionPolicy.notifySurface(surfaceTarget(handle), .selectionChanged)
         // free() runs on main BEFORE the queued delivery closure can (this
         // test body occupies the main thread; the async closure is behind us).
         surface.free()
@@ -215,7 +224,7 @@ final class Gate9CallbackMatrixTests: XCTestCase {
         surface.free()
 
         // The handle value is only used as a registry KEY (never deref'd).
-        GhosttyManualSurface.deliverActionNotification(.selectionChanged, toSurfaceHandle: handle)
+        HiveGhosttyActionPolicy.notifySurface(surfaceTarget(handle), .selectionChanged)
         drainMain(0.1)
         XCTAssertEqual(received, 0, "a freed surface must never receive action notifications")
     }

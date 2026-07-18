@@ -255,42 +255,14 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
 
     /// Gate 9 observe-only action notifications (SELECTION_CHANGED /
     /// SCROLLBAR), delivered async on the main thread with the payload
-    /// already value-copied. Set/read from the main thread.
-    public var onActionNotification: ((HiveGhosttyActionNotification) -> Void)?
-
-    /// Routes an action target's `ghostty_surface_t` back to the owning
-    /// Swift surface. Weak values + removal in `free()` mean a freed
-    /// surface can never be delivered to (no callback after free).
-    private static let actionRegistryLock = NSLock()
-    private static var actionRegistry: [ghostty_surface_t: WeakSurfaceBox] = [:]
-    private final class WeakSurfaceBox {
-        weak var value: GhosttyManualSurface?
-        init(_ value: GhosttyManualSurface) { self.value = value }
-    }
-
-    static func deliverActionNotification(
-        _ note: HiveGhosttyActionNotification,
-        toSurfaceHandle handle: ghostty_surface_t
-    ) {
-        actionRegistryLock.lock()
-        let box = actionRegistry[handle]
-        actionRegistryLock.unlock()
-        guard let surface = box?.value else { return }
-        DispatchQueue.main.async { [weak surface] in
-            guard let surface else { return }
-            // EXECUTION-time gate (dylan cross-vendor review 2026-07-18): a
-            // note enqueued before free() must deliver NOTHING once free()
-            // has run, even while the wrapper is still retained — an
-            // enqueue-time check alone races free(). The registry is the
-            // lock-protected truth (free() deregisters before the C free),
-            // and the identity compare also drops a note whose handle value
-            // was reused by a NEWER surface.
-            Self.actionRegistryLock.lock()
-            let stillRegistered = Self.actionRegistry[handle]?.value === surface
-            Self.actionRegistryLock.unlock()
-            guard stillRegistered else { return }
-            surface.onActionNotification?(note)
-        }
+    /// already value-copied. Rides the surface's BridgeCallbackContext:
+    /// routing goes through GhosttySurfaceCallbackRegistry and the
+    /// context's acceptingCallbacks execution-time gate is the
+    /// no-delivery-after-free guarantee (dylan review 2026-07-18; single
+    /// routing path per queen's integration ruling).
+    public var onActionNotification: ((HiveGhosttyActionNotification) -> Void)? {
+        get { callbackContext.onActionNotification }
+        set { callbackContext.onActionNotification = newValue }
     }
 
     /// Strong host view so the C `nsview` pointer never dangles (SF1).
@@ -318,14 +290,6 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         self.hostView = hostView
         self.appOwner = appOwner
         self.ownsSurface = ownsSurface
-        // Only the owning wrapper receives action notifications: a
-        // non-owning alias of the same handle must not shadow the owner
-        // in the registry.
-        if ownsSurface {
-            Self.actionRegistryLock.lock()
-            Self.actionRegistry[surface] = WeakSurfaceBox(self)
-            Self.actionRegistryLock.unlock()
-        }
     }
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> GhosttyBridgeResult {
@@ -793,9 +757,11 @@ public enum HiveGhosttyActionPolicy {
         }
     }
 
-    private static func notifySurface(_ target: ghostty_target_s, _ note: HiveGhosttyActionNotification) {
+    /// internal (not private): gate-9 lifetime tests drive the exact
+    /// production dispatch path (registry lookup + context admission gate).
+    static func notifySurface(_ target: ghostty_target_s, _ note: HiveGhosttyActionNotification) {
         guard target.tag == GHOSTTY_TARGET_SURFACE, let handle = target.target.surface else { return }
-        GhosttyManualSurface.deliverActionNotification(note, toSurfaceHandle: handle)
+        GhosttySurfaceCallbackRegistry.shared.enqueueActionNotification(note, for: handle)
     }
 }
 
@@ -803,9 +769,12 @@ public enum HiveGhosttyActionPolicy {
 /// per-surface. Observe-only — the action callback still returns false to
 /// the engine for both tags, so nothing privileged is enabled by listening.
 /// `scrollbar` fields map 1:1 to `ghostty_action_scrollbar_s` (pinned
-/// ghostty.h); `selectionChanged` carries no payload at the pinned header —
-/// consumers pull the selection via `readSelection()` /
-/// `ghostty_surface_read_selection` from the main thread on receipt.
+/// ghostty.h); `selectionChanged` carries no payload at the pinned header.
+/// ACCESSIBILITY consumers must source selection range/text from the atomic
+/// semantic snapshot (queen ruling c1784ed2) — a separate `readSelection()`
+/// read can tear against the snapshot's text/cursor/viewport; treat the
+/// notification strictly as an async-main invalidation signal.
+/// `readSelection()` remains valid for non-tree consumers.
 public enum HiveGhosttyActionNotification: Equatable, Sendable {
     case selectionChanged
     case scrollbar(total: UInt64, offset: UInt64, len: UInt64)
@@ -872,6 +841,17 @@ private final class GhosttySurfaceCallbackRegistry: @unchecked Sendable {
         let context = contexts[UInt(bitPattern: surface)]?.value
         lock.unlock()
         context?.enqueueRendererHealth(health)
+    }
+
+    /// Gate 9 carrier routing (same shape as enqueueRendererHealth): the
+    /// context's admission gate provides the execution-time
+    /// no-delivery-after-free guarantee.
+    func enqueueActionNotification(_ note: HiveGhosttyActionNotification, for surface: ghostty_surface_t?) {
+        guard let surface else { return }
+        lock.lock()
+        let context = contexts[UInt(bitPattern: surface)]?.value
+        lock.unlock()
+        context?.enqueueActionNotification(note)
     }
 }
 

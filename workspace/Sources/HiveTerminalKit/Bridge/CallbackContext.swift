@@ -47,6 +47,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
     private var writeHandler: ((Data) -> Void)?
     private var eventHandler: ((BridgeEvent) -> Void)?
     private var rendererHealthHandler: ((RendererHealth) -> Void)?
+    private var actionNotificationHandler: ((HiveGhosttyActionNotification) -> Void)?
     private var acceptingCallbacks = true
     private var activeCallbacks = 0
     private let condition = NSCondition()
@@ -164,6 +165,7 @@ public final class BridgeCallbackContext: @unchecked Sendable {
         writeHandler = nil
         eventHandler = nil
         rendererHealthHandler = nil
+        actionNotificationHandler = nil
         condition.unlock()
     }
 
@@ -200,6 +202,35 @@ public final class BridgeCallbackContext: @unchecked Sendable {
             let handler = self.acceptingCallbacks ? self.rendererHealthHandler : nil
             self.condition.unlock()
             handler?(health)
+        }
+    }
+
+    /// Gate 9 observe-only action notifications (SELECTION_CHANGED /
+    /// SCROLLBAR), same admission + main-deferral discipline as
+    /// enqueueRendererHealth. The execution-time acceptingCallbacks recheck
+    /// is the no-delivery-after-free guarantee (dylan review 2026-07-18).
+    public var onActionNotification: ((HiveGhosttyActionNotification) -> Void)? {
+        get {
+            condition.lock()
+            defer { condition.unlock() }
+            return actionNotificationHandler
+        }
+        set {
+            condition.lock()
+            actionNotificationHandler = acceptingCallbacks ? newValue : nil
+            condition.unlock()
+        }
+    }
+
+    func enqueueActionNotification(_ note: HiveGhosttyActionNotification) {
+        guard enter() else { return }
+        leave()
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.condition.lock()
+            let handler = self.acceptingCallbacks ? self.actionNotificationHandler : nil
+            self.condition.unlock()
+            handler?(note)
         }
     }
 
