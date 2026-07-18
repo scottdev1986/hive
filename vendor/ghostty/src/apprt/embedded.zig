@@ -1148,8 +1148,7 @@ const HiveManual = struct {
     /// level 2 conformance, ANSI color, no clipboard feature (52) because
     /// clipboardWrite above always denies.
     ///
-    /// stream_terminal suppresses tertiary DA to match the pinned exec-mode
-    /// handler, which implements only primary and secondary DA.
+    /// DA3 uses the default zero terminal unit ID.
     fn deviceAttributes(handler: *terminal.TerminalStream.Handler) terminal.device_attributes.Attributes {
         _ = handler;
         return .{ .secondary = .{ .firmware_version = 10 } };

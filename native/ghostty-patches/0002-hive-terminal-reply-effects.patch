@@ -1,5 +1,5 @@
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index f683855..293171f 100644
+index f683855..8cbd512 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -23,6 +23,7 @@ const CoreApp = @import("../App.zig");
@@ -50,7 +50,7 @@ index f683855..293171f 100644
          };
          return .{
              .surface = surface,
-@@ -1123,29 +1130,90 @@ const HiveManual = struct {
+@@ -1123,29 +1130,89 @@ const HiveManual = struct {
          return .denied;
      }
  
@@ -82,8 +82,7 @@ index f683855..293171f 100644
 +    /// level 2 conformance, ANSI color, no clipboard feature (52) because
 +    /// clipboardWrite above always denies.
 +    ///
-+    /// stream_terminal suppresses tertiary DA to match the pinned exec-mode
-+    /// handler, which implements only primary and secondary DA.
++    /// DA3 uses the default zero terminal unit ID.
 +    fn deviceAttributes(handler: *terminal.TerminalStream.Handler) terminal.device_attributes.Attributes {
 +        _ = handler;
 +        return .{ .secondary = .{ .firmware_version = 10 } };
@@ -161,7 +160,7 @@ index f683855..293171f 100644
          self.surface.core_surface.io.renderer_wakeup.notify() catch {};
          self.emit(.invalidate, "");
          return .success;
-@@ -1171,24 +1239,24 @@ const HiveManual = struct {
+@@ -1171,24 +1238,24 @@ const HiveManual = struct {
          };
          var stream_owned = true;
          defer if (stream_owned) stream.deinit();
@@ -203,7 +202,7 @@ index f683855..293171f 100644
          self.surface.core_surface.io.renderer_wakeup.notify() catch {};
          self.emit(.title, self.surface.core_surface.io.terminal.getTitle() orelse "");
          self.emit(.pwd, self.surface.core_surface.io.terminal.getPwd() orelse "");
-@@ -1765,6 +1833,7 @@ pub const CAPI = struct {
+@@ -1765,6 +1832,7 @@ pub const CAPI = struct {
      export fn hive_ghostty_surface_new_manual_v1(
          app_: ?*App,
          opts_: ?*const apprt.Surface.Options,
@@ -211,7 +210,7 @@ index f683855..293171f 100644
          write_: ?HiveWriteFn,
          write_context: ?*anyopaque,
          event_: ?HiveEventFn,
-@@ -1774,6 +1843,10 @@ pub const CAPI = struct {
+@@ -1774,6 +1842,10 @@ pub const CAPI = struct {
          const opts = opts_ orelse return null;
          const write = write_ orelse return null;
          const event = event_ orelse return null;
@@ -222,7 +221,7 @@ index f683855..293171f 100644
          if (CoreSurface.hive_manual_backend != null or hive_manual_init != null)
              return null;
  
-@@ -1784,6 +1857,7 @@ pub const CAPI = struct {
+@@ -1784,6 +1856,7 @@ pub const CAPI = struct {
          hive_manual_init = .{
              .event = event,
              .event_context = event_context,
@@ -253,7 +252,7 @@ index e095e1b..15e9985 100644
              pending.clearRetainingCapacity();
          }
 diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
-index 91cfb21..846c6ab 100644
+index 91cfb21..8e3eb99 100644
 --- a/src/terminal/stream_terminal.zig
 +++ b/src/terminal/stream_terminal.zig
 @@ -4,6 +4,7 @@ const testing = std.testing;
@@ -397,12 +396,3 @@ index 91cfb21..846c6ab 100644
      fn bell(self: *Handler) void {
          const func = self.effects.bell orelse return;
          func(self);
-@@ -363,6 +450,8 @@ pub const Handler = struct {
-     }
- 
-     fn reportDeviceAttributes(self: *Handler, req: device_attributes.Req) void {
-+        // Match Ghostty's exec-mode handler: tertiary DA is unsupported.
-+        if (req == .tertiary) return;
-         const func = self.effects.device_attributes orelse return;
-         const attrs = func(self);
- 

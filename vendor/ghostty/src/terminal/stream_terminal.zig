@@ -450,8 +450,6 @@ pub const Handler = struct {
     }
 
     fn reportDeviceAttributes(self: *Handler, req: device_attributes.Req) void {
-        // Match Ghostty's exec-mode handler: tertiary DA is unsupported.
-        if (req == .tertiary) return;
         const func = self.effects.device_attributes orelse return;
         const attrs = func(self);
 
