@@ -30,6 +30,12 @@ final class OrderedOutputEngineTests: XCTestCase {
         }
     }
 
+    private func pumpMainQueue() {
+        let delivered = expectation(description: "main-thread callback delivery")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 1)
+    }
+
     func testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -57,6 +63,7 @@ final class OrderedOutputEngineTests: XCTestCase {
         let bytes = Data("hello".utf8)
         XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: 0), .success)
         XCTAssertEqual(surface.throughSeq, 5)
+        pumpMainQueue()
         let eventCountAfterFirstParse = events.count
         XCTAssertGreaterThan(eventCountAfterFirstParse, 0,
                              "positive control: the real first parse must produce at least one event " +
@@ -66,6 +73,7 @@ final class OrderedOutputEngineTests: XCTestCase {
         // Exact same [0,5) range, identical bytes -> duplicate, still success.
         XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: 0), .success)
         XCTAssertEqual(surface.throughSeq, 5, "a duplicate retransmit must not double-advance through_seq")
+        pumpMainQueue()
         XCTAssertEqual(events.count, eventCountAfterFirstParse,
                        "a duplicate retransmit must re-parse NOTHING -- zero additional events, " +
                        "not merely an unchanged throughSeq")
@@ -109,9 +117,11 @@ final class OrderedOutputEngineTests: XCTestCase {
         let first = Data("\u{1B}[".utf8)
         let second = Data("c".utf8)
         XCTAssertEqual(surface.processOutput(bytes: first, streamSeq: 0), .success)
+        pumpMainQueue()
         XCTAssertEqual(writes.count, 0, "an incomplete CSI sequence must not reply early")
 
         XCTAssertEqual(surface.processOutput(bytes: second, streamSeq: UInt64(first.count)), .success)
+        pumpMainQueue()
         XCTAssertEqual(writes.count, 1, "the reply must fire once the sequence completes, split or not")
         XCTAssertEqual(writes.first, Data("\u{1B}[?62;22c".utf8))
     }

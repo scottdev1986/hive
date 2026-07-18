@@ -20,6 +20,8 @@ final class CallbackDisciplineTests: XCTestCase {
         hiveBridgeWriteTrampoline(ctx.unownedContextPointer, UnsafePointer(ptr), n)
         ptr.update(repeating: 0xFF, count: n)
 
+        waitUntil { observed != nil }
+
         XCTAssertEqual(observed, original, "copy must survive same-address overwrite")
         XCTAssertNotEqual(observed, Data(bytes: ptr, count: n),
                           "positive control: storage was actually overwritten")
@@ -44,6 +46,8 @@ final class CallbackDisciplineTests: XCTestCase {
         )
         hiveBridgeEventTrampoline(ctx.unownedContextPointer, &event)
         ptr.update(repeating: 0xFF, count: n)
+
+        waitUntil { observed != nil }
 
         XCTAssertEqual(observed?.type, .pwd)
         XCTAssertEqual(observed?.bytes, original)
@@ -71,23 +75,134 @@ final class CallbackDisciplineTests: XCTestCase {
         ptr[0] = 0x01; ptr[1] = 0x02; ptr[2] = 0x03; ptr[3] = 0x04
         hiveBridgeWriteTrampoline(ctx.unownedContextPointer, UnsafePointer(ptr), n)
         ptr.update(repeating: 0xFF, count: n)
+        waitUntil { copy != nil }
         XCTAssertEqual(copy, Data([0x01, 0x02, 0x03, 0x04]))
     }
 
-    /// SF3: renames the old misnamed test — verifies enter()/leave() arm and clear
-    /// `isInCallback` around a trampoline (does not trap on re-entry).
-    func testInCallbackFlagArmedDuringTrampolineAndClearedAfter() {
+    func testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds() {
         let ctx = BridgeCallbackContext()
-        var sawInCallback = false
+        var sawInCallback: Bool?
+        var sawMainThread = false
         ctx.onWrite = { _ in
             sawInCallback = ctx.isInCallback
+            sawMainThread = Thread.isMainThread
         }
         let bytes: [UInt8] = [1]
         bytes.withUnsafeBufferPointer { buf in
             hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
         }
-        XCTAssertTrue(sawInCallback, "enter() must arm inCallback during trampoline")
+        XCTAssertNil(sawInCallback, "host delivery must be deferred until the C callback returns")
         XCTAssertFalse(ctx.isInCallback, "leave() must clear after return")
+        waitUntil { sawInCallback != nil }
+        XCTAssertEqual(sawInCallback, false, "host code must never run inside the C callback scope")
+        XCTAssertTrue(sawMainThread, "all host callback delivery is main-thread confined")
+    }
+
+    func testTeardownDropsDeliveryAlreadyQueuedBeforeFree() {
+        let ctx = BridgeCallbackContext()
+        var deliveries = 0
+        ctx.onWrite = { _ in deliveries += 1 }
+        let bytes: [UInt8] = [1]
+
+        bytes.withUnsafeBufferPointer { buf in
+            hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
+        }
+        ctx.beginTeardown()
+        pumpMainQueue()
+
+        XCTAssertEqual(deliveries, 0, "queued callbacks must self-drop once teardown closes admission")
+    }
+
+    func testTeardownAlsoDropsQueuedRendererHealthDelivery() {
+        let ctx = BridgeCallbackContext()
+        var deliveries = 0
+        ctx.onRendererHealth = { _ in deliveries += 1 }
+
+        ctx.enqueueRendererHealth(.unhealthy)
+        ctx.beginTeardown()
+        pumpMainQueue()
+
+        XCTAssertEqual(deliveries, 0, "renderer-health actions cannot arrive after surface teardown")
+    }
+
+    func testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight() throws {
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        let entered = DispatchSemaphore(value: 0)
+        let release = DispatchSemaphore(value: 0)
+        let orderLock = NSLock()
+        var nextOrder = 0
+        var copyObserverReturnedOrder: Int?
+        var freeReturnedOrder: Int?
+        surface.callbackContext.callbackCopyObserver = {
+            entered.signal()
+            release.wait()
+            orderLock.lock()
+            nextOrder += 1
+            copyObserverReturnedOrder = nextOrder
+            orderLock.unlock()
+        }
+        var deliveries = 0
+        surface.callbackContext.onWrite = { _ in deliveries += 1 }
+
+        let byte = UnsafeMutablePointer<UInt8>.allocate(capacity: 1)
+        byte.initialize(to: 0x41)
+        defer { byte.deallocate() }
+
+        let callbackDone = expectation(description: "callback returned")
+        DispatchQueue.global(qos: .userInitiated).async {
+            hiveBridgeWriteTrampoline(
+                surface.callbackContext.unownedContextPointer,
+                UnsafePointer(byte),
+                1
+            )
+            callbackDone.fulfill()
+        }
+        XCTAssertEqual(entered.wait(timeout: .now() + 1), .success)
+
+        let freeDone = expectation(description: "surface free returned")
+        DispatchQueue.global(qos: .userInitiated).async {
+            surface.free()
+            orderLock.lock()
+            nextOrder += 1
+            freeReturnedOrder = nextOrder
+            orderLock.unlock()
+            freeDone.fulfill()
+        }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.1) {
+            release.signal()
+        }
+
+        wait(for: [callbackDone, freeDone], timeout: 3)
+        pumpMainQueue()
+        orderLock.lock()
+        let observedCopyReturn = copyObserverReturnedOrder
+        let observedFreeReturn = freeReturnedOrder
+        orderLock.unlock()
+        XCTAssertNotNil(observedCopyReturn)
+        XCTAssertNotNil(observedFreeReturn)
+        XCTAssertLessThan(
+            observedCopyReturn ?? .max,
+            observedFreeReturn ?? .min,
+            "surface free must return only after the in-flight callback copy scope returns"
+        )
+        XCTAssertNil(surface.surfaceHandle)
+        XCTAssertEqual(deliveries, 0, "delivery queued by the completed copy must drop after teardown")
+    }
+
+    func testCallbackMayRequestFreeOnlyAfterTrampolineReturns() {
+        let ctx = BridgeCallbackContext()
+        let engine = FakeManualSurface(callbackContext: ctx)
+        ctx.onWrite = { _ in
+            XCTAssertFalse(ctx.isInCallback)
+            engine.free()
+        }
+        let bytes: [UInt8] = [1]
+
+        bytes.withUnsafeBufferPointer { buf in
+            hiveBridgeWriteTrampoline(ctx.unownedContextPointer, buf.baseAddress, 1)
+        }
+        XCTAssertFalse(engine.freed, "destruction must not re-enter the C callback")
+        waitUntil { engine.freed }
     }
 
     func testEventTrampolineABI_isTwoParamStructPointer() {
@@ -104,6 +219,24 @@ final class CallbackDisciplineTests: XCTestCase {
             length: 0
         )
         fn(ctx.unownedContextPointer, &event)
+        waitUntil { got }
         XCTAssertTrue(got)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 1,
+        _ condition: @escaping () -> Bool
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertTrue(condition())
+    }
+
+    private func pumpMainQueue() {
+        let done = expectation(description: "main queue pumped")
+        DispatchQueue.main.async { done.fulfill() }
+        wait(for: [done], timeout: 1)
     }
 }

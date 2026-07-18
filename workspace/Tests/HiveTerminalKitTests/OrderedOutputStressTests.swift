@@ -24,6 +24,12 @@ final class OrderedOutputStressTests: XCTestCase {
         }
     }
 
+    private func pumpMainQueue() {
+        let delivered = expectation(description: "main-thread callback delivery")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 1)
+    }
+
     private func readScreenText(_ surface: GhosttyManualSurface) -> String {
         guard let handle = surface.surfaceHandle else { return "" }
         var text = ghostty_text_s()
@@ -101,6 +107,7 @@ final class OrderedOutputStressTests: XCTestCase {
         // ORDER PROOF: the reply stream must be EXACTLY the alternating
         // DA1/DA2 sequence — a dropped, duplicated, or reordered reply
         // changes this list; identical replies could not catch that.
+        pumpMainQueue()
         XCTAssertEqual(writes.count, expectedReplies.count, "each query must reply exactly once")
         XCTAssertEqual(writes, expectedReplies,
                        "the reply sequence must match the alternating DA1/DA2 query order byte-for-byte")
@@ -130,6 +137,7 @@ final class OrderedOutputStressTests: XCTestCase {
         // Still fully functional after the stress.
         writes.removeAll()
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: seq), .success)
+        pumpMainQueue()
         XCTAssertEqual(writes, [da1], "post-stress DA1 must still answer byte-exactly")
     }
 }

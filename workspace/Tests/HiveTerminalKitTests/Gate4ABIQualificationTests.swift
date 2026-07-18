@@ -4,12 +4,19 @@ import HiveGhosttyC
 @testable import HiveTerminalKit
 
 final class Gate4ABIQualificationTests: XCTestCase {
+    private func pumpMainQueue() {
+        let delivered = expectation(description: "main-thread callback delivery")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 1)
+    }
+
     func testEnabledPolicyCreatesLiveSurfaceAndReplies() throws {
         let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: .enabled)
         defer { surface.free() }
         var writes: [Data] = []
         surface.callbackContext.onWrite = { writes.append($0) }
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 0), .success)
+        pumpMainQueue()
         XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)])
     }
 

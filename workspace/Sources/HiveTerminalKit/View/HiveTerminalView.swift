@@ -36,6 +36,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public var onFirstCorrectFrame: ((UInt64) -> Void)?
     public var onStateChange: ((TerminalSurfaceState) -> Void)?
     public var onBell: (() -> Void)?
+    public var onRendererHealthChange: ((RendererHealth) -> Void)?
 
     public private(set) var focusStealAttempts = 0
     public var testingAllowFocusSteal = false
@@ -43,14 +44,23 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var resizeFramesSent = 0
     public private(set) var reportedGeometry: TerminalGeometry?
     public private(set) var appliedContentScale = NSSize(width: 1, height: 1)
+    public private(set) var appliedDrawableSize = NSSize.zero
     public private(set) var appliedDisplayID: UInt32?
     public private(set) var appliedOcclusionVisible: Bool?
+    public private(set) var rendererHealthy = true
+    public private(set) var sleepTransitionCount = 0
+    public private(set) var wakeTransitionCount = 0
 
     private var viewerId: String
     private var resizeWorkItem: DispatchWorkItem?
     private var drawWorkItem: DispatchWorkItem?
     private var renderHostView: NSView?
     private var windowObservers: [NSObjectProtocol] = []
+    private var workspaceObservers: [NSObjectProtocol] = []
+    private var pendingDraw = false
+    private var renderingSuspended = false
+    private var closed = false
+    private var appliedFramebufferSize: (width: UInt32, height: UInt32)?
     private let resizeQuiescence: TimeInterval = 0.100
     // internal (not private): HiveTerminalView+Input.swift (gate 8) reads/writes these.
     var markedText: NSAttributedString?
@@ -63,6 +73,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         super.init(frame: frameRect)
         wantsLayer = true
         wireBridgeEvents()
+        wireWorkspaceEvents()
     }
 
     /// Creates the production view and binds Ghostty's renderer to an
@@ -88,6 +99,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         engineStorage = engine
         applicatorStorage = OutputRangeApplicator(engine: engine)
         wireBridgeEvents()
+        wireWorkspaceEvents()
         synchronizeRenderingState()
     }
 
@@ -100,6 +112,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
         removeWindowObservers()
+        removeWorkspaceObservers()
     }
 
     /// Wire §23 bridge events: INVALIDATE → render; CLOSE_REQUEST → terminate seam (M9).
@@ -112,6 +125,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             } else {
                 DispatchQueue.main.async { self.handleBridgeEvent(event) }
             }
+        }
+        engine.callbackContext.onRendererHealth = { [weak self] health in
+            self?.handleRendererHealth(health)
         }
     }
 
@@ -137,14 +153,43 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     private func scheduleDraw() {
-        drawWorkItem?.cancel()
+        pendingDraw = true
+        schedulePendingDrawIfPossible()
+    }
+
+    private func schedulePendingDrawIfPossible() {
+        guard pendingDraw, drawWorkItem == nil, canPresentGhosttyFrame else { return }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
+            self.drawWorkItem = nil
+            guard self.pendingDraw, self.canPresentGhosttyFrame else { return }
+            self.pendingDraw = false
             self.drawScheduledCount += 1
             self.engine.draw()
         }
         drawWorkItem = work
         DispatchQueue.main.async(execute: work)
+    }
+
+    private var canPresentGhosttyFrame: Bool {
+        !closed && rendererHealthy && !renderingSuspended && bounds.width > 0 && bounds.height > 0 &&
+            appliedOcclusionVisible != false
+    }
+
+    /// AppKit may invoke this for view damage, but Ghostty has exactly one
+    /// presentation entry: the coalesced INVALIDATE path above.
+    public override func draw(_ dirtyRect: NSRect) {
+        _ = dirtyRect
+    }
+
+    private func handleRendererHealth(_ health: RendererHealth) {
+        rendererHealthy = health == .healthy
+        onRendererHealthChange?(health)
+        if health == .healthy {
+            synchronizeRenderingState()
+            engine.refresh()
+            schedulePendingDrawIfPossible()
+        }
     }
 
     // MARK: - Attach
@@ -244,6 +289,37 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     // MARK: - AppKit renderer lifecycle
 
+    private func wireWorkspaceEvents() {
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers = [
+            center.addObserver(
+                forName: NSWorkspace.willSleepNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.sleepTransitionCount += 1
+                self.renderingSuspended = true
+                if self.appliedOcclusionVisible != false {
+                    self.engineStorage?.setOcclusion(false)
+                    self.appliedOcclusionVisible = false
+                }
+            },
+            center.addObserver(
+                forName: NSWorkspace.didWakeNotification,
+                object: nil,
+                queue: .main
+            ) { [weak self] _ in
+                guard let self else { return }
+                self.wakeTransitionCount += 1
+                self.renderingSuspended = false
+                self.synchronizeRenderingState()
+                self.engine.refresh()
+                self.schedulePendingDrawIfPossible()
+            },
+        ]
+    }
+
     public override func viewWillMove(toWindow newWindow: NSWindow?) {
         removeWindowObservers()
         super.viewWillMove(toWindow: newWindow)
@@ -283,41 +359,55 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     private func synchronizeRenderingState() {
-        let backingSize = convertToBacking(bounds.size)
+        let backingSize = currentBackingSize
         let fallbackScale = window?.backingScaleFactor ?? 1
         let xScale = bounds.width > 0 ? backingSize.width / bounds.width : fallbackScale
         let yScale = bounds.height > 0 ? backingSize.height / bounds.height : fallbackScale
         appliedContentScale = NSSize(width: xScale, height: yScale)
+        appliedDrawableSize = backingSize
 
         CATransaction.begin()
         CATransaction.setDisableActions(true)
         ghosttyRenderingLayer?.contentsScale = fallbackScale
         CATransaction.commit()
 
-        if let surface = engineStorage?.surfaceHandle {
-            ghostty_surface_set_content_scale(surface, xScale, yScale)
-            synchronizeDisplayID(surface: surface)
-        }
+        engineStorage?.setContentScale(x: xScale, y: yScale)
+        synchronizeDisplayID()
         synchronizeOcclusion()
-        scheduleResizeIfNeeded()
+        synchronizeFramebufferSize()
     }
 
-    private func synchronizeDisplayID(surface: ghostty_surface_t) {
+    private var currentBackingSize: NSSize {
+        if let renderHostView {
+            return renderHostView.convertToBacking(renderHostView.bounds.size)
+        }
+        return convertToBacking(bounds.size)
+    }
+
+    private func synchronizeDisplayID() {
         guard
             let screen = window?.screen,
             let number = screen.deviceDescription[NSDeviceDescriptionKey("NSScreenNumber")] as? NSNumber
         else { return }
         let displayID = number.uint32Value
-        ghostty_surface_set_display_id(surface, displayID)
+        guard appliedDisplayID != displayID else { return }
+        engineStorage?.setDisplayID(displayID)
         appliedDisplayID = displayID
     }
 
     private func synchronizeOcclusion() {
-        guard let surface = engineStorage?.surfaceHandle else { return }
-        let visible = window?.occlusionState.contains(.visible) ?? false
+        guard let window else {
+            if appliedOcclusionVisible != nil {
+                engineStorage?.setOcclusion(false)
+                appliedOcclusionVisible = false
+            }
+            return
+        }
+        let visible = window.occlusionState.contains(.visible)
         guard appliedOcclusionVisible != visible else { return }
-        ghostty_surface_set_occlusion(surface, visible)
+        engineStorage?.setOcclusion(visible)
         appliedOcclusionVisible = visible
+        if visible { schedulePendingDrawIfPossible() }
     }
 
     private func removeWindowObservers() {
@@ -326,45 +416,74 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         windowObservers.removeAll()
     }
 
+    private func removeWorkspaceObservers() {
+        let center = NSWorkspace.shared.notificationCenter
+        workspaceObservers.forEach(center.removeObserver)
+        workspaceObservers.removeAll()
+    }
+
     // MARK: - Geometry / RESIZE (M10)
 
     public override func layout() {
         super.layout()
-        scheduleResizeIfNeeded()
+        synchronizeFramebufferSize()
     }
 
     public override func setFrameSize(_ newSize: NSSize) {
         super.setFrameSize(newSize)
-        scheduleResizeIfNeeded()
+        synchronizeFramebufferSize()
     }
 
-    private func scheduleResizeIfNeeded() {
-        resizeWorkItem?.cancel()
-        let backingSize = convertToBacking(bounds.size)
-        let width = max(0, Int(backingSize.width))
-        let height = max(0, Int(backingSize.height))
-        guard width > 0, height > 0 else { return }
+    private func synchronizeFramebufferSize() {
+        let backingSize = currentBackingSize
+        appliedDrawableSize = backingSize
+        let width = max(0, Int(backingSize.width.rounded()))
+        let height = max(0, Int(backingSize.height.rounded()))
+        guard width > 0, height > 0 else {
+            resizeWorkItem?.cancel()
+            appliedFramebufferSize = nil
+            reportedGeometry = nil
+            return
+        }
 
+        let widthPx = UInt32(width)
+        let heightPx = UInt32(height)
+        if let appliedFramebufferSize,
+           appliedFramebufferSize.width == widthPx,
+           appliedFramebufferSize.height == heightPx {
+            schedulePendingDrawIfPossible()
+            return
+        }
+        resizeWorkItem?.cancel()
+        appliedFramebufferSize = (widthPx, heightPx)
+        engine.setSize(widthPx: widthPx, heightPx: heightPx)
+        updateReportedGeometry()
+        schedulePendingDrawIfPossible()
+    }
+
+    private func scheduleResizeFrame(_ geometry: TerminalGeometry) {
         let work = DispatchWorkItem { [weak self] in
-            self?.commitResize(widthPx: UInt32(width), heightPx: UInt32(height))
+            guard let self, self.bounds.width > 0, self.bounds.height > 0,
+                  self.binding != nil, let client = self.attachClient else { return }
+            guard (try? client.sendResize(geometry)) != nil else { return }
+            self.resizeFramesSent += 1
         }
         resizeWorkItem = work
         DispatchQueue.main.asyncAfter(deadline: .now() + resizeQuiescence, execute: work)
     }
 
-    private func commitResize(widthPx: UInt32, heightPx: UInt32) {
-        guard widthPx > 0, heightPx > 0 else { return }
-        engine.setSize(widthPx: widthPx, heightPx: heightPx)
-        guard let surface = engine.surfaceHandle else { return }
-
-        let size = ghostty_surface_size(surface)
+    private func updateReportedGeometry() {
+        guard let size = engine.reportedSize() else {
+            reportedGeometry = nil
+            return
+        }
         guard
             size.columns > 0,
             size.rows > 0,
-            size.width_px > 0,
-            size.height_px > 0,
-            size.cell_width_px > 0,
-            size.cell_height_px > 0
+            size.widthPx > 0,
+            size.heightPx > 0,
+            size.cellWidthPx > 0,
+            size.cellHeightPx > 0
         else {
             reportedGeometry = nil
             return
@@ -372,21 +491,21 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         let geometry = TerminalGeometry(
             columns: Int(size.columns),
             rows: Int(size.rows),
-            widthPx: Int(size.width_px),
-            heightPx: Int(size.height_px),
-            cellWidthPx: Double(size.cell_width_px),
-            cellHeightPx: Double(size.cell_height_px)
+            widthPx: Int(size.widthPx),
+            heightPx: Int(size.heightPx),
+            cellWidthPx: Double(size.cellWidthPx),
+            cellHeightPx: Double(size.cellHeightPx)
         )
         reportedGeometry = geometry
-        if binding != nil, let client = attachClient {
-            guard (try? client.sendResize(geometry)) != nil else { return }
-            resizeFramesSent += 1
-        }
+        if binding != nil { scheduleResizeFrame(geometry) }
     }
 
     // MARK: - Close
 
     public func userClose() {
+        guard !closed else { return }
+        closed = true
+        pendingDraw = false
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
         onUserClose?()

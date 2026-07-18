@@ -35,6 +35,7 @@ final class GhosttyBridgeLinkTests: XCTestCase {
         // MF3: unconditional — green means the C boundary ran successfully.
         XCTAssertEqual(result, .success, "process_output_v1 must succeed on a live manual surface")
         XCTAssertEqual(surface.throughSeq, 5)
+        waitUntil { events.contains { $0.type == .invalidate } }
         XCTAssertTrue(
             events.contains { $0.type == .invalidate },
             "real process_output must fire INVALIDATE via event trampoline"
@@ -57,6 +58,7 @@ final class GhosttyBridgeLinkTests: XCTestCase {
 
         let r = surface.processOutput(bytes: Data("abc".utf8), streamSeq: 0)
         XCTAssertEqual(r, .success, "MF3: C boundary must execute")
+        waitUntil { observed.contains { $0.type == .invalidate } }
         XCTAssertTrue(
             observed.contains { $0.type == .invalidate },
             "INVALIDATE must arrive through the copy-safe event trampoline"
@@ -97,5 +99,16 @@ final class GhosttyBridgeLinkTests: XCTestCase {
         XCTAssertTrue(surface.hostView === weakHost)
         XCTAssertNotNil(weakCtx, "SF2: surface must strongly retain callbackContext")
         XCTAssertTrue(surface.callbackContext === weakCtx)
+    }
+
+    private func waitUntil(
+        timeout: TimeInterval = 1,
+        _ condition: @escaping () -> Bool
+    ) {
+        let deadline = Date().addingTimeInterval(timeout)
+        while !condition(), Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertTrue(condition())
     }
 }

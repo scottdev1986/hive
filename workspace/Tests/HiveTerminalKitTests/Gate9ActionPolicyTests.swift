@@ -17,6 +17,12 @@ final class Gate9ActionPolicyTests: XCTestCase {
         }
     }
 
+    private func pumpMainQueue() {
+        let delivered = expectation(description: "main-thread callback delivery")
+        DispatchQueue.main.async { delivered.fulfill() }
+        wait(for: [delivered], timeout: 1)
+    }
+
     /// Parses ONLY the `ghostty_action_tag_e` enum block out of the PINNED
     /// vendored header and counts its members. Cross-vendor review
     /// (2026-07-18) corrected the earlier claim that the old ambiguous
@@ -225,6 +231,8 @@ final class Gate9ActionPolicyTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: osc9, streamSeq: 0), .success)
 
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: UInt64(osc9.count)), .success)
+        HiveGhosttyActionPolicy.setObserver(nil)
+        pumpMainQueue()
         XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)],
                        "OSC 9 must produce no reply and must not poison the following query")
 

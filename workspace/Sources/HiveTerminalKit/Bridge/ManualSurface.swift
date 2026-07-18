@@ -24,7 +24,42 @@ public enum GhosttyTerminalReplyPolicy: UInt32, Equatable, Sendable {
     case enabled = 1
 }
 
+/// Geometry reported by Ghostty after a framebuffer resize. Consumers must
+/// use these cells verbatim; deriving rows/columns from font guesses is not a
+/// supported fallback.
+public struct ManualSurfaceSize: Equatable, Sendable {
+    public let columns: UInt16
+    public let rows: UInt16
+    public let widthPx: UInt32
+    public let heightPx: UInt32
+    public let cellWidthPx: UInt32
+    public let cellHeightPx: UInt32
+
+    public init(
+        columns: UInt16,
+        rows: UInt16,
+        widthPx: UInt32,
+        heightPx: UInt32,
+        cellWidthPx: UInt32,
+        cellHeightPx: UInt32
+    ) {
+        self.columns = columns
+        self.rows = rows
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.cellWidthPx = cellWidthPx
+        self.cellHeightPx = cellHeightPx
+    }
+}
+
 /// L0 surface engine seam — production uses Ghostty; tests inject fakes.
+///
+/// Threading contract: AppKit/Metal and every Ghostty app/surface C entry run
+/// on the main thread. UI/input/read methods require a main-thread caller.
+/// `processOutput` and `restoreCheckpoint` are the only off-main ingress: each
+/// copies its Data before synchronously admitting the C transaction to main.
+/// `free` may originate off-main but also serializes on main, after closing
+/// callback admission. No host callback is invoked inside a C callback.
 public protocol ManualSurfaceEngine: AnyObject {
     var callbackContext: BridgeCallbackContext { get }
     var throughSeq: UInt64 { get }
@@ -33,6 +68,10 @@ public protocol ManualSurfaceEngine: AnyObject {
     func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> GhosttyBridgeResult
     func setFocus(_ focused: Bool)
     func setSize(widthPx: UInt32, heightPx: UInt32)
+    func setContentScale(x: Double, y: Double)
+    func setDisplayID(_ displayID: UInt32)
+    func setOcclusion(_ visible: Bool)
+    func reportedSize() -> ManualSurfaceSize?
     func draw()
     func refresh()
     func sendKey(_ key: ghostty_input_key_s) -> Bool
@@ -57,14 +96,19 @@ public protocol ManualSurfaceEngine: AnyObject {
 
 /// In-process fake for L1/L2 logic tests that do not need the real C boundary.
 public final class FakeManualSurface: ManualSurfaceEngine {
-    public let callbackContext = BridgeCallbackContext()
+    public let callbackContext: BridgeCallbackContext
     public private(set) var throughSeq: UInt64 = 0
     public var surfaceHandle: ghostty_surface_t? { nil }
     public private(set) var appliedRanges: [(streamSeq: UInt64, bytes: Data)] = []
     public private(set) var restored: [(throughSeq: UInt64, payload: Data)] = []
     public private(set) var focusCalls: [Bool] = []
     public private(set) var sizeCalls: [(UInt32, UInt32)] = []
+    public private(set) var contentScaleCalls: [(Double, Double)] = []
+    public private(set) var displayIDCalls: [UInt32] = []
+    public private(set) var occlusionCalls: [Bool] = []
+    public var fakeReportedSize: ManualSurfaceSize?
     public private(set) var drawCount = 0
+    public private(set) var refreshCount = 0
     public private(set) var freed = false
     public private(set) var textSent: [String] = []
     public private(set) var keysSent = 0
@@ -83,9 +127,19 @@ public final class FakeManualSurface: ManualSurfaceEngine {
 
     private var committed: [(streamSeq: UInt64, bytes: Data, digest: Data)] = []
 
-    public init() {}
+    public init(callbackContext: BridgeCallbackContext = BridgeCallbackContext()) {
+        self.callbackContext = callbackContext
+    }
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> GhosttyBridgeResult {
+        let ownedBytes = Data(bytes)
+        return performOnMainSync {
+            self.processOutputOnMain(bytes: ownedBytes, streamSeq: streamSeq)
+        }
+    }
+
+    private func processOutputOnMain(bytes: Data, streamSeq: UInt64) -> GhosttyBridgeResult {
+        dispatchPrecondition(condition: .onQueue(.main))
         if bytes.isEmpty { return .invalidValue }
         let digest = sha256(bytes)
         let (end, overflow) = streamSeq.addingReportingOverflow(UInt64(bytes.count))
@@ -105,22 +159,29 @@ public final class FakeManualSurface: ManualSurfaceEngine {
         appliedRanges.append((streamSeq, bytes))
         throughSeq = end
         // Simulate invalidate event like the real bridge.
-        callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        callbackContext.enqueueEvent(BridgeEvent(type: .invalidate))
         return .success
     }
 
     public func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> GhosttyBridgeResult {
-        if payload.isEmpty { return .invalidValue }
-        restored.append((throughSeq, payload))
-        committed.removeAll()
-        self.throughSeq = throughSeq
-        return .success
+        let ownedPayload = Data(payload)
+        return performOnMainSync {
+            if ownedPayload.isEmpty { return .invalidValue }
+            self.restored.append((throughSeq, ownedPayload))
+            self.committed.removeAll()
+            self.throughSeq = throughSeq
+            return .success
+        }
     }
 
     public func setFocus(_ focused: Bool) { focusCalls.append(focused) }
     public func setSize(widthPx: UInt32, heightPx: UInt32) { sizeCalls.append((widthPx, heightPx)) }
+    public func setContentScale(x: Double, y: Double) { contentScaleCalls.append((x, y)) }
+    public func setDisplayID(_ displayID: UInt32) { displayIDCalls.append(displayID) }
+    public func setOcclusion(_ visible: Bool) { occlusionCalls.append(visible) }
+    public func reportedSize() -> ManualSurfaceSize? { fakeReportedSize }
     public func draw() { drawCount += 1 }
-    public func refresh() {}
+    public func refresh() { refreshCount += 1 }
     public func sendKey(_ key: ghostty_input_key_s) -> Bool {
         keysSent += 1
         keysSentDetail.append(KeySent(
@@ -136,7 +197,7 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     public func sendText(_ text: String) {
         textSent.append(text)
         // Encoder-out tail: fake write callback with UTF-8 bytes.
-        callbackContext.onWrite?(Data(text.utf8))
+        callbackContext.enqueueWrite(Data(text.utf8))
     }
     public func sendPreedit(_ text: String) { _ = text }
     public func sendMouseButton(
@@ -156,7 +217,13 @@ public final class FakeManualSurface: ManualSurfaceEngine {
     public func sendMouseScroll(x: Double, y: Double, mods: Int32) {
         scrollsSent.append((x, y, mods))
     }
-    public func free() { freed = true }
+    public func free() {
+        performOnMainSync {
+            guard !self.freed else { return }
+            self.callbackContext.beginTeardown()
+            self.freed = true
+        }
+    }
 }
 
 /// Real L0 wrapper over the six §23 `_v1` symbols + stock surface APIs.
@@ -167,18 +234,36 @@ public final class FakeManualSurface: ManualSurfaceEngine {
 /// those objects can drop. The C surface holds unowned pointers into
 /// `callbackContext` and the host `NSView`; both must outlive every C callback
 /// and Metal draw.
+enum GhosttyOperationPhase {
+    case begin
+    case end
+}
+
 public final class GhosttyManualSurface: ManualSurfaceEngine {
     public let callbackContext: BridgeCallbackContext
-    public private(set) var throughSeq: UInt64 = 0
-    public private(set) var surfaceHandle: ghostty_surface_t?
+    private var rawThroughSeq: UInt64 = 0
+    private var rawSurfaceHandle: ghostty_surface_t?
+
+    public var throughSeq: UInt64 {
+        performOnMainSync { self.rawThroughSeq }
+    }
+
+    public var surfaceHandle: ghostty_surface_t? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        return rawSurfaceHandle
+    }
 
     /// Strong host view so the C `nsview` pointer never dangles (SF1).
-    public let hostView: NSView?
+    public private(set) var hostView: NSView?
     /// App retained so the surface stays valid (app owns surface lifetime tree).
     /// internal (not private): gate 3 lifecycle tests reach the real
     /// GhosttyAppOwner/GhosttyAppWakeupContext via @testable import.
-    let appOwner: GhosttyAppOwner?
+    private(set) var appOwner: GhosttyAppOwner?
     private var ownsSurface: Bool
+
+    /// Gate 3 test seams. Production leaves both nil.
+    var operationObserver: ((String, GhosttyOperationPhase) -> Void)?
+    var outputCopyObserver: ((Data) -> Void)?
 
     public init(
         surface: ghostty_surface_t,
@@ -187,7 +272,8 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         appOwner: GhosttyAppOwner? = nil,
         ownsSurface: Bool = true
     ) {
-        self.surfaceHandle = surface
+        precondition(Thread.isMainThread, "Ghostty surface wrappers must be created on the main thread")
+        self.rawSurfaceHandle = surface
         self.callbackContext = callbackContext
         self.hostView = hostView
         self.appOwner = appOwner
@@ -195,66 +281,112 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     }
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> GhosttyBridgeResult {
-        guard let surface = surfaceHandle else { return .invalidValue }
-        let result: ghostty_result_e = bytes.withUnsafeBytes { raw in
-            let ptr = raw.bindMemory(to: UInt8.self).baseAddress
-            return hive_ghostty_surface_process_output_v1(surface, ptr, raw.count, streamSeq)
+        // Data may wrap caller-owned mutable storage. Force an independent
+        // copy before a background producer waits for main-queue admission.
+        let ownedBytes = Data(bytes)
+        outputCopyObserver?(ownedBytes)
+        return performSurfaceOperation("processOutput", default: .invalidValue) { surface in
+            let result: ghostty_result_e = ownedBytes.withUnsafeBytes { raw in
+                let ptr = raw.bindMemory(to: UInt8.self).baseAddress
+                return hive_ghostty_surface_process_output_v1(surface, ptr, raw.count, streamSeq)
+            }
+            let mapped = GhosttyBridgeResult(cResult: result)
+            if mapped == .success {
+                let end = streamSeq + UInt64(ownedBytes.count)
+                if end > self.rawThroughSeq { self.rawThroughSeq = end }
+            }
+            return mapped
         }
-        let mapped = GhosttyBridgeResult(cResult: result)
-        if mapped == .success {
-            let end = streamSeq + UInt64(bytes.count)
-            if end > throughSeq { throughSeq = end }
-        }
-        return mapped
     }
 
     public func restoreCheckpoint(payload: Data, throughSeq: UInt64) -> GhosttyBridgeResult {
-        guard let surface = surfaceHandle else { return .invalidValue }
-        let result: ghostty_result_e = payload.withUnsafeBytes { raw in
-            let ptr = raw.bindMemory(to: UInt8.self).baseAddress
-            return hive_ghostty_surface_restore_checkpoint_v1(surface, ptr, raw.count, throughSeq)
+        let ownedPayload = Data(payload)
+        return performSurfaceOperation("restoreCheckpoint", default: .invalidValue) { surface in
+            let result: ghostty_result_e = ownedPayload.withUnsafeBytes { raw in
+                let ptr = raw.bindMemory(to: UInt8.self).baseAddress
+                return hive_ghostty_surface_restore_checkpoint_v1(surface, ptr, raw.count, throughSeq)
+            }
+            let mapped = GhosttyBridgeResult(cResult: result)
+            if mapped == .success {
+                self.rawThroughSeq = throughSeq
+            }
+            return mapped
         }
-        let mapped = GhosttyBridgeResult(cResult: result)
-        if mapped == .success {
-            self.throughSeq = throughSeq
-        }
-        return mapped
     }
 
     public func setFocus(_ focused: Bool) {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_set_focus(surface, focused)
     }
 
     public func setSize(widthPx: UInt32, heightPx: UInt32) {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_set_size(surface, widthPx, heightPx)
     }
 
+    public func setContentScale(x: Double, y: Double) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_content_scale(surface, x, y)
+    }
+
+    public func setDisplayID(_ displayID: UInt32) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_display_id(surface, displayID)
+    }
+
+    public func setOcclusion(_ visible: Bool) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_occlusion(surface, visible)
+    }
+
+    public func reportedSize() -> ManualSurfaceSize? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return nil }
+        let size = ghostty_surface_size(surface)
+        return ManualSurfaceSize(
+            columns: size.columns,
+            rows: size.rows,
+            widthPx: size.width_px,
+            heightPx: size.height_px,
+            cellWidthPx: size.cell_width_px,
+            cellHeightPx: size.cell_height_px
+        )
+    }
+
     public func draw() {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_draw(surface)
     }
 
     public func refresh() {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_refresh(surface)
     }
 
     public func sendKey(_ key: ghostty_input_key_s) -> Bool {
-        guard let surface = surfaceHandle else { return false }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return false }
         return ghostty_surface_key(surface, key)
     }
 
     public func sendText(_ text: String) {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         text.withCString { cstr in
             ghostty_surface_text(surface, cstr, UInt(text.utf8.count))
         }
     }
 
     public func sendPreedit(_ text: String) {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         text.withCString { cstr in
             ghostty_surface_preedit(surface, cstr, UInt(text.utf8.count))
         }
@@ -265,17 +397,20 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
         button: ghostty_input_mouse_button_e,
         mods: ghostty_input_mods_e
     ) -> Bool {
-        guard let surface = surfaceHandle else { return false }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return false }
         return ghostty_surface_mouse_button(surface, state, button, mods)
     }
 
     public func sendMousePos(x: Double, y: Double, mods: ghostty_input_mods_e) {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_mouse_pos(surface, x, y, mods)
     }
 
     public func readSelection() -> (offset: Int, length: Int)? {
-        guard let surface = surfaceHandle else { return nil }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return nil }
         var text = ghostty_text_s()
         guard ghostty_surface_read_selection(surface, &text) else { return nil }
         defer { ghostty_surface_free_text(surface, &text) }
@@ -283,25 +418,27 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     }
 
     public func sendMouseScroll(x: Double, y: Double, mods: Int32) {
-        guard let surface = surfaceHandle else { return }
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_mouse_scroll(surface, x, y, ghostty_input_scroll_mods_t(mods))
     }
 
     public func free() {
-        guard ownsSurface, let surface = surfaceHandle else { return }
-        surfaceHandle = nil
-        ownsSurface = false
-        // ghostty_surface_free mutates app-level state that ghostty_app_tick
-        // (which always runs on the main queue — see GhosttyAppWakeupContext)
-        // also touches, so it must run on that same serial queue: a free from
-        // another thread could otherwise interleave with an in-flight tick.
-        // The pinned Ghostty app frees surfaces on main for the same reason.
-        if Thread.isMainThread {
+        performOnMainSync {
+            guard self.ownsSurface, let surface = self.rawSurfaceHandle else { return }
+            self.callbackContext.beginTeardown()
+            GhosttySurfaceCallbackRegistry.shared.unregister(surface)
+            self.rawSurfaceHandle = nil
+            self.ownsSurface = false
+            self.operationObserver?("surfaceFree", .begin)
+            defer { self.operationObserver?("surfaceFree", .end) }
             ghostty_surface_free(surface)
-        } else {
-            DispatchQueue.main.sync { ghostty_surface_free(surface) }
+            // Releasing the app owner after surface_free preserves the native
+            // lifetime tree. A shared owner remains alive until its last
+            // surface releases it.
+            self.appOwner = nil
+            self.hostView = nil
         }
-        // callbackContext retained until self deinits — after surface free.
     }
 
     deinit {
@@ -312,6 +449,25 @@ public final class GhosttyManualSurface: ManualSurfaceEngine {
     public static func engineBuildId() -> String {
         guard let cstr = hive_ghostty_engine_build_id_v1() else { return "" }
         return String(cString: cstr)
+    }
+
+    func withUnsafeSurfaceHandle<T>(_ body: (ghostty_surface_t) -> T) -> T? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return nil }
+        return body(surface)
+    }
+
+    private func performSurfaceOperation<T>(
+        _ operation: String,
+        default defaultValue: T,
+        _ body: @escaping (ghostty_surface_t) -> T
+    ) -> T {
+        performOnMainSync {
+            guard let surface = self.rawSurfaceHandle else { return defaultValue }
+            self.operationObserver?(operation, .begin)
+            defer { self.operationObserver?(operation, .end) }
+            return body(surface)
+        }
     }
 }
 
@@ -572,14 +728,52 @@ public enum HiveGhosttyActionPolicy {
     }
 }
 
+/// `ghostty_runtime_action_cb` has no userdata parameter. Keep the surface to
+/// callback-context association here so renderer-health actions can be copied
+/// without calling any Ghostty API from inside the callback. The registry lock
+/// is never held across a C call, main-queue hop, or context lock.
+private final class GhosttySurfaceCallbackRegistry: @unchecked Sendable {
+    static let shared = GhosttySurfaceCallbackRegistry()
+
+    private final class WeakContext {
+        weak var value: BridgeCallbackContext?
+        init(_ value: BridgeCallbackContext) { self.value = value }
+    }
+
+    private let lock = NSLock()
+    private var contexts: [UInt: WeakContext] = [:]
+
+    func register(_ surface: ghostty_surface_t, context: BridgeCallbackContext) {
+        lock.lock()
+        contexts[UInt(bitPattern: surface)] = WeakContext(context)
+        lock.unlock()
+    }
+
+    func unregister(_ surface: ghostty_surface_t) {
+        lock.lock()
+        contexts.removeValue(forKey: UInt(bitPattern: surface))
+        lock.unlock()
+    }
+
+    func enqueueRendererHealth(_ health: RendererHealth, for surface: ghostty_surface_t?) {
+        guard let surface else { return }
+        lock.lock()
+        let context = contexts[UInt(bitPattern: surface)]?.value
+        lock.unlock()
+        context?.enqueueRendererHealth(health)
+    }
+}
+
 /// Owns a Ghostty app + config for manual surface creation (M2).
 public final class GhosttyAppOwner {
     public let app: ghostty_app_t
     public let config: ghostty_config_t
     /// internal (not private): gate 3 lifecycle tests drive wakeup_cb directly.
     let wakeupContext: GhosttyAppWakeupContext
+    var operationObserver: ((String) -> Void)?
 
     fileprivate init(app: ghostty_app_t, config: ghostty_config_t, wakeupContext: GhosttyAppWakeupContext) {
+        precondition(Thread.isMainThread, "Ghostty app owners must be created on the main thread")
         self.app = app
         self.config = config
         self.wakeupContext = wakeupContext
@@ -592,7 +786,9 @@ public final class GhosttyAppOwner {
 
     public func free() {
         wakeupContext.freeIfNeeded { [app, config] in
+            self.operationObserver?("app")
             ghostty_app_free(app)
+            self.operationObserver?("config")
             ghostty_config_free(config)
         }
     }
@@ -617,28 +813,11 @@ public enum GhosttyBridgeFactory {
         }
     }
 
-    /// Serializes Ghostty app/surface construction across threads.
-    ///
-    /// Two independent reasons this is load-bearing for multi-pane:
-    /// 1. `ghostty_app_new` touches HIToolbox TIS/TSM (keyboard layout) which
-    ///    aborts if called concurrently from multiple threads.
-    /// 2. `hive_ghostty_surface_new_manual_v1` installs the manual backend
-    ///    into a per-thread construction slot for the duration of
-    ///    `app.newSurface`; serializing constructors also closes any
-    ///    same-thread re-entry window and keeps the Workspace's concurrent
-    ///    surface creation path robust.
-    ///
-    /// CRITICAL: never hold this lock across `GhosttyAppOwner.free()` /
-    /// `GhosttyManualSurface.free()` — those may `DispatchQueue.main.sync`.
-    /// Holding the lock across a main.sync deadlocks when main itself is
-    /// blocked waiting to create (the boris prototype failure mode).
-    private static let creationLock = NSLock()
-
-    /// Test seam only (gate 3 positive control): when `false`, skips the
-    /// creation lock so a concurrent-create test can measure the unlocked
-    /// failure mode. Production callers always see `true`; tests that flip
-    /// this must restore it in `defer`.
-    static var serializeCreation = true
+    /// Test seam: observes each real C construction entry after main-queue
+    /// admission. Production leaves this nil.
+    static var creationObserver: ((String) -> Void)?
+    private(set) static var initializationCount = 0
+    private static var globalInitialized = false
 
     /// Builds the runtime config passed to `ghostty_app_new` — pulled out of
     /// `makeManualSurface` so gate 3 tests can assert the REAL factory wires
@@ -653,7 +832,20 @@ public enum GhosttyBridgeFactory {
             wakeup_cb: ghosttyAppWakeupTrampoline,
             // Gate 9: typed per-tag policy, not a blanket false — see
             // HiveGhosttyActionPolicy.
-            action_cb: { _, _, action in HiveGhosttyActionPolicy.handle(action.tag) },
+            action_cb: { _, target, action in
+                let handled = HiveGhosttyActionPolicy.handle(action.tag)
+                if action.tag == GHOSTTY_ACTION_RENDERER_HEALTH,
+                   target.tag == GHOSTTY_TARGET_SURFACE {
+                    let health: RendererHealth = action.action.renderer_health == GHOSTTY_RENDERER_HEALTH_HEALTHY
+                        ? .healthy
+                        : .unhealthy
+                    GhosttySurfaceCallbackRegistry.shared.enqueueRendererHealth(
+                        health,
+                        for: target.target.surface
+                    )
+                }
+                return handled
+            },
             read_clipboard_cb: { _, _, _ in false },
             confirm_read_clipboard_cb: { _, _, _, _ in },
             write_clipboard_cb: { _, _, _, _, _ in },
@@ -672,44 +864,29 @@ public enum GhosttyBridgeFactory {
         heightPx: UInt32 = 480,
         terminalReplies: GhosttyTerminalReplyPolicy = .disabled
     ) throws -> GhosttyManualSurface {
-        try makeManualSurface(
-            hostView: hostView,
-            widthPx: widthPx,
-            heightPx: heightPx,
-            terminalReplies: terminalReplies,
-            configPolicyPath: manualConfigPolicyPath
-        )
+        try performOnMainSync {
+            try makeManualSurfaceOnMain(
+                hostView: hostView,
+                widthPx: widthPx,
+                heightPx: heightPx,
+                terminalReplies: terminalReplies,
+                configPolicyPath: manualConfigPolicyPath
+            )
+        }
     }
 
-    private static func makeManualSurface(
+    private static func makeManualSurfaceOnMain(
         hostView: NSView,
         widthPx: UInt32,
         heightPx: UInt32,
         terminalReplies: GhosttyTerminalReplyPolicy,
         configPolicyPath: UnsafePointer<CChar>
     ) throws -> GhosttyManualSurface {
-        // Snapshot the seam once: a mid-call flip of serializeCreation must
-        // not unlock a lock we never took (NSLock unlock-without-lock is UB).
-        let didLock = serializeCreation
-        if didLock { creationLock.lock() }
-        // LOAD-BEARING declaration order: `ownerToFreeAfterUnlock` MUST be
-        // declared BEFORE the defer below. The defer captures it and runs
-        // unlock-then-free on every exit. Declaring the var first keeps a
-        // strong ref so a failed owner is never deinit'd (and thus free'd
-        // via GhosttyAppOwner.deinit) while still under creationLock — that
-        // reorder would silently reintroduce free-under-lock with no test
-        // catching it (colin cross-vendor review 2026-07-18).
-        // Free the failed owner AFTER unlock — free marshals to main via
-        // DispatchQueue.main.sync and must not run under creationLock.
-        var ownerToFreeAfterUnlock: GhosttyAppOwner?
-        defer {
-            if didLock { creationLock.unlock() }
-            ownerToFreeAfterUnlock?.free()
-        }
+        dispatchPrecondition(condition: .onQueue(.main))
 
-        // ghostty_init is idempotent for process lifetime.
-        _ = ghostty_init(0, nil)
+        try ensureGlobalInitializedOnMain()
 
+        creationObserver?("configNew")
         guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
         // Gate 9 (queen ruling 2026-07-18): STRIP every Ghostty keybind from
         // the manual-surface config. Hive owns window/pane/split management;
@@ -727,6 +904,7 @@ public enum GhosttyBridgeFactory {
         let wakeupContext = GhosttyAppWakeupContext()
         var runtime = makeRuntimeConfig(wakeupContext: wakeupContext)
 
+        creationObserver?("appNew")
         guard let app = ghostty_app_new(&runtime, config) else {
             ghostty_config_free(config)
             throw FactoryError.appFailed
@@ -740,13 +918,17 @@ public enum GhosttyBridgeFactory {
                 nsview: Unmanaged.passUnretained(hostView).toOpaque()
             )
         )
-        surfaceConfig.scale_factor = Double(hostView.window?.backingScaleFactor ?? 2.0)
+        // The view synchronizes the real backing scale after attachment and on
+        // every screen/backing change. Until then, 1× is a neutral provisional
+        // value; assuming Retina here would be guessed geometry.
+        surfaceConfig.scale_factor = Double(hostView.window?.backingScaleFactor ?? 1.0)
         surfaceConfig.font_size = 13
 
         let callbackContext = BridgeCallbackContext()
         let writeCtx = callbackContext.unownedContextPointer
         let eventCtx = callbackContext.unownedContextPointer
 
+        creationObserver?("surfaceNew")
         guard let surface = hive_ghostty_surface_new_manual_v1(
             app,
             &surfaceConfig,
@@ -756,10 +938,9 @@ public enum GhosttyBridgeFactory {
             hiveBridgeEventTrampoline,
             eventCtx
         ) else {
-            // Defer free until after creationLock.unlock (see defer above).
-            ownerToFreeAfterUnlock = owner
             throw FactoryError.surfaceFailed
         }
+        GhosttySurfaceCallbackRegistry.shared.register(surface, context: callbackContext)
 
         // Size the surface (never 0×0).
         let w = widthPx > 0 ? widthPx : UInt32(max(1, hostView.bounds.width))
@@ -773,6 +954,15 @@ public enum GhosttyBridgeFactory {
             appOwner: owner,
             ownsSurface: true
         )
+    }
+
+    private static func ensureGlobalInitializedOnMain() throws {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !globalInitialized else { return }
+        creationObserver?("init")
+        guard ghostty_init(0, nil) == 0 else { throw FactoryError.initFailed }
+        globalInitialized = true
+        initializationCount += 1
     }
 
     /// One-line manual-surface config policy, written once per process.
@@ -801,15 +991,24 @@ public enum GhosttyBridgeFactory {
         heightPx: UInt32 = 480,
         terminalReplies: GhosttyTerminalReplyPolicy = .enabled
     ) throws -> GhosttyManualSurface {
-        let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
-        return try makeManualSurface(
-            hostView: host,
-            widthPx: widthPx,
-            heightPx: heightPx,
-            terminalReplies: terminalReplies,
-            configPolicyPath: headlessTestConfigPolicyPath
-        )
+        try performOnMainSync {
+            let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
+            return try makeManualSurfaceOnMain(
+                hostView: host,
+                widthPx: widthPx,
+                heightPx: heightPx,
+                terminalReplies: terminalReplies,
+                configPolicyPath: headlessTestConfigPolicyPath
+            )
+        }
     }
+}
+
+private func performOnMainSync<T>(_ body: @escaping () throws -> T) rethrows -> T {
+    if Thread.isMainThread {
+        return try body()
+    }
+    return try DispatchQueue.main.sync(execute: body)
 }
 
 func sha256(_ data: Data) -> Data {
