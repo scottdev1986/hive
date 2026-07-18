@@ -49,6 +49,7 @@ pub fn build(b: *std.Build) void {
     broker_module.addImport("protocol", test_module);
     broker_module.addImport("boot_envelope", boot_envelope_module);
     const broker_tests = b.addTest(.{ .root_module = broker_module });
+    broker_tests.linkLibrary(ghostty_vt);
     const run_broker_tests = b.addRunArtifact(broker_tests);
     test_step.dependOn(&run_broker_tests.step);
 
@@ -238,6 +239,7 @@ pub fn build(b: *std.Build) void {
     });
     stub_module.addImport("broker", broker_module);
     const stub_tests = b.addTest(.{ .root_module = stub_module });
+    stub_tests.linkLibrary(ghostty_vt);
     const run_stub_tests = b.addRunArtifact(stub_tests);
     test_step.dependOn(&run_stub_tests.step);
 

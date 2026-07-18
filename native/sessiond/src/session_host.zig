@@ -103,6 +103,12 @@ pub fn checkpointWireSeq(state: *const terminal_state.TerminalState) u64 {
     return state.checkpointSeq();
 }
 
+pub fn requireEngineBuildId(value: ?[]const u8) !void {
+    const expected = try broker.engineBuildIdHex();
+    if (value == null or !std.mem.eql(u8, value.?, &expected))
+        return error.EngineMismatch;
+}
+
 /// Contract A5: bridge/C-owned exports never escape to TerminalState. The
 /// adapter copies into the exact Zig allocator that TerminalState later frees.
 pub const BridgeExport = struct {
@@ -4314,9 +4320,7 @@ pub fn runHostRole(
     if (revision == 0) return error.InvalidVisibilityRevision;
     const engine_build_digest = try RealVtEngine.engineBuildId();
     const engine_build_hex = std.fmt.bytesToHex(engine_build_digest, .lower);
-    if (locator.engine_build_id == null or
-        !std.mem.eql(u8, locator.engine_build_id.?, &engine_build_hex))
-        return error.EngineMismatch;
+    try requireEngineBuildId(locator.engine_build_id);
 
     var runtime = try HostRuntime.open(
         allocator,
@@ -4628,6 +4632,14 @@ test "ready neutral endpoint drops a timed-out partial frame" {
         return error.PartialOperationFrameAccepted;
     } else |_| {}
     try std.testing.expect(!handler.called);
+}
+
+test "WELCOME engine build id passes create validation and a wrong id fails" {
+    const welcome_engine_build_id = try broker.engineBuildIdHex();
+    try requireEngineBuildId(&welcome_engine_build_id);
+    var wrong = welcome_engine_build_id;
+    wrong[0] = if (wrong[0] == '0') '1' else '0';
+    try std.testing.expectError(error.EngineMismatch, requireEngineBuildId(&wrong));
 }
 
 test "visibility lease self-expires at the generated fifteen second bound" {

@@ -20,6 +20,16 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
+extern fn hive_ghostty_engine_build_id_v1() [*:0]const u8;
+
+pub fn engineBuildIdHex() ![64]u8 {
+    const value = std.mem.span(hive_ghostty_engine_build_id_v1());
+    if (value.len != 64) return error.InvalidEngineBuildId;
+    var digest: [32]u8 = undefined;
+    _ = try std.fmt.hexToBytes(&digest, value);
+    return std.fmt.bytesToHex(digest, .lower);
+}
+
 pub const ProcessStartToken = struct {
     seconds: u64,
     microseconds: u64,
@@ -2500,13 +2510,14 @@ fn writeWelcome(
     var epoch_storage: [32]u8 = undefined;
     const connection_id = try std.fmt.bufPrint(&connection_storage, "{d}", .{std.crypto.random.int(u64)});
     const epoch = try std.fmt.bufPrint(&epoch_storage, "{d}", .{server_epoch});
+    const engine_build_id = try engineBuildIdHex();
     const welcome = .{
         .schemaVersion = @as(u8, 1),
         .protocol = .{ .major = generated.protocol_major, .minor = selected_minor },
         .instanceId = instance_id,
         .endpointRole = "broker",
         .buildId = build_id,
-        .engineBuildId = @as(?[]const u8, null),
+        .engineBuildId = @as(?[]const u8, &engine_build_id),
         .connectionId = connection_id,
         .serverEpoch = epoch,
         .limits = .{
@@ -3070,7 +3081,13 @@ pub fn serve(
             build_id,
             &timer,
             backend,
-        ) catch continue;
+        ) catch |err| {
+            std.log.err(
+                "broker daemon connection failed closed during authentication/control: {s}",
+                .{@errorName(err)},
+            );
+            continue;
+        };
     }
 }
 
@@ -3238,6 +3255,52 @@ test "daemon UDS returns a correlated typed header failure before closing" {
     try std.testing.expectEqualStrings(expected_code, error_payload.value.code);
     thread.join();
     try std.testing.expect(!harness.failed.load(.acquire));
+}
+
+test "WELCOME publishes the real engine build id" {
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var server: std.net.Stream = .{ .handle = sockets[1] };
+    defer server.close();
+    const request: protocol.Header = .{
+        .minor = generated.protocol_minor,
+        .type_code = generated.frame_type.hello,
+        .flags = 0,
+        .payload_length = 0,
+        .request_id = 91,
+        .stream_seq = 0,
+    };
+    try writeWelcome(
+        std.testing.allocator,
+        server,
+        request,
+        "welcome-engine-proof",
+        "broker-build",
+        1,
+        generated.protocol_minor,
+    );
+    const file: std.fs.File = .{ .handle = client.handle };
+    const response = try protocol.readFrame(std.testing.allocator, file.deprecatedReader());
+    defer response.frame.deinit(std.testing.allocator);
+    try std.testing.expectEqual(generated.frame_type.welcome, response.frame.header.type_code);
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.welcome_payload,
+        response.frame.payload,
+    ));
+    var welcome = try std.json.parseFromSlice(
+        WireWelcome,
+        std.testing.allocator,
+        response.frame.payload,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer welcome.deinit();
+    const expected = try engineBuildIdHex();
+    try std.testing.expect(welcome.value.engineBuildId != null);
+    try std.testing.expectEqualStrings(&expected, welcome.value.engineBuildId.?);
 }
 
 test "broker dispatcher validates projections and handles PING without lifecycle authority" {
