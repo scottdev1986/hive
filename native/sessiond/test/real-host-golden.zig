@@ -15,6 +15,15 @@ const c = @cImport({
 const session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000f4";
 const instance_id = "real-host-golden";
 const EmptyEnvironment = struct {};
+const WireLocatorPayload = struct {
+    schemaVersion: u8,
+    instanceId: []const u8,
+    subject: struct { kind: []const u8, agentId: []const u8 },
+    generation: u64,
+    sessionId: []const u8,
+    hostKind: []const u8,
+    engineBuildId: []const u8,
+};
 
 pub fn main() !void {
     var debug_allocator: std.heap.DebugAllocator(.{}) = .init;
@@ -52,6 +61,14 @@ fn runGolden(allocator: std.mem.Allocator) !void {
 
     const engine_digest = try session_host.RealVtEngine.engineBuildId();
     const engine_build_id = std.fmt.bytesToHex(engine_digest, .lower);
+    const input_proof_path = try std.fs.path.join(allocator, &.{ root, "input-proof.txt" });
+    defer allocator.free(input_proof_path);
+    const provider_script = try std.fmt.allocPrint(
+        allocator,
+        "while IFS= read -r line; do printf '%s\\n' \"$line\" >> {s}; done",
+        .{input_proof_path},
+    );
+    defer allocator.free(provider_script);
     const locator: broker.Locator = .{
         .instance_id = instance_id,
         .session_id = session_id,
@@ -78,9 +95,9 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .provider = "codex",
         .toolSessionId = @as(?[]const u8, null),
         .cwd = root,
-        .argv = [_][]const u8{"/bin/cat"},
+        .argv = [_][]const u8{ "/bin/sh", "-c", provider_script },
         .environment = EmptyEnvironment{},
-        .expectedExecutable = "/bin/cat",
+        .expectedExecutable = "/bin/sh",
         .readOnly = false,
         .capabilityEpoch = @as(u64, 0),
         .geometry = .{
@@ -195,7 +212,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     );
     defer lifecycle_backend.deinit();
     const backend = lifecycle_backend.backend();
-    const wire_locator = .{
+    const wire_locator: WireLocatorPayload = .{
         .schemaVersion = @as(u8, 1),
         .instanceId = instance_id,
         .subject = .{ .kind = "agent", .agentId = "aaron" },
@@ -204,6 +221,15 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .hostKind = "sessiond",
         .engineBuildId = &engine_build_id,
     };
+    try driveViewerWire(
+        allocator,
+        root,
+        &recovered.registry,
+        locator,
+        wire_locator,
+        input_proof_path,
+        parsed_created.value.inspection.providerRoot.pid,
+    );
 
     const list_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -334,6 +360,356 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         parsed_final.value.survivors.len != 0 or
         parsed_final.value.errors.len != 0)
         return error.InvalidFinalEvidence;
+}
+
+fn writeViewerRequest(
+    stream: std.net.Stream,
+    type_code: u16,
+    request_id: u64,
+    flags: u16,
+    payload: []const u8,
+) !void {
+    try protocol.writeFrame(stream, .{
+        .minor = generated.protocol_minor,
+        .type_code = type_code,
+        .flags = flags,
+        .payload_length = @intCast(payload.len),
+        .request_id = request_id,
+        .stream_seq = 0,
+    }, payload);
+}
+
+fn readViewerResponse(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    type_code: u16,
+    request_id: u64,
+    schema: []const u8,
+) !protocol.Frame {
+    const file: std.fs.File = .{ .handle = stream.handle };
+    const frame = switch (try protocol.readFrame(allocator, file.deprecatedReader())) {
+        .frame => |frame| frame,
+        else => return error.InvalidViewerResponse,
+    };
+    errdefer frame.deinit(allocator);
+    if (frame.header.type_code != type_code or
+        frame.header.request_id != request_id or
+        frame.header.flags != (generated.frame_flag.response | generated.frame_flag.final) or
+        !protocol.validateControlPayload(allocator, schema, frame.payload))
+        return error.InvalidViewerResponse;
+    return frame;
+}
+
+fn waitForSingleInputEffect(
+    allocator: std.mem.Allocator,
+    path: []const u8,
+) !void {
+    var attempts: usize = 0;
+    while (attempts < 100) : (attempts += 1) {
+        const file = std.fs.openFileAbsolute(path, .{ .mode = .read_only }) catch |err| switch (err) {
+            error.FileNotFound => {
+                std.Thread.sleep(10 * std.time.ns_per_ms);
+                continue;
+            },
+            else => return err,
+        };
+        defer file.close();
+        const contents = try file.readToEndAlloc(allocator, 128);
+        defer allocator.free(contents);
+        if (std.mem.eql(u8, contents, "wire-input\n")) {
+            std.Thread.sleep(50 * std.time.ns_per_ms);
+            const verify = try std.fs.openFileAbsolute(path, .{ .mode = .read_only });
+            defer verify.close();
+            const final = try verify.readToEndAlloc(allocator, 128);
+            defer allocator.free(final);
+            if (!std.mem.eql(u8, final, "wire-input\n"))
+                return error.InputAppliedMoreThanOnce;
+            return;
+        }
+        if (contents.len > "wire-input\n".len)
+            return error.InputAppliedMoreThanOnce;
+        std.Thread.sleep(10 * std.time.ns_per_ms);
+    }
+    return error.InputEffectMissing;
+}
+
+fn driveViewerWire(
+    allocator: std.mem.Allocator,
+    root: []const u8,
+    registry: *broker.Registry,
+    locator: broker.Locator,
+    wire_locator: WireLocatorPayload,
+    input_proof_path: []const u8,
+    provider_pid: i32,
+) !void {
+    const grant_token = "golden-viewer-token";
+    var grant_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(grant_token, &grant_hash, .{});
+    const operations = [_][]const u8{ "view", "human-input", "resize" };
+    if (registry.registerGrant(
+        locator,
+        grant_hash,
+        "golden-viewer",
+        &operations,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .width_px = 800,
+            .height_px = 480,
+            .cell_width_px = 10,
+            .cell_height_px = 20,
+        },
+        4,
+    ) != null) return error.ViewerGrantRegistrationFailed;
+
+    const socket_path = try std.fs.path.join(allocator, &.{
+        root,
+        "runtime/sessiond/hosts",
+        session_id,
+        "host.sock",
+    });
+    defer allocator.free(socket_path);
+    const stream = try std.net.connectUnixSocket(socket_path);
+    defer stream.close();
+    const hello = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .buildId = "golden-viewer-build",
+        .instanceId = instance_id,
+        .protocol = .{
+            .major = generated.protocol_major,
+            .minMinor = generated.protocol_min_minor,
+            .maxMinor = generated.protocol_max_minor,
+        },
+        .clientRole = "viewer",
+        .grantToken = grant_token,
+    }, .{});
+    defer allocator.free(hello);
+    try writeViewerRequest(stream, generated.frame_type.hello, 10, 0, hello);
+    var welcome = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.welcome,
+        10,
+        generated.wire_schema.welcome_payload,
+    );
+    welcome.deinit(allocator);
+
+    const attach = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
+        .token = grant_token,
+        .geometry = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPx = @as(u32, 800),
+            .heightPx = @as(u32, 480),
+            .cellWidthPx = @as(f64, 10),
+            .cellHeightPx = @as(f64, 20),
+        },
+        .afterSeq = "0",
+    }, .{});
+    defer allocator.free(attach);
+    try writeViewerRequest(stream, generated.frame_type.host_attach, 11, 0, attach);
+
+    const claim = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .writer = "golden-viewer",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 10_000),
+        .idempotencyKey = "domain-claim-idempotency",
+    }, .{});
+    defer allocator.free(claim);
+    try writeViewerRequest(stream, generated.frame_type.claim_acquire, 20, 0, claim);
+    var claim_result = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.claim_result,
+        20,
+        generated.wire_schema.claim_result_payload,
+    );
+    defer claim_result.deinit(allocator);
+    const Granted = struct {
+        result: struct {
+            state: []const u8,
+            claim: struct { token: []const u8, writer: []const u8, kind: []const u8 },
+        },
+    };
+    var parsed_claim = try std.json.parseFromSlice(Granted, allocator, claim_result.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_claim.deinit();
+    if (!std.mem.eql(u8, parsed_claim.value.result.state, "granted") or
+        !std.mem.eql(u8, parsed_claim.value.result.claim.writer, "golden-viewer") or
+        !std.mem.eql(u8, parsed_claim.value.result.claim.kind, "human"))
+        return error.InvalidClaimGrant;
+    const claim_token = parsed_claim.value.result.claim.token;
+
+    const denied_claim = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .writer = "automation-contender",
+        .kind = "automation",
+        .leaseMilliseconds = @as(u64, 10_000),
+        .idempotencyKey = "domain-claim-denied",
+    }, .{});
+    defer allocator.free(denied_claim);
+    try writeViewerRequest(stream, generated.frame_type.claim_acquire, 21, 0, denied_claim);
+    var denied_result = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.claim_result,
+        21,
+        generated.wire_schema.claim_result_payload,
+    );
+    defer denied_result.deinit(allocator);
+    const Denied = struct {
+        result: struct { state: []const u8, owner: struct { token: []const u8 } },
+    };
+    var parsed_denied = try std.json.parseFromSlice(Denied, allocator, denied_result.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_denied.deinit();
+    if (!std.mem.eql(u8, parsed_denied.value.result.state, "denied") or
+        !std.mem.eql(u8, parsed_denied.value.result.owner.token, claim_token))
+        return error.InvalidClaimDenial;
+
+    const input = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .claimToken = claim_token,
+        .transactionId = "domain-input-transaction",
+        .idempotencyKey = "domain-input-idempotency",
+        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = "d2lyZS1pbnB1dAo=" },
+    }, .{});
+    defer allocator.free(input);
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.input_submit,
+        30,
+        generated.frame_flag.content_sensitive,
+        input,
+    );
+    var applied = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.applied,
+        30,
+        generated.wire_schema.applied_payload,
+    );
+    defer applied.deinit(allocator);
+    const AppliedInput = struct {
+        resultKind: []const u8,
+        receipt: struct { transactionId: []const u8, stage: []const u8, orderedAt: []const u8 },
+    };
+    var parsed_applied = try std.json.parseFromSlice(AppliedInput, allocator, applied.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_applied.deinit();
+    if (!std.mem.eql(u8, parsed_applied.value.resultKind, "input") or
+        !std.mem.eql(u8, parsed_applied.value.receipt.transactionId, "domain-input-transaction") or
+        !std.mem.eql(u8, parsed_applied.value.receipt.stage, "written-to-terminal"))
+        return error.InvalidInputReceipt;
+
+    // Transport correlation changes; domain idempotency stays fixed.
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.input_submit,
+        31,
+        generated.frame_flag.content_sensitive,
+        input,
+    );
+    var replayed = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.applied,
+        31,
+        generated.wire_schema.applied_payload,
+    );
+    defer replayed.deinit(allocator);
+    if (!std.mem.eql(u8, replayed.payload, applied.payload))
+        return error.InputReplayChangedReceipt;
+    try waitForSingleInputEffect(allocator, input_proof_path);
+
+    const resize = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .window = .{
+            .columns = @as(u16, 111),
+            .rows = @as(u16, 37),
+            .widthPixels = @as(u32, 1110),
+            .heightPixels = @as(u32, 740),
+        },
+        .revision = "41",
+        .idempotencyKey = "domain-resize-idempotency",
+    }, .{});
+    defer allocator.free(resize);
+    try writeViewerRequest(stream, generated.frame_type.resize, 40, 0, resize);
+    var resized = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.applied,
+        40,
+        generated.wire_schema.applied_payload,
+    );
+    defer resized.deinit(allocator);
+    const AppliedResize = struct {
+        resultKind: []const u8,
+        result: struct {
+            state: []const u8,
+            revision: []const u8,
+            readback: struct { columns: u32, rows: u32, widthPixels: u32, heightPixels: u32 },
+        },
+    };
+    var parsed_resize = try std.json.parseFromSlice(AppliedResize, allocator, resized.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_resize.deinit();
+    if (!std.mem.eql(u8, parsed_resize.value.resultKind, "resize") or
+        !std.mem.eql(u8, parsed_resize.value.result.state, "applied") or
+        !std.mem.eql(u8, parsed_resize.value.result.revision, "41") or
+        parsed_resize.value.result.readback.columns != 111 or
+        parsed_resize.value.result.readback.rows != 37 or
+        parsed_resize.value.result.readback.widthPixels != 1110 or
+        parsed_resize.value.result.readback.heightPixels != 740)
+        return error.InvalidResizeReceipt;
+
+    const eof = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .claimToken = claim_token,
+        .transactionId = "domain-eof-transaction",
+        .idempotencyKey = "domain-eof-idempotency",
+        .operation = .{ .kind = "canonical-end-of-file" },
+    }, .{});
+    defer allocator.free(eof);
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.input_submit,
+        50,
+        generated.frame_flag.content_sensitive,
+        eof,
+    );
+    var eof_result = try readViewerResponse(
+        allocator,
+        stream,
+        generated.frame_type.applied,
+        50,
+        generated.wire_schema.applied_payload,
+    );
+    defer eof_result.deinit(allocator);
+    const EofResult = struct { receipt: struct { stage: []const u8, diagnostic: []const u8 } };
+    var parsed_eof = try std.json.parseFromSlice(EofResult, allocator, eof_result.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_eof.deinit();
+    if (!std.mem.eql(u8, parsed_eof.value.receipt.stage, "rejected") or
+        std.mem.indexOf(u8, parsed_eof.value.receipt.diagnostic, "canonical") == null)
+        return error.InvalidCanonicalEofReceipt;
+    switch (process_inspector.observeProcess(provider_pid)) {
+        .present => {},
+        .absent, .unobservable => return error.CanonicalEofWasHangup,
+    }
 }
 
 fn runCreateBroker(

@@ -129,6 +129,7 @@ const fixtureWelcome = {
   serverEpoch: "123456789",
   limits: {
     controlFrameMaxBytes: TERMINAL_LIMITS.controlJsonBytesPerFrame,
+    maxInputTransactionBytes: TERMINAL_LIMITS.inputTransactionBytes,
     streamChunkMaxBytes: TERMINAL_LIMITS.streamChunkBytes,
     automatedMessageMaxBytes: TERMINAL_LIMITS.automatedMessageBytes,
     viewerQueueMaxBytes: TERMINAL_LIMITS.viewerUnacknowledgedOutputBytes,
@@ -221,6 +222,30 @@ const fixtureVisibilityLease = {
 };
 const fixtureTerminationRequest = { mode: "graceful", reason: "terminal closed", requestId: FIXTURE_IDS.request };
 const fixtureTerminationResult = { locator: fixtureLocator, state: "terminated", exit: null, survivors: [], errors: [] };
+const fixtureTerminalHostSession = { key: fixtureLocator.sessionId, incarnation: "3" };
+const fixtureTerminalHostClaim = {
+  token: "claim-fixture-token",
+  writer: "viewer-fixture",
+  kind: "human",
+  leaseExpiresAt: "2026-07-16T12:00:15.000Z",
+};
+const fixtureTerminalHostReceipt = {
+  transactionId: "terminal-input-fixture",
+  stage: "written-to-terminal",
+  byteRange: { start: "0", endExclusive: "5" },
+  orderedAt: "1",
+  availableCreditBytes: TERMINAL_LIMITS.inputTransactionBytes,
+  consumedByProcess: "not-claimed",
+  completeness: "complete",
+  diagnostic: null,
+};
+const fixtureTerminalHostResize = {
+  state: "applied",
+  revision: "8",
+  readback: { columns: 111, rows: 37, widthPixels: 1110, heightPixels: 740 },
+  orderedAt: "2",
+  foregroundProcessObservation: "not-claimed",
+};
 
 const validCases: readonly WireCorpusCase[] = [
   { name: "session locator", schema: "sessionLocator", value: fixtureLocator },
@@ -523,6 +548,56 @@ const validCases: readonly WireCorpusCase[] = [
   { name: "GRANT_REGISTER request", schema: "grantRegisterPayload", value: fixtureGrantRegistration },
   { name: "GRANT_REGISTER accepted", schema: "grantRegisterPayload", value: { schemaVersion: 1, registered: true } },
   {
+    name: "CLAIM_ACQUIRE frozen request",
+    schema: "claimAcquirePayload",
+    value: {
+      schemaVersion: 1,
+      session: fixtureTerminalHostSession,
+      writer: fixtureTerminalHostClaim.writer,
+      kind: fixtureTerminalHostClaim.kind,
+      leaseMilliseconds: 15_000,
+      idempotencyKey: "claim-fixture-key",
+    },
+  },
+  {
+    name: "CLAIM_RESULT frozen grant",
+    schema: "claimResultPayload",
+    value: { schemaVersion: 1, result: { state: "granted", claim: fixtureTerminalHostClaim } },
+  },
+  {
+    name: "INPUT_SUBMIT frozen byte operation",
+    schema: "inputSubmitPayload",
+    value: {
+      schemaVersion: 1,
+      session: fixtureTerminalHostSession,
+      claimToken: fixtureTerminalHostClaim.token,
+      transactionId: fixtureTerminalHostReceipt.transactionId,
+      idempotencyKey: "input-fixture-key",
+      operation: { kind: "bytes", encoding: "base64", bytes: "aGVsbG8=" },
+    },
+  },
+  {
+    name: "RESIZE frozen request",
+    schema: "resizePayload",
+    value: {
+      schemaVersion: 1,
+      session: fixtureTerminalHostSession,
+      window: fixtureTerminalHostResize.readback,
+      revision: fixtureTerminalHostResize.revision,
+      idempotencyKey: "resize-fixture-key",
+    },
+  },
+  {
+    name: "APPLIED frozen input receipt",
+    schema: "appliedPayload",
+    value: { schemaVersion: 1, resultKind: "input", receipt: fixtureTerminalHostReceipt },
+  },
+  {
+    name: "APPLIED frozen resize receipt",
+    schema: "appliedPayload",
+    value: { schemaVersion: 1, resultKind: "resize", result: fixtureTerminalHostResize },
+  },
+  {
     name: "session inspection preserves unknown input observation",
     schema: "sessionInspection",
     value: { ...fixtureInspection, input: { ...fixtureInspection.input, state: "UNKNOWN" } },
@@ -602,6 +677,43 @@ const invalidCases: readonly WireCorpusCase[] = [
   { name: "HOST_ADOPT rejects malformed secret", schema: "hostAdoptPayload", value: { ...fixtureAdoptRequest, adoptionSecretHex: "not-a-secret" } },
   { name: "GRANT_REGISTER rejects unknown field", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, rawToken: "forbidden" } },
   { name: "GRANT_REGISTER rejects untagged hash", schema: "grantRegisterPayload", value: { ...fixtureGrantRegistration, grantTokenSha256: "b".repeat(64) } },
+  {
+    name: "CLAIM_ACQUIRE rejects absent session fencing",
+    schema: "claimAcquirePayload",
+    value: { schemaVersion: 1, writer: "viewer", kind: "human", leaseMilliseconds: 1, idempotencyKey: "claim" },
+  },
+  {
+    name: "CLAIM_RESULT rejects invented ownership",
+    schema: "claimResultPayload",
+    value: { schemaVersion: 1, result: { state: "denied", owner: null, diagnostic: "" } },
+  },
+  {
+    name: "INPUT_SUBMIT rejects malformed base64",
+    schema: "inputSubmitPayload",
+    value: {
+      schemaVersion: 1,
+      session: fixtureTerminalHostSession,
+      claimToken: fixtureTerminalHostClaim.token,
+      transactionId: "terminal-input-fixture",
+      idempotencyKey: "input-fixture-key",
+      operation: { kind: "bytes", encoding: "base64", bytes: "not base64" },
+    },
+  },
+  {
+    name: "RESIZE rejects absent idempotency key",
+    schema: "resizePayload",
+    value: { schemaVersion: 1, session: fixtureTerminalHostSession, window: fixtureTerminalHostResize.readback, revision: "8" },
+  },
+  {
+    name: "APPLIED rejects ambiguous result branch",
+    schema: "appliedPayload",
+    value: {
+      schemaVersion: 1,
+      resultKind: "input",
+      receipt: fixtureTerminalHostReceipt,
+      result: fixtureTerminalHostResize,
+    },
+  },
 ];
 
 export type FrameHeaderFields = Readonly<{

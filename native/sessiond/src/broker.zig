@@ -2456,6 +2456,7 @@ fn writeWelcome(
         .serverEpoch = epoch,
         .limits = .{
             .controlFrameMaxBytes = generated.limits.control_json_bytes,
+            .maxInputTransactionBytes = generated.limits.input_transaction_bytes,
             .streamChunkMaxBytes = generated.limits.stream_chunk_bytes,
             .automatedMessageMaxBytes = generated.limits.automated_message_bytes,
             .viewerQueueMaxBytes = generated.limits.viewer_queue_bytes,

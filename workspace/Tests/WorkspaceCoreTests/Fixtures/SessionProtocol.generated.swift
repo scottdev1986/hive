@@ -47,6 +47,7 @@ enum SessionProtocolGenerated {
         "HUMAN_INPUT": 0x0302,
         "CLAIM_RELEASE": 0x0303,
         "GESTURE_INPUT": 0x0304,
+        "INPUT_SUBMIT": 0x0305,
         "AUTOMATION_BEGIN": 0x0310,
         "AUTOMATION_CHUNK": 0x0311,
         "AUTOMATION_COMMIT": 0x0312,

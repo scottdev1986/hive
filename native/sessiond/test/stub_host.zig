@@ -504,6 +504,7 @@ const WireStubServer = struct {
             .serverEpoch = "1",
             .limits = .{
                 .controlFrameMaxBytes = broker.generated.limits.control_json_bytes,
+                .maxInputTransactionBytes = broker.generated.limits.input_transaction_bytes,
                 .streamChunkMaxBytes = broker.generated.limits.stream_chunk_bytes,
                 .automatedMessageMaxBytes = broker.generated.limits.automated_message_bytes,
                 .viewerQueueMaxBytes = broker.generated.limits.viewer_queue_bytes,

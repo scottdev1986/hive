@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type * as SessionHostContract from "../daemon/session-host/contract";
+import type * as TerminalHostContract from "../daemon/session-host/terminal-host-contract";
 
 export const SESSION_PROTOCOL_VERSION = { major: 1, minor: 0 } as const;
 export const SESSION_PROTOCOL_MINOR_RANGE = {
@@ -40,6 +41,7 @@ export const TERMINAL_LIMITS = {
   liveSessionsPerHiveHome: 32,
   authenticatedViewersPerGeneration: 4,
   controlJsonBytesPerFrame: 256 * 1024,
+  inputTransactionBytes: 128 * 1024,
   streamChunkBytes: 64 * 1024,
   automatedMessageBytes: 1024 * 1024,
   viewerUnacknowledgedOutputBytes: 8 * 1024 * 1024,
@@ -137,6 +139,7 @@ export const FRAME_TYPES = {
   HUMAN_INPUT: 0x0302,
   CLAIM_RELEASE: 0x0303,
   GESTURE_INPUT: 0x0304,
+  INPUT_SUBMIT: 0x0305,
   AUTOMATION_BEGIN: 0x0310,
   AUTOMATION_CHUNK: 0x0311,
   AUTOMATION_COMMIT: 0x0312,
@@ -162,7 +165,7 @@ export const FRAME_TYPE_GROUPS = [
   { names: ["OUTPUT", "APPLIED"], direction: "host-viewer-bidirectional", purpose: "ordered-output-and-high-water" },
   { names: ["RESIZE", "DETACH", "EVENT"], direction: "bidirectional", purpose: "geometry-transport-detach-session-event" },
   { names: ["CLAIM_ACQUIRE", "CLAIM_RESULT"], direction: "viewer-host-bidirectional", purpose: "authoring-claim" },
-  { names: ["HUMAN_INPUT", "CLAIM_RELEASE", "GESTURE_INPUT"], direction: "viewer-to-host", purpose: "ordered-human-input" },
+  { names: ["HUMAN_INPUT", "CLAIM_RELEASE", "GESTURE_INPUT", "INPUT_SUBMIT"], direction: "viewer-to-host", purpose: "ordered-human-input" },
   { names: ["AUTOMATION_BEGIN", "AUTOMATION_CHUNK", "AUTOMATION_COMMIT", "AUTOMATION_RESULT", "AUTOMATION_CANCEL"], direction: "daemon-host-bidirectional", purpose: "idempotent-buffered-automation" },
   { names: ["HOST_REGISTER", "HOST_ADOPT", "GRANT_REGISTER"], direction: "broker-host-bidirectional", purpose: "authenticated-internal-lifecycle" },
 ] as const satisfies readonly Readonly<{
@@ -511,6 +514,123 @@ export const ResizeResultSchema = z.strictObject({
   geometry: TerminalGeometrySchema,
   revision: DecimalUint64Schema,
 }).readonly();
+
+/** Frozen A0 terminal-host identity carried by direct-host control operations. */
+export const TerminalHostSessionRefSchema = z.strictObject({
+  key: z.string().min(1),
+  incarnation: z.string().min(1),
+}).readonly();
+export const TerminalHostWindowSizeSchema = z.strictObject({
+  columns: z.number().int().min(TERMINAL_LIMITS.terminalCellsPerDimensionMin)
+    .max(TERMINAL_LIMITS.terminalCellsPerDimensionMax),
+  rows: z.number().int().min(TERMINAL_LIMITS.terminalCellsPerDimensionMin)
+    .max(TERMINAL_LIMITS.terminalCellsPerDimensionMax),
+  widthPixels: z.number().int().nonnegative().max(65_535),
+  heightPixels: z.number().int().nonnegative().max(65_535),
+}).refine(
+  ({ columns, rows }) => columns * rows <= TERMINAL_LIMITS.terminalActiveCellsMax,
+  "active terminal cells exceed the v1 limit",
+).meta({ "x-hive-max-active-cells": TERMINAL_LIMITS.terminalActiveCellsMax }).readonly();
+const TerminalHostCompletenessSchema = z.enum(["complete", "partial", "unavailable", "unknown"]);
+export const TerminalHostInputClaimSchema = z.strictObject({
+  token: z.string().min(1),
+  writer: z.string().min(1),
+  kind: z.enum(["human", "automation"]),
+  leaseExpiresAt: Rfc3339UtcMillisecondsSchema,
+}).readonly();
+export const TerminalHostClaimResultSchema = z.discriminatedUnion("state", [
+  z.strictObject({ state: z.literal("granted"), claim: TerminalHostInputClaimSchema }).readonly(),
+  z.strictObject({
+    state: z.literal("denied"),
+    owner: TerminalHostInputClaimSchema.nullable(),
+    diagnostic: z.string().min(1),
+  }).readonly(),
+  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+]);
+export const TerminalHostInputReceiptSchema = z.strictObject({
+  transactionId: z.string().min(1),
+  stage: z.enum(["accepted", "queued", "written-to-terminal", "rejected", "unknown"]),
+  byteRange: z.strictObject({
+    start: DecimalUint64Schema,
+    endExclusive: DecimalUint64Schema,
+  }).readonly().nullable(),
+  orderedAt: DecimalUint64Schema.nullable(),
+  availableCreditBytes: SafeUintSchema,
+  consumedByProcess: z.literal("not-claimed"),
+  completeness: TerminalHostCompletenessSchema,
+  diagnostic: z.string().min(1).nullable(),
+}).readonly();
+export const TerminalHostResizeResultSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("applied"),
+    revision: DecimalUint64Schema,
+    readback: TerminalHostWindowSizeSchema,
+    orderedAt: DecimalUint64Schema,
+    foregroundProcessObservation: z.literal("not-claimed"),
+  }).readonly(),
+  z.strictObject({ state: z.literal("stale"), currentRevision: DecimalUint64Schema }).readonly(),
+  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+]);
+
+export const BASE64_BYTES_PATTERN = "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$";
+const EncodedInputBytesSchema = z.string()
+  .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
+  .regex(new RegExp(BASE64_BYTES_PATTERN));
+
+/** Strict wire projection of frozen A0 claimInput. */
+export const ClaimAcquirePayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  session: TerminalHostSessionRefSchema,
+  writer: z.string().min(1),
+  kind: z.enum(["human", "automation"]),
+  leaseMilliseconds: SafeUintSchema.min(1),
+  idempotencyKey: z.string().min(1),
+}).readonly();
+export const ClaimResultPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  result: TerminalHostClaimResultSchema,
+}).readonly();
+
+/** INPUT_SUBMIT is JSON control; raw HUMAN_INPUT remains keystroke streaming. */
+export const InputSubmitPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  session: TerminalHostSessionRefSchema,
+  claimToken: z.string().min(1),
+  transactionId: z.string().min(1),
+  idempotencyKey: z.string().min(1),
+  operation: z.discriminatedUnion("kind", [
+    z.strictObject({
+      kind: z.literal("bytes"),
+      encoding: z.literal("base64"),
+      bytes: EncodedInputBytesSchema,
+    }).readonly(),
+    z.strictObject({ kind: z.literal("canonical-end-of-file") }).readonly(),
+    z.strictObject({ kind: z.literal("hangup") }).readonly(),
+  ]),
+}).readonly();
+
+/** Strict wire projection of frozen A0 resize. */
+export const ResizePayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  session: TerminalHostSessionRefSchema,
+  window: TerminalHostWindowSizeSchema,
+  revision: DecimalUint64Schema,
+  idempotencyKey: z.string().min(1),
+}).readonly();
+
+/** Correlated result union shared by INPUT_SUBMIT and RESIZE. */
+export const AppliedPayloadSchema = z.discriminatedUnion("resultKind", [
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    resultKind: z.literal("input"),
+    receipt: TerminalHostInputReceiptSchema,
+  }).readonly(),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    resultKind: z.literal("resize"),
+    result: TerminalHostResizeResultSchema,
+  }).readonly(),
+]);
 const AutomatedInputObjectSchema = z.strictObject({
   transactionId: domainUuidV7Schema("txn"),
   idempotencyKey: z.string().min(1),
@@ -638,6 +758,7 @@ export const WelcomePayloadSchema = z.strictObject({
   /** §20 returns limits; shape adjudicated to the four §18 negotiated transport caps. */
   limits: z.strictObject({
     controlFrameMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.controlJsonBytesPerFrame),
+    maxInputTransactionBytes: z.number().int().positive().max(TERMINAL_LIMITS.inputTransactionBytes),
     streamChunkMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.streamChunkBytes),
     automatedMessageMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.automatedMessageBytes),
     viewerQueueMaxBytes: z.number().int().positive().max(TERMINAL_LIMITS.viewerUnacknowledgedOutputBytes),
@@ -896,6 +1017,11 @@ export const SESSION_WIRE_SCHEMAS = {
   attachRequestPayload: AttachRequestPayloadSchema,
   attachGrantPayload: AttachGrantPayloadSchema,
   hostAttachPayload: HostAttachPayloadSchema,
+  claimAcquirePayload: ClaimAcquirePayloadSchema,
+  claimResultPayload: ClaimResultPayloadSchema,
+  inputSubmitPayload: InputSubmitPayloadSchema,
+  resizePayload: ResizePayloadSchema,
+  appliedPayload: AppliedPayloadSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
@@ -936,6 +1062,12 @@ type AttachGrantSchemaMatchesContract = Assert<Equals<z.infer<typeof AttachGrant
 type VisibilityRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof VisibilityRequestSchema>, SessionHostContract.VisibilityRequest>>;
 type VisibilityLeaseSchemaMatchesContract = Assert<Equals<z.infer<typeof VisibilityLeaseSchema>, SessionHostContract.VisibilityLease>>;
 type ResizeResultSchemaMatchesContract = Assert<Equals<z.infer<typeof ResizeResultSchema>, SessionHostContract.ResizeResult>>;
+type TerminalHostSessionRefSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostSessionRefSchema>, TerminalHostContract.SessionRef>>;
+type TerminalHostWindowSizeSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostWindowSizeSchema>, TerminalHostContract.WindowSize>>;
+type TerminalHostInputClaimSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostInputClaimSchema>, TerminalHostContract.InputClaim>>;
+type TerminalHostClaimResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostClaimResultSchema>, TerminalHostContract.ClaimResult>>;
+type TerminalHostInputReceiptSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostInputReceiptSchema>, TerminalHostContract.InputReceipt>>;
+type TerminalHostResizeResultSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminalHostResizeResultSchema>, TerminalHostContract.ResizeResult>>;
 type AutomatedInputSchemaMatchesContract = Assert<Equals<z.infer<typeof AutomatedInputSchema>, SessionHostContract.AutomatedInput>>;
 type InputReceiptSchemaMatchesContract = Assert<Equals<z.infer<typeof InputReceiptSchema>, SessionHostContract.InputReceipt>>;
 type TerminationRequestSchemaMatchesContract = Assert<Equals<z.infer<typeof TerminationRequestSchema>, SessionHostContract.TerminationRequest>>;

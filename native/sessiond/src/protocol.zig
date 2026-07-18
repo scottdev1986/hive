@@ -99,6 +99,7 @@ fn knownType(type_code: u16) bool {
         generated.frame_type.human_input,
         generated.frame_type.claim_release,
         generated.frame_type.gesture_input,
+        generated.frame_type.input_submit,
         generated.frame_type.automation_begin,
         generated.frame_type.automation_chunk,
         generated.frame_type.automation_commit,
@@ -659,6 +660,8 @@ fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
     if (std.mem.eql(u8, pattern, "^[0-9a-f]{64}$")) return lowercaseHex(string, 64);
     if (std.mem.eql(u8, pattern, "^sha256:[0-9a-f]{64}$"))
         return std.mem.startsWith(u8, string, "sha256:") and lowercaseHex(string[7..], 64);
+    if (std.mem.eql(u8, pattern, "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"))
+        return standardBase64(string);
     if (std.mem.indexOf(u8, pattern, "[0-9a-f]{8}-[0-9a-f]{4}-7") != null) {
         const separator = std.mem.indexOfScalar(u8, pattern, '_') orelse return false;
         if (separator <= 1) return false;
@@ -678,6 +681,27 @@ fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
     }
     if (std.mem.indexOf(u8, pattern, "\\d{3}(?:Z))$") != null) return rfc3339Milliseconds(string);
     return null;
+}
+
+fn standardBase64(string: []const u8) bool {
+    if (string.len % 4 != 0) return false;
+    var index: usize = 0;
+    while (index < string.len) : (index += 4) {
+        const final = index + 4 == string.len;
+        const block = string[index .. index + 4];
+        if (!base64Byte(block[0]) or !base64Byte(block[1])) return false;
+        if (block[2] == '=') {
+            if (!final or block[3] != '=') return false;
+        } else if (!base64Byte(block[2])) return false;
+        if (block[3] == '=') {
+            if (!final) return false;
+        } else if (!base64Byte(block[3])) return false;
+    }
+    return true;
+}
+
+fn base64Byte(byte: u8) bool {
+    return std.ascii.isAlphanumeric(byte) or byte == '+' or byte == '/';
 }
 
 fn standardUuid(string: []const u8) bool {

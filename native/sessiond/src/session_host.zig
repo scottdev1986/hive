@@ -854,6 +854,7 @@ fn writeHostWelcome(
         .serverEpoch = epoch,
         .limits = .{
             .controlFrameMaxBytes = generated.limits.control_json_bytes,
+            .maxInputTransactionBytes = generated.limits.input_transaction_bytes,
             .streamChunkMaxBytes = generated.limits.stream_chunk_bytes,
             .automatedMessageMaxBytes = generated.limits.automated_message_bytes,
             .viewerQueueMaxBytes = generated.limits.viewer_queue_bytes,
@@ -1832,6 +1833,50 @@ const WireTerminate = struct {
     requestId: []const u8,
 };
 
+const WireTerminalSessionRef = struct {
+    key: []const u8,
+    incarnation: []const u8,
+};
+
+const WireClaimAcquire = struct {
+    schemaVersion: u8,
+    session: WireTerminalSessionRef,
+    writer: []const u8,
+    kind: []const u8,
+    leaseMilliseconds: u64,
+    idempotencyKey: []const u8,
+};
+
+const WireInputOperation = struct {
+    kind: []const u8,
+    encoding: ?[]const u8 = null,
+    bytes: ?[]const u8 = null,
+};
+
+const WireInputSubmit = struct {
+    schemaVersion: u8,
+    session: WireTerminalSessionRef,
+    claimToken: []const u8,
+    transactionId: []const u8,
+    idempotencyKey: []const u8,
+    operation: WireInputOperation,
+};
+
+const WireTerminalWindow = struct {
+    columns: u32,
+    rows: u32,
+    widthPixels: u32,
+    heightPixels: u32,
+};
+
+const WireResize = struct {
+    schemaVersion: u8,
+    session: WireTerminalSessionRef,
+    window: WireTerminalWindow,
+    revision: []const u8,
+    idempotencyKey: []const u8,
+};
+
 const GrantOperations = packed struct {
     view: bool = false,
     human_input: bool = false,
@@ -2103,6 +2148,98 @@ fn validatedHostLeaseRemaining(expires_at: []const u8) !u64 {
     );
 }
 
+const ActiveInputClaim = struct {
+    token: []u8,
+    writer: []u8,
+    kind: []u8,
+    idempotency_key: []u8,
+    owner_viewer_id: []u8,
+    lease_expires_at: []u8,
+    expires_mono_ns: u64,
+    next_sequence: u64,
+
+    fn deinit(self: *ActiveInputClaim, allocator: std.mem.Allocator) void {
+        allocator.free(self.token);
+        allocator.free(self.writer);
+        allocator.free(self.kind);
+        allocator.free(self.idempotency_key);
+        allocator.free(self.owner_viewer_id);
+        allocator.free(self.lease_expires_at);
+        self.* = undefined;
+    }
+};
+
+const InputOperationKind = enum { bytes, canonical_eof, hangup };
+
+const InputReplay = struct {
+    idempotency_key: []u8,
+    claim_token: []u8,
+    transaction_id: []u8,
+    operation_kind: InputOperationKind,
+    operation_digest: [32]u8,
+    receipt: ?InputReceiptData = null,
+
+    fn deinit(self: *InputReplay, allocator: std.mem.Allocator) void {
+        allocator.free(self.idempotency_key);
+        allocator.free(self.claim_token);
+        allocator.free(self.transaction_id);
+        self.* = undefined;
+    }
+
+    fn matches(
+        self: *const InputReplay,
+        request: WireInputSubmit,
+        kind: InputOperationKind,
+        digest: [32]u8,
+    ) bool {
+        return std.mem.eql(u8, self.claim_token, request.claimToken) and
+            std.mem.eql(u8, self.transaction_id, request.transactionId) and
+            self.operation_kind == kind and
+            std.crypto.timing_safe.eql([32]u8, self.operation_digest, digest);
+    }
+};
+
+const ResizeReplay = struct {
+    idempotency_key: []u8,
+    revision: u64,
+    window: WireTerminalWindow,
+    result: ?StoredResizeResult = null,
+
+    fn deinit(self: *ResizeReplay, allocator: std.mem.Allocator) void {
+        allocator.free(self.idempotency_key);
+        self.* = undefined;
+    }
+
+    fn matches(self: *const ResizeReplay, revision: u64, window: WireTerminalWindow) bool {
+        return self.revision == revision and
+            self.window.columns == window.columns and self.window.rows == window.rows and
+            self.window.widthPixels == window.widthPixels and
+            self.window.heightPixels == window.heightPixels;
+    }
+};
+
+const StoredResizeResult = union(enum) {
+    applied: pty_host.ResizeReceipt,
+    stale: u64,
+    unknown: []const u8,
+};
+
+const InputReceiptData = struct {
+    transaction_id: []const u8,
+    stage: []const u8,
+    byte_range: ?input_arbiter.ByteRange,
+    ordered_at: ?u64,
+    available_credit_bytes: usize,
+    completeness: []const u8,
+    diagnostic: ?[]const u8,
+};
+
+const ClaimResponse = union(enum) {
+    granted: *const ActiveInputClaim,
+    denied: struct { owner: ?*const ActiveInputClaim, diagnostic: []const u8 },
+    unknown: []const u8,
+};
+
 pub const HostCore = struct {
     allocator: std.mem.Allocator,
     registration: HostRegistration,
@@ -2111,6 +2248,9 @@ pub const HostCore = struct {
     broker_build_id: []const u8,
     lease: VisibilityLease,
     grants: std.ArrayList(GrantEntry) = .{},
+    active_claim: ?ActiveInputClaim = null,
+    input_replays: std.ArrayList(InputReplay) = .{},
+    resize_replays: std.ArrayList(ResizeReplay) = .{},
     termination: ?TerminationBinding = null,
     adopted: bool = false,
     terminated: bool = false,
@@ -2140,12 +2280,572 @@ pub const HostCore = struct {
     pub fn deinit(self: *HostCore) void {
         for (self.grants.items) |*grant| grant.deinit(self.allocator);
         self.grants.deinit(self.allocator);
+        if (self.active_claim) |*claim| claim.deinit(self.allocator);
+        for (self.input_replays.items) |*replay| replay.deinit(self.allocator);
+        self.input_replays.deinit(self.allocator);
+        for (self.resize_replays.items) |*replay| replay.deinit(self.allocator);
+        self.resize_replays.deinit(self.allocator);
         std.crypto.secureZero(u8, &self.adoption_secret);
         self.* = undefined;
     }
 
     pub fn bindTermination(self: *HostCore, binding: TerminationBinding) void {
         self.termination = binding;
+    }
+
+    fn terminalSessionMatches(self: *const HostCore, session: WireTerminalSessionRef) bool {
+        var generation_storage: [32]u8 = undefined;
+        const generation = std.fmt.bufPrint(
+            &generation_storage,
+            "{d}",
+            .{self.registration.record.locator.generation},
+        ) catch return false;
+        return std.mem.eql(u8, session.key, self.registration.record.locator.session_id) and
+            std.mem.eql(u8, session.incarnation, generation);
+    }
+
+    fn inputClaimValue(
+        allocator: std.mem.Allocator,
+        claim: *const ActiveInputClaim,
+    ) !std.json.Value {
+        var value = std.json.ObjectMap.init(allocator);
+        try value.put("token", .{ .string = claim.token });
+        try value.put("writer", .{ .string = claim.writer });
+        try value.put("kind", .{ .string = claim.kind });
+        try value.put("leaseExpiresAt", .{ .string = claim.lease_expires_at });
+        return .{ .object = value };
+    }
+
+    fn encodeClaimResult(self: *HostCore, response: ClaimResponse) ![]u8 {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var result = std.json.ObjectMap.init(a);
+        switch (response) {
+            .granted => |claim| {
+                try result.put("state", .{ .string = "granted" });
+                try result.put("claim", try inputClaimValue(a, claim));
+            },
+            .denied => |denied| {
+                try result.put("state", .{ .string = "denied" });
+                try result.put("owner", if (denied.owner) |owner|
+                    try inputClaimValue(a, owner)
+                else
+                    .null);
+                try result.put("diagnostic", .{ .string = denied.diagnostic });
+            },
+            .unknown => |diagnostic| {
+                try result.put("state", .{ .string = "unknown" });
+                try result.put("diagnostic", .{ .string = diagnostic });
+            },
+        }
+        var root = std.json.ObjectMap.init(a);
+        try root.put("schemaVersion", .{ .integer = 1 });
+        try root.put("result", .{ .object = result });
+        const payload = try std.json.Stringify.valueAlloc(
+            self.allocator,
+            std.json.Value{ .object = root },
+            .{},
+        );
+        errdefer self.allocator.free(payload);
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.claim_result_payload,
+            payload,
+        )) return error.InvalidClaimResult;
+        return payload;
+    }
+
+    pub fn claimInput(
+        self: *HostCore,
+        payload: []const u8,
+        viewer_id: []const u8,
+        now_ns: u64,
+    ) ![]u8 {
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.claim_acquire_payload,
+            payload,
+        )) return error.InvalidClaimAcquire;
+        var parsed = try std.json.parseFromSlice(WireClaimAcquire, self.allocator, payload, .{});
+        defer parsed.deinit();
+        const request = parsed.value;
+        if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
+            return error.GenerationMismatch;
+        if (self.active_claim) |*claim| {
+            if (std.mem.eql(u8, claim.idempotency_key, request.idempotencyKey) and
+                std.mem.eql(u8, claim.writer, request.writer) and
+                std.mem.eql(u8, claim.kind, request.kind) and
+                std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
+                return self.encodeClaimResult(.{ .granted = claim });
+            return self.encodeClaimResult(.{ .denied = .{
+                .owner = claim,
+                .diagnostic = if (claim.expires_mono_ns <= now_ns)
+                    "input owner lease expired; operator resolution required"
+                else
+                    "input already claimed",
+            } });
+        }
+        const binding = self.termination orelse
+            return self.encodeClaimResult(.{ .unknown = "input binding unavailable" });
+        const arbiter = binding.arbiter orelse
+            return self.encodeClaimResult(.{ .unknown = "input arbiter unavailable" });
+        if (self.lease.expired(now_ns))
+            return self.encodeClaimResult(.{ .unknown = "visibility lease expired" });
+        const remaining_ms = (self.lease.expires_mono_ns - now_ns) / std.time.ns_per_ms;
+        const duration_ms = @min(request.leaseMilliseconds, remaining_ms);
+        if (duration_ms == 0)
+            return self.encodeClaimResult(.{ .unknown = "claim lease unavailable" });
+
+        var random_token: [32]u8 = undefined;
+        std.crypto.random.bytes(&random_token);
+        defer std.crypto.secureZero(u8, &random_token);
+        const token_hex = std.fmt.bytesToHex(random_token, .lower);
+        var claim: ActiveInputClaim = .{
+            .token = try std.fmt.allocPrint(self.allocator, "claim_{s}", .{token_hex}),
+            .writer = undefined,
+            .kind = undefined,
+            .idempotency_key = undefined,
+            .owner_viewer_id = undefined,
+            .lease_expires_at = undefined,
+            .expires_mono_ns = try std.math.add(
+                u64,
+                now_ns,
+                try std.math.mul(u64, duration_ms, std.time.ns_per_ms),
+            ),
+            .next_sequence = 0,
+        };
+        var initialized_fields: usize = 1;
+        errdefer {
+            if (initialized_fields >= 1) self.allocator.free(claim.token);
+            if (initialized_fields >= 2) self.allocator.free(claim.writer);
+            if (initialized_fields >= 3) self.allocator.free(claim.kind);
+            if (initialized_fields >= 4) self.allocator.free(claim.idempotency_key);
+            if (initialized_fields >= 5) self.allocator.free(claim.owner_viewer_id);
+            if (initialized_fields >= 6) self.allocator.free(claim.lease_expires_at);
+        }
+        claim.writer = try self.allocator.dupe(u8, request.writer);
+        initialized_fields = 2;
+        claim.kind = try self.allocator.dupe(u8, request.kind);
+        initialized_fields = 3;
+        claim.idempotency_key = try self.allocator.dupe(u8, request.idempotencyKey);
+        initialized_fields = 4;
+        claim.owner_viewer_id = try self.allocator.dupe(u8, viewer_id);
+        initialized_fields = 5;
+        var expiry_storage: [24]u8 = undefined;
+        const expiry = try broker.wallDeadline(&expiry_storage, duration_ms);
+        claim.lease_expires_at = try self.allocator.dupe(u8, expiry);
+        initialized_fields = 6;
+
+        const granted = arbiter.claimAcquire(viewer_id, claim.token) catch |err| return switch (err) {
+            error.HumanOwned, error.HumanOrphaned, error.InputBusy => self.encodeClaimResult(.{ .denied = .{
+                .owner = null,
+                .diagnostic = @errorName(err),
+            } }),
+            else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
+        };
+        claim.next_sequence = granted.next_sequence;
+        self.active_claim = claim;
+        initialized_fields = 0;
+        return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
+    }
+
+    fn encodeInputApplied(self: *HostCore, receipt: InputReceiptData) ![]u8 {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var receipt_value = std.json.ObjectMap.init(a);
+        try receipt_value.put("transactionId", .{ .string = receipt.transaction_id });
+        try receipt_value.put("stage", .{ .string = receipt.stage });
+        if (receipt.byte_range) |range| {
+            var byte_range = std.json.ObjectMap.init(a);
+            try byte_range.put("start", .{ .string = try std.fmt.allocPrint(a, "{d}", .{range.start}) });
+            try byte_range.put("endExclusive", .{ .string = try std.fmt.allocPrint(a, "{d}", .{range.end_exclusive}) });
+            try receipt_value.put("byteRange", .{ .object = byte_range });
+        } else try receipt_value.put("byteRange", .null);
+        try receipt_value.put("orderedAt", if (receipt.ordered_at) |ordered|
+            .{ .string = try std.fmt.allocPrint(a, "{d}", .{ordered}) }
+        else
+            .null);
+        try receipt_value.put("availableCreditBytes", .{ .integer = @intCast(receipt.available_credit_bytes) });
+        try receipt_value.put("consumedByProcess", .{ .string = "not-claimed" });
+        try receipt_value.put("completeness", .{ .string = receipt.completeness });
+        try receipt_value.put("diagnostic", if (receipt.diagnostic) |diagnostic|
+            .{ .string = diagnostic }
+        else
+            .null);
+        var root = std.json.ObjectMap.init(a);
+        try root.put("schemaVersion", .{ .integer = 1 });
+        try root.put("resultKind", .{ .string = "input" });
+        try root.put("receipt", .{ .object = receipt_value });
+        const payload = try std.json.Stringify.valueAlloc(
+            self.allocator,
+            std.json.Value{ .object = root },
+            .{},
+        );
+        errdefer self.allocator.free(payload);
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.applied_payload,
+            payload,
+        )) return error.InvalidAppliedResult;
+        return payload;
+    }
+
+    fn reserveInputReplay(
+        self: *HostCore,
+        request: WireInputSubmit,
+        kind: InputOperationKind,
+        digest: [32]u8,
+    ) !*InputReplay {
+        var replay: InputReplay = .{
+            .idempotency_key = try self.allocator.dupe(u8, request.idempotencyKey),
+            .claim_token = undefined,
+            .transaction_id = undefined,
+            .operation_kind = kind,
+            .operation_digest = digest,
+        };
+        var initialized_fields: usize = 1;
+        errdefer {
+            if (initialized_fields >= 1) self.allocator.free(replay.idempotency_key);
+            if (initialized_fields >= 2) self.allocator.free(replay.claim_token);
+            if (initialized_fields >= 3) self.allocator.free(replay.transaction_id);
+        }
+        replay.claim_token = try self.allocator.dupe(u8, request.claimToken);
+        initialized_fields = 2;
+        replay.transaction_id = try self.allocator.dupe(u8, request.transactionId);
+        initialized_fields = 3;
+        try self.input_replays.append(self.allocator, replay);
+        initialized_fields = 0;
+        return &self.input_replays.items[self.input_replays.items.len - 1];
+    }
+
+    fn rejectedInputReceipt(transaction_id: []const u8, diagnostic: []const u8) InputReceiptData {
+        return .{
+            .transaction_id = transaction_id,
+            .stage = "rejected",
+            .byte_range = null,
+            .ordered_at = null,
+            .available_credit_bytes = generated.limits.input_transaction_bytes,
+            .completeness = "complete",
+            .diagnostic = diagnostic,
+        };
+    }
+
+    pub fn submitInput(
+        self: *HostCore,
+        payload: []const u8,
+        viewer_id: []const u8,
+        now_ns: u64,
+    ) ![]u8 {
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.input_submit_payload,
+            payload,
+        )) return error.InvalidInputSubmit;
+        var parsed = try std.json.parseFromSlice(WireInputSubmit, self.allocator, payload, .{});
+        defer parsed.deinit();
+        const request = parsed.value;
+        if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
+            return error.GenerationMismatch;
+
+        var decoded: ?[]u8 = null;
+        defer if (decoded) |bytes| {
+            std.crypto.secureZero(u8, bytes);
+            self.allocator.free(bytes);
+        };
+        const kind: InputOperationKind = if (std.mem.eql(u8, request.operation.kind, "bytes")) blk: {
+            const encoded = request.operation.bytes orelse return error.InvalidInputSubmit;
+            if (request.operation.encoding == null or
+                !std.mem.eql(u8, request.operation.encoding.?, "base64"))
+                return error.InvalidInputSubmit;
+            const size = std.base64.standard.Decoder.calcSizeForSlice(encoded) catch
+                return error.InvalidInputSubmit;
+            if (size > generated.limits.input_transaction_bytes)
+                return error.InputPayloadTooLarge;
+            decoded = try self.allocator.alloc(u8, size);
+            std.base64.standard.Decoder.decode(decoded.?, encoded) catch
+                return error.InvalidInputSubmit;
+            break :blk .bytes;
+        } else if (std.mem.eql(u8, request.operation.kind, "canonical-end-of-file"))
+            .canonical_eof
+        else if (std.mem.eql(u8, request.operation.kind, "hangup"))
+            .hangup
+        else
+            return error.InvalidInputSubmit;
+        var digest_hasher = std.crypto.hash.sha2.Sha256.init(.{});
+        digest_hasher.update(@tagName(kind));
+        digest_hasher.update(&[_]u8{0});
+        if (decoded) |bytes| digest_hasher.update(bytes);
+        const operation_digest = digest_hasher.finalResult();
+
+        for (self.input_replays.items) |*replay| {
+            if (!std.mem.eql(u8, replay.idempotency_key, request.idempotencyKey)) continue;
+            if (!replay.matches(request, kind, operation_digest))
+                return self.encodeInputApplied(rejectedInputReceipt(
+                    request.transactionId,
+                    "idempotency key reused with different input",
+                ));
+            const receipt = replay.receipt orelse return error.InputReplayIncomplete;
+            return self.encodeInputApplied(receipt);
+        }
+        const replay = try self.reserveInputReplay(request, kind, operation_digest);
+        const binding = self.termination orelse {
+            replay.receipt = .{
+                .transaction_id = replay.transaction_id,
+                .stage = "unknown",
+                .byte_range = null,
+                .ordered_at = null,
+                .available_credit_bytes = 0,
+                .completeness = "unknown",
+                .diagnostic = "input binding unavailable",
+            };
+            return self.encodeInputApplied(replay.receipt.?);
+        };
+        const arbiter = binding.arbiter orelse {
+            replay.receipt = .{
+                .transaction_id = replay.transaction_id,
+                .stage = "unknown",
+                .byte_range = null,
+                .ordered_at = null,
+                .available_credit_bytes = 0,
+                .completeness = "unknown",
+                .diagnostic = "input arbiter unavailable",
+            };
+            return self.encodeInputApplied(replay.receipt.?);
+        };
+        const claim = if (self.active_claim) |*active| active else {
+            replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim unavailable");
+            return self.encodeInputApplied(replay.receipt.?);
+        };
+        if (claim.expires_mono_ns <= now_ns) {
+            arbiter.viewerDisconnect() catch {};
+            replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim expired");
+            return self.encodeInputApplied(replay.receipt.?);
+        }
+        if (!std.mem.eql(u8, claim.token, request.claimToken) or
+            !std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
+        {
+            replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim fenced");
+            return self.encodeInputApplied(replay.receipt.?);
+        }
+
+        if (kind == .hangup) {
+            const ordered_at = binding.pty.hangup() catch |err| {
+                replay.receipt = .{
+                    .transaction_id = replay.transaction_id,
+                    .stage = "unknown",
+                    .byte_range = null,
+                    .ordered_at = null,
+                    .available_credit_bytes = 0,
+                    .completeness = "unknown",
+                    .diagnostic = @errorName(err),
+                };
+                return self.encodeInputApplied(replay.receipt.?);
+            };
+            arbiter.terminate() catch |err| {
+                replay.receipt = .{
+                    .transaction_id = replay.transaction_id,
+                    .stage = "unknown",
+                    .byte_range = null,
+                    .ordered_at = ordered_at,
+                    .available_credit_bytes = 0,
+                    .completeness = "partial",
+                    .diagnostic = @errorName(err),
+                };
+                return self.encodeInputApplied(replay.receipt.?);
+            };
+            replay.receipt = .{
+                .transaction_id = replay.transaction_id,
+                .stage = "accepted",
+                .byte_range = null,
+                .ordered_at = ordered_at,
+                .available_credit_bytes = 0,
+                .completeness = "complete",
+                .diagnostic = null,
+            };
+            return self.encodeInputApplied(replay.receipt.?);
+        }
+
+        var eof_storage: [1]u8 = undefined;
+        const input_bytes: []const u8 = if (kind == .bytes)
+            decoded.?
+        else blk: {
+            eof_storage[0] = binding.pty.canonicalEofByte() catch |err| {
+                replay.receipt = if (err == error.NotCanonical)
+                    rejectedInputReceipt(replay.transaction_id, "terminal input mode is not canonical")
+                else
+                    .{
+                        .transaction_id = replay.transaction_id,
+                        .stage = "unknown",
+                        .byte_range = null,
+                        .ordered_at = null,
+                        .available_credit_bytes = 0,
+                        .completeness = "unknown",
+                        .diagnostic = @errorName(err),
+                    };
+                return self.encodeInputApplied(replay.receipt.?);
+            };
+            break :blk &eof_storage;
+        };
+        var input_digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(input_bytes, &input_digest, .{});
+        const accepted = arbiter.humanInput(
+            viewer_id,
+            claim.token,
+            claim.next_sequence,
+            input_digest,
+            input_bytes,
+        ) catch |err| {
+            replay.receipt = if (err == error.Internal or err == error.SinkWriteFailed)
+                .{
+                    .transaction_id = replay.transaction_id,
+                    .stage = "unknown",
+                    .byte_range = null,
+                    .ordered_at = null,
+                    .available_credit_bytes = 0,
+                    .completeness = "unknown",
+                    .diagnostic = @errorName(err),
+                }
+            else
+                rejectedInputReceipt(replay.transaction_id, @errorName(err));
+            return self.encodeInputApplied(replay.receipt.?);
+        };
+        claim.next_sequence = std.math.add(u64, claim.next_sequence, 1) catch
+            return error.InputSequenceOverflow;
+        const ordered_at = binding.pty.operationSequence();
+        binding.pty.writeDrainAll() catch |err| {
+            replay.receipt = .{
+                .transaction_id = replay.transaction_id,
+                .stage = "unknown",
+                .byte_range = accepted.byte_range,
+                .ordered_at = ordered_at,
+                .available_credit_bytes = @min(
+                    generated.limits.input_transaction_bytes,
+                    binding.pty.availableWriteCredit(),
+                ),
+                .completeness = "partial",
+                .diagnostic = @errorName(err),
+            };
+            return self.encodeInputApplied(replay.receipt.?);
+        };
+        replay.receipt = .{
+            .transaction_id = replay.transaction_id,
+            .stage = "written-to-terminal",
+            .byte_range = accepted.byte_range,
+            .ordered_at = ordered_at,
+            .available_credit_bytes = @min(
+                generated.limits.input_transaction_bytes,
+                binding.pty.availableWriteCredit(),
+            ),
+            .completeness = "complete",
+            .diagnostic = null,
+        };
+        return self.encodeInputApplied(replay.receipt.?);
+    }
+
+    fn encodeResizeApplied(self: *HostCore, result: StoredResizeResult) ![]u8 {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var result_value = std.json.ObjectMap.init(a);
+        switch (result) {
+            .applied => |receipt| {
+                try result_value.put("state", .{ .string = "applied" });
+                try result_value.put("revision", .{ .string = try std.fmt.allocPrint(a, "{d}", .{receipt.revision}) });
+                var readback = std.json.ObjectMap.init(a);
+                try readback.put("columns", .{ .integer = receipt.readback.columns });
+                try readback.put("rows", .{ .integer = receipt.readback.rows });
+                try readback.put("widthPixels", .{ .integer = receipt.readback.width_px });
+                try readback.put("heightPixels", .{ .integer = receipt.readback.height_px });
+                try result_value.put("readback", .{ .object = readback });
+                try result_value.put("orderedAt", .{ .string = try std.fmt.allocPrint(a, "{d}", .{receipt.ordered_at}) });
+                try result_value.put("foregroundProcessObservation", .{ .string = "not-claimed" });
+            },
+            .stale => |revision| {
+                try result_value.put("state", .{ .string = "stale" });
+                try result_value.put("currentRevision", .{ .string = try std.fmt.allocPrint(a, "{d}", .{revision}) });
+            },
+            .unknown => |diagnostic| {
+                try result_value.put("state", .{ .string = "unknown" });
+                try result_value.put("diagnostic", .{ .string = diagnostic });
+            },
+        }
+        var root = std.json.ObjectMap.init(a);
+        try root.put("schemaVersion", .{ .integer = 1 });
+        try root.put("resultKind", .{ .string = "resize" });
+        try root.put("result", .{ .object = result_value });
+        const payload = try std.json.Stringify.valueAlloc(
+            self.allocator,
+            std.json.Value{ .object = root },
+            .{},
+        );
+        errdefer self.allocator.free(payload);
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.applied_payload,
+            payload,
+        )) return error.InvalidAppliedResult;
+        return payload;
+    }
+
+    fn reserveResizeReplay(
+        self: *HostCore,
+        request: WireResize,
+        revision: u64,
+    ) !*ResizeReplay {
+        const replay: ResizeReplay = .{
+            .idempotency_key = try self.allocator.dupe(u8, request.idempotencyKey),
+            .revision = revision,
+            .window = request.window,
+        };
+        errdefer self.allocator.free(replay.idempotency_key);
+        try self.resize_replays.append(self.allocator, replay);
+        return &self.resize_replays.items[self.resize_replays.items.len - 1];
+    }
+
+    pub fn resizeTerminal(self: *HostCore, payload: []const u8) ![]u8 {
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.resize_payload,
+            payload,
+        )) return error.InvalidResize;
+        var parsed = try std.json.parseFromSlice(WireResize, self.allocator, payload, .{});
+        defer parsed.deinit();
+        const request = parsed.value;
+        if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
+            return error.GenerationMismatch;
+        const revision = std.fmt.parseInt(u64, request.revision, 10) catch
+            return error.InvalidResize;
+        for (self.resize_replays.items) |*replay| {
+            if (!std.mem.eql(u8, replay.idempotency_key, request.idempotencyKey)) continue;
+            if (!replay.matches(revision, request.window)) return error.InvalidResizeReplay;
+            return self.encodeResizeApplied(replay.result orelse return error.ResizeReplayIncomplete);
+        }
+        const replay = try self.reserveResizeReplay(request, revision);
+        const binding = self.termination orelse {
+            replay.result = .{ .unknown = "terminal binding unavailable" };
+            return self.encodeResizeApplied(replay.result.?);
+        };
+        const geometry: pty_host.Geometry = .{
+            .columns = request.window.columns,
+            .rows = request.window.rows,
+            .width_px = request.window.widthPixels,
+            .height_px = request.window.heightPixels,
+        };
+        const receipt = binding.pty.resize(geometry, revision) catch |err| {
+            replay.result = if (err == error.StaleResizeRevision)
+                .{ .stale = binding.pty.resizeRevision() }
+            else
+                .{ .unknown = @errorName(err) };
+            return self.encodeResizeApplied(replay.result.?);
+        };
+        self.registration.record.geometry.columns = @intCast(receipt.readback.columns);
+        self.registration.record.geometry.rows = @intCast(receipt.readback.rows);
+        self.registration.record.geometry.width_px = receipt.readback.width_px;
+        self.registration.record.geometry.height_px = receipt.readback.height_px;
+        replay.result = .{ .applied = receipt };
+        return self.encodeResizeApplied(replay.result.?);
     }
 
     pub fn adopt(
@@ -2624,12 +3324,13 @@ pub const HostCore = struct {
     }
 };
 
-const ExpectedPeerRole = enum { broker, viewer };
+const ExpectedPeerRole = enum { broker, viewer, either };
 
 const AcceptedHello = struct {
     allocator: std.mem.Allocator,
     build_id: []u8,
     grant_token: ?[]u8,
+    role: ExpectedPeerRole,
 
     fn deinit(self: *AcceptedHello) void {
         self.allocator.free(self.build_id);
@@ -2655,8 +3356,7 @@ fn acceptHostHello(
 
     var hello_frame = try readRequiredFrame(allocator, stream);
     defer {
-        if (expected_role == .viewer)
-            std.crypto.secureZero(u8, hello_frame.payload);
+        std.crypto.secureZero(u8, hello_frame.payload);
         hello_frame.deinit(allocator);
     }
     if (hello_frame.header.type_code != generated.frame_type.hello or
@@ -2687,8 +3387,16 @@ fn acceptHostHello(
         try writeHostFailure(allocator, stream, hello_frame.header, .instance_mismatch);
         return null;
     }
-    if (!std.mem.eql(u8, hello.value.clientRole, @tagName(expected_role)) or
-        (expected_role == .viewer and hello.value.grantToken == null))
+    const role: ExpectedPeerRole = if (std.mem.eql(u8, hello.value.clientRole, "broker"))
+        .broker
+    else if (std.mem.eql(u8, hello.value.clientRole, "viewer"))
+        .viewer
+    else {
+        try writeHostFailure(allocator, stream, hello_frame.header, .forbidden);
+        return null;
+    };
+    if ((expected_role != .either and role != expected_role) or
+        (role == .viewer and hello.value.grantToken == null))
     {
         try writeHostFailure(allocator, stream, hello_frame.header, .forbidden);
         return null;
@@ -2715,21 +3423,17 @@ fn acceptHostHello(
         .allocator = allocator,
         .build_id = build_id,
         .grant_token = grant_token,
+        .role = role,
     };
 }
 
-/// Authenticates the existing generated viewer HELLO and consumes the existing
-/// generated HOST_ATTACH request. The caller retains the stream and begins the
-/// snapshot/output sequence once those generated payload contracts exist.
-pub fn authorizeViewerConnection(
+fn authorizeViewerAfterHello(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
+    hello: *const AcceptedHello,
     now_ns: u64,
 ) !ViewerAuthorization {
-    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .viewer)) orelse
-        return error.ViewerHandshakeRefused;
-    defer hello.deinit();
     var request = try readRequiredFrame(allocator, stream);
     defer {
         std.crypto.secureZero(u8, request.payload);
@@ -2748,18 +3452,28 @@ pub fn authorizeViewerConnection(
     );
 }
 
-/// Serves one authenticated broker RPC on an already-accepted host.sock
-/// connection. Kernel identity is captured before HELLO; broker JSON claims
-/// are used only as cross-checks. The broker opens one connection per RPC.
-pub fn serveHostConnection(
+/// Authenticates the existing generated viewer HELLO and consumes the existing
+/// generated HOST_ATTACH request. The caller retains the stream and begins the
+/// snapshot/output sequence once those generated payload contracts exist.
+pub fn authorizeViewerConnection(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
     now_ns: u64,
-) !void {
-    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .broker)) orelse return;
+) !ViewerAuthorization {
+    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .viewer)) orelse
+        return error.ViewerHandshakeRefused;
     defer hello.deinit();
+    return authorizeViewerAfterHello(allocator, stream, core, &hello, now_ns);
+}
 
+fn serveBrokerRequest(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    core: *HostCore,
+    hello_build_id: []const u8,
+    now_ns: u64,
+) !void {
     var request = try readRequiredFrame(allocator, stream);
     defer request.deinit(allocator);
     if (request.header.flags != 0) {
@@ -2770,7 +3484,7 @@ pub fn serveHostConnection(
         generated.frame_type.host_adopt => {
             const response = core.adopt(
                 request.payload,
-                hello.build_id,
+                hello_build_id,
                 now_ns,
             ) catch |err| {
                 try writeHostFailure(
@@ -2853,6 +3567,145 @@ pub fn serveHostConnection(
             );
         },
         else => try writeHostFailure(allocator, stream, request.header, .unsupported_frame),
+    }
+}
+
+/// Serves one authenticated broker RPC on an already-accepted host.sock
+/// connection. Kernel identity is captured before HELLO; broker JSON claims
+/// are used only as cross-checks. The broker opens one connection per RPC.
+pub fn serveHostConnection(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    core: *HostCore,
+    now_ns: u64,
+) !void {
+    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .broker)) orelse return;
+    defer hello.deinit();
+    return serveBrokerRequest(allocator, stream, core, hello.build_id, now_ns);
+}
+
+fn viewerFailureCode(err: anyerror) protocol.WireError {
+    return switch (err) {
+        error.GenerationMismatch => .generation_mismatch,
+        error.InvalidClaimAcquire,
+        error.InvalidInputSubmit,
+        error.InvalidResize,
+        error.InvalidResizeReplay,
+        => .malformed_frame,
+        error.InputPayloadTooLarge => .payload_too_large,
+        error.OutOfMemory => .resource_exhausted,
+        else => .verification_unknown,
+    };
+}
+
+fn serveViewerRequest(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    core: *HostCore,
+    authorization: *const ViewerAuthorization,
+    now_ns: u64,
+) !void {
+    var request = try readRequiredFrame(allocator, stream);
+    defer {
+        if (request.header.type_code == generated.frame_type.input_submit)
+            std.crypto.secureZero(u8, request.payload);
+        request.deinit(allocator);
+    }
+    const expected_flags: u16 = if (request.header.type_code == generated.frame_type.input_submit)
+        generated.frame_flag.content_sensitive
+    else
+        0;
+    if (request.header.flags != expected_flags) {
+        try writeHostFailure(allocator, stream, request.header, .malformed_frame);
+        return;
+    }
+    var response_type: u16 = undefined;
+    const response = switch (request.header.type_code) {
+        generated.frame_type.claim_acquire => blk: {
+            if (!authorization.operations.human_input) {
+                try writeHostFailure(allocator, stream, request.header, .forbidden);
+                return;
+            }
+            response_type = generated.frame_type.claim_result;
+            break :blk core.claimInput(
+                request.payload,
+                authorization.viewer_id,
+                now_ns,
+            ) catch |err| {
+                try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
+                return;
+            };
+        },
+        generated.frame_type.input_submit => blk: {
+            if (!authorization.operations.human_input) {
+                try writeHostFailure(allocator, stream, request.header, .forbidden);
+                return;
+            }
+            response_type = generated.frame_type.applied;
+            break :blk core.submitInput(
+                request.payload,
+                authorization.viewer_id,
+                now_ns,
+            ) catch |err| {
+                try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
+                return;
+            };
+        },
+        generated.frame_type.resize => blk: {
+            if (!authorization.operations.resize) {
+                try writeHostFailure(allocator, stream, request.header, .forbidden);
+                return;
+            }
+            response_type = generated.frame_type.applied;
+            break :blk core.resizeTerminal(request.payload) catch |err| {
+                try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
+                return;
+            };
+        },
+        else => {
+            try writeHostFailure(allocator, stream, request.header, .unsupported_frame);
+            return;
+        },
+    };
+    defer core.allocator.free(response);
+    try protocol.writeFrame(
+        stream,
+        responseHeader(request.header, response_type, response.len),
+        response,
+    );
+}
+
+fn serveSessionConnection(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    core: *HostCore,
+    timer: *std.time.Timer,
+) !void {
+    const now_ns = timer.read();
+    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .either)) orelse return;
+    defer hello.deinit();
+    switch (hello.role) {
+        .broker => return serveBrokerRequest(allocator, stream, core, hello.build_id, now_ns),
+        .viewer => {
+            var authorization = try authorizeViewerAfterHello(
+                allocator,
+                stream,
+                core,
+                &hello,
+                now_ns,
+            );
+            defer authorization.deinit(core.allocator);
+            while (!core.terminated) {
+                serveViewerRequest(
+                    allocator,
+                    stream,
+                    core,
+                    &authorization,
+                    timer.read(),
+                ) catch return;
+            }
+        },
+        .either => unreachable,
     }
 }
 
@@ -3022,7 +3875,7 @@ fn runHostLoop(
                 stream.handle,
                 try leaseBoundControlTimeoutMs(core.lease, connection_now_ns),
             );
-            serveHostConnection(core.allocator, stream, core, connection_now_ns) catch |err| {
+            serveSessionConnection(core.allocator, stream, core, timer) catch |err| {
                 std.log.err("host connection refused: {s}", .{@errorName(err)});
             };
             continue;
@@ -3661,6 +4514,40 @@ fn fixtureRegistration() HostRegistration {
         .complete = true,
     };
 }
+
+const TestIdentityEncoder = struct {
+    context: u8 = 0,
+
+    fn encoder(self: *TestIdentityEncoder) input_arbiter.Encoder {
+        return .{ .context = self, .encodeFn = encode };
+    }
+
+    fn cancelEncoder(self: *TestIdentityEncoder) input_arbiter.CancelEncoder {
+        return .{ .context = self, .encodeFn = cancel };
+    }
+
+    fn encode(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        body: []const u8,
+        submit: input_arbiter.SubmitAction,
+        out: *std.ArrayList(u8),
+    ) anyerror!void {
+        _ = context;
+        _ = submit;
+        try out.appendSlice(allocator, body);
+    }
+
+    fn cancel(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        out: *std.ArrayList(u8),
+    ) anyerror!void {
+        _ = context;
+        _ = allocator;
+        _ = out;
+    }
+};
 
 test "HOST_REGISTER record and CREATED use generated strict schemas" {
     const registration = fixtureRegistration();
@@ -4346,6 +5233,127 @@ test "HOST_ATTACH consumes an exact one-use viewer grant" {
         error.InvalidViewerGrant,
         core.authorizeViewerAttach(attach_payload, token, 3_000),
     );
+}
+
+test "CLAIM_RESULT reports unknown without inventing an owner when the arbiter is unavailable" {
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    const payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-a",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 1_000),
+        .idempotencyKey = "claim-unknown",
+    }, .{});
+    defer std.testing.allocator.free(payload);
+    const result = try core.claimInput(payload, "viewer-a", 2_000);
+    defer std.testing.allocator.free(result);
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.claim_result_payload,
+        result,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"state\":\"unknown\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, result, "\"owner\"") == null);
+}
+
+test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    _ = switch (try pty.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => |readback| readback,
+        .exec_failed => return error.TestUnexpectedResult,
+    };
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-a",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 1_000),
+        .idempotencyKey = "claim-hangup",
+    }, .{});
+    defer std.testing.allocator.free(claim_payload);
+    const claim_result = try core.claimInput(claim_payload, "viewer-a", 2_000);
+    defer std.testing.allocator.free(claim_result);
+    const Granted = struct { result: struct { claim: struct { token: []const u8 } } };
+    var granted = try std.json.parseFromSlice(Granted, std.testing.allocator, claim_result, .{
+        .ignore_unknown_fields = true,
+    });
+    defer granted.deinit();
+    const input_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .claimToken = granted.value.result.claim.token,
+        .transactionId = "hangup-transaction",
+        .idempotencyKey = "hangup-idempotency",
+        .operation = .{ .kind = "hangup" },
+    }, .{});
+    defer std.testing.allocator.free(input_payload);
+    const applied = try core.submitInput(input_payload, "viewer-a", 3_000);
+    defer std.testing.allocator.free(applied);
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.applied_payload,
+        applied,
+    ));
+    const Applied = struct {
+        resultKind: []const u8,
+        receipt: struct { stage: []const u8, orderedAt: []const u8, byteRange: ?std.json.Value },
+    };
+    var parsed = try std.json.parseFromSlice(Applied, std.testing.allocator, applied, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    try std.testing.expectEqualStrings("input", parsed.value.resultKind);
+    try std.testing.expectEqualStrings("accepted", parsed.value.receipt.stage);
+    try std.testing.expectEqualStrings("1", parsed.value.receipt.orderedAt);
+    try std.testing.expect(parsed.value.receipt.byteRange == null);
+    const exit = try pty.waitExit(true);
+    try std.testing.expect(exit.reaped);
 }
 
 test "viewer wire authenticates HELLO and validates HOST_ATTACH before streaming" {

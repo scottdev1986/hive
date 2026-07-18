@@ -384,6 +384,11 @@
               "exclusiveMinimum": 0,
               "maximum": 262144
             },
+            "maxInputTransactionBytes": {
+              "type": "integer",
+              "exclusiveMinimum": 0,
+              "maximum": 131072
+            },
             "streamChunkMaxBytes": {
               "type": "integer",
               "exclusiveMinimum": 0,
@@ -402,6 +407,7 @@
           },
           "required": [
             "controlFrameMaxBytes",
+            "maxInputTransactionBytes",
             "streamChunkMaxBytes",
             "automatedMessageMaxBytes",
             "viewerQueueMaxBytes"
@@ -4512,6 +4518,655 @@
       ],
       "additionalProperties": false
     },
+    "claimAcquirePayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "writer": {
+          "type": "string",
+          "minLength": 1
+        },
+        "kind": {
+          "type": "string",
+          "enum": [
+            "human",
+            "automation"
+          ]
+        },
+        "leaseMilliseconds": {
+          "type": "integer",
+          "minimum": 1,
+          "maximum": 9007199254740991
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "session",
+        "writer",
+        "kind",
+        "leaseMilliseconds",
+        "idempotencyKey"
+      ],
+      "additionalProperties": false
+    },
+    "claimResultPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "result": {
+          "oneOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "granted"
+                },
+                "claim": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "writer": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "human",
+                        "automation"
+                      ]
+                    },
+                    "leaseExpiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "writer",
+                    "kind",
+                    "leaseExpiresAt"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "state",
+                "claim"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "denied"
+                },
+                "owner": {
+                  "anyOf": [
+                    {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "token": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "writer": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "kind": {
+                          "type": "string",
+                          "enum": [
+                            "human",
+                            "automation"
+                          ]
+                        },
+                        "leaseExpiresAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "token",
+                        "writer",
+                        "kind",
+                        "leaseExpiresAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "state",
+                "owner",
+                "diagnostic"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "state": {
+                  "type": "string",
+                  "const": "unknown"
+                },
+                "diagnostic": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "state",
+                "diagnostic"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "result"
+      ],
+      "additionalProperties": false
+    },
+    "inputSubmitPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "claimToken": {
+          "type": "string",
+          "minLength": 1
+        },
+        "transactionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        },
+        "operation": {
+          "oneOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "bytes"
+                },
+                "encoding": {
+                  "type": "string",
+                  "const": "base64"
+                },
+                "bytes": {
+                  "type": "string",
+                  "maxLength": 174764,
+                  "pattern": "^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$"
+                }
+              },
+              "required": [
+                "kind",
+                "encoding",
+                "bytes"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "canonical-end-of-file"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "kind": {
+                  "type": "string",
+                  "const": "hangup"
+                }
+              },
+              "required": [
+                "kind"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "session",
+        "claimToken",
+        "transactionId",
+        "idempotencyKey",
+        "operation"
+      ],
+      "additionalProperties": false
+    },
+    "resizePayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "window": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "columns": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "rows": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 1000
+            },
+            "widthPixels": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            },
+            "heightPixels": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 65535
+            }
+          },
+          "required": [
+            "columns",
+            "rows",
+            "widthPixels",
+            "heightPixels"
+          ],
+          "additionalProperties": false,
+          "x-hive-max-active-cells": 250000
+        },
+        "revision": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+          "format": "hive-uint64-decimal"
+        },
+        "idempotencyKey": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "session",
+        "window",
+        "revision",
+        "idempotencyKey"
+      ],
+      "additionalProperties": false
+    },
+    "appliedPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "resultKind": {
+              "type": "string",
+              "const": "input"
+            },
+            "receipt": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "transactionId": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "stage": {
+                  "type": "string",
+                  "enum": [
+                    "accepted",
+                    "queued",
+                    "written-to-terminal",
+                    "rejected",
+                    "unknown"
+                  ]
+                },
+                "byteRange": {
+                  "anyOf": [
+                    {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "start": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                          "format": "hive-uint64-decimal"
+                        },
+                        "endExclusive": {
+                          "type": "string",
+                          "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                          "format": "hive-uint64-decimal"
+                        }
+                      },
+                      "required": [
+                        "start",
+                        "endExclusive"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "orderedAt": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "availableCreditBytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "consumedByProcess": {
+                  "type": "string",
+                  "const": "not-claimed"
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "partial",
+                    "unavailable",
+                    "unknown"
+                  ]
+                },
+                "diagnostic": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "transactionId",
+                "stage",
+                "byteRange",
+                "orderedAt",
+                "availableCreditBytes",
+                "consumedByProcess",
+                "completeness",
+                "diagnostic"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "resultKind",
+            "receipt"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "resultKind": {
+              "type": "string",
+              "const": "resize"
+            },
+            "result": {
+              "oneOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "applied"
+                    },
+                    "revision": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "readback": {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "columns": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        },
+                        "rows": {
+                          "type": "integer",
+                          "minimum": 1,
+                          "maximum": 1000
+                        },
+                        "widthPixels": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 65535
+                        },
+                        "heightPixels": {
+                          "type": "integer",
+                          "minimum": 0,
+                          "maximum": 65535
+                        }
+                      },
+                      "required": [
+                        "columns",
+                        "rows",
+                        "widthPixels",
+                        "heightPixels"
+                      ],
+                      "additionalProperties": false,
+                      "x-hive-max-active-cells": 250000
+                    },
+                    "orderedAt": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "foregroundProcessObservation": {
+                      "type": "string",
+                      "const": "not-claimed"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "revision",
+                    "readback",
+                    "orderedAt",
+                    "foregroundProcessObservation"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "stale"
+                    },
+                    "currentRevision": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "currentRevision"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "unknown"
+                    },
+                    "diagnostic": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "diagnostic"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "resultKind",
+            "result"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "sessionLocator": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,
@@ -8241,6 +8896,7 @@
         "liveSessionsPerHiveHome": 32,
         "authenticatedViewersPerGeneration": 4,
         "controlJsonBytesPerFrame": 262144,
+        "inputTransactionBytes": 131072,
         "streamChunkBytes": 65536,
         "automatedMessageBytes": 1048576,
         "viewerUnacknowledgedOutputBytes": 8388608,
@@ -8340,6 +8996,7 @@
         "HUMAN_INPUT": 770,
         "CLAIM_RELEASE": 771,
         "GESTURE_INPUT": 772,
+        "INPUT_SUBMIT": 773,
         "AUTOMATION_BEGIN": 784,
         "AUTOMATION_CHUNK": 785,
         "AUTOMATION_COMMIT": 786,
@@ -8455,7 +9112,8 @@
           "names": [
             "HUMAN_INPUT",
             "CLAIM_RELEASE",
-            "GESTURE_INPUT"
+            "GESTURE_INPUT",
+            "INPUT_SUBMIT"
           ],
           "direction": "viewer-to-host",
           "purpose": "ordered-human-input"

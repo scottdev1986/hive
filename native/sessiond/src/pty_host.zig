@@ -59,6 +59,7 @@ pub const Error = error{
     StaleResizeRevision,
     IdentityUnavailable,
     IoFailed,
+    NotCanonical,
     Internal,
 };
 
@@ -504,6 +505,36 @@ pub const PtyHost = struct {
             .ordered_at = ordered_at,
             .readback = readback,
         };
+    }
+
+    pub fn operationSequence(self: *const PtyHost) u64 {
+        return self.operation_sequence;
+    }
+
+    pub fn resizeRevision(self: *const PtyHost) u64 {
+        return self.resize_revision;
+    }
+
+    pub fn availableWriteCredit(self: *const PtyHost) usize {
+        return write_queue_cap_bytes - self.write_queue.items.len;
+    }
+
+    pub fn canonicalEofByte(self: *PtyHost) Error!u8 {
+        try self.requireOpen();
+        var term: c.struct_termios = undefined;
+        if (c.tcgetattr(self.master_fd, &term) != 0) return error.IoFailed;
+        if (term.c_lflag & c.ICANON == 0) return error.NotCanonical;
+        return term.c_cc[c.VEOF];
+    }
+
+    pub fn hangup(self: *PtyHost) Error!u64 {
+        try self.requireOpen();
+        try self.writeDrainAll();
+        const ordered_at = std.math.add(u64, self.operation_sequence, 1) catch
+            return error.Internal;
+        self.operation_sequence = ordered_at;
+        self.closeMaster();
+        return ordered_at;
     }
 
     /// Atomically accept one contiguous write range into the ordered queue.

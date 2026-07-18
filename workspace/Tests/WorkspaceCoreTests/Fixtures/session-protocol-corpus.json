@@ -1245,6 +1245,7 @@
         "serverEpoch": "123456789",
         "limits": {
           "controlFrameMaxBytes": 262144,
+          "maxInputTransactionBytes": 131072,
           "streamChunkMaxBytes": 65536,
           "automatedMessageMaxBytes": 1048576,
           "viewerQueueMaxBytes": 8388608
@@ -1425,6 +1426,116 @@
       "value": {
         "schemaVersion": 1,
         "registered": true
+      }
+    },
+    {
+      "name": "CLAIM_ACQUIRE frozen request",
+      "schema": "claimAcquirePayload",
+      "value": {
+        "schemaVersion": 1,
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "writer": "viewer-fixture",
+        "kind": "human",
+        "leaseMilliseconds": 15000,
+        "idempotencyKey": "claim-fixture-key"
+      }
+    },
+    {
+      "name": "CLAIM_RESULT frozen grant",
+      "schema": "claimResultPayload",
+      "value": {
+        "schemaVersion": 1,
+        "result": {
+          "state": "granted",
+          "claim": {
+            "token": "claim-fixture-token",
+            "writer": "viewer-fixture",
+            "kind": "human",
+            "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
+          }
+        }
+      }
+    },
+    {
+      "name": "INPUT_SUBMIT frozen byte operation",
+      "schema": "inputSubmitPayload",
+      "value": {
+        "schemaVersion": 1,
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "claimToken": "claim-fixture-token",
+        "transactionId": "terminal-input-fixture",
+        "idempotencyKey": "input-fixture-key",
+        "operation": {
+          "kind": "bytes",
+          "encoding": "base64",
+          "bytes": "aGVsbG8="
+        }
+      }
+    },
+    {
+      "name": "RESIZE frozen request",
+      "schema": "resizePayload",
+      "value": {
+        "schemaVersion": 1,
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1110,
+          "heightPixels": 740
+        },
+        "revision": "8",
+        "idempotencyKey": "resize-fixture-key"
+      }
+    },
+    {
+      "name": "APPLIED frozen input receipt",
+      "schema": "appliedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "resultKind": "input",
+        "receipt": {
+          "transactionId": "terminal-input-fixture",
+          "stage": "written-to-terminal",
+          "byteRange": {
+            "start": "0",
+            "endExclusive": "5"
+          },
+          "orderedAt": "1",
+          "availableCreditBytes": 131072,
+          "consumedByProcess": "not-claimed",
+          "completeness": "complete",
+          "diagnostic": null
+        }
+      }
+    },
+    {
+      "name": "APPLIED frozen resize receipt",
+      "schema": "appliedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "resultKind": "resize",
+        "result": {
+          "state": "applied",
+          "revision": "8",
+          "readback": {
+            "columns": 111,
+            "rows": 37,
+            "widthPixels": 1110,
+            "heightPixels": 740
+          },
+          "orderedAt": "2",
+          "foregroundProcessObservation": "not-claimed"
+        }
       }
     },
     {
@@ -2808,6 +2919,7 @@
         "serverEpoch": "123456789",
         "limits": {
           "controlFrameMaxBytes": 262144,
+          "maxInputTransactionBytes": 131072,
           "streamChunkMaxBytes": 65536,
           "automatedMessageMaxBytes": 1048576,
           "viewerQueueMaxBytes": 8388608
@@ -2985,6 +3097,99 @@
           "heightPx": 800,
           "cellWidthPx": 10,
           "cellHeightPx": 20
+        }
+      }
+    },
+    {
+      "name": "CLAIM_ACQUIRE rejects absent session fencing",
+      "schema": "claimAcquirePayload",
+      "value": {
+        "schemaVersion": 1,
+        "writer": "viewer",
+        "kind": "human",
+        "leaseMilliseconds": 1,
+        "idempotencyKey": "claim"
+      }
+    },
+    {
+      "name": "CLAIM_RESULT rejects invented ownership",
+      "schema": "claimResultPayload",
+      "value": {
+        "schemaVersion": 1,
+        "result": {
+          "state": "denied",
+          "owner": null,
+          "diagnostic": ""
+        }
+      }
+    },
+    {
+      "name": "INPUT_SUBMIT rejects malformed base64",
+      "schema": "inputSubmitPayload",
+      "value": {
+        "schemaVersion": 1,
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "claimToken": "claim-fixture-token",
+        "transactionId": "terminal-input-fixture",
+        "idempotencyKey": "input-fixture-key",
+        "operation": {
+          "kind": "bytes",
+          "encoding": "base64",
+          "bytes": "not base64"
+        }
+      }
+    },
+    {
+      "name": "RESIZE rejects absent idempotency key",
+      "schema": "resizePayload",
+      "value": {
+        "schemaVersion": 1,
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1110,
+          "heightPixels": 740
+        },
+        "revision": "8"
+      }
+    },
+    {
+      "name": "APPLIED rejects ambiguous result branch",
+      "schema": "appliedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "resultKind": "input",
+        "receipt": {
+          "transactionId": "terminal-input-fixture",
+          "stage": "written-to-terminal",
+          "byteRange": {
+            "start": "0",
+            "endExclusive": "5"
+          },
+          "orderedAt": "1",
+          "availableCreditBytes": 131072,
+          "consumedByProcess": "not-claimed",
+          "completeness": "complete",
+          "diagnostic": null
+        },
+        "result": {
+          "state": "applied",
+          "revision": "8",
+          "readback": {
+            "columns": 111,
+            "rows": 37,
+            "widthPixels": 1110,
+            "heightPixels": 740
+          },
+          "orderedAt": "2",
+          "foregroundProcessObservation": "not-claimed"
         }
       }
     }

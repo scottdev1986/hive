@@ -651,6 +651,7 @@ pub const limits = struct {
     pub const live_sessions_per_hive_home: usize = ${TERMINAL_LIMITS.liveSessionsPerHiveHome};
     pub const viewers_per_generation: usize = ${TERMINAL_LIMITS.authenticatedViewersPerGeneration};
     pub const control_json_bytes: usize = ${TERMINAL_LIMITS.controlJsonBytesPerFrame};
+    pub const input_transaction_bytes: usize = ${TERMINAL_LIMITS.inputTransactionBytes};
     pub const stream_chunk_bytes: usize = ${TERMINAL_LIMITS.streamChunkBytes};
     pub const automated_message_bytes: usize = ${TERMINAL_LIMITS.automatedMessageBytes};
     pub const viewer_queue_bytes: usize = ${TERMINAL_LIMITS.viewerUnacknowledgedOutputBytes};
