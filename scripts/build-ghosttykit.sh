@@ -166,7 +166,20 @@ if [[ ! -f "$OUT/notices/ghostty/LICENSE" ]]; then
   exit 1
 fi
 
+# Gate 4 (M1-B1): the shipped artifact must contain only static archives —
+# an accidental dynamic library would silently change linking, codesign,
+# and notarization behavior.
+if /usr/bin/find "$OUT" \( -name '*.dylib' -o -name '*.so' \) -print | /usr/bin/grep -q .; then
+  echo "unexpected dynamic library in GhosttyKit artifact:" >&2
+  /usr/bin/find "$OUT" \( -name '*.dylib' -o -name '*.so' \) -print >&2
+  exit 1
+fi
+
 mac_library="$mac_slice/$mac_binary_path"
+if ! /usr/bin/file "$mac_library" | /usr/bin/grep -q 'ar archive'; then
+  echo "macOS GhosttyKit slice is not a static archive: $(/usr/bin/file "$mac_library")" >&2
+  exit 1
+fi
 /usr/bin/nm -gUj "$mac_library" | /usr/bin/sed 's/^_//' | LC_ALL=C /usr/bin/sort -u >"$OUT/symbols/ghostty-all.exports"
 if [[ "$(lock_value ghostty.symbolListSha256)" != "REQUIRED_BEFORE_TG1_PRODUCTION" ]]; then
   "$ROOT/scripts/check-ghostty-abi.sh" "$mac_library"

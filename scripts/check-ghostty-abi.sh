@@ -15,7 +15,7 @@ if [ ! -f "$GHOSTTY_INCLUDE/ghostty.h" ]; then
 fi
 
 env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
-  /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories -fsyntax-only \
+  /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories -Wno-padded -fsyntax-only \
   -I "$ROOT/native/include" -isystem "$GHOSTTY_INCLUDE" "$TEST_SOURCE"
 
 /usr/bin/sed -n 's/.*\(hive_ghostty_[a-z0-9_]*_v1\)(.*/\1/p' "$HEADER" \
