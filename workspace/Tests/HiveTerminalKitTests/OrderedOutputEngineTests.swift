@@ -23,7 +23,7 @@ final class OrderedOutputEngineTests: XCTestCase {
     /// review 2026-07-17 caught exactly this failure mode).
     private func makeSurface() throws -> GhosttyManualSurface {
         do {
-            return try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+            return try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: .enabled)
         } catch {
             XCTFail("real manual surface required for gate 5 live proof, got: \(error)")
             throw error

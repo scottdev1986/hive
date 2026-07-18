@@ -1,8 +1,18 @@
+import AppKit
 import XCTest
 import HiveGhosttyC
 @testable import HiveTerminalKit
 
 final class Gate4ABIQualificationTests: XCTestCase {
+    func testEnabledPolicyCreatesLiveSurfaceAndReplies() throws {
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting(terminalReplies: .enabled)
+        defer { surface.free() }
+        var writes: [Data] = []
+        surface.callbackContext.onWrite = { writes.append($0) }
+        XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: 0), .success)
+        XCTAssertEqual(writes, [Data("\u{1B}[?62;22c".utf8)])
+    }
+
     func testBridgeValuesLayoutAndCSignaturesAtRuntime() {
         XCTAssertEqual(GHOSTTY_SUCCESS.rawValue, 0)
         XCTAssertEqual(GHOSTTY_OUT_OF_MEMORY.rawValue, -1)
