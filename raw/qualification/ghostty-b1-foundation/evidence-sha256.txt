@@ -22,9 +22,9 @@ f9705ec54e7727c0929dc08283ba019e2b06f7a7a57a0f95e2f0fc2ccb3a95fb  ./artifact-met
 df783f261a171e560b09ea2458801cee1f8a82fc636b689fc2fdb1e9f137d482  ./artifact-summary.json
 8eafae61ba77c70db652ebf15ef263d12d82243a1dd83b732e1d8f9851d7cc25  ./c-zig-abi.txt
 71f785a28509c6ebb078b74481124bd45eb3b87efa8c7c9536d15995774921b3  ./carrier-dynamic-libraries.txt
-1385b6112f30b57ce2eb0efeec930a5c01c4808ed0d5f34e09fb376d7bf69159  ./clean-build-a.log
-1385b6112f30b57ce2eb0efeec930a5c01c4808ed0d5f34e09fb376d7bf69159  ./clean-build-b.log
-1385b6112f30b57ce2eb0efeec930a5c01c4808ed0d5f34e09fb376d7bf69159  ./clean-build-c.log
+1385b6112f30b57ce2eb0efeec930a5c01c4808ed0d5f34e09fb376d7bf69159  ./clean-build-a.txt
+1385b6112f30b57ce2eb0efeec930a5c01c4808ed0d5f34e09fb376d7bf69159  ./clean-build-b.txt
+1385b6112f30b57ce2eb0efeec930a5c01c4808ed0d5f34e09fb376d7bf69159  ./clean-build-c.txt
 0c93cef0dd503e5888491a6138e14dddbb37ff0c66850734272eab993ce76571  ./codesign-display.txt
 d2084e708cd471a65b1422f42aa7e71a1eb53ae2ce145d1c567d75a34f5ee276  ./codesign-verify.txt
 5f6cd2ca5ae4930daa8e3b797bbd8c7130236c54fcb8b1cc4d942a06c7909e0c  ./external-source-verification.txt

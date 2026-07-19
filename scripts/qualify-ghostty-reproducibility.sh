@@ -46,7 +46,7 @@ capture_run() {
   local label=$1
   echo "clean build $label/$RUNS"
   "$ROOT/scripts/build-ghosttykit.sh" \
-    >"$EVIDENCE/clean-build-$label.log" 2>&1
+    >"$EVIDENCE/clean-build-$label.txt" 2>&1
   /bin/cp "$ARTIFACT/artifact-manifest.json" \
     "$EVIDENCE/repro-build-$label-manifest.json"
   hash_shipped "$EVIDENCE/shipped-runtime-$label.sha256"
@@ -59,7 +59,7 @@ capture_run b
 capture_run c
 
 /usr/bin/grep -E 'headless checkpoint harness: all checks passed|checkpoint engine build id' \
-  "$EVIDENCE/clean-build-c.log" >"$EVIDENCE/native-build-id-harness.txt"
+  "$EVIDENCE/clean-build-c.txt" >"$EVIDENCE/native-build-id-harness.txt"
 
 if ! /usr/bin/cmp -s "$EVIDENCE/shipped-runtime-a.sha256" \
   "$EVIDENCE/shipped-runtime-b.sha256" || \
