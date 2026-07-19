@@ -225,6 +225,60 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         .hostKind = "sessiond",
         .engineBuildId = &engine_build_id,
     };
+    // §19/§20 broker attach issuance: ATTACH_REQUEST through the production
+    // dispatch path returns a schema-valid one-use ATTACH_GRANT whose endpoint
+    // names this host's socket. The token drives the replay re-attach leg.
+    const attach_request_payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
+        .viewerId = "golden-viewer-b",
+        .geometry = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPx = @as(u32, 800),
+            .heightPx = @as(u32, 480),
+            .cellWidthPx = @as(f64, 10),
+            .cellHeightPx = @as(f64, 20),
+        },
+        .operations = [_][]const u8{"view"},
+    }, .{});
+    defer allocator.free(attach_request_payload);
+    const grant_dispatch = broker.dispatchFrame(
+        allocator,
+        .{
+            .header = requestHeader(generated.frame_type.attach_request, attach_request_payload.len),
+            .payload = attach_request_payload,
+        },
+        4,
+        backend,
+    );
+    const grant_response = switch (grant_dispatch) {
+        .response => |value| value,
+        else => return error.AttachGrantIssueFailed,
+    };
+    defer grant_response.deinit(allocator);
+    if (grant_response.header.type_code != generated.frame_type.attach_grant)
+        return error.AttachGrantIssueFailed;
+    const GrantProjection = struct {
+        token: []const u8,
+        endpoint: []const u8,
+        outputSeq: []const u8,
+    };
+    var parsed_grant = try std.json.parseFromSlice(
+        GrantProjection,
+        allocator,
+        grant_response.payload,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_grant.deinit();
+    const expected_endpoint_suffix = try std.fs.path.join(
+        allocator,
+        &.{ "runtime/sessiond/hosts", session_id, "host.sock" },
+    );
+    defer allocator.free(expected_endpoint_suffix);
+    if (!std.mem.endsWith(u8, parsed_grant.value.endpoint, expected_endpoint_suffix))
+        return error.AttachGrantWrongEndpoint;
+
     try driveViewerWire(
         allocator,
         root,
@@ -233,6 +287,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         wire_locator,
         input_proof_path,
         parsed_created.value.inspection.providerRoot.pid,
+        parsed_grant.value.token,
     );
 
     // Frozen A0 LIST is unscoped (no Hive instanceId). Expect the real session
@@ -608,6 +663,7 @@ fn driveViewerWire(
     wire_locator: WireLocatorPayload,
     input_proof_path: []const u8,
     provider_pid: i32,
+    replay_grant_token: []const u8,
 ) !void {
     const grant_token = "golden-viewer-token";
     var grant_hash: [32]u8 = undefined;
@@ -1060,25 +1116,6 @@ fn driveViewerWire(
     // same exact generation from afterSeq 0, replays the identical retained
     // byte stream, and supersedes this connection (which then closes).
     {
-        var grant_hash_b: [32]u8 = undefined;
-        std.crypto.hash.sha2.Sha256.hash("golden-viewer-token-b", &grant_hash_b, .{});
-        const operations_b = [_][]const u8{"view"};
-        if (registry.registerGrant(
-            locator,
-            grant_hash_b,
-            "golden-viewer-b",
-            &operations_b,
-            .{
-                .columns = 80,
-                .rows = 24,
-                .width_px = 800,
-                .height_px = 480,
-                .cell_width_px = 10,
-                .cell_height_px = 20,
-            },
-            4,
-        ) != null) return error.ReplayGrantRegistrationFailed;
-
         const replay_stream = try std.net.connectUnixSocket(socket_path);
         defer replay_stream.close();
         var replay_reader: ViewerReader = .{
@@ -1097,7 +1134,7 @@ fn driveViewerWire(
                 .maxMinor = generated.protocol_max_minor,
             },
             .clientRole = "viewer",
-            .grantToken = "golden-viewer-token-b",
+            .grantToken = replay_grant_token,
         }, .{});
         defer allocator.free(replay_hello);
         try writeViewerRequest(replay_stream, generated.frame_type.hello, 80, 0, replay_hello);
@@ -1111,7 +1148,7 @@ fn driveViewerWire(
         const replay_attach = try std.json.Stringify.valueAlloc(allocator, .{
             .schemaVersion = @as(u8, 1),
             .locator = wire_locator,
-            .token = "golden-viewer-token-b",
+            .token = replay_grant_token,
             .geometry = .{
                 .columns = @as(u16, 80),
                 .rows = @as(u16, 24),

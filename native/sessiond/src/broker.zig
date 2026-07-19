@@ -3072,7 +3072,102 @@ pub const ProductionBackend = struct {
             return self.terminate(allocator, payload);
         if (header.type_code == generated.frame_type.visibility_renew)
             return self.renewVisibility(allocator, payload, now_ns);
+        if (header.type_code == generated.frame_type.attach_request)
+            return self.issueAttach(allocator, payload, now_ns);
         return failure(.not_found);
+    }
+
+    /// §19/§20 one-use viewer attach: mints a grant token, registers only its
+    /// hash on the live exact-generation host (visibility-gated by
+    /// Registry.registerGrant), and returns the ATTACH_GRANT the viewer
+    /// presents directly to the host endpoint.
+    fn issueAttach(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const Request = struct {
+            schemaVersion: u8,
+            locator: DiskLocator,
+            viewerId: []const u8,
+            geometry: DiskGeometry,
+            operations: []const []const u8,
+        };
+        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{
+            .ignore_unknown_fields = true,
+        }) catch return failure(.malformed_frame);
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
+        const locator = locatorFromDisk(parsed.value.locator) catch
+            return failure(.malformed_frame);
+
+        var token_bytes: [32]u8 = undefined;
+        std.crypto.random.bytes(&token_bytes);
+        const token_hex = std.fmt.bytesToHex(token_bytes, .lower);
+        var token_hash: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(&token_hex, &token_hash, .{});
+
+        if (self.registry.registerGrant(
+            locator,
+            token_hash,
+            parsed.value.viewerId,
+            parsed.value.operations,
+            .{
+                .columns = parsed.value.geometry.columns,
+                .rows = parsed.value.geometry.rows,
+                .width_px = parsed.value.geometry.widthPx,
+                .height_px = parsed.value.geometry.heightPx,
+                .cell_width_px = parsed.value.geometry.cellWidthPx,
+                .cell_height_px = parsed.value.geometry.cellHeightPx,
+            },
+            now_ns,
+        )) |register_failure| return .{ .failure = register_failure };
+
+        const lookup = self.registry.lookup(locator) orelse return failure(.not_found);
+        const entry = switch (lookup) {
+            .failure => |lookup_failure| return .{ .failure = lookup_failure },
+            .entry => |value| value,
+        };
+
+        const endpoint = std.fs.path.join(allocator, &.{
+            self.runtime.canonical_home,
+            "runtime/sessiond/hosts",
+            entry.record.locator.session_id,
+            "host.sock",
+        }) catch return failure(.resource_exhausted);
+        defer allocator.free(endpoint);
+
+        var deadline_storage: [24]u8 = undefined;
+        const expires_at = wallDeadline(
+            &deadline_storage,
+            generated.limits.attach_grant_timeout_ms,
+        ) catch return failure(.internal);
+        var output_storage: [32]u8 = undefined;
+        const output_seq = std.fmt.bufPrint(
+            &output_storage,
+            "{d}",
+            .{entry.record.output_seq},
+        ) catch return failure(.internal);
+        var checkpoint_storage: [32]u8 = undefined;
+        const checkpoint_seq = std.fmt.bufPrint(
+            &checkpoint_storage,
+            "{d}",
+            .{entry.record.checkpoint_seq},
+        ) catch return failure(.internal);
+
+        const response = std.json.Stringify.valueAlloc(allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .locator = parsed.value.locator,
+            .endpoint = endpoint,
+            .token = @as([]const u8, &token_hex),
+            .expiresAt = expires_at,
+            .engineBuildId = entry.record.engine_build_id,
+            .checkpointSeq = checkpoint_seq,
+            .outputSeq = output_seq,
+            .operations = parsed.value.operations,
+        }, .{}) catch return failure(.resource_exhausted);
+        return .{ .response = response };
     }
 
     fn controlPlaneFailure(err: anyerror) BackendResult {
