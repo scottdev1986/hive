@@ -1,0 +1,16 @@
+vttest: VT100 test program, version 2.7 (20251205)
+session: vttest-terminal-reports.bin
+session-sha256: 11d697d02ca82269a536175474ad8b01f0607cc25cf1fc4a2fa752b278bdaae9
+
+DSR 5: CSI 0 n — TERMINAL OK
+DSR 6: CSI 5 ; 1 R — OK
+DSR 6 with origin mode: CSI 5 ; 1 R — OK
+DA1: CSI ? 62 ; 22 c — VT200 family, option 22 = color
+DA2: CSI > 1 ; 10 ; 0 c — VT220, firmware 1.0, ROM registration 0, ok
+DA3: DCS ! | 00000000 ST — ok
+XTVERSION CSI > q: framing accepted — ok
+XTVERSION CSI > 0 q: framing accepted — ok
+
+The expect driver injects the exact reply bytes independently observed in
+live-proof.jsonl. This session records vttest's classification of those bytes;
+live-proof.jsonl remains the callback-delivery oracle.

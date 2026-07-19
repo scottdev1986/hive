@@ -1,0 +1,17 @@
+c7c6541111ee53947140bac154f1275c6b1b244c40c045b190662f23226509c9  ./.gitattributes
+db40595e3a787fd81545732b0926d6b2c2fea8a6ee5d31ab721f1a43b03453c5  ./README.md
+61cb61b492c0fca59488c192ff054e43d7144616b3b3bf946a2f4050ded9f6c1  ./capture-probe.swift
+1eb2d36f484220e9947e1855f0aecc6c4edac26bcb7f75ba8d50c327d331bd76  ./live-proof.jsonl
+30dcadfcf812f1ffe22e435c5b2a28a3cb8695ec97d20852fceff4edc5ea71bd  ./osc52-policy.md
+a2e578f9bcc6b1b8ac49d4166f8c7b0042cfd6ff4e228c29c288f3b4ea26e7e7  ./swift-build-report.txt
+126f5b3434eee909381b96023d504a74dc0eccb7f496a67da93af595c9e7fede  ./swift-test-report.txt
+16d33f55799d0e8ac6009863cede4fc19bca7168913a018f5ef270d7d1004ace  ./validate-corpus.sh
+5a597d999d321f9d20aa9b6a83aafea2898efb191eace20ed3ed5e3b5034c125  ./vendor-claude-code-startup.bin
+e4a10935a208de2511ce3368e762615d8ccf67e58255d7fa2b8eea20c70dc19f  ./vendor-codex-cli-startup.bin
+d2e20642ab0028a590c5231e66d4d64501923b872e4ae3c6f1b76a347d03d0a7  ./vendor-corpora.md
+f2a5de4bf24b47136287d743797f65152b4c4b1c90d0c012cc60986825c1b9fe  ./vendor-grok-cli-startup.bin
+1197549b4317ac3ec8055422e421d73e0ae27d5a7766186c07d8b8c4e0410388  ./vttest-reply-report.md
+dc8b2280ab12b52a3e75e25cd4a97516e2848c6a2cbb6641a2612407637dc060  ./vttest-report-driver.exp
+452fac7f58fa5bba160e77da8ecd23c7b8bdecf6d4e0b5d76fd631a35fecd92b  ./vttest-session-summary.txt
+11d697d02ca82269a536175474ad8b01f0607cc25cf1fc4a2fa752b278bdaae9  ./vttest-terminal-reports.bin
+343625acce6694a12d0883db3e95bd7ae98069975068ed7e7a90d77c1da1699a  ./vttest-version.txt

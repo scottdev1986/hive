@@ -1,0 +1,46 @@
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/12] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (1.65s)
+Test Suite 'Selected tests' started at 2026-07-19 14:21:19.763.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:21:19.764.
+Test Suite 'RendererReplySuppressionTests' started at 2026-07-19 14:21:19.764.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' started.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' passed (3.039 seconds).
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' started.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' passed (0.209 seconds).
+Test Suite 'RendererReplySuppressionTests' passed at 2026-07-19 14:21:23.012.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 3.248 (3.248) seconds
+Test Suite 'TerminalReplyCorpusTests' started at 2026-07-19 14:21:23.012.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' passed (0.023 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' passed (0.310 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.017 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' started.
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' passed (0.010 seconds).
+Test Suite 'TerminalReplyCorpusTests' passed at 2026-07-19 14:21:23.433.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.420 (0.421) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:21:23.433.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 3.668 (3.669) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 14:21:23.433.
+	 Executed 11 tests, with 0 failures (0 unexpected) in 3.668 (3.670) seconds
+B21_REPLY_SUPPRESSION answered_when_enabled_count=7
+B21_REPLY_SUPPRESSION vacuous_count=0
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

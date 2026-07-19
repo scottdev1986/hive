@@ -1,0 +1,6 @@
+VT100 test program, version 2.7 (20251205)
+source: https://invisible-island.net/archives/vttest/vttest-20251205.tgz
+archive-sha256: cd6886f9aefe6a3f6c566fa61271a55710901a71849c630bf5376aa984bf77cc
+configured-and-built-locally: 2026-07-19
+capture-term: xterm-ghostty
+capture-geometry: 80 columns x 24 rows

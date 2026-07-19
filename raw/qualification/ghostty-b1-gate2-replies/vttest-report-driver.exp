@@ -1,0 +1,65 @@
+#!/usr/bin/expect -f
+set timeout 10
+set esc "\033"
+set reply_version "${esc}P>|ghostty 1.3.2-hive-florence-category-complex-coding-m1-b1-+a07b570d${esc}\\"
+set output "raw/qualification/ghostty-b1-gate2-replies/vttest-terminal-reports.bin"
+set env(TERM) "xterm-ghostty"
+set env(COLORTERM) "truecolor"
+log_file -noappend $output
+spawn -noecho .cache/vttest/vttest-20251205/install/bin/vttest
+
+proc menu {choice} {
+    expect -exact "Enter choice number"
+    expect -exact ": "
+    send -- "$choice\r"
+}
+
+proc hold {} {
+    expect -exact "Push <RETURN>"
+    send -- "\r"
+}
+
+# Terminal reports: inject the exact bytes separately observed from Ghostty.
+menu 6
+menu 3
+expect -exact "${esc}\[5n"
+send -- "${esc}\[0n"
+expect -exact "${esc}\[6n"
+send -- "${esc}\[5;1R"
+expect -exact "${esc}\[6n"
+send -- "${esc}\[5;1R"
+hold
+
+menu 4
+expect -exact "${esc}\[0c"
+send -- "${esc}\[?62;22c"
+hold
+
+menu 5
+expect -exact "${esc}\[>c"
+send -- "${esc}\[>1;10;0c"
+hold
+
+menu 6
+expect -exact "${esc}\[=c"
+send -- "${esc}P!|00000000${esc}\\"
+hold
+
+menu 0
+
+# XTERM reports: vttest sends both omitted and explicit zero forms.
+menu 11
+menu 8
+menu 2
+menu 2
+expect -exact "${esc}\[>q"
+send -- $reply_version
+expect -exact "${esc}\[>0q"
+send -- $reply_version
+hold
+
+menu 0
+menu 0
+menu 0
+menu 0
+expect eof
