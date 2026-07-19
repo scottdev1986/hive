@@ -383,7 +383,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             // message-sending path (typing into the native TUIs). Making the
             // terminal first responder is what moves the indicator: the ring
             // follows the keyboard, not this call.
-            view.contentView.focusTerminal()
+            view.focusTerminal()
         }
         refreshFocusIndicators()
     }

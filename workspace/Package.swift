@@ -86,7 +86,7 @@ let package = Package(
         ),
         .testTarget(
             name: "HiveWorkspaceTests",
-            dependencies: ["HiveWorkspace", "WorkspaceCore"]
+            dependencies: ["HiveWorkspace", "HiveTerminalKit", "WorkspaceCore"]
         ),
         .testTarget(
             name: "HiveTerminalKitTests",

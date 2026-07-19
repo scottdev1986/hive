@@ -334,6 +334,14 @@ final class PaneView: NSView {
         contentView.commitCellGeometry()
     }
 
+    func focusTerminal() {
+        if let terminalView = sessiondTerminal?.view {
+            terminalView.focusExplicitly()
+        } else {
+            contentView.focusTerminal()
+        }
+    }
+
     // MARK: Actions (all routed through the shared command model)
 
     @objc private func promoteAction() {
