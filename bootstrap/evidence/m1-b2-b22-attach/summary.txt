@@ -18,6 +18,6 @@ Robustness fixes (mutation-verified controls):
 - broker grant churn: consume-on-issue frees the mirror slot; no CAPACITY_EXCEEDED under reconnect churn
 
 Artifacts:
-- live-proof-transcript.log — stack boot/create/renew/teardown
+- live-proof-transcript.txt — stack boot/create/renew/teardown
 - live-host-attach-test.txt — opt-in Swift live wire test PASS vs the real host
 - attach-grant-cli.txt — exact-locator grant + typed wrong-generation refusal
