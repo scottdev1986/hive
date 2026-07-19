@@ -377,7 +377,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private func reportedGeometryMatchesSemanticSnapshot() -> Bool {
         guard let reportedGeometry,
               let snapshot = (engine as? ManualSurfaceSemanticSnapshotProviding)?.semanticSnapshot()
-        else { return true }
+        else { return false }
         return reportedGeometry.columns == snapshot.geometry.columns &&
             reportedGeometry.rows == snapshot.geometry.rows
     }
