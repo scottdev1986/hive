@@ -54,20 +54,6 @@ final class HiveTerminalVisualProofTests: XCTestCase {
             "the composed C1 config must reach the live surface exactly once"
         )
 
-        try host.harvestViewerFrames()
-        let resize = try XCTUnwrap(
-            host.receivedFromViewer.first { $0.type == .resize },
-            "the live first frame must send its measured grid to the PTY"
-        )
-        let resizeObject = try FrameCodec.parseJSONObject(resize.payload)
-        let resizeWindow = try XCTUnwrap(resizeObject["window"] as? [String: Any])
-        XCTAssertEqual(resizeWindow["columns"] as? Int, geometry.columns)
-        XCTAssertEqual(resizeWindow["rows"] as? Int, geometry.rows)
-        XCTAssertEqual(resizeWindow["widthPixels"] as? Int, geometry.widthPx)
-        XCTAssertEqual(resizeWindow["heightPixels"] as? Int, geometry.heightPx)
-        XCTAssertEqual(resizeObject["revision"] as? String, "1")
-        XCTAssertEqual(view.resizeFramesSent, 1)
-
         let snapshot = try XCTUnwrap(surface.semanticSnapshot())
         XCTAssertEqual(snapshot.geometry.columns, geometry.columns)
         XCTAssertEqual(snapshot.geometry.rows, geometry.rows)
@@ -100,6 +86,20 @@ final class HiveTerminalVisualProofTests: XCTestCase {
         XCTAssertEqual(bitmap.pixelsWide, IOSurfaceGetWidth(ioSurface))
         XCTAssertEqual(bitmap.pixelsHigh, IOSurfaceGetHeight(ioSurface))
         assertC1Background(try XCTUnwrap(bitmap.colorAt(x: 3, y: 3)))
+
+        try host.harvestViewerFrames()
+        let resize = try XCTUnwrap(
+            host.receivedFromViewer.first { $0.type == .resize },
+            "the live first frame must send its measured grid to the PTY"
+        )
+        let resizeObject = try FrameCodec.parseJSONObject(resize.payload)
+        let resizeWindow = try XCTUnwrap(resizeObject["window"] as? [String: Any])
+        XCTAssertEqual(resizeWindow["columns"] as? Int, geometry.columns)
+        XCTAssertEqual(resizeWindow["rows"] as? Int, geometry.rows)
+        XCTAssertEqual(resizeWindow["widthPixels"] as? Int, geometry.widthPx)
+        XCTAssertEqual(resizeWindow["heightPixels"] as? Int, geometry.heightPx)
+        XCTAssertEqual(resizeObject["revision"] as? String, "1")
+        XCTAssertEqual(view.resizeFramesSent, 1)
     }
 
     private func representativeContent(
