@@ -169,7 +169,7 @@ final class AttachInputTests: XCTestCase {
         XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .inputSubmit })
     }
 
-    func testResizeUsesFrozenExactSessionPayload() throws {
+    func testSubsequentResizeUsesFrozenExactSessionPayload() throws {
         let host = FakeHost(connectionId: "input-resize")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
@@ -188,7 +188,7 @@ final class AttachInputTests: XCTestCase {
         XCTAssertEqual(window["rows"] as? Int, geometry.rows)
         XCTAssertEqual(window["widthPixels"] as? Int, geometry.widthPx)
         XCTAssertEqual(window["heightPixels"] as? Int, geometry.heightPx)
-        XCTAssertEqual(object["revision"] as? String, "1")
+        XCTAssertEqual(object["revision"] as? String, "2")
         XCTAssertNotNil(object["idempotencyKey"] as? String)
         XCTAssertNil(object["locator"])
         XCTAssertNil(object["geometry"])

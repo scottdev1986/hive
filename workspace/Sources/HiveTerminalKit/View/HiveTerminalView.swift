@@ -263,6 +263,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         switch outcome {
         case .firstCorrectFrame(let hw, _):
             highWater = hw
+            try client.sendResize(reportedGeometry ?? geometry)
+            resizeFramesSent += 1
             setSurfaceState(.live)
             notifyOutputStatusReconnect(reason: "first-correct-frame")
             onFirstCorrectFrame?(hw)

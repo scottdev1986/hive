@@ -8,9 +8,34 @@ import XCTest
 ///
 /// Skipped unless `HIVE_B22_PROOF_HOME` names a home prepared by
 /// `scripts/b22-live-attach-proof.ts` (which writes `b22-proof.json`). The
-/// fake engine stands in for Ghostty so this runs headless; the pixels-on-
-/// glass leg is the recorded Workspace session.
+/// Most legs use a fake engine; the geometry leg uses a real Ghostty surface.
+/// Pixels-on-glass acceptance remains the recorded Workspace session.
 final class LiveHostAttachTests: XCTestCase {
+    private final class RecordingTransport: HostTransport {
+        let base: HostTransport
+        private(set) var sent: [WireFrame] = []
+
+        init(base: HostTransport) {
+            self.base = base
+        }
+
+        var connectionId: String { base.connectionId }
+        var isClosed: Bool { base.isClosed }
+
+        func send(_ frame: WireFrame) throws {
+            sent.append(frame)
+            try base.send(frame)
+        }
+
+        func receive(timeout: TimeInterval?) throws -> WireFrame? {
+            try base.receive(timeout: timeout)
+        }
+
+        func close() {
+            base.close()
+        }
+    }
+
     private struct Proof: Decodable {
         let hiveCli: String
         let port: Int
@@ -52,10 +77,10 @@ final class LiveHostAttachTests: XCTestCase {
         cellHeightPx: 20
     )
 
-    private func geometryJSON() throws -> String {
+    private func geometryJSON(_ geometry: TerminalGeometry? = nil) throws -> String {
         String(
             data: try JSONSerialization.data(
-                withJSONObject: geometry.jsonObject(),
+                withJSONObject: (geometry ?? self.geometry).jsonObject(),
                 options: [.sortedKeys]
             ),
             encoding: .utf8
@@ -83,7 +108,8 @@ final class LiveHostAttachTests: XCTestCase {
     private func issueGrant(
         _ proof: Proof,
         viewerId: String,
-        generationOverride: Int? = nil
+        generationOverride: Int? = nil,
+        geometryOverride: TerminalGeometry? = nil
     ) throws -> (status: Int32, output: String) {
         var locator = proof.locator
         _ = locator
@@ -105,7 +131,7 @@ final class LiveHostAttachTests: XCTestCase {
             "--port", String(proof.port),
             "--session-locator", locatorLine,
             "--viewer-id", viewerId,
-            "--geometry", try geometryJSON(),
+            "--geometry", try geometryJSON(geometryOverride),
         ]
         let stdout = Pipe()
         let stderr = Pipe()
@@ -310,6 +336,102 @@ final class LiveHostAttachTests: XCTestCase {
         }
         XCTAssertEqual(stage, "written-to-terminal")
         transport.close()
+    }
+
+    /// B2.4 opt-in live geometry proof: the real Ghostty grid, not the session
+    /// fixture's 80x24 default, is sent through authenticated RESIZE before
+    /// the attached login shell accepts input.
+    func testLiveShellInitialResizeMatchesRenderedGeometry() throws {
+        let (proof, _) = try loadProof()
+        guard proof.mode == "shell" else {
+            throw XCTSkip("real-shell geometry proof requires HIVE_B22_REAL_SHELL=1")
+        }
+
+        _ = NSApplication.shared
+        let view = try HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 613, height: 347),
+            viewerId: "b24-live-geometry"
+        )
+        defer { view.userClose() }
+        let renderedGeometry = try XCTUnwrap(view.reportedGeometry)
+        XCTAssertFalse(
+            renderedGeometry.columns == geometry.columns && renderedGeometry.rows == geometry.rows,
+            "positive control requires a real non-80x24 rendered grid"
+        )
+
+        let grantLine = try issueGrant(
+            proof,
+            viewerId: "b24-live-geometry",
+            geometryOverride: renderedGeometry
+        )
+        XCTAssertEqual(grantLine.status, 0, "geometry grant refused: \(grantLine.output)")
+        let grant = try parseGrant(grantLine.output)
+        let transport = RecordingTransport(
+            base: try UdsHostTransport.connect(endpoint: grant.endpoint)
+        )
+        defer { transport.close() }
+        let outcome = try view.attach(
+            grant: grant,
+            geometry: renderedGeometry,
+            afterSeq: 0,
+            transport: transport
+        )
+        guard case .firstCorrectFrame = outcome else {
+            return XCTFail("geometry proof attach failed: \(outcome)")
+        }
+        let binding = try XCTUnwrap(view.binding)
+
+        view.insertText(
+            "stty size",
+            replacementRange: NSRange(location: NSNotFound, length: 0),
+            associatedEvent: nil
+        )
+        let returnKey = try XCTUnwrap(NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: ProcessInfo.processInfo.systemUptime,
+            windowNumber: 0,
+            context: nil,
+            characters: "\r",
+            charactersIgnoringModifiers: "\r",
+            isARepeat: false,
+            keyCode: 36
+        ))
+        view.keyDown(with: returnKey)
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let expectedSize = Data("\(renderedGeometry.rows) \(renderedGeometry.columns)".utf8)
+        var returnedOutput = Data()
+        let deadline = Date().addingTimeInterval(10)
+        while returnedOutput.range(of: expectedSize) == nil, Date() < deadline {
+            do {
+                guard let frame = try transport.receive(timeout: 1.0) else { break }
+                if frame.type == .output { returnedOutput.append(frame.payload) }
+                view.pumpHostFrame(frame, frameBinding: binding)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            } catch WireError.receiveTimeout {
+                continue
+            }
+        }
+        XCTAssertNotNil(
+            returnedOutput.range(of: expectedSize),
+            "stty output \(String(decoding: returnedOutput, as: UTF8.self)) " +
+                "did not match rendered grid \(renderedGeometry.rows) \(renderedGeometry.columns)"
+        )
+
+        let initialResize = try XCTUnwrap(
+            transport.sent.first { $0.type == .resize },
+            "attach did not send an initial authenticated RESIZE"
+        )
+        let resizeObject = try FrameCodec.parseJSONObject(initialResize.payload)
+        let window = try XCTUnwrap(resizeObject["window"] as? [String: Any])
+        XCTAssertEqual(window["columns"] as? Int, renderedGeometry.columns)
+        XCTAssertEqual(window["rows"] as? Int, renderedGeometry.rows)
+        XCTAssertEqual(window["widthPixels"] as? Int, renderedGeometry.widthPx)
+        XCTAssertEqual(window["heightPixels"] as? Int, renderedGeometry.heightPx)
+        XCTAssertEqual(resizeObject["revision"] as? String, "1")
+        XCTAssertEqual(view.resizeFramesSent, 1)
     }
 
     /// Reconnect-churn robustness (§18/§26): a pane that repeatedly loses its
