@@ -3073,7 +3073,7 @@ pub const HostCore = struct {
             if (locator.engine_build_id) |engine| self.allocator.free(engine);
         }
         if (!sameLocator(locator, self.registration.record.locator))
-            return error.InvalidHostAttach;
+            return error.AttachLocatorMismatch;
         const after_seq = try std.fmt.parseInt(u64, parsed.value.afterSeq, 10);
         if (after_seq > self.registration.record.output_seq)
             return error.InvalidHostAttach;
@@ -3621,6 +3621,9 @@ fn viewerAttachFailureCode(err: anyerror) protocol.WireError {
     return switch (err) {
         error.VisibilityExpired => .not_ready,
         error.InvalidHostAttach => .malformed_frame,
+        // Exact-locator fence (§06/§20): a wrong or superseded generation is a
+        // typed refusal before any grant/token evaluation.
+        error.AttachLocatorMismatch => .generation_mismatch,
         error.InvalidViewerGrant => .unauthenticated,
         error.OutOfMemory => .resource_exhausted,
         else => .verification_unknown,

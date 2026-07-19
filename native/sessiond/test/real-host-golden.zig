@@ -65,7 +65,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     defer allocator.free(input_proof_path);
     const provider_script = try std.fmt.allocPrint(
         allocator,
-        "while IFS= read -r line; do printf '%s\\n' \"$line\" >> {s}; done",
+        "printf 'GOLDEN-BANNER\\n'; while IFS= read -r line; do printf '%s\\n' \"$line\" >> {s}; printf 'OUT:%s\\n' \"$line\"; done",
         .{input_proof_path},
     );
     defer allocator.free(provider_script);
@@ -456,18 +456,81 @@ fn waitForProcessAbsence(pid: i32) !void {
     return error.ProcessStillPresent;
 }
 
-fn readViewerResponse(
+/// Viewer-side reader that accumulates unsolicited ordered OUTPUT frames while
+/// waiting for correlated responses, asserting §20 contiguity: every OUTPUT
+/// frame's stream_seq must equal the accumulated exclusive high-water.
+const ViewerReader = struct {
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
+    next_seq: u64,
+    output: std.ArrayList(u8) = .{},
+
+    fn deinit(self: *ViewerReader) void {
+        self.output.deinit(self.allocator);
+    }
+
+    fn readWireFrame(self: *ViewerReader) !protocol.Frame {
+        const file: std.fs.File = .{ .handle = self.stream.handle };
+        return switch (try protocol.readFrame(self.allocator, file.deprecatedReader())) {
+            .frame => |frame| frame,
+            else => error.InvalidViewerResponse,
+        };
+    }
+
+    /// Consumes an OUTPUT frame into the accumulator; false when the frame is
+    /// not OUTPUT and belongs to the caller.
+    fn consumeOutput(self: *ViewerReader, frame: *const protocol.Frame) !bool {
+        if (frame.header.type_code != generated.frame_type.output) return false;
+        if (frame.header.flags != 0 or frame.header.request_id != 0)
+            return error.InvalidOutputFrame;
+        if (frame.header.stream_seq != self.next_seq) return error.OutputSequenceGap;
+        if (frame.payload.len == 0) return error.EmptyOutputFrame;
+        try self.output.appendSlice(self.allocator, frame.payload);
+        self.next_seq += frame.payload.len;
+        return true;
+    }
+
+    /// Next non-OUTPUT frame; interleaved ordered OUTPUT accumulates.
+    fn readControlFrame(self: *ViewerReader) !protocol.Frame {
+        while (true) {
+            var frame = try self.readWireFrame();
+            const consumed = self.consumeOutput(&frame) catch |err| {
+                frame.deinit(self.allocator);
+                return err;
+            };
+            if (!consumed) return frame;
+            frame.deinit(self.allocator);
+        }
+    }
+
+    /// Blocks until the accumulated ordered output contains `needle`.
+    fn collectOutputUntilContains(self: *ViewerReader, needle: []const u8) !void {
+        while (std.mem.indexOf(u8, self.output.items, needle) == null) {
+            var frame = try self.readWireFrame();
+            defer frame.deinit(self.allocator);
+            if (!try self.consumeOutput(&frame)) return error.UnexpectedControlFrame;
+        }
+    }
+
+    /// Blocks until the accumulated ordered output reaches `total` bytes.
+    fn collectOutputUntilLength(self: *ViewerReader, total: usize) !void {
+        while (self.output.items.len < total) {
+            var frame = try self.readWireFrame();
+            defer frame.deinit(self.allocator);
+            if (!try self.consumeOutput(&frame)) return error.UnexpectedControlFrame;
+        }
+        if (self.output.items.len != total) return error.OutputOverrun;
+    }
+};
+
+fn readViewerResponse(
+    reader: *ViewerReader,
     type_code: u16,
     request_id: u64,
     schema: []const u8,
 ) !protocol.Frame {
-    const file: std.fs.File = .{ .handle = stream.handle };
-    const frame = switch (try protocol.readFrame(allocator, file.deprecatedReader())) {
-        .frame => |frame| frame,
-        else => return error.InvalidViewerResponse,
-    };
+    const allocator = reader.allocator;
+    const frame = try reader.readControlFrame();
     errdefer frame.deinit(allocator);
     if (frame.header.type_code != type_code or
         frame.header.request_id != request_id or
@@ -478,16 +541,12 @@ fn readViewerResponse(
 }
 
 fn readViewerError(
-    allocator: std.mem.Allocator,
-    stream: std.net.Stream,
+    reader: *ViewerReader,
     request_id: u64,
     expected_code: []const u8,
 ) !void {
-    const file: std.fs.File = .{ .handle = stream.handle };
-    var frame = switch (try protocol.readFrame(allocator, file.deprecatedReader())) {
-        .frame => |frame| frame,
-        else => return error.InvalidViewerError,
-    };
+    const allocator = reader.allocator;
+    var frame = try reader.readControlFrame();
     defer frame.deinit(allocator);
     if (frame.header.type_code != generated.frame_type.@"error" or
         frame.header.request_id != request_id or
@@ -579,6 +638,8 @@ fn driveViewerWire(
     defer allocator.free(socket_path);
     const stream = try std.net.connectUnixSocket(socket_path);
     defer stream.close();
+    var reader: ViewerReader = .{ .allocator = allocator, .stream = stream, .next_seq = 0 };
+    defer reader.deinit();
     const hello = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
         .buildId = "golden-viewer-build",
@@ -594,8 +655,7 @@ fn driveViewerWire(
     defer allocator.free(hello);
     try writeViewerRequest(stream, generated.frame_type.hello, 10, 0, hello);
     var welcome = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.welcome,
         10,
         generated.wire_schema.welcome_payload,
@@ -619,6 +679,10 @@ fn driveViewerWire(
     defer allocator.free(attach);
     try writeViewerRequest(stream, generated.frame_type.host_attach, 11, 0, attach);
 
+    // §20 replay: the pre-attach provider banner must arrive as ordered OUTPUT
+    // beginning exactly at afterSeq 0.
+    try reader.collectOutputUntilContains("GOLDEN-BANNER");
+
     const wrong_generation_claim = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
         .session = .{ .key = session_id, .incarnation = "2" },
@@ -635,7 +699,7 @@ fn driveViewerWire(
         0,
         wrong_generation_claim,
     );
-    try readViewerError(allocator, stream, 19, "GENERATION_MISMATCH");
+    try readViewerError(&reader, 19, "GENERATION_MISMATCH");
 
     const claim = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -648,8 +712,7 @@ fn driveViewerWire(
     defer allocator.free(claim);
     try writeViewerRequest(stream, generated.frame_type.claim_acquire, 20, 0, claim);
     var claim_result = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.claim_result,
         20,
         generated.wire_schema.claim_result_payload,
@@ -682,8 +745,7 @@ fn driveViewerWire(
     defer allocator.free(denied_claim);
     try writeViewerRequest(stream, generated.frame_type.claim_acquire, 21, 0, denied_claim);
     var denied_result = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.claim_result,
         21,
         generated.wire_schema.claim_result_payload,
@@ -717,8 +779,7 @@ fn driveViewerWire(
         input,
     );
     var applied = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.applied,
         30,
         generated.wire_schema.applied_payload,
@@ -746,8 +807,7 @@ fn driveViewerWire(
         input,
     );
     var replayed = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.applied,
         31,
         generated.wire_schema.applied_payload,
@@ -756,6 +816,50 @@ fn driveViewerWire(
     if (!std.mem.eql(u8, replayed.payload, applied.payload))
         return error.InputReplayChangedReceipt;
     try waitForSingleInputEffect(allocator, input_proof_path);
+
+    // §20 live push: the provider's stdout echo of the applied input arrives
+    // as ordered OUTPUT on the attached viewer, and the idempotent replay
+    // produced no duplicate echo.
+    try reader.collectOutputUntilContains("OUT:wire-input");
+    if (std.mem.count(u8, reader.output.items, "OUT:wire-input") != 1)
+        return error.DuplicateLiveOutput;
+
+    // §20 APPLIED output acknowledgement: the frozen output branch advances
+    // the host's acknowledged high-water without disturbing the stream.
+    var ack_storage: [32]u8 = undefined;
+    const ack_through = try std.fmt.bufPrint(&ack_storage, "{d}", .{reader.next_seq});
+    const output_ack = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .resultKind = "output",
+        .throughSeq = ack_through,
+    }, .{});
+    defer allocator.free(output_ack);
+    try writeViewerRequest(stream, generated.frame_type.applied, 32, 0, output_ack);
+
+    const beta_input = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .claimToken = claim_token,
+        .transactionId = "domain-input-beta",
+        .idempotencyKey = "domain-input-beta-idempotency",
+        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = "YmV0YS1saW5lCg==" },
+    }, .{});
+    defer allocator.free(beta_input);
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.input_submit,
+        33,
+        generated.frame_flag.content_sensitive,
+        beta_input,
+    );
+    var beta_applied = try readViewerResponse(
+        &reader,
+        generated.frame_type.applied,
+        33,
+        generated.wire_schema.applied_payload,
+    );
+    beta_applied.deinit(allocator);
+    try reader.collectOutputUntilContains("OUT:beta-line");
 
     const resize = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -772,8 +876,7 @@ fn driveViewerWire(
     defer allocator.free(resize);
     try writeViewerRequest(stream, generated.frame_type.resize, 40, 0, resize);
     var resized = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.applied,
         40,
         generated.wire_schema.applied_payload,
@@ -815,8 +918,7 @@ fn driveViewerWire(
     defer allocator.free(stale_resize);
     try writeViewerRequest(stream, generated.frame_type.resize, 41, 0, stale_resize);
     var stale_result = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.applied,
         41,
         generated.wire_schema.applied_payload,
@@ -852,8 +954,7 @@ fn driveViewerWire(
         eof,
     );
     var eof_result = try readViewerResponse(
-        allocator,
-        stream,
+        &reader,
         generated.frame_type.applied,
         50,
         generated.wire_schema.applied_payload,
@@ -871,6 +972,171 @@ fn driveViewerWire(
         .present => {},
         .absent, .unobservable => return error.CanonicalEofWasHangup,
     }
+
+    // §06/§20 locator fence: a wrong-generation HOST_ATTACH is a typed
+    // GENERATION_MISMATCH refusal, receives zero OUTPUT bytes, and the
+    // connection closes.
+    {
+        const wrong_stream = try std.net.connectUnixSocket(socket_path);
+        defer wrong_stream.close();
+        var wrong_reader: ViewerReader = .{
+            .allocator = allocator,
+            .stream = wrong_stream,
+            .next_seq = 0,
+        };
+        defer wrong_reader.deinit();
+        const wrong_hello = try std.json.Stringify.valueAlloc(allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .buildId = "golden-viewer-build",
+            .instanceId = instance_id,
+            .protocol = .{
+                .major = generated.protocol_major,
+                .minMinor = generated.protocol_min_minor,
+                .maxMinor = generated.protocol_max_minor,
+            },
+            .clientRole = "viewer",
+            .grantToken = "wrong-generation-token",
+        }, .{});
+        defer allocator.free(wrong_hello);
+        try writeViewerRequest(wrong_stream, generated.frame_type.hello, 70, 0, wrong_hello);
+        var wrong_welcome = try readViewerResponse(
+            &wrong_reader,
+            generated.frame_type.welcome,
+            70,
+            generated.wire_schema.welcome_payload,
+        );
+        wrong_welcome.deinit(allocator);
+        var wrong_locator = wire_locator;
+        wrong_locator.generation = 2;
+        const wrong_attach = try std.json.Stringify.valueAlloc(allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .locator = wrong_locator,
+            .token = "wrong-generation-token",
+            .geometry = .{
+                .columns = @as(u16, 80),
+                .rows = @as(u16, 24),
+                .widthPx = @as(u32, 800),
+                .heightPx = @as(u32, 480),
+                .cellWidthPx = @as(f64, 10),
+                .cellHeightPx = @as(f64, 20),
+            },
+            .afterSeq = "0",
+        }, .{});
+        defer allocator.free(wrong_attach);
+        try writeViewerRequest(wrong_stream, generated.frame_type.host_attach, 71, 0, wrong_attach);
+        try readViewerError(&wrong_reader, 71, "GENERATION_MISMATCH");
+        if (wrong_reader.output.items.len != 0) return error.WrongGenerationReceivedOutput;
+        try expectViewerClosed(&wrong_reader);
+    }
+
+    // The refused wrong-generation attach must not have disturbed the live
+    // viewer: a further input still echoes as ordered OUTPUT here.
+    const gamma_input = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "1" },
+        .claimToken = claim_token,
+        .transactionId = "domain-input-gamma",
+        .idempotencyKey = "domain-input-gamma-idempotency",
+        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = "Z2FtbWEtbGluZQo=" },
+    }, .{});
+    defer allocator.free(gamma_input);
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.input_submit,
+        72,
+        generated.frame_flag.content_sensitive,
+        gamma_input,
+    );
+    var gamma_applied = try readViewerResponse(
+        &reader,
+        generated.frame_type.applied,
+        72,
+        generated.wire_schema.applied_payload,
+    );
+    gamma_applied.deinit(allocator);
+    try reader.collectOutputUntilContains("OUT:gamma-line");
+
+    // §26 retarget + §20 replay determinism: a second grant re-attaches the
+    // same exact generation from afterSeq 0, replays the identical retained
+    // byte stream, and supersedes this connection (which then closes).
+    {
+        var grant_hash_b: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash("golden-viewer-token-b", &grant_hash_b, .{});
+        const operations_b = [_][]const u8{"view"};
+        if (registry.registerGrant(
+            locator,
+            grant_hash_b,
+            "golden-viewer-b",
+            &operations_b,
+            .{
+                .columns = 80,
+                .rows = 24,
+                .width_px = 800,
+                .height_px = 480,
+                .cell_width_px = 10,
+                .cell_height_px = 20,
+            },
+            4,
+        ) != null) return error.ReplayGrantRegistrationFailed;
+
+        const replay_stream = try std.net.connectUnixSocket(socket_path);
+        defer replay_stream.close();
+        var replay_reader: ViewerReader = .{
+            .allocator = allocator,
+            .stream = replay_stream,
+            .next_seq = 0,
+        };
+        defer replay_reader.deinit();
+        const replay_hello = try std.json.Stringify.valueAlloc(allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .buildId = "golden-viewer-build",
+            .instanceId = instance_id,
+            .protocol = .{
+                .major = generated.protocol_major,
+                .minMinor = generated.protocol_min_minor,
+                .maxMinor = generated.protocol_max_minor,
+            },
+            .clientRole = "viewer",
+            .grantToken = "golden-viewer-token-b",
+        }, .{});
+        defer allocator.free(replay_hello);
+        try writeViewerRequest(replay_stream, generated.frame_type.hello, 80, 0, replay_hello);
+        var replay_welcome = try readViewerResponse(
+            &replay_reader,
+            generated.frame_type.welcome,
+            80,
+            generated.wire_schema.welcome_payload,
+        );
+        replay_welcome.deinit(allocator);
+        const replay_attach = try std.json.Stringify.valueAlloc(allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .locator = wire_locator,
+            .token = "golden-viewer-token-b",
+            .geometry = .{
+                .columns = @as(u16, 80),
+                .rows = @as(u16, 24),
+                .widthPx = @as(u32, 800),
+                .heightPx = @as(u32, 480),
+                .cellWidthPx = @as(f64, 10),
+                .cellHeightPx = @as(f64, 20),
+            },
+            .afterSeq = "0",
+        }, .{});
+        defer allocator.free(replay_attach);
+        try writeViewerRequest(replay_stream, generated.frame_type.host_attach, 81, 0, replay_attach);
+        try replay_reader.collectOutputUntilLength(reader.output.items.len);
+        if (!std.mem.eql(u8, replay_reader.output.items, reader.output.items))
+            return error.ReplayDiverged;
+        try expectViewerClosed(&reader);
+    }
+}
+
+/// Asserts the host closed this viewer connection (EOF or reset on read).
+fn expectViewerClosed(reader: *ViewerReader) !void {
+    if (reader.readWireFrame()) |frame| {
+        frame.deinit(reader.allocator);
+        return error.ViewerNotClosed;
+    } else |_| {}
 }
 
 fn runCreateBroker(

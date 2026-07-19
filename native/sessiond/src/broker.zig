@@ -3372,10 +3372,79 @@ fn adoptionMatches(record: HostRecord, readback: AdoptionReadback, now_ns: u64) 
         record.process_root.pid == readback.process_root.pid and
         record.process_root.process_group_id == readback.process_root.process_group_id and
         std.mem.eql(u8, record.process_root.start_token, readback.process_root.start_token) and
-        record.output_seq == readback.output_seq and record.checkpoint_seq == readback.checkpoint_seq and
+        // Progress counters are monotonic, not frozen: the live host keeps
+        // journaling output after record.json was written at launch, so the
+        // readback may only be AHEAD of the disk record. A readback BEHIND the
+        // record is a reset/substituted terminal and still fails closed.
+        record.output_seq <= readback.output_seq and record.checkpoint_seq <= readback.checkpoint_seq and
         std.mem.eql(u8, record.visibility.workspace_session_id, readback.visibility.workspace_session_id) and
         record.visibility.open_terminal_revision == readback.visibility.open_terminal_revision and
         readback.visibility.state != .expired and readback.visibility.expires_mono_ns > now_ns;
+}
+
+test "adoption accepts a readback ahead of the launch record and refuses regression" {
+    var executable_storage: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
+    const executable = try std.fs.selfExePath(&executable_storage);
+    const locator: Locator = .{
+        .instance_id = "adoption-progress",
+        .session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000aa",
+        .generation = 1,
+        .subject = .{ .agent = "aaron" },
+        .host_kind = .sessiond,
+        .engine_build_id = "engine-fixture",
+    };
+    const visibility: Visibility = .{
+        .state = .visible,
+        .workspace_session_id = "ws-fixture",
+        .open_terminal_revision = 1,
+        .expires_mono_ns = 10_000,
+    };
+    const record: HostRecord = .{
+        .locator = locator,
+        .host_pid = 100,
+        .host_start_token = "1:2",
+        .process_root = .{ .pid = 101, .start_token = "3:4", .process_group_id = 101 },
+        .expected_executable = executable,
+        .executable_build_hash = "hash-fixture",
+        .engine_build_id = "engine-fixture",
+        .protocol_major = generated.protocol_major,
+        .protocol_minor = generated.protocol_minor,
+        .geometry = .{
+            .columns = 80,
+            .rows = 24,
+            .width_px = 800,
+            .height_px = 480,
+            .cell_width_px = 10,
+            .cell_height_px = 20,
+        },
+        .state = .live,
+        .visibility = visibility,
+        .output_seq = 0,
+        .checkpoint_seq = 0,
+    };
+    var readback: AdoptionReadback = .{
+        .locator = locator,
+        .host_pid = 100,
+        .host_start_token = "1:2",
+        .executable = executable,
+        .executable_build_hash = "hash-fixture",
+        .engine_build_id = "engine-fixture",
+        .protocol_major = generated.protocol_major,
+        .protocol_minor = generated.protocol_minor,
+        .process_root = .{ .pid = 101, .start_token = "3:4", .process_group_id = 101 },
+        .output_seq = 4096,
+        .checkpoint_seq = 2048,
+        .visibility = visibility,
+    };
+    // The live host journaled output since record.json was written at launch.
+    try std.testing.expect(adoptionMatches(record, readback, 1_000));
+    // A readback BEHIND the durable record is a reset/substituted terminal.
+    var regressed = record;
+    regressed.output_seq = 4096;
+    regressed.checkpoint_seq = 2048;
+    readback.output_seq = 0;
+    readback.checkpoint_seq = 0;
+    try std.testing.expect(!adoptionMatches(regressed, readback, 1_000));
 }
 
 test "daemon claims never override kernel identity" {
