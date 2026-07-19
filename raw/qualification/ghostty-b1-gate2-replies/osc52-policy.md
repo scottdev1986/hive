@@ -6,13 +6,27 @@ clipboard boundary.
 
 ## Read requests: deny silently
 
-For `OSC 52 ; c ; ? BEL` and `OSC 52 ; c ; ? ST`, the surface does not call a
-host clipboard reader and emits no terminal reply. In particular, it never
-returns base64-encoded host clipboard content to the remote program. The two
-read variants in `live-proof.jsonl` each observe zero write callbacks and then
-observe the exact DA1 response once through that same callback. Their silence
-is therefore a measured denial, not an empty or disconnected observation
-channel.
+Read denial is engine-enforced at two layers, in this order:
+
+1. The pinned manual terminal handler in `stream_terminal.zig` treats the
+   single-byte `?` payload as a read and returns before invoking any clipboard
+   effect. This is the primary drop for manual remote-output parsing.
+2. The probe loads `clipboard-read = deny` into the Ghostty config with zero
+   diagnostics. Ghostty's `Surface` deny gate is therefore armed as
+   defense-in-depth if a future parser path forwards an OSC 52 read farther.
+
+The corpus proves the enforcement by behavior, not only by reading those code
+paths. Its positive control drives the trusted `paste_from_clipboard` binding
+action through the real surface; that action reaches the same
+`read_clipboard_cb` counter exactly once. The callback returns false, so the
+binding action itself reports false, as expected. After that biting control,
+both `OSC 52 ; c ; ? BEL` and `OSC 52 ; c ; ? ST` leave the counter unchanged,
+emit no terminal reply, and are followed by an exact-once DA1 reply through
+the write callback. The denial therefore does not rely on the host stub's
+false return, a dead callback counter, or a disconnected reply channel.
+
+The result is that remote output cannot cause the host reader to return
+base64-encoded clipboard content to the remote program.
 
 ## Write and clear requests: deny visibly to the host
 

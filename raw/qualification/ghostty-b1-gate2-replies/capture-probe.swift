@@ -36,6 +36,25 @@ final class CallbackLog: @unchecked Sendable {
     }
 }
 
+final class HostClipboardReadProbe: @unchecked Sendable {
+    private let lock = NSLock()
+    private var invocations = 0
+
+    func record() {
+        lock.lock()
+        invocations += 1
+        lock.unlock()
+    }
+
+    func count() -> Int {
+        lock.lock()
+        defer { lock.unlock() }
+        return invocations
+    }
+}
+
+private let hostClipboardReadProbe = HostClipboardReadProbe()
+
 private let writeCallback: hive_ghostty_write_fn = { context, bytes, length in
     guard let context, let bytes else { return }
     Unmanaged<CallbackLog>.fromOpaque(context).takeUnretainedValue()
@@ -68,6 +87,7 @@ private func fail(_ message: String) -> Never {
 
 final class Surface {
     let log: CallbackLog
+    private let app: ghostty_app_t
     private var ownedHandle: ghostty_surface_t?
     private var sequence: UInt64 = 0
 
@@ -77,6 +97,7 @@ final class Surface {
     }
 
     init(app: ghostty_app_t, policy: UInt32) {
+        self.app = app
         let view = NSView(frame: NSRect(x: 0, y: 0, width: 640, height: 360))
         log = CallbackLog()
         var config = ghostty_surface_config_new()
@@ -84,6 +105,7 @@ final class Surface {
         config.platform = ghostty_platform_u(
             macos: ghostty_platform_macos_s(nsview: Unmanaged.passUnretained(view).toOpaque())
         )
+        config.userdata = Unmanaged.passUnretained(hostClipboardReadProbe).toOpaque()
         config.scale_factor = 2
         config.font_size = 13
         guard let created = hive_ghostty_surface_new_manual_v1(
@@ -124,9 +146,16 @@ final class Surface {
         sequence += UInt64(data.count)
     }
 
-    func observe(_ data: Data) -> (writes: [Data], events: [Int]) {
+    func observe(_ data: Data, drainSeconds: TimeInterval = 0) -> (writes: [Data], events: [Int]) {
         log.reset()
         process(data)
+        if drainSeconds > 0 {
+            let deadline = Date().addingTimeInterval(drainSeconds)
+            while Date() < deadline {
+                ghostty_app_tick(app)
+                RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+            }
+        }
         return log.snapshot()
     }
 }
@@ -152,13 +181,33 @@ struct Query {
 setbuf(stdout, nil)
 _ = ghostty_init(0, nil)
 guard let config = ghostty_config_new() else { fail("ghostty_config_new") }
+let configPolicyURL = FileManager.default.temporaryDirectory
+    .appendingPathComponent("hive-gate2-clipboard-policy-\(ProcessInfo.processInfo.processIdentifier).conf")
+do {
+    try Data("clipboard-read = deny\n".utf8).write(to: configPolicyURL, options: .atomic)
+} catch {
+    fail("write clipboard-read policy: \(error)")
+}
+let loadedConfigPolicy = configPolicyURL.withUnsafeFileSystemRepresentation { path in
+    guard let path else { return false }
+    ghostty_config_load_file(config, path)
+    return true
+}
+try? FileManager.default.removeItem(at: configPolicyURL)
+guard loadedConfigPolicy else { fail("load clipboard-read policy") }
 ghostty_config_finalize(config)
+let configDiagnostics = ghostty_config_diagnostics_count(config)
+guard configDiagnostics == 0 else { fail("clipboard-read policy diagnostics: \(configDiagnostics)") }
 var runtime = ghostty_runtime_config_s(
     userdata: nil,
     supports_selection_clipboard: false,
     wakeup_cb: { _ in },
     action_cb: { _, _, _ in false },
-    read_clipboard_cb: { _, _, _ in false },
+    read_clipboard_cb: { context, _, _ in
+        guard let context else { return false }
+        Unmanaged<HostClipboardReadProbe>.fromOpaque(context).takeUnretainedValue().record()
+        return false
+    },
     confirm_read_clipboard_cb: { _, _, _, _ in },
     write_clipboard_cb: { _, _, _, _, _ in },
     close_surface_cb: { _, _ in }
@@ -166,6 +215,20 @@ var runtime = ghostty_runtime_config_s(
 guard let app = ghostty_app_new(&runtime, config) else { fail("ghostty_app_new") }
 
 let surface = Surface(app: app, policy: UInt32(HIVE_GHOSTTY_TERMINAL_REPLIES_ENABLED))
+let hostReadPositiveAction = "paste_from_clipboard"
+let hostReadPositiveBefore = hostClipboardReadProbe.count()
+let hostReadPositiveActionResult = hostReadPositiveAction.withCString { action in
+    ghostty_surface_binding_action(surface.handle, action, UInt(hostReadPositiveAction.utf8.count))
+}
+let hostReadPositiveDeadline = Date().addingTimeInterval(0.1)
+while Date() < hostReadPositiveDeadline {
+    ghostty_app_tick(app)
+    RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+}
+let hostReadPositiveDelta = hostClipboardReadProbe.count() - hostReadPositiveBefore
+guard hostReadPositiveDelta == 1 else {
+    fail("host clipboard read callback engine-path positive control action_result=\(hostReadPositiveActionResult) delta=\(hostReadPositiveDelta)")
+}
 let size = ghostty_surface_size(surface.handle)
 let rows = Int(size.rows)
 let columns = Int(size.columns)
@@ -179,8 +242,13 @@ let engineVersion = "ghostty 1.3.2-hive-florence-category-complex-coding-m1-b1-+
 emit([
     "kind": "metadata",
     "engine_build_id": engineBuildID,
+    "clipboard_read_config_policy": "deny",
+    "config_diagnostics_count": configDiagnostics,
     "ghostty_commit": "73534c4680a809398b396c94ac7f12fcccb7963d",
     "ghostty_version": engineVersion,
+    "host_read_callback_positive_control": hostReadPositiveAction,
+    "host_read_callback_positive_control_action_result": hostReadPositiveActionResult,
+    "host_read_callback_positive_control_delta": hostReadPositiveDelta,
     "surface": [
         "columns": columns,
         "rows": rows,
@@ -257,12 +325,20 @@ emit([
     "in_order_exact_once": burstPass,
 ])
 
-func emitSilencePolicy(name: String, input: Data, requiredEvent: Int? = nil) -> Bool {
-    let silent = surface.observe(input)
+func emitSilencePolicy(
+    name: String,
+    input: Data,
+    requiredEvent: Int? = nil,
+    hostReadCallbackMustStayFlat: Bool = false
+) -> Bool {
+    let hostReadBefore = hostClipboardReadProbe.count()
+    let silent = surface.observe(input, drainSeconds: 0.1)
+    let hostReadCallbackCount = hostClipboardReadProbe.count() - hostReadBefore
     let positive = surface.observe(Data("\(esc)[c".utf8))
     let eventPass = requiredEvent.map { silent.events.contains($0) } ?? true
     let pass = silent.writes.isEmpty
         && eventPass
+        && (!hostReadCallbackMustStayFlat || hostReadCallbackCount == 0)
         && positive.writes == [Data("\(esc)[?62;22c".utf8)]
     emit([
         "kind": "silence_policy",
@@ -272,6 +348,8 @@ func emitSilencePolicy(name: String, input: Data, requiredEvent: Int? = nil) -> 
         "callback_hex": silent.writes.map(hex),
         "event_types": silent.events,
         "required_event": requiredEvent as Any,
+        "host_read_callback_count": hostReadCallbackCount,
+        "host_read_callback_must_stay_flat": hostReadCallbackMustStayFlat,
         "positive_control_input_hex": hex(Data("\(esc)[c".utf8)),
         "positive_control_callback_hex": positive.writes.map(hex),
         "positive_control_exact_once": positive.writes == [Data("\(esc)[?62;22c".utf8)],
@@ -283,8 +361,16 @@ func emitSilencePolicy(name: String, input: Data, requiredEvent: Int? = nil) -> 
 let silencePasses = [
     emitSilencePolicy(name: "ENQ pinned empty enquiry response", input: Data([0x05])),
     emitSilencePolicy(name: "DSR color scheme unavailable", input: Data("\(esc)[?996n".utf8)),
-    emitSilencePolicy(name: "OSC 52 clipboard read BEL", input: Data("\(esc)]52;c;?\u{07}".utf8)),
-    emitSilencePolicy(name: "OSC 52 clipboard read ST", input: Data("\(esc)]52;c;?\(esc)\\".utf8)),
+    emitSilencePolicy(
+        name: "OSC 52 clipboard read BEL",
+        input: Data("\(esc)]52;c;?\u{07}".utf8),
+        hostReadCallbackMustStayFlat: true
+    ),
+    emitSilencePolicy(
+        name: "OSC 52 clipboard read ST",
+        input: Data("\(esc)]52;c;?\(esc)\\".utf8),
+        hostReadCallbackMustStayFlat: true
+    ),
     emitSilencePolicy(
         name: "OSC 52 clipboard write denied",
         input: Data("\(esc)]52;c;SGVsbG8=\(esc)\\".utf8),

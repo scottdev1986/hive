@@ -3,41 +3,79 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/12] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (1.65s)
-Test Suite 'Selected tests' started at 2026-07-19 14:21:19.763.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:21:19.764.
-Test Suite 'RendererReplySuppressionTests' started at 2026-07-19 14:21:19.764.
+Build complete! (0.25s)
+Test Suite 'Selected tests' started at 2026-07-19 14:49:11.106.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:49:11.107.
+Test Suite 'Gate8ClipboardTests' started at 2026-07-19 14:49:11.107.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testConfirmedClipboardWriteIsDroppedWithoutHostAuthorizationUI]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testConfirmedClipboardWriteIsDroppedWithoutHostAuthorizationUI]' passed (0.111 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testDisabledReplySurfaceRoutesKeyTextAndBracketedPasteThroughOneWriteCallback]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testDisabledReplySurfaceRoutesKeyTextAndBracketedPasteThroughOneWriteCallback]' passed (0.190 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testOSC52CannotReachClipboardCallbacksUnderDisabledPolicy]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testOSC52CannotReachClipboardCallbacksUnderDisabledPolicy]' passed (0.218 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testPendingClipboardRequestCompletesEmptyBeforeTeardown]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testPendingClipboardRequestCompletesEmptyBeforeTeardown]' passed (0.109 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testQueuedClipboardCompletionDropsAfterSurfaceTeardown]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testQueuedClipboardCompletionDropsAfterSurfaceTeardown]' passed (0.125 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite]' passed (0.025 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testUnsafePasteConfirmationFailsClosed]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testUnsafePasteConfirmationFailsClosed]' passed (0.114 seconds).
+Test Suite 'Gate8ClipboardTests' passed at 2026-07-19 14:49:12.000.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.892 (0.893) seconds
+Test Suite 'Gate9CallbackMatrixTests' started at 2026-07-19 14:49:12.000.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseRequestSurfacesAsBridgeEventNeverAsCloseSurfaceCb]' passed (0.335 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseSurfaceProbeObservesDirectInvocation]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testCloseSurfaceProbeObservesDirectInvocation]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testKitSourcesContainNoPrivilegedOpeners]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testKitSourcesContainNoPrivilegedOpeners]' passed (0.027 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNoNotificationDeliveredAfterFree]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNoNotificationDeliveredAfterFree]' passed (0.152 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testNotificationEnqueuedBeforeFreeIsDroppedAtExecutionTime]' passed (0.154 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52ReadNeverReachesTheApprtReadCallback]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52ReadNeverReachesTheApprtReadCallback]' passed (0.344 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testOSC52WriteIsVisiblyDeniedAndPasteboardUntouched]' passed (0.342 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testScrollOutputDeliversScrollbarNotificationWithPayload]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testScrollOutputDeliversScrollbarNotificationWithPayload]' passed (0.531 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testSelectionGestureDeliversSelectionChangedNotification]' started.
+Test Case '-[HiveTerminalKitTests.Gate9CallbackMatrixTests testSelectionGestureDeliversSelectionChangedNotification]' passed (0.629 seconds).
+Test Suite 'Gate9CallbackMatrixTests' passed at 2026-07-19 14:49:14.514.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 2.513 (2.514) seconds
+Test Suite 'RendererReplySuppressionTests' started at 2026-07-19 14:49:14.514.
 Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' started.
-Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' passed (3.039 seconds).
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testEveryQueryIsIndividuallySuppressedAndNonVacuous]' passed (3.092 seconds).
 Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' started.
-Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' passed (0.209 seconds).
-Test Suite 'RendererReplySuppressionTests' passed at 2026-07-19 14:21:23.012.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 3.248 (3.248) seconds
-Test Suite 'TerminalReplyCorpusTests' started at 2026-07-19 14:21:23.012.
+Test Case '-[HiveTerminalKitTests.RendererReplySuppressionTests testObservationChannelPositiveControl]' passed (0.234 seconds).
+Test Suite 'RendererReplySuppressionTests' passed at 2026-07-19 14:49:17.840.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 3.325 (3.326) seconds
+Test Suite 'TerminalReplyCorpusTests' started at 2026-07-19 14:49:17.840.
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' passed (0.023 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDCSRepliesMatchPinnedGhosttyExactlyOnceAndInOrder]' passed (0.016 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testDisabledPolicySuppressesProtocolReplies]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testEnquiryDefaultMatchesPinnedGhosttyDefaultPolicy]' passed (0.011 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testMultipleRepliesInOneBurstPreserveOrderAndCount]' passed (0.010 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' passed (0.310 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testOSC52ClipboardReadIsDeniedNoReplyEver]' passed (0.313 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.017 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testPrimaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.020 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' started.
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testSecondaryDeviceAttributesReplyMatchesPinnedGhosttyExactlyOnce]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testTextAreaSizeReportIsWiredAndWellFormed]' passed (0.010 seconds).
 Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' started.
-Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' passed (0.010 seconds).
-Test Suite 'TerminalReplyCorpusTests' passed at 2026-07-19 14:21:23.433.
-	 Executed 9 tests, with 0 failures (0 unexpected) in 0.420 (0.421) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:21:23.433.
-	 Executed 11 tests, with 0 failures (0 unexpected) in 3.668 (3.669) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 14:21:23.433.
-	 Executed 11 tests, with 0 failures (0 unexpected) in 3.668 (3.670) seconds
+Test Case '-[HiveTerminalKitTests.TerminalReplyCorpusTests testXtversionReplyIdentifiesAsGhosttyNotGenericFallback]' passed (0.009 seconds).
+Test Suite 'TerminalReplyCorpusTests' passed at 2026-07-19 14:49:18.255.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.414 (0.415) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:49:18.255.
+	 Executed 27 tests, with 0 failures (0 unexpected) in 7.145 (7.148) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 14:49:18.255.
+	 Executed 27 tests, with 0 failures (0 unexpected) in 7.145 (7.149) seconds
 B21_REPLY_SUPPRESSION answered_when_enabled_count=7
 B21_REPLY_SUPPRESSION vacuous_count=0
 ◇ Test run started.

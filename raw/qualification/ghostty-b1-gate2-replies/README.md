@@ -11,6 +11,13 @@ independently specified non-empty byte string. A separate six-query burst
 checks callback order. Deliberate-silence policy cases each send DA1 through
 the same callback immediately afterward as a positive control.
 
+OSC 52 read denial has a separate host-callback observation channel. The probe
+first drives trusted `paste_from_clipboard` through the real surface and
+observes `read_clipboard_cb` increment exactly once. It then proves both OSC 52
+read terminators leave that live counter flat. The config explicitly loads
+`clipboard-read = deny`; see `osc52-policy.md` for the primary parser drop and
+the defense-in-depth Surface gate.
+
 ## Frozen inputs
 
 - Ghostty upstream commit: `73534c4680a809398b396c94ac7f12fcccb7963d`
@@ -35,12 +42,12 @@ The final summary record reports:
 - zero vacuous query cases;
 - one six-query mixed CSI/DCS burst exact and in input order;
 - six deliberate-silence policy cases passing with a live DA1 positive
-  control (and the required denial event for OSC 52 writes); and
+  control (and the required denial event for OSC 52 writes and clears);
 - three captured vendor startup streams replayed with their expected callback
   sequence and a same-surface DA1 positive control.
 
 Grok's captured startup emitted no query. Its `query_count: 0` is recorded,
-not promoted into the 20 answered-query count, and its observation channel is
+not promoted into the 21 answered-query count, and its observation channel is
 separately proven live. Claude Code emitted XTVERSION and DA1. Codex emitted
 CPR, two dynamic-color queries, a kitty-keyboard query, and DA1.
 
@@ -64,8 +71,11 @@ xcrun swiftc raw/qualification/ghostty-b1-gate2-replies/capture-probe.swift \
 Then pass the three committed byte streams in the documented order and write
 stdout to `live-proof.jsonl`. `validate-corpus.sh` fails if a query has an
 empty expected value, any callback is absent/duplicated/different, burst order
-drifts, a silence proof lacks its positive control, or the summary is not
-closed.
+drifts, the disabled-policy record is missing or false, a silence proof's DA1
+bytes are absent, a required denial event is absent, the host-read counter is
+uncontrolled/nonzero, or the summary is not closed. `validate-mutations.sh`
+regenerates the manifest after corrupting a scratch corpus and proves the
+validator rejects D2 mutations M2, M4, and M5 independently of the hash gate.
 
 The expected protocol bytes follow the xterm control-sequence reference and
 the pinned Ghostty implementation. Primary references:

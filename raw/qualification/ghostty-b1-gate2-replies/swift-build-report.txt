@@ -3,4 +3,4 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/11] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.22s)
+Build complete! (0.21s)
