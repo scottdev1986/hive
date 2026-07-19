@@ -23,10 +23,9 @@ final class HiveTerminalVisualProofTests: XCTestCase {
         defer { view.userClose() }
         let surface = try XCTUnwrap(view.engine as? GhosttyManualSurface)
         let layer = try XCTUnwrap(view.ghosttyRenderingLayer)
-        let geometry = try XCTUnwrap(view.reportedGeometry)
-        XCTAssertGreaterThan(geometry.columns, 100)
-        XCTAssertGreaterThan(geometry.rows, 30)
-        XCTAssertNotEqual([geometry.columns, geometry.rows], [80, 24])
+        let provisionalGeometry = try XCTUnwrap(view.reportedGeometry)
+        XCTAssertGreaterThan(provisionalGeometry.columns, 100)
+        XCTAssertNotEqual([provisionalGeometry.columns, provisionalGeometry.rows], [80, 24])
 
         var surfaceOperations: [(String, GhosttyOperationPhase)] = []
         surface.operationObserver = { surfaceOperations.append(($0, $1)) }
@@ -37,12 +36,11 @@ final class HiveTerminalVisualProofTests: XCTestCase {
             instanceId: locator.instanceId,
             connectionId: host.hostTransport.connectionId
         )
-        let content = representativeContent(columns: geometry.columns, rows: geometry.rows)
-        host.enqueueOutput(streamSeq: 0, bytes: Data(content.ansi.utf8))
+        host.enqueueOutput(streamSeq: 0, bytes: Data("\u{1b}[2J\u{1b}[H".utf8))
 
         let outcome = try view.attach(
             grant: host.makeGrant(locator: locator),
-            geometry: geometry,
+            geometry: provisionalGeometry,
             transport: host.clientTransport
         )
         guard case .firstCorrectFrame = outcome else {
@@ -52,6 +50,22 @@ final class HiveTerminalVisualProofTests: XCTestCase {
             surfaceOperations.filter { $0.0 == "surfaceUpdateConfig" }.map(\.1),
             [.begin, .end],
             "the composed C1 config must reach the live surface exactly once"
+        )
+
+        let geometry = try XCTUnwrap(view.reportedGeometry)
+        XCTAssertGreaterThan(geometry.columns, 80)
+        XCTAssertGreaterThan(geometry.rows, 24)
+        XCTAssertNotEqual(geometry, provisionalGeometry)
+        let content = representativeContent(columns: geometry.columns, rows: geometry.rows)
+        let binding = try XCTUnwrap(view.binding)
+        view.pumpHostFrame(
+            WireFrame(
+                type: .output,
+                flags: [.contentSensitive],
+                streamSeq: view.highWater,
+                payload: Data(content.ansi.utf8)
+            ),
+            frameBinding: binding
         )
 
         let snapshot = try XCTUnwrap(surface.semanticSnapshot())
