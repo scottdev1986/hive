@@ -1,0 +1,3 @@
+observer_parent=32286 observer_child=32373
+32286 64581 32286      0 Ss   /bin/bash
+32373 32286 32286      0 S    /bin/sleep

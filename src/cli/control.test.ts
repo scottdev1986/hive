@@ -2,6 +2,38 @@ import { describe, expect, test } from "bun:test";
 import type { KillSessionOptions } from "../adapters/tmux";
 import { stopAgentSessions, stopHive } from "./control";
 import { agentTmuxSession, orchestratorTmuxSession } from "../daemon/tmux-sessions";
+import type { AgentRecord } from "../schemas";
+
+function sessiondAgent(name: string, generation = 1): AgentRecord {
+  return {
+    id: `agent-${name}`,
+    name,
+    tool: "codex",
+    model: "gpt-test",
+    category: "complex_coding",
+    status: "working",
+    taskDescription: "test",
+    worktreePath: null,
+    branch: null,
+    tmuxSession: `hive-${name}`,
+    contextPct: null,
+    createdAt: "2026-07-18T00:00:00.000Z",
+    lastEventAt: "2026-07-18T00:00:00.000Z",
+    recoveryAttempts: 0,
+    capabilityEpoch: 0,
+    readOnly: false,
+    writeRevoked: false,
+    sessionLocator: {
+      schemaVersion: 1,
+      instanceId: "test-instance",
+      subject: { kind: "agent", agentId: `agent-${name}` },
+      generation,
+      sessionId: `ses_0198a8f0-0000-7000-8000-00000000000${generation}`,
+      hostKind: "sessiond",
+      engineBuildId: "engine-test",
+    },
+  };
+}
 
 class FakeStopTmux {
   readonly killed: string[] = [];
@@ -90,7 +122,7 @@ describe("hive stop agent sessions", () => {
 });
 
 describe("hive stop daemon", () => {
-  test("signals a live daemon before touching the sessions it must reap", async () => {
+  test("authoritatively stops sessiond before signalling the daemon", async () => {
     const order: string[] = [];
     const tmux = new FakeStopTmux([
       agentTmuxSession("maya"),
@@ -106,6 +138,10 @@ describe("hive stop daemon", () => {
 
     await stopHive({
       tmux,
+      readAgents: () => [sessiondAgent("maya")],
+      stopSessiond: async (agent) => {
+        order.push(`sessiond:${agent.name}`);
+      },
       readPid: () => 4242,
       kill: () => order.push("SIGTERM"),
       liveness: async () => states.shift() ?? "dead",
@@ -115,7 +151,38 @@ describe("hive stop daemon", () => {
       log: () => {},
     });
 
-    expect(order[0]).toBe("SIGTERM");
+    expect(order).toEqual([
+      "sessiond:maya",
+      "SIGTERM",
+      `session:${agentTmuxSession("maya")}`,
+      `session:${orchestratorTmuxSession()}`,
+    ]);
+  });
+
+  test("attempts every sessiond teardown and refuses daemon shutdown on failure", async () => {
+    const attempts: string[] = [];
+    let signalled = false;
+
+    await expect(stopHive({
+      tmux: new FakeStopTmux([]),
+      readAgents: () => [sessiondAgent("maya"), sessiondAgent("sam", 2)],
+      stopSessiond: async (agent) => {
+        attempts.push(agent.name);
+        if (agent.name === "maya") throw new Error("tree still present");
+      },
+      readPid: () => 4242,
+      kill: () => {
+        signalled = true;
+      },
+      liveness: async () => "live",
+      cleanup: () => {},
+      log: () => {},
+    })).rejects.toThrow(
+      /sessiond teardown was not verified: maya: tree still present/,
+    );
+
+    expect(attempts).toEqual(["maya", "sam"]);
+    expect(signalled).toBe(false);
   });
 
   test("unknown daemon liveness preserves every process and session", async () => {

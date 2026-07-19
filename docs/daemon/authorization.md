@@ -112,13 +112,13 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `POST /autonomy` | `autonomy:write` | — | yes | `src/daemon/server.ts:2357-2362` |
 | `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2363-2368` |
 | `POST /routing/policy` | `routing-policy:write` | — | yes | `src/daemon/server.ts:2363-2368` |
-| `POST /workspace-visibility` | `workspace-visibility:write` | — | yes | `src/daemon/server.ts` |
+| `POST /workspace-visibility` | `workspace-visibility:write` | — | yes | `src/daemon/server.ts:2800-2849` |
 | `POST /graphify` | `graphify:write` | — | yes | `src/daemon/server.ts:2392-2394` |
 | `GET /orchestrator-status` | `status:read` | — | no | `src/daemon/server.ts:2369-2371` |
 | `GET /token-usage` | `token-usage:read` | — | no | `src/daemon/server.ts:2372-2374` |
 | `POST /token-usage/**` | `token-usage:write` | — | yes | `src/daemon/server.ts:2375-2390` |
 | `POST /recover` | `agent:recover` | any | yes | `src/daemon/server.ts:2398-2400` |
-| `POST /agents/:name/kill` | `agent:kill` | any | yes | `src/daemon/server.ts:2404-2409` |
+| `POST /agents/:name/kill` | `agent:kill` | any | yes | `src/daemon/server.ts:3156-3217` |
 | `POST /codex-root-token` | `root-token:mint` | — | yes | `src/daemon/server.ts:2401-2403`, `:2416-2441` |
 | `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `src/daemon/server.ts:3427-3433`, `:3533-3539`, `:4044-4054` |
 | `hive_quota_status` | `quota:read` | — | no | `src/daemon/server.ts:3505-3512` |

@@ -68,11 +68,11 @@ The agent dies at once — no confirmation, no blocking prompt. Nobody is asked 
 
 `stop()` used to kill the orchestrator's tmux session and exit, leaving every agent running with nothing alive to supervise, message, meter, or reap them. Quitting the app is the ordinary way a session ends, so that was the ordinary way Hive orphaned processes.
 
-Shutdown now closes **every live agent through the same kill path**, before the timers stop (teardown needs delivery and quota alive), and then reaps the orchestrator's own pane tree — the orchestrator has no agents row, so nothing else would have.
+Shutdown now closes **every live agent through the same kill path**, before the timers stop (teardown needs delivery and quota alive), and then reaps the orchestrator's own pane tree — the orchestrator has no agents row, so nothing else would have. `hive stop` first partitions persisted tmux and sessiond locators. While the daemon's broker authority is still live, it submits every exact sessiond locator to the daemon and requires authoritative process-tree absence; only then may it signal daemon shutdown. A failed tree refuses the shutdown instead of becoming a successful quit message.
 
 That breadth is why an acceptance harness must resolve the full instance tuple before calling stop or closing a Workspace. It may quit only the temporary development app whose home, instance id, daemon/app PIDs and start times, executables, port/handshake, tmux namespace, and window match its ownership manifest. The already-running installed Hive is never a teardown target; unknown identity fails and is preserved. See [Pre-release acceptance testing](../release/acceptance-testing.md).
 
-### How long it takes, and why the app's quit wait is not a deadline
+### How long it takes, and why AppKit holds termination
 
 Measured end to end, SIGTERM to daemon exit, with every agent carrying a full tree (pane shell → vendor CLI → MCP child, a `nohup`ed background command, and a Codex host):
 
@@ -85,13 +85,13 @@ Measured end to end, SIGTERM to daemon exit, with every agent carrying a full tr
 
 Both rows are single runs, and they are not held equally firmly. The 0.97s figure is the measurement recorded when the shutdown fix landed. The 6-agent row is **one observation by its author, not independently reproduced** — confirming it costs a real six-agent teardown, so it stands as recorded, not as established fact. What it has going for it is arithmetic: the ~0.3s/agent slope sits just above the 250ms floor the code actually sets, so it is at least consistent with the mechanism. Argue from the slope; do not quote the second row as a spec.
 
-**That is not a correctness bound, and the Workspace must not treat it as one.** The daemon is a *detached* process, not a child of the app: the SIGTERM handler runs `stop()` to completion whether or not the app is still alive to watch it. So the app's quit wait buys **observability, not correctness**, and a wait that expires means "we stopped watching", never "the teardown was truncated". Render an expired wait as such — not as a failure.
+**That is not a correctness bound, and the Workspace must not treat it as one.** AppKit returns `terminateLater` while `hive stop` runs. It replies yes only after the command reports verified absence; a nonzero exit cancels quit and displays the failure. There is no UI timeout that converts "still checking" into success. The visibility lease remains the backstop for an app crash, not the ordinary quit mechanism.
 
 Parallelising `killAllAgents` to shrink the number was deliberately **rejected**: it is a speculative change to a kill path, for a latency problem with no correctness consequence.
 
 ## The surface the Workspace calls
 
-`POST /agents/<name>/kill` (capability `agent:kill`), and `hive kill <agent> --port <n>` over it — the pattern the app already uses for `hive autonomy`. It is a thin authorization shell over `killAgentTeardown` and holds no policy of its own, because a second kill path is how one of them stops reaping something.
+`POST /agents/<name>/kill` (capability `agent:kill`), and `hive kill <agent> --port <n>` over it — the pattern the app already uses for `hive autonomy`. The request carries the exact Hive-owned session locator held by the pane; the daemon compares it with the current record before teardown, so a stale generation receives a typed rejection and kills nothing. After that fence it is a thin authorization shell over `killAgentTeardown` and holds no second teardown policy.
 
 **Idempotent, because a UI cannot be.** The feed publishes an agent row before its tmux session exists, so the X is clickable on a pane whose backing resource does not exist yet; and a pane can be closed twice. Both exit 0. A kill that genuinely failed exits non-zero, and survivors are an error — the command will not report success over a process it could not kill.
 

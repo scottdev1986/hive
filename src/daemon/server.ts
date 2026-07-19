@@ -18,7 +18,10 @@ import {
   TmuxSessionHost,
   type TmuxEngine,
 } from "./session-host/tmux-host";
-import { HiveTerminalHostAdapter } from "./session-host/hive-terminal-host";
+import {
+  HiveTerminalHostAdapter,
+  requireSessiondAgentLocator,
+} from "./session-host/hive-terminal-host";
 import {
   SessiondHost,
   type LandedTerminalHost,
@@ -71,6 +74,7 @@ import {
   isTerminalAgentStatus,
   QuotaObservationSchema,
   RoutingPolicyMutationSchema,
+  SessionLocatorSchema,
   StatuslineReportSchema,
   unknownVendor,
   type AgentRecord,
@@ -98,6 +102,7 @@ import {
   type StatusIncarnationGenerationSource,
 } from "./status-generation";
 import type { SessionHost, SessionLocator } from "./session-host/contract";
+import { sameSessionLocator } from "./session-host/locators";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
 import {
@@ -868,6 +873,10 @@ export class HiveDaemon {
           {
             terminalHost: this.terminalHost,
             reap: this.reapDependencies,
+            readHostPid: async (record) =>
+              (await this.terminalHost.inspect(
+                requireSessiondAgentLocator(record),
+              )).hostPid,
           },
           beforeKill,
         )
@@ -3137,8 +3146,8 @@ export class HiveDaemon {
    *
    * The Workspace needs a kill it can call without an MCP client, and it must
    * be the SAME kill: a second teardown path is how one of them quietly stops
-   * reaping something. So this is a thin authorization shell over
-   * killAgentTeardown and holds no policy of its own.
+   * reaping something. So this checks the pane's exact Hive locator, then is a
+   * thin authorization shell over killAgentTeardown.
    *
    * Idempotent, because a UI cannot be. The user can click X on a pane whose
    * agent died a second ago, or click it twice; an already-dead agent is the
@@ -3166,6 +3175,36 @@ export class HiveDaemon {
     const agent = this.db.getAgentByName(name);
     if (agent === null) {
       return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
+    }
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      return json({
+        state: "rejected",
+        reason: "invalid-session-locator",
+        error: "Kill requires the pane's exact sessionLocator",
+      }, { status: 400 });
+    }
+    const parsed = z.strictObject({
+      sessionLocator: SessionLocatorSchema,
+    }).safeParse(body);
+    if (!parsed.success) {
+      return json({
+        state: "rejected",
+        reason: "invalid-session-locator",
+        error: "Kill requires the pane's exact sessionLocator",
+      }, { status: 400 });
+    }
+    if (
+      agent.sessionLocator === undefined ||
+      !sameSessionLocator(agent.sessionLocator, parsed.data.sessionLocator)
+    ) {
+      return json({
+        state: "rejected",
+        reason: "session-locator-mismatch",
+        error: `Hive refused to kill ${name}: its session generation changed`,
+      }, { status: 409 });
     }
     try {
       return json(await this.killAgentTeardown(agent));

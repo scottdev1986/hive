@@ -2,6 +2,7 @@ import { expect, test } from "bun:test";
 import { chmod, mkdir, mkdtemp, readFile, rm, stat } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { HiveDatabase } from "../../../src/daemon/db";
+import { stopHive } from "../../../src/cli/control";
 import {
   expectedDaemonHandshake,
   parseDaemonHandshake,
@@ -176,7 +177,7 @@ async function waitForExactProcessAbsence(
   throw new Error(`owned sessiond process ${pid} outlived visibility expiry`);
 }
 
-test("TypeScript gates a real DirectHost and publisher death expires its tree", async () => {
+test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
   // Keep runtime/sessiond/broker.sock below macOS's AF_UNIX path limit.
   const home = await mkdtemp("/tmp/hsd.");
@@ -261,17 +262,20 @@ test("TypeScript gates a real DirectHost and publisher death expires its tree", 
             workspaceStartToken: workspace.startToken,
             openTerminalRevision: "1",
           };
-          const workspaceVisibility = new WorkspaceVisibilityAuthority({
-            expectedInstanceId: handshake.instanceId,
-            observeProcess: (pid) => {
-              try {
-                return macProcessIdentity(pid);
-              } catch {
-                return null;
-              }
-            },
-            discoverEngineBuildId: () => host.discoverEngineBuildId(),
-          });
+          const visibilityAuthority = () => new WorkspaceVisibilityAuthority({
+              expectedInstanceId: handshake.instanceId,
+              observeProcess: (pid) => {
+                try {
+                  return macProcessIdentity(pid);
+                } catch {
+                  return null;
+                }
+              },
+              discoverEngineBuildId: () => host.discoverEngineBuildId(),
+            });
+          let workspaceVisibility = visibilityAuthority();
+          let admittedAgentName = "maya";
+          let admittedVisibility = visibility;
 
           const tmux = new FakeTmux();
           const stopSpawnedSession = async (agent: AgentRecord) => {
@@ -308,7 +312,7 @@ test("TypeScript gates a real DirectHost and publisher death expires its tree", 
             tmux,
             sessiond: {
               terminalHost: adapter,
-              prepare: (candidate) => candidate.agentName === "maya"
+              prepare: (candidate) => candidate.agentName === admittedAgentName
                 ? workspaceVisibility.prepare()
                 : Promise.resolve(null),
               admit: (candidate) => workspaceVisibility.admit(candidate),
@@ -331,22 +335,22 @@ test("TypeScript gates a real DirectHost and publisher death expires its tree", 
                     expect(workspaceVisibility.publish({
                       schemaVersion: 1,
                       source: {
-                        sessionId: visibility.workspaceSessionId,
+                        sessionId: admittedVisibility.workspaceSessionId,
                         process: {
-                          processId: visibility.workspacePid,
-                          startToken: visibility.workspaceStartToken,
+                          processId: admittedVisibility.workspacePid,
+                          startToken: admittedVisibility.workspaceStartToken,
                         },
                       },
-                      inventoryRevision: visibility.openTerminalRevision,
+                      inventoryRevision: admittedVisibility.openTerminalRevision,
                       terminals: [{
                         agentId: agent.id,
                         agentName: agent.name,
                         locator,
-                        state: "pending",
+                      state: "pending",
                       }],
                     })).toEqual({
                       state: "accepted",
-                      inventoryRevision: visibility.openTerminalRevision,
+                      inventoryRevision: admittedVisibility.openTerminalRevision,
                     });
                   }
                   db.insertAgent({ ...agent, status: "working" });
@@ -507,13 +511,79 @@ test("TypeScript gates a real DirectHost and publisher death expires its tree", 
             ),
           ).toHaveLength(1);
 
+          let stoppedSurvivors: readonly unknown[] | null = null;
+          const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
+          await stopHive({
+            tmux: {
+              listSessions: async () => [...tmux.active],
+              listPanePids: async () => [],
+              killSession: async (name) => tmux.killSession(name),
+            },
+            readAgents: () => [sessiondAgent],
+            stopSessiond: async (agent) => {
+              const stopped = await stopSpawnedSession(agent);
+              stoppedSurvivors = stopped.survivors;
+            },
+            readPid: () => process.pid,
+            kill: () => {
+              expect(stoppedSurvivors).toEqual([]);
+            },
+            liveness: async () => daemonStates.shift() ?? "dead",
+            cleanup: () => {},
+            sleep: async () => {},
+            log: () => {},
+          });
+          expect(stoppedSurvivors).toEqual([]);
+          expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit)
+            .toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
+          await Promise.all([
+            waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
+            waitForExactProcessAbsence(spawnedProvider.pid, spawnedProvider.startToken),
+          ]);
+          expect((await adapter.inspect(sessiondLocator)).presence)
+            .not.toBe("present");
+          spawnedHost = null;
+          spawnedProvider = null;
+
+          admittedAgentName = "lena";
+          admittedVisibility = {
+            ...visibility,
+            openTerminalRevision: "3",
+          };
+          workspaceVisibility = visibilityAuthority();
+          const expiryAgent = await spawner.spawn({
+            task: "Exercise publisher-death lease expiry",
+            category: "complex_coding",
+            name: "lena",
+            tool: "codex",
+            model: "gpt-sessiond-live",
+          });
+          const expiryLocator = requireSessiondAgentLocator(expiryAgent);
+          const expiryInspection = await adapter.inspect(expiryLocator);
+          if (
+            expiryInspection.hostPid === null ||
+            expiryInspection.hostStartToken === null ||
+            expiryInspection.providerRoot === null
+          ) {
+            throw new Error("publisher-death session omitted measured process identity");
+          }
+          spawnedHost = {
+            pid: expiryInspection.hostPid,
+            startToken: expiryInspection.hostStartToken,
+          };
+          spawnedProvider = expiryInspection.providerRoot;
+          expect(macProcessIdentity(spawnedHost.pid).startToken)
+            .toBe(spawnedHost.startToken);
+          expect(macProcessIdentity(spawnedProvider.pid).startToken)
+            .toBe(spawnedProvider.startToken);
+
           process.kill(workspacePublisher.pid, "SIGKILL");
           await workspacePublisher.exited;
           await Promise.all([
             waitForExactProcessAbsence(spawnedHost.pid, spawnedHost.startToken),
             waitForExactProcessAbsence(spawnedProvider.pid, spawnedProvider.startToken),
           ]);
-          const expired = await adapter.inspect(sessiondLocator);
+          const expired = await adapter.inspect(expiryLocator);
           expect(expired.presence).not.toBe("present");
           expect(expired.visibility.state).toBe("expired");
         } finally {

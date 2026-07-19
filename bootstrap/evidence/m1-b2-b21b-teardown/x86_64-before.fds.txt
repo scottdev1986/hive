@@ -1,0 +1,13 @@
+p40473
+f0
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.frV8ii/x86_64.control
+f1
+tREG
+n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b21b-teardown/x86_64-protocol.jsonl
+f2
+tREG
+n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b21b-teardown/x86_64-probe.stderr.txt
+f3
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.frV8ii/x86_64.control

@@ -31,6 +31,26 @@ public struct AgentSessionLocator: Equatable, Codable {
         self.hostKind = hostKind
         self.engineBuildId = engineBuildId
     }
+
+    private enum CodingKeys: String, CodingKey {
+        case schemaVersion, instanceId, subject, generation, sessionId, hostKind
+        case engineBuildId
+    }
+
+    public func encode(to encoder: Encoder) throws {
+        var container = encoder.container(keyedBy: CodingKeys.self)
+        try container.encode(schemaVersion, forKey: .schemaVersion)
+        try container.encode(instanceId, forKey: .instanceId)
+        try container.encode(subject, forKey: .subject)
+        try container.encode(generation, forKey: .generation)
+        try container.encode(sessionId, forKey: .sessionId)
+        try container.encode(hostKind, forKey: .hostKind)
+        if let engineBuildId {
+            try container.encode(engineBuildId, forKey: .engineBuildId)
+        } else {
+            try container.encodeNil(forKey: .engineBuildId)
+        }
+    }
 }
 
 /// One agent as reported by `hive workspace-feed` (NDJSON, one snapshot per
@@ -83,7 +103,7 @@ public struct AgentSnapshot: Equatable, Decodable {
         tmuxSession = try? container.decodeIfPresent(String.self, forKey: .tmuxSession)
         contextPct = try? container.decodeIfPresent(Double.self, forKey: .contextPct)
         closedAt = try? container.decodeIfPresent(String.self, forKey: .closedAt)
-        sessionLocator = try? container.decodeIfPresent(
+        sessionLocator = try container.decodeIfPresent(
             AgentSessionLocator.self, forKey: .sessionLocator)
     }
 }
@@ -146,13 +166,14 @@ public struct FeedLine: Decodable {
     public init(from decoder: Decoder) throws {
         let container = try decoder.container(keyedBy: CodingKeys.self)
         v = (try? container.decodeIfPresent(Int.self, forKey: .v)) ?? nil
-        if let decodedAgents = try? container.decodeIfPresent(
-            [LossyAgentSnapshot].self, forKey: .agents)
-        {
-            let validAgents = decodedAgents.compactMap(\.value)
-            agents = validAgents.count == decodedAgents.count ? validAgents : nil
-        } else {
+        do {
+            agents = try container.decodeIfPresent([AgentSnapshot].self, forKey: .agents)
+        } catch {
             agents = nil
+            self.error = "workspace-feed agent schema error: \(error)"
+            autonomy = nil
+            orchestrator = nil
+            return
         }
         let reportedAutonomy =
             (try? container.decodeIfPresent(String.self, forKey: .autonomy)) ?? nil
@@ -170,14 +191,6 @@ public struct FeedLine: Decodable {
         let trimmed = line.trimmingCharacters(in: .whitespaces)
         guard trimmed.hasPrefix("{"), let data = trimmed.data(using: .utf8) else { return nil }
         return try? JSONDecoder().decode(FeedLine.self, from: data)
-    }
-}
-
-private struct LossyAgentSnapshot: Decodable {
-    let value: AgentSnapshot?
-
-    init(from decoder: Decoder) throws {
-        value = try? AgentSnapshot(from: decoder)
     }
 }
 

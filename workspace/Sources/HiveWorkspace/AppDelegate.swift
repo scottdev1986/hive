@@ -33,8 +33,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// daemon that is gone for good — stops thrashing.
     private static let feedRestartLimit = 5
     private var feedRestartsLeft = AppDelegate.feedRestartLimit
-    /// How long a quit waits for `hive stop` before going ahead without it.
-    private static let stopDeadline: TimeInterval = 5
     /// Set once the app has decided the feed should stay dead (window closing,
     /// app quitting), so a restart already in flight cannot resurrect it.
     private var feedRetired = false
@@ -44,6 +42,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// out. Weak, and per-instance: nothing here outlives this process.
     private weak var trackingMenu: NSMenu?
     private let workspaceSessionID = UUID().uuidString
+    private var terminationPending = false
+    private var terminationFailureAlert: NSAlert?
+    private var terminationProcess: Process?
+
+    lazy var stopForTermination: (@escaping (Result<Void, Error>) -> Void) -> Void = {
+        [weak self] completion in self?.runStopSession(completion: completion)
+    }
+    lazy var replyToApplicationTermination: (Bool) -> Void = { allow in
+        NSApp.reply(toApplicationShouldTerminate: allow)
+    }
+    lazy var presentTerminationFailure: (String) -> Void = { [weak self] reason in
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Hive could not quit safely"
+        alert.informativeText = reason
+        alert.addButton(withTitle: "OK")
+        self?.terminationFailureAlert = alert
+        alert.window.makeKeyAndOrderFront(nil)
+    }
 
     init(config: LaunchConfig) {
         self.config = config
@@ -178,8 +195,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         feed.onAutonomy = { [weak self] autonomy in
             self?.currentAutonomy = autonomy
         }
-        feed.onError = { message in
+        feed.onError = { [weak self] message in
             NSLog("workspace-feed error: %@", message)
+            if message.hasPrefix("workspace-feed agent schema error:") {
+                self?.controller?.reportFeedFailure(reason: message)
+            }
         }
         feed.onExit = { [weak self] in
             NSLog("workspace-feed exited; agent statuses are stale")
@@ -334,6 +354,26 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         true
     }
 
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        guard config.isComplete, !config.smoke else { return .terminateNow }
+        guard !terminationPending else { return .terminateLater }
+        terminationPending = true
+        stopForTermination { [weak self] result in
+            DispatchQueue.main.async {
+                guard let self else { return }
+                switch result {
+                case .success:
+                    self.replyToApplicationTermination(true)
+                case .failure(let error):
+                    self.terminationPending = false
+                    self.replyToApplicationTermination(false)
+                    self.presentTerminationFailure(error.localizedDescription)
+                }
+            }
+        }
+        return .terminateLater
+    }
+
     func applicationShouldHandleReopen(_ sender: NSApplication, hasVisibleWindows flag: Bool) -> Bool {
         if !flag {
             controller?.window?.makeKeyAndOrderFront(nil)
@@ -347,22 +387,21 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         closeOwnedSurfaces()
         retireFeed()
         controller?.terminateAllTerminals()
-        stopSession()
     }
 
     /// Quitting the workspace ends the Hive session: `hive stop` is the daemon's
     /// own shutdown — it stops every live agent and then the daemon itself — so
     /// no agent, and no daemon, outlives the window that was showing them.
     ///
-    /// Bounded, and never a dialog. The user asked for immediate: nothing here
-    /// prompts, and the wait is capped, because a quit that hangs on a daemon
-    /// which cannot answer is a worse failure than a quit that leaves the last
-    /// second of shutdown to a command that goes on running without us (the
-    /// child outlives this process — the wait is to observe it, not to power
-    /// it).
-    private func stopSession() {
+    /// AppKit holds termination until this process exits successfully. `hive
+    /// stop` itself returns only after exact process-tree absence has been read
+    /// back; an error cancels quit and remains visible.
+    private func runStopSession(completion: @escaping (Result<Void, Error>) -> Void) {
         guard let hivePath = config.hivePath, let instanceHome = config.instanceHome,
-              !config.smoke else { return }
+              !config.smoke else {
+            completion(.success(()))
+            return
+        }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
         process.arguments = ["stop"]
@@ -370,21 +409,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         environment["HIVE_HOME"] = instanceHome
         process.environment = environment
         process.standardOutput = FileHandle.nullDevice
-        process.standardError = FileHandle.standardError
+        let stderr = Pipe()
+        process.standardError = stderr
+        process.terminationHandler = { [weak self] finished in
+            let detail = String(
+                data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8)?
+                .trimmingCharacters(in: .whitespacesAndNewlines) ?? ""
+            DispatchQueue.main.async { self?.terminationProcess = nil }
+            if finished.terminationStatus == 0 {
+                completion(.success(()))
+            } else {
+                let message = detail.isEmpty
+                    ? "hive stop failed (exit \(finished.terminationStatus))"
+                    : detail
+                completion(.failure(NSError(
+                    domain: "HiveWorkspace.Termination", code: Int(finished.terminationStatus),
+                    userInfo: [NSLocalizedDescriptionKey: message])))
+            }
+        }
         do {
+            terminationProcess = process
             try process.run()
         } catch {
-            NSLog("could not run hive stop: %@", error.localizedDescription)
-            return
-        }
-        let deadline = Date().addingTimeInterval(Self.stopDeadline)
-        while process.isRunning, Date() < deadline {
-            usleep(50_000)
-        }
-        if process.isRunning {
-            NSLog("hive stop is still running after %.0fs; quitting anyway", Self.stopDeadline)
-        } else if process.terminationStatus != 0 {
-            NSLog("hive stop failed (exit %d)", process.terminationStatus)
+            process.terminationHandler = nil
+            terminationProcess = nil
+            completion(.failure(error))
         }
     }
 

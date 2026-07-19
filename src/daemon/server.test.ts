@@ -409,6 +409,59 @@ test("a shared selection failure is explicit about the already-saved local polic
   }
 });
 
+test("agent kill rejects a stale locator without killing the current generation", async () => {
+  const db = new HiveDatabase(join(home, "locator-fenced-kill.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    resourceRunners: { panePids: async () => [], orphans: null },
+  });
+  const current = agent({
+    worktreePath: null,
+    branch: null,
+    sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 2),
+  });
+  db.insertAgent(current);
+  try {
+    const stale = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+        }),
+      },
+    );
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      state: "rejected",
+      reason: "session-locator-mismatch",
+      error: "Hive refused to kill maya: its session generation changed",
+    });
+    expect(tmux.killed).toEqual([]);
+    expect(db.getAgentByName("maya")?.status).toBe("working");
+
+    const exact = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionLocator: current.sessionLocator }),
+      },
+    );
+    expect(exact.status).toBe(200);
+    expect(tmux.killed).toEqual(["hive-maya"]);
+    expect(db.getAgentByName("maya")?.status).toBe("dead");
+  } finally {
+    tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
 test("agent kill refuses when a live session's process roots are unreadable", async () => {
   const db = new HiveDatabase(join(home, "unreadable-kill-roots.db"));
   const tmux = new FakeDaemonTmux();
@@ -425,12 +478,18 @@ test("agent kill refuses when a live session's process roots are unreadable", as
       orphans: null,
     },
   });
-  db.insertAgent(agent());
+  const target = agent({
+    sessionLocator: mintAgentTmuxSessionLocator("agent-maya"),
+  });
+  db.insertAgent(target);
   const agentFetch = actingAs(daemon, "maya", "writer");
   try {
     const response = await actingAs(daemon, "operator")(
       "http://hive/agents/maya/kill",
-      { method: "POST" },
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionLocator: target.sessionLocator }),
+      },
     );
     expect(response.status).toEqual(500);
     expect(await response.json()).toEqual({
@@ -472,12 +531,18 @@ test("agent kill refuses when tmux reports success but leaves the session", asyn
       orphans: null,
     },
   });
-  db.insertAgent(agent());
+  const target = agent({
+    sessionLocator: mintAgentTmuxSessionLocator("agent-maya"),
+  });
+  db.insertAgent(target);
   const agentFetch = actingAs(daemon, "maya", "writer");
   try {
     const response = await actingAs(daemon, "operator")(
       "http://hive/agents/maya/kill",
-      { method: "POST" },
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionLocator: target.sessionLocator }),
+      },
     );
     expect(response.status).toEqual(500);
     expect(await response.json()).toEqual({
@@ -2370,18 +2435,23 @@ describe("HiveDaemon HTTP server", () => {
         orphans: null,
       },
     });
-    db.insertAgent(agent({
+    const target = agent({
       status: "dead",
       worktreePath: null,
       branch: null,
-    }));
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya"),
+    });
+    db.insertAgent(target);
     try {
       expect(() => process.kill(owned.pid, 0)).not.toThrow();
       expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
 
       const response = await actingAs(daemon, "operator")(
         "http://hive/agents/maya/kill",
-        { method: "POST" },
+        {
+          method: "POST",
+          body: JSON.stringify({ sessionLocator: target.sessionLocator }),
+        },
       );
       expect(response.status).toEqual(200);
       const result = await response.json() as {

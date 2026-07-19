@@ -19,7 +19,11 @@ import type {
   MemoryWriteInput,
   QuotaObservationInput,
 } from "../schemas";
-import { isLiveAgent } from "../schemas";
+import {
+  isLiveAgent,
+  type AgentRecord,
+  type SessionLocator,
+} from "../schemas";
 import { hiveInstanceSuffix, isTmuxSessionForInstance } from "../daemon/tmux-sessions";
 import {
   deleteMemory,
@@ -208,21 +212,36 @@ function readDaemonPid(): number | null {
 export async function killAgentCli(
   name: string,
   port: number = requireDaemonPort(),
+  expectedLocator?: SessionLocator,
 ): Promise<void> {
+  const locator = expectedLocator ?? (await fetchAgentStatus(port)).find(
+    (agent) => agent.name === name,
+  )?.sessionLocator;
+  if (locator === undefined) {
+    throw new Error(`Hive agent ${name} has no exact session locator`);
+  }
   const response = await operatorFetch(
     `http://127.0.0.1:${port}/agents/${encodeURIComponent(name)}/kill`,
-    { method: "POST" },
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionLocator: locator }),
+    },
   );
   const body = await response.json().catch(() => null) as
     | {
       error?: string;
+      reason?: string;
       alreadyDead?: boolean;
       preserved?: { branch: string; ref: string } | null;
       reaped?: { killed?: unknown[]; survivors?: { pid: number; command: string }[] };
     }
     | null;
   if (!response.ok) {
-    throw new Error(body?.error ?? `kill failed (HTTP ${response.status})`);
+    const reason = body?.reason === undefined ? "" : ` [${body.reason}]`;
+    throw new Error(
+      (body?.error ?? `kill failed (HTTP ${response.status})`) + reason,
+    );
   }
   if (body?.alreadyDead === true) {
     console.log(`${name} was already closed`);
@@ -426,6 +445,8 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
 export interface StopHiveDependencies {
   readonly tmux?: StopTmux;
   readonly sessions?: TmuxSessionHost;
+  readonly readAgents?: () => readonly AgentRecord[];
+  readonly stopSessiond?: (agent: AgentRecord) => Promise<void>;
   readonly readPid?: () => number | null;
   readonly kill?: (pid: number, signal: NodeJS.Signals) => void;
   readonly liveness?: () => Promise<DaemonInstanceLiveness>;
@@ -439,18 +460,30 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
   const sessions = deps.sessions ?? (deps.tmux === undefined
     ? new TmuxSessionHost()
     : undefined);
-  if (sessions !== undefined && existsSync(getDatabasePath())) {
+  let agents: readonly AgentRecord[] = [];
+  if (deps.readAgents !== undefined) {
+    agents = deps.readAgents();
+  } else if (existsSync(getDatabasePath())) {
     const db = HiveDatabase.openReadonly();
     try {
-      for (const agent of db.listAgents()) {
-        if (isLiveAgent(agent) && agent.sessionLocator !== undefined) {
-          bindAgentSession(sessions, agent);
-        }
-      }
+      agents = db.listAgents();
     } finally {
       db.close();
     }
   }
+  if (sessions !== undefined) {
+    for (const agent of agents) {
+      if (
+        isLiveAgent(agent) &&
+        agent.sessionLocator?.hostKind === "tmux"
+      ) {
+        bindAgentSession(sessions, agent);
+      }
+    }
+  }
+  const sessiondAgents = agents.filter((agent): agent is AgentRecord & {
+    sessionLocator: SessionLocator & { hostKind: "sessiond" };
+  } => isLiveAgent(agent) && agent.sessionLocator?.hostKind === "sessiond");
   const pid = (deps.readPid ?? readDaemonPid)();
   const liveness = deps.liveness ?? (() =>
     daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
@@ -469,6 +502,30 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
       throw new Error(
         "the daemon is live but has no recorded pid\n" +
           "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
+      );
+    }
+    const stopSessiond = deps.stopSessiond ?? ((agent: AgentRecord) =>
+      killAgentCli(
+        agent.name,
+        requireDaemonPort(),
+        agent.sessionLocator,
+      ));
+    const sessiondResults = await Promise.allSettled(
+      sessiondAgents.map((agent) => stopSessiond(agent)),
+    );
+    const sessiondFailures = sessiondResults.flatMap((result, index) =>
+      result.status === "rejected"
+        ? [`${sessiondAgents[index]!.name}: ${
+          result.reason instanceof Error
+            ? result.reason.message
+            : String(result.reason)
+        }`]
+        : []
+    );
+    if (sessiondFailures.length > 0) {
+      throw new Error(
+        "Hive refused shutdown because sessiond teardown was not verified: " +
+          sessiondFailures.join("; "),
       );
     }
     try {

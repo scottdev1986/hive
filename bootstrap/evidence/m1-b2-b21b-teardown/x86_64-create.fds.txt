@@ -1,0 +1,31 @@
+p40473
+f0
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.frV8ii/x86_64.control
+f1
+tREG
+n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b21b-teardown/x86_64-protocol.jsonl
+f2
+tREG
+n/Users/scottkellar/Projects/hive/.hive/worktrees/elaine/bootstrap/evidence/m1-b2-b21b-teardown/x86_64-probe.stderr.txt
+f3
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b20.frV8ii/x86_64.control
+f4
+tREG
+n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/c9ce17da-0726-4ce0-76c9-c0cfffa6c1a1.run.lock
+f5
+tKQUEUE
+ncount=0, state=0x12
+f6
+tREG
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/C/com.apple.metal/16777235_467/functions.list
+f7
+tREG
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/C/com.apple.metal/16777235_467/functions.data
+f8
+tKQUEUE
+ncount=0, state=0x12
+f9
+tKQUEUE
+ncount=0, state=0x12

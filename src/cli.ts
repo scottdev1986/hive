@@ -76,6 +76,7 @@ import type {
 import {
   MemoryWriterSourceSchema,
   MemoryVerificationStatusSchema,
+  SessionLocatorSchema,
 } from "./schemas";
 
 export interface EventCliOptions {
@@ -503,10 +504,18 @@ export function createProgram(): Command {
         "never discarded",
     )
     .option("--port <number>", "daemon port")
-    .action(async (agent: string, options: { port?: string }) => {
+    .option("--session-locator <json>", "exact pane session locator")
+    .action(async (
+      agent: string,
+      options: { port?: string; sessionLocator?: string },
+    ) => {
+      const locator = options.sessionLocator === undefined
+        ? undefined
+        : SessionLocatorSchema.parse(JSON.parse(options.sessionLocator));
       await killAgentCli(
         agent,
-        ...(options.port === undefined ? [] : [parsePort(options.port)]),
+        options.port === undefined ? undefined : parsePort(options.port),
+        locator,
       );
     });
 

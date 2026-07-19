@@ -444,4 +444,29 @@ final class ProjectStateTests: XCTestCase {
         let decoded = try XCTUnwrap(FeedLine.parse(line))
         XCTAssertNil(decoded.agents, "a partial snapshot could falsely close the omitted agent")
     }
+
+    func testMalformedPresentSessionLocatorSurfacesAsFeedContractError() throws {
+        let line = #"{"v":1,"agents":[{"name":"worker","sessionLocator":{"schemaVersion":1,"instanceId":"instance","subject":{"kind":"agent","agentId":"agent-worker"},"generation":"wrong","sessionId":"ses_bad","hostKind":"sessiond","engineBuildId":"engine"}}]}"#
+
+        let decoded = try XCTUnwrap(FeedLine.parse(line))
+
+        XCTAssertNil(decoded.agents)
+        XCTAssertTrue(try XCTUnwrap(decoded.error).contains("sessionLocator"))
+    }
+
+    func testTmuxLocatorEncodesRequiredNullEngineBuildID() throws {
+        let locator = AgentSessionLocator(
+            instanceId: "instance",
+            subject: AgentSessionSubject(kind: "agent", agentId: "agent-worker"),
+            generation: 1,
+            sessionId: "ses_0198a8f0-0000-7000-8000-000000000001",
+            hostKind: "tmux", engineBuildId: nil)
+
+        let object = try XCTUnwrap(
+            JSONSerialization.jsonObject(with: JSONEncoder().encode(locator))
+                as? [String: Any])
+
+        XCTAssertTrue(object.keys.contains("engineBuildId"))
+        XCTAssertTrue(object["engineBuildId"] is NSNull)
+    }
 }

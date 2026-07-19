@@ -307,7 +307,7 @@ final class SmokeRunner {
             let paneID = ProjectState.paneID(forAgent: closeTarget)
             let countBefore = controller.paneViewCount
             var killed: [String] = []
-            controller.killAgent = { killed.append($0) }
+            controller.killAgent = { name, _ in killed.append(name) }
             // Close the pane that currently holds the keyboard: the indicator
             // must not survive on a dead pane, and exactly one live pane may
             // claim focus afterwards.

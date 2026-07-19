@@ -1,0 +1,41 @@
+M1-B2 B2.1b exact close/quit lifecycle freeze evidence
+
+Lifecycle behavior proved:
+- Workspace pane close carries its held Hive SessionLocator through the CLI request.
+- The daemon compares the complete locator before teardown. A stale generation returns
+  session-locator-mismatch, leaves the current agent live, and invokes no kill; the exact
+  locator positive control terminates that same agent.
+- hive stop partitions tmux and sessiond records. Every live sessiond record is attempted
+  through the authenticated daemon kill path before SIGTERM. Any unverified teardown keeps
+  the daemon live and makes the stop command fail visibly.
+- Daemon sessiond teardown captures the inspected host root before termination, requires the
+  adapter's terminated/no-survivor result, and reaps plus re-reads the captured tree.
+- AppKit returns terminateLater until hive stop exits zero. Failure replies false and presents
+  the actual stop diagnostic; no deadline reports a successful quit while teardown is pending.
+- A malformed present sessionLocator becomes an immediate feed schema error and never a
+  partial agent snapshot.
+
+Live native proof:
+- A real sessiond host/provider pair was observed live by exact PID/start token.
+- The production stopHive ordering invoked stopSessiondAgentSession, recorded a termination
+  audit, proved both exact identities absent, and only then allowed the daemon signal.
+- A fresh second sessiond generation was then created. Killing the Workspace publisher proved
+  both exact identities absent through the independent 15-second crash-expiry backstop.
+
+Recorded green gates:
+- qualify-hive-terminal-b20.sh passed clean arm64 and x86_64 builds, pinned-library ABI/symbol/
+  behavior lock, neutral replay, process/fd inventory, and all Swift tests in isolated copies.
+- Both architectures answered all 7 terminal queries when enabled and reported vacuous_count=0
+  with renderer replies disabled.
+- The public import audit recorded its observed imports.
+- Bun JUnit: 1734 tests, 1724 pass, 10 live-account/environment skips, 0 failures.
+- Native sessiond: Zig suite, identity parity, real clean stop, and publisher-death expiry passed.
+- TypeScript typecheck passed with tsc --noEmit.
+
+B2.2 handoff:
+- Attach only the exact sessionLocator already held by PaneState; never resolve a generation by
+  agent name.
+- B2.1 visibility remains the create/sustain authority. B2.1b exact kill is the ordinary close
+  path and hive stop is the ordinary quit path; the lease deadline is only crash recovery.
+- On attach/reconnect, preserve the locator fence across grants, output ranges, checkpoints,
+  renderer recreation, exit, and reap. A late/wrong generation must not draw or receive input.

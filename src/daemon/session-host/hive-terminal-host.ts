@@ -20,6 +20,7 @@ import type {
   VisibilityRequest,
 } from "./contract";
 import type { AgentRecord } from "../../schemas";
+import { sameSessionLocator } from "./locators";
 import {
   HiveTerminalBindingSchema,
   type HiveTerminalBinding,
@@ -94,24 +95,6 @@ function sameSession(left: SessionRef, right: SessionRef): boolean {
   return left.key === right.key && left.incarnation === right.incarnation;
 }
 
-function sameLocator(
-  left: SessionLocator,
-  right: SessionLocator,
-): boolean {
-  const sameSubject = left.subject.kind === right.subject.kind &&
-    (left.subject.kind === "root" || (
-      right.subject.kind === "agent" &&
-      left.subject.agentId === right.subject.agentId
-    ));
-  return left.schemaVersion === right.schemaVersion &&
-    left.instanceId === right.instanceId &&
-    sameSubject &&
-    left.generation === right.generation &&
-    left.sessionId === right.sessionId &&
-    left.hostKind === right.hostKind &&
-    left.engineBuildId === right.engineBuildId;
-}
-
 function presenceForLifecycle(
   lifecycle: NeutralSessionInspection["lifecycle"],
 ): SessionInspection["presence"] {
@@ -160,14 +143,14 @@ export class HiveTerminalHostAdapter {
     if (policy.locator.instanceId !== this.instanceId) {
       throw new TerminalHostBindingNotFoundError();
     }
-    if (!sameLocator(spec.locator, policy.locator)) {
+    if (!sameSessionLocator(spec.locator, policy.locator)) {
       throw new TerminalHostBindingMismatchError();
     }
     this.bindings.bindTerminalHostSession(policy);
     const result = await this.host.create(spec, initialInput);
     if (
-      !sameLocator(result.locator, policy.locator) ||
-      !sameLocator(result.inspection.locator, policy.locator) ||
+      !sameSessionLocator(result.locator, policy.locator) ||
+      !sameSessionLocator(result.inspection.locator, policy.locator) ||
       result.inspection.expectedExecutable !== spec.expectedExecutable ||
       result.inspection.visibility.workspaceSessionId !==
         policy.visibility.workspaceSessionId ||
@@ -246,7 +229,7 @@ export class HiveTerminalHostAdapter {
     }
     const lease = await this.host.renewVisibility(locator, request);
     if (
-      !sameLocator(lease.locator, locator) ||
+      !sameSessionLocator(lease.locator, locator) ||
       lease.state !== "active" ||
       lease.openTerminalRevision !== request.openTerminalRevision
     ) {

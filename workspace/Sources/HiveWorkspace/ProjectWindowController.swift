@@ -22,6 +22,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
     private var killFailureSheets: [String: NSWindow] = [:]
+    private var feedFailureWindow: NSWindow?
     private var isClosing = false
 
     /// Set by the app delegate to tear the feed down with the window (the
@@ -142,7 +143,13 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         if case .closePane(let paneID) = command,
            let pane = state.panes[paneID], pane.kind == .agent {
             react(to: state.markUserClosed(paneID))
-            killAgent(pane.title)
+            guard let locator = pane.sessionLocator else {
+                reportKillFailure(
+                    agent: pane.title,
+                    reason: "The pane has no exact session locator; nothing was killed.")
+                return
+            }
+            killAgent(pane.title, locator)
             return
         }
         react(to: state.apply(command))
@@ -159,10 +166,19 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// same way the Agents menu reaches the daemon (`hive <verb> --port`).
     /// Overridable so the smoke harness can assert that a close asks for a kill
     /// without ending a real agent.
-    lazy var killAgent: (String) -> Void = { [weak self, hivePath, daemonPort, instanceHome] name in
+    lazy var killAgent: (String, AgentSessionLocator) -> Void = {
+        [weak self, hivePath, daemonPort, instanceHome] name, locator in
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
-        process.arguments = ["kill", name, "--port", String(daemonPort)]
+        guard let encoded = try? JSONEncoder().encode(locator),
+              let locatorJSON = String(data: encoded, encoding: .utf8) else {
+            self?.reportKillFailure(agent: name, reason: "Could not encode session locator")
+            return
+        }
+        process.arguments = [
+            "kill", name, "--port", String(daemonPort),
+            "--session-locator", locatorJSON,
+        ]
         var environment = ProcessInfo.processInfo.environment
         environment["HIVE_HOME"] = instanceHome
         process.environment = environment
@@ -216,6 +232,17 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             guard let self, self.killFailureSheets[agent] === sheet else { return }
             self.killFailureSheets.removeValue(forKey: agent)
         }
+    }
+
+    func reportFeedFailure(reason: String) {
+        feedFailureWindow?.close()
+        let alert = NSAlert()
+        alert.alertStyle = .critical
+        alert.messageText = "Workspace feed contract failed"
+        alert.informativeText = reason
+        alert.addButton(withTitle: "OK")
+        feedFailureWindow = alert.window
+        alert.window.makeKeyAndOrderFront(nil)
     }
 
     private func dismissKillFailure(for agent: String) {

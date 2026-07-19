@@ -126,4 +126,29 @@ describe("WorkspaceVisibilityAuthority", () => {
     host.replaceProcess({ processId: 7102, startToken: "7102:100" });
     expect(host.value.publish(second)).toMatchObject({ state: "accepted" });
   });
+
+  test("two simultaneously live Workspace sources cannot replace one another", () => {
+    const secondProcess = { processId: 7102, startToken: "7102:100" };
+    const observed = new Map([
+      [process.processId, process],
+      [secondProcess.processId, secondProcess],
+    ]);
+    const host = new WorkspaceVisibilityAuthority({
+      expectedInstanceId: instanceId,
+      observeProcess: (pid) => observed.get(pid) ?? null,
+      discoverEngineBuildId: async () => engineBuildId,
+    });
+    expect(host.publish(snapshot("1"))).toMatchObject({ state: "accepted" });
+    expect(host.publish(snapshot("1", {
+      source: {
+        sessionId: "second-live-workspace",
+        process: secondProcess,
+      },
+    }))).toMatchObject({
+      state: "rejected",
+      reason: "source-identity-mismatch",
+    });
+    expect(observed.size).toBe(2);
+    expect(host.currentSnapshot()?.source.sessionId).toBe("workspace-session");
+  });
 });
