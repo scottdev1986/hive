@@ -1346,6 +1346,35 @@ fn setControlTimeout(fd: std.posix.fd_t) !void {
     return setControlTimeoutMs(fd, generated.limits.control_rpc_timeout_ms);
 }
 
+/// Applies the lease-bound control timeout to one accepted host connection.
+/// Returns false on any per-connection setup failure (lease-timeout race,
+/// setsockopt on a reset/invalid socket) so the caller drops that connection
+/// and keeps serving; it never surfaces a fatal error that would tear down
+/// the whole host on a single bad connection.
+fn acceptedConnectionReady(lease: VisibilityLease, handle: std.posix.fd_t, now_ns: u64) bool {
+    const timeout_ms = leaseBoundControlTimeoutMs(lease, now_ns) catch return false;
+    setControlTimeoutMs(handle, timeout_ms) catch return false;
+    return true;
+}
+
+test "accepted-connection setup drops a bad socket without a fatal error" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    var timer = try std.time.Timer.start();
+    const now = timer.read();
+    const lease = try VisibilityLease.initial("ws-fixture", 1, now);
+
+    // A valid, un-expired lease + a real socket: the control timeout applies
+    // and the connection is ready to serve.
+    const good = try std.posix.socket(std.posix.AF.UNIX, std.posix.SOCK.STREAM, 0);
+    try std.testing.expect(acceptedConnectionReady(lease, good, now));
+
+    // The same fd, now closed, makes setsockopt fail (EBADF). The setup must
+    // report NOT ready (drop this one connection) rather than surfacing a
+    // fatal error that the host loop would let tear the whole host down.
+    std.posix.close(good);
+    try std.testing.expect(!acceptedConnectionReady(lease, good, now));
+}
+
 fn leaseBoundControlTimeoutMs(lease: VisibilityLease, now_ns: u64) !u64 {
     if (now_ns >= lease.expires_mono_ns) return error.VisibilityExpired;
     const remaining_ms = try std.math.divCeil(
@@ -4448,16 +4477,16 @@ fn runHostLoop(
                 _ = try core.enforceVisibilityExpiry(connection_now_ns);
                 break;
             }
-            setControlTimeoutMs(
-                stream.handle,
-                leaseBoundControlTimeoutMs(core.lease, connection_now_ns) catch |err| {
-                    stream.close();
-                    return err;
-                },
-            ) catch |err| {
+            // A per-connection setup failure — a peer that reset the socket
+            // before setsockopt ran, or a momentary lease-timeout race — drops
+            // THIS connection and keeps serving. It must never tear down the
+            // host (a single client cannot kill the terminal). A genuine lease
+            // expiry is caught by the top-of-loop and pre-accept checks above.
+            if (!acceptedConnectionReady(core.lease, stream.handle, connection_now_ns)) {
+                std.log.err("host connection setup refused; dropping connection", .{});
                 stream.close();
-                return err;
-            };
+                continue;
+            }
             const accepted = serveSessionConnection(
                 core.allocator,
                 stream,
