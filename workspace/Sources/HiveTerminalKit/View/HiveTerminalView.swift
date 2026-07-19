@@ -329,6 +329,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         notifyOutputStatusReconnect(reason: "status:\(evidence)")
     }
 
+    /// Drives the surface into a typed, user-visible lost state when a viewer
+    /// gives up reconnecting (§26 bounded recovery). Never claims close — the
+    /// logical pane and session are untouched; only this renderer stopped.
+    public func markAttachFailed(_ evidence: String) {
+        guard !closed else { return }
+        setSurfaceState(.lost(evidence: evidence))
+    }
+
     // MARK: - First responder / input (M8, gate 8): see HiveTerminalView+Input.swift
 
     public func notifyOutputStatusReconnect(reason: String) {

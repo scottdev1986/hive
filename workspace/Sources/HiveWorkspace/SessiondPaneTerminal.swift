@@ -24,6 +24,22 @@ final class SessiondPaneTerminal {
     private var attachInFlight = false
     private var geometryPollTimer: Timer?
 
+    /// §26 bounded recovery: consecutive failed attach attempts. Reset to 0 on
+    /// each first-correct-frame so a later transient loss gets a fresh budget.
+    private var failedAttempts = 0
+    private(set) var gaveUp = false
+    /// The terminal failure reason once recovery is exhausted (nil while live
+    /// or still retrying).
+    private(set) var lastFailure: String?
+    let maxAttachAttempts = 6
+    private let baseRetryDelay: TimeInterval = 0.5
+    private let maxRetryDelay: TimeInterval = 8.0
+    /// Test seam: a fixed retry delay so the give-up path runs without the
+    /// exponential wall-clock. Production leaves this nil.
+    var retryDelayOverride: TimeInterval?
+    /// Fired once when recovery is exhausted (bounded give-up), with evidence.
+    var onFailure: ((String) -> Void)?
+
     /// Grant acquisition, overridable by the smoke harness: runs
     /// `hive workspace-attach` and returns the raw grant JSON line.
     var requestGrant: (_ geometryJSON: String) throws -> String
@@ -112,7 +128,7 @@ final class SessiondPaneTerminal {
     // MARK: - Attach machinery
 
     private func beginAttach(afterSeq: UInt64) {
-        guard !detached, !attachInFlight else { return }
+        guard !detached, !attachInFlight, !gaveUp else { return }
         guard let geometry = view?.reportedGeometry, geometry.isUsable else { return }
         attachInFlight = true
         let geometryJSON = Self.encodeGeometry(geometry)
@@ -139,7 +155,7 @@ final class SessiondPaneTerminal {
                 NSLog("sessiond attach for %@ failed: %@", self.agentName, "\(error)")
                 DispatchQueue.main.async {
                     self.attachInFlight = false
-                    self.scheduleReattach()
+                    self.scheduleReattach("\(error)")
                 }
             }
         }
@@ -165,15 +181,19 @@ final class SessiondPaneTerminal {
                 afterSeq: afterSeq,
                 transport: transport
             )
-            if case .failed = outcome {
+            if case .failed(let state) = outcome {
                 transport.close()
-                scheduleReattach()
+                scheduleReattach("attach failed: \(state)")
                 return
             }
+            // Live: a first-correct-frame clears the recovery budget so a later
+            // transient loss starts fresh.
+            failedAttempts = 0
             startPump(transport: transport)
         } catch {
             NSLog("sessiond surface attach for %@ refused: %@", agentName, "\(error)")
             transport.close()
+            scheduleReattach("\(error)")
         }
     }
 
@@ -203,17 +223,43 @@ final class SessiondPaneTerminal {
             transport.close()
             DispatchQueue.main.async {
                 guard !self.detached, self.transport === transport else { return }
-                self.scheduleReattach()
+                self.scheduleReattach("host transport lost")
             }
         }
         thread.name = "sessiond-pump-\(agentName)"
         thread.start()
     }
 
-    private func scheduleReattach() {
-        guard !detached else { return }
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.0) { [weak self] in
-            guard let self, !self.detached else { return }
+    /// Registers a failed attach attempt and reports whether another retry is
+    /// authorized. After `maxAttachAttempts` consecutive failures it records a
+    /// terminal, user-visible failure and returns false — never an infinite
+    /// silent loop. Idempotent once given up.
+    func registerFailedAttemptAndShouldRetry(_ evidence: String) -> Bool {
+        guard !gaveUp, !detached else { return false }
+        failedAttempts += 1
+        if failedAttempts > maxAttachAttempts {
+            failAttach(evidence)
+            return false
+        }
+        return true
+    }
+
+    private func failAttach(_ evidence: String) {
+        guard !gaveUp else { return }
+        gaveUp = true
+        lastFailure = evidence
+        NSLog("sessiond pane %@ gave up after %d attach attempts: %@",
+              agentName, maxAttachAttempts, evidence)
+        view?.markAttachFailed(evidence)
+        onFailure?(evidence)
+    }
+
+    private func scheduleReattach(_ evidence: String) {
+        guard registerFailedAttemptAndShouldRetry(evidence) else { return }
+        let delay = retryDelayOverride
+            ?? min(baseRetryDelay * pow(2, Double(failedAttempts - 1)), maxRetryDelay)
+        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
+            guard let self, !self.detached, !self.gaveUp else { return }
             self.beginAttach(afterSeq: self.view?.highWater ?? 0)
         }
     }
