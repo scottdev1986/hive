@@ -1,8 +1,54 @@
 # HiveTerminalView B2.2 — attach + live output (the first watchable frame)
 
-Status: frozen for cross-vendor review. The author must not call `hive_land`;
-the next state transition is an independent cross-vendor review at this exact
-pin.
+Status: frozen for cross-vendor review at the pin reported with this document.
+The author must not call `hive_land`; the next state transition is an
+independent cross-vendor review at this exact pin.
+
+## The live watch (proven, recorded)
+
+The watchable milestone is proven with the real Workspace app, not just the
+wire tests. `scripts/b22-live-attach-proof.ts` stands up the complete real
+stack (broker, in-process real daemon, one manually-created sessiond session
+running an animated color ticker — M1 black-box, NOT M2 spawn) and launches
+the real Workspace; the pane for the session carries the exact sessiond
+locator and renders through the new wiring. Recorded on an unlocked session:
+
+- `bootstrap/evidence/m1-b2-b22-attach/live-watch-frame1-ticker-0000-0059.png`
+  and `…-frame2-ticker-0148-0198.png` — the aria pane rendering the live
+  ticker through `HiveTerminalView`, visibly ADVANCING between the two frames
+  (0000–0059 → 0148–0198; the host journal reached frame 0230). The user
+  confirmed on screen: "it rendered and stayed up".
+- `…-frame3-renderer-disconnected.png` — after the host is killed, the pane
+  header reads "renderer disconnected" with a red failure badge: bounded
+  recovery reached a visible give-up, not a silent frozen frame.
+
+### Two robustness gaps found live and fixed (the wire tests could not reach)
+
+The first live run crashed the watch. Two combining gaps, both fixed with
+mutation-verified positive controls:
+
+1. **Host fragility** (native `runHostLoop` accept path): a `setsockopt`
+   failure on one accepted connection was a fatal `return err` that tore down
+   the whole host — a pre-existing B2.1b shape that B2.2's real attach/grant/
+   renew traffic first exercised (the host died ~1 s in). Now a per-connection
+   setup failure closes that stream and `continue`s, matching accept()-failure
+   handling (`acceptedConnectionReady`). Control: a closed socket
+   (setsockopt EBADF) reports not-ready without a fatal error; mutation to
+   accept the closed fd goes red. Live-verified: the host now survives the full
+   attach/grant/renew traffic (18 s+, 63+ ordered frames, clean terminate,
+   `failureCode: null`).
+2. **App silent stall / infinite retry** (`SessiondPaneTerminal`): the pane
+   retried attach every second forever with no give-up (an infinite silent
+   loop that also starved the machine), and an interim recursive-backoff fix
+   could still silently strand the pane when the pump-loss and grant-fail
+   retry paths raced. Now a single repeating recovery timer ticks independently
+   of the attach chain, so the bounded budget always runs out and a visible
+   failure always fires (`HiveTerminalView.markAttachFailed` → `.lost`;
+   `PaneView` shows the failure badge + "renderer disconnected"). Controls: the
+   never-give-up mutation goes red at 1006 unbounded retries; a timer-driven
+   test reaches give-up even when the attach never progresses (the stall bug).
+   Live-verified: kill host → 6 bounded retries → visible "renderer
+   disconnected" badge.
 
 ## Contract source
 
@@ -145,7 +191,12 @@ bun scripts/b22-live-attach-proof.ts   # boots stack + app; Ctrl-C tears down
 
 ## Residuals (named, not hidden)
 
-- The watchable screen recording awaits an unlocked user session (above).
+- The watchable screen recording is DONE (frame1/2/3 screenshots above); no
+  longer a residual.
+- Terminate while a viewer is attached returns a `sessiond INTERNAL` at
+  harness shutdown even though the host does terminate cleanly (final.json:
+  `terminated`, no survivors, `waitObserved`). This is a teardown-reporting
+  path, not a failure to terminate, and is a follow-up after landing.
 - The harness sustains the visibility lease itself (its own publisher
   identity). The real Workspace's own publications renew only sessions whose
   create was bound to the Workspace's identity — that binding arrives with

@@ -1,19 +1,22 @@
 M1-B2 B2.2 attach + live output evidence
 
 Suites at this pin:
- 10 skip
- 0 fail
- 7160 expect() calls
-Ran 1735 tests across 133 files. [54.36s]
-TSC OK
-	 Executed 374 tests, with 3 tests skipped and 13 failures (7 unexpected) in 16.765 (16.799) seconds
-native sessiond suite: green (golden real-host with B2.2 legs included)
+- bun: 1735 tests, 0 failures, 10 live-account skips
+- tsc --noEmit: clean
+- native sessiond: green (golden real-host with B2.2 legs; host-fragility control)
+- Swift: 377 tests, 2 skips, 0 failures (real surfaces on an unlocked session)
 
-Swift failure parity: branch failure set is a subset of unmodified main's
-(environmental production-config surface creation without an unlocked GUI
-session); diff recorded in this session, main scratch at b9c81c07.
+LIVE WATCH (recorded, real Workspace app):
+- live-watch-frame1-ticker-0000-0059.png  — aria pane rendering live ticker
+- live-watch-frame2-ticker-0148-0198.png  — same pane ADVANCED (live, not frozen); host journal reached 0230
+- live-watch-frame3-renderer-disconnected.png — post host-kill: bounded recovery → visible 'renderer disconnected' badge
+  User confirmed on screen: 'it rendered and stayed up'.
+
+Robustness fixes (found live, fixed, mutation-verified):
+- host fragility: per-connection setup failure → close+continue (never kills host)
+- app recovery: timer-driven bounded retry → visible give-up (no infinite loop, no silent stall)
 
 Artifacts:
-- live-proof-transcript.log — full stack boot, create, renewals, teardown w/ termination audit
-- live-host-attach-test.txt — opt-in Swift live wire test PASS against the real host
-- attach-grant-cli.txt — exact-locator grant + typed wrong-generation refusal + capacity bound
+- live-proof-transcript.log — stack boot/create/renew/teardown
+- live-host-attach-test.txt — opt-in Swift live wire test PASS vs the real host
+- attach-grant-cli.txt — exact-locator grant + typed wrong-generation refusal
