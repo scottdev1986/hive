@@ -702,6 +702,71 @@ const WireStubServer = struct {
     }
 };
 
+test "consuming an issued grant frees the mirror slot so reconnect churn never exhausts capacity" {
+    const now: u64 = 1_000_000;
+    const record = fixtureRecord(now + 30 * std.time.ns_per_s);
+    const operations = [_][]const u8{"view"};
+    const capacity = broker.generated.limits.viewers_per_generation;
+
+    // Consume-on-issue (what the broker's issueAttach now does): issue and
+    // consume far more grants than the four-slot mirror; every one is admitted
+    // because consumption releases the slot.
+    {
+        var host = fixtureHost(record);
+        var registry: broker.Registry = .{};
+        try std.testing.expect(registry.register(record, host.control()) == null);
+        var i: usize = 0;
+        while (i < capacity * 5) : (i += 1) {
+            var raw: [32]u8 = undefined;
+            std.mem.writeInt(u256, &raw, @intCast(i + 1), .little);
+            var hash: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(&raw, &hash, .{});
+            try std.testing.expect(registry.registerGrant(
+                record.locator,
+                hash,
+                "viewer-churn",
+                &operations,
+                record.geometry,
+                now,
+            ) == null);
+            try std.testing.expect(registry.consumeGrant(record.locator, &raw, now) == null);
+        }
+    }
+
+    // Positive control: WITHOUT the consume, the mirror fills and refuses a
+    // fresh viewer with capacity_exceeded — proving the consume above is
+    // load-bearing, not incidental.
+    {
+        var host = fixtureHost(record);
+        var registry: broker.Registry = .{};
+        try std.testing.expect(registry.register(record, host.control()) == null);
+        var refused = false;
+        var i: usize = 0;
+        while (i < capacity + 1) : (i += 1) {
+            var raw: [32]u8 = undefined;
+            std.mem.writeInt(u256, &raw, @intCast(i + 1), .little);
+            var hash: [32]u8 = undefined;
+            std.crypto.hash.sha2.Sha256.hash(&raw, &hash, .{});
+            if (registry.registerGrant(
+                record.locator,
+                hash,
+                "viewer-flood",
+                &operations,
+                record.geometry,
+                now,
+            )) |register_failure| {
+                try std.testing.expectEqual(
+                    broker.protocol.WireError.capacity_exceeded,
+                    register_failure.code,
+                );
+                refused = true;
+                break;
+            }
+        }
+        try std.testing.expect(refused);
+    }
+}
+
 test "security corpus rejects replay stale generation and foreign instance" {
     const now: u64 = 1_000_000;
     const record = fixtureRecord(now + 30 * std.time.ns_per_s);

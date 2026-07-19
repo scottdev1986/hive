@@ -3164,6 +3164,14 @@ pub const ProductionBackend = struct {
             now_ns,
         )) |register_failure| return .{ .failure = register_failure };
 
+        // The broker's per-generation grant slots are an issuance-capacity
+        // mirror only — the HOST owns one-use validation and removes the grant
+        // on the viewer's attach. Release the mirror slot as soon as the grant
+        // is handed to the viewer so reconnect churn (a pane repeatedly losing
+        // its transport and re-attaching) cannot exhaust the four slots and
+        // refuse a fresh viewer while spent grants sit until their 15s expiry.
+        _ = self.registry.consumeGrant(locator, &token_hex, now_ns);
+
         const lookup = self.registry.lookup(locator) orelse return failure(.not_found);
         const entry = switch (lookup) {
             .failure => |lookup_failure| return .{ .failure = lookup_failure },

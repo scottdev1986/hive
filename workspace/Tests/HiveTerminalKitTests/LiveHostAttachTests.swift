@@ -249,4 +249,20 @@ final class LiveHostAttachTests: XCTestCase {
             "wrong-generation refusal missing typed reason: \(wrong.output)"
         )
     }
+
+    /// Reconnect-churn robustness (§18): a pane that repeatedly loses its
+    /// transport and re-attaches keeps getting fresh one-use grants. The
+    /// broker's four-slot per-generation mirror must not exhaust while spent
+    /// grants await their 15 s expiry — issueAttach releases the slot on issue,
+    /// so far more than capacity succeed inside one host's grant window.
+    func testReconnectChurnNeverExhaustsGrantCapacity() throws {
+        let (proof, _) = try loadProof()
+        for i in 0..<20 {
+            let line = try issueGrant(proof, viewerId: "b22-churn-\(i)")
+            XCTAssertEqual(
+                line.status, 0,
+                "churn grant \(i) refused (grant-slot exhaustion?): \(line.output)"
+            )
+        }
+    }
 }
