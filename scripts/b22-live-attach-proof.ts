@@ -22,8 +22,11 @@ import { appendFileSync, chmodSync, existsSync, mkdirSync, writeFileSync } from 
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..");
+// Short by necessity: the home canonicalizes under /private/tmp and the host
+// socket path (…/runtime/sessiond/hosts/ses_<36-char uuid>/host.sock) must
+// stay inside the 104-byte sun_path limit.
 const home = process.env.HIVE_B22_HOME
-  ?? `/tmp/hive-b22-proof-${Math.random().toString(16).slice(2, 10)}`;
+  ?? `/tmp/hb22-${Math.random().toString(16).slice(2, 6)}`;
 process.env.HIVE_HOME = home;
 const port = Number(process.env.HIVE_B22_PORT ?? "43117");
 const agentName = "aria";
@@ -210,7 +213,15 @@ const spec = {
   launchGrantId: "b22-live-proof-grant",
   launchGrantRevision: 1,
 };
-const created = await adapter.create(spec, new Uint8Array(), { locator, visibility });
+let created;
+try {
+  created = await adapter.create(spec, new Uint8Array(), { locator, visibility });
+} catch (error) {
+  log(`session create failed: ${error}`);
+  broker.kill();
+  await daemon.stop();
+  process.exit(1);
+}
 log(`session created: hostPid=${created.inspection.hostPid} provider=${created.inspection.providerRoot?.pid}`);
 
 // Sustain the visibility lease from this live publisher process.
