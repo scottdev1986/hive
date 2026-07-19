@@ -67,6 +67,7 @@ let package = Package(
             name: "HiveWorkspace",
             dependencies: [
                 "WorkspaceCore",
+                "HiveTerminalKit",
                 .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             // Official vendor marks for the Model Control Center. The release

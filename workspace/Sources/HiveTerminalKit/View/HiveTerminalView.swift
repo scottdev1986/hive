@@ -266,6 +266,29 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         return outcome
     }
 
+    /// Applies one live post-attach host frame through the locator-fenced
+    /// client (§20/§26). Frames for a superseded binding are rejected by the
+    /// client and never mutate the surface. Main-thread confined.
+    public func pumpHostFrame(_ frame: WireFrame) {
+        guard let binding, let client = attachClient else { return }
+        let outcome = (try? client.handleFrame(frame, frameBinding: binding))
+            ?? .rejectedLateFrame
+        highWater = client.highWater
+        claimPresentation = client.claimPresentation
+        switch outcome {
+        case .firstCorrectFrame(let hw, _):
+            highWater = hw
+            if surfaceState != .live {
+                setSurfaceState(.live)
+                onFirstCorrectFrame?(hw)
+            }
+        case .failed(let state):
+            setSurfaceState(state)
+        case .rejectedLateFrame, .continueReplay:
+            break
+        }
+    }
+
     /// Binds this view to one exact locator. A reconnect may replace only the
     /// connection fence; a different locator or generation requires a new view.
     public func bind(to newBinding: SurfaceBinding, highWater: UInt64 = 0) throws {

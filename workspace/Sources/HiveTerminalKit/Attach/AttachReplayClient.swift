@@ -377,13 +377,18 @@ public final class AttachReplayClient {
         return .firstCorrectFrame(highWater: highWater, connectionId: binding.connectionId)
     }
 
+    /// §20 output acknowledgement — the frozen APPLIED output branch. The
+    /// native header validator requires a nonzero client request id on
+    /// non-unsolicited frames, so acks spend their own request ids.
     private func sendApplied(throughSeq: UInt64) throws {
         guard transport != nil else { return }
         let object: [String: Any] = [
             "schemaVersion": 1,
+            "resultKind": "output",
             "throughSeq": String(throughSeq),
         ]
-        try sendJSON(.applied, object: object, requestId: 0, flags: [.response])
+        try sendJSON(.applied, object: object, requestId: nextRequestId)
+        nextRequestId += 1
     }
 
     private func sendJSON(

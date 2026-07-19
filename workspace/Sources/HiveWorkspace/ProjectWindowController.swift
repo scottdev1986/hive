@@ -259,6 +259,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             case .paneRemoved(let paneID):
                 pendingCloses.remove(paneID)
                 if let view = paneViews.removeValue(forKey: paneID) {
+                    view.sessiondTerminal?.detach() // renderer detach, never close
                     view.contentView.terminateChild() // detaches the tmux client, never the session
                     view.removeFromSuperview()
                 }
@@ -302,9 +303,22 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         view.contentView.onComposerInput = { [weak self] action in
             self?.onComposerInput?(recipient, action)
         }
-        view.contentView.schedule(
-            command: terminalCommand(for: pane),
-            workingDirectory: projectDirectory)
+        if pane.kind == .agent,
+           let locator = pane.sessionLocator,
+           locator.hostKind == "sessiond" {
+            // B2.2: a sessiond-backed pane renders through the exact-locator
+            // HiveTerminalView; no tmux client is spawned for it.
+            view.installSessiondTerminal(SessiondPaneTerminal(
+                agentName: pane.title,
+                locator: locator,
+                hivePath: hivePath,
+                daemonPort: daemonPort,
+                instanceHome: instanceHome))
+        } else {
+            view.contentView.schedule(
+                command: terminalCommand(for: pane),
+                workingDirectory: projectDirectory)
+        }
         if pane.kind == .orchestrator {
             view.contentView.onChildExit = { [weak self] exitCode in
                 guard let self, !self.isClosing else { return }
@@ -417,6 +431,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// sessions, and detaching a client must never kill them.
     func terminateAllTerminals() {
         for view in paneViews.values {
+            view.sessiondTerminal?.detach()
             view.contentView.terminateChild()
         }
     }

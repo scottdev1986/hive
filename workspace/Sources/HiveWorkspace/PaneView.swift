@@ -24,6 +24,28 @@ final class PaneView: NSView {
     private var pulsing = false
     private var focusIndicator: PaneFocusIndicator = .none
 
+    /// B2.2: a sessiond-backed pane renders through HiveTerminalView driven by
+    /// the pane's exact locator; the SwiftTerm content stays unspawned beneath
+    /// it. nil for tmux panes.
+    private(set) var sessiondTerminal: SessiondPaneTerminal?
+
+    /// Installs the sessiond renderer over the content area. The tmux content
+    /// view must not have been scheduled; close/kill authority is untouched
+    /// (the renderer is a disposable viewer, §26).
+    func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
+        guard sessiondTerminal == nil else { return }
+        do {
+            let terminalView = try terminal.makeView()
+            terminalView.frame = contentView.bounds
+            contentView.addSubview(terminalView)
+            sessiondTerminal = terminal
+            terminal.startWhenGeometryReady()
+        } catch {
+            NSLog("sessiond terminal surface for pane %@ failed: %@",
+                  titleLabel.stringValue, "\(error)")
+        }
+    }
+
     init(paneID: PaneID, title: String, tmuxSession: String? = nil,
          tmuxSocket: String? = nil,
          allowsMouseReporting: Bool = true,
