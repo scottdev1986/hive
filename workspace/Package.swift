@@ -93,8 +93,21 @@ let package = Package(
         ),
         .executableTarget(
             name: "GhosttyManualIsolationProbe",
-            dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
-            path: "Tests/GhosttyManualIsolationProbe"
+            // Isolation probe talks only the C bridge + AppKit host view; it must
+            // not pull HiveTerminalKit (and the Gate-10 snapshot symbol) so a
+            // six-or-seven-symbol kit can both qualify Gate 1.
+            dependencies: ["HiveGhosttyC"],
+            path: "Tests/GhosttyManualIsolationProbe",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Metal"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("IOKit"),
+                .linkedLibrary("c++"),
+            ]
         ),
         .executableTarget(
             name: "GhosttyGate10Probe",

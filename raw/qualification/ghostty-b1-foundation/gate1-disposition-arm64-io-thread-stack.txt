@@ -1,0 +1,4 @@
+    727 Thread_37478328: io
+    + 727 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   727 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1028e4244]
+    +     727 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]

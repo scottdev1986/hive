@@ -1,0 +1,3 @@
+stage=create arch=x86_64 root_pid=94421
+94421     1 94421      0 Ss   /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate1-disp.XFQ8Ai/build-x86_64/x86_64-apple-macosx/debug/GhosttyManualIsolationProbe
+children=0

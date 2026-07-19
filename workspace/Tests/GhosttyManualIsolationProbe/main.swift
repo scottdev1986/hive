@@ -161,9 +161,19 @@ if processExited || foregroundPID != 0 || ttyLength != 0 {
 }
 emit(stage: "create", facts: [
     "engineBuildId": String(cString: hive_ghostty_engine_build_id_v1()),
+    "surfaceCreated": true,
+    "suppliedWorkingDirectory": String(cString: workingDirectory),
+    "suppliedCommand": String(cString: command),
+    "suppliedEnv": "\(String(cString: environmentKey))=\(String(cString: environmentValue))",
+    "suppliedInitialInput": String(cString: initialInput),
+    "waitAfterCommand": true,
+    "processConfigDisposition": "inert",
     "processExited": processExited,
     "foregroundPid": String(foregroundPID),
     "ttyLength": ttyLength,
+    "stockProcessExitedDisposition": "unsupported_sentinel_false",
+    "stockForegroundPidDisposition": "unsupported_sentinel_zero",
+    "stockTtyDisposition": "unsupported_sentinel_empty",
     "writeCallbacks": callbackLog.snapshot().count,
     "initialInputVisible": false,
 ])

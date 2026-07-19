@@ -1,0 +1,28 @@
+p94421
+f0
+tFIFO
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate1-disp.XFQ8Ai/x86_64.control
+f1
+tREG
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate1-disp.XFQ8Ai/capture/x86_64-protocol.jsonl
+f2
+tREG
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate1-disp.XFQ8Ai/capture/x86_64-probe.stderr.txt
+f3
+tREG
+n/Users/scottkellar/Library/Caches/com.mitchellh.ghostty/sentry/60274e60-52fb-494b-9c7f-ea6302e1351f.run.lock
+f4
+tKQUEUE
+ncount=0, state=0x12
+f5
+tKQUEUE
+ncount=0, state=0x12
+f6
+tREG
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/C/com.apple.metal/16777235_467/functions1.data
+f7
+tREG
+n/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/C/com.apple.metal/16777235_467/functions1.list
+f8
+tKQUEUE
+ncount=0, state=0x12

@@ -1,0 +1,164 @@
+# Gate 1 — manual-mode isolation: DISPOSITION RECORD
+# Captured: 2026-07-19 by flora (Hive writer)
+# Probe: GhosttyManualIsolationProbe (re-run for disposition closure)
+# Contract: docs/terminal/ghostty-fork-contract-v1.md §Manual-mode isolation
+# Story: planning/story-m1-b1-ghosttykit-qualification.md gate 1 + DoD
+
+## Object under qualification
+
+hive_ghostty_surface_new_manual_v1 at the Ghostty fork pin recorded in
+native/toolchain-lock.json:
+
+  ghostty_commit=73534c4680a809398b396c94ac7f12fcccb7963d
+  ghostty_patched_tree=d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb
+  bridge_header_sha256=275ca6b8d3af85d9e9addcdc4f4e0edc599cd8fba2f93b19fd3d1f089688fafe
+
+Host: macOS 26.3.1 (25D2128), Xcode 26.6 (17F113), host_arch=arm64.
+A-class live proof already on main (process-tree/fd/thread before/create/use/free
+for both slices). This record closes the disposition gap: cwd/command/env/
+initial_input + stock pid/tty/process-exit.
+
+Engine build IDs measured on this re-run (architecture-bound):
+  arm64  engineBuildId=cd20992008a1f957ffd8c01d191dec297e55540483164dc83f80a759e1879459
+  x86_64 engineBuildId=2b27c3abfb2981bd4b3f886ad3c8d377f3d228d813bee2608fd3cf6f29149961
+
+Supporting re-run artifacts (same directory):
+  gate1-disposition-{arm64,x86_64}-protocol.jsonl
+  gate1-disposition-{arm64,x86_64}-create.process-tree.txt
+  gate1-disposition-{arm64,x86_64}-create.fds.txt
+  gate1-disposition-{arm64,x86_64}-io-thread-stack.txt
+  gate1-disposition-observer-positive-control.process-tree.txt
+
+## Positive controls (reader liveness — not empty-world)
+
+### P1 — process-tree observer sees a real child
+
+Before trusting children=0 on the probe, the controller spawned /bin/sleep as a
+direct child and required pgrep -P $$ to list that PID:
+
+observer_parent=91601 observer_child=91692
+91601 65281 91601      0 Ss   /bin/zsh
+91692 91601 91601      0 SN   /bin/sleep
+
+PASS: observer_child appears under observer_parent. An all-empty descendant
+inventory is therefore a real empty world, not a dead reader.
+
+### P2 — fd inventory sees a known control FIFO
+
+At create, lsof for the probe must list the stage-control FIFO path
+(.../arm64.control or .../x86_64.control). Measured:
+  arm64 control-FIFO name matches in create.fds: count=1
+  x86_64 control-FIFO name matches in create.fds: count=1
+PASS: the fd reader is live; absence of /dev/pty* and /dev/ttys* is therefore
+meaningful.
+
+### P3 — protocol JSON carries measured disposition fields (not missing keys)
+
+Create-stage lines include explicit processExited / foregroundPid / ttyLength
+keys with the contract sentinels (counts below must be 1, not 0):
+  arm64 processExited:false present=1
+  arm64 foregroundPid:"0" present=1
+  arm64 ttyLength:0 present=1
+  x86_64 processExited:false present=1
+  x86_64 foregroundPid:"0" present=1
+  x86_64 ttyLength:0 present=1
+PASS: sentinels are observed positives in the protocol, not inferred from
+absent fields.
+
+## Hostile / inert process-config fields supplied at create
+
+GhosttyManualIsolationProbe deliberately fills stock surface-config process
+fields with values that would be highly visible if honored:
+
+  working_directory = /hive-manual-cwd-must-be-inert-and-missing
+  command           = /bin/sleep 600
+  env               = HIVE_MANUAL_ENV_MUST_BE_INERT=sentinel
+  initial_input     = INITIAL_INPUT_MUST_BE_INERT
+  wait_after_command = true
+
+If command were launched, /bin/sleep 600 would remain as a direct child for the
+entire create/use window (no race-to-exit). If initial_input were applied, the
+sentinel string would appear on the screen before any process_output.
+
+## Disposition table
+
+| Input / query | Contract disposition | Measured control (this re-run) |
+|---|---|---|
+| working_directory | INERT (ignored; no chdir/exec path) | surfaceCreated=true; children=0 at create on both arches |
+| command | INERT (no child/shell) | suppliedCommand=/bin/sleep 600 observed in protocol; children=0 (P1 proves reader would see sleep) |
+| env_vars / env_var_count | INERT | suppliedEnv observed; no child carrying that env |
+| initial_input | INERT (does not seed terminal output) | initialInputVisible=false; create-screen check in probe rejects if sentinel visible |
+| wait_after_command | INERT | waitAfterCommand=true supplied; no process to wait on |
+| ghostty_surface_process_exited | UNSUPPORTED sentinel false | processExited=false measured (P3); never fabricated exit |
+| ghostty_surface_foreground_pid | UNSUPPORTED sentinel zero | foregroundPid="0" measured (P3); never a fabricated pid |
+| ghostty_surface_tty_name | UNSUPPORTED sentinel empty | ttyLength=0 measured (P3); never a fabricated path |
+| PTY / process reader-writer thread | none started | no /dev/pty* or /dev/ttys* in create fds (P2); io thread blocked in kqueue/kevent, not pty/waitpid/read/write |
+
+Overall process-config disposition recorded by the probe:
+  processConfigDisposition = inert
+  (surface creation SUCCEEDED with hostile fields present — this is INERT, not REJECT)
+
+## Live create-stage measurements
+
+### arm64 create protocol line
+{"engineBuildId":"cd20992008a1f957ffd8c01d191dec297e55540483164dc83f80a759e1879459","foregroundPid":"0","initialInputVisible":false,"pid":92809,"processConfigDisposition":"inert","processExited":false,"stage":"create","stockForegroundPidDisposition":"unsupported_sentinel_zero","stockProcessExitedDisposition":"unsupported_sentinel_false","stockTtyDisposition":"unsupported_sentinel_empty","suppliedCommand":"\/bin\/sleep 600","suppliedEnv":"HIVE_MANUAL_ENV_MUST_BE_INERT=sentinel","suppliedInitialInput":"INITIAL_INPUT_MUST_BE_INERT","suppliedWorkingDirectory":"\/hive-manual-cwd-must-be-inert-and-missing","surfaceCreated":true,"ttyLength":0,"waitAfterCommand":true,"writeCallbacks":0}
+
+### arm64 create process tree
+stage=create arch=arm64 root_pid=92809
+92809     1 92809      0 Ss   /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate1-disp.XFQ8Ai/build-arm64/arm64-apple-macosx/debug/GhosttyManualIsolationProbe
+children=0
+
+### arm64 create io-thread sample (must be event-loop idle, not process I/O)
+    727 Thread_37478328: io
+    + 727 thread_start  (in libsystem_pthread.dylib) + 8  [0x19c8a6ba8]
+    +   727 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 2496  [0x1028e4244]
+    +     727 kevent64  (in libsystem_kernel.dylib) + 8  [0x19c874b84]
+
+### arm64 create PTY names in fds
+(none)
+
+### x86_64 create protocol line
+{"engineBuildId":"2b27c3abfb2981bd4b3f886ad3c8d377f3d228d813bee2608fd3cf6f29149961","foregroundPid":"0","initialInputVisible":false,"pid":94421,"processConfigDisposition":"inert","processExited":false,"stage":"create","stockForegroundPidDisposition":"unsupported_sentinel_zero","stockProcessExitedDisposition":"unsupported_sentinel_false","stockTtyDisposition":"unsupported_sentinel_empty","suppliedCommand":"\/bin\/sleep 600","suppliedEnv":"HIVE_MANUAL_ENV_MUST_BE_INERT=sentinel","suppliedInitialInput":"INITIAL_INPUT_MUST_BE_INERT","suppliedWorkingDirectory":"\/hive-manual-cwd-must-be-inert-and-missing","surfaceCreated":true,"ttyLength":0,"waitAfterCommand":true,"writeCallbacks":0}
+
+### x86_64 create process tree
+stage=create arch=x86_64 root_pid=94421
+94421     1 94421      0 Ss   /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate1-disp.XFQ8Ai/build-x86_64/x86_64-apple-macosx/debug/GhosttyManualIsolationProbe
+children=0
+
+### x86_64 create io-thread sample
+    876 Thread_37486672: io
+    + 876 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   876 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x105226b43]
+    +     876 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    +       876 ???  (in <unknown binary>)  [0x7ff89a03eb80]
+
+### x86_64 create PTY names in fds
+(none)
+
+## Use-stage positive controls (isolation of mutation paths)
+
+Only ordered process_output mutates remote output; only the write callback
+emits host-bound bytes. Measured use-stage lines:
+
+arm64: {"hostInputVisible":false,"pid":92809,"remoteOutputVisible":true,"stage":"use","writeCallbacks":1,"writeHex":["484f53545f494e5055545f43414c4c4241434b"]}
+x86_64: {"hostInputVisible":false,"pid":94421,"remoteOutputVisible":true,"stage":"use","writeCallbacks":1,"writeHex":["484f53545f494e5055545f43414c4c4241434b"]}
+
+Required keys (PASS when present):
+  remoteOutputVisible=true  — process_output of REMOTE_OUTPUT_ONLY painted
+  hostInputVisible=false    — ghostty_surface_text did not mutate remote screen
+  writeCallbacks=1          — exactly one write-callback delivery
+  writeHex=484f53545f494e5055545f43414c4c4241434b  — HOST_INPUT_CALLBACK bytes
+
+## Verdict
+
+Gate 1 disposition gap CLOSED for this pin:
+  1. cwd/command/env/initial_input/wait_after_command are INERT under manual
+     create (surface created; no child, no PTY, no process reader/writer stack).
+  2. Stock process_exited / foreground_pid / tty_name are UNSUPPORTED sentinels
+     (false / 0 / empty), observed as positive protocol fields, never fabricated
+     process truth.
+  3. Positive controls P1–P3 prove the observers that recorded the negatives
+     can also record positives.
+
+Cross-vendor review pin: commit of this evidence on
+hive/flora-category-simple-coding-m1-b1-g (do not self-land; light review).

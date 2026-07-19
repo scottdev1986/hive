@@ -1,0 +1,5 @@
+    876 Thread_37486672: io
+    + 876 thread_start  (in libsystem_pthread.dylib) + 15  [0x7ff80e271857]
+    +   876 backend.kqueue.Loop.tick  (in GhosttyManualIsolationProbe) + 3091  [0x105226b43]
+    +     876 ???  (in <unknown binary>)  [0x7ff89a5b1198]
+    +       876 ???  (in <unknown binary>)  [0x7ff89a03eb80]

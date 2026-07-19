@@ -1,0 +1,3 @@
+observer_parent=91601 observer_child=91692
+91601 65281 91601      0 Ss   /bin/zsh
+91692 91601 91601      0 SN   /bin/sleep

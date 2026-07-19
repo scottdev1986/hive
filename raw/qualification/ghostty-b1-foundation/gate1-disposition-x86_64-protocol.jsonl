@@ -1,0 +1,5 @@
+{"pid":94421,"stage":"before"}
+{"engineBuildId":"2b27c3abfb2981bd4b3f886ad3c8d377f3d228d813bee2608fd3cf6f29149961","foregroundPid":"0","initialInputVisible":false,"pid":94421,"processConfigDisposition":"inert","processExited":false,"stage":"create","stockForegroundPidDisposition":"unsupported_sentinel_zero","stockProcessExitedDisposition":"unsupported_sentinel_false","stockTtyDisposition":"unsupported_sentinel_empty","suppliedCommand":"\/bin\/sleep 600","suppliedEnv":"HIVE_MANUAL_ENV_MUST_BE_INERT=sentinel","suppliedInitialInput":"INITIAL_INPUT_MUST_BE_INERT","suppliedWorkingDirectory":"\/hive-manual-cwd-must-be-inert-and-missing","surfaceCreated":true,"ttyLength":0,"waitAfterCommand":true,"writeCallbacks":0}
+{"hostInputVisible":false,"pid":94421,"remoteOutputVisible":true,"stage":"use","writeCallbacks":1,"writeHex":["484f53545f494e5055545f43414c4c4241434b"]}
+{"pid":94421,"stage":"free","writeCallbacks":1}
+{"pid":94421,"stage":"done"}
