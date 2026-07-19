@@ -744,6 +744,11 @@ const validCases: readonly WireCorpusCase[] = [
     value: { schemaVersion: 1, resultKind: "resize", result: fixtureTerminalHostResize },
   },
   {
+    name: "APPLIED frozen output acknowledgement",
+    schema: "appliedPayload",
+    value: { schemaVersion: 1, resultKind: "output", throughSeq: "262144" },
+  },
+  {
     name: "session inspection preserves unknown input observation",
     schema: "sessionInspection",
     value: { ...fixtureInspection, input: { ...fixtureInspection.input, state: "UNKNOWN" } },
@@ -889,6 +894,11 @@ const invalidCases: readonly WireCorpusCase[] = [
       receipt: fixtureTerminalHostReceipt,
       result: fixtureTerminalHostResize,
     },
+  },
+  {
+    name: "APPLIED output acknowledgement rejects non-decimal high-water",
+    schema: "appliedPayload",
+    value: { schemaVersion: 1, resultKind: "output", throughSeq: "0x40" },
   },
 ];
 

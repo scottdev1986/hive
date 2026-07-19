@@ -5309,6 +5309,31 @@
             "result"
           ],
           "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "resultKind": {
+              "type": "string",
+              "const": "output"
+            },
+            "throughSeq": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "resultKind",
+            "throughSeq"
+          ],
+          "additionalProperties": false
         }
       ]
     },

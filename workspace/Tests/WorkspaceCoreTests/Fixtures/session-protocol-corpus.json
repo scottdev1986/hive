@@ -1784,6 +1784,15 @@
       }
     },
     {
+      "name": "APPLIED frozen output acknowledgement",
+      "schema": "appliedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "resultKind": "output",
+        "throughSeq": "262144"
+      }
+    },
+    {
       "name": "session inspection preserves unknown input observation",
       "schema": "sessionInspection",
       "value": {
@@ -3595,6 +3604,15 @@
           "orderedAt": "2",
           "foregroundProcessObservation": "not-claimed"
         }
+      }
+    },
+    {
+      "name": "APPLIED output acknowledgement rejects non-decimal high-water",
+      "schema": "appliedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "resultKind": "output",
+        "throughSeq": "0x40"
       }
     }
   ],

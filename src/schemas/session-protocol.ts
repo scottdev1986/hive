@@ -791,7 +791,8 @@ export const ResizePayloadSchema = z.strictObject({
   idempotencyKey: z.string().min(1),
 }).readonly();
 
-/** Correlated result union shared by INPUT_SUBMIT and RESIZE. */
+/** Correlated result union shared by INPUT_SUBMIT and RESIZE, plus the §20
+ * viewer→host ordered-output high-water acknowledgement (B2.2). */
 export const AppliedPayloadSchema = z.discriminatedUnion("resultKind", [
   z.strictObject({
     schemaVersion: z.literal(1),
@@ -802,6 +803,12 @@ export const AppliedPayloadSchema = z.discriminatedUnion("resultKind", [
     schemaVersion: z.literal(1),
     resultKind: z.literal("resize"),
     result: TerminalHostResizeResultSchema,
+  }).readonly(),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    resultKind: z.literal("output"),
+    /** Exclusive contiguous OUTPUT byte high-water the viewer has applied. */
+    throughSeq: DecimalUint64Schema,
   }).readonly(),
 ]);
 const AutomatedInputObjectSchema = z.strictObject({
