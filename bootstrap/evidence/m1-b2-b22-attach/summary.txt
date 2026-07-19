@@ -1,20 +1,21 @@
 M1-B2 B2.2 attach + live output evidence
 
 Suites at this pin:
-- bun: 1735 tests, 0 failures, 10 live-account skips
+- bun: 1725 pass, 10 skip, 0 fail
 - tsc --noEmit: clean
-- native sessiond: green (golden real-host with B2.2 legs; host-fragility control)
-- Swift: 377 tests, 2 skips, 0 failures (real surfaces on an unlocked session)
+- native sessiond: green (golden real-host + grant-churn control + host-setup-failure control)
+- Swift: 379 tests, 3 skips, 0 failures (real surfaces on an unlocked session)
 
 LIVE WATCH (recorded, real Workspace app):
 - live-watch-frame1-ticker-0000-0059.png  — aria pane rendering live ticker
-- live-watch-frame2-ticker-0148-0198.png  — same pane ADVANCED (live, not frozen); host journal reached 0230
-- live-watch-frame3-renderer-disconnected.png — post host-kill: bounded recovery → visible 'renderer disconnected' badge
+- live-watch-frame2-ticker-0148-0198.png  — same pane ADVANCED (live); host journal reached 0230
+- live-watch-frame3-renderer-disconnected.png — post host-kill: bounded recovery -> visible 'renderer disconnected' badge
   User confirmed on screen: 'it rendered and stayed up'.
 
-Robustness fixes (found live, fixed, mutation-verified):
-- host fragility: per-connection setup failure → close+continue (never kills host)
-- app recovery: timer-driven bounded retry → visible give-up (no infinite loop, no silent stall)
+Robustness fixes (mutation-verified controls):
+- host fragility: per-connection setup failure -> close+continue (never kills host)
+- app recovery: self-rescheduling timer, exponential backoff 0.5->8s, bounded give-up -> visible failure
+- broker grant churn: consume-on-issue frees the mirror slot; no CAPACITY_EXCEEDED under reconnect churn
 
 Artifacts:
 - live-proof-transcript.log — stack boot/create/renew/teardown

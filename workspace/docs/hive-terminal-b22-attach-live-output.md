@@ -41,14 +41,29 @@ mutation-verified positive controls:
    retried attach every second forever with no give-up (an infinite silent
    loop that also starved the machine), and an interim recursive-backoff fix
    could still silently strand the pane when the pump-loss and grant-fail
-   retry paths raced. Now a single repeating recovery timer ticks independently
-   of the attach chain, so the bounded budget always runs out and a visible
-   failure always fires (`HiveTerminalView.markAttachFailed` → `.lost`;
-   `PaneView` shows the failure badge + "renderer disconnected"). Controls: the
+   retry paths raced. Now a single self-rescheduling recovery driver runs the
+   show: each one-shot tick advances the give-up budget AND reschedules the
+   next at EXPONENTIAL backoff (`retryDelay(forAttempt:)` = 0.5·2ⁿ capped at
+   8 s), independent of the attach outcome — so a raced/stalled attempt can
+   never strand the pane, the budget always runs out, and a visible failure
+   always fires (`HiveTerminalView.markAttachFailed` → `.lost`; `PaneView`
+   shows the failure badge + "renderer disconnected"). Controls: the
    never-give-up mutation goes red at 1006 unbounded retries; a timer-driven
-   test reaches give-up even when the attach never progresses (the stall bug).
-   Live-verified: kill host → 6 bounded retries → visible "renderer
-   disconnected" badge.
+   test reaches give-up even when the attach never progresses (the stall bug);
+   the backoff-timing test asserts the exact 0.5→8 s escalation so flattening
+   it to a fixed interval goes red. Live-verified: kill host → 6 bounded
+   retries → visible "renderer disconnected" badge.
+3. **Broker grant-slot exhaustion under reconnect churn** (`Registry` /
+   `issueAttach`): the broker's four-slot per-generation grant mirror never
+   freed a slot until the 15 s grant expiry (the real host owns one-use
+   validation and removes its own copy on attach, but the broker was never
+   told), so repeated attach/reattach churn exhausted the slots and refused a
+   fresh viewer with `CAPACITY_EXCEEDED`. `issueAttach` now consumes the token
+   it just issued (`Registry.consumeGrant`), releasing the mirror slot on
+   issue. Controls: a Registry churn test issues+consumes 5× capacity with no
+   refusal, and its positive control (no consume) hits `capacity_exceeded`
+   (mutation-verified red); an opt-in live churn leg issues 20 grants through
+   the production path with no exhaustion.
 
 ## Contract source
 
@@ -166,12 +181,12 @@ are untouched; renderer detach never claims close.
   superseded; typed wrong-generation refusal. Recorded run:
   `bootstrap/evidence/m1-b2-b22-attach/live-host-attach-test.txt`.
 - Suites: conformance 8/8; bun 1725 pass / 10 live-account skips / 0 fail;
-  `tsc --noEmit` clean; native sessiond suite green (golden included); Swift
-  374 tests with 13 failures that are the pre-existing environmental
-  real-surface set — proven identical (branch ⊆ main) on an unmodified main
-  scratch checkout with the same staged artifact; cause is production-config
-  surface creation without an unlocked GUI session (no CVDisplayLink), not
-  code.
+  `tsc --noEmit` clean; native sessiond suite green (golden + the grant-churn
+  and host setup-failure controls); Swift 379 tests / 3 skips / 0 failures on
+  the unlocked session where real Ghostty surfaces create. (The earlier "13
+  environmental real-surface failures" were a locked-session artifact — proven
+  identical branch ⊆ main at the time — and clear entirely once the GUI
+  session is unlocked; no code cause.)
 
 ## The watchable recording
 
@@ -179,11 +194,11 @@ are untouched; renderer detach never claims close.
 in-process real daemon, one manually-created sessiond session running an
 animated color ticker — M1 black-box, NOT M2 spawn) and launches the real
 Workspace app; the pane for the session carries the exact sessiond locator
-and renders through the new wiring. The machine was at the lock screen for
-this entire session (verified by screenshot), and production surface creation
-requires the unlocked GUI session, so the screen recording could not be
-produced headlessly. Everything up to pixels-on-glass is proven by the live
-wire test above; the recording is one command with the user present:
+and renders through the new wiring. This is recorded (see "The live watch"
+section above): the frame1/frame2/frame3 screenshots in the evidence bundle
+capture the pane rendering the live ticker, visibly advancing, and then the
+bounded-recovery "renderer disconnected" state after a host kill. Reproduce
+with one command:
 
 ```sh
 bun scripts/b22-live-attach-proof.ts   # boots stack + app; Ctrl-C tears down
