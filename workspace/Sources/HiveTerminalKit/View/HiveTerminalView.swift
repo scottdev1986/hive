@@ -262,13 +262,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         claimPresentation = client.claimPresentation
         switch outcome {
         case .firstCorrectFrame(let hw, _):
-            highWater = hw
+            engine.applyHiveConfiguration()
+            updateReportedGeometry(scheduleResize: false)
             try client.sendResize(reportedGeometry ?? geometry)
             resizeFramesSent += 1
-            setSurfaceState(.live)
-            notifyOutputStatusReconnect(reason: "first-correct-frame")
-            onFirstCorrectFrame?(hw)
-            scheduleDraw()
+            presentFirstCorrectFrame(hw)
         case .failed(let state):
             setSurfaceState(state)
         case .rejectedLateFrame, .continueReplay:
@@ -289,16 +287,22 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         inputSubmissionState = client.inputSubmissionState
         switch outcome {
         case .firstCorrectFrame(let hw, _):
-            highWater = hw
-            if surfaceState != .live {
-                setSurfaceState(.live)
-                onFirstCorrectFrame?(hw)
-            }
+            presentFirstCorrectFrame(hw)
         case .failed(let state):
             setSurfaceState(state)
         case .rejectedLateFrame, .continueReplay:
             break
         }
+    }
+
+    private func presentFirstCorrectFrame(_ highWater: UInt64) {
+        self.highWater = highWater
+        guard surfaceState != .live else { return }
+        engine.applyHiveConfiguration()
+        setSurfaceState(.live)
+        notifyOutputStatusReconnect(reason: "first-correct-frame")
+        onFirstCorrectFrame?(highWater)
+        scheduleDraw()
     }
 
     /// Binds this view to one exact locator. A reconnect may replace only the
@@ -558,7 +562,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         DispatchQueue.main.asyncAfter(deadline: .now() + resizeQuiescence, execute: work)
     }
 
-    private func updateReportedGeometry() {
+    private func updateReportedGeometry(scheduleResize: Bool = true) {
         guard let size = engine.reportedSize() else {
             reportedGeometry = nil
             return
@@ -583,7 +587,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             cellHeightPx: Double(size.cellHeightPx)
         )
         reportedGeometry = geometry
-        if binding != nil { scheduleResizeFrame(geometry) }
+        if scheduleResize, binding != nil { scheduleResizeFrame(geometry) }
     }
 
     // MARK: - Close

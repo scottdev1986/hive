@@ -5,6 +5,8 @@ import Foundation
 enum HiveTerminalConfiguration {
     static let horizontalPaddingPoints = 10
     static let verticalPaddingPoints = 8
+    static let liveLogFingerprint =
+        "background=0f1117 font-size=13 padding=\(horizontalPaddingPoints)x\(verticalPaddingPoints)"
 
     private static let darkThemeLines = [
         "# Hive C1 dark theme. Colors are inline; no user theme lookup occurs.",

@@ -86,6 +86,19 @@ final class HiveTerminalConfigurationTests: XCTestCase {
         XCTAssertEqual([background.r, background.g, background.b], [0x0f, 0x11, 0x17])
     }
 
+    func testRealSurfaceLiveConfigurationUpdateIsIdempotent() throws {
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        defer { surface.free() }
+        var operations: [(String, GhosttyOperationPhase)] = []
+        surface.operationObserver = { operations.append(($0, $1)) }
+
+        surface.applyHiveConfiguration()
+        surface.applyHiveConfiguration()
+
+        XCTAssertEqual(operations.map(\.0), ["surfaceUpdateConfig", "surfaceUpdateConfig"])
+        XCTAssertEqual(operations.map(\.1), [.begin, .end])
+    }
+
     func testEffectiveAppearanceDrivesLiveSurfaceColorScheme() {
         let engine = FakeManualSurface()
         let view = HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 240), engine: engine)

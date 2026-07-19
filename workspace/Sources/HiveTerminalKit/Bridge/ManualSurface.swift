@@ -136,6 +136,7 @@ protocol ManualSurfaceEngine: AnyObject {
     func setSize(widthPx: UInt32, heightPx: UInt32)
     func setContentScale(x: Double, y: Double)
     func setColorScheme(_ scheme: TerminalColorScheme)
+    func applyHiveConfiguration()
     func setDisplayID(_ displayID: UInt32)
     func setOcclusion(_ visible: Bool)
     func reportedSize() -> ManualSurfaceSize?
@@ -179,6 +180,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
     private(set) var sizeCalls: [(UInt32, UInt32)] = []
     private(set) var contentScaleCalls: [(Double, Double)] = []
     private(set) var colorSchemeCalls: [TerminalColorScheme] = []
+    private(set) var hiveConfigurationApplyCount = 0
     private(set) var displayIDCalls: [UInt32] = []
     private(set) var occlusionCalls: [Bool] = []
     var fakeReportedSize: ManualSurfaceSize?
@@ -255,6 +257,10 @@ final class FakeManualSurface: ManualSurfaceEngine {
     public func setSize(widthPx: UInt32, heightPx: UInt32) { sizeCalls.append((widthPx, heightPx)) }
     public func setContentScale(x: Double, y: Double) { contentScaleCalls.append((x, y)) }
     public func setColorScheme(_ scheme: TerminalColorScheme) { colorSchemeCalls.append(scheme) }
+    public func applyHiveConfiguration() {
+        guard hiveConfigurationApplyCount == 0 else { return }
+        hiveConfigurationApplyCount = 1
+    }
     public func setDisplayID(_ displayID: UInt32) { displayIDCalls.append(displayID) }
     public func setOcclusion(_ visible: Bool) { occlusionCalls.append(visible) }
     public func reportedSize() -> ManualSurfaceSize? { fakeReportedSize }
@@ -359,6 +365,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     private var rawThroughSeq: UInt64 = 0
     private var rawSurfaceHandle: ghostty_surface_t?
     private let clipboardContext: GhosttyClipboardContext
+    private var hiveConfigurationApplied = false
 
     var throughSeq: UInt64 {
         performOnMainSync { self.rawThroughSeq }
@@ -485,6 +492,21 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         ghostty_surface_set_color_scheme(
             surface,
             scheme == .dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+        )
+    }
+
+    public func applyHiveConfiguration() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard !hiveConfigurationApplied,
+              let surface = rawSurfaceHandle,
+              let config = appOwner?.config else { return }
+        operationObserver?("surfaceUpdateConfig", .begin)
+        ghostty_surface_update_config(surface, config)
+        hiveConfigurationApplied = true
+        operationObserver?("surfaceUpdateConfig", .end)
+        NSLog(
+            "ghostty_surface_update_config live C1 %@",
+            HiveTerminalConfiguration.liveLogFingerprint
         )
     }
 
@@ -1353,11 +1375,6 @@ enum GhosttyBridgeFactory {
             throw FactoryError.surfaceFailed
         }
         GhosttySurfaceCallbackRegistry.shared.register(surface, context: callbackContext)
-
-        // C1.0: the same explicitly-loaded Hive file is pushed through the
-        // live surface update API. Never load Ghostty's default locations.
-        creationObserver?("surfaceUpdateConfig")
-        ghostty_surface_update_config(surface, config)
 
         // Size the surface (never 0×0).
         let w = widthPx > 0 ? widthPx : UInt32(max(1, hostView.bounds.width))

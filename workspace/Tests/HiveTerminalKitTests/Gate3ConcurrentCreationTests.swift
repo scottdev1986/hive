@@ -147,7 +147,7 @@ final class Gate3ConcurrentCreationTests: XCTestCase {
 
         XCTAssertEqual(
             observed.map(\.0).filter { $0 != "init" },
-            ["configNew", "appNew", "surfaceNew", "surfaceUpdateConfig"]
+            ["configNew", "appNew", "surfaceNew"]
         )
         XCTAssertTrue(observed.allSatisfy(\.1))
     }

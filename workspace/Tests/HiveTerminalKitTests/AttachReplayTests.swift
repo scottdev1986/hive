@@ -158,6 +158,43 @@ final class AttachReplayTests: XCTestCase {
         XCTAssertEqual(view.focusStealAttempts, 0)
     }
 
+    func testViewAppliesHiveConfigurationOnceAtFirstCorrectFrameBeforePresentation() throws {
+        let host = FakeHost(connectionId: "live-theme")
+        let locator = makeTestLocator()
+        let grant = host.makeGrant(locator: locator)
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            engine: engine
+        )
+        XCTAssertEqual(engine.hiveConfigurationApplyCount, 0)
+
+        try host.enqueueWelcome(instanceId: locator.instanceId, connectionId: host.hostTransport.connectionId)
+        host.enqueueOutput(streamSeq: 0, bytes: Data("ready".utf8))
+        view.onFirstCorrectFrame = { _ in
+            XCTAssertEqual(engine.hiveConfigurationApplyCount, 1)
+            XCTAssertEqual(view.drawScheduledCount, 0)
+        }
+
+        let outcome = try view.attach(
+            grant: grant,
+            geometry: makeGeometry(),
+            transport: host.clientTransport
+        )
+        guard case .firstCorrectFrame = outcome else {
+            XCTFail("expected firstCorrectFrame, got \(outcome)")
+            return
+        }
+        XCTAssertEqual(engine.hiveConfigurationApplyCount, 1)
+
+        let binding = try XCTUnwrap(view.binding)
+        view.pumpHostFrame(
+            WireFrame(type: .output, streamSeq: 5, payload: Data("again".utf8)),
+            frameBinding: binding
+        )
+        XCTAssertEqual(engine.hiveConfigurationApplyCount, 1)
+    }
+
     func testFrameCodecRoundTripMatchesSection20Header() throws {
         let payload = Data("raw-output".utf8)
         let frame = WireFrame(
