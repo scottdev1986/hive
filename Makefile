@@ -2,6 +2,7 @@
 # installed hive and its running instances.
 #
 #   make build                  build + stage the standalone dev release under .dev/
+#   make demo                   build fresh terminal artifacts + launch watched proof
 #   make run PROJECT=/path      run the staged dev build against a separate test repo
 #   make test                   bun suites + sessiond (Zig) + Workspace (Swift)
 #   make cleanup                stop the dev instance and delete all dev artifacts
@@ -22,19 +23,85 @@ DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
+LOCK := $(ROOT)/native/toolchain-lock.json
+NATIVE_CACHE ?= $(ROOT)/.cache/native
+DEMO_CACHE := $(NATIVE_CACHE)/demo
+export HIVE_NATIVE_CACHE := $(NATIVE_CACHE)
 
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),arm64)
 CLI_ASSET := hive-darwin-arm64
 ZIG_ARCH := aarch64
-else
+ZIG_LOCK_ARCH := arm64
+else ifeq ($(UNAME_M),x86_64)
 CLI_ASSET := hive-darwin-x64
 ZIG_ARCH := x86_64
+ZIG_LOCK_ARCH := x86_64
+else
+$(error unsupported host architecture $(UNAME_M); expected arm64 or x86_64)
 endif
 
-ZIG_VERSION := $(shell /usr/bin/plutil -extract zig.version raw -o - native/toolchain-lock.json)
-ZIG := $(ROOT)/.cache/native/zig/toolchains/zig-$(ZIG_ARCH)-macos-$(ZIG_VERSION)/zig
+ZIG_VERSION := $(shell /usr/bin/plutil -extract zig.version raw -o - $(LOCK))
+ZIG_SHA := $(shell /usr/bin/plutil -extract zig.$(ZIG_LOCK_ARCH)Sha256 raw -o - $(LOCK))
+BUN_VERSION := $(shell /usr/bin/plutil -extract bun raw -o - $(LOCK))
+MACOS_DEPLOYMENT_TARGET := $(shell /usr/bin/plutil -extract deploymentTarget raw -o - $(LOCK))
+GHOSTTY_COMMIT := $(shell /usr/bin/plutil -extract ghostty.commit raw -o - $(LOCK))
+GHOSTTY_PATCH_SHA := $(shell /usr/bin/plutil -extract ghostty.patchSeriesSha256 raw -o - $(LOCK))
+ZIG := $(NATIVE_CACHE)/zig/toolchains/zig-$(ZIG_ARCH)-macos-$(ZIG_VERSION)/zig
+TOOLCHAIN_STAMP := $(DEMO_CACHE)/toolchain-$(ZIG_VERSION)-$(ZIG_SHA).stamp
+GHOSTTY_ARTIFACT := $(NATIVE_CACHE)/artifacts/ghostty-$(GHOSTTY_COMMIT)-zig-$(ZIG_SHA)
+GHOSTTY_ARTIFACT_INFO := $(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework/Info.plist
+GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-demo-$(GHOSTTY_PATCH_SHA).stamp
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
+GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
+WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
+SESSIOND_RELEASE_ROOT := $(DEMO_CACHE)/sessiond-releasefast
+SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
+SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
+DEMO_PORT := 43117
+
+GHOSTTY_ENGINE_INPUTS := $(shell find \
+	$(ROOT)/vendor/ghostty \
+	-type f \( \
+	-name '*.zig' -o -name '*.zon' -o -name '*.json' \
+	-o -name '*.c' -o -name '*.h' -o -name '*.m' -o -name '*.mm' \
+	-o -name '*.swift' -o -name '*.metal' \
+	\) \
+	! -path '* *' \
+	! -path '*/.zig-cache/*' \
+	! -path '*/zig-out/*') \
+	$(shell find \
+	$(ROOT)/native/ghostty-patches \
+	$(ROOT)/native/include \
+	$(ROOT)/native/abi \
+	-type f \
+	! -path '*/.zig-cache/*' \
+	! -path '*/zig-out/*') \
+	$(ROOT)/native/ghostty-upstream-tree.txt
+GHOSTTY_BUILD_INPUTS := $(GHOSTTY_ENGINE_INPUTS) \
+	$(LOCK) \
+	$(ROOT)/scripts/build-ghosttykit.sh \
+	$(ROOT)/scripts/check-ghostty-abi.sh \
+	$(ROOT)/scripts/preflight-native-toolchain.sh \
+	$(ROOT)/scripts/prepare-zig-xcode-overlay.sh \
+	$(ROOT)/scripts/qualify-ghostty-checkpoint.sh \
+	$(ROOT)/scripts/qualify-ghostty-release-lock.sh \
+	$(ROOT)/scripts/vendor-ghostty.sh \
+	$(ROOT)/scripts/write-ghostty-artifact-metadata.ts
+WORKSPACE_INPUTS := $(shell find \
+	$(ROOT)/workspace/Sources \
+	$(ROOT)/workspace/Resources \
+	-type f \
+	! -path '* *') \
+	$(ROOT)/workspace/Package.swift \
+	$(ROOT)/workspace/Package.resolved
+SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
+	$(ROOT)/native/sessiond/build.zig \
+	$(ROOT)/native/sessiond/build.zig.zon \
+	$(ROOT)/scripts/prepare-zig-xcode-overlay.sh \
+	$(ROOT)/scripts/zig-runner-tools/xcrun \
+	$(LOCK) \
+	$(GHOSTTY_ENGINE_INPUTS)
 
 # The complete isolation envelope for the dev instance.
 DEV_ENV := \
@@ -46,48 +113,111 @@ DEV_ENV := \
 	TMPDIR=$(DEV)/tmp \
 	TMUX_TMPDIR=$(DEV)/tmux
 
-.PHONY: help build run test test-e2e toolchain ghosttykit clean cleanup deepclean
+.PHONY: help build demo demo-artifacts demo-preflight native sessiond workspace \
+	ghostty ghosttykit run test test-e2e toolchain clean cleanup deepclean
 
 help:
 	@echo "make build                 build + stage the standalone dev release (.dev/)"
+	@echo "make demo                  build fresh artifacts + launch watched typeable proof"
+	@echo "make demo-artifacts        build only the proof's Ghostty/Swift/sessiond artifacts"
+	@echo "make native                build + stage the ReleaseFast sessiond proof binary"
+	@echo "make ghostty               build + stage the lock-pinned GhosttyKit"
+	@echo "make workspace             build the Workspace Swift executable"
 	@echo "make run PROJECT=/path     run the dev build against a separate test repo"
 	@echo "make test                  run all suites (bun, sessiond/Zig, Workspace/Swift)"
 	@echo "make test-e2e              opt-in real-CLI e2e suite (needs tmux on PATH)"
 	@echo "make cleanup               stop the dev instance, delete all dev artifacts"
 	@echo "make deepclean             cleanup + delete native toolchain/build caches"
+	@echo "demo needs Bun $(BUN_VERSION), Xcode/Swift + Metal Toolchain, and an unlocked Aqua GUI session"
 
 # Pinned Zig toolchain + Ghostty dependency cache (native/toolchain-lock.json).
 # The brew zig is not used; the preflight enforces the locked 0.15.x.
-toolchain:
-	@if [ ! -x "$(ZIG)" ]; then "$(ROOT)/scripts/provision-native-toolchain.sh"; fi
+toolchain: $(TOOLCHAIN_STAMP)
 
-# GhosttyKit.xcframework is a build output (see workspace/Package.swift).
-# Reuse the newest cached artifact when one exists and is current; otherwise
-# build it. Currency has three independent markers, each learned from a real
-# staleness failure: the macOS slice must carry the lib-prefixed archive (the
-# SwiftPM rename in build-ghosttykit.sh; without it only the test-bundle link
-# fails), it must ship the per-arch gate-6 fixture corpus
-# (Gate6SurfaceRestoreTests never skips), and its recorded patch series must
-# match native/toolchain-lock.json — the cache dir name embeds only the
-# Ghostty commit and Zig hash, so a patch-series regeneration changes the
-# required bytes under an UNCHANGED name. This target is phony (re-checked
-# every build) because an already-materialized Vendor copy says nothing about
-# currency; the trailing ditto is idempotent.
-ghosttykit: | toolchain
+$(TOOLCHAIN_STAMP): $(LOCK) \
+		$(ROOT)/scripts/provision-native-toolchain.sh \
+		$(ROOT)/scripts/validate-native-toolchain-lock.sh \
+		$(ROOT)/scripts/ghostty-dependency-cache.ts \
+		$(ROOT)/vendor/ghostty/build.zig.zon.json
+	@mkdir -p "$(DEMO_CACHE)"
+	@"$(ROOT)/scripts/provision-native-toolchain.sh"
+	@test -x "$(ZIG)" || { echo "make: pinned Zig was not provisioned; rerun 'make toolchain'" >&2; exit 1; }
+	@touch "$@"
+
+# File-backed rules make source and lock changes invalidate every demo artifact.
+ghostty ghosttykit: $(GHOSTTYKIT_INFO)
+
+$(GHOSTTY_ARTIFACT_STAMP): $(GHOSTTY_BUILD_INPUTS) | toolchain
+	@echo "building lock-pinned GhosttyKit"
+	@"$(ROOT)/scripts/build-ghosttykit.sh"
+	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make ghostty'" >&2; exit 1; }
+	@ls "$(GHOSTTY_ARTIFACT)"/GhosttyKit.xcframework/macos-*/lib*.a >/dev/null 2>&1 || { echo "make: GhosttyKit macOS archive is invalid; rerun 'make ghostty'" >&2; exit 1; }
+	@test -f "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures/$(UNAME_M)/corpus.hvg6" || { echo "make: GhosttyKit checkpoint corpus is missing; rerun 'make ghostty'" >&2; exit 1; }
+	@touch "$@"
+
+$(GHOSTTYKIT_INFO): $(GHOSTTY_ARTIFACT_STAMP)
+	@echo "staging lock-pinned GhosttyKit for SwiftPM"
+	@/bin/rm -rf "$(GHOSTTYKIT)" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
+	@mkdir -p "$(ROOT)/workspace/Vendor"
+	@/usr/bin/ditto "$(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework" "$(GHOSTTYKIT)"
+	@/usr/bin/ditto "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
+	@test -f "$@" || { echo "make: GhosttyKit staging failed; rerun 'make ghostty'" >&2; exit 1; }
+	@touch "$@"
+
+workspace: $(WORKSPACE_BIN)
+
+$(WORKSPACE_BIN): $(WORKSPACE_INPUTS) $(GHOSTTYKIT_INFO)
+	@echo "building Workspace Swift executable"
+	@swift build --package-path "$(ROOT)/workspace"
+	@test -x "$@" || { echo "make: Workspace build produced no executable; rerun 'make workspace'" >&2; exit 1; }
+	@touch "$@"
+
+native: sessiond
+
+sessiond: $(SESSIOND_BIN)
+	@if ! /usr/bin/cmp -s "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)"; then \
+		echo "replacing non-ReleaseFast sessiond proof binary"; \
+		/bin/cp "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)"; \
+		/bin/chmod 755 "$(SESSIOND_BIN)"; \
+	fi
+	@/usr/bin/cmp -s "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)" || { echo "make: sessiond is not the ReleaseFast proof build; rerun 'make native'" >&2; exit 1; }
+
+$(SESSIOND_BIN): $(SESSIOND_RELEASE_BIN)
+	@mkdir -p "$(@D)"
+	@/bin/cp "$(SESSIOND_RELEASE_BIN)" "$@"
+	@/bin/chmod 755 "$@"
+
+$(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) | toolchain
+	@echo "building ReleaseFast sessiond for $(ZIG_ARCH)-macos.$(MACOS_DEPLOYMENT_TARGET)"
+	@mkdir -p "$(SESSIOND_RELEASE_ROOT)"
+	@/bin/rm -f "$@"
 	@set -e; \
-	want=$$(/usr/bin/plutil -extract ghostty.patchSeriesSha256 raw -o - "$(ROOT)/native/toolchain-lock.json"); \
-	dir=$$(ls -td "$(ROOT)"/.cache/native/artifacts/ghostty-* 2>/dev/null | head -1); \
-	have=$$(/usr/bin/plutil -extract ghostty.patchSeriesSha256 raw -o - "$$dir/provenance/toolchain-lock.json" 2>/dev/null || true); \
-	if [ -z "$$dir" ] \
-	  || ! ls "$$dir"/GhosttyKit.xcframework/macos-*/lib*.a >/dev/null 2>&1 \
-	  || [ ! -f "$$dir/checkpoint-fixtures/$(UNAME_M)/corpus.hvg6" ] \
-	  || [ "$$have" != "$$want" ]; then \
-	  "$(ROOT)/scripts/build-ghosttykit.sh"; \
-	  dir=$$(ls -td "$(ROOT)"/.cache/native/artifacts/ghostty-* | head -1); \
-	fi; \
-	/usr/bin/ditto "$$dir/GhosttyKit.xcframework" "$(GHOSTTYKIT)"; \
-	/bin/rm -rf "$(ROOT)/workspace/Vendor/checkpoint-fixtures"; \
-	/usr/bin/ditto "$$dir/checkpoint-fixtures" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
+		overlay=$$("$(ROOT)/scripts/prepare-zig-xcode-overlay.sh"); \
+		cd "$(ROOT)/native/sessiond"; \
+		PATH="$(ROOT)/scripts/zig-runner-tools:$$PATH" "$(ZIG)" build install \
+			--prefix "$(SESSIOND_RELEASE_ROOT)" \
+			--global-cache-dir "$(NATIVE_CACHE)/zig-global" \
+			-Dtarget=$(ZIG_ARCH)-macos.$(MACOS_DEPLOYMENT_TARGET) \
+			-Doptimize=ReleaseFast \
+			--sysroot "$$overlay"
+	@test -x "$@" || { echo "make: ReleaseFast sessiond build produced no binary; rerun 'make native'" >&2; exit 1; }
+	@touch "$@"
+
+demo-artifacts: ghosttykit workspace sessiond
+
+demo-preflight:
+	@command -v bun >/dev/null 2>&1 || { echo "make demo: Bun is missing; install Bun $(BUN_VERSION)" >&2; exit 2; }
+	@actual=$$(bun --version); [ "$$actual" = "$(BUN_VERSION)" ] || { echo "make demo: Bun $$actual does not match lock $(BUN_VERSION)" >&2; exit 2; }
+	@command -v swift >/dev/null 2>&1 && xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 || { echo "make demo: Xcode/Swift is unavailable; select the locked Xcode toolchain first" >&2; exit 2; }
+	@if /usr/sbin/lsof -nP -iTCP:$(DEMO_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
+		echo "make demo: port $(DEMO_PORT) is in use; stop that listener and rerun 'make demo'" >&2; exit 2; \
+	fi
+	@console_user=$$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true); \
+	[ "$$console_user" = "$$USER" ] || { echo "make demo: log into an unlocked Aqua session as $$USER, then rerun 'make demo'" >&2; exit 2; }
+
+demo: demo-preflight demo-artifacts
+	@echo "launching watched typeable-terminal proof (keep the Aqua session unlocked)"
+	@unset HIVE_B22_HOME; HIVE_B22_NO_APP=0 HIVE_B22_PORT=$(DEMO_PORT) bun "$(ROOT)/scripts/b22-live-attach-proof.ts"
 
 # Same pipeline the real installer consumes (src/release/build.ts), unsigned
 # because no Developer ID is in the environment, then staged in the exact
