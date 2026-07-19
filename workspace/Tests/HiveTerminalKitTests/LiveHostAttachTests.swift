@@ -385,6 +385,10 @@ final class LiveHostAttachTests: XCTestCase {
         }
         XCTAssertEqual(view.surfaceState, .live)
         let renderedGeometry = try XCTUnwrap(view.reportedGeometry)
+        let surface = try XCTUnwrap(view.engine as? GhosttyManualSurface)
+        let semanticGeometry = try XCTUnwrap(surface.semanticSnapshot()).geometry
+        XCTAssertEqual(semanticGeometry.columns, renderedGeometry.columns)
+        XCTAssertEqual(semanticGeometry.rows, renderedGeometry.rows)
         let binding = try XCTUnwrap(view.binding)
 
         view.insertText(
