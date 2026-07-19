@@ -3,6 +3,7 @@
 #
 #   make build                  build + stage the standalone dev release under .dev/
 #   make demo                   build fresh terminal artifacts + launch watched proof
+#   make terminal               build fresh artifacts + launch a real login shell
 #   make run PROJECT=/path      run the staged dev build against a separate test repo
 #   make test                   bun suites + sessiond (Zig) + Workspace (Swift)
 #   make cleanup                stop the dev instance and delete all dev artifacts
@@ -59,6 +60,7 @@ SESSIOND_RELEASE_ROOT := $(DEMO_CACHE)/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
 SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
 DEMO_PORT := 43117
+DEMO_TARGET := demo
 
 GHOSTTY_ENGINE_INPUTS := $(shell find \
 	$(ROOT)/vendor/ghostty \
@@ -113,12 +115,13 @@ DEV_ENV := \
 	TMPDIR=$(DEV)/tmp \
 	TMUX_TMPDIR=$(DEV)/tmux
 
-.PHONY: help build demo demo-artifacts demo-preflight native sessiond workspace \
+.PHONY: help build demo terminal demo-artifacts demo-preflight native sessiond workspace \
 	ghostty ghosttykit run test test-e2e toolchain clean cleanup deepclean
 
 help:
 	@echo "make build                 build + stage the standalone dev release (.dev/)"
 	@echo "make demo                  build fresh artifacts + launch watched typeable proof"
+	@echo "make terminal              build fresh artifacts + launch a real typeable login shell"
 	@echo "make demo-artifacts        build only the proof's Ghostty/Swift/sessiond artifacts"
 	@echo "make native                build + stage the ReleaseFast sessiond proof binary"
 	@echo "make ghostty               build + stage the lock-pinned GhosttyKit"
@@ -128,7 +131,7 @@ help:
 	@echo "make test-e2e              opt-in real-CLI e2e suite (needs tmux on PATH)"
 	@echo "make cleanup               stop the dev instance, delete all dev artifacts"
 	@echo "make deepclean             cleanup + delete native toolchain/build caches"
-	@echo "demo needs Bun $(BUN_VERSION), Xcode/Swift + Metal Toolchain, and an unlocked Aqua GUI session"
+	@echo "demo/terminal need Bun $(BUN_VERSION), Xcode/Swift + Metal Toolchain, and an unlocked Aqua GUI session"
 
 # Pinned Zig toolchain + Ghostty dependency cache (native/toolchain-lock.json).
 # The brew zig is not used; the preflight enforces the locked 0.15.x.
@@ -187,7 +190,7 @@ $(SESSIOND_BIN): $(SESSIOND_RELEASE_BIN)
 	@/bin/cp "$(SESSIOND_RELEASE_BIN)" "$@"
 	@/bin/chmod 755 "$@"
 
-$(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) | toolchain
+$(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) $(GHOSTTY_ARTIFACT_STAMP) | toolchain
 	@echo "building ReleaseFast sessiond for $(ZIG_ARCH)-macos.$(MACOS_DEPLOYMENT_TARGET)"
 	@mkdir -p "$(SESSIOND_RELEASE_ROOT)"
 	@/bin/rm -f "$@"
@@ -206,18 +209,24 @@ $(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) | toolchain
 demo-artifacts: ghosttykit workspace sessiond
 
 demo-preflight:
-	@command -v bun >/dev/null 2>&1 || { echo "make demo: Bun is missing; install Bun $(BUN_VERSION)" >&2; exit 2; }
-	@actual=$$(bun --version); [ "$$actual" = "$(BUN_VERSION)" ] || { echo "make demo: Bun $$actual does not match lock $(BUN_VERSION)" >&2; exit 2; }
-	@command -v swift >/dev/null 2>&1 && xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 || { echo "make demo: Xcode/Swift is unavailable; select the locked Xcode toolchain first" >&2; exit 2; }
+	@command -v bun >/dev/null 2>&1 || { echo "make $(DEMO_TARGET): Bun is missing; install Bun $(BUN_VERSION)" >&2; exit 2; }
+	@actual=$$(bun --version); [ "$$actual" = "$(BUN_VERSION)" ] || { echo "make $(DEMO_TARGET): Bun $$actual does not match lock $(BUN_VERSION)" >&2; exit 2; }
+	@command -v swift >/dev/null 2>&1 && xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 || { echo "make $(DEMO_TARGET): Xcode/Swift is unavailable; select the locked Xcode toolchain first" >&2; exit 2; }
 	@if /usr/sbin/lsof -nP -iTCP:$(DEMO_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
-		echo "make demo: port $(DEMO_PORT) is in use; stop that listener and rerun 'make demo'" >&2; exit 2; \
+		echo "make $(DEMO_TARGET): port $(DEMO_PORT) is in use; stop that listener and rerun 'make $(DEMO_TARGET)'" >&2; exit 2; \
 	fi
 	@console_user=$$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true); \
-	[ "$$console_user" = "$$USER" ] || { echo "make demo: log into an unlocked Aqua session as $$USER, then rerun 'make demo'" >&2; exit 2; }
+	[ "$$console_user" = "$$USER" ] || { echo "make $(DEMO_TARGET): log into an unlocked Aqua session as $$USER, then rerun 'make $(DEMO_TARGET)'" >&2; exit 2; }
 
+demo: DEMO_TARGET := demo
 demo: demo-preflight demo-artifacts
 	@echo "launching watched typeable-terminal proof (keep the Aqua session unlocked)"
 	@unset HIVE_B22_HOME; HIVE_B22_NO_APP=0 HIVE_B22_PORT=$(DEMO_PORT) bun "$(ROOT)/scripts/b22-live-attach-proof.ts"
+
+terminal: DEMO_TARGET := terminal
+terminal: demo-preflight demo-artifacts
+	@echo "launching a real interactive login shell (keep the Aqua session unlocked)"
+	@unset HIVE_B22_HOME; HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 HIVE_B22_PORT=$(DEMO_PORT) bun "$(ROOT)/scripts/b22-live-attach-proof.ts"
 
 # Same pipeline the real installer consumes (src/release/build.ts), unsigned
 # because no Developer ID is in the environment, then staged in the exact

@@ -6,10 +6,10 @@
  * Stands up the REAL stack end to end:
  *   1. real `hive-sessiond serve` broker
  *   2. real Hive daemon (`bun src/cli.ts daemon`) sharing the same HIVE_HOME
- *   3. one manually-created sessiond session running a visible animated
- *      shell ticker, admitted through HiveTerminalHostAdapter.create with a
- *      harness-owned visibility publisher (this process), lease sustained by
- *      a renewal ticker
+ *   3. one manually-created sessiond session running either the visible B2.2
+ *      ticker or (with HIVE_B22_REAL_SHELL=1) the user's interactive login
+ *      shell, admitted through HiveTerminalHostAdapter.create with a harness-
+ *      owned visibility publisher (this process), lease sustained by renewal
  *   4. the REAL Workspace debug app launched against the daemon; its pane for
  *      the agent carries the exact sessiond locator, so the B2.2 wiring
  *      attaches a HiveTerminalView and renders the live output
@@ -18,10 +18,29 @@
  * terminate → daemon SIGTERM → broker SIGTERM). All steps append to a
  * transcript file for the evidence bundle.
  */
-import { appendFileSync, chmodSync, existsSync, mkdirSync, writeFileSync } from "node:fs";
+import {
+  accessSync,
+  appendFileSync,
+  chmodSync,
+  constants,
+  existsSync,
+  mkdirSync,
+  writeFileSync,
+} from "node:fs";
 import { join, resolve } from "node:path";
 
 const repoRoot = resolve(import.meta.dir, "..");
+const realShell = process.env.HIVE_B22_REAL_SHELL === "1";
+const shellExecutable = process.env.SHELL ?? "/bin/zsh";
+if (realShell) {
+  try {
+    if (!shellExecutable.startsWith("/")) throw new Error("not absolute");
+    accessSync(shellExecutable, constants.X_OK);
+  } catch {
+    console.error(`make terminal: SHELL is not an absolute executable: ${shellExecutable}`);
+    process.exit(2);
+  }
+}
 // Short by necessity: the home canonicalizes under /private/tmp and the host
 // socket path (…/runtime/sessiond/hosts/ses_<36-char uuid>/host.sock) must
 // stay inside the 104-byte sun_path limit.
@@ -29,7 +48,7 @@ const home = process.env.HIVE_B22_HOME
   ?? `/tmp/hb22-${Math.random().toString(16).slice(2, 6)}`;
 process.env.HIVE_HOME = home;
 const port = Number(process.env.HIVE_B22_PORT ?? "43117");
-const agentName = "aria";
+const agentName = realShell ? "terminal" : "aria";
 const agentId = `agent-${agentName}`;
 
 mkdirSync(home, { recursive: true, mode: 0o700 });
@@ -169,10 +188,12 @@ db.insertAgent({
   id: agentId,
   name: agentName,
   tool: "codex",
-  model: "b22-live-proof",
+  model: realShell ? "interactive-login-shell" : "b22-live-proof",
   category: "simple_coding",
   status: "working",
-  taskDescription: "B2.2 live watchable terminal proof (manual session)",
+  taskDescription: realShell
+    ? "Real interactive login shell (manual session)"
+    : "B2.2 live watchable terminal proof (manual session)",
   worktreePath: null,
   branch: null,
   tmuxSession: `hive-${agentName}`,
@@ -193,15 +214,25 @@ const ticker =
   'sleep 0.25; done) & ticker_pid=$!; ' +
   'trap \'kill "$ticker_pid" 2>/dev/null\' EXIT; ' +
   'while IFS= read -r line; do printf "\\nB2.3 RESPONSE:%s\\n" "$line"; done';
+const shellEnvironment = Object.fromEntries(
+  ["HOME", "USER", "LOGNAME", "PATH", "LANG", "LC_ALL", "LC_CTYPE", "TMPDIR"]
+    .flatMap((name) => process.env[name] === undefined
+      ? []
+      : [[name, process.env[name]!]]),
+);
 const spec = {
   schemaVersion: 1 as const,
   locator,
   provider: "codex" as const,
   toolSessionId: null,
-  cwd: home,
-  argv: ["/bin/sh", "-c", ticker] as const,
-  environment: { TERM: "xterm-256color", PATH: "/usr/bin:/bin" },
-  expectedExecutable: "/bin/sh",
+  cwd: realShell ? repoRoot : home,
+  argv: realShell
+    ? [shellExecutable, "-l"] as const
+    : ["/bin/sh", "-c", ticker] as const,
+  environment: realShell
+    ? { ...shellEnvironment, TERM: "xterm-256color", SHELL: shellExecutable }
+    : { TERM: "xterm-256color", PATH: "/usr/bin:/bin" },
+  expectedExecutable: realShell ? shellExecutable : "/bin/sh",
   readOnly: false,
   capabilityEpoch: 0,
   geometry: {
@@ -225,6 +256,7 @@ try {
   process.exit(1);
 }
 log(`session created: hostPid=${created.inspection.hostPid} provider=${created.inspection.providerRoot?.pid}`);
+if (realShell) log(`interactive login shell: ${shellExecutable} -l (cwd ${repoRoot})`);
 
 // Sustain the visibility lease from this live publisher process.
 const renewals = setInterval(() => {
@@ -289,8 +321,11 @@ writeFileSync(join(home, "b22-proof.json"), JSON.stringify({
   hiveCli: hiveWrapper,
   port,
   agent: agentName,
+  mode: realShell ? "shell" : "ticker",
   locator,
 }));
 log("proof descriptor written for opt-in live tests: " + join(home, "b22-proof.json"));
-log("proof stack is up — Ctrl-C to tear down");
+log(realShell
+  ? "terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down"
+  : "proof stack is up — Ctrl-C to tear down");
 await new Promise(() => {});

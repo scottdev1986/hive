@@ -15,6 +15,7 @@ final class LiveHostAttachTests: XCTestCase {
         let hiveCli: String
         let port: Int
         let agent: String
+        let mode: String?
         let locator: ProofLocator
     }
 
@@ -273,7 +274,9 @@ final class LiveHostAttachTests: XCTestCase {
             return XCTFail("input proof attach failed: \(outcome)")
         }
         let binding = try XCTUnwrap(view.binding)
-        let sent = "b23-byte-round-trip"
+        let sent = proof.mode == "shell"
+            ? "echo $((123456 + 654321))"
+            : "b23-byte-round-trip"
         view.insertText(
             "\(sent)\n",
             replacementRange: NSRange(location: NSNotFound, length: 0),
@@ -281,7 +284,9 @@ final class LiveHostAttachTests: XCTestCase {
         )
         RunLoop.main.run(until: Date().addingTimeInterval(0.05))
 
-        let expectedResponse = Data("B2.3 RESPONSE:\(sent)".utf8)
+        let expectedResponse = Data(
+            (proof.mode == "shell" ? "777777" : "B2.3 RESPONSE:\(sent)").utf8
+        )
         let deadline = Date().addingTimeInterval(10)
         while Date() < deadline {
             let applied = engine.appliedRanges.reduce(Data()) { $0 + $1.bytes }
