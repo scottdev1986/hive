@@ -1,0 +1,12 @@
+control=retain-callback-pointer sanitizer=none exit_status=1
+  sanitizer_report=[]
+  probe_assertion=["error":"retained callback pointer no longer yields the callback's bytes — the header's callback-lifetime-only contract is real and copying is mandatory"]
+control=callback-after-free sanitizer=none exit_status=1
+  sanitizer_report=[]
+  probe_assertion=["error":"1 callback(s) arrived after ghostty_surface_free: transient"]
+control=free-app-before-surface sanitizer=address exit_status=134
+  sanitizer_report=[ERROR: AddressSanitizer: stack-buffer-underflow]
+  probe_assertion=[]
+control=unserialized-output sanitizer=address exit_status=134
+  sanitizer_report=[ERROR: AddressSanitizer: dynamic-stack-buffer-overflow]
+  probe_assertion=[]

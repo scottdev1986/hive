@@ -1,0 +1,82 @@
+=================================================================
+==53672==ERROR: AddressSanitizer: dynamic-stack-buffer-overflow on address 0x00016d59a300 at pc 0x0001045614b0 bp 0x00016e7454c0 sp 0x00016e744c90
+READ of size 12368 at 0x00016d59a300 thread T3
+    #0 0x0001045614ac in write.cold.2+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x8d4ac)
+    #1 0x0001044ef39c in write+0xe0 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x1b39c)
+    #2 0x000102d46b78 in google_breakpad::UntypedMDRVA::Copy(unsigned int, void const*, unsigned long) minidump_file_writer.cc:350
+    #3 0x000102d4a6d0 in google_breakpad::MinidumpGenerator::WriteStackFromStartAddress(unsigned long long, MDMemoryDescriptor*) minidump_generator.cc
+    #4 0x000102d4aaec in google_breakpad::MinidumpGenerator::WriteThreadStream(unsigned int, MDRawThread*) minidump_generator.cc:977
+    #5 0x000102d49994 in google_breakpad::MinidumpGenerator::WriteThreadListStream(MDRawDirectory*) minidump_generator.cc:1024
+    #6 0x000102d496d4 in google_breakpad::MinidumpGenerator::Write(char const*) minidump_generator.cc:274
+    #7 0x000102d4ca08 in google_breakpad::ExceptionHandler::WriteMinidumpWithException(int, int, int, __darwin_ucontext64*, unsigned int, bool, bool) exception_handler.cc:413
+    #8 0x000102d4cb90 in google_breakpad::ExceptionHandler::WaitForMessage(void*) exception_handler.cc:581
+    #9 0x000104511d64 in asan_thread_start(void*)+0x4c (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x3dd64)
+    #10 0x00019c8abc04 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c04)
+    #11 0x00019c8a6ba4 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1ba4)
+
+Address 0x00016d59a300 is located in stack of thread T0
+SUMMARY: AddressSanitizer: dynamic-stack-buffer-overflow minidump_file_writer.cc:350 in google_breakpad::UntypedMDRVA::Copy(unsigned int, void const*, unsigned long)
+Shadow bytes around the buggy address:
+  0x00016d59a080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016d59a100: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016d59a180: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016d59a200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016d59a280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x00016d59a300:[ca]ca ca ca 00 00 cb cb cb cb cb cb ca ca ca ca
+  0x00016d59a380: 00 cb cb cb cb cb cb cb ca ca ca ca 01 cb cb cb
+  0x00016d59a400: cb cb cb cb ca ca ca ca 00 cb cb cb cb cb cb cb
+  0x00016d59a480: ca ca ca ca 00 cb cb cb cb cb cb cb ca ca ca ca
+  0x00016d59a500: 00 cb cb cb cb cb cb cb 00 00 00 00 00 00 00 00
+  0x00016d59a580: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+Shadow byte legend (one shadow byte represents 8 application bytes):
+  Addressable:           00
+  Partially addressable: 01 02 03 04 05 06 07 
+  Heap left redzone:       fa
+  Freed heap region:       fd
+  Stack left redzone:      f1
+  Stack mid redzone:       f2
+  Stack right redzone:     f3
+  Stack after return:      f5
+  Stack use after scope:   f8
+  Global redzone:          f9
+  Global init order:       f6
+  Poisoned by user:        f7
+  Container overflow:      fc
+  Array cookie:            ac
+  Intra object redzone:    bb
+  ASan internal:           fe
+  Left alloca redzone:     ca
+  Right alloca redzone:    cb
+Thread T3 created by T2 here:
+    #0 0x00010450d198 in pthread_create+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x39198)
+    #1 0x000102d4c180 in google_breakpad::ExceptionHandler::Setup(bool) exception_handler.cc:762
+    #2 0x000102d4bff4 in google_breakpad::ExceptionHandler::ExceptionHandler(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, bool (*)(void*), bool (*)(char const*, char const*, void*, bool), void*, bool, char const*) exception_handler.cc:251
+    #3 0x000102d426bc in sentry__breakpad_backend_startup(sentry_backend_s*, sentry_options_s const*) sentry_backend_breakpad.cpp:223
+    #4 0x000102d26e90 in sentry_init sentry_core.c:153
+    #5 0x000102e69c70 in Thread.PosixThreadImpl.spawn__anon_25411.Instance.entryFn+0x188 (GhosttyGate3Probe:arm64+0x100605c70)
+    #6 0x00019c8abc04 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c04)
+    #7 0x00019c8a6ba4 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1ba4)
+
+Thread T2 created by T0 here:
+    #0 0x00010450d198 in pthread_create+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x39198)
+    #1 0x000102e680ac in global.GlobalState.init+0x2858 (GhosttyGate3Probe:arm64+0x1006040ac)
+    #2 0x0001b657a984 in partial apply for thunk for @callee_guaranteed () -> (@out A, @error @owned Error)+0x18 (libswiftDispatch.dylib:arm64e+0x8984)
+    #3 0x0001b657aa38 in partial apply for thunk for @callee_guaranteed () -> (@out A, @error @owned Error)+0xc (libswiftDispatch.dylib:arm64e+0x8a38)
+    #4 0x0001b6577b24 in closure #1 in closure #1 in OS_dispatch_queue._syncHelper<A>(fn:execute:rescue:)+0xbc (libswiftDispatch.dylib:arm64e+0x5b24)
+    #5 0x0001b657a95c in partial apply for thunk for @callee_guaranteed () -> ()+0x18 (libswiftDispatch.dylib:arm64e+0x895c)
+    #6 0x0001b6573868 in thunk for @escaping @callee_guaranteed () -> ()+0x18 (libswiftDispatch.dylib:arm64e+0x1868)
+    #7 0x00019c708ad0 in _dispatch_client_callout+0xc (libdispatch.dylib:arm64e+0x1bad0)
+    #8 0x00019c6fea14 in _dispatch_async_and_wait_invoke+0x50 (libdispatch.dylib:arm64e+0x11a14)
+    #9 0x00019c708ad0 in _dispatch_client_callout+0xc (libdispatch.dylib:arm64e+0x1bad0)
+    #10 0x00019c7260cc in _dispatch_main_queue_drain.cold.5+0x328 (libdispatch.dylib:arm64e+0x390cc)
+    #11 0x00019c6fdf44 in _dispatch_main_queue_drain+0xb0 (libdispatch.dylib:arm64e+0x10f44)
+    #12 0x00019c6fde80 in _dispatch_main_queue_callback_4CF+0x28 (libdispatch.dylib:arm64e+0x10e80)
+    #13 0x00019c97499c in __CFRUNLOOP_IS_SERVICING_THE_MAIN_DISPATCH_QUEUE__+0xc (CoreFoundation:arm64e+0x8999c)
+    #14 0x00019c9497f8 in __CFRunLoopRun+0x794 (CoreFoundation:arm64e+0x5e7f8)
+    #15 0x00019ca03f38 in _CFRunLoopRunSpecificWithOptions+0x210 (CoreFoundation:arm64e+0x118f38)
+    #16 0x00019eb99d0c in -[NSRunLoop(NSRunLoop) runMode:beforeDate:]+0xd0 (Foundation:arm64e+0xa5bd0c)
+    #17 0x00019e198a4c in -[NSRunLoop(NSRunLoop) run]+0x3c (Foundation:arm64e+0x5aa4c)
+    #18 0x000102866c88 in GhosttyGate3Probe_main main.swift:572
+    #19 0x00019c4e1d50 in start+0x1c0c (dyld:arm64e+0x8d50)
+
+==53672==ABORTING

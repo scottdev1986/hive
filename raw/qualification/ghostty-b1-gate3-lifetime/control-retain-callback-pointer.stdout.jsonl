@@ -1,0 +1,3 @@
+{"arch":"arm64","defect":"retain-callback-pointer","pid":53490,"stage":"start"}
+{"defect":"retain-callback-pointer","inlineTicks":0,"pid":53490,"stage":"wakeup-tick","ticks":2,"ticksOnMain":2,"wakeups":2}
+{"defect":"retain-callback-pointer","error":"retained callback pointer no longer yields the callback's bytes — the header's callback-lifetime-only contract is real and copying is mandatory","pid":53490,"stage":"failed"}

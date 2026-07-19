@@ -1,0 +1,5 @@
+{"arch":"arm64","defect":"unserialized-output","pid":53672,"stage":"start"}
+{"defect":"unserialized-output","inlineTicks":0,"pid":53672,"stage":"wakeup-tick","ticks":2,"ticksOnMain":2,"wakeups":2}
+{"defect":"unserialized-output","pid":53672,"replyBytes":9,"replyHex":"1b5b3f36323b323263","stage":"copy-before-return"}
+{"defect":"unserialized-output","deliveriesAfterFree":0,"deliveriesBeforeFree":8,"pid":53672,"stage":"no-callback-after-free"}
+{"defect":"unserialized-output","fedSurface":"fleet2","pid":53672,"stage":"multi-surface","surfaces":4}

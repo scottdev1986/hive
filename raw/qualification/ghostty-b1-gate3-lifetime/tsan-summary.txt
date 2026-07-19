@@ -1,0 +1,6 @@
+data_race_reports=0
+thread_leak_reports=2
+known_benign_leak=ghostty_init GlobalState.init spawns a thread that finishes but is never joined
+corpus_tsan_exit_status=1 (nonzero: known benign engine thread leak)
+corpus_tsan_data_races=0
+corpus_tsan_tests_passed=21
