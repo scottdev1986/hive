@@ -32,11 +32,14 @@ final class SessiondPaneTerminal {
     /// or still retrying).
     private(set) var lastFailure: String?
     let maxAttachAttempts = 6
-    private let baseRetryDelay: TimeInterval = 0.5
-    private let maxRetryDelay: TimeInterval = 8.0
-    /// Test seam: a fixed retry delay so the give-up path runs without the
-    /// exponential wall-clock. Production leaves this nil.
-    var retryDelayOverride: TimeInterval?
+    /// A single repeating recovery driver: it ticks independently of the attach
+    /// chain, so give-up ALWAYS fires after the budget even if an individual
+    /// attach attempt races or stalls. Drives one bounded retry per tick.
+    private var recoveryTimer: Timer?
+    private let recoveryInterval: TimeInterval = 1.0
+    /// Test seam: fast recovery ticks so the give-up path runs without the
+    /// wall-clock. Production leaves this nil.
+    var recoveryIntervalOverride: TimeInterval?
     /// Fired once when recovery is exhausted (bounded give-up), with evidence.
     var onFailure: ((String) -> Void)?
 
@@ -121,6 +124,7 @@ final class SessiondPaneTerminal {
         detached = true
         geometryPollTimer?.invalidate()
         geometryPollTimer = nil
+        stopRecovery()
         transport?.close()
         transport = nil
     }
@@ -155,7 +159,7 @@ final class SessiondPaneTerminal {
                 NSLog("sessiond attach for %@ failed: %@", self.agentName, "\(error)")
                 DispatchQueue.main.async {
                     self.attachInFlight = false
-                    self.scheduleReattach("\(error)")
+                    self.beginRecovery("\(error)")
                 }
             }
         }
@@ -183,17 +187,18 @@ final class SessiondPaneTerminal {
             )
             if case .failed(let state) = outcome {
                 transport.close()
-                scheduleReattach("attach failed: \(state)")
+                beginRecovery("attach failed: \(state)")
                 return
             }
-            // Live: a first-correct-frame clears the recovery budget so a later
-            // transient loss starts fresh.
+            // Live: a first-correct-frame ends recovery and clears the budget so
+            // a later transient loss starts fresh.
+            stopRecovery()
             failedAttempts = 0
             startPump(transport: transport)
         } catch {
             NSLog("sessiond surface attach for %@ refused: %@", agentName, "\(error)")
             transport.close()
-            scheduleReattach("\(error)")
+            beginRecovery("\(error)")
         }
     }
 
@@ -223,7 +228,7 @@ final class SessiondPaneTerminal {
             transport.close()
             DispatchQueue.main.async {
                 guard !self.detached, self.transport === transport else { return }
-                self.scheduleReattach("host transport lost")
+                self.beginRecovery("host transport lost")
             }
         }
         thread.name = "sessiond-pump-\(agentName)"
@@ -254,14 +259,37 @@ final class SessiondPaneTerminal {
         onFailure?(evidence)
     }
 
-    private func scheduleReattach(_ evidence: String) {
-        guard registerFailedAttemptAndShouldRetry(evidence) else { return }
-        let delay = retryDelayOverride
-            ?? min(baseRetryDelay * pow(2, Double(failedAttempts - 1)), maxRetryDelay)
-        DispatchQueue.main.asyncAfter(deadline: .now() + delay) { [weak self] in
-            guard let self, !self.detached, !self.gaveUp else { return }
-            self.beginAttach(afterSeq: self.view?.highWater ?? 0)
+    /// Starts (or keeps) the single repeating recovery driver. Each tick counts
+    /// one attempt toward the give-up budget and, when nothing is already in
+    /// flight, kicks a fresh attach. Because the timer ticks independently of
+    /// the attach chain, a stalled/raced individual attempt can never strand
+    /// the pane — the budget still runs out and give-up fires visibly.
+    /// Test seam: drive the recovery timer directly (no live attach needed).
+    func startRecoveryForTesting(_ evidence: String) { beginRecovery(evidence) }
+
+    private func beginRecovery(_ evidence: String) {
+        guard !detached, !gaveUp, recoveryTimer == nil else { return }
+        let timer = Timer(timeInterval: recoveryIntervalOverride ?? recoveryInterval, repeats: true) { [weak self] tick in
+            guard let self, !self.detached, !self.gaveUp else {
+                tick.invalidate()
+                return
+            }
+            guard self.registerFailedAttemptAndShouldRetry(evidence) else {
+                tick.invalidate()
+                self.recoveryTimer = nil
+                return
+            }
+            if !self.attachInFlight {
+                self.beginAttach(afterSeq: self.view?.highWater ?? 0)
+            }
         }
+        recoveryTimer = timer
+        RunLoop.main.add(timer, forMode: .common)
+    }
+
+    private func stopRecovery() {
+        recoveryTimer?.invalidate()
+        recoveryTimer = nil
     }
 
     // MARK: - Grant subprocess

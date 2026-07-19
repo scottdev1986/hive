@@ -39,6 +39,16 @@ final class PaneView: NSView {
             terminalView.frame = contentView.bounds
             contentView.addSubview(terminalView)
             sessiondTerminal = terminal
+            // §26 bounded recovery: when the renderer gives up reconnecting,
+            // surface a visible failure on the pane instead of a silently
+            // frozen frame (fires on the main thread from the recovery timer).
+            terminal.onFailure = { [weak self] evidence in
+                guard let self else { return }
+                self.failureBadge.isHidden = false
+                self.failureBadge.toolTip = "Terminal renderer disconnected — \(evidence)"
+                self.detailLabel.stringValue = "renderer disconnected"
+                self.detailLabel.toolTip = evidence
+            }
             terminal.startWhenGeometryReady()
         } catch {
             NSLog("sessiond terminal surface for pane %@ failed: %@",

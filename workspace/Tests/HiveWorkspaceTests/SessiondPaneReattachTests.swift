@@ -54,6 +54,26 @@ final class SessiondPaneReattachTests: XCTestCase {
         XCTAssertEqual(failures, ["host refused"])
     }
 
+    /// The recovery timer drives to a visible give-up even when the attach
+    /// never progresses (no view/geometry) — the regression guard for a stalled
+    /// attach chain silently stranding the pane instead of failing visibly.
+    func testRecoveryTimerReachesGiveUpWithoutAProgressingAttach() {
+        let terminal = makeTerminal()
+        terminal.recoveryIntervalOverride = 0.01
+        var failures: [String] = []
+        let gaveUp = expectation(description: "recovery gave up")
+        terminal.onFailure = {
+            failures.append($0)
+            gaveUp.fulfill()
+        }
+        // No view is installed, so every timer-driven attach is a no-op; the
+        // timer must still count down the budget and give up on its own.
+        terminal.startRecoveryForTesting("host gone")
+        wait(for: [gaveUp], timeout: 5)
+        XCTAssertTrue(terminal.gaveUp)
+        XCTAssertEqual(failures, ["host gone"], "gave up once, visibly")
+    }
+
     /// A detached pane never retries and never reports a failure — renderer
     /// detach is not an attach failure (§26: detach never claims close).
     func testDetachedPaneDoesNotRetryOrFail() {
