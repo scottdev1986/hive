@@ -2409,7 +2409,10 @@ export class HiveDaemon {
       );
     }
     if (url.pathname === "/handshake" && request.method === "GET") {
-      return json(await this.handshake());
+      // The sessiond broker authenticates by fetching this over a raw socket
+      // and reading to EOF (`Connection: close`); Bun keep-alive would leave
+      // that read hanging until its timeout and fail broker auth closed.
+      return json(await this.handshake(), { headers: { connection: "close" } });
     }
     // Everything below mutates state or reads another tenant's data, so every
     // one of them authenticates first. See the capability rights matrix.

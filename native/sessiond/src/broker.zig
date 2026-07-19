@@ -366,15 +366,55 @@ pub fn loadDaemonHandshake(
     try setControlTimeout(stream.handle);
     try stream.writeAll("GET /handshake HTTP/1.1\r\nHost: 127.0.0.1\r\nConnection: close\r\n\r\n");
     const file: std.fs.File = .{ .handle = stream.handle };
-    const response = try file.readToEndAlloc(allocator, generated.limits.control_json_bytes + 8192);
-    defer allocator.free(response);
-    if (!std.mem.startsWith(u8, response, "HTTP/1.1 200 ") and
-        !std.mem.startsWith(u8, response, "HTTP/1.0 200 ")) return error.InvalidDaemonHandshakeResponse;
-    const separator = std.mem.indexOf(u8, response, "\r\n\r\n") orelse
+    // The daemon's HTTP runtime may keep the connection alive despite
+    // `Connection: close`, so a read-to-EOF would hang until the socket
+    // timeout and fail authentication closed. Stop as soon as the framed
+    // Content-Length body is complete; EOF remains a valid terminator.
+    const limit = generated.limits.control_json_bytes + 8192;
+    var response: std.ArrayList(u8) = .{};
+    defer response.deinit(allocator);
+    var storage: [4096]u8 = undefined;
+    while (response.items.len < limit) {
+        const count = try file.read(&storage);
+        if (count == 0) break;
+        try response.appendSlice(allocator, storage[0..count]);
+        if (httpResponseComplete(response.items)) break;
+    }
+    if (!std.mem.startsWith(u8, response.items, "HTTP/1.1 200 ") and
+        !std.mem.startsWith(u8, response.items, "HTTP/1.0 200 ")) return error.InvalidDaemonHandshakeResponse;
+    const separator = std.mem.indexOf(u8, response.items, "\r\n\r\n") orelse
         return error.InvalidDaemonHandshakeResponse;
-    const body = response[separator + 4 ..];
+    const body = response.items[separator + 4 ..];
     if (body.len > generated.limits.control_json_bytes) return error.InvalidDaemonHandshakeResponse;
     return parseOwnedDaemonHandshake(allocator, body);
+}
+
+/// True once the head and the full declared Content-Length body have arrived.
+/// Without a Content-Length header the caller keeps reading to EOF.
+fn httpResponseComplete(bytes: []const u8) bool {
+    const separator = std.mem.indexOf(u8, bytes, "\r\n\r\n") orelse return false;
+    const head = bytes[0..separator];
+    const body_len = bytes.len - (separator + 4);
+    var lines = std.mem.splitSequence(u8, head, "\r\n");
+    while (lines.next()) |line| {
+        const colon = std.mem.indexOfScalar(u8, line, ':') orelse continue;
+        if (!std.ascii.eqlIgnoreCase(std.mem.trim(u8, line[0..colon], " "), "content-length"))
+            continue;
+        const declared = std.fmt.parseInt(
+            usize,
+            std.mem.trim(u8, line[colon + 1 ..], " "),
+            10,
+        ) catch return false;
+        return body_len >= declared;
+    }
+    return false;
+}
+
+test "handshake response completes at Content-Length without EOF" {
+    try std.testing.expect(httpResponseComplete("HTTP/1.1 200 OK\r\nContent-Length: 4\r\n\r\nbody"));
+    try std.testing.expect(!httpResponseComplete("HTTP/1.1 200 OK\r\nContent-Length: 5\r\n\r\nbody"));
+    try std.testing.expect(!httpResponseComplete("HTTP/1.1 200 OK\r\n\r\nbody"));
+    try std.testing.expect(!httpResponseComplete("HTTP/1.1 200 OK\r\nContent-Length: 4"));
 }
 
 fn parseOwnedDaemonHandshake(allocator: std.mem.Allocator, body: []const u8) !std.json.Parsed(DaemonHandshake) {

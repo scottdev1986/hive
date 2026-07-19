@@ -1,0 +1,6 @@
+== exact-locator grant ==
+{"locator":{"schemaVersion":1,"instanceId":"a2f2606df6","subject":{"kind":"agent","agentId":"agent-aria"},"generation":1,"sessionId":"ses_019f7856-d30a-701c-859a-61b7101cbfe0","hostKind":"sessiond","engineBuildId":"0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300"},"endpoint":"/private/tmp/hive-b22-proof/runtime/sessiond/hosts/ses_019f7856-d30a-701c-859a-61b7101cbfe0/host.sock","token":"933782b7671a31e4929896c66aac8ee31a301ae6e69699baf2162b5f9952d125","expiresAt":"2026-07-19T03:08:13.675Z","engineBuildId":"0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300","checkpointSeq":"0","outputSeq":"0","operations":["view"]}
+== wrong-generation refusal (typed) ==
+hive: Hive refused to attach aria: its session generation changed [session-locator-mismatch]
+wrong-generation exit=1
+== grant capacity bound (4 one-use slots, 30s expiry): earlier burst returned CAPACITY_EXCEEDED ==

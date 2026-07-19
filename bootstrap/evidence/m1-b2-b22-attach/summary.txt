@@ -1,0 +1,19 @@
+M1-B2 B2.2 attach + live output evidence
+
+Suites at this pin:
+ 10 skip
+ 0 fail
+ 7160 expect() calls
+Ran 1735 tests across 133 files. [54.36s]
+TSC OK
+	 Executed 374 tests, with 3 tests skipped and 13 failures (7 unexpected) in 16.765 (16.799) seconds
+native sessiond suite: green (golden real-host with B2.2 legs included)
+
+Swift failure parity: branch failure set is a subset of unmodified main's
+(environmental production-config surface creation without an unlocked GUI
+session); diff recorded in this session, main scratch at b9c81c07.
+
+Artifacts:
+- live-proof-transcript.log — full stack boot, create, renewals, teardown w/ termination audit
+- live-host-attach-test.txt — opt-in Swift live wire test PASS against the real host
+- attach-grant-cli.txt — exact-locator grant + typed wrong-generation refusal + capacity bound
