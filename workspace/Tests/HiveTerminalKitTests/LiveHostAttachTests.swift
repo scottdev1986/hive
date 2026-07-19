@@ -250,19 +250,38 @@ final class LiveHostAttachTests: XCTestCase {
         )
     }
 
-    /// Reconnect-churn robustness (§18): a pane that repeatedly loses its
-    /// transport and re-attaches keeps getting fresh one-use grants. The
-    /// broker's four-slot per-generation mirror must not exhaust while spent
-    /// grants await their 15 s expiry — issueAttach releases the slot on issue,
-    /// so far more than capacity succeed inside one host's grant window.
+    /// Reconnect-churn robustness (§18/§26): a pane that repeatedly loses its
+    /// transport and re-attaches keeps getting fresh one-use grants. Each cycle
+    /// is a REAL reconnect — issue a grant, attach (which the host consumes via
+    /// its own grant list), then drop the transport — so both the host's grant
+    /// list and the broker's four-slot mirror must free per cycle. The broker
+    /// previously retained the mirror slot until the 15 s expiry, exhausting it
+    /// after four cycles; issueAttach now releases it on issue, so far more
+    /// than capacity of rapid reconnect cycles succeed with no CAPACITY refusal.
     func testReconnectChurnNeverExhaustsGrantCapacity() throws {
         let (proof, _) = try loadProof()
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(frame: .zero, engine: engine, viewerId: "b22-churn")
         for i in 0..<20 {
-            let line = try issueGrant(proof, viewerId: "b22-churn-\(i)")
+            let line = try issueGrant(proof, viewerId: "b22-churn")
             XCTAssertEqual(
                 line.status, 0,
-                "churn grant \(i) refused (grant-slot exhaustion?): \(line.output)"
+                "reconnect-cycle \(i) grant refused (grant-slot exhaustion?): \(line.output)"
             )
+            let grant = try parseGrant(line.output)
+            let transport = try UdsHostTransport.connect(endpoint: grant.endpoint)
+            // Attach makes the host consume its grant (orderedRemove); the
+            // broker already released its mirror slot at issue.
+            let outcome = try view.attach(
+                grant: grant,
+                geometry: geometry,
+                afterSeq: view.highWater,
+                transport: transport
+            )
+            if case .failed(let state) = outcome {
+                XCTFail("reconnect-cycle \(i) attach failed: \(state)")
+            }
+            transport.close()
         }
     }
 }
