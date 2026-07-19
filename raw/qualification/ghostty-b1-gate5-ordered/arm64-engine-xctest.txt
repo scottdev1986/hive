@@ -1,0 +1,41 @@
+Test Suite 'Selected tests' started at 2026-07-19 14:12:41.358.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:12:41.359.
+Test Suite 'OrderedOutputEngineTests' started at 2026-07-19 14:12:41.359.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testAPCSequenceSplitAcrossChunkBoundaryDoesNotPoisonFollowingText]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testAPCSequenceSplitAcrossChunkBoundaryDoesNotPoisonFollowingText]' passed (0.115 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testConflictingBytesAtSameRangeIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testConflictingBytesAtSameRangeIsInvalid]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testCSISequenceSplitAcrossChunkBoundaryStillReplies]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testCSISequenceSplitAcrossChunkBoundaryStillReplies]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDCSSequenceSplitAcrossChunkBoundaryStillReplies]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDCSSequenceSplitAcrossChunkBoundaryStillReplies]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDuplicateExactRetransmitIsIdempotent]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testDuplicateExactRetransmitIsIdempotent]' passed (0.016 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testEmptyBytesIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testEmptyBytesIsInvalid]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGraphemeClusterSplitAcrossChunkBoundaryDecodesCorrectly]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testGraphemeClusterSplitAcrossChunkBoundaryDecodesCorrectly]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testIngestionSerializedWithDrawAndRestore]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testIngestionSerializedWithDrawAndRestore]' passed (0.014 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testNullPointerInputIsInvalidAtCBoundary]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testNullPointerInputIsInvalidAtCBoundary]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testOSCSequenceSplitAcrossChunkBoundaryStillSetsTitle]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testOSCSequenceSplitAcrossChunkBoundaryStillSetsTitle]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testPartialOverlapIsInvalidAndDoesNotAdvanceThroughSeq]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testPartialOverlapIsInvalidAndDoesNotAdvanceThroughSeq]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedGapDoesNotPoisonSubsequentValidCall]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testRejectedGapDoesNotPoisonSubsequentValidCall]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testSequenceOverflowIsInvalid]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testSequenceOverflowIsInvalid]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputEngineTests testUTF8CodepointSplitAcrossChunkBoundaryDecodesToTheCorrectCharacter]' passed (0.010 seconds).
+Test Suite 'OrderedOutputEngineTests' passed at 2026-07-19 14:12:41.666.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.305 (0.307) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:12:41.666.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.305 (0.307) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 14:12:41.666.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.305 (0.308) seconds

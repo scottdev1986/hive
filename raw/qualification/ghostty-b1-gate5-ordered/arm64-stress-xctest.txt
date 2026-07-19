@@ -1,0 +1,13 @@
+Test Suite 'Selected tests' started at 2026-07-19 14:12:45.528.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:12:45.528.
+Test Suite 'OrderedOutputStressTests' started at 2026-07-19 14:12:45.528.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected]' passed (0.057 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' started.
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' passed (1.443 seconds).
+Test Suite 'OrderedOutputStressTests' passed at 2026-07-19 14:12:47.029.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 1.500 (1.500) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:12:47.029.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 1.500 (1.500) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 14:12:47.029.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 1.500 (1.501) seconds

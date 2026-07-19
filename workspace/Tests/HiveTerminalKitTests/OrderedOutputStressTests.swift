@@ -54,10 +54,11 @@ final class OrderedOutputStressTests: XCTestCase {
 
         // PHASE 1 — VOLUME + REPLY ORDER. Blocks of ~16 KiB filler each,
         // each ending in an alternating query (DA1 even, DA2 odd), until the
-        // stream exceeds 8 MiB. The filler bulks the volume; the alternating
-        // queries make reply ORDER observable (the reply array encodes the
-        // query order — identical replies could not).
-        let minBytes = 8 * 1024 * 1024
+        // stream exceeds 100 MiB (gate 5 "100 MiB class" large-stream stress).
+        // The filler bulks the volume; the alternating queries make reply
+        // ORDER observable (the reply array encodes the query order —
+        // identical replies could not).
+        let minBytes = 100 * 1024 * 1024
         let fillerRow = "\u{1B}[32mfiller row of ordered-stream stress content padding the volume\u{1B}[0m\r\n"
         var pending = Data()
         var expectedReplies: [Data] = []
@@ -73,7 +74,7 @@ final class OrderedOutputStressTests: XCTestCase {
         }
         let volumeBytes = pending.count
         XCTAssertGreaterThanOrEqual(volumeBytes, minBytes,
-                                    "the stress stream must be at least 8 MiB, was \(volumeBytes)")
+                                    "the stress stream must be at least 100 MiB, was \(volumeBytes)")
 
         // PHASE 2 — LOSSLESS ORDERED CONTENT. A dense run of unique numbered
         // sentinels (no filler between them) so the last full screen is a
@@ -139,5 +140,78 @@ final class OrderedOutputStressTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: seq), .success)
         pumpMainQueue()
         XCTAssertEqual(writes, [da1], "post-stress DA1 must still answer byte-exactly")
+    }
+
+    /// Concurrent callers race processOutput on one surface. Admission is
+    /// main-queue serialized (never nested); concurrent non-contiguous
+    /// stream_seq values are rejected as gaps; a subsequent coordinated
+    /// contiguous write still succeeds (rejection is the concurrency
+    /// disposition when callers do not coordinate seq).
+    func testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        let stateLock = NSLock()
+        var active = 0
+        var maxActive = 0
+        surface.operationObserver = { operation, phase in
+            guard operation == "processOutput" else { return }
+            stateLock.lock()
+            if phase == .begin {
+                active += 1
+                maxActive = max(maxActive, active)
+            } else {
+                active -= 1
+            }
+            stateLock.unlock()
+        }
+
+        let start = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var results: [HiveTerminalEngineResult] = []
+        let resultLock = NSLock()
+        // Eight concurrent writers all claim stream_seq=0 with different
+        // payloads — at most one can accept; the rest are conflict/gap.
+        for i in 0..<8 {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                start.wait()
+                let r = surface.processOutput(
+                    bytes: Data("c\(i)".utf8),
+                    streamSeq: 0
+                )
+                resultLock.lock()
+                results.append(r)
+                resultLock.unlock()
+                group.leave()
+            }
+        }
+        for _ in 0..<8 { start.signal() }
+        // Wait off-main so processOutput's main-queue admission can run.
+        let finished = expectation(description: "concurrent callers finished")
+        DispatchQueue.global().async {
+            _ = group.wait(timeout: .now() + 5)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 6)
+
+        let successes = results.filter { $0 == .success }.count
+        let invalids = results.filter { $0 == .invalidValue }.count
+        XCTAssertEqual(successes + invalids, 8)
+        XCTAssertEqual(successes, 1, "exactly one concurrent claim of seq 0 may accept")
+        XCTAssertEqual(invalids, 7, "the other seven must be rejected (conflict/duplicate-range mismatch)")
+
+        stateLock.lock()
+        let peak = maxActive
+        let still = active
+        stateLock.unlock()
+        XCTAssertEqual(still, 0)
+        XCTAssertEqual(peak, 1, "concurrent callers must serialize; never re-enter")
+
+        // Surface remains usable: continue from the accepted through_seq.
+        let next = surface.throughSeq
+        XCTAssertGreaterThan(next, 0)
+        XCTAssertEqual(surface.processOutput(bytes: Data("!".utf8), streamSeq: next), .success)
+        XCTAssertEqual(surface.throughSeq, next + 1)
     }
 }

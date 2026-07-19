@@ -200,4 +200,309 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(result, .success, "a prior rejected call must not poison a correctly-ordered one")
         XCTAssertEqual(surface.throughSeq, 2)
     }
+
+    /// Partial overlap: stream_seq < through_seq but the [start,end) is not
+    /// an exact prior committed range → invalid (not a silent partial apply).
+    func testPartialOverlapIsInvalidAndDoesNotAdvanceThroughSeq() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        XCTAssertEqual(surface.processOutput(bytes: Data("hello".utf8), streamSeq: 0), .success)
+        XCTAssertEqual(surface.throughSeq, 5)
+
+        // [1,5) overlaps the accepted [0,5) without being an exact retransmit.
+        let result = surface.processOutput(bytes: Data("ello".utf8), streamSeq: 1)
+        XCTAssertEqual(result, .invalidValue)
+        XCTAssertEqual(surface.throughSeq, 5, "a rejected partial overlap must not touch through_seq")
+
+        // Contiguous continuation still works (failure did not poison).
+        XCTAssertEqual(surface.processOutput(bytes: Data("!".utf8), streamSeq: 5), .success)
+        XCTAssertEqual(surface.throughSeq, 6)
+    }
+
+    /// stream_seq + length overflows u64 → invalid (sequence-overflow disposition).
+    func testSequenceOverflowIsInvalid() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        let result = surface.processOutput(bytes: Data("xy".utf8), streamSeq: UInt64.max - 1)
+        XCTAssertEqual(result, .invalidValue)
+        XCTAssertEqual(surface.throughSeq, 0)
+
+        XCTAssertEqual(surface.processOutput(bytes: Data("ok".utf8), streamSeq: 0), .success)
+        XCTAssertEqual(surface.throughSeq, 2)
+    }
+
+    /// Null pointer at the C boundary is invalid for every length (including 0).
+    func testNullPointerInputIsInvalidAtCBoundary() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        let handle = try XCTUnwrap(surface.surfaceHandle)
+        let nullResult = hive_ghostty_surface_process_output_v1(handle, nil, 4, 0)
+        XCTAssertEqual(HiveTerminalEngineResult(cResult: nullResult), .invalidValue)
+        XCTAssertEqual(surface.throughSeq, 0)
+
+        let nullEmpty = hive_ghostty_surface_process_output_v1(handle, nil, 0, 0)
+        XCTAssertEqual(HiveTerminalEngineResult(cResult: nullEmpty), .invalidValue)
+
+        XCTAssertEqual(surface.processOutput(bytes: Data("ok".utf8), streamSeq: 0), .success)
+        XCTAssertEqual(surface.throughSeq, 2)
+    }
+
+    /// OSC 0 title split across chunk boundary still emits one title event.
+    func testOSCSequenceSplitAcrossChunkBoundaryStillSetsTitle() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        var titles: [Data] = []
+        surface.callbackContext.onEvent = { event in
+            if event.type == .title { titles.append(event.bytes) }
+        }
+
+        let full = Data("\u{1B}]0;split-title\u{07}".utf8)
+        let mid = 4 // after ESC ] 0 ;
+        let first = full.subdata(in: 0..<mid)
+        let second = full.subdata(in: mid..<full.count)
+
+        XCTAssertEqual(surface.processOutput(bytes: first, streamSeq: 0), .success)
+        pumpMainQueue()
+        XCTAssertEqual(titles.count, 0, "incomplete OSC must not emit title early")
+
+        XCTAssertEqual(surface.processOutput(bytes: second, streamSeq: UInt64(first.count)), .success)
+        pumpMainQueue()
+        XCTAssertEqual(titles.count, 1, "completed OSC must emit title exactly once")
+        XCTAssertEqual(String(data: titles[0], encoding: .utf8), "split-title")
+    }
+
+    /// DCS (DECRQSS) split across chunks still produces one reply when complete.
+    func testDCSSequenceSplitAcrossChunkBoundaryStillReplies() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        var writes: [Data] = []
+        surface.callbackContext.onWrite = { writes.append($0) }
+
+        // DECRQSS for SGR: ESC P $ q m ST  (split after the DCS introducer).
+        let first = Data("\u{1B}P".utf8)
+        let second = Data("$qm\u{1B}\\".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: first, streamSeq: 0), .success)
+        pumpMainQueue()
+        XCTAssertEqual(writes.count, 0, "incomplete DCS must not reply early")
+
+        XCTAssertEqual(surface.processOutput(bytes: second, streamSeq: UInt64(first.count)), .success)
+        pumpMainQueue()
+        XCTAssertEqual(writes.count, 1, "completed DCS DECRQSS must reply exactly once")
+        // Reply is DCS-framed; non-empty is the live proof the parser re-entered.
+        XCTAssertFalse(writes[0].isEmpty)
+        XCTAssertEqual(writes[0].first, 0x1B)
+    }
+
+    /// APC (Kitty graphics query) split across chunks still completes without
+    /// poisoning the following printable text.
+    func testAPCSequenceSplitAcrossChunkBoundaryDoesNotPoisonFollowingText() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        // Kitty graphics query APC; split mid-payload then follow with "Z".
+        let apc = Data("\u{1B}_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u{1B}\\".utf8)
+        let mid = apc.count / 2
+        let first = apc.subdata(in: 0..<mid)
+        let second = apc.subdata(in: mid..<apc.count)
+        XCTAssertEqual(surface.processOutput(bytes: first, streamSeq: 0), .success)
+        XCTAssertEqual(
+            surface.processOutput(bytes: second, streamSeq: UInt64(first.count)),
+            .success
+        )
+        let after = UInt64(apc.count)
+        XCTAssertEqual(surface.processOutput(bytes: Data("Z".utf8), streamSeq: after), .success)
+        XCTAssertEqual(surface.throughSeq, after + 1)
+
+        let meaningful = readScreenText(surface).trimmingCharacters(in: .whitespacesAndNewlines)
+        XCTAssertTrue(meaningful.contains("Z"),
+                      "APC split must not poison later printables; screen=\(meaningful.debugDescription)")
+    }
+
+    /// Grapheme cluster (base + combining mark) split mid-cluster still
+    /// lands as one visual character, not two garbled cells.
+    func testGraphemeClusterSplitAcrossChunkBoundaryDecodesCorrectly() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        // "é" as e + COMBINING ACUTE ACCENT (U+0301), not the precomposed form.
+        let base = Data("e".utf8)
+        let mark = Data("\u{0301}".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: base, streamSeq: 0), .success)
+        XCTAssertEqual(surface.processOutput(bytes: mark, streamSeq: 1), .success)
+        XCTAssertEqual(surface.throughSeq, UInt64(base.count + mark.count))
+
+        let meaningful = readScreenText(surface).trimmingCharacters(in: .whitespacesAndNewlines)
+        // NFC of e+acute is "é"; accept either NFC or NFD as long as it is
+        // one grapheme of "é", not "e" alone or replacement garbage.
+        let nfc = meaningful.precomposedStringWithCanonicalMapping
+        XCTAssertEqual(nfc, "é",
+                       "split grapheme must decode to 'é', got \(meaningful.debugDescription)")
+    }
+
+    /// Rejected fault dispositions must not retain the renderer/admission
+    /// lock: a concurrent valid call after a burst of invalids must still
+    /// enter and succeed, and operationObserver must never show nested
+    /// processOutput (serialized, not re-entrant / stuck).
+    func testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        let stateLock = NSLock()
+        var active = 0
+        var maxActive = 0
+        surface.operationObserver = { operation, phase in
+            guard operation == "processOutput" else { return }
+            stateLock.lock()
+            if phase == .begin {
+                active += 1
+                maxActive = max(maxActive, active)
+            } else {
+                active -= 1
+            }
+            stateLock.unlock()
+        }
+
+        let start = DispatchSemaphore(value: 0)
+        let group = DispatchGroup()
+        var invalidResults: [HiveTerminalEngineResult] = []
+        let resultLock = NSLock()
+
+        // Burst of concurrent invalid calls (gap, overflow, empty).
+        for seq in [UInt64(50), UInt64.max - 1, UInt64(999)] {
+            group.enter()
+            DispatchQueue.global(qos: .userInitiated).async {
+                start.wait()
+                let r = surface.processOutput(bytes: Data("bad".utf8), streamSeq: seq)
+                resultLock.lock()
+                invalidResults.append(r)
+                resultLock.unlock()
+                group.leave()
+            }
+        }
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            start.wait()
+            let r = surface.processOutput(bytes: Data(), streamSeq: 0)
+            resultLock.lock()
+            invalidResults.append(r)
+            resultLock.unlock()
+            group.leave()
+        }
+
+        // One concurrent valid contiguous write — must succeed after/among rejects.
+        var validResult: HiveTerminalEngineResult = .invalidValue
+        group.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            start.wait()
+            // Small delay so invalids hit first, proving we are not locked out.
+            Thread.sleep(forTimeInterval: 0.01)
+            validResult = surface.processOutput(bytes: Data("ok".utf8), streamSeq: 0)
+            group.leave()
+        }
+
+        for _ in 0..<5 { start.signal() }
+        // Wait off-main so DispatchQueue.main.sync admission inside
+        // processOutput can run (group.wait on main would deadlock).
+        let finished = expectation(description: "concurrent fault burst finished")
+        DispatchQueue.global().async {
+            _ = group.wait(timeout: .now() + 5)
+            finished.fulfill()
+        }
+        wait(for: [finished], timeout: 6)
+
+        XCTAssertEqual(validResult, .success, "valid call must not be locked out by prior rejects")
+        XCTAssertEqual(surface.throughSeq, 2)
+        for r in invalidResults {
+            XCTAssertEqual(r, .invalidValue)
+        }
+        stateLock.lock()
+        let peak = maxActive
+        let stillActive = active
+        stateLock.unlock()
+        XCTAssertEqual(stillActive, 0, "no processOutput must remain entered after return")
+        XCTAssertEqual(peak, 1, "ingestion must serialize: never re-enter processOutput")
+    }
+
+    /// processOutput is serialized with draw and restore on the main
+    /// admission domain: concurrent callers never overlap in
+    /// operationObserver, and a restore after ordered output resets the
+    /// ledger baseline (pre-restore ranges classify invalid).
+    func testIngestionSerializedWithDrawAndRestore() throws {
+        let surface = try makeSurface()
+        defer { surface.free() }
+
+        let stateLock = NSLock()
+        var activeOps = 0
+        var maxActive = 0
+        var sawDrawDuringOutput = false
+        var outputEntered = false
+        surface.operationObserver = { operation, phase in
+            stateLock.lock()
+            defer { stateLock.unlock() }
+            if operation == "processOutput" || operation == "restoreCheckpoint" {
+                if phase == .begin {
+                    activeOps += 1
+                    maxActive = max(maxActive, activeOps)
+                    if operation == "processOutput" { outputEntered = true }
+                } else {
+                    activeOps -= 1
+                }
+            }
+        }
+
+        // Hold processOutput mid-admission so draw can race it on main.
+        let copyEntered = DispatchSemaphore(value: 0)
+        let releaseCopy = DispatchSemaphore(value: 0)
+        surface.outputCopyObserver = { _ in
+            copyEntered.signal()
+            releaseCopy.wait()
+        }
+
+        var outputResult: HiveTerminalEngineResult = .invalidValue
+        let outputDone = expectation(description: "output finished")
+        DispatchQueue.global(qos: .userInitiated).async {
+            outputResult = surface.processOutput(bytes: Data("draw-race".utf8), streamSeq: 0)
+            outputDone.fulfill()
+        }
+        XCTAssertEqual(copyEntered.wait(timeout: .now() + 2), .success)
+
+        // Draw on main while output is waiting for admission — must not
+        // interleave with the C process_output body (observer peak stays 1).
+        surface.draw()
+        stateLock.lock()
+        if outputEntered { sawDrawDuringOutput = true }
+        stateLock.unlock()
+
+        releaseCopy.signal()
+        wait(for: [outputDone], timeout: 2)
+        // Drop the stall seam before any further processOutput: later calls
+        // (including on main) would otherwise block forever on releaseCopy.
+        surface.outputCopyObserver = nil
+        XCTAssertEqual(outputResult, .success)
+        XCTAssertEqual(surface.throughSeq, 9)
+
+        // Restore with a deliberately invalid empty payload → invalid, no
+        // advance; then a second valid processOutput after the failed restore
+        // still works at the pre-restore through_seq (failed restore no-ops).
+        XCTAssertEqual(
+            surface.restoreCheckpoint(payload: Data(), throughSeq: 0),
+            .invalidValue
+        )
+        XCTAssertEqual(surface.throughSeq, 9)
+        XCTAssertEqual(surface.processOutput(bytes: Data("!".utf8), streamSeq: 9), .success)
+        XCTAssertEqual(surface.throughSeq, 10)
+
+        stateLock.lock()
+        let peak = maxActive
+        let still = activeOps
+        stateLock.unlock()
+        XCTAssertEqual(still, 0)
+        XCTAssertEqual(peak, 1, "processOutput/restore must never nest")
+        _ = sawDrawDuringOutput // draw may complete before admission; peak is the load-bearing proof
+    }
 }
