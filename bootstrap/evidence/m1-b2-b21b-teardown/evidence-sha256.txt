@@ -28,7 +28,7 @@ acf7d235494424b80ca75bd233c2b8958dcdf97c9540a0a1ad833eb7fcca06c5  ./observer-pos
 0d889b34997cb0d70e9b39d521078dc03825f4431e3e17fccd534fd260da6633  ./provenance.txt
 3cf6a7279d0dd4c54c4eedfd47875c6d7d4c0486b1263546fab5eef6d3baa167  ./public-probe-import-audit.txt
 c82af1b50d4489797ee900df2b51e8ec88a6e9e3807d5991dc2afd296a2ccc8f  ./public-probe-imports.observed.txt
-22b53d1e0b5a0f20e4fb230c3081d9eb849688675dc84db4feebdefaacfebe6f  ./summary.txt
+986228cda7e4f9c3ccc7b479fd78492ee73d914fac56894011e1045abc2c9be1  ./summary.txt
 24f55a2e5e583397671df4b9bd0ea83287f1f4843521cb32aaae932798499ed4  ./x86_64-before.fds.txt
 9698949274c8b97dfc98387d7b44ad6278bb75dbb98650b6874c28a3fa7155ca  ./x86_64-before.process-tree.txt
 29811ffaccfeaf43eca9b0909ecc3003743843432194700e987b0f54b5eaf98d  ./x86_64-before.threads.txt

@@ -39,3 +39,8 @@ B2.2 handoff:
   path and hive stop is the ordinary quit path; the lease deadline is only crash recovery.
 - On attach/reconnect, preserve the locator fence across grants, output ranges, checkpoints,
   renderer recreation, exit, and reap. A late/wrong generation must not draw or receive input.
+- Do not interpret a successful hive stop against an already non-live daemon as verified tree
+  absence: broker authentication is no longer available, so the crash lease is the only backstop.
+- Close if cheap: make the TypeScript reap belt refuse loudly when SessionInspection.hostPid is
+  null. An empty capture currently makes its ps readback vacuous even though the native belt is
+  independently stronger.
