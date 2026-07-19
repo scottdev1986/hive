@@ -18,6 +18,11 @@ read terminators leave that live counter flat. The config explicitly loads
 `clipboard-read = deny`; see `osc52-policy.md` for the primary parser drop and
 the defense-in-depth Surface gate.
 
+Future CI note: the in-suite positive control invokes `read_clipboard_cb`
+directly, while this probe's `paste_from_clipboard` control proves the engine
+path reaches that callback. If the probe is ever removed from CI, promote an
+engine-driven positive control into the suite so the engine-path proof remains.
+
 ## Frozen inputs
 
 - Ghostty upstream commit: `73534c4680a809398b396c94ac7f12fcccb7963d`
