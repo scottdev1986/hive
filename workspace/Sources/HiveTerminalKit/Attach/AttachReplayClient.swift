@@ -187,6 +187,13 @@ public final class AttachReplayClient {
         snapshotStarted = false
     }
 
+    func failDeferredPresentation(_ failure: TerminalSurfaceState) {
+        transport?.close()
+        transport = nil
+        state = failure
+        resetInputState()
+    }
+
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {
         guard let binding else { return .rejectedLateFrame }
         if frameBinding != binding { return .rejectedLateFrame }

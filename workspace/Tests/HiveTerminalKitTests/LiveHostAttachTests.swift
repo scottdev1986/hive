@@ -353,16 +353,16 @@ final class LiveHostAttachTests: XCTestCase {
             viewerId: "b24-live-geometry"
         )
         defer { view.userClose() }
-        let renderedGeometry = try XCTUnwrap(view.reportedGeometry)
+        let provisionalGeometry = try XCTUnwrap(view.reportedGeometry)
         XCTAssertFalse(
-            renderedGeometry.columns == geometry.columns && renderedGeometry.rows == geometry.rows,
+            provisionalGeometry.columns == geometry.columns && provisionalGeometry.rows == geometry.rows,
             "positive control requires a real non-80x24 rendered grid"
         )
 
         let grantLine = try issueGrant(
             proof,
             viewerId: "b24-live-geometry",
-            geometryOverride: renderedGeometry
+            geometryOverride: provisionalGeometry
         )
         XCTAssertEqual(grantLine.status, 0, "geometry grant refused: \(grantLine.output)")
         let grant = try parseGrant(grantLine.output)
@@ -372,13 +372,19 @@ final class LiveHostAttachTests: XCTestCase {
         defer { transport.close() }
         let outcome = try view.attach(
             grant: grant,
-            geometry: renderedGeometry,
+            geometry: provisionalGeometry,
             afterSeq: 0,
             transport: transport
         )
         guard case .firstCorrectFrame = outcome else {
             return XCTFail("geometry proof attach failed: \(outcome)")
         }
+        let liveDeadline = Date().addingTimeInterval(3)
+        while view.surfaceState != .live, Date() < liveDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(view.surfaceState, .live)
+        let renderedGeometry = try XCTUnwrap(view.reportedGeometry)
         let binding = try XCTUnwrap(view.binding)
 
         view.insertText(

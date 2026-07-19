@@ -262,11 +262,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         claimPresentation = client.claimPresentation
         switch outcome {
         case .firstCorrectFrame(let hw, _):
-            engine.applyHiveConfiguration()
-            updateReportedGeometry(scheduleResize: false)
-            try client.sendResize(reportedGeometry ?? geometry)
-            resizeFramesSent += 1
-            presentFirstCorrectFrame(hw)
+            try prepareFirstCorrectFrame(
+                hw,
+                client: client,
+                fallbackGeometry: geometry
+            )
         case .failed(let state):
             setSurfaceState(state)
         case .rejectedLateFrame, .continueReplay:
@@ -303,6 +303,96 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         notifyOutputStatusReconnect(reason: "first-correct-frame")
         onFirstCorrectFrame?(highWater)
         scheduleDraw()
+    }
+
+    private func prepareFirstCorrectFrame(
+        _ highWater: UInt64,
+        client: AttachReplayClient,
+        fallbackGeometry: TerminalGeometry
+    ) throws {
+        guard let expectedBinding = binding else { return }
+        engine.applyHiveConfiguration()
+        if engine is GhosttyManualSurface {
+            let deadline = Date().addingTimeInterval(2)
+            DispatchQueue.main.async { [weak self] in
+                self?.finalizeFirstCorrectFrameWhenConfigurationSettles(
+                    highWater,
+                    client: client,
+                    fallbackGeometry: fallbackGeometry,
+                    expectedBinding: expectedBinding,
+                    deadline: deadline
+                )
+            }
+        } else {
+            try finalizeFirstCorrectFrame(
+                highWater,
+                client: client,
+                fallbackGeometry: fallbackGeometry
+            )
+        }
+    }
+
+    private func finalizeFirstCorrectFrameWhenConfigurationSettles(
+        _ highWater: UInt64,
+        client: AttachReplayClient,
+        fallbackGeometry: TerminalGeometry,
+        expectedBinding: SurfaceBinding,
+        deadline: Date
+    ) {
+        guard surfaceState == .attaching,
+              binding == expectedBinding,
+              attachClient === client,
+              client.binding == expectedBinding
+        else { return }
+        refreshReportedGeometryAfterConfiguration()
+        if !reportedGeometryMatchesSemanticSnapshot() {
+            guard Date() < deadline else {
+                setSurfaceState(.rendererFailed(evidence: "C1 config geometry did not settle"))
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) { [weak self] in
+                self?.finalizeFirstCorrectFrameWhenConfigurationSettles(
+                    highWater,
+                    client: client,
+                    fallbackGeometry: fallbackGeometry,
+                    expectedBinding: expectedBinding,
+                    deadline: deadline
+                )
+            }
+            return
+        }
+        do {
+            try finalizeFirstCorrectFrame(
+                highWater,
+                client: client,
+                fallbackGeometry: fallbackGeometry
+            )
+        } catch {
+            let failure = TerminalSurfaceState.lost(evidence: "initial-resize: \(error)")
+            client.failDeferredPresentation(failure)
+            setSurfaceState(failure)
+        }
+    }
+
+    private func reportedGeometryMatchesSemanticSnapshot() -> Bool {
+        guard let reportedGeometry,
+              let snapshot = (engine as? ManualSurfaceSemanticSnapshotProviding)?.semanticSnapshot()
+        else { return true }
+        return reportedGeometry.columns == snapshot.geometry.columns &&
+            reportedGeometry.rows == snapshot.geometry.rows
+    }
+
+    private func finalizeFirstCorrectFrame(
+        _ highWater: UInt64,
+        client: AttachReplayClient,
+        fallbackGeometry: TerminalGeometry
+    ) throws {
+        if !(engine is GhosttyManualSurface) {
+            refreshReportedGeometryAfterConfiguration()
+        }
+        try client.sendResize(reportedGeometry ?? fallbackGeometry)
+        resizeFramesSent += 1
+        presentFirstCorrectFrame(highWater)
     }
 
     /// Binds this view to one exact locator. A reconnect may replace only the
@@ -588,6 +678,16 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         )
         reportedGeometry = geometry
         if scheduleResize, binding != nil { scheduleResizeFrame(geometry) }
+    }
+
+    private func refreshReportedGeometryAfterConfiguration() {
+        if let appliedFramebufferSize {
+            engine.setSize(
+                widthPx: appliedFramebufferSize.width,
+                heightPx: appliedFramebufferSize.height
+            )
+        }
+        updateReportedGeometry(scheduleResize: false)
     }
 
     // MARK: - Close

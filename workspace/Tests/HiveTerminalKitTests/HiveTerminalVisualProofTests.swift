@@ -21,14 +21,34 @@ final class HiveTerminalVisualProofTests: XCTestCase {
             viewerId: "c1-offscreen-proof"
         )
         defer { view.userClose() }
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: [.borderless],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        window.setFrameOrigin(NSPoint(x: -10_000, y: -10_000))
+        window.orderFrontRegardless()
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
         let surface = try XCTUnwrap(view.engine as? GhosttyManualSurface)
+        surface.setOcclusion(true)
         let layer = try XCTUnwrap(view.ghosttyRenderingLayer)
         let provisionalGeometry = try XCTUnwrap(view.reportedGeometry)
         XCTAssertGreaterThan(provisionalGeometry.columns, 100)
         XCTAssertNotEqual([provisionalGeometry.columns, provisionalGeometry.rows], [80, 24])
 
         var surfaceOperations: [(String, GhosttyOperationPhase)] = []
-        surface.operationObserver = { surfaceOperations.append(($0, $1)) }
+        var drawStates: [TerminalSurfaceState] = []
+        surface.operationObserver = { operation, phase in
+            surfaceOperations.append((operation, phase))
+            if operation == "draw" { drawStates.append(view.surfaceState) }
+        }
+        var callbackState: TerminalSurfaceState?
+        view.onFirstCorrectFrame = { _ in callbackState = view.surfaceState }
 
         let host = FakeHost(connectionId: "c1-offscreen-proof")
         let locator = makeTestLocator(sessionSuffix: "c1000000-7bbb-4ccc-8ddd-eeeeeeeeeeee")
@@ -46,16 +66,23 @@ final class HiveTerminalVisualProofTests: XCTestCase {
         guard case .firstCorrectFrame = outcome else {
             return XCTFail("expected a first correct production frame, got \(outcome)")
         }
+        XCTAssertEqual(view.surfaceState, .attaching)
+        XCTAssertEqual(view.resizeFramesSent, 0)
         XCTAssertEqual(
             surfaceOperations.filter { $0.0 == "surfaceUpdateConfig" }.map(\.1),
             [.begin, .end],
             "the composed C1 config must reach the live surface exactly once"
         )
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { view.surfaceState == .live },
+            "the live surface did not finalize after Ghostty's deferred config tick"
+        )
+        XCTAssertEqual(callbackState, .live)
+        XCTAssertEqual(view.resizeFramesSent, 1)
 
         let geometry = try XCTUnwrap(view.reportedGeometry)
         XCTAssertGreaterThan(geometry.columns, 80)
         XCTAssertGreaterThan(geometry.rows, 24)
-        XCTAssertNotEqual(geometry, provisionalGeometry)
         let content = representativeContent(columns: geometry.columns, rows: geometry.rows)
         let binding = try XCTUnwrap(view.binding)
         view.pumpHostFrame(
@@ -67,6 +94,9 @@ final class HiveTerminalVisualProofTests: XCTestCase {
             ),
             frameBinding: binding
         )
+        surface.draw()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+        XCTAssertTrue(drawStates.allSatisfy { $0 == .live })
 
         let snapshot = try XCTUnwrap(surface.semanticSnapshot())
         XCTAssertEqual(snapshot.geometry.columns, geometry.columns)
@@ -100,8 +130,10 @@ final class HiveTerminalVisualProofTests: XCTestCase {
         XCTAssertEqual(bitmap.pixelsWide, IOSurfaceGetWidth(ioSurface))
         XCTAssertEqual(bitmap.pixelsHigh, IOSurfaceGetHeight(ioSurface))
         assertC1Background(try XCTUnwrap(bitmap.colorAt(x: 3, y: 3)))
+        assertRepresentativeForeground(bitmap)
 
         try host.harvestViewerFrames()
+        XCTAssertEqual(host.receivedFromViewer.filter { $0.type == .resize }.count, 1)
         let resize = try XCTUnwrap(
             host.receivedFromViewer.first { $0.type == .resize },
             "the live first frame must send its measured grid to the PTY"
@@ -166,6 +198,19 @@ final class HiveTerminalVisualProofTests: XCTestCase {
         XCTAssertEqual(rgb.greenComponent, 17.0 / 255.0, accuracy: 0.08)
         XCTAssertEqual(rgb.blueComponent, 23.0 / 255.0, accuracy: 0.08)
         XCTAssertGreaterThan(rgb.alphaComponent, 0.95)
+    }
+
+    private func assertRepresentativeForeground(_ bitmap: NSBitmapImageRep) {
+        var foregroundSamples = 0
+        for y in stride(from: 0, to: bitmap.pixelsHigh, by: 4) {
+            for x in stride(from: 0, to: bitmap.pixelsWide, by: 4) {
+                guard let color = bitmap.colorAt(x: x, y: y)?.usingColorSpace(.sRGB) else { continue }
+                if color.redComponent > 0.25 || color.greenComponent > 0.25 || color.blueComponent > 0.25 {
+                    foregroundSamples += 1
+                }
+            }
+        }
+        XCTAssertGreaterThan(foregroundSamples, 500, "PNG contains only the C1 background")
     }
 
     private func waitUntil(
