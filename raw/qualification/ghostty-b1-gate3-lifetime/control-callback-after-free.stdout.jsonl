@@ -1,4 +1,4 @@
-{"arch":"arm64","defect":"callback-after-free","pid":79860,"stage":"start"}
-{"defect":"callback-after-free","inlineTicks":0,"pid":79860,"stage":"wakeup-tick","ticks":2,"ticksOnMain":2,"wakeups":2}
-{"defect":"callback-after-free","pid":79860,"replyBytes":9,"replyHex":"1b5b3f36323b323263","stage":"copy-before-return"}
-{"defect":"callback-after-free","error":"1 callback(s) arrived after ghostty_surface_free: transient","pid":79860,"stage":"failed"}
+{"arch":"arm64","defect":"callback-after-free","pid":98216,"stage":"start"}
+{"defect":"callback-after-free","inlineTicks":0,"pid":98216,"stage":"wakeup-tick","ticks":2,"ticksOnMain":2,"wakeups":2}
+{"defect":"callback-after-free","pid":98216,"replyBytes":9,"replyHex":"1b5b3f36323b323263","stage":"copy-before-return"}
+{"defect":"callback-after-free","error":"1 callback(s) arrived after ghostty_surface_free: transient","pid":98216,"stage":"failed"}

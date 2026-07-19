@@ -8,58 +8,39 @@ Building for debugging...
 [6/16] Compiling HiveTerminalKit ManualSurface.swift
 [7/16] Emitting module HiveTerminalKit
 [8/24] Compiling HiveTerminalKit ClipboardContext.swift
-[9/24] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
-[10/24] Compiling HiveTerminalKit HiveTerminalView+Input.swift
-[11/24] Compiling HiveTerminalKit OutputRangeApplicator.swift
-[12/24] Compiling HiveTerminalKit AttachReplayClient.swift
-[13/24] Compiling HiveTerminalKit EngineContract.swift
+[9/24] Compiling HiveTerminalKit EngineContract.swift
+[10/24] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
+[11/24] Compiling HiveTerminalKit ManualSurface+SemanticSnapshot.swift
+[12/24] Compiling HiveTerminalKit OutputRangeApplicator.swift
+[13/24] Compiling HiveTerminalKit HiveTerminalView+Input.swift
 [14/24] Compiling HiveTerminalKit HiveTerminalView.swift
-[15/24] Compiling HiveTerminalKit ManualSurface+SemanticSnapshot.swift
-[15/28] Write Objects.LinkFileList
+[15/24] Compiling HiveTerminalKit AttachReplayClient.swift
+[15/30] Write Objects.LinkFileList
 [18/62] Emitting module HiveTerminalB20Probe
 [19/62] Compiling HiveTerminalB20Probe main.swift
 [19/63] Write Objects.LinkFileList
-[21/63] Compiling HiveTerminalKitTests HeaderParityTests.swift
-[22/63] Compiling HiveTerminalKitTests InMemoryHostTransport.swift
+[21/63] Compiling HiveTerminalKitTests RendererReplySuppressionTests.swift
+[22/63] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
 [23/64] Compiling HiveWorkspace SessiondPaneTerminal.swift
 [24/64] Compiling HiveWorkspace PaneView.swift
-[25/64] Compiling HiveTerminalKitTests RendererReplySuppressionTests.swift
-[26/64] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
-[27/64] Compiling HiveTerminalKitTests OrderedOutputEngineTests.swift
-[28/64] Compiling HiveTerminalKitTests OrderedOutputStressTests.swift
-[29/64] Compiling HiveTerminalKitTests FakeHost.swift
-[30/64] Compiling HiveTerminalKitTests FocusStealTests.swift
-[31/64] Compiling HiveTerminalKitTests Gate3ConcurrentCreationTests.swift
-[32/64] Compiling HiveTerminalKitTests Gate3OperationDomainTests.swift
-[33/64] Emitting module HiveWorkspace
-[34/64] Compiling HiveTerminalKitTests B20EngineContractTests.swift
-[35/64] Compiling HiveTerminalKitTests CallbackDisciplineTests.swift
-[35/64] Write Objects.LinkFileList
-[37/64] Compiling HiveTerminalKitTests AppWakeupLifecycleTests.swift
-[38/64] Compiling HiveTerminalKitTests AttachReplayTests.swift
-[39/64] Compiling HiveTerminalKitTests Gate10AccessibilityTests.swift
-[40/64] Compiling HiveTerminalKitTests Gate10SemanticSnapshotTests.swift
-[41/64] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
-[42/64] Compiling HiveTerminalKitTests InputEncodingTests.swift
-[43/64] Compiling HiveTerminalKitTests KittyKeyboardGoldenTests.swift
-[44/64] Compiling HiveTerminalKitTests LateFrameRejectionTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
+[25/64] Compiling HiveTerminalKitTests LateFrameRejectionTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
  85 |         generationOverride: Int? = nil
  86 |     ) throws -> (status: Int32, output: String) {
  87 |         var locator = proof.locator
     |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
  88 |         _ = locator
  89 |         var locatorLine = try locatorJSON(proof.locator)
-[45/64] Compiling HiveTerminalKitTests LiveHostAttachTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
+[26/64] Compiling HiveTerminalKitTests LiveHostAttachTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
  85 |         generationOverride: Int? = nil
  86 |     ) throws -> (status: Int32, output: String) {
  87 |         var locator = proof.locator
     |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
  88 |         _ = locator
  89 |         var locatorLine = try locatorJSON(proof.locator)
-[46/64] Compiling HiveTerminalKitTests Gate9ReachabilityTraceTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+[27/64] Compiling HiveTerminalKitTests Gate9ReachabilityTraceTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
  79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
  80 |         )
  81 |         weak var weakHost = externalHost
@@ -67,7 +48,7 @@ Building for debugging...
  82 | 
  83 |         let surface: GhosttyManualSurface
 
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
  93 |         defer { surface.free() }
  94 | 
  95 |         weak var weakCtx = surface.callbackContext
@@ -76,8 +57,8 @@ Building for debugging...
  97 | 
 
 [#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
-[47/64] Compiling HiveTerminalKitTests GhosttyBridgeLinkTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+[28/64] Compiling HiveTerminalKitTests GhosttyBridgeLinkTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
  79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
  80 |         )
  81 |         weak var weakHost = externalHost
@@ -85,7 +66,7 @@ Building for debugging...
  82 | 
  83 |         let surface: GhosttyManualSurface
 
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
  93 |         defer { surface.free() }
  94 | 
  95 |         weak var weakCtx = surface.callbackContext
@@ -94,16 +75,35 @@ Building for debugging...
  97 | 
 
 [#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
-[48/64] Compiling HiveTerminalKitTests Gate9ActionPolicyTests.swift
-[49/64] Compiling HiveTerminalKitTests Gate9CallbackMatrixTests.swift
-[50/64] Compiling HiveTerminalKitTests Gate4ABIQualificationTests.swift
-[51/64] Compiling HiveTerminalKitTests Gate6SurfaceRestoreTests.swift
-[52/64] Compiling HiveTerminalKitTests Gate7RenderingTests.swift
-[53/64] Compiling HiveTerminalKitTests Gate8ClipboardTests.swift
-[54/64] Emitting module HiveTerminalKitTests
+[29/64] Compiling HiveTerminalKitTests Gate9ActionPolicyTests.swift
+[30/64] Compiling HiveTerminalKitTests Gate9CallbackMatrixTests.swift
+[31/64] Emitting module HiveWorkspace
+[32/64] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
+[32/64] Write Objects.LinkFileList
+[34/64] Compiling HiveTerminalKitTests Gate3ConcurrentCreationTests.swift
+[35/64] Compiling HiveTerminalKitTests Gate3OperationDomainTests.swift
+[36/64] Compiling HiveTerminalKitTests Gate10AccessibilityTests.swift
+[37/64] Compiling HiveTerminalKitTests Gate10SemanticSnapshotTests.swift
+[38/64] Compiling HiveTerminalKitTests Gate4ABIQualificationTests.swift
+[39/64] Compiling HiveTerminalKitTests Gate6SurfaceRestoreTests.swift
+[40/64] Compiling HiveTerminalKitTests FakeHost.swift
+[41/64] Compiling HiveTerminalKitTests FocusStealTests.swift
+[42/64] Compiling HiveTerminalKitTests B20EngineContractTests.swift
+[43/64] Compiling HiveTerminalKitTests CallbackDisciplineTests.swift
+[44/64] Emitting module HiveTerminalKitTests
+[45/64] Compiling HiveTerminalKitTests AppWakeupLifecycleTests.swift
+[46/64] Compiling HiveTerminalKitTests AttachReplayTests.swift
+[47/64] Compiling HiveTerminalKitTests Gate7RenderingTests.swift
+[48/64] Compiling HiveTerminalKitTests Gate8ClipboardTests.swift
+[49/64] Compiling HiveTerminalKitTests InputEncodingTests.swift
+[50/64] Compiling HiveTerminalKitTests KittyKeyboardGoldenTests.swift
+[51/64] Compiling HiveTerminalKitTests HeaderParityTests.swift
+[52/64] Compiling HiveTerminalKitTests InMemoryHostTransport.swift
+[53/64] Compiling HiveTerminalKitTests OrderedOutputEngineTests.swift
+[54/64] Compiling HiveTerminalKitTests OrderedOutputStressTests.swift
 [54/64] Linking GhosttyGate3Probe
-[55/64] Linking GhosttyGate10Probe
-[56/64] Applying GhosttyGate3Probe
+[55/64] Applying GhosttyGate3Probe
+[56/64] Linking GhosttyGate10Probe
 [57/64] Applying GhosttyGate10Probe
 [58/64] Linking HiveTerminalB20Probe
 [59/64] Applying HiveTerminalB20Probe
@@ -111,33 +111,33 @@ Building for debugging...
 [61/64] Applying HiveWorkspace
 [62/64] Write Objects.LinkFileList
 [63/64] Linking HiveWorkspacePackageTests
-Build complete! (6.14s)
-Test Suite 'Selected tests' started at 2026-07-19 16:53:40.519.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 16:53:40.519.
-Test Suite 'AppWakeupLifecycleTests' started at 2026-07-19 16:53:40.519.
+Build complete! (6.06s)
+Test Suite 'Selected tests' started at 2026-07-19 16:58:18.517.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 16:58:18.518.
+Test Suite 'AppWakeupLifecycleTests' started at 2026-07-19 16:58:18.518.
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' started.
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' started.
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:239: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing] : XCTAssertTrue failed - free must have been attempted — recorded ["tick-start-timeout"]
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:240: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing] : XCTAssertTrue failed - free must have completed — recorded ["tick-start-timeout"]
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:243: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing] : failed - expected both tick-end and free-completed — recorded ["tick-start-timeout"]
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' failed (2.372 seconds).
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:239: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing] : XCTAssertTrue failed - free must have been attempted — recorded ["tick-start-timeout"]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:240: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing] : XCTAssertTrue failed - free must have completed — recorded ["tick-start-timeout"]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:243: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing] : failed - expected both tick-end and free-completed — recorded ["tick-start-timeout"]
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' failed (2.347 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' started.
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:84: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer] : Asynchronous wait failed: Exceeded timeout of 2 seconds, with unfulfilled expectations: "real tick observed".
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:86: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer] : XCTAssertTrue failed - the tick must execute on the main thread
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:87: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer] : XCTAssertEqual failed: ("nil") is not equal to ("Optional(0x000000099527ea00)") - the tick must receive the real owning app's handle
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' failed (2.025 seconds).
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:84: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer] : Asynchronous wait failed: Exceeded timeout of 2 seconds, with unfulfilled expectations: "real tick observed".
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:86: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer] : XCTAssertTrue failed - the tick must execute on the main thread
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:87: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer] : XCTAssertEqual failed: ("nil") is not equal to ("Optional(0x0000000baab71c00)") - the tick must receive the real owning app's handle
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' failed (2.023 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' started.
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:136: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp] : XCTAssertGreaterThanOrEqual failed: ("0") is less than ("1") - the deferred tick must actually execute once the main run loop turns
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' failed (2.016 seconds).
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.0CEAmE/workspace/Tests/HiveTerminalKitTests/AppWakeupLifecycleTests.swift:136: error: -[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp] : XCTAssertGreaterThanOrEqual failed: ("0") is less than ("1") - the deferred tick must actually execute once the main run loop turns
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' failed (2.031 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' started.
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' passed (0.133 seconds).
-Test Suite 'AppWakeupLifecycleTests' failed at 2026-07-19 16:53:47.067.
-	 Executed 5 tests, with 7 failures (0 unexpected) in 6.547 (6.548) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-07-19 16:53:47.067.
-	 Executed 5 tests, with 7 failures (0 unexpected) in 6.547 (6.548) seconds
-Test Suite 'Selected tests' failed at 2026-07-19 16:53:47.067.
-	 Executed 5 tests, with 7 failures (0 unexpected) in 6.547 (6.549) seconds
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' passed (0.134 seconds).
+Test Suite 'AppWakeupLifecycleTests' failed at 2026-07-19 16:58:25.054.
+	 Executed 5 tests, with 7 failures (0 unexpected) in 6.535 (6.536) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-07-19 16:58:25.054.
+	 Executed 5 tests, with 7 failures (0 unexpected) in 6.535 (6.536) seconds
+Test Suite 'Selected tests' failed at 2026-07-19 16:58:25.054.
+	 Executed 5 tests, with 7 failures (0 unexpected) in 6.535 (6.537) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0

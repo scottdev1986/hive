@@ -2,7 +2,7 @@ control=teardown-wait file=CallbackContext.swift
   bytes_before=9275 bytes_after=9200
   filter=CallbackDisciplineTests exit_status=1
 control=noop-wakeup file=ManualSurface.swift
-  bytes_before=61242 bytes_after=61231
+  bytes_before=61487 bytes_after=61476
   filter=AppWakeupLifecycleTests exit_status=1
 control=delivery-guards file=CallbackContext.swift
   bytes_before=9275 bytes_after=9216
