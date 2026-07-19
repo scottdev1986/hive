@@ -196,7 +196,10 @@ final class SessiondPaneTerminal {
             // a later transient loss starts fresh.
             stopRecovery()
             failedAttempts = 0
-            startPump(transport: transport)
+            startPump(
+                transport: transport,
+                binding: SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
+            )
         } catch {
             NSLog("sessiond surface attach for %@ refused: %@", agentName, "\(error)")
             transport.close()
@@ -208,7 +211,7 @@ final class SessiondPaneTerminal {
     /// handshake returns. Frames apply on the main thread through the
     /// locator-fenced view entry; transport loss triggers a re-attach to the
     /// SAME exact generation at the applied high-water.
-    private func startPump(transport: UdsHostTransport) {
+    private func startPump(transport: UdsHostTransport, binding: SurfaceBinding) {
         let thread = Thread { [weak self] in
             while true {
                 guard let self, !self.detached, !transport.isClosed else { return }
@@ -217,7 +220,7 @@ final class SessiondPaneTerminal {
                         break // orderly close
                     }
                     DispatchQueue.main.async {
-                        self.view?.pumpHostFrame(frame)
+                        self.view?.pumpHostFrame(frame, frameBinding: binding)
                     }
                 } catch let error as WireError {
                     if case .receiveTimeout = error { continue }

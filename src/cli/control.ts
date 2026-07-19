@@ -239,7 +239,7 @@ export async function attachGrantCli(
         sessionLocator: locator,
         viewerId,
         geometry,
-        operations: ["view"],
+        operations: ["view", "human-input", "resize"],
       }),
     },
   );

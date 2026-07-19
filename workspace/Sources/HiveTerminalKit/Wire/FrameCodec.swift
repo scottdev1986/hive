@@ -22,6 +22,7 @@ public enum FrameType: UInt16, CaseIterable, Sendable {
     case humanInput = 0x0302
     case claimRelease = 0x0303
     case gestureInput = 0x0304
+    case inputSubmit = 0x0305
 }
 
 public struct FrameFlags: OptionSet, Sendable {
@@ -91,6 +92,7 @@ public enum FrameCodec {
     public static let protocolMinor: UInt8 = 0
     public static let controlFrameMaxBytes = 256 * 1024
     public static let streamChunkMaxBytes = 64 * 1024
+    public static let inputTransactionMaxBytes = 128 * 1024
     public static let optionalTypeBit: UInt16 = 0x8000
 
     private static let rawByteTypes: Set<FrameType> = [

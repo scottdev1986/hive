@@ -188,9 +188,11 @@ db.insertAgent({
 log(`agent row inserted: ${agentName} → ${locator.sessionId} generation ${locator.generation}`);
 
 const ticker =
-  'i=0; while true; do printf "\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  " ' +
+  '(i=0; while true; do printf "\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  " ' +
   '"$(( (i % 6) + 1 ))" "$i"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf "\\n"; ' +
-  "sleep 0.25; done";
+  'sleep 0.25; done) & ticker_pid=$!; ' +
+  'trap \'kill "$ticker_pid" 2>/dev/null\' EXIT; ' +
+  'while IFS= read -r line; do printf "\\nB2.3 RESPONSE:%s\\n" "$line"; done';
 const spec = {
   schemaVersion: 1 as const,
   locator,

@@ -247,3 +247,21 @@ public enum InputClaimPresentation: Equatable, Sendable {
     case humanOwned(viewerId: String, claimId: String)
     case humanOrphaned(viewerId: String, claimId: String)
 }
+
+/// Viewer-visible state of the frozen INPUT_SUBMIT / APPLIED transaction.
+public enum InputSubmissionState: Equatable, Sendable {
+    case idle
+    case waitingForClaim
+    case pending(transactionId: String)
+    case applied(transactionId: String, stage: String)
+    case refused(code: String, evidence: String)
+    case unknown(evidence: String)
+
+    public var failureEvidence: String? {
+        switch self {
+        case .refused(let code, let evidence): return "\(code): \(evidence)"
+        case .unknown(let evidence): return evidence
+        default: return nil
+        }
+    }
+}

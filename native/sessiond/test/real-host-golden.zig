@@ -790,6 +790,31 @@ fn driveViewerWire(
         return error.InvalidClaimGrant;
     const claim_token = parsed_claim.value.result.claim.token;
 
+    // Positive control for the reverse exact-generation fence: even on this
+    // authenticated attached stream with a valid human claim token, a stale
+    // session incarnation is a typed refusal and reaches the PTY zero times.
+    const wrong_generation_input = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = session_id, .incarnation = "2" },
+        .claimToken = claim_token,
+        .transactionId = "domain-input-wrong-generation",
+        .idempotencyKey = "domain-input-wrong-generation-idempotency",
+        .operation = .{
+            .kind = "bytes",
+            .encoding = "base64",
+            .bytes = "d3JvbmctZ2VuZXJhdGlvbi1pbnB1dAo=",
+        },
+    }, .{});
+    defer allocator.free(wrong_generation_input);
+    try writeViewerRequest(
+        stream,
+        generated.frame_type.input_submit,
+        29,
+        generated.frame_flag.content_sensitive,
+        wrong_generation_input,
+    );
+    try readViewerError(&reader, 29, "GENERATION_MISMATCH");
+
     const denied_claim = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
         .session = .{ .key = session_id, .incarnation = "1" },

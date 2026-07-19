@@ -16,6 +16,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var binding: SurfaceBinding?
     public private(set) var sessionLocator: SessionLocator?
     public private(set) var claimPresentation: InputClaimPresentation = .free
+    public private(set) var inputSubmissionState: InputSubmissionState = .idle
     public private(set) var highWater: UInt64 = 0
     public private(set) var lastTitle: String = ""
     public private(set) var lastPwd: String = ""
@@ -37,6 +38,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public var onStateChange: ((TerminalSurfaceState) -> Void)?
     public var onBell: (() -> Void)?
     public var onRendererHealthChange: ((RendererHealth) -> Void)?
+    public var onInputSubmissionStateChange: ((InputSubmissionState) -> Void)?
 
     public private(set) var focusStealAttempts = 0
     var testingAllowFocusSteal = false
@@ -210,9 +212,13 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     func makeAttachClient() -> AttachReplayClient {
         let client = AttachReplayClient(viewerId: viewerId, engine: engine)
-        // Encoder-out write path → HUMAN_INPUT (client owns claim binding).
+        // Encoder-out write path → claim-held INPUT_SUBMIT.
         engine.callbackContext.onWrite = { [weak client] bytes in
             client?.handleEncodedWrite(bytes)
+        }
+        client.onInputSubmissionStateChange = { [weak self] state in
+            self?.inputSubmissionState = state
+            self?.onInputSubmissionStateChange?(state)
         }
         // Event path stays on the view (INVALIDATE/CLOSE_REQUEST/…).
         engine.callbackContext.onEvent = { [weak self] event in
@@ -269,12 +275,13 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// Applies one live post-attach host frame through the locator-fenced
     /// client (§20/§26). Frames for a superseded binding are rejected by the
     /// client and never mutate the surface. Main-thread confined.
-    public func pumpHostFrame(_ frame: WireFrame) {
-        guard let binding, let client = attachClient else { return }
-        let outcome = (try? client.handleFrame(frame, frameBinding: binding))
+    public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
+        guard let client = attachClient else { return }
+        let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
             ?? .rejectedLateFrame
         highWater = client.highWater
         claimPresentation = client.claimPresentation
+        inputSubmissionState = client.inputSubmissionState
         switch outcome {
         case .firstCorrectFrame(let hw, _):
             highWater = hw

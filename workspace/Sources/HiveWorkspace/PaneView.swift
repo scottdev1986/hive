@@ -49,6 +49,13 @@ final class PaneView: NSView {
                 self.detailLabel.stringValue = "renderer disconnected"
                 self.detailLabel.toolTip = evidence
             }
+            terminalView.onInputSubmissionStateChange = { [weak self] state in
+                guard let self, let evidence = state.failureEvidence else { return }
+                self.failureBadge.isHidden = false
+                self.failureBadge.toolTip = "Terminal input refused — \(evidence)"
+                self.detailLabel.stringValue = "input refused"
+                self.detailLabel.toolTip = evidence
+            }
             terminal.startWhenGeometryReady()
         } catch {
             NSLog("sessiond terminal surface for pane %@ failed: %@",

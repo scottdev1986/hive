@@ -20,11 +20,23 @@ public enum AttachReplayOutcome: Equatable, Sendable {
 ///
 /// Host transport is injected (test double or L3 UDS).
 public final class AttachReplayClient {
+    private struct PendingInputBatch {
+        let binding: SurfaceBinding
+        let bytes: Data
+    }
+
+    private struct PendingInputRequest {
+        let binding: SurfaceBinding
+        let transactionId: String
+    }
+
     public private(set) var state: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
     public private(set) var highWater: UInt64 = 0
     public private(set) var claimPresentation: InputClaimPresentation = .free
+    public private(set) var inputSubmissionState: InputSubmissionState = .idle
     public private(set) var firstCorrectFramePresented = false
+    public var onInputSubmissionStateChange: ((InputSubmissionState) -> Void)?
 
     public let viewerId: String
     public let applicator: OutputRangeApplicator
@@ -33,8 +45,14 @@ public final class AttachReplayClient {
     private var nextRequestId: UInt64 = 1
     private var snapshotBuffer = Data()
     private var snapshotStarted = false
-    private var activeClaimId: String?
+    private var activeClaimToken: String?
+    private var claimRequestId: UInt64?
+    private var claimIdempotencyKey: String?
+    private var pendingInputBatches: [PendingInputBatch] = []
+    private var pendingInputRequests: [UInt64: PendingInputRequest] = [:]
+    private var inputFenced = false
     private var inputSequence: UInt64 = 0
+    private var resizeRevision: UInt64 = 0
 
     /// Handshake receive timeout (§09): fail closed rather than HOST_ATTACH blind.
     public var handshakeTimeout: TimeInterval = 5.0
@@ -86,6 +104,10 @@ public final class AttachReplayClient {
 
         let binding = SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
         self.binding = binding
+        resetInputState()
+        if !grant.operations.contains("human-input") {
+            refuseInput(code: "FORBIDDEN", evidence: "attach grant does not authorize human input")
+        }
         applicator.bind(binding, highWater: afterSeq)
         highWater = afterSeq
 
@@ -156,6 +178,7 @@ public final class AttachReplayClient {
         transport?.close()
         transport = nil
         binding = newBinding
+        resetInputState()
         applicator.bind(newBinding, highWater: highWater)
         self.highWater = highWater
         firstCorrectFramePresented = false
@@ -170,54 +193,75 @@ public final class AttachReplayClient {
         return try handleHostFrame(frame, binding: binding)
     }
 
-    /// §22 claim-bound write path: Ghostty encoder output → HUMAN_INPUT.
+    /// Gate 8 encoder output is held until this exact binding owns a human
+    /// claim, then submitted through the frozen INPUT_SUBMIT JSON operation.
     public func handleEncodedWrite(_ bytes: Data) {
-        guard let transport, let claimId = activeClaimId, !bytes.isEmpty else { return }
-        let seq = inputSequence
-        inputSequence += 1
-        let frame = WireFrame(
-            type: .humanInput,
-            flags: [.contentSensitive],
-            requestId: 0,
-            streamSeq: seq,
-            payload: bytes
-        )
-        _ = claimId
-        try? transport.send(frame)
+        guard !bytes.isEmpty, !inputFenced, let binding, transport != nil else { return }
+        guard bytes.count <= FrameCodec.inputTransactionMaxBytes else {
+            refuseInput(
+                code: "PAYLOAD_TOO_LARGE",
+                evidence: "encoded input is \(bytes.count) bytes; limit is \(FrameCodec.inputTransactionMaxBytes)",
+                fence: false
+            )
+            return
+        }
+        let batch = PendingInputBatch(binding: binding, bytes: bytes)
+        if activeClaimToken == nil {
+            pendingInputBatches.append(batch)
+            do {
+                try beginClaimAcquire()
+            } catch {
+                refuseInput(code: "CLAIM_FAILED", evidence: String(describing: error))
+            }
+            return
+        }
+        submitInput(batch)
     }
 
     public func beginClaimAcquire() throws {
-        guard transport != nil else { throw WireError.notConnected }
+        guard !inputFenced else { return }
+        guard let binding, transport != nil else { throw WireError.notConnected }
+        guard activeClaimToken == nil, claimRequestId == nil else { return }
+        let requestId = nextRequestId
+        let idempotencyKey = claimIdempotencyKey ?? "claim-\(UUID().uuidString)"
+        claimIdempotencyKey = idempotencyKey
         let payload: [String: Any] = [
             "schemaVersion": 1,
-            "viewerId": viewerId,
+            "session": sessionReference(binding.locator),
+            "writer": viewerId,
+            "kind": "human",
+            "leaseMilliseconds": 60_000,
+            "idempotencyKey": idempotencyKey,
         ]
-        try sendJSON(.claimAcquire, object: payload, requestId: nextRequestId)
+        try sendJSON(.claimAcquire, object: payload, requestId: requestId)
+        claimRequestId = requestId
         nextRequestId += 1
-    }
-
-    public func noteClaimResult(claimId: String, owned: Bool) {
-        if owned {
-            activeClaimId = claimId
-            claimPresentation = .humanOwned(viewerId: viewerId, claimId: claimId)
-        } else {
-            activeClaimId = nil
-            claimPresentation = .free
-        }
+        setInputSubmissionState(.waitingForClaim)
     }
 
     public func noteOrphaned(claimId: String) {
+        activeClaimToken = nil
+        inputFenced = true
         claimPresentation = .humanOrphaned(viewerId: viewerId, claimId: claimId)
+        refuseInput(code: "HUMAN_ORPHANED", evidence: "human input claim is orphaned")
     }
 
-    /// §20 RESIZE (0x0207) after geometry quiescence (M10).
+    /// Frozen RESIZE request after geometry quiescence (M10).
     public func sendResize(_ geometry: TerminalGeometry) throws {
         guard let binding else { throw WireError.notConnected }
         guard geometry.isUsable else { return }
+        resizeRevision += 1
         let object: [String: Any] = [
             "schemaVersion": 1,
-            "locator": binding.locator.jsonObject(),
-            "geometry": geometry.jsonObject(),
+            "session": sessionReference(binding.locator),
+            "window": [
+                "columns": geometry.columns,
+                "rows": geometry.rows,
+                "widthPixels": geometry.widthPx,
+                "heightPixels": geometry.heightPx,
+            ],
+            "revision": String(resizeRevision),
+            "idempotencyKey": "resize-\(viewerId)-\(binding.generation)-\(resizeRevision)",
         ]
         try sendJSON(.resize, object: object, requestId: nextRequestId)
         nextRequestId += 1
@@ -249,6 +293,19 @@ public final class AttachReplayClient {
         case .error:
             let object = try FrameCodec.parseJSONObject(frame.payload)
             let code = object["code"] as? String ?? "INTERNAL"
+            if frame.requestId == claimRequestId || pendingInputRequests[frame.requestId] != nil {
+                if frame.requestId == claimRequestId {
+                    claimRequestId = nil
+                    pendingInputBatches.removeAll()
+                }
+                pendingInputRequests.removeValue(forKey: frame.requestId)
+                activeClaimToken = nil
+                refuseInput(
+                    code: code,
+                    evidence: object["message"] as? String ?? "host refused terminal input"
+                )
+                return .continueReplay
+            }
             if code == "ENGINE_MISMATCH" || code == "PROTOCOL_MISMATCH" {
                 state = .incompatibleEngine(evidence: code)
             } else if code == "UNAUTHENTICATED" || code == "FORBIDDEN" {
@@ -349,11 +406,70 @@ public final class AttachReplayClient {
             }
 
         case .claimResult:
+            guard frame.requestId == claimRequestId else { return .continueReplay }
+            claimRequestId = nil
             let object = try FrameCodec.parseJSONObject(frame.payload)
-            if let claimId = object["claimId"] as? String {
-                let owned = (object["state"] as? String) == "HUMAN_OWNED"
-                    || object["accepted"] as? Bool == true
-                noteClaimResult(claimId: claimId, owned: owned)
+            guard let result = object["result"] as? [String: Any],
+                  let claimState = result["state"] as? String else {
+                refuseInput(code: "MALFORMED_CLAIM_RESULT", evidence: "claim result has no state")
+                return .continueReplay
+            }
+            if claimState == "granted",
+               let claim = result["claim"] as? [String: Any],
+               let token = claim["token"] as? String {
+                activeClaimToken = token
+                claimPresentation = .humanOwned(viewerId: viewerId, claimId: token)
+                let batches = pendingInputBatches
+                pendingInputBatches.removeAll()
+                for batch in batches where batch.binding == binding {
+                    submitInput(batch)
+                }
+            } else if claimState == "denied" {
+                activeClaimToken = nil
+                pendingInputBatches.removeAll()
+                claimPresentation = .free
+                refuseInput(
+                    code: "CLAIM_DENIED",
+                    evidence: result["diagnostic"] as? String ?? "human input is owned elsewhere"
+                )
+            } else {
+                activeClaimToken = nil
+                pendingInputBatches.removeAll()
+                claimPresentation = .free
+                inputFenced = true
+                setInputSubmissionState(.unknown(
+                    evidence: result["diagnostic"] as? String ?? "human input claim is unknown"
+                ))
+            }
+            return .continueReplay
+
+        case .applied:
+            guard let pending = pendingInputRequests[frame.requestId],
+                  pending.binding == binding else { return .continueReplay }
+            let object = try FrameCodec.parseJSONObject(frame.payload)
+            guard object["resultKind"] as? String == "input",
+                  let receipt = object["receipt"] as? [String: Any],
+                  let transactionId = receipt["transactionId"] as? String,
+                  transactionId == pending.transactionId,
+                  let stage = receipt["stage"] as? String else {
+                pendingInputRequests.removeValue(forKey: frame.requestId)
+                inputFenced = true
+                setInputSubmissionState(.unknown(evidence: "malformed or uncorrelated input receipt"))
+                return .continueReplay
+            }
+            pendingInputRequests.removeValue(forKey: frame.requestId)
+            if stage == "rejected" {
+                refuseInput(
+                    code: "INPUT_REJECTED",
+                    evidence: receipt["diagnostic"] as? String ?? "host rejected terminal input"
+                )
+            } else if stage == "unknown" {
+                inputFenced = true
+                setInputSubmissionState(.unknown(
+                    evidence: receipt["diagnostic"] as? String ?? "terminal input result is unknown"
+                ))
+            } else {
+                setInputSubmissionState(.applied(transactionId: transactionId, stage: stage))
             }
             return .continueReplay
 
@@ -375,6 +491,76 @@ public final class AttachReplayClient {
         firstCorrectFramePresented = true
         state = .live
         return .firstCorrectFrame(highWater: highWater, connectionId: binding.connectionId)
+    }
+
+    private func submitInput(_ batch: PendingInputBatch) {
+        guard !inputFenced,
+              let binding,
+              binding == batch.binding,
+              let transport,
+              transport.connectionId == binding.connectionId,
+              let claimToken = activeClaimToken else { return }
+        let sequence = inputSequence
+        inputSequence += 1
+        let transactionId = "input-\(viewerId)-\(binding.generation)-\(sequence)"
+        let requestId = nextRequestId
+        let object: [String: Any] = [
+            "schemaVersion": 1,
+            "session": sessionReference(binding.locator),
+            "claimToken": claimToken,
+            "transactionId": transactionId,
+            "idempotencyKey": transactionId,
+            "operation": [
+                "kind": "bytes",
+                "encoding": "base64",
+                "bytes": batch.bytes.base64EncodedString(),
+            ],
+        ]
+        do {
+            try sendJSON(
+                .inputSubmit,
+                object: object,
+                requestId: requestId,
+                flags: [.contentSensitive]
+            )
+            pendingInputRequests[requestId] = PendingInputRequest(
+                binding: binding,
+                transactionId: transactionId
+            )
+            nextRequestId += 1
+            setInputSubmissionState(.pending(transactionId: transactionId))
+        } catch {
+            inputFenced = true
+            setInputSubmissionState(.unknown(evidence: "input send failed: \(error)"))
+        }
+    }
+
+    private func sessionReference(_ locator: SessionLocator) -> [String: Any] {
+        [
+            "key": locator.sessionId,
+            "incarnation": String(locator.generation),
+        ]
+    }
+
+    private func resetInputState() {
+        activeClaimToken = nil
+        claimRequestId = nil
+        claimIdempotencyKey = nil
+        pendingInputBatches.removeAll()
+        pendingInputRequests.removeAll()
+        inputFenced = false
+        claimPresentation = .free
+        setInputSubmissionState(.idle)
+    }
+
+    private func refuseInput(code: String, evidence: String, fence: Bool = true) {
+        if fence { inputFenced = true }
+        setInputSubmissionState(.refused(code: code, evidence: evidence))
+    }
+
+    private func setInputSubmissionState(_ newState: InputSubmissionState) {
+        inputSubmissionState = newState
+        onInputSubmissionStateChange?(newState)
     }
 
     /// §20 output acknowledgement — the frozen APPLIED output branch. The

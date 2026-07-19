@@ -165,7 +165,7 @@ final class LiveHostAttachTests: XCTestCase {
         let liveDeadline = Date().addingTimeInterval(10)
         while view.highWater <= replayHighWater, Date() < liveDeadline {
             guard let frame = try transportA.receive(timeout: 2.0) else { break }
-            view.pumpHostFrame(frame)
+            view.pumpHostFrame(frame, frameBinding: view.binding!)
         }
         XCTAssertGreaterThan(view.highWater, replayHighWater, "no live output arrived")
         let fedBytes = engine.appliedRanges.reduce(Data()) { $0 + $1.bytes }
@@ -230,7 +230,7 @@ final class LiveHostAttachTests: XCTestCase {
         let resumeDeadline = Date().addingTimeInterval(10)
         while view.highWater <= resumeSeq, Date() < resumeDeadline {
             guard let frame = try transportB.receive(timeout: 2.0) else { break }
-            view.pumpHostFrame(frame)
+            view.pumpHostFrame(frame, frameBinding: view.binding!)
         }
         XCTAssertGreaterThan(view.highWater, resumeSeq, "no output after re-attach")
         XCTAssertEqual(view.surfaceState, .live)
@@ -248,6 +248,63 @@ final class LiveHostAttachTests: XCTestCase {
             wrong.output.contains("session-locator-mismatch"),
             "wrong-generation refusal missing typed reason: \(wrong.output)"
         )
+    }
+
+    /// B2.3 opt-in headless proof through the production Swift attach socket:
+    /// a Gate 8 NSTextInputClient commit is held for CLAIM_RESULT, submitted as
+    /// INPUT_SUBMIT, written to the live PTY, and returned as ordered OUTPUT.
+    func testLiveGate8InputRoundTrip() throws {
+        let (proof, _) = try loadProof()
+        let grantLine = try issueGrant(proof, viewerId: "b23-live-input")
+        XCTAssertEqual(grantLine.status, 0, "input grant refused: \(grantLine.output)")
+        let grant = try parseGrant(grantLine.output)
+        XCTAssertTrue(grant.operations.contains("human-input"))
+
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(frame: .zero, engine: engine, viewerId: "b23-live-input")
+        let transport = try UdsHostTransport.connect(endpoint: grant.endpoint)
+        let outcome = try view.attach(
+            grant: grant,
+            geometry: geometry,
+            afterSeq: 0,
+            transport: transport
+        )
+        guard case .firstCorrectFrame = outcome else {
+            return XCTFail("input proof attach failed: \(outcome)")
+        }
+        let binding = try XCTUnwrap(view.binding)
+        let sent = "b23-byte-round-trip"
+        view.insertText(
+            "\(sent)\n",
+            replacementRange: NSRange(location: NSNotFound, length: 0),
+            associatedEvent: nil
+        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+
+        let expectedResponse = Data("B2.3 RESPONSE:\(sent)".utf8)
+        let deadline = Date().addingTimeInterval(10)
+        while Date() < deadline {
+            let applied = engine.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+            if applied.range(of: expectedResponse) != nil { break }
+            do {
+                guard let frame = try transport.receive(timeout: 1.0) else { break }
+                view.pumpHostFrame(frame, frameBinding: binding)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            } catch WireError.receiveTimeout {
+                continue
+            }
+        }
+        let applied = engine.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+        XCTAssertNotNil(
+            applied.range(of: expectedResponse),
+            "byte-exact PTY response did not return over OUTPUT"
+        )
+        guard case .applied(_, let stage) = view.inputSubmissionState else {
+            transport.close()
+            return XCTFail("input did not receive correlated APPLIED: \(view.inputSubmissionState)")
+        }
+        XCTAssertEqual(stage, "written-to-terminal")
+        transport.close()
     }
 
     /// Reconnect-churn robustness (§18/§26): a pane that repeatedly loses its
