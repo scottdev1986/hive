@@ -1,7 +1,7 @@
-{"arch":"arm64","defect":"free-app-before-surface","pid":53556,"stage":"start"}
-{"defect":"free-app-before-surface","inlineTicks":0,"pid":53556,"stage":"wakeup-tick","ticks":2,"ticksOnMain":2,"wakeups":2}
-{"defect":"free-app-before-surface","pid":53556,"replyBytes":9,"replyHex":"1b5b3f36323b323263","stage":"copy-before-return"}
-{"defect":"free-app-before-surface","deliveriesAfterFree":0,"deliveriesBeforeFree":8,"pid":53556,"stage":"no-callback-after-free"}
-{"defect":"free-app-before-surface","fedSurface":"fleet2","pid":53556,"stage":"multi-surface","surfaces":4}
-{"defect":"free-app-before-surface","deliveriesAfterFree":0,"outputCallsWhileClosing":1504,"pid":53556,"stage":"inflight-close"}
-{"cycles":50,"defect":"free-app-before-surface","deliveriesAfterFree":0,"pid":53556,"stage":"rapid-create-free"}
+{"arch":"arm64","defect":"free-app-before-surface","pid":69953,"stage":"start"}
+{"defect":"free-app-before-surface","inlineTicks":0,"pid":69953,"stage":"wakeup-tick","ticks":2,"ticksOnMain":2,"wakeups":2}
+{"defect":"free-app-before-surface","pid":69953,"replyBytes":9,"replyHex":"1b5b3f36323b323263","stage":"copy-before-return"}
+{"defect":"free-app-before-surface","deliveriesAfterFree":0,"deliveriesBeforeFree":8,"pid":69953,"stage":"no-callback-after-free"}
+{"defect":"free-app-before-surface","fedSurface":"fleet2","pid":69953,"stage":"multi-surface","surfaces":4}
+{"defect":"free-app-before-surface","deliveriesAfterFree":0,"outputCallsWhileClosing":1231,"pid":69953,"stage":"inflight-close"}
+{"cycles":50,"defect":"free-app-before-surface","deliveriesAfterFree":0,"pid":69953,"stage":"rapid-create-free"}

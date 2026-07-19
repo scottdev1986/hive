@@ -40,7 +40,11 @@ sanitizer-backed rather than only logically argued.
 | `free-ordering` | surface → app → config | `--defect=free-app-before-surface` frees the app first | **RED**, exit 134 — ASan `stack-buffer-underflow` |
 
 Green run: **0 AddressSanitizer reports, 0 ThreadSanitizer data races**, all
-eight stages reached, 2 993 callback deliveries.
+eight stages reached. The total callback-delivery count (a few thousand) and
+`outputCallsWhileClosing` vary between runs because the `inflight-close` stage
+feeds for a fixed wall-clock window rather than a fixed count; every asserted
+value — tick counts, inline ticks, late deliveries, cycles, free order — is
+deterministic. The committed protocol files are the record of one run.
 
 Surfaces are created serially on main because
 `hive_ghostty_surface_new_manual_v1` fills a **process-global backend slot** —
