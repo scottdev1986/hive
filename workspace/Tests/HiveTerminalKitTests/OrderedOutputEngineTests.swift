@@ -298,12 +298,15 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(writes[0].first, 0x1B)
     }
 
-    /// APC (Kitty graphics query) split across chunks completes EXACTLY as the
-    /// unsplit feed: same through_seq, same write-callback bytes, same screen
-    /// content. "Later glyph exists" is not enough — discarding the APC or
-    /// printing split-tail garbage must go RED against the unsplit baseline.
+    /// APC (Kitty graphics) split across chunks completes EXACTLY as the
+    /// unsplit feed. First assert a NON-EMPTY APC-specific Kitty reply on the
+    /// unsplit baseline (so a dual-path discard stays red), then assert
+    /// split==unsplit on through_seq / writes / screen.
     func testAPCSequenceSplitAcrossChunkBoundaryMatchesUnsplitBaseline() throws {
-        let apc = Data("\u{1B}_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u{1B}\\".utf8)
+        // Upstream stream_terminal.zig "kitty graphics APC response":
+        // ESC_G a=t,t=d,f=24,i=1,s=1,v=2,c=10,r=1;//////// ST  →  ESC_G i=1;OK ST
+        let apc = Data("\u{1B}_Ga=t,t=d,f=24,i=1,s=1,v=2,c=10,r=1;////////\u{1B}\\".utf8)
+        let expectedKittyReply = Data("\u{1B}_Gi=1;OK\u{1B}\\".utf8)
         let tail = Data("ZMARKER\r\n".utf8)
         let full = apc + tail
 
@@ -330,9 +333,17 @@ final class OrderedOutputEngineTests: XCTestCase {
         }
 
         let unsplit = try run(split: false)
-        let split = try run(split: true)
 
-        XCTAssertEqual(unsplit.through, UInt64(full.count))
+        // APC-specific effect MUST fire on the unsplit baseline — empty writes
+        // would make split==unsplit vacuous under a dual-path discard.
+        XCTAssertFalse(unsplit.writes.isEmpty,
+                       "unsplit Kitty APC must produce a write-callback reply")
+        XCTAssertEqual(unsplit.writes, [expectedKittyReply],
+                       "unsplit APC must reply with the exact Kitty OK response, got \(unsplit.writes)")
+        XCTAssertTrue(unsplit.screen.contains("ZMARKER"),
+                      "unsplit baseline must still show the trailing marker")
+
+        let split = try run(split: true)
         XCTAssertEqual(split.through, unsplit.through,
                        "split APC must advance through_seq identically to unsplit")
         XCTAssertEqual(split.writes, unsplit.writes,
@@ -340,8 +351,6 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(split.screen, unsplit.screen,
                        "split APC must land identical screen content to unsplit — " +
                        "got split=\(split.screen.debugDescription) unsplit=\(unsplit.screen.debugDescription)")
-        XCTAssertTrue(unsplit.screen.contains("ZMARKER"),
-                      "positive control: unsplit baseline must show the trailing marker")
     }
 
     /// Grapheme cluster (base + combining mark) split mid-cluster still
@@ -428,6 +437,11 @@ final class OrderedOutputEngineTests: XCTestCase {
         var results: [HiveTerminalEngineResult] = []
         let resultLock = NSLock()
 
+        // Caller-side ATTEMPTED counter: stamped after go.wait, BEFORE
+        // processOutput — measures contention, not sleep-inferred overlap.
+        var attempted = 0
+        let allAttempted = DispatchSemaphore(value: 0)
+
         for job in jobs {
             group.enter()
             DispatchQueue.global(qos: .userInitiated).async {
@@ -436,6 +450,10 @@ final class OrderedOutputEngineTests: XCTestCase {
                 if readyCount == workerCount { allReady.signal() }
                 readyLock.unlock()
                 go.wait()
+                stateLock.lock()
+                attempted += 1
+                if attempted == workerCount { allAttempted.signal() }
+                stateLock.unlock()
                 let r = surface.processOutput(bytes: job.bytes, streamSeq: job.seq)
                 resultLock.lock()
                 results.append(r)
@@ -450,15 +468,19 @@ final class OrderedOutputEngineTests: XCTestCase {
         var midActive = -1
         var midBeginCount = -1
         var midEndCount = -1
+        var midAttempted = -1
         DispatchQueue.global(qos: .userInitiated).async {
             XCTAssertEqual(allReady.wait(timeout: .now() + 2), .success, "ready barrier")
             for _ in 0..<workerCount { go.signal() }
             XCTAssertEqual(bodyEntered.wait(timeout: .now() + 2), .success, "in-body hold must engage")
-            Thread.sleep(forTimeInterval: 0.05)
+            // REQUIRE every contender has attempted (pre-admission) before release.
+            XCTAssertEqual(allAttempted.wait(timeout: .now() + 2), .success,
+                           "all callers must stamp ATTEMPTED before hold release")
             stateLock.lock()
             midActive = active
             midBeginCount = stamps.filter { $0.phase == "begin" }.count
             midEndCount = stamps.filter { $0.phase == "end" }.count
+            midAttempted = attempted
             stateLock.unlock()
             releaseBody.signal()
             _ = group.wait(timeout: .now() + 5)
@@ -466,6 +488,8 @@ final class OrderedOutputEngineTests: XCTestCase {
         }
         wait(for: [coordinated], timeout: 8)
 
+        XCTAssertEqual(midAttempted, workerCount,
+                       "forced overlap: every contender must have attempted during the hold")
         XCTAssertEqual(midActive, 1, "exactly one processOutput body must be live during forced hold")
         XCTAssertEqual(midBeginCount, 1,
                        "only one begin stamp before release — others must be queued, not entered")

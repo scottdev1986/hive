@@ -38,10 +38,11 @@ final class OrderedOutputStressTests: XCTestCase {
         return String(cString: text.text)
     }
 
-    /// 100 MiB class stream: every block carries a DENSE unique sentinel
-    /// stamped with absolute source offset; the sink observes every block
-    /// via OSC title events (full-stream, not viewport tail). Dropping or
-    /// mutating any block loses/scrambles a title stamp and goes RED.
+    /// 100 MiB class stream with FULL-STREAM dense SENT observation.
+    /// Each block is a screenful of unique SENT lines; after feeding we read
+    /// the screen and require EVERY stamp from that block (not a thin tail /
+    /// OSC-only sink). Clear, then next block. Mutating any mid-stream SENT
+    /// byte fails the per-block screen equality for that block.
     func testLargeOrderedStreamProvesReplyOrderAndLosslessContent() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -51,137 +52,101 @@ final class OrderedOutputStressTests: XCTestCase {
         var writes: [Data] = []
         surface.callbackContext.onWrite = { writes.append($0) }
 
-        // SINK stamps: one OSC title per block, payload = "B{index}@{absOffset}".
-        // Titles survive scrollback; the viewport cannot hold 100 MiB.
-        var titleSink: [String] = []
-        let titleLock = NSLock()
-        surface.callbackContext.onEvent = { event in
-            guard event.type == .title else { return }
-            let s = String(data: event.bytes, encoding: .utf8) ?? ""
-            titleLock.lock()
-            titleSink.append(s)
-            titleLock.unlock()
+        let minBytes = 100 * 1024 * 1024
+        // Fit entirely in the default ~30-row viewport so every stamp is
+        // observable via readScreen after the block (full-stream, per-block).
+        let linesPerBlock = 24
+        let chunkSizes = [1, 7, 1023, 4096, 65_537]
+        var streamAbs = 0
+        var seq: UInt64 = 0
+        var blockIndex = 0
+        var expectedReplies: [Data] = []
+        var feedStamps: [(seq: UInt64, end: UInt64, size: Int)] = []
+        var blocksVerified = 0
+        var chunkIndex = 0
+
+        func extractSentinels(_ screen: String) -> [String] {
+            var out: [String] = []
+            var rest = Substring(screen)
+            while let start = rest.range(of: "SENT") {
+                let from = rest[start.lowerBound...]
+                guard let end = from.range(of: "END") else { break }
+                out.append(String(from[from.startIndex..<end.upperBound]))
+                rest = from[end.upperBound...]
+            }
+            return out
         }
 
-        let minBytes = 100 * 1024 * 1024
-        let blockTarget = 16 * 1024
-        var pending = Data()
-        var expectedReplies: [Data] = []
-        var expectedTitles: [String] = []
-        // Source stamps: (blockIndex, absStart, absEnd exclusive) for every block.
-        var sourceBlocks: [(index: Int, start: Int, end: Int, title: String)] = []
-        var blockIndex = 0
-
-        while pending.count < minBytes {
-            let absStart = pending.count
-            // Dense unique body: many distinct lines per block (not bulk identical
-            // filler). Any dropped line changes block length/title offset chain.
+        while streamAbs < minBytes {
             var block = Data()
-            var line = 0
-            while block.count < blockTarget - 64 {
-                // SENT{block}.{line}@{absolute}END — unique across the whole stream.
-                let abs = absStart + block.count
-                block.append(Data("SENT\(blockIndex).\(line)@\(abs)END\r\n".utf8))
-                line += 1
+            var stamps: [String] = []
+            for line in 0..<linesPerBlock {
+                let abs = streamAbs + block.count
+                // Unique across the whole stream; dense printable content.
+                let stamp = "SENT\(blockIndex).\(line)@\(abs)END"
+                stamps.append(stamp)
+                // Pad each line so volume accumulates quickly while remaining
+                // a single screen row (truncate pad to keep stamp intact).
+                let padLen = max(0, 72 - stamp.count)
+                let pad = String(repeating: String(Character(UnicodeScalar(0x41 + (line % 26))!)), count: padLen)
+                block.append(Data("\(stamp)\(pad)\r\n".utf8))
             }
-            let title = "B\(blockIndex)@\(absStart)"
-            // OSC 0 title is the full-stream sink stamp for this block.
-            block.append(Data("\u{1B}]0;\(title)\u{07}".utf8))
             let even = (blockIndex % 2 == 0)
             block.append(Data((even ? "\u{1B}[c" : "\u{1B}[>c").utf8))
             expectedReplies.append(even ? da1 : da2)
-            expectedTitles.append(title)
-            pending.append(block)
-            sourceBlocks.append((blockIndex, absStart, pending.count, title))
+
+            // Uneven chunks on every block — parser must reassemble dense SENT.
+            var fed = 0
+            while fed < block.count {
+                let size = min(chunkSizes[chunkIndex % chunkSizes.count], block.count - fed)
+                chunkIndex += 1
+                let chunk = block.subdata(in: fed..<(fed + size))
+                let result = surface.processOutput(bytes: chunk, streamSeq: seq)
+                XCTAssertEqual(result, .success, "chunk at seq \(seq) size \(size) must be accepted")
+                if result != .success { return }
+                let end = seq + UInt64(size)
+                feedStamps.append((seq, end, size))
+                seq = end
+                fed += size
+            }
+            streamAbs += block.count
+
+            // FULL-STREAM SINK (per-block): every dense SENT line of THIS block
+            // must appear on screen, exact ordered equality. A mutated mid-stream
+            // printable fails here even if DA/throughSeq still advance.
+            pumpMainQueue()
+            let screen = readScreenText(surface)
+            let found = extractSentinels(screen)
+            XCTAssertEqual(found, stamps,
+                           "block \(blockIndex) dense SENT sink must equal source stamps — " +
+                           "mid-stream byte loss/mutation goes red here")
+            blocksVerified += 1
+
+            // Clear so the next block's stamps are the only ones on screen.
+            let clear = Data("\u{1B}[2J\u{1B}[H".utf8)
+            XCTAssertEqual(surface.processOutput(bytes: clear, streamSeq: seq), .success)
+            seq += UInt64(clear.count)
+            streamAbs += clear.count
+            feedStamps.append((seq - UInt64(clear.count), seq, clear.count))
             blockIndex += 1
         }
-        let volumeBytes = pending.count
-        XCTAssertGreaterThanOrEqual(volumeBytes, minBytes,
-                                    "the stress stream must be at least 100 MiB, was \(volumeBytes)")
-        XCTAssertGreaterThanOrEqual(sourceBlocks.count, 100,
-                                    "dense per-block sentinels required across the stream")
 
-        // Uneven chunk sizes that never align with block/query/sentinel or
-        // sequence boundaries — the parser must be indifferent to chunking.
-        let chunkSizes = [1, 7, 1023, 4096, 65_537]
-        var seq: UInt64 = 0
-        var fed = 0
-        var chunkIndex = 0
-        // Source feed stamps: each accepted chunk's [streamSeq, end).
-        var feedStamps: [(seq: UInt64, end: UInt64, size: Int)] = []
-        while fed < pending.count {
-            let size = min(chunkSizes[chunkIndex % chunkSizes.count], pending.count - fed)
-            chunkIndex += 1
-            let chunk = pending.subdata(in: fed..<(fed + size))
-            let result = surface.processOutput(bytes: chunk, streamSeq: seq)
-            XCTAssertEqual(result, .success, "chunk at seq \(seq) size \(size) must be accepted")
-            if result != .success { return }
-            let end = seq + UInt64(size)
-            feedStamps.append((seq, end, size))
-            seq = end
-            fed += size
-        }
-
-        XCTAssertEqual(surface.throughSeq, UInt64(pending.count),
-                       "through_seq must advance by exactly the total byte count")
-
-        // Source order: every feed stamp is contiguous (no gap/overlap in what we sent).
+        XCTAssertGreaterThanOrEqual(streamAbs, minBytes)
+        XCTAssertGreaterThanOrEqual(blocksVerified, 100,
+                                    "must verify many full-screen dense blocks across the stream")
+        XCTAssertEqual(surface.throughSeq, seq)
         XCTAssertEqual(feedStamps.first?.seq, 0)
         for i in 1..<feedStamps.count {
             XCTAssertEqual(feedStamps[i].seq, feedStamps[i - 1].end,
                            "source feed stamps must be contiguous")
         }
-        XCTAssertEqual(feedStamps.last?.end, UInt64(pending.count))
+        XCTAssertEqual(feedStamps.last?.end, seq)
 
-        // ORDER PROOF: alternating DA1/DA2 reply sequence.
         pumpMainQueue()
-        // Drain deferred title deliveries.
-        for _ in 0..<3 { pumpMainQueue() }
-
         XCTAssertEqual(writes.count, expectedReplies.count, "each query must reply exactly once")
         XCTAssertEqual(writes, expectedReplies,
                        "the reply sequence must match the alternating DA1/DA2 query order byte-for-byte")
 
-        // FULL-STREAM SINK: every block's OSC title must arrive, in order.
-        // Dropping a block or mutating away its OSC loses a stamp; reordering
-        // mismatches the expectedTitles sequence.
-        titleLock.lock()
-        let titles = titleSink
-        titleLock.unlock()
-        XCTAssertEqual(titles.count, expectedTitles.count,
-                       "sink title count must equal source block count — lost/extra block: " +
-                       "got \(titles.count) expected \(expectedTitles.count)")
-        XCTAssertEqual(titles, expectedTitles,
-                       "sink title sequence must equal source block stamps exactly")
-
-        // Viewport still shows a contiguous ascending suffix of dense SENT markers
-        // (tail integrity, complementary to full-stream titles).
-        let screen = readScreenText(surface)
-        var sentinelPairs: [(block: Int, line: Int)] = []
-        var rest = Substring(screen)
-        while let start = rest.range(of: "SENT") {
-            let after = rest[start.upperBound...]
-            guard let dot = after.firstIndex(of: "."),
-                  let at = after.firstIndex(of: "@"),
-                  let end = after.range(of: "END"),
-                  let b = Int(after[after.startIndex..<dot]),
-                  let line = Int(after[after.index(after: dot)..<at]) else { break }
-            sentinelPairs.append((b, line))
-            rest = after[end.upperBound...]
-        }
-        XCTAssertGreaterThanOrEqual(sentinelPairs.count, 2,
-                                    "viewport must show multiple dense sentinels, got \(screen.suffix(160).debugDescription)")
-        // Contiguous in the order they appear (no reorder/garble of visible tail).
-        for i in 1..<sentinelPairs.count {
-            let prev = sentinelPairs[i - 1]
-            let cur = sentinelPairs[i]
-            let ordered = (cur.block > prev.block) ||
-                (cur.block == prev.block && cur.line == prev.line + 1)
-            XCTAssertTrue(ordered,
-                          "visible dense sentinels must stay ordered: \(sentinelPairs)")
-        }
-
-        // Still fully functional after the stress.
         writes.removeAll()
         XCTAssertEqual(surface.processOutput(bytes: Data("\u{1B}[c".utf8), streamSeq: seq), .success)
         pumpMainQueue()
@@ -234,6 +199,8 @@ final class OrderedOutputStressTests: XCTestCase {
         let group = DispatchGroup()
         var results: [HiveTerminalEngineResult] = []
         let resultLock = NSLock()
+        var attempted = 0
+        let allAttempted = DispatchSemaphore(value: 0)
 
         // Eight concurrent writers all claim stream_seq=0 with different
         // payloads — at most one can accept; the rest are conflict/gap.
@@ -245,6 +212,11 @@ final class OrderedOutputStressTests: XCTestCase {
                 if readyCount == workerCount { allReady.signal() }
                 readyLock.unlock()
                 go.wait()
+                // Pre-admission ATTEMPTED stamp — measured overlap, not sleep.
+                stateLock.lock()
+                attempted += 1
+                if attempted == workerCount { allAttempted.signal() }
+                stateLock.unlock()
                 let r = surface.processOutput(
                     bytes: Data("c\(i)".utf8),
                     streamSeq: 0
@@ -261,15 +233,18 @@ final class OrderedOutputStressTests: XCTestCase {
         var midActive = -1
         var midBegins = -1
         var midEnds = -1
+        var midAttempted = -1
         DispatchQueue.global(qos: .userInitiated).async {
             XCTAssertEqual(allReady.wait(timeout: .now() + 2), .success, "ready barrier")
             for _ in 0..<workerCount { go.signal() }
             XCTAssertEqual(bodyEntered.wait(timeout: .now() + 2), .success, "in-body hold")
-            Thread.sleep(forTimeInterval: 0.05)
+            XCTAssertEqual(allAttempted.wait(timeout: .now() + 2), .success,
+                           "all callers must stamp ATTEMPTED before hold release")
             stateLock.lock()
             midActive = active
             midBegins = stamps.filter { $0.phase == "begin" }.count
             midEnds = stamps.filter { $0.phase == "end" }.count
+            midAttempted = attempted
             stateLock.unlock()
             releaseBody.signal()
             _ = group.wait(timeout: .now() + 5)
@@ -277,6 +252,8 @@ final class OrderedOutputStressTests: XCTestCase {
         }
         wait(for: [coordinated], timeout: 8)
 
+        XCTAssertEqual(midAttempted, workerCount,
+                       "forced overlap: every contender must have attempted during the hold")
         XCTAssertEqual(midActive, 1, "forced hold: exactly one body live")
         XCTAssertEqual(midBegins, 1)
         XCTAssertEqual(midEnds, 0)

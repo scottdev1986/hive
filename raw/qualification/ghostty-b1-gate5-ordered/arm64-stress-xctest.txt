@@ -1,13 +1,13 @@
-Test Suite 'Selected tests' started at 2026-07-19 14:25:53.665.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:25:53.667.
-Test Suite 'OrderedOutputStressTests' started at 2026-07-19 14:25:53.667.
+Test Suite 'Selected tests' started at 2026-07-19 14:36:10.438.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:36:10.439.
+Test Suite 'OrderedOutputStressTests' started at 2026-07-19 14:36:10.439.
 Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected]' started.
-Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected]' passed (0.220 seconds).
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected]' passed (0.054 seconds).
 Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' started.
-Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' passed (3.798 seconds).
-Test Suite 'OrderedOutputStressTests' passed at 2026-07-19 14:25:57.685.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 4.018 (4.019) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:25:57.685.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 4.018 (4.019) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 14:25:57.685.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 4.018 (4.021) seconds
+Test Case '-[HiveTerminalKitTests.OrderedOutputStressTests testLargeOrderedStreamProvesReplyOrderAndLosslessContent]' passed (8.199 seconds).
+Test Suite 'OrderedOutputStressTests' passed at 2026-07-19 14:36:18.692.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 8.253 (8.253) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:36:18.692.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 8.253 (8.253) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 14:36:18.692.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 8.253 (8.254) seconds

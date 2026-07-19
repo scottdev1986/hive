@@ -1,4 +1,4 @@
-qualification=M1-B1 Gate 5 ordered output (matrix row C) — fraser rework
+qualification=M1-B1 Gate 5 ordered output — fraser round-2 rework
 host_arch=arm64
 ProductName:		macOS
 ProductVersion:		26.3.1
@@ -10,12 +10,8 @@ Target: arm64-apple-macosx26.0
 ghostty_commit=73534c4680a809398b396c94ac7f12fcccb7963d
 ghostty_patched_tree=d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb
 patch_series_sha256=ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0
-bridge_header_sha256=275ca6b8d3af85d9e9addcdc4f4e0edc599cd8fba2f93b19fd3d1f089688fafe
-symbol_list_sha256=16e34bd7e3776904a8b5c13b69ebb3a883dcd071f090ac57e32f95cdb61139e9
 engine_build_id=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300
-libghostty_internal_sha256=c4bd399870cce744de0c1d30e91e5c07af51b21507e04e6929415efedaaa8e5b
 tests=OrderedOutputEngineTests:16/16 OrderedOutputStressTests:2/2
-fraser_rework=draw_restore_stamps dense_100mib_titles apc_unsplit_baseline concurrent_ready_hold_stamps
-run_utc=2026-07-19T18:26:48Z
-branch=hive/forrest-category-complex-coding-m1-b1
-prior_pin=9474e0481e6df9d70aecbd62e2bacc33be88ad72
+fraser_round2=per_block_sent_screen_sink kitty_apc_ok_reply attempted_counter
+run_utc=2026-07-19T18:36:38Z
+prior_pin=0cf16eb197570addda43d324749bc02ed62a1615
