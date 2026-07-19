@@ -298,29 +298,50 @@ final class OrderedOutputEngineTests: XCTestCase {
         XCTAssertEqual(writes[0].first, 0x1B)
     }
 
-    /// APC (Kitty graphics query) split across chunks still completes without
-    /// poisoning the following printable text.
-    func testAPCSequenceSplitAcrossChunkBoundaryDoesNotPoisonFollowingText() throws {
-        let surface = try makeSurface()
-        defer { surface.free() }
-
-        // Kitty graphics query APC; split mid-payload then follow with "Z".
+    /// APC (Kitty graphics query) split across chunks completes EXACTLY as the
+    /// unsplit feed: same through_seq, same write-callback bytes, same screen
+    /// content. "Later glyph exists" is not enough — discarding the APC or
+    /// printing split-tail garbage must go RED against the unsplit baseline.
+    func testAPCSequenceSplitAcrossChunkBoundaryMatchesUnsplitBaseline() throws {
         let apc = Data("\u{1B}_Gi=31,s=1,v=1,a=q,t=d,f=24;AAAA\u{1B}\\".utf8)
-        let mid = apc.count / 2
-        let first = apc.subdata(in: 0..<mid)
-        let second = apc.subdata(in: mid..<apc.count)
-        XCTAssertEqual(surface.processOutput(bytes: first, streamSeq: 0), .success)
-        XCTAssertEqual(
-            surface.processOutput(bytes: second, streamSeq: UInt64(first.count)),
-            .success
-        )
-        let after = UInt64(apc.count)
-        XCTAssertEqual(surface.processOutput(bytes: Data("Z".utf8), streamSeq: after), .success)
-        XCTAssertEqual(surface.throughSeq, after + 1)
+        let tail = Data("ZMARKER\r\n".utf8)
+        let full = apc + tail
 
-        let meaningful = readScreenText(surface).trimmingCharacters(in: .whitespacesAndNewlines)
-        XCTAssertTrue(meaningful.contains("Z"),
-                      "APC split must not poison later printables; screen=\(meaningful.debugDescription)")
+        func run(split: Bool) throws -> (through: UInt64, writes: [Data], screen: String) {
+            let surface = try makeSurface()
+            defer { surface.free() }
+            var writes: [Data] = []
+            surface.callbackContext.onWrite = { writes.append($0) }
+            if split {
+                let mid = apc.count / 2
+                let first = full.subdata(in: 0..<mid)
+                let second = full.subdata(in: mid..<full.count)
+                XCTAssertEqual(surface.processOutput(bytes: first, streamSeq: 0), .success)
+                XCTAssertEqual(
+                    surface.processOutput(bytes: second, streamSeq: UInt64(first.count)),
+                    .success
+                )
+            } else {
+                XCTAssertEqual(surface.processOutput(bytes: full, streamSeq: 0), .success)
+            }
+            pumpMainQueue()
+            let screen = readScreenText(surface).trimmingCharacters(in: .whitespacesAndNewlines)
+            return (surface.throughSeq, writes, screen)
+        }
+
+        let unsplit = try run(split: false)
+        let split = try run(split: true)
+
+        XCTAssertEqual(unsplit.through, UInt64(full.count))
+        XCTAssertEqual(split.through, unsplit.through,
+                       "split APC must advance through_seq identically to unsplit")
+        XCTAssertEqual(split.writes, unsplit.writes,
+                       "split APC must produce the same write-callback reply bytes as unsplit")
+        XCTAssertEqual(split.screen, unsplit.screen,
+                       "split APC must land identical screen content to unsplit — " +
+                       "got split=\(split.screen.debugDescription) unsplit=\(unsplit.screen.debugDescription)")
+        XCTAssertTrue(unsplit.screen.contains("ZMARKER"),
+                      "positive control: unsplit baseline must show the trailing marker")
     }
 
     /// Grapheme cluster (base + combining mark) split mid-cluster still
@@ -345,9 +366,9 @@ final class OrderedOutputEngineTests: XCTestCase {
     }
 
     /// Rejected fault dispositions must not retain the renderer/admission
-    /// lock: a concurrent valid call after a burst of invalids must still
-    /// enter and succeed, and operationObserver must never show nested
-    /// processOutput (serialized, not re-entrant / stuck).
+    /// lock under FORCED concurrent contention: ready barrier + in-body hold
+    /// so overlap is attempted, entry/exit sequence stamps prove serialization
+    /// (not coincidental peak==1), and a concurrent valid call still succeeds.
     func testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -355,83 +376,136 @@ final class OrderedOutputEngineTests: XCTestCase {
         let stateLock = NSLock()
         var active = 0
         var maxActive = 0
+        var stampSeq = 0
+        var stamps: [(seq: Int, op: String, phase: String)] = []
+        let bodyEntered = DispatchSemaphore(value: 0)
+        let releaseBody = DispatchSemaphore(value: 0)
+        var holdArmed = true
+
         surface.operationObserver = { operation, phase in
             guard operation == "processOutput" else { return }
             stateLock.lock()
+            stampSeq += 1
+            let s = stampSeq
+            let phaseName = phase == .begin ? "begin" : "end"
+            stamps.append((s, operation, phaseName))
             if phase == .begin {
                 active += 1
                 maxActive = max(maxActive, active)
+                let shouldHold = holdArmed
+                if shouldHold { holdArmed = false }
+                stateLock.unlock()
+                if shouldHold {
+                    bodyEntered.signal()
+                    // In-body hold: other concurrent callers must queue on main
+                    // while this critical section is live.
+                    releaseBody.wait()
+                }
             } else {
                 active -= 1
+                stateLock.unlock()
             }
-            stateLock.unlock()
         }
 
-        let start = DispatchSemaphore(value: 0)
+        // Jobs: 4 invalids + 1 valid. Ready barrier then simultaneous go.
+        struct Job {
+            let bytes: Data
+            let seq: UInt64
+        }
+        let jobs: [Job] = [
+            Job(bytes: Data("bad".utf8), seq: 50),
+            Job(bytes: Data("bad".utf8), seq: UInt64.max - 1),
+            Job(bytes: Data("bad".utf8), seq: 999),
+            Job(bytes: Data(), seq: 0),
+            Job(bytes: Data("ok".utf8), seq: 0),
+        ]
+        let workerCount = jobs.count
+        let readyLock = NSLock()
+        var readyCount = 0
+        let allReady = DispatchSemaphore(value: 0)
+        let go = DispatchSemaphore(value: 0)
         let group = DispatchGroup()
-        var invalidResults: [HiveTerminalEngineResult] = []
+        var results: [HiveTerminalEngineResult] = []
         let resultLock = NSLock()
 
-        // Burst of concurrent invalid calls (gap, overflow, empty).
-        for seq in [UInt64(50), UInt64.max - 1, UInt64(999)] {
+        for job in jobs {
             group.enter()
             DispatchQueue.global(qos: .userInitiated).async {
-                start.wait()
-                let r = surface.processOutput(bytes: Data("bad".utf8), streamSeq: seq)
+                readyLock.lock()
+                readyCount += 1
+                if readyCount == workerCount { allReady.signal() }
+                readyLock.unlock()
+                go.wait()
+                let r = surface.processOutput(bytes: job.bytes, streamSeq: job.seq)
                 resultLock.lock()
-                invalidResults.append(r)
+                results.append(r)
                 resultLock.unlock()
                 group.leave()
             }
         }
-        group.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            start.wait()
-            let r = surface.processOutput(bytes: Data(), streamSeq: 0)
-            resultLock.lock()
-            invalidResults.append(r)
-            resultLock.unlock()
-            group.leave()
-        }
 
-        // One concurrent valid contiguous write — must succeed after/among rejects.
-        var validResult: HiveTerminalEngineResult = .invalidValue
-        group.enter()
+        // Coordinate off-main: bodyEntered.wait on main would deadlock with
+        // processOutput's DispatchQueue.main.sync admission.
+        let coordinated = expectation(description: "hold+release coordinated")
+        var midActive = -1
+        var midBeginCount = -1
+        var midEndCount = -1
         DispatchQueue.global(qos: .userInitiated).async {
-            start.wait()
-            // Small delay so invalids hit first, proving we are not locked out.
-            Thread.sleep(forTimeInterval: 0.01)
-            validResult = surface.processOutput(bytes: Data("ok".utf8), streamSeq: 0)
-            group.leave()
-        }
-
-        for _ in 0..<5 { start.signal() }
-        // Wait off-main so DispatchQueue.main.sync admission inside
-        // processOutput can run (group.wait on main would deadlock).
-        let finished = expectation(description: "concurrent fault burst finished")
-        DispatchQueue.global().async {
+            XCTAssertEqual(allReady.wait(timeout: .now() + 2), .success, "ready barrier")
+            for _ in 0..<workerCount { go.signal() }
+            XCTAssertEqual(bodyEntered.wait(timeout: .now() + 2), .success, "in-body hold must engage")
+            Thread.sleep(forTimeInterval: 0.05)
+            stateLock.lock()
+            midActive = active
+            midBeginCount = stamps.filter { $0.phase == "begin" }.count
+            midEndCount = stamps.filter { $0.phase == "end" }.count
+            stateLock.unlock()
+            releaseBody.signal()
             _ = group.wait(timeout: .now() + 5)
-            finished.fulfill()
+            coordinated.fulfill()
         }
-        wait(for: [finished], timeout: 6)
+        wait(for: [coordinated], timeout: 8)
 
-        XCTAssertEqual(validResult, .success, "valid call must not be locked out by prior rejects")
+        XCTAssertEqual(midActive, 1, "exactly one processOutput body must be live during forced hold")
+        XCTAssertEqual(midBeginCount, 1,
+                       "only one begin stamp before release — others must be queued, not entered")
+        XCTAssertEqual(midEndCount, 0)
+
+        let successes = results.filter { $0 == .success }.count
+        let invalids = results.filter { $0 == .invalidValue }.count
+        XCTAssertEqual(successes, 1, "exactly one valid accept among concurrent jobs")
+        XCTAssertEqual(invalids, workerCount - 1)
         XCTAssertEqual(surface.throughSeq, 2)
-        for r in invalidResults {
-            XCTAssertEqual(r, .invalidValue)
-        }
+
         stateLock.lock()
         let peak = maxActive
         let stillActive = active
+        let finalStamps = stamps
         stateLock.unlock()
         XCTAssertEqual(stillActive, 0, "no processOutput must remain entered after return")
-        XCTAssertEqual(peak, 1, "ingestion must serialize: never re-enter processOutput")
+        XCTAssertEqual(peak, 1, "forced concurrent callers must never nest processOutput")
+
+        // Sequence stamps: begins and ends must strictly alternate (no nesting).
+        var depth = 0
+        var seenBegin = 0
+        for stamp in finalStamps {
+            if stamp.phase == "begin" {
+                depth += 1
+                seenBegin += 1
+                XCTAssertEqual(depth, 1, "nested begin at stamp \(stamp.seq): \(finalStamps)")
+            } else {
+                XCTAssertEqual(depth, 1, "end without begin at stamp \(stamp.seq)")
+                depth -= 1
+            }
+        }
+        XCTAssertEqual(depth, 0)
+        XCTAssertEqual(seenBegin, workerCount,
+                       "every contending call must eventually enter (after hold release)")
     }
 
-    /// processOutput is serialized with draw and restore on the main
-    /// admission domain: concurrent callers never overlap in
-    /// operationObserver, and a restore after ordered output resets the
-    /// ledger baseline (pre-restore ranges classify invalid).
+    /// processOutput is serialized with draw and restore: observe ALL three
+    /// ops, force draw+restore to queue while processOutput is held IN body,
+    /// and prove via entry/exit sequence stamps that nothing nested.
     func testIngestionSerializedWithDrawAndRestore() throws {
         let surface = try makeSurface()
         defer { surface.free() }
@@ -439,70 +513,132 @@ final class OrderedOutputEngineTests: XCTestCase {
         let stateLock = NSLock()
         var activeOps = 0
         var maxActive = 0
-        var sawDrawDuringOutput = false
-        var outputEntered = false
+        var stampSeq = 0
+        var stamps: [(seq: Int, op: String, phase: String)] = []
+        let bodyEntered = DispatchSemaphore(value: 0)
+        let releaseBody = DispatchSemaphore(value: 0)
+        var holdArmed = true
+
         surface.operationObserver = { operation, phase in
+            // Observe processOutput, restore, AND draw — a draw-only regression
+            // must move the stamp stream.
             stateLock.lock()
-            defer { stateLock.unlock() }
-            if operation == "processOutput" || operation == "restoreCheckpoint" {
-                if phase == .begin {
-                    activeOps += 1
-                    maxActive = max(maxActive, activeOps)
-                    if operation == "processOutput" { outputEntered = true }
-                } else {
-                    activeOps -= 1
+            stampSeq += 1
+            let s = stampSeq
+            let phaseName = phase == .begin ? "begin" : "end"
+            stamps.append((s, operation, phaseName))
+            if phase == .begin {
+                activeOps += 1
+                maxActive = max(maxActive, activeOps)
+                let hold = holdArmed && operation == "processOutput"
+                if hold { holdArmed = false }
+                stateLock.unlock()
+                if hold {
+                    bodyEntered.signal()
+                    releaseBody.wait()
                 }
+            } else {
+                activeOps -= 1
+                stateLock.unlock()
             }
         }
 
-        // Hold processOutput mid-admission so draw can race it on main.
-        let copyEntered = DispatchSemaphore(value: 0)
-        let releaseCopy = DispatchSemaphore(value: 0)
-        surface.outputCopyObserver = { _ in
-            copyEntered.signal()
-            releaseCopy.wait()
-        }
-
         var outputResult: HiveTerminalEngineResult = .invalidValue
-        let outputDone = expectation(description: "output finished")
-        DispatchQueue.global(qos: .userInitiated).async {
-            outputResult = surface.processOutput(bytes: Data("draw-race".utf8), streamSeq: 0)
-            outputDone.fulfill()
-        }
-        XCTAssertEqual(copyEntered.wait(timeout: .now() + 2), .success)
+        var restoreResult: HiveTerminalEngineResult = .success
+        var midActive = -1
+        var midOps: [String] = []
+        var midPhases: [String] = []
 
-        // Draw on main while output is waiting for admission — must not
-        // interleave with the C process_output body (observer peak stays 1).
-        surface.draw()
+        // All coordination off-main so main can run processOutput's sync body
+        // and the queued draw/restore without deadlocking on bodyEntered.wait.
+        let raceDone = expectation(description: "draw/restore race finished")
+        DispatchQueue.global(qos: .userInitiated).async {
+            let outputDone = DispatchSemaphore(value: 0)
+            DispatchQueue.global(qos: .userInitiated).async {
+                outputResult = surface.processOutput(bytes: Data("draw-race".utf8), streamSeq: 0)
+                outputDone.signal()
+            }
+            XCTAssertEqual(bodyEntered.wait(timeout: .now() + 2), .success,
+                           "processOutput must enter its observed body so draw can race it")
+
+            // Queue draw + restore on main WHILE processOutput body is held.
+            let sideDone = DispatchSemaphore(value: 0)
+            DispatchQueue.main.async {
+                surface.draw()
+                restoreResult = surface.restoreCheckpoint(payload: Data(), throughSeq: 0)
+                sideDone.signal()
+            }
+
+            Thread.sleep(forTimeInterval: 0.05)
+            stateLock.lock()
+            midActive = activeOps
+            midOps = stamps.map(\.op)
+            midPhases = stamps.map(\.phase)
+            stateLock.unlock()
+
+            releaseBody.signal()
+            _ = outputDone.wait(timeout: .now() + 3)
+            _ = sideDone.wait(timeout: .now() + 3)
+            raceDone.fulfill()
+        }
+        wait(for: [raceDone], timeout: 8)
+
+        XCTAssertEqual(midActive, 1, "draw/restore must not enter while processOutput is held")
+        XCTAssertEqual(midOps, ["processOutput"],
+                       "only processOutput begin may exist before release: \(midOps)")
+        XCTAssertEqual(midPhases, ["begin"])
+
+        // Capture the race stamps BEFORE any follow-up processOutput so the
+        // ordering proof is about the forced draw/restore contention only.
         stateLock.lock()
-        if outputEntered { sawDrawDuringOutput = true }
+        let raceStamps = stamps
+        let peak = maxActive
+        let stillAfterRace = activeOps
         stateLock.unlock()
 
-        releaseCopy.signal()
-        wait(for: [outputDone], timeout: 2)
-        // Drop the stall seam before any further processOutput: later calls
-        // (including on main) would otherwise block forever on releaseCopy.
-        surface.outputCopyObserver = nil
         XCTAssertEqual(outputResult, .success)
         XCTAssertEqual(surface.throughSeq, 9)
-
-        // Restore with a deliberately invalid empty payload → invalid, no
-        // advance; then a second valid processOutput after the failed restore
-        // still works at the pre-restore through_seq (failed restore no-ops).
-        XCTAssertEqual(
-            surface.restoreCheckpoint(payload: Data(), throughSeq: 0),
-            .invalidValue
-        )
+        XCTAssertEqual(restoreResult, .invalidValue, "empty restore is invalid and must not reset")
         XCTAssertEqual(surface.throughSeq, 9)
+        XCTAssertEqual(stillAfterRace, 0)
+        XCTAssertEqual(peak, 1, "processOutput/draw/restore must never nest")
+
+        // Stamps on BOTH sides: processOutput begin/end, then draw begin/end,
+        // then restore begin/end (or draw/restore order), never interleaved.
+        var depth = 0
+        var opsSeen = Set<String>()
+        for stamp in raceStamps {
+            opsSeen.insert(stamp.op)
+            if stamp.phase == "begin" {
+                depth += 1
+                XCTAssertEqual(depth, 1,
+                               "nesting detected at \(stamp): \(raceStamps)")
+            } else {
+                XCTAssertEqual(depth, 1, "unbalanced end at \(stamp)")
+                depth -= 1
+            }
+        }
+        XCTAssertEqual(depth, 0)
+        XCTAssertTrue(opsSeen.contains("processOutput"))
+        XCTAssertTrue(opsSeen.contains("draw"),
+                      "draw must be stamped — a draw-blind control is vacuous: \(raceStamps)")
+        XCTAssertTrue(opsSeen.contains("restoreCheckpoint"),
+                      "restore must be stamped: \(raceStamps)")
+
+        // Ordering: processOutput fully completes before draw and restore begin.
+        let poEnd = raceStamps.lastIndex { $0.op == "processOutput" && $0.phase == "end" }
+        let drawBegin = raceStamps.firstIndex { $0.op == "draw" && $0.phase == "begin" }
+        let restoreBegin = raceStamps.firstIndex { $0.op == "restoreCheckpoint" && $0.phase == "begin" }
+        XCTAssertNotNil(poEnd)
+        XCTAssertNotNil(drawBegin)
+        XCTAssertNotNil(restoreBegin)
+        XCTAssertLessThan(poEnd!, drawBegin!,
+                          "draw must not begin until processOutput ends: \(raceStamps)")
+        XCTAssertLessThan(poEnd!, restoreBegin!,
+                          "restore must not begin until processOutput ends: \(raceStamps)")
+
+        // Follow-up accept after failed restore (poison check — not part of race stamps).
         XCTAssertEqual(surface.processOutput(bytes: Data("!".utf8), streamSeq: 9), .success)
         XCTAssertEqual(surface.throughSeq, 10)
-
-        stateLock.lock()
-        let peak = maxActive
-        let still = activeOps
-        stateLock.unlock()
-        XCTAssertEqual(still, 0)
-        XCTAssertEqual(peak, 1, "processOutput/restore must never nest")
-        _ = sawDrawDuringOutput // draw may complete before admission; peak is the load-bearing proof
     }
 }

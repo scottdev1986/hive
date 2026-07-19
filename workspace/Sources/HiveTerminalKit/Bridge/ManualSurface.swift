@@ -496,6 +496,10 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     public func draw() {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
+        // Gate 5 test seam: observe draw the same way as processOutput/restore
+        // so serialization proofs can stamp entry/exit on both sides.
+        operationObserver?("draw", .begin)
+        defer { operationObserver?("draw", .end) }
         ghostty_surface_draw(surface)
     }
 

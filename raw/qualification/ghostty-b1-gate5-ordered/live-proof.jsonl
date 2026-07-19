@@ -1,4 +1,4 @@
-{"kind":"engine","ghostty_commit":"73534c4680a809398b396c94ac7f12fcccb7963d","patched_tree":"d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb","patch_series_sha256":"ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0","engine_build_id":"0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300","host_arch":"arm64","boundary":"hive_ghostty_surface_process_output_v1"}
+{"kind":"engine","ghostty_commit":"73534c4680a809398b396c94ac7f12fcccb7963d","patched_tree":"d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb","patch_series_sha256":"ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0","engine_build_id":"0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300","host_arch":"arm64","boundary":"hive_ghostty_surface_process_output_v1","review":"fraser-noland-rework"}
 {"kind":"suite","name":"OrderedOutputEngineTests","executed":16,"failures":0,"arch":"arm64","transcript":"arm64-engine-xctest.txt"}
 {"kind":"disposition","case":"gap","result":"invalid","control":"testGapAheadIsInvalidAndDoesNotAdvanceThroughSeq","status":"PASS"}
 {"kind":"disposition","case":"duplicate","result":"success_no_reparse","control":"testDuplicateExactRetransmitIsIdempotent","status":"PASS"}
@@ -12,11 +12,11 @@
 {"kind":"chunk_boundary","case":"grapheme","control":"testGraphemeClusterSplitAcrossChunkBoundaryDecodesCorrectly","status":"PASS"}
 {"kind":"chunk_boundary","case":"osc","control":"testOSCSequenceSplitAcrossChunkBoundaryStillSetsTitle","status":"PASS"}
 {"kind":"chunk_boundary","case":"dcs","control":"testDCSSequenceSplitAcrossChunkBoundaryStillReplies","status":"PASS"}
-{"kind":"chunk_boundary","case":"apc","control":"testAPCSequenceSplitAcrossChunkBoundaryDoesNotPoisonFollowingText","status":"PASS"}
+{"kind":"chunk_boundary","case":"apc","control":"testAPCSequenceSplitAcrossChunkBoundaryMatchesUnsplitBaseline","proof":"split_equals_unsplit_through_writes_screen","status":"PASS"}
 {"kind":"hygiene","case":"reject_does_not_poison","control":"testRejectedGapDoesNotPoisonSubsequentValidCall","status":"PASS"}
-{"kind":"hygiene","case":"reject_no_lock_retain_concurrent","control":"testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller","status":"PASS"}
-{"kind":"serialization","case":"draw_and_restore","control":"testIngestionSerializedWithDrawAndRestore","status":"PASS"}
+{"kind":"hygiene","case":"reject_no_lock_retain_concurrent","control":"testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller","proof":"ready_barrier_in_body_hold_sequence_stamps","status":"PASS"}
+{"kind":"serialization","case":"draw_and_restore","control":"testIngestionSerializedWithDrawAndRestore","proof":"observe_draw_forced_overlap_stamps_both_sides","status":"PASS"}
 {"kind":"suite","name":"OrderedOutputStressTests","executed":2,"failures":0,"arch":"arm64","transcript":"arm64-stress-xctest.txt"}
-{"kind":"stress","case":"large_stream_100mib_class","control":"testLargeOrderedStreamProvesReplyOrderAndLosslessContent","min_bytes":104857600,"status":"PASS"}
-{"kind":"stress","case":"concurrent_callers_serialized","control":"testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected","disposition":"serialized_peak_1_one_accept_seven_reject","status":"PASS"}
-{"kind":"matrix_row","row":"C","status":"PASS","note":"every chunk boundary and order fault disposition proven live at C boundary"}
+{"kind":"stress","case":"large_stream_100mib_class","control":"testLargeOrderedStreamProvesReplyOrderAndLosslessContent","min_bytes":104857600,"proof":"dense_per_block_sentinels_osc_title_sink_source_feed_stamps","status":"PASS"}
+{"kind":"stress","case":"concurrent_callers_serialized","control":"testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected","proof":"ready_barrier_in_body_hold_sequence_stamps","status":"PASS"}
+{"kind":"matrix_row","row":"C","status":"PASS","note":"fraser NO-LAND four vacuous controls reworked to bite"}

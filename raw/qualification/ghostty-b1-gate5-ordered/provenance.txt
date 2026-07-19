@@ -1,4 +1,4 @@
-qualification=M1-B1 Gate 5 ordered output (matrix row C)
+qualification=M1-B1 Gate 5 ordered output (matrix row C) — fraser rework
 host_arch=arm64
 ProductName:		macOS
 ProductVersion:		26.3.1
@@ -15,6 +15,7 @@ symbol_list_sha256=16e34bd7e3776904a8b5c13b69ebb3a883dcd071f090ac57e32f95cdb6113
 engine_build_id=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300
 libghostty_internal_sha256=c4bd399870cce744de0c1d30e91e5c07af51b21507e04e6929415efedaaa8e5b
 tests=OrderedOutputEngineTests:16/16 OrderedOutputStressTests:2/2
-run_utc=2026-07-19T18:13:52Z
+fraser_rework=draw_restore_stamps dense_100mib_titles apc_unsplit_baseline concurrent_ready_hold_stamps
+run_utc=2026-07-19T18:26:48Z
 branch=hive/forrest-category-complex-coding-m1-b1
-head_before_evidence_commit=a07b570d53d79059f37a282ec972a976b1f17318
+prior_pin=9474e0481e6df9d70aecbd62e2bacc33be88ad72
