@@ -1,19 +1,17 @@
-# Gate 5 — ordered output dispositions (fraser round-2 rework)
+# Gate 5 dispositions — fraser round-3 (#2 volume)
 
-## Round-2 residual vacuity fixes
+## Control #2 (100 MiB) — volume bytes in the sink
 
-| # | Control | Fix |
-|---|---|---|
-| 1 | Draw/restore | **Closed round-1** — draw observed, in-body hold, stamps both sides |
-| 2 | 100 MiB byte-loss | Per-block **screen equality** of every dense SENT stamp (block fits viewport); clear; next block. Mid-stream printable mutation fails block equality. Not OSC-only / not tail-only. |
-| 3 | APC | Unsplit asserts exact non-empty Kitty reply `\x1b_Gi=1;OK\x1b\\`, **then** split==unsplit |
-| 4 | Concurrent | Caller-side `attempted` counter after `go.wait` **before** `processOutput`; `allAttempted` required before hold release |
+Each block is a screenful of **full-width unique rows** (`cols-1` load-bearing
+characters per row; no strip-able padding). After feed, `readScreen` rows must
+**equal the full generated rows** (every volume byte). Clear; next block.
 
-## Full disposition matrix
+- Mutating any volume byte fails full-row equality.
+- Negative control `testVolumeByteLossControlFailsOnSingleVolumeByteMutation`
+  flips one mid-row byte and asserts inequality (fraser counterexample).
 
-Gap / overlap / duplicate / conflict / overflow / empty / null — engine tests.
-CSI / OSC / DCS / APC / UTF-8 / grapheme — engine tests.
-Serialization draw/restore — engine test (closed).
-100 MiB dense + concurrent — stress tests.
+## Already closed
 
-Evidence: arm64-engine-xctest.txt (16/16), arm64-stress-xctest.txt (2/2).
+1. Draw/restore serialization  
+3. APC Kitty OK reply + split==unsplit  
+4. Concurrent attempted counter before release  

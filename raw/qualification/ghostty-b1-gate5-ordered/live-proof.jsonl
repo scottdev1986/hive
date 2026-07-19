@@ -1,9 +1,6 @@
-{"kind":"engine","ghostty_commit":"73534c4680a809398b396c94ac7f12fcccb7963d","patched_tree":"d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb","host_arch":"arm64","boundary":"hive_ghostty_surface_process_output_v1","review":"fraser-round2-rework"}
+{"kind":"engine","host_arch":"arm64","boundary":"hive_ghostty_surface_process_output_v1","review":"fraser-round3-volume"}
 {"kind":"suite","name":"OrderedOutputEngineTests","executed":16,"failures":0,"transcript":"arm64-engine-xctest.txt"}
-{"kind":"chunk_boundary","case":"apc","control":"testAPCSequenceSplitAcrossChunkBoundaryMatchesUnsplitBaseline","proof":"unsplit_exact_kitty_OK_reply_then_split_equals_unsplit","status":"PASS"}
-{"kind":"hygiene","case":"reject_no_lock_retain_concurrent","control":"testRejectedFaultsDoNotRetainLocksOrPoisonConcurrentCaller","proof":"attempted_counter_all_contenders_before_release","status":"PASS"}
-{"kind":"serialization","case":"draw_and_restore","control":"testIngestionSerializedWithDrawAndRestore","status":"PASS","note":"closed round1"}
-{"kind":"suite","name":"OrderedOutputStressTests","executed":2,"failures":0,"transcript":"arm64-stress-xctest.txt"}
-{"kind":"stress","case":"large_stream_100mib_class","control":"testLargeOrderedStreamProvesReplyOrderAndLosslessContent","proof":"per_block_screen_equality_all_dense_SENT_stamps_full_stream","min_bytes":104857600,"status":"PASS"}
-{"kind":"stress","case":"concurrent_callers_serialized","control":"testConcurrentCallersAreSerializedAndUncoordinatedGapsRejected","proof":"attempted_counter_all_contenders_before_release","status":"PASS"}
-{"kind":"matrix_row","row":"C","status":"PASS"}
+{"kind":"suite","name":"OrderedOutputStressTests","executed":3,"failures":0,"transcript":"arm64-stress-xctest.txt"}
+{"kind":"stress","case":"large_stream_100mib_class","control":"testLargeOrderedStreamProvesReplyOrderAndLosslessContent","proof":"full_width_volume_rows_equal_source_every_byte","status":"PASS"}
+{"kind":"stress","case":"volume_negative_control","control":"testVolumeByteLossControlFailsOnSingleVolumeByteMutation","proof":"single_volume_byte_flip_fails_full_row_equality","status":"PASS"}
+{"kind":"closed","controls":["draw_restore","apc","concurrent","100mib_volume"],"status":"PASS"}
