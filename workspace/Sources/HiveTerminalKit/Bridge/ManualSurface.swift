@@ -110,6 +110,15 @@ struct ManualSurfaceIMEPoint: Equatable, Sendable {
     var height: Double
 }
 
+enum TerminalColorScheme: Equatable, Sendable {
+    case light
+    case dark
+
+    init(appearance: NSAppearance) {
+        self = appearance.bestMatch(from: [.darkAqua, .aqua]) == .darkAqua ? .dark : .light
+    }
+}
+
 /// L0 surface engine seam — production uses Ghostty; tests inject fakes.
 ///
 /// Threading contract: AppKit/Metal and every Ghostty app/surface C entry run
@@ -126,6 +135,7 @@ protocol ManualSurfaceEngine: AnyObject {
     func setFocus(_ focused: Bool)
     func setSize(widthPx: UInt32, heightPx: UInt32)
     func setContentScale(x: Double, y: Double)
+    func setColorScheme(_ scheme: TerminalColorScheme)
     func setDisplayID(_ displayID: UInt32)
     func setOcclusion(_ visible: Bool)
     func reportedSize() -> ManualSurfaceSize?
@@ -168,6 +178,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
     private(set) var focusCalls: [Bool] = []
     private(set) var sizeCalls: [(UInt32, UInt32)] = []
     private(set) var contentScaleCalls: [(Double, Double)] = []
+    private(set) var colorSchemeCalls: [TerminalColorScheme] = []
     private(set) var displayIDCalls: [UInt32] = []
     private(set) var occlusionCalls: [Bool] = []
     var fakeReportedSize: ManualSurfaceSize?
@@ -243,6 +254,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
     public func setFocus(_ focused: Bool) { focusCalls.append(focused) }
     public func setSize(widthPx: UInt32, heightPx: UInt32) { sizeCalls.append((widthPx, heightPx)) }
     public func setContentScale(x: Double, y: Double) { contentScaleCalls.append((x, y)) }
+    public func setColorScheme(_ scheme: TerminalColorScheme) { colorSchemeCalls.append(scheme) }
     public func setDisplayID(_ displayID: UInt32) { displayIDCalls.append(displayID) }
     public func setOcclusion(_ visible: Bool) { occlusionCalls.append(visible) }
     public func reportedSize() -> ManualSurfaceSize? { fakeReportedSize }
@@ -465,6 +477,15 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         dispatchPrecondition(condition: .onQueue(.main))
         guard let surface = rawSurfaceHandle else { return }
         ghostty_surface_set_content_scale(surface, x, y)
+    }
+
+    public func setColorScheme(_ scheme: TerminalColorScheme) {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let surface = rawSurfaceHandle else { return }
+        ghostty_surface_set_color_scheme(
+            surface,
+            scheme == .dark ? GHOSTTY_COLOR_SCHEME_DARK : GHOSTTY_COLOR_SCHEME_LIGHT
+        )
     }
 
     public func setDisplayID(_ displayID: UInt32) {
@@ -1152,6 +1173,7 @@ enum GhosttyBridgeFactory {
     enum FactoryError: Error, CustomStringConvertible {
         case initFailed
         case configFailed
+        case invalidConfig(UInt32)
         case appFailed
         case surfaceFailed
 
@@ -1159,6 +1181,7 @@ enum GhosttyBridgeFactory {
             switch self {
             case .initFailed: return "ghostty_init failed"
             case .configFailed: return "ghostty_config_new failed"
+            case .invalidConfig(let count): return "Hive Ghostty config has \(count) diagnostics"
             case .appFailed: return "ghostty_app_new failed"
             case .surfaceFailed: return "hive_ghostty_surface_new_manual_v1 failed"
             }
@@ -1246,13 +1269,16 @@ enum GhosttyBridgeFactory {
         heightPx: UInt32 = 480
     ) throws -> GhosttyManualSurface {
         try performOnMainSync {
-            try makeManualSurfaceOnMain(
-                hostView: hostView,
-                widthPx: widthPx,
-                heightPx: heightPx,
-                terminalReplies: .disabled,
-                configPolicyPath: manualConfigPolicyPath
-            )
+            let configURL = try HiveTerminalConfiguration.writeProcessFile()
+            return try configURL.path.withCString { configPath in
+                try makeManualSurfaceOnMain(
+                    hostView: hostView,
+                    widthPx: widthPx,
+                    heightPx: heightPx,
+                    terminalReplies: .disabled,
+                    configPolicyPath: configPath
+                )
+            }
         }
     }
 
@@ -1278,10 +1304,15 @@ enum GhosttyBridgeFactory {
         // callback — an unbound key falls through to normal terminal
         // encoding instead of being swallowed by an action nobody provides.
         // `keybind = clear` empties the root set and all tables
-        // (config/Config.zig keybind parser). The pinned C API has no
-        // load_string, so the one-line policy is loaded via a temp file.
+        // (config/Config.zig keybind parser). C1's generated file carries
+        // that security policy after the theme and typography base.
         ghostty_config_load_file(config, configPolicyPath)
         ghostty_config_finalize(config)
+        let diagnosticCount = ghostty_config_diagnostics_count(config)
+        guard diagnosticCount == 0 else {
+            ghostty_config_free(config)
+            throw FactoryError.invalidConfig(diagnosticCount)
+        }
 
         let wakeupContext = GhosttyAppWakeupContext()
         var runtime = makeRuntimeConfig(wakeupContext: wakeupContext)
@@ -1305,8 +1336,6 @@ enum GhosttyBridgeFactory {
         // every screen/backing change. Until then, 1× is a neutral provisional
         // value; assuming Retina here would be guessed geometry.
         surfaceConfig.scale_factor = Double(hostView.window?.backingScaleFactor ?? 1.0)
-        surfaceConfig.font_size = 13
-
         let callbackContext = BridgeCallbackContext()
         let writeCtx = callbackContext.unownedContextPointer
         let eventCtx = callbackContext.unownedContextPointer
@@ -1324,6 +1353,11 @@ enum GhosttyBridgeFactory {
             throw FactoryError.surfaceFailed
         }
         GhosttySurfaceCallbackRegistry.shared.register(surface, context: callbackContext)
+
+        // C1.0: the same explicitly-loaded Hive file is pushed through the
+        // live surface update API. Never load Ghostty's default locations.
+        creationObserver?("surfaceUpdateConfig")
+        ghostty_surface_update_config(surface, config)
 
         // Size the surface (never 0×0).
         let w = widthPx > 0 ? widthPx : UInt32(max(1, hostView.bounds.width))
@@ -1351,26 +1385,6 @@ enum GhosttyBridgeFactory {
         initializationCount += 1
     }
 
-    /// Fixed manual-surface policy, written once per process. Contents are
-    /// gate rulings, not user preference — never merge user config files
-    /// into a manual surface.
-    static let manualConfigPolicyPath: UnsafePointer<CChar> = {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hive-ghostty-manual-config-\(ProcessInfo.processInfo.processIdentifier).conf")
-        try? Data("keybind = clear\nclipboard-read = deny\nclipboard-write = deny\n".utf8).write(to: url)
-        // Intentionally leaked: valid for process lifetime, handed to C.
-        return UnsafePointer(strdup(url.path))
-    }()
-
-    /// XCTest may have no active CVDisplayLink; only frame pacing is disabled.
-    /// The real Metal renderer, IOSurface layer, and terminal core still run.
-    private static let headlessTestConfigPolicyPath: UnsafePointer<CChar> = {
-        let url = FileManager.default.temporaryDirectory
-            .appendingPathComponent("hive-ghostty-test-config-\(ProcessInfo.processInfo.processIdentifier).conf")
-        try? Data("keybind = clear\nclipboard-read = deny\nclipboard-write = deny\nwindow-vsync = false\n".utf8).write(to: url)
-        return UnsafePointer(strdup(url.path))
-    }()
-
     /// Convenience for tests: host view is retained by the returned surface (SF1).
     static func makeManualSurfaceForTesting(
         widthPx: UInt32 = 800,
@@ -1379,13 +1393,16 @@ enum GhosttyBridgeFactory {
     ) throws -> GhosttyManualSurface {
         try performOnMainSync {
             let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
-            return try makeManualSurfaceOnMain(
-                hostView: host,
-                widthPx: widthPx,
-                heightPx: heightPx,
-                terminalReplies: terminalReplies,
-                configPolicyPath: headlessTestConfigPolicyPath
-            )
+            let configURL = try HiveTerminalConfiguration.writeProcessFile(headless: true)
+            return try configURL.path.withCString { configPath in
+                try makeManualSurfaceOnMain(
+                    hostView: host,
+                    widthPx: widthPx,
+                    heightPx: heightPx,
+                    terminalReplies: terminalReplies,
+                    configPolicyPath: configPath
+                )
+            }
         }
     }
 
@@ -1397,14 +1414,17 @@ enum GhosttyBridgeFactory {
     ) throws -> GhosttyManualSurface {
         try performOnMainSync {
             let host = NSView(frame: NSRect(x: 0, y: 0, width: CGFloat(widthPx), height: CGFloat(heightPx)))
-            return try makeManualSurfaceOnMain(
-                hostView: host,
-                widthPx: widthPx,
-                heightPx: heightPx,
-                terminalReplies: terminalReplies,
-                configPolicyPath: headlessTestConfigPolicyPath,
-                clipboardContext: clipboardContext
-            )
+            let configURL = try HiveTerminalConfiguration.writeProcessFile(headless: true)
+            return try configURL.path.withCString { configPath in
+                try makeManualSurfaceOnMain(
+                    hostView: host,
+                    widthPx: widthPx,
+                    heightPx: heightPx,
+                    terminalReplies: terminalReplies,
+                    configPolicyPath: configPath,
+                    clipboardContext: clipboardContext
+                )
+            }
         }
     }
 }

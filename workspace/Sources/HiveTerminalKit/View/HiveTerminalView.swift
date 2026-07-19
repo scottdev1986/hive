@@ -52,6 +52,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var rendererHealthy = true
     public private(set) var sleepTransitionCount = 0
     public private(set) var wakeTransitionCount = 0
+    private(set) var appliedColorScheme: TerminalColorScheme?
 
     private var viewerId: String
     private var resizeWorkItem: DispatchWorkItem?
@@ -75,6 +76,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         self.applicatorStorage = OutputRangeApplicator(engine: engine)
         super.init(frame: frameRect)
         wantsLayer = true
+        synchronizeColorScheme()
         wireBridgeEvents()
         wireWorkspaceEvents()
     }
@@ -101,6 +103,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         )
         engineStorage = engine
         applicatorStorage = OutputRangeApplicator(engine: engine)
+        synchronizeColorScheme()
         wireBridgeEvents()
         wireWorkspaceEvents()
         synchronizeRenderingState()
@@ -422,6 +425,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         synchronizeRenderingState()
     }
 
+    public override func viewDidChangeEffectiveAppearance() {
+        super.viewDidChangeEffectiveAppearance()
+        synchronizeColorScheme()
+    }
+
     var ghosttyRenderingLayer: CALayer? {
         renderHostView?.layer
     }
@@ -443,6 +451,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         synchronizeDisplayID()
         synchronizeOcclusion()
         synchronizeFramebufferSize()
+    }
+
+    private func synchronizeColorScheme() {
+        guard let engineStorage else { return }
+        let scheme = TerminalColorScheme(appearance: effectiveAppearance)
+        guard appliedColorScheme != scheme else { return }
+        engineStorage.setColorScheme(scheme)
+        appliedColorScheme = scheme
     }
 
     private var currentBackingSize: NSSize {

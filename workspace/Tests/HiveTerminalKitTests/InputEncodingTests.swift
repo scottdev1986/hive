@@ -766,9 +766,9 @@ final class InputEncodingTests: XCTestCase {
         // no-button motion code (3 + 32) before the press and release.
         drainMainRunLoop(until: { writes.count >= 3 })
         XCTAssertEqual(writes, [
-            Data("\u{1B}[<35;3;16M".utf8),
-            Data("\u{1B}[<0;3;16M".utf8),
-            Data("\u{1B}[<0;3;16m".utf8),
+            Data("\u{1B}[<35;2;14M".utf8),
+            Data("\u{1B}[<0;2;14M".utf8),
+            Data("\u{1B}[<0;2;14m".utf8),
         ])
     }
 
@@ -786,8 +786,8 @@ final class InputEncodingTests: XCTestCase {
         terminal.mouseDown(with: makeMouseEvent(type: .leftMouseDown, location: NSPoint(x: 25, y: 40)))
         drainMainRunLoop(until: { writes.count >= 2 })
         XCTAssertEqual(writes, [
-            Data("\u{1B}[<35;3;16M".utf8),
-            Data("\u{1B}[<0;3;16M".utf8),
+            Data("\u{1B}[<35;2;14M".utf8),
+            Data("\u{1B}[<0;2;14M".utf8),
         ])
         // The CG scroll event carries deltas, not a view position. Clear the
         // setup motion/press only after proving mouseDown established the
@@ -809,7 +809,7 @@ final class InputEncodingTests: XCTestCase {
         drainMainRunLoop(until: { writes.count == 9 })
         XCTAssertEqual(
             writes,
-            Array(repeating: Data("\u{1B}[<65;3;16M".utf8), count: 9)
+            Array(repeating: Data("\u{1B}[<65;2;14M".utf8), count: 9)
         )
     }
 

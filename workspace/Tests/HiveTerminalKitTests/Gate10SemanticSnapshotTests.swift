@@ -54,14 +54,24 @@ final class Gate10SemanticSnapshotTests: XCTestCase {
             throw NSError(domain: "Gate10SemanticSnapshotTests", code: 1)
         }
         // Mouse input is a Gate 8 stock-surface operation, so author the
-        // gesture with the stock surface's reported input cell geometry. The
-        // snapshot itself deliberately uses the locked Terminal commit.
+        // gesture with the stock surface's reported input cell geometry and
+        // C1 balanced padding. The snapshot itself deliberately uses the
+        // locked Terminal commit.
         let inputGeometry = ghostty_surface_size(handle)
+        let horizontalSpace = Int(inputGeometry.width_px) -
+            Int(inputGeometry.columns) * Int(inputGeometry.cell_width_px)
+        let verticalSpace = Int(inputGeometry.height_px) -
+            Int(inputGeometry.rows) * Int(inputGeometry.cell_height_px)
+        let leftPadding = max(0, horizontalSpace / 2)
+        let balancedTop = max(0, verticalSpace / 2)
+        let cappedTop = (2 * HiveTerminalConfiguration.horizontalPaddingPoints +
+            Int(inputGeometry.cell_width_px)) / 2
+        let topPadding = min(balancedTop, cappedTop)
         func point(_ cell: (column: Int, row: Int)) -> NSPoint {
             NSPoint(
-                x: cell.column * Int(inputGeometry.cell_width_px) +
+                x: leftPadding + cell.column * Int(inputGeometry.cell_width_px) +
                     Int(inputGeometry.cell_width_px) / 2,
-                y: cell.row * Int(inputGeometry.cell_height_px) +
+                y: topPadding + cell.row * Int(inputGeometry.cell_height_px) +
                     Int(inputGeometry.cell_height_px) / 2
             )
         }
