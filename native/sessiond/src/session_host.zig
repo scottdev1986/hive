@@ -3609,13 +3609,31 @@ fn acceptHostHello(
     };
 }
 
+const AuthorizedViewer = struct {
+    authorization: ViewerAuthorization,
+    /// HOST_ATTACH request header fields for correlated snapshot frames and
+    /// typed attach failures (§20).
+    attach_minor: u8,
+    attach_request_id: u64,
+};
+
+fn viewerAttachFailureCode(err: anyerror) protocol.WireError {
+    return switch (err) {
+        error.VisibilityExpired => .not_ready,
+        error.InvalidHostAttach => .malformed_frame,
+        error.InvalidViewerGrant => .unauthenticated,
+        error.OutOfMemory => .resource_exhausted,
+        else => .verification_unknown,
+    };
+}
+
 fn authorizeViewerAfterHello(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
     hello: *const AcceptedHello,
     now_ns: u64,
-) !ViewerAuthorization {
+) !AuthorizedViewer {
     var request = try readRequiredFrame(allocator, stream);
     defer {
         std.crypto.secureZero(u8, request.payload);
@@ -3627,16 +3645,24 @@ fn authorizeViewerAfterHello(
         try writeHostFailure(allocator, stream, request.header, .malformed_frame);
         return error.InvalidHostAttach;
     }
-    return core.authorizeViewerAttach(
+    const authorization = core.authorizeViewerAttach(
         request.payload,
         hello.grant_token.?,
         now_ns,
-    );
+    ) catch |err| {
+        try writeHostFailure(allocator, stream, request.header, viewerAttachFailureCode(err));
+        return err;
+    };
+    return .{
+        .authorization = authorization,
+        .attach_minor = request.header.minor,
+        .attach_request_id = request.header.request_id,
+    };
 }
 
 /// Authenticates the existing generated viewer HELLO and consumes the existing
 /// generated HOST_ATTACH request. The caller retains the stream and begins the
-/// snapshot/output sequence once those generated payload contracts exist.
+/// snapshot/output sequence.
 pub fn authorizeViewerConnection(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
@@ -3646,7 +3672,8 @@ pub fn authorizeViewerConnection(
     var hello = (try acceptHostHello(allocator, stream, core, now_ns, .viewer)) orelse
         return error.ViewerHandshakeRefused;
     defer hello.deinit();
-    return authorizeViewerAfterHello(allocator, stream, core, &hello, now_ns);
+    const authorized = try authorizeViewerAfterHello(allocator, stream, core, &hello, now_ns);
+    return authorized.authorization;
 }
 
 fn serveBrokerRequest(
@@ -3780,19 +3807,14 @@ fn viewerFailureCode(err: anyerror) protocol.WireError {
     };
 }
 
-fn serveViewerRequest(
+fn handleViewerFrame(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
     authorization: *const ViewerAuthorization,
+    request: *const protocol.Frame,
     now_ns: u64,
 ) !void {
-    var request = try readRequiredFrame(allocator, stream);
-    defer {
-        if (request.header.type_code == generated.frame_type.input_submit)
-            std.crypto.secureZero(u8, request.payload);
-        request.deinit(allocator);
-    }
     const expected_flags: u16 = if (request.header.type_code == generated.frame_type.input_submit)
         generated.frame_flag.content_sensitive
     else
@@ -3857,38 +3879,241 @@ fn serveViewerRequest(
     );
 }
 
+/// One live attached viewer stream owned by the host loop (§20/§26). A later
+/// successful attach for the same exact generation supersedes it.
+const AttachedViewer = struct {
+    stream: std.net.Stream,
+    authorization: ViewerAuthorization,
+    /// Exclusive journal byte offset already written to this viewer.
+    sent_seq: u64,
+    /// Exclusive contiguous OUTPUT high-water the viewer acknowledged (§20 APPLIED).
+    acked_seq: u64,
+
+    fn close(self: *AttachedViewer, allocator: std.mem.Allocator) void {
+        self.stream.close();
+        self.authorization.deinit(allocator);
+        self.* = undefined;
+    }
+};
+
+/// Push retained journal bytes from `seq.*` to the journal end as ordered
+/// unsolicited OUTPUT frames (stream_seq = absolute first-byte offset),
+/// chunked at the negotiated stream bound. Advances `seq.*`.
+fn pushRetainedOutput(
+    stream: std.net.Stream,
+    state: *terminal_state.TerminalState,
+    seq: *u64,
+) !void {
+    const slice = try state.journal.sliceFrom(seq.*);
+    var offset: usize = 0;
+    while (offset < slice.len) {
+        const take = @min(generated.limits.stream_chunk_bytes, slice.len - offset);
+        try protocol.writeFrame(stream, .{
+            .minor = generated.protocol_minor,
+            .type_code = generated.frame_type.output,
+            .flags = 0,
+            .payload_length = @intCast(take),
+            .request_id = 0,
+            .stream_seq = seq.* + @as(u64, @intCast(offset)),
+        }, slice[offset..][0..take]);
+        offset += take;
+    }
+    seq.* += @as(u64, @intCast(slice.len));
+}
+
+/// §20 attach stream for an authorized viewer: when the requested cursor is
+/// below the retained journal start, the newest verified HVTCP001 checkpoint
+/// envelope is sent as correlated SNAPSHOT_BYTES chunks; every retained byte
+/// after the effective base then replays as ordered OUTPUT. Returns the
+/// exclusive high-water written. A cursor the retained journal and checkpoint
+/// cannot bridge is a typed CHECKPOINT_UNAVAILABLE failure, never silence.
+fn beginViewerStream(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    state: *terminal_state.TerminalState,
+    authorized: *const AuthorizedViewer,
+) !u64 {
+    const attach_header: protocol.Header = .{
+        .minor = authorized.attach_minor,
+        .type_code = generated.frame_type.host_attach,
+        .flags = 0,
+        .payload_length = 0,
+        .request_id = authorized.attach_request_id,
+        .stream_seq = 0,
+    };
+    var base: u64 = authorized.authorization.after_seq;
+    const retained_start = state.retainedOutputStart();
+    if (base < retained_start) {
+        const checkpoint = state.newestCheckpoint() orelse {
+            try writeHostFailure(allocator, stream, attach_header, .checkpoint_unavailable);
+            return error.CheckpointUnavailable;
+        };
+        const through_seq = checkpoint.header.through_seq;
+        if (through_seq < retained_start) {
+            try writeHostFailure(allocator, stream, attach_header, .checkpoint_unavailable);
+            return error.CheckpointUnavailable;
+        }
+        const file = checkpoint.file;
+        var offset: usize = 0;
+        while (offset < file.len) {
+            const take = @min(generated.limits.stream_chunk_bytes, file.len - offset);
+            const final_flag: u16 = if (offset + take == file.len)
+                generated.frame_flag.final
+            else
+                0;
+            try protocol.writeFrame(stream, .{
+                .minor = authorized.attach_minor,
+                .type_code = generated.frame_type.snapshot_bytes,
+                .flags = generated.frame_flag.response | final_flag,
+                .payload_length = @intCast(take),
+                .request_id = authorized.attach_request_id,
+                .stream_seq = @intCast(offset),
+            }, file[offset..][0..take]);
+            offset += take;
+        }
+        base = through_seq;
+    }
+    try pushRetainedOutput(stream, state, &base);
+    return base;
+}
+
+/// Serves one accepted host.sock connection. A broker connection is one RPC.
+/// A viewer connection authorizes, streams the attach snapshot/replay, and is
+/// returned to the host loop as the live attached viewer; the caller closes
+/// the stream in every other outcome.
 fn serveSessionConnection(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
+    state: *terminal_state.TerminalState,
     timer: *std.time.Timer,
-) !void {
+) !?AttachedViewer {
     const now_ns = timer.read();
-    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .either)) orelse return;
+    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .either)) orelse return null;
     defer hello.deinit();
     switch (hello.role) {
-        .broker => return serveBrokerRequest(allocator, stream, core, hello.build_id, now_ns),
+        .broker => {
+            try serveBrokerRequest(allocator, stream, core, hello.build_id, now_ns);
+            return null;
+        },
         .viewer => {
-            var authorization = try authorizeViewerAfterHello(
+            var authorized = try authorizeViewerAfterHello(
                 allocator,
                 stream,
                 core,
                 &hello,
                 now_ns,
             );
-            defer authorization.deinit(core.allocator);
-            while (!core.terminated) {
-                serveViewerRequest(
-                    allocator,
-                    stream,
-                    core,
-                    &authorization,
-                    timer.read(),
-                ) catch return;
-            }
+            errdefer authorized.authorization.deinit(core.allocator);
+            const sent_seq = try beginViewerStream(allocator, stream, state, &authorized);
+            return .{
+                .stream = stream,
+                .authorization = authorized.authorization,
+                .sent_seq = sent_seq,
+                .acked_seq = authorized.authorization.after_seq,
+            };
         },
         .either => unreachable,
     }
+}
+
+/// Per-iteration bound on dispatched inbound viewer frames so a chatty viewer
+/// cannot starve the PTY pump.
+const viewer_inbound_frames_per_iteration = 32;
+
+/// Drives the attached viewer inside the host loop: pushes newly journaled
+/// OUTPUT (paused while the unacknowledged window exceeds the negotiated
+/// viewer queue bound), then dispatches any ready inbound frames. Any wire
+/// error detaches the viewer; the logical pane representation is untouched.
+fn pumpAttachedViewer(
+    allocator: std.mem.Allocator,
+    viewer_slot: *?AttachedViewer,
+    core: *HostCore,
+    state: *terminal_state.TerminalState,
+    timer: *std.time.Timer,
+) void {
+    if (viewer_slot.*) |*viewer| {
+        if (state.outputSeq() > viewer.sent_seq and
+            viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
+        {
+            pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch {
+                viewer.close(allocator);
+                viewer_slot.* = null;
+                return;
+            };
+        }
+        var handled: u32 = 0;
+        while (handled < viewer_inbound_frames_per_iteration) : (handled += 1) {
+            var fds = [_]std.posix.pollfd{.{
+                .fd = viewer.stream.handle,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            }};
+            const ready = std.posix.poll(&fds, 0) catch 0;
+            if (ready == 0 or fds[0].revents == 0) return;
+            var frame = readRequiredFrame(allocator, viewer.stream) catch {
+                viewer.close(allocator);
+                viewer_slot.* = null;
+                return;
+            };
+            defer {
+                if (frame.header.type_code == generated.frame_type.input_submit)
+                    std.crypto.secureZero(u8, frame.payload);
+                frame.deinit(allocator);
+            }
+            if (frame.header.type_code == generated.frame_type.applied) {
+                if (viewerOutputAckThroughSeq(allocator, &frame)) |through_seq| {
+                    // Duplicate/stale acks are harmless retransmits; an ack
+                    // beyond what was sent is a protocol violation.
+                    if (through_seq <= viewer.sent_seq) {
+                        if (through_seq > viewer.acked_seq) viewer.acked_seq = through_seq;
+                        continue;
+                    }
+                }
+                viewer.close(allocator);
+                viewer_slot.* = null;
+                return;
+            }
+            handleViewerFrame(
+                allocator,
+                viewer.stream,
+                core,
+                &viewer.authorization,
+                &frame,
+                timer.read(),
+            ) catch {
+                viewer.close(allocator);
+                viewer_slot.* = null;
+                return;
+            };
+        }
+    }
+}
+
+/// Parses a viewer→host APPLIED output acknowledgement; null on any shape
+/// that is not the frozen output branch.
+fn viewerOutputAckThroughSeq(
+    allocator: std.mem.Allocator,
+    frame: *const protocol.Frame,
+) ?u64 {
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.applied_payload,
+        frame.payload,
+    )) return null;
+    const Ack = struct {
+        schemaVersion: u8,
+        resultKind: []const u8,
+        throughSeq: []const u8,
+    };
+    var parsed = std.json.parseFromSlice(Ack, allocator, frame.payload, .{
+        .ignore_unknown_fields = true,
+    }) catch return null;
+    defer parsed.deinit();
+    if (parsed.value.schemaVersion != 1 or
+        !std.mem.eql(u8, parsed.value.resultKind, "output"))
+        return null;
+    return std.fmt.parseInt(u64, parsed.value.throughSeq, 10) catch null;
 }
 
 const WireCreateSpec = struct {
@@ -4196,6 +4421,11 @@ fn runHostLoop(
     state: *terminal_state.TerminalState,
     persistence: *PersistenceCursor,
 ) !void {
+    var attached: ?AttachedViewer = null;
+    defer if (attached) |*viewer| {
+        viewer.close(core.allocator);
+        attached = null;
+    };
     while (!core.terminated) {
         refreshRegistration(core, state);
         const now_ns = timer.read();
@@ -4207,21 +4437,42 @@ fn runHostLoop(
         }
 
         if (try runtime.accept()) |stream| {
-            defer stream.close();
             const connection_now_ns = timer.read();
             if (core.lease.expired(connection_now_ns)) {
+                stream.close();
                 try persistTerminalState(state, runtime.directory, persistence);
                 refreshRegistration(core, state);
                 _ = try core.enforceVisibilityExpiry(connection_now_ns);
                 break;
             }
-            try setControlTimeoutMs(
+            setControlTimeoutMs(
                 stream.handle,
-                try leaseBoundControlTimeoutMs(core.lease, connection_now_ns),
-            );
-            serveSessionConnection(core.allocator, stream, core, timer) catch |err| {
-                std.log.err("host connection refused: {s}", .{@errorName(err)});
+                leaseBoundControlTimeoutMs(core.lease, connection_now_ns) catch |err| {
+                    stream.close();
+                    return err;
+                },
+            ) catch |err| {
+                stream.close();
+                return err;
             };
+            const accepted = serveSessionConnection(
+                core.allocator,
+                stream,
+                core,
+                state,
+                timer,
+            ) catch |err| blk: {
+                std.log.err("host connection refused: {s}", .{@errorName(err)});
+                break :blk null;
+            };
+            if (accepted) |viewer| {
+                // §26 retarget: a later successful attach for this exact
+                // generation supersedes the previous viewer connection.
+                if (attached) |*old| old.close(core.allocator);
+                attached = viewer;
+            } else {
+                stream.close();
+            }
             continue;
         }
 
@@ -4259,6 +4510,9 @@ fn runHostLoop(
             error.Closed => {
                 try persistTerminalState(state, runtime.directory, persistence);
                 refreshRegistration(core, state);
+                // Best-effort tail push: every journaled byte reaches the
+                // attached viewer before the endpoint closes (§20 drain).
+                pumpAttachedViewer(core.allocator, &attached, core, state, timer);
                 const response = try core.terminateBound(.immediate, null);
                 core.allocator.free(response);
                 break;
@@ -4270,6 +4524,7 @@ fn runHostLoop(
             try persistTerminalState(state, runtime.directory, persistence);
             refreshRegistration(core, state);
         }
+        pumpAttachedViewer(core.allocator, &attached, core, state, timer);
         std.Thread.sleep(std.time.ns_per_ms);
     }
 }
