@@ -54,6 +54,26 @@ final class SessiondPaneReattachTests: XCTestCase {
         XCTAssertEqual(failures, ["host refused"])
     }
 
+    /// Recovery backoff is EXPONENTIAL (0.5→8s cap) and escalates — the
+    /// regression guard for a flattened fixed interval. A fixed delay fails
+    /// both the exact values and the escalation assertion.
+    func testRetryBackoffIsExponential() {
+        let terminal = makeTerminal()
+        XCTAssertEqual(terminal.retryDelay(forAttempt: 0), 0.5, accuracy: 0.0001)
+        XCTAssertEqual(terminal.retryDelay(forAttempt: 1), 1.0, accuracy: 0.0001)
+        XCTAssertEqual(terminal.retryDelay(forAttempt: 2), 2.0, accuracy: 0.0001)
+        XCTAssertEqual(terminal.retryDelay(forAttempt: 3), 4.0, accuracy: 0.0001)
+        XCTAssertEqual(terminal.retryDelay(forAttempt: 4), 8.0, accuracy: 0.0001)
+        XCTAssertEqual(terminal.retryDelay(forAttempt: 5), 8.0, accuracy: 0.0001, "capped at max")
+        for attempt in 0..<4 {
+            XCTAssertGreaterThan(
+                terminal.retryDelay(forAttempt: attempt + 1),
+                terminal.retryDelay(forAttempt: attempt),
+                "backoff must escalate, not stay flat"
+            )
+        }
+    }
+
     /// The recovery timer drives to a visible give-up even when the attach
     /// never progresses (no view/geometry) — the regression guard for a stalled
     /// attach chain silently stranding the pane instead of failing visibly.

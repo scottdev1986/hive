@@ -32,13 +32,15 @@ final class SessiondPaneTerminal {
     /// or still retrying).
     private(set) var lastFailure: String?
     let maxAttachAttempts = 6
-    /// A single repeating recovery driver: it ticks independently of the attach
-    /// chain, so give-up ALWAYS fires after the budget even if an individual
-    /// attach attempt races or stalls. Drives one bounded retry per tick.
+    let baseRetryDelay: TimeInterval = 0.5
+    let maxRetryDelay: TimeInterval = 8.0
+    /// A single self-rescheduling recovery driver: each one-shot tick advances
+    /// the give-up budget and reschedules the next tick at an EXPONENTIAL delay
+    /// — independent of the attach outcome, so a raced/stalled attempt can
+    /// never strand the pane before give-up fires.
     private var recoveryTimer: Timer?
-    private let recoveryInterval: TimeInterval = 1.0
-    /// Test seam: fast recovery ticks so the give-up path runs without the
-    /// wall-clock. Production leaves this nil.
+    /// Test seam: a fixed tick delay so the give-up path runs without the
+    /// exponential wall-clock. Production leaves this nil (real backoff).
     var recoveryIntervalOverride: TimeInterval?
     /// Fired once when recovery is exhausted (bounded give-up), with evidence.
     var onFailure: ((String) -> Void)?
@@ -264,24 +266,41 @@ final class SessiondPaneTerminal {
     /// flight, kicks a fresh attach. Because the timer ticks independently of
     /// the attach chain, a stalled/raced individual attempt can never strand
     /// the pane — the budget still runs out and give-up fires visibly.
-    /// Test seam: drive the recovery timer directly (no live attach needed).
+    /// Exponential backoff for the given zero-based attempt index (0.5, 1, 2,
+    /// 4, 8, 8, …), capped at `maxRetryDelay`. Extracted so the escalating
+    /// shape is deterministically unit-testable — a flat/fixed interval
+    /// (the regression) fails the timing test.
+    func retryDelay(forAttempt attempt: Int) -> TimeInterval {
+        let scaled = baseRetryDelay * pow(2, Double(max(0, attempt)))
+        return min(scaled, maxRetryDelay)
+    }
+
+    /// Test seam: drive recovery directly (no live attach needed).
     func startRecoveryForTesting(_ evidence: String) { beginRecovery(evidence) }
 
     private func beginRecovery(_ evidence: String) {
         guard !detached, !gaveUp, recoveryTimer == nil else { return }
-        let timer = Timer(timeInterval: recoveryIntervalOverride ?? recoveryInterval, repeats: true) { [weak self] tick in
+        scheduleRecoveryTick(evidence)
+    }
+
+    private func scheduleRecoveryTick(_ evidence: String) {
+        guard !detached, !gaveUp else { return }
+        let delay = recoveryIntervalOverride ?? retryDelay(forAttempt: failedAttempts)
+        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
             guard let self, !self.detached, !self.gaveUp else {
-                tick.invalidate()
+                self?.recoveryTimer = nil
                 return
             }
             guard self.registerFailedAttemptAndShouldRetry(evidence) else {
-                tick.invalidate()
                 self.recoveryTimer = nil
-                return
+                return // gave up — visible failure fired
             }
             if !self.attachInFlight {
                 self.beginAttach(afterSeq: self.view?.highWater ?? 0)
             }
+            // Always reschedule the next tick, independent of the attach
+            // outcome, at the escalating backoff for the next attempt.
+            self.scheduleRecoveryTick(evidence)
         }
         recoveryTimer = timer
         RunLoop.main.add(timer, forMode: .common)
