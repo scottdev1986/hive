@@ -17,6 +17,8 @@ import type {
   TerminationResult,
 } from "./terminal-host-contract";
 import type {
+  AttachGrant,
+  AttachRequest,
   CreateResult,
   SessionHost,
   SessionSpec,
@@ -29,6 +31,8 @@ import {
 } from "./terminal-host-binding";
 import {
   AppliedPayloadSchema,
+  AttachGrantPayloadSchema,
+  AttachRequestPayloadSchema,
   ClaimAcquirePayloadSchema,
   ClaimResultPayloadSchema,
   CreateBeginPayloadSchema,
@@ -70,7 +74,7 @@ export type LandedTerminalHost = Pick<
   | "inspect"
   | "list"
   | "terminate"
-> & Pick<SessionHost, "create" | "renewVisibility">;
+> & Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
 
 export class SessiondProtocolError extends Error {
   constructor(message: string) {
@@ -711,6 +715,29 @@ export class SessiondHost implements LandedTerminalHost {
         responseSchema: RenewedPayloadSchema,
       });
       return lease;
+    } finally {
+      broker.close();
+    }
+  }
+
+  async issueAttach(
+    locator: Parameters<SessionHost["issueAttach"]>[0],
+    request: AttachRequest,
+  ): Promise<AttachGrant> {
+    const payload = AttachRequestPayloadSchema.parse({
+      schemaVersion: 1,
+      locator,
+      ...request,
+    });
+    const broker = await this.connectBroker();
+    try {
+      const { schemaVersion: _, ...grant } = await broker.request({
+        requestType: "ATTACH_REQUEST",
+        responseType: "ATTACH_GRANT",
+        payload,
+        responseSchema: AttachGrantPayloadSchema,
+      });
+      return grant;
     } finally {
       broker.close();
     }

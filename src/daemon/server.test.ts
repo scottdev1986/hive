@@ -302,6 +302,7 @@ test("an accepted full inventory renews each exact completed sessiond binding", 
     submitInput: unsupported,
     resize: unsupported,
     inspect: unsupported,
+    issueAttach: unsupported,
     list: async () => [],
     terminate: unsupported,
     renewVisibility: async (requestedLocator, request) => {
@@ -457,6 +458,141 @@ test("agent kill rejects a stale locator without killing the current generation"
     expect(db.getAgentByName("maya")?.status).toBe("dead");
   } finally {
     tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
+test("attach grant is fenced by the exact locator and a completed binding", async () => {
+  const db = new HiveDatabase(join(home, "locator-fenced-attach.db"));
+  const locator = {
+    ...mintAgentTmuxSessionLocator("agent-maya", 2),
+    hostKind: "sessiond" as const,
+    engineBuildId: "engine-attach",
+  };
+  const issued: unknown[] = [];
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected terminal-host operation");
+  };
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux: new FakeDaemonTmux(),
+    resourceRunners: { panePids: async () => [], orphans: null },
+    terminalHost: {
+      create: unsupported,
+      claimInput: unsupported,
+      submitInput: unsupported,
+      resize: unsupported,
+      inspect: unsupported,
+      list: async () => [],
+      terminate: unsupported,
+      renewVisibility: unsupported,
+      issueAttach: async (requestedLocator, request) => {
+        issued.push({ locator: requestedLocator, request });
+        return {
+          locator: requestedLocator,
+          endpoint: "/hive/runtime/sessiond/hosts/x/host.sock",
+          token: "one-use-token",
+          expiresAt: "2026-07-18T12:00:30.000Z",
+          engineBuildId: "engine-attach",
+          checkpointSeq: "0",
+          outputSeq: "42",
+          operations: request.operations,
+        };
+      },
+    },
+  });
+  db.insertAgent(agent({
+    worktreePath: null,
+    branch: null,
+    sessionLocator: locator,
+  }));
+  const geometry = {
+    columns: 80,
+    rows: 24,
+    widthPx: 800,
+    heightPx: 480,
+    cellWidthPx: 10,
+    cellHeightPx: 20,
+  };
+  const attachBody = (requestLocator: unknown) => JSON.stringify({
+    sessionLocator: requestLocator,
+    viewerId: "workspace-pane-viewer",
+    geometry,
+    operations: ["view"],
+  });
+  try {
+    const stale = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/attach-grant",
+      {
+        method: "POST",
+        body: attachBody({ ...locator, generation: 1 }),
+      },
+    );
+    expect(stale.status).toBe(409);
+    expect(await stale.json()).toEqual({
+      state: "rejected",
+      reason: "session-locator-mismatch",
+      error: "Hive refused to attach maya: its session generation changed",
+    });
+    expect(issued).toEqual([]);
+
+    // The exact locator without a completed Workspace binding refuses loudly
+    // rather than issuing a grant for a session Hive never admitted.
+    const unbound = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/attach-grant",
+      { method: "POST", body: attachBody(locator) },
+    );
+    expect(unbound.status).toBe(500);
+    expect(issued).toEqual([]);
+
+    db.bindTerminalHostSession({
+      locator,
+      visibility: {
+        workspaceSessionId: "ws-attach",
+        workspacePid: 7301,
+        workspaceStartToken: "7301:100",
+        openTerminalRevision: "1",
+      },
+    });
+    db.completeTerminalHostSession(locator, {
+      expectedExecutable: "/bin/sh",
+      executableVerified: true,
+      verifiedProviderRoot: {
+        pid: 4242,
+        startToken: "4242:1",
+        processGroupId: 4242,
+      },
+      geometry,
+      visibility: {
+        state: "visible",
+        workspaceSessionId: "ws-attach",
+        openTerminalRevision: "1",
+        expiresAt: "2026-07-18T12:00:30.000Z",
+      },
+    });
+    const granted = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/attach-grant",
+      { method: "POST", body: attachBody(locator) },
+    );
+    expect(granted.status).toBe(200);
+    const grantedBody = await granted.json() as {
+      state: string;
+      grant: { token: string; endpoint: string; locator: unknown };
+    };
+    expect(grantedBody.state).toBe("granted");
+    expect(grantedBody.grant.token).toBe("one-use-token");
+    expect(issued).toEqual([{
+      locator,
+      request: {
+        viewerId: "workspace-pane-viewer",
+        geometry,
+        operations: ["view"],
+      },
+    }]);
+  } finally {
     await daemon.stop();
     db.close();
   }

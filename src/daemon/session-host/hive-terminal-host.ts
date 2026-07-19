@@ -9,6 +9,8 @@ import type {
   TerminationResult as NeutralTerminationResult,
 } from "./terminal-host-contract";
 import type {
+  AttachGrant,
+  AttachRequest,
   CreateResult,
   SessionHost,
   SessionInspection,
@@ -54,7 +56,7 @@ type TerminalLifecycleHost = Pick<
   | "inspect"
   | "list"
   | "terminate"
-> & Pick<SessionHost, "create" | "renewVisibility">;
+> & Pick<SessionHost, "create" | "renewVisibility" | "issueAttach">;
 
 export type HiveTerminalPolicy = Pick<
   HiveTerminalBinding,
@@ -217,6 +219,27 @@ export class HiveTerminalHostAdapter {
   ): Promise<ResizeResult> {
     const { session } = await this.requireTransportBinding(locator);
     return this.host.resize({ ...request, session });
+  }
+
+  /** §19/§20 one-use viewer attach, fenced by the exact completed binding:
+   * an unknown or incomplete locator never reaches the broker, and a grant
+   * whose locator or engine drifted from the binding is refused here. */
+  async issueAttach(
+    locator: HiveTerminalBinding["locator"],
+    request: AttachRequest,
+  ): Promise<AttachGrant> {
+    const binding = this.requireBinding(locator);
+    if (binding.createEvidence === undefined) {
+      throw new TerminalHostBindingIncompleteError();
+    }
+    const grant = await this.host.issueAttach(locator, request);
+    if (
+      !sameSessionLocator(grant.locator, locator) ||
+      grant.engineBuildId !== locator.engineBuildId
+    ) {
+      throw new TerminalHostBindingMismatchError();
+    }
+    return grant;
   }
 
   async renewVisibility(

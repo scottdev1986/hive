@@ -209,6 +209,52 @@ function readDaemonPid(): number | null {
  * discarded by that — the daemon preserves the branch and tells the
  * orchestrator — so the caller has nothing to ask the user about.
  */
+/**
+ * Request a one-use viewer attach grant for a pane's EXACT sessiond session
+ * (§19/§20). The Workspace's HiveTerminalView shells out to this and connects
+ * directly to the returned host endpoint; a stale or superseded generation is
+ * refused by the daemon before the broker is contacted. Prints the grant as
+ * JSON on stdout — machine-readable, nothing else.
+ */
+export async function attachGrantCli(
+  name: string,
+  locator: SessionLocator,
+  viewerId: string,
+  geometry: {
+    columns: number;
+    rows: number;
+    widthPx: number;
+    heightPx: number;
+    cellWidthPx: number;
+    cellHeightPx: number;
+  },
+  port: number = requireDaemonPort(),
+): Promise<void> {
+  const response = await operatorFetch(
+    `http://127.0.0.1:${port}/agents/${encodeURIComponent(name)}/attach-grant`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        sessionLocator: locator,
+        viewerId,
+        geometry,
+        operations: ["view"],
+      }),
+    },
+  );
+  const body = await response.json().catch(() => null) as
+    | { state?: string; grant?: unknown; error?: string; reason?: string }
+    | null;
+  if (!response.ok || body?.state !== "granted" || body.grant === undefined) {
+    const reason = body?.reason === undefined ? "" : ` [${body.reason}]`;
+    throw new Error(
+      (body?.error ?? `attach grant failed (HTTP ${response.status})`) + reason,
+    );
+  }
+  console.log(JSON.stringify(body.grant));
+}
+
 export async function killAgentCli(
   name: string,
   port: number = requireDaemonPort(),

@@ -251,6 +251,8 @@ describe("HiveTerminalHostAdapter", () => {
     const terminateRequests: unknown[] = [];
     const directRequests: unknown[] = [];
     const host = {
+      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+
       renewVisibility,
       create: async (spec: SessionSpec, input: Uint8Array) => {
         expect(spec).toEqual(sessionSpec);
@@ -425,6 +427,8 @@ describe("HiveTerminalHostAdapter", () => {
     });
     const inspectedSessions: SessionRef[] = [];
     const host = {
+      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+
       renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
@@ -486,6 +490,8 @@ describe("HiveTerminalHostAdapter", () => {
       },
     };
     const host = {
+      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+
       renewVisibility,
       create: async () => createResult,
       claimInput: async () => ({ state: "unknown" as const, diagnostic: "fixture" }),
@@ -551,6 +557,8 @@ describe("HiveTerminalHostAdapter", () => {
   test("fails closed for missing, foreign, or mismatched bindings", async () => {
     const bindings = new MemoryBindings();
     const host = {
+      issueAttach: async () => { throw new Error("issueAttach not under test"); },
+
       renewVisibility,
       create: async () => ({
         ...createResult,

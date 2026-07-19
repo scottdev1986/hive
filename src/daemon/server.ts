@@ -76,6 +76,7 @@ import {
   RoutingPolicyMutationSchema,
   SessionLocatorSchema,
   StatuslineReportSchema,
+  TerminalGeometrySchema,
   unknownVendor,
   type AgentRecord,
   type HookEvent,
@@ -2471,6 +2472,12 @@ export class HiveDaemon {
     ) {
       return this.killEndpoint(url.pathname, request);
     }
+    if (
+      url.pathname.startsWith("/agents/") &&
+      url.pathname.endsWith("/attach-grant") && request.method === "POST"
+    ) {
+      return this.attachGrantEndpoint(url.pathname, request);
+    }
     if (url.pathname === "/mcp") {
       return this.handleMcp(request);
     }
@@ -3211,6 +3218,80 @@ export class HiveDaemon {
     } catch (error) {
       return json(
         { error: error instanceof Error ? error.message : "Kill failed" },
+        { status: 500 },
+      );
+    }
+  }
+
+  /** POST /agents/<name>/attach-grant — §19/§20 one-use viewer attach for the
+   * Workspace renderer, fenced by the pane's EXACT sessionLocator: a stale or
+   * superseded generation is refused before the broker is ever contacted. */
+  private async attachGrantEndpoint(
+    pathname: string,
+    request: Request,
+  ): Promise<Response> {
+    const authenticated = this.authenticate(request, "/agents/attach-grant");
+    if (!authenticated.ok) return this.denied(authenticated);
+    const name = decodeURIComponent(
+      pathname.slice("/agents/".length, -"/attach-grant".length),
+    );
+    if (name === "") {
+      return json({ error: "Invalid attach request: no agent" }, { status: 400 });
+    }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/agents/attach-grant",
+      "terminal:observe",
+      name,
+    );
+    if (!decision.ok) return this.denied(decision);
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) {
+      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
+    }
+    let body: unknown;
+    try {
+      body = await request.json();
+    } catch {
+      body = null;
+    }
+    const parsed = z.strictObject({
+      sessionLocator: SessionLocatorSchema,
+      viewerId: z.string().min(1),
+      geometry: TerminalGeometrySchema,
+      operations: z.array(z.enum(["view", "human-input", "resize"])),
+    }).safeParse(body);
+    if (!parsed.success) {
+      return json({
+        state: "rejected",
+        reason: "invalid-attach-request",
+        error: "Attach requires the pane's exact sessionLocator, viewer, and geometry",
+      }, { status: 400 });
+    }
+    if (
+      agent.sessionLocator === undefined ||
+      !sameSessionLocator(agent.sessionLocator, parsed.data.sessionLocator)
+    ) {
+      return json({
+        state: "rejected",
+        reason: "session-locator-mismatch",
+        error: `Hive refused to attach ${name}: its session generation changed`,
+      }, { status: 409 });
+    }
+    try {
+      const locator = requireSessiondAgentLocator({
+        id: agent.id,
+        sessionLocator: agent.sessionLocator,
+      });
+      const grant = await this.terminalHost.issueAttach(locator, {
+        viewerId: parsed.data.viewerId,
+        geometry: parsed.data.geometry,
+        operations: parsed.data.operations,
+      });
+      return json({ state: "granted", grant });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "Attach failed" },
         { status: 500 },
       );
     }

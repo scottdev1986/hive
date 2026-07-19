@@ -4,6 +4,7 @@ import { Command, CommanderError } from "commander";
 import { runCodexAppServerHost } from "./adapters/tools/codex-app-server";
 import {
   autonomyCli,
+  attachGrantCli,
   killAgentCli,
   deleteMemoryCli,
   printQuotaStatus,
@@ -77,6 +78,7 @@ import {
   MemoryWriterSourceSchema,
   MemoryVerificationStatusSchema,
   SessionLocatorSchema,
+  TerminalGeometrySchema,
 } from "./schemas";
 
 export interface EventCliOptions {
@@ -516,6 +518,38 @@ export function createProgram(): Command {
         agent,
         options.port === undefined ? undefined : parsePort(options.port),
         locator,
+      );
+    });
+
+  program
+    .command("workspace-attach <agent>")
+    .description(
+      "Request a one-use viewer attach grant for the pane's exact sessiond " +
+        "session and print it as JSON (Workspace renderer plumbing)",
+    )
+    .requiredOption("--session-locator <json>", "exact pane session locator")
+    .requiredOption("--viewer-id <id>", "renderer viewer identity")
+    .requiredOption("--geometry <json>", "terminal geometry for the grant")
+    .option("--port <number>", "daemon port")
+    .action(async (
+      agent: string,
+      options: {
+        port?: string;
+        sessionLocator: string;
+        viewerId: string;
+        geometry: string;
+      },
+    ) => {
+      const locator = SessionLocatorSchema.parse(
+        JSON.parse(options.sessionLocator),
+      );
+      const geometry = TerminalGeometrySchema.parse(JSON.parse(options.geometry));
+      await attachGrantCli(
+        agent,
+        locator,
+        options.viewerId,
+        geometry,
+        options.port === undefined ? undefined : parsePort(options.port),
       );
     });
 
