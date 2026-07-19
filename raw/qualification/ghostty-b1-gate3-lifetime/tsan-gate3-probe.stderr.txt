@@ -1,6 +1,6 @@
 ==================
-WARNING: ThreadSanitizer: thread leak (pid=69131)
-  Thread T3 (tid=37816325, finished) created by main thread at:
+WARNING: ThreadSanitizer: thread leak (pid=79683)
+  Thread T3 (tid=38817996, finished) created by main thread at:
     #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33834)
     #1 global.GlobalState.init <null> (GhosttyGate3Probe:arm64+0x100591e8c)
     #2 partial apply for thunk for @callee_guaranteed () -> (@out A, @error @owned Error) <null> (libswiftDispatch.dylib:arm64e+0x8984)

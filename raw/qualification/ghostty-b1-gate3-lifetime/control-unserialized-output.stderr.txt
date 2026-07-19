@@ -1,33 +1,33 @@
 =================================================================
-==70088==ERROR: AddressSanitizer: dynamic-stack-buffer-overflow on address 0x00016d816300 at pc 0x0001043f54b0 bp 0x00016e9c14c0 sp 0x00016e9c0c90
-READ of size 12288 at 0x00016d816300 thread T3
-    #0 0x0001043f54ac in write.cold.2+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x8d4ac)
-    #1 0x00010438339c in write+0xe0 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x1b39c)
-    #2 0x000102acab78 in google_breakpad::UntypedMDRVA::Copy(unsigned int, void const*, unsigned long) minidump_file_writer.cc:350
-    #3 0x000102ace6d0 in google_breakpad::MinidumpGenerator::WriteStackFromStartAddress(unsigned long long, MDMemoryDescriptor*) minidump_generator.cc
-    #4 0x000102aceaec in google_breakpad::MinidumpGenerator::WriteThreadStream(unsigned int, MDRawThread*) minidump_generator.cc:977
-    #5 0x000102acd994 in google_breakpad::MinidumpGenerator::WriteThreadListStream(MDRawDirectory*) minidump_generator.cc:1024
-    #6 0x000102acd6d4 in google_breakpad::MinidumpGenerator::Write(char const*) minidump_generator.cc:274
-    #7 0x000102ad0a08 in google_breakpad::ExceptionHandler::WriteMinidumpWithException(int, int, int, __darwin_ucontext64*, unsigned int, bool, bool) exception_handler.cc:413
-    #8 0x000102ad0b90 in google_breakpad::ExceptionHandler::WaitForMessage(void*) exception_handler.cc:581
-    #9 0x0001043a5d64 in asan_thread_start(void*)+0x4c (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x3dd64)
+==80003==ERROR: AddressSanitizer: dynamic-stack-buffer-overflow on address 0x00016fbda300 at pc 0x000101e954b0 bp 0x000170d854c0 sp 0x000170d84c90
+READ of size 12288 at 0x00016fbda300 thread T3
+    #0 0x000101e954ac in write.cold.2+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x8d4ac)
+    #1 0x000101e2339c in write+0xe0 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x1b39c)
+    #2 0x000100706b78 in google_breakpad::UntypedMDRVA::Copy(unsigned int, void const*, unsigned long) minidump_file_writer.cc:350
+    #3 0x00010070a6d0 in google_breakpad::MinidumpGenerator::WriteStackFromStartAddress(unsigned long long, MDMemoryDescriptor*) minidump_generator.cc
+    #4 0x00010070aaec in google_breakpad::MinidumpGenerator::WriteThreadStream(unsigned int, MDRawThread*) minidump_generator.cc:977
+    #5 0x000100709994 in google_breakpad::MinidumpGenerator::WriteThreadListStream(MDRawDirectory*) minidump_generator.cc:1024
+    #6 0x0001007096d4 in google_breakpad::MinidumpGenerator::Write(char const*) minidump_generator.cc:274
+    #7 0x00010070ca08 in google_breakpad::ExceptionHandler::WriteMinidumpWithException(int, int, int, __darwin_ucontext64*, unsigned int, bool, bool) exception_handler.cc:413
+    #8 0x00010070cb90 in google_breakpad::ExceptionHandler::WaitForMessage(void*) exception_handler.cc:581
+    #9 0x000101e45d64 in asan_thread_start(void*)+0x4c (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x3dd64)
     #10 0x00019c8abc04 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c04)
     #11 0x00019c8a6ba4 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1ba4)
 
-Address 0x00016d816300 is located in stack of thread T0
+Address 0x00016fbda300 is located in stack of thread T0
 SUMMARY: AddressSanitizer: dynamic-stack-buffer-overflow minidump_file_writer.cc:350 in google_breakpad::UntypedMDRVA::Copy(unsigned int, void const*, unsigned long)
 Shadow bytes around the buggy address:
-  0x00016d816080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x00016d816100: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x00016d816180: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x00016d816200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-  0x00016d816280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
-=>0x00016d816300:[ca]ca ca ca 00 00 cb cb cb cb cb cb ca ca ca ca
-  0x00016d816380: 00 cb cb cb cb cb cb cb ca ca ca ca 01 cb cb cb
-  0x00016d816400: cb cb cb cb ca ca ca ca 00 cb cb cb cb cb cb cb
-  0x00016d816480: ca ca ca ca 00 cb cb cb cb cb cb cb ca ca ca ca
-  0x00016d816500: 00 cb cb cb cb cb cb cb 00 00 00 00 00 00 00 00
-  0x00016d816580: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016fbda080: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016fbda100: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016fbda180: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016fbda200: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+  0x00016fbda280: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
+=>0x00016fbda300:[ca]ca ca ca 00 00 cb cb cb cb cb cb ca ca ca ca
+  0x00016fbda380: 00 cb cb cb cb cb cb cb ca ca ca ca 01 cb cb cb
+  0x00016fbda400: cb cb cb cb ca ca ca ca 00 cb cb cb cb cb cb cb
+  0x00016fbda480: ca ca ca ca 00 cb cb cb cb cb cb cb ca ca ca ca
+  0x00016fbda500: 00 cb cb cb cb cb cb cb 00 00 00 00 00 00 00 00
+  0x00016fbda580: 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00
 Shadow byte legend (one shadow byte represents 8 application bytes):
   Addressable:           00
   Partially addressable: 01 02 03 04 05 06 07 
@@ -48,18 +48,18 @@ Shadow byte legend (one shadow byte represents 8 application bytes):
   Left alloca redzone:     ca
   Right alloca redzone:    cb
 Thread T3 created by T2 here:
-    #0 0x0001043a1198 in pthread_create+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x39198)
-    #1 0x000102ad0180 in google_breakpad::ExceptionHandler::Setup(bool) exception_handler.cc:762
-    #2 0x000102acfff4 in google_breakpad::ExceptionHandler::ExceptionHandler(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, bool (*)(void*), bool (*)(char const*, char const*, void*, bool), void*, bool, char const*) exception_handler.cc:251
-    #3 0x000102ac66bc in sentry__breakpad_backend_startup(sentry_backend_s*, sentry_options_s const*) sentry_backend_breakpad.cpp:223
-    #4 0x000102aaae90 in sentry_init sentry_core.c:153
-    #5 0x000102bedc70 in Thread.PosixThreadImpl.spawn__anon_25411.Instance.entryFn+0x188 (GhosttyGate3Probe:arm64+0x100605c70)
+    #0 0x000101e41198 in pthread_create+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x39198)
+    #1 0x00010070c180 in google_breakpad::ExceptionHandler::Setup(bool) exception_handler.cc:762
+    #2 0x00010070bff4 in google_breakpad::ExceptionHandler::ExceptionHandler(std::__1::basic_string<char, std::__1::char_traits<char>, std::__1::allocator<char>> const&, bool (*)(void*), bool (*)(char const*, char const*, void*, bool), void*, bool, char const*) exception_handler.cc:251
+    #3 0x0001007026bc in sentry__breakpad_backend_startup(sentry_backend_s*, sentry_options_s const*) sentry_backend_breakpad.cpp:223
+    #4 0x0001006e6e90 in sentry_init sentry_core.c:153
+    #5 0x000100829c70 in Thread.PosixThreadImpl.spawn__anon_25411.Instance.entryFn+0x188 (GhosttyGate3Probe:arm64+0x100605c70)
     #6 0x00019c8abc04 in _pthread_start+0x84 (libsystem_pthread.dylib:arm64e+0x6c04)
     #7 0x00019c8a6ba4 in thread_start+0x4 (libsystem_pthread.dylib:arm64e+0x1ba4)
 
 Thread T2 created by T0 here:
-    #0 0x0001043a1198 in pthread_create+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x39198)
-    #1 0x000102bec0ac in global.GlobalState.init+0x2858 (GhosttyGate3Probe:arm64+0x1006040ac)
+    #0 0x000101e41198 in pthread_create+0x60 (libclang_rt.asan_osx_dynamic.dylib:arm64e+0x39198)
+    #1 0x0001008280ac in global.GlobalState.init+0x2858 (GhosttyGate3Probe:arm64+0x1006040ac)
     #2 0x0001b657a984 in partial apply for thunk for @callee_guaranteed () -> (@out A, @error @owned Error)+0x18 (libswiftDispatch.dylib:arm64e+0x8984)
     #3 0x0001b657aa38 in partial apply for thunk for @callee_guaranteed () -> (@out A, @error @owned Error)+0xc (libswiftDispatch.dylib:arm64e+0x8a38)
     #4 0x0001b6577b24 in closure #1 in closure #1 in OS_dispatch_queue._syncHelper<A>(fn:execute:rescue:)+0xbc (libswiftDispatch.dylib:arm64e+0x5b24)
@@ -76,7 +76,7 @@ Thread T2 created by T0 here:
     #15 0x00019ca03f38 in _CFRunLoopRunSpecificWithOptions+0x210 (CoreFoundation:arm64e+0x118f38)
     #16 0x00019eb99d0c in -[NSRunLoop(NSRunLoop) runMode:beforeDate:]+0xd0 (Foundation:arm64e+0xa5bd0c)
     #17 0x00019e198a4c in -[NSRunLoop(NSRunLoop) run]+0x3c (Foundation:arm64e+0x5aa4c)
-    #18 0x0001025eac88 in GhosttyGate3Probe_main main.swift:572
+    #18 0x000100226c88 in GhosttyGate3Probe_main main.swift:572
     #19 0x00019c4e1d50 in start+0x1c0c (dyld:arm64e+0x8d50)
 
-==70088==ABORTING
+==80003==ABORTING

@@ -49,10 +49,136 @@ if [[ ! -d "$XCFRAMEWORK" ]]; then
   exit 1
 fi
 
+MACOS_LIBRARY_PATH='GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a'
+
+# Bind the exercised binary to THIS pin's source tuple, cryptographically.
+#
+# Existence of an xcframework proves nothing about which source produced it:
+# the artifact cache key is upstream-commit + Zig-SHA only, so it excludes
+# patchedTree and patchSeries and two different patch series collide on one
+# key. (Measured on this machine: the same key has held both the current
+# artifact and an older one with a different patchedTree.) Without this check a
+# committed corpus cannot say which compatible binary produced it.
+#
+# Two links are verified, both FAIL CLOSED — an absent manifest is a hard
+# error, never a skipped check:
+#   A  artifact-manifest.json's source/toolchain identity == toolchain-lock.json
+#   B  the macOS library's actual bytes == the sha256 the manifest records for
+#      it, so a manifest cannot vouch for a different binary beside it
+#
+# A missing key reads back as null rather than raising, so null/empty is
+# treated as a mismatch explicitly instead of comparing equal to an absent
+# lock value.
+validate_artifact_binding() {
+  local artifact=$1 report=$2
+  local manifest="$artifact/artifact-manifest.json"
+  : >"$report"
+  printf 'artifact=%s\n' "$artifact" >>"$report"
+  if [[ ! -f "$manifest" ]]; then
+    printf 'artifact_manifest=MISSING -> fail closed\n' >>"$report"
+    return 1
+  fi
+  printf 'artifact_manifest_sha256=%s\n' \
+    "$(/usr/bin/shasum -a 256 "$manifest" | /usr/bin/cut -d' ' -f1)" >>"$report"
+
+  local failures=0 pair jq_path lock_key manifest_value lock_value_actual
+  for pair in \
+    '.source.commit=ghostty.commit' \
+    '.source.upstreamTree=ghostty.upstreamTree' \
+    '.source.patchedTree=ghostty.patchedTree' \
+    '.source.declaredVersion=ghostty.declaredVersion' \
+    '.source.patchSeriesSha256=ghostty.patchSeriesSha256' \
+    '.source.upstreamPublicHeaderSha256=ghostty.upstreamPublicHeaderSha256' \
+    '.source.bridgeHeaderSha256=ghostty.bridgeHeaderSha256' \
+    '.source.symbolListSha256=ghostty.symbolListSha256' \
+    '.toolchain.zig.version=zig.version' \
+    '.toolchain.zig.arm64Sha256=zig.arm64Sha256' \
+    '.toolchain.zig.x86_64Sha256=zig.x86_64Sha256' \
+    '.toolchain.apple.xcode=apple.xcode' \
+    '.toolchain.apple.build=apple.build' \
+    '.toolchain.apple.swift=apple.swift' \
+    '.toolchain.deploymentTarget=deploymentTarget'
+  do
+    jq_path=${pair%%=*}
+    lock_key=${pair#*=}
+    manifest_value=$(/usr/bin/jq -r "$jq_path // empty" "$manifest")
+    lock_value_actual=$(lock_value "$lock_key")
+    if [[ -z "$manifest_value" || -z "$lock_value_actual" \
+       || "$manifest_value" != "$lock_value_actual" ]]; then
+      printf 'MISMATCH %s manifest=[%s] lock=[%s]\n' \
+        "$jq_path" "$manifest_value" "$lock_value_actual" >>"$report"
+      failures=$((failures + 1))
+    else
+      printf 'ok %s=%s\n' "$jq_path" "$manifest_value" >>"$report"
+    fi
+  done
+
+  # Link B: the library the probe and corpus actually link against.
+  local recorded actual
+  recorded=$(/usr/bin/jq -r \
+    --arg p "$MACOS_LIBRARY_PATH" \
+    '.files[] | select(.path == $p) | .sha256' "$manifest")
+  if [[ -f "$artifact/$MACOS_LIBRARY_PATH" ]]; then
+    actual=$(/usr/bin/shasum -a 256 "$artifact/$MACOS_LIBRARY_PATH" | /usr/bin/cut -d' ' -f1)
+  else
+    actual=""
+  fi
+  if [[ -z "$recorded" || -z "$actual" || "$recorded" != "$actual" ]]; then
+    printf 'MISMATCH macos_library manifest=[%s] actual=[%s]\n' "$recorded" "$actual" >>"$report"
+    failures=$((failures + 1))
+  else
+    printf 'ok macos_library_sha256=%s\n' "$actual" >>"$report"
+  fi
+
+  printf 'mismatches=%s\n' "$failures" >>"$report"
+  [[ "$failures" -eq 0 ]]
+}
+
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-gate3.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir -p "$EVIDENCE"
 find "$EVIDENCE" -mindepth 1 -depth -delete
+
+echo "== artifact binding =="
+if ! validate_artifact_binding "$ARTIFACT" "$EVIDENCE/artifact-binding.txt"; then
+  echo "artifact is NOT bound to this pin's source tuple; see $EVIDENCE/artifact-binding.txt" >&2
+  /bin/cat "$EVIDENCE/artifact-binding.txt" >&2
+  exit 1
+fi
+
+# The binding check is itself positive-controlled: a validator that cannot go
+# red is exactly the gap it was added to close. Both controls drive the SAME
+# function, so a bite proves the committed check, not a parallel copy of it.
+binding_control_record="$EVIDENCE/artifact-binding-controls.txt"
+: >"$binding_control_record"
+run_binding_control() {
+  local name=$1 dir=$2
+  local report="$TMP/binding-control-$name.txt"
+  local status=0
+  validate_artifact_binding "$dir" "$report" || status=$?
+  {
+    printf 'control=%s exit_status=%s\n' "$name" "$status"
+    /usr/bin/sed 's/^/  /' "$report"
+  } >>"$binding_control_record"
+  if [[ "$status" -eq 0 ]]; then
+    echo "binding control $name DID NOT BITE: validation accepted a bad artifact" >&2
+    exit 1
+  fi
+}
+# Absent manifest must be a hard error, not a silent skip.
+mkdir -p "$TMP/binding-missing"
+run_binding_control missing-manifest "$TMP/binding-missing"
+# One doctored identity field — a different patch series on the same cache key,
+# which is precisely the collision the cache key cannot distinguish.
+mkdir -p "$TMP/binding-tampered"
+/usr/bin/jq '.source.patchedTree = "a27fc0e700000000000000000000000000000000"' \
+  "$ARTIFACT/artifact-manifest.json" >"$TMP/binding-tampered/artifact-manifest.json"
+run_binding_control tampered-patched-tree "$TMP/binding-tampered"
+# A manifest that vouches for a library it does not describe.
+mkdir -p "$TMP/binding-swapped/$(/usr/bin/dirname "$MACOS_LIBRARY_PATH")"
+/bin/cp "$ARTIFACT/artifact-manifest.json" "$TMP/binding-swapped/artifact-manifest.json"
+printf 'not the qualified library' >"$TMP/binding-swapped/$MACOS_LIBRARY_PATH"
+run_binding_control swapped-library "$TMP/binding-swapped"
 /usr/bin/rsync -a --exclude .build --exclude '.build-*' --exclude Vendor \
   "$ROOT/workspace/" "$TMP/workspace/"
 mkdir -p "$TMP/native/include" "$TMP/workspace/Vendor"
@@ -77,6 +203,11 @@ GATE3_FILTER='CallbackDisciplineTests|AppWakeupLifecycleTests|Gate3OperationDoma
   printf 'patch_series_sha256=%s\n' "$(lock_value ghostty.patchSeriesSha256)"
   printf 'bridge_header_sha256=%s\n' "$(lock_value ghostty.bridgeHeaderSha256)"
   printf 'symbol_list_sha256=%s\n' "$(lock_value ghostty.symbolListSha256)"
+  # Identity of the binary actually exercised, not merely of the pin it should
+  # have come from. Full validated field table in artifact-binding.txt.
+  printf 'artifact_dir=%s\n' "$ARTIFACT"
+  /usr/bin/grep -E '^(artifact_manifest_sha256|ok macos_library_sha256)=' \
+    "$EVIDENCE/artifact-binding.txt" | /usr/bin/sed 's/^ok //'
 } >"$EVIDENCE/provenance.txt" 2>&1
 
 build_probe() {

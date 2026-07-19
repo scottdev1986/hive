@@ -1,181 +1,194 @@
-Fetching https://github.com/apple/swift-argument-parser from cache
 Fetching https://github.com/migueldeicaza/SwiftTerm from cache
+Fetching https://github.com/apple/swift-argument-parser from cache
 warning: 'swift-argument-parser': skipping cache due to an error: The file “maintenance.lock” doesn’t exist.
-Fetched https://github.com/migueldeicaza/SwiftTerm from cache (1.37s)
+Fetched https://github.com/migueldeicaza/SwiftTerm from cache (0.37s)
 Computing version for https://github.com/migueldeicaza/SwiftTerm
-Computed https://github.com/migueldeicaza/SwiftTerm at 1.11.2 (1.39s)
+Computed https://github.com/migueldeicaza/SwiftTerm at 1.11.2 (0.40s)
 [1/18175] Fetching swift-argument-parser
-Fetched https://github.com/apple/swift-argument-parser from cache (5.04s)
+Fetched https://github.com/apple/swift-argument-parser from cache (0.92s)
 Computing version for https://github.com/apple/swift-argument-parser
-Computed https://github.com/apple/swift-argument-parser at 1.8.2 (3.67s)
-Creating working copy for https://github.com/apple/swift-argument-parser
-Working copy of https://github.com/apple/swift-argument-parser resolved at 1.8.2
+Computed https://github.com/apple/swift-argument-parser at 1.8.2 (0.54s)
 Creating working copy for https://github.com/migueldeicaza/SwiftTerm
 Working copy of https://github.com/migueldeicaza/SwiftTerm resolved at 1.11.2
+Creating working copy for https://github.com/apple/swift-argument-parser
+Working copy of https://github.com/apple/swift-argument-parser resolved at 1.8.2
 [1/1] Compiling plugin GenerateManual
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
-[2/42] /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/test-tsan/arm64-apple-macosx/debug/HiveWorkspacePackageTests.derived/runner.swift
-[3/42] Write HiveWorkspace-entitlement.plist
-[3/42] Write sources
-[3/42] Write GhosttyManualIsolationProbe-entitlement.plist
+[2/42] /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/test-tsan/arm64-apple-macosx/debug/HiveWorkspacePackageTests.derived/runner.swift
 [3/42] Write sources
 [3/42] Write HiveTerminalB20Probe-entitlement.plist
+[3/42] Write GhosttyGate3Probe-entitlement.plist
 [3/42] Write sources
 [3/42] Copying libghostty-internal.a
-[3/42] Write GhosttyGate3Probe-entitlement.plist
+[3/42] Write HiveWorkspace-entitlement.plist
 [3/42] Write GhosttyGate10Probe-entitlement.plist
-[20/42] Write sources
+[3/42] Write GhosttyManualIsolationProbe-entitlement.plist
+[3/42] Write sources
 [21/42] Copying VendorMarks
 [22/42] Copying Fixtures
 [23/42] Compiling HiveGhosttyC empty.c
 [24/42] Write swift-version--58304C5D6DBC2206.txt
-[26/131] Compiling WorkspaceCore PaneFocus.swift
-[27/132] Compiling WorkspaceCore ModelControlCommand.swift
-[28/132] Compiling WorkspaceCore TerminalScroll.swift
-[29/132] Compiling SwiftTerm AppleTerminalView.swift
-[30/132] Compiling SwiftTerm BlockElementRenderer.swift
-[31/132] Emitting module WorkspaceCore
-[32/132] Compiling WorkspaceCore TokenUsagePresentation.swift
-[33/132] Compiling WorkspaceCore SpatialNavigation.swift
-[34/132] Compiling WorkspaceCore Status.swift
-[35/132] Compiling WorkspaceCore LayoutTree.swift
-[36/132] Compiling SwiftTerm BoxDrawingRenderer.swift
-[37/132] Compiling SwiftTerm CaretView.swift
-[38/132] Compiling SwiftTerm Extensions.swift
-[39/132] Compiling SwiftTerm TerminalProgressBarView.swift
-[40/132] Compiling WorkspaceCore ModelControlState.swift
-[41/132] Compiling WorkspaceCore ProjectState.swift
-[42/132] Compiling WorkspaceCore RoutingPolicyDocument.swift
+[26/131] Compiling WorkspaceCore ModelControlCommand.swift
+[27/132] Compiling SwiftTerm AppleTerminalView.swift
+[28/132] Compiling SwiftTerm BlockElementRenderer.swift
+[29/132] Emitting module WorkspaceCore
+[30/132] Compiling WorkspaceCore TokenUsagePresentation.swift
+[31/132] Compiling WorkspaceCore SpatialNavigation.swift
+[32/132] Compiling WorkspaceCore Status.swift
+[33/132] Compiling WorkspaceCore RoutingPolicyDocument.swift
+[34/132] Compiling WorkspaceCore TerminalScroll.swift
+[35/132] Compiling WorkspaceCore PaneFocus.swift
+[36/132] Compiling WorkspaceCore ProjectState.swift
+[37/132] Compiling SwiftTerm Extensions.swift
+[38/132] Compiling SwiftTerm TerminalProgressBarView.swift
+[39/132] Compiling WorkspaceCore LayoutTree.swift
+[40/132] Compiling SwiftTerm BoxDrawingRenderer.swift
+[41/132] Compiling SwiftTerm CaretView.swift
+[42/132] Compiling WorkspaceCore ModelControlState.swift
 [43/132] Compiling WorkspaceCore ModelControlPolicy.swift
 [44/132] Compiling WorkspaceCore WorkspaceStatus.swift
 [45/132] Compiling WorkspaceCore ModelControlSnapshot.swift
-[46/150] Compiling SwiftTerm SwiftUITerminalView.swift
-[47/150] Compiling SwiftTerm iOSAccessoryView.swift
-[48/150] Compiling SwiftTerm iOSCaretView.swift
-[49/153] Compiling SwiftTerm iOSDoubleButton.swift
-[50/153] Compiling SwiftTerm iOSExtensions.swift
-[51/153] Compiling SwiftTerm iOSKeyboardView.swift
-[52/153] Compiling SwiftTerm SearchService.swift
-[53/153] Compiling SwiftTerm SearchState.swift
-[54/153] Compiling SwiftTerm SelectionService.swift
-[55/153] Compiling SwiftTerm iOSTerminalView.swift
-[56/153] Compiling SwiftTerm iOSTextInput.swift
-[57/153] Compiling SwiftTerm iOSTextStorage.swift
-[58/153] Compiling SwiftTerm TerminalViewSearch.swift
-[59/153] Compiling SwiftTerm UnicodeWidthData.swift
-[60/153] Compiling SwiftTerm Utilities.swift
-[61/153] Compiling SwiftTerm SearchEngine.swift
-[62/153] Compiling SwiftTerm SearchLineCache.swift
-[63/153] Compiling SwiftTerm SearchOptions.swift
-[64/153] Compiling HiveTerminalKit FrameCodec.swift
-[65/153] Compiling HiveTerminalKit CheckpointHeader.generated.swift
-[66/154] Compiling SwiftTerm BufferLine.swift
-[67/154] Compiling SwiftTerm BufferSet.swift
-[68/154] Compiling SwiftTerm CharData.swift
-[69/154] Compiling SwiftTerm CharSets.swift
-[70/154] Compiling HiveTerminalKit CheckpointEnvelope.swift
-[71/154] Emitting module SwiftTerm
-[72/154] Compiling HiveTerminalKit SessionTypes.swift
-[73/154] Compiling SwiftTerm CircularList.swift
-[74/154] Compiling SwiftTerm Colors.swift
-[75/154] Compiling SwiftTerm EscapeSequenceParser.swift
-[76/154] Compiling SwiftTerm EscapeSequences.swift
-[77/154] Compiling SwiftTerm ExtensionsTerminal.swift
-[78/154] Compiling SwiftTerm File.swift
-[79/154] Compiling SwiftTerm HeadlessTerminal.swift
-[80/154] Compiling SwiftTerm KittyGraphics.swift
-[81/154] Compiling GhosttyManualIsolationProbe main.swift
-[82/154] Emitting module GhosttyManualIsolationProbe
-[82/154] Write Objects.LinkFileList
-[84/154] Compiling SwiftTerm MacAccessibilityService.swift
-[85/154] Compiling SwiftTerm MacCaretView.swift
-[86/154] Compiling SwiftTerm MacDebugView.swift
-[87/154] Compiling SwiftTerm KittyPlaceholder.swift
-[88/154] Compiling SwiftTerm Line.swift
-[89/154] Compiling SwiftTerm LocalProcess.swift
-[92/154] Compiling SwiftTerm TerminalViewDelegate.swift
-[93/154] Compiling SwiftTerm Buffer.swift
-[94/154] Compiling SwiftTerm MacExtensions.swift
-[95/154] Compiling SwiftTerm MacFindBarView.swift
-[96/154] Compiling SwiftTerm MacLocalTerminalView.swift
-[97/154] Compiling HiveTerminalKit HiveTerminalView.swift
-[98/154] Compiling HiveTerminalKit HiveTerminalKit.swift
-[99/154] Compiling HiveTerminalKit HiveTerminalView+Input.swift
-[100/154] Compiling HiveTerminalKit OutputRangeApplicator.swift
-[101/154] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
-[102/154] Compiling HiveTerminalKit EngineContract.swift
-[103/154] Compiling HiveTerminalKit ManualSurface+SemanticSnapshot.swift
-[104/154] Compiling HiveTerminalKit ClipboardContext.swift
-[105/154] Compiling HiveTerminalKit UdsHostTransport.swift
-[106/154] Compiling HiveTerminalKit CallbackContext.swift
-[107/154] Compiling WorkspaceCoreTests AgentActivityTests.swift
-[108/154] Compiling WorkspaceCoreTests AttentionQueueTests.swift
+[46/150] Compiling SwiftTerm iOSDoubleButton.swift
+[47/150] Compiling SwiftTerm iOSExtensions.swift
+[48/150] Compiling SwiftTerm iOSKeyboardView.swift
+[49/153] Compiling SwiftTerm SwiftUITerminalView.swift
+[50/153] Compiling SwiftTerm iOSAccessoryView.swift
+[51/153] Compiling SwiftTerm iOSCaretView.swift
+[52/153] Compiling SwiftTerm iOSTerminalView.swift
+[53/153] Compiling SwiftTerm iOSTextInput.swift
+[54/153] Compiling SwiftTerm iOSTextStorage.swift
+[55/153] Compiling SwiftTerm SearchService.swift
+[56/153] Compiling SwiftTerm SearchState.swift
+[57/153] Compiling SwiftTerm SelectionService.swift
+[58/153] Compiling SwiftTerm SearchEngine.swift
+[59/153] Compiling SwiftTerm SearchLineCache.swift
+[60/153] Compiling SwiftTerm SearchOptions.swift
+[61/153] Compiling SwiftTerm KittyPlaceholder.swift
+[62/153] Compiling SwiftTerm Line.swift
+[63/153] Compiling SwiftTerm LocalProcess.swift
+[64/153] Compiling SwiftTerm TerminalViewSearch.swift
+[65/153] Compiling SwiftTerm UnicodeWidthData.swift
+[66/153] Compiling SwiftTerm Utilities.swift
+[67/153] Compiling HiveTerminalKit CheckpointEnvelope.swift
+[68/154] Compiling HiveTerminalKit CheckpointHeader.generated.swift
+[69/154] Compiling HiveTerminalKit FrameCodec.swift
+[70/154] Emitting module SwiftTerm
+[71/154] Compiling HiveTerminalKit SessionTypes.swift
+[72/154] Compiling SwiftTerm ExtensionsTerminal.swift
+[73/154] Compiling SwiftTerm File.swift
+[74/154] Compiling SwiftTerm HeadlessTerminal.swift
+[75/154] Compiling SwiftTerm KittyGraphics.swift
+[76/154] Emitting module GhosttyManualIsolationProbe
+[77/154] Compiling GhosttyManualIsolationProbe main.swift
+[77/154] Write Objects.LinkFileList
+[81/154] Compiling SwiftTerm TerminalViewDelegate.swift
+[82/154] Compiling SwiftTerm Buffer.swift
+[83/154] Compiling HiveTerminalKit HiveTerminalView.swift
+[84/154] Compiling HiveTerminalKit OutputRangeApplicator.swift
+[85/154] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
+[86/154] Compiling HiveTerminalKit HiveTerminalView+Input.swift
+[87/154] Compiling SwiftTerm MacExtensions.swift
+[88/154] Compiling SwiftTerm MacFindBarView.swift
+[89/154] Compiling SwiftTerm MacLocalTerminalView.swift
+[90/154] Compiling SwiftTerm CircularList.swift
+[91/154] Compiling SwiftTerm Colors.swift
+[92/154] Compiling SwiftTerm EscapeSequenceParser.swift
+[93/154] Compiling SwiftTerm EscapeSequences.swift
+[94/154] Compiling SwiftTerm MacAccessibilityService.swift
+[95/154] Compiling SwiftTerm MacCaretView.swift
+[96/154] Compiling SwiftTerm MacDebugView.swift
+[97/154] Compiling SwiftTerm BufferLine.swift
+[98/154] Compiling SwiftTerm BufferSet.swift
+[99/154] Compiling SwiftTerm CharData.swift
+[100/154] Compiling SwiftTerm CharSets.swift
+[101/154] Compiling SwiftTerm MacTerminalView.swift
+[102/154] Compiling SwiftTerm Position.swift
+[103/154] Compiling SwiftTerm Pty.swift
+[104/154] Compiling HiveTerminalKit HiveTerminalKit.swift
+[105/154] Compiling HiveTerminalKit ManualSurface+SemanticSnapshot.swift
+[106/154] Compiling HiveTerminalKit EngineContract.swift
+[107/154] Compiling HiveTerminalKit UdsHostTransport.swift
+[108/154] Compiling HiveTerminalKit ClipboardContext.swift
 [109/154] Emitting module HiveTerminalKit
-[110/154] Compiling HiveTerminalKit ManualSurface.swift
-[111/154] Compiling SwiftTerm MacTerminalView.swift
-[112/154] Compiling SwiftTerm Position.swift
-[113/154] Compiling SwiftTerm Pty.swift
-[114/189] Compiling HiveTerminalKitTests AppWakeupLifecycleTests.swift
-[115/189] Compiling HiveTerminalKitTests AttachReplayTests.swift
-[116/189] Compiling HiveTerminalKitTests B20EngineContractTests.swift
-[117/189] Compiling HiveTerminalKitTests CallbackDisciplineTests.swift
-[118/189] Compiling HiveTerminalB20Probe main.swift
-[119/189] Emitting module HiveTerminalB20Probe
-[119/189] Write Objects.LinkFileList
-[121/189] Compiling GhosttyGate3Probe main.swift
-[122/189] Emitting module GhosttyGate3Probe
+[110/154] Compiling HiveTerminalKit CallbackContext.swift
+[111/154] Compiling HiveTerminalKit ManualSurface.swift
+[112/154] Compiling WorkspaceCoreTests AgentActivityTests.swift
+[113/154] Compiling WorkspaceCoreTests AttentionQueueTests.swift
+[114/189] Compiling HiveTerminalB20Probe main.swift
+[115/189] Emitting module HiveTerminalB20Probe
+[115/189] Write Objects.LinkFileList
+[117/189] Compiling HiveTerminalKitTests HeaderParityTests.swift
+[118/189] Compiling HiveTerminalKitTests InMemoryHostTransport.swift
+[119/189] Compiling HiveTerminalKitTests Gate4ABIQualificationTests.swift
+[120/189] Compiling HiveTerminalKitTests Gate6SurfaceRestoreTests.swift
+[121/189] Emitting module GhosttyGate3Probe
+[122/189] Compiling GhosttyGate3Probe main.swift
 [122/189] Write Objects.LinkFileList
-[124/189] Compiling GhosttyGate10Probe main.swift
-[125/189] Emitting module GhosttyGate10Probe
+[124/189] Emitting module GhosttyGate10Probe
+[125/189] Compiling GhosttyGate10Probe main.swift
 [125/189] Write Objects.LinkFileList
 [127/189] Compiling SwiftTerm SixelDcsHandler.swift
 [128/189] Compiling SwiftTerm Terminal.swift
 [129/189] Compiling SwiftTerm TerminalOptions.swift
-[130/220] Compiling HiveWorkspace ComposerLeaseStore.swift
-[131/220] Compiling HiveWorkspace CapsuleBadge.swift
-[132/220] Emitting module HiveWorkspace
-[133/220] Compiling HiveWorkspace UsageMeterView.swift
-[134/220] Compiling HiveWorkspace ThemeTokens.swift
-[135/222] Compiling WorkspaceCoreTests RoutingPolicyWireContractTests.swift
-[136/222] Compiling WorkspaceCoreTests TokenUsagePresentationTests.swift
-[137/223] Compiling HiveWorkspace CardView.swift
-[138/223] Compiling HiveWorkspace ProviderMarkView.swift
-[139/223] Compiling HiveWorkspace ModelRowView.swift
-[140/223] Compiling HiveWorkspace ProviderCardView.swift
-[141/223] Compiling HiveWorkspace ChainEditorView.swift
-[142/223] Compiling HiveWorkspace EffortControlView.swift
-[143/223] Compiling HiveWorkspace PaneView.swift
-[144/223] Compiling HiveWorkspace ProjectSwitcher.swift
-[145/223] Compiling WorkspaceCoreTests RoutingPolicyDocumentTests.swift
-[146/223] Compiling WorkspaceCoreTests LayoutTreeTests.swift
-[147/223] Compiling HiveWorkspace main.swift
-[148/223] Compiling HiveWorkspace resource_bundle_accessor.swift
-[149/223] Compiling WorkspaceCoreTests WorkspaceStatusReducerTests.swift
-[150/223] Compiling WorkspaceCoreTests WorkspaceFeedWireContractTests.swift
-[151/223] Compiling WorkspaceCoreTests TokenUsageWireContractTests.swift
-[152/223] Compiling WorkspaceCoreTests ModelControlWireContractTests.swift
-[153/223] Compiling WorkspaceCoreTests SessionProtocolFixtureTests.swift
-[154/223] Compiling WorkspaceCoreTests SpatialNavigationTests.swift
-[155/223] Compiling WorkspaceCoreTests ProjectStateTests.swift
-[156/223] Compiling WorkspaceCoreTests PaneFocusTests.swift
-[157/223] Compiling WorkspaceCoreTests resource_bundle_accessor.swift
-[162/223] Compiling WorkspaceCoreTests ModelControlTests.swift
-[163/223] Emitting module WorkspaceCoreTests
-[164/223] Compiling HiveTerminalKitTests RendererReplySuppressionTests.swift
-[165/223] Compiling HiveWorkspace TerminalPaneView.swift
-[166/223] Compiling HiveWorkspace Theme.swift
-[167/224] Compiling HiveWorkspace AppDelegate.swift
-[168/224] Compiling HiveWorkspace AttentionCenter.swift
-[169/224] Compiling HiveWorkspace PaneFocusRingView.swift
-[170/224] Compiling HiveWorkspace PaneStatusBorderView.swift
-[171/224] Compiling HiveWorkspace LayoutContainerView.swift
-[172/224] Compiling HiveWorkspace MainMenuBuilder.swift
-[175/224] Compiling HiveWorkspace SettingsPageController.swift
-[176/224] Compiling HiveWorkspace SettingsWindowController.swift
-[176/224] Linking GhosttyManualIsolationProbe
-[178/224] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+[130/220] Compiling WorkspaceCoreTests TokenUsageWireContractTests.swift
+[131/221] Compiling WorkspaceCoreTests TokenUsagePresentationTests.swift
+[132/221] Compiling WorkspaceCoreTests WorkspaceStatusReducerTests.swift
+[133/221] Compiling WorkspaceCoreTests RoutingPolicyDocumentTests.swift
+[134/221] Compiling WorkspaceCoreTests SessionProtocolFixtureTests.swift
+[135/221] Compiling WorkspaceCoreTests SpatialNavigationTests.swift
+[136/221] Compiling WorkspaceCoreTests ModelControlWireContractTests.swift
+[137/221] Compiling WorkspaceCoreTests RoutingPolicyWireContractTests.swift
+[138/221] Compiling WorkspaceCoreTests WorkspaceFeedWireContractTests.swift
+[139/221] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
+[140/221] Compiling HiveTerminalKitTests RendererReplySuppressionTests.swift
+[141/222] Compiling WorkspaceCoreTests resource_bundle_accessor.swift
+[142/222] Compiling HiveWorkspace FeedClient.swift
+[143/222] Compiling HiveWorkspace LaunchConfig.swift
+[144/222] Compiling HiveWorkspace LayoutContainerView.swift
+[145/222] Compiling HiveWorkspace MainMenuBuilder.swift
+[146/222] Compiling HiveWorkspace PaneFocusRingView.swift
+[147/222] Compiling HiveWorkspace PaneStatusBorderView.swift
+[148/224] Compiling HiveWorkspace MCCCopy.swift
+[149/224] Compiling HiveWorkspace ModelControlDataSource.swift
+[150/224] Compiling WorkspaceCoreTests ProjectStateTests.swift
+[151/224] Compiling WorkspaceCoreTests PaneFocusTests.swift
+[152/224] Compiling HiveWorkspace AppDelegate.swift
+[153/224] Compiling HiveWorkspace AttentionCenter.swift
+[154/224] Emitting module WorkspaceCoreTests
+[155/224] Compiling WorkspaceCoreTests LayoutTreeTests.swift
+[156/224] Compiling HiveWorkspace CardView.swift
+[157/224] Compiling HiveWorkspace ProviderMarkView.swift
+[158/224] Compiling WorkspaceCoreTests ModelControlTests.swift
+[159/224] Compiling HiveWorkspace UsageMeterView.swift
+[160/224] Compiling HiveWorkspace ThemeTokens.swift
+[161/224] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
+[162/224] Compiling HiveWorkspace main.swift
+[163/224] Compiling HiveWorkspace resource_bundle_accessor.swift
+[164/224] Compiling HiveWorkspace ComposerLeaseStore.swift
+[165/224] Compiling HiveWorkspace CapsuleBadge.swift
+[166/224] Compiling HiveWorkspace ChainEditorView.swift
+[167/224] Compiling HiveWorkspace EffortControlView.swift
+[168/224] Emitting module HiveTerminalKitTests
+[173/224] Compiling HiveWorkspace PaneView.swift
+[174/224] Compiling HiveWorkspace ProjectSwitcher.swift
+[177/224] Compiling HiveWorkspace ProjectWindowController.swift
+[178/224] Compiling HiveWorkspace SessiondPaneTerminal.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
+ 85 |         generationOverride: Int? = nil
+ 86 |     ) throws -> (status: Int32, output: String) {
+ 87 |         var locator = proof.locator
+    |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
+ 88 |         _ = locator
+ 89 |         var locatorLine = try locatorJSON(proof.locator)
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
+ 85 |         generationOverride: Int? = nil
+ 86 |     ) throws -> (status: Int32, output: String) {
+ 87 |         var locator = proof.locator
+    |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
+ 88 |         _ = locator
+ 89 |         var locatorLine = try locatorJSON(proof.locator)
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
  79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
  80 |         )
  81 |         weak var weakHost = externalHost
@@ -183,7 +196,7 @@ Building for debugging...
  82 | 
  83 |         let surface: GhosttyManualSurface
 
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
  93 |         defer { surface.free() }
  94 | 
  95 |         weak var weakCtx = surface.callbackContext
@@ -192,7 +205,7 @@ Building for debugging...
  97 | 
 
 [#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
  79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
  80 |         )
  81 |         weak var weakHost = externalHost
@@ -200,7 +213,7 @@ Building for debugging...
  82 | 
  83 |         let surface: GhosttyManualSurface
 
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
  93 |         defer { surface.free() }
  94 | 
  95 |         weak var weakCtx = surface.callbackContext
@@ -209,31 +222,17 @@ Building for debugging...
  97 | 
 
 [#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
-[183/224] Compiling HiveWorkspace ProjectWindowController.swift
-[184/224] Compiling HiveWorkspace SessiondPaneTerminal.swift
-[189/224] Compiling HiveWorkspace MCCCopy.swift
-[190/224] Compiling HiveWorkspace ModelControlDataSource.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
- 85 |         generationOverride: Int? = nil
- 86 |     ) throws -> (status: Int32, output: String) {
- 87 |         var locator = proof.locator
-    |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
- 88 |         _ = locator
- 89 |         var locatorLine = try locatorJSON(proof.locator)
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
- 85 |         generationOverride: Int? = nil
- 86 |     ) throws -> (status: Int32, output: String) {
- 87 |         var locator = proof.locator
-    |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
- 88 |         _ = locator
- 89 |         var locatorLine = try locatorJSON(proof.locator)
-[193/224] Compiling HiveWorkspace FeedClient.swift
-[194/224] Compiling HiveWorkspace LaunchConfig.swift
-[201/224] Emitting module HiveTerminalKitTests
-[202/224] Compiling HiveWorkspace UsageSettingsController.swift
-[203/224] Compiling HiveWorkspace SmokeRunner.swift
-[203/224] Applying GhosttyManualIsolationProbe
-[205/224] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
+[191/224] Compiling HiveWorkspace TerminalPaneView.swift
+[192/224] Compiling HiveWorkspace Theme.swift
+[193/224] Compiling HiveWorkspace SettingsPageController.swift
+[194/224] Compiling HiveWorkspace SettingsWindowController.swift
+[199/224] Emitting module HiveWorkspace
+[203/224] Linking GhosttyManualIsolationProbe
+[204/224] Applying GhosttyManualIsolationProbe
+[210/224] Compiling HiveWorkspace ModelRowView.swift
+[211/224] Compiling HiveWorkspace ProviderCardView.swift
+[212/224] Compiling HiveWorkspace UsageSettingsController.swift
+[213/224] Compiling HiveWorkspace SmokeRunner.swift
 [213/224] Write Objects.LinkFileList
 [214/224] Linking HiveTerminalB20Probe
 [215/224] Applying HiveTerminalB20Probe
@@ -243,82 +242,82 @@ Building for debugging...
 [219/224] Applying GhosttyGate10Probe
 [220/224] Linking HiveWorkspace
 [221/224] Applying HiveWorkspace
-[223/232] Compiling HiveWorkspaceTests SettingsWindowControllerTests.swift
-[224/232] Compiling HiveWorkspaceTests UsageMeterViewTests.swift
-[225/232] Compiling HiveWorkspaceTests SessiondPaneReattachTests.swift
+[223/232] Compiling HiveWorkspaceTests UsageMeterViewTests.swift
+[224/232] Compiling HiveWorkspaceTests SessiondPaneReattachTests.swift
+[225/232] Compiling HiveWorkspaceTests SettingsWindowControllerTests.swift
 [226/232] Compiling HiveWorkspaceTests ProjectSwitcherTests.swift
-[227/232] Compiling HiveWorkspaceTests ComposerLeaseStoreTests.swift
-[228/232] Emitting module HiveWorkspaceTests
-[229/232] Compiling HiveWorkspaceTests ChainEditorViewTests.swift
-[230/232] Compiling HiveWorkspaceTests AppDelegateLifecycleTests.swift
-[231/234] Emitting module HiveWorkspacePackageTests
-[232/234] Compiling HiveWorkspacePackageTests runner.swift
+[227/232] Compiling HiveWorkspaceTests AppDelegateLifecycleTests.swift
+[228/232] Compiling HiveWorkspaceTests ComposerLeaseStoreTests.swift
+[229/232] Emitting module HiveWorkspaceTests
+[230/232] Compiling HiveWorkspaceTests ChainEditorViewTests.swift
+[231/234] Compiling HiveWorkspacePackageTests runner.swift
+[232/234] Emitting module HiveWorkspacePackageTests
 [232/234] Write Objects.LinkFileList
 [233/234] Linking HiveWorkspacePackageTests
-Build complete! (19.99s)
-Test Suite 'Selected tests' started at 2026-07-19 14:26:29.653.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:26:29.655.
-Test Suite 'AppWakeupLifecycleTests' started at 2026-07-19 14:26:29.655.
+Build complete! (18.55s)
+Test Suite 'Selected tests' started at 2026-07-19 16:53:09.488.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 16:53:09.490.
+Test Suite 'AppWakeupLifecycleTests' started at 2026-07-19 16:53:09.490.
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' started.
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFactoryWiresTheRealTrampolineAndContext]' passed (0.001 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' started.
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' passed (0.842 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testFreeWaitsForInFlightTickToFinishBeforeFreeing]' passed (0.954 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' started.
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineActuallyInvokesTickOnMainThreadWithRealAppPointer]' passed (0.021 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' started.
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDefersTickOnMainThreadLikeThePinnedApp]' passed (0.016 seconds).
 Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' started.
-Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' passed (0.122 seconds).
-Test Suite 'AppWakeupLifecycleTests' passed at 2026-07-19 14:26:30.665.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 1.000 (1.010) seconds
-Test Suite 'CallbackDisciplineTests' started at 2026-07-19 14:26:30.665.
+Test Case '-[HiveTerminalKitTests.AppWakeupLifecycleTests testWakeupTrampolineDoesNotTickAfterFree]' passed (0.125 seconds).
+Test Suite 'AppWakeupLifecycleTests' passed at 2026-07-19 16:53:10.616.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 1.116 (1.127) seconds
+Test Suite 'CallbackDisciplineTests' started at 2026-07-19 16:53:10.617.
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' passed (0.015 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' passed (0.016 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' passed (0.014 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.013 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' passed (0.015 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' passed (0.012 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' passed (0.013 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' passed (0.114 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' passed (0.117 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' started.
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.014 seconds).
-Test Suite 'CallbackDisciplineTests' passed at 2026-07-19 14:26:30.861.
-	 Executed 9 tests, with 0 failures (0 unexpected) in 0.195 (0.196) seconds
-Test Suite 'Gate3ConcurrentCreationTests' started at 2026-07-19 14:26:30.861.
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.012 seconds).
+Test Suite 'CallbackDisciplineTests' passed at 2026-07-19 16:53:10.816.
+	 Executed 9 tests, with 0 failures (0 unexpected) in 0.198 (0.200) seconds
+Test Suite 'Gate3ConcurrentCreationTests' started at 2026-07-19 16:53:10.816.
 Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' started.
-Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testBackgroundFactoryCallerRunsEveryNativeEntryOnMain]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' started.
-Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' passed (0.138 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentCreateDoesNotDeadlockWithMarshaledFree]' passed (0.025 seconds).
 Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' started.
-Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' passed (0.045 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testConcurrentSurfaceCreationAllSucceed]' passed (0.036 seconds).
 Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' started.
-Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' passed (0.324 seconds).
-Test Suite 'Gate3ConcurrentCreationTests' passed at 2026-07-19 14:26:31.387.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.525 (0.526) seconds
-Test Suite 'Gate3OperationDomainTests' started at 2026-07-19 14:26:31.387.
+Test Case '-[HiveTerminalKitTests.Gate3ConcurrentCreationTests testRapidBackgroundCreateFreeCyclesRemainSerialized]' passed (0.334 seconds).
+Test Suite 'Gate3ConcurrentCreationTests' passed at 2026-07-19 16:53:11.225.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.408 (0.409) seconds
+Test Suite 'Gate3OperationDomainTests' started at 2026-07-19 16:53:11.225.
 Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' started.
-Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOffMainOutputCopiesBeforeMainAdmissionAndCallsCOnMain]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' started.
-Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testOutputAndFreeNeverOverlapAndNoCallbackArrivesAfterFree]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' started.
-Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' passed (0.010 seconds).
-Test Suite 'Gate3OperationDomainTests' passed at 2026-07-19 14:26:31.418.
-	 Executed 3 tests, with 0 failures (0 unexpected) in 0.031 (0.031) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 14:26:31.418.
-	 Executed 21 tests, with 0 failures (0 unexpected) in 1.751 (1.763) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 14:26:31.418.
-	 Executed 21 tests, with 0 failures (0 unexpected) in 1.751 (1.764) seconds
+Test Case '-[HiveTerminalKitTests.Gate3OperationDomainTests testSurfaceThenAppThenConfigFreeOrdering]' passed (0.011 seconds).
+Test Suite 'Gate3OperationDomainTests' passed at 2026-07-19 16:53:11.259.
+	 Executed 3 tests, with 0 failures (0 unexpected) in 0.034 (0.034) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 16:53:11.259.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 1.757 (1.769) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 16:53:11.259.
+	 Executed 21 tests, with 0 failures (0 unexpected) in 1.757 (1.771) seconds
 ==================
-WARNING: ThreadSanitizer: thread leak (pid=72775)
-  Thread T3 (tid=37833243, finished) created by main thread at:
+WARNING: ThreadSanitizer: thread leak (pid=82706)
+  Thread T3 (tid=38831428, finished) created by main thread at:
     #0 pthread_create <null> (libclang_rt.tsan_osx_dynamic.dylib:arm64e+0x33834)
     #1 global.GlobalState.init <null> (HiveWorkspacePackageTests:arm64+0xb92c04)
     #2 static GhosttyBridgeFactory.makeManualSurfaceOnMain(hostView:widthPx:heightPx:terminalReplies:configPolicyPath:clipboardContext:) ManualSurface.swift:1265 (HiveWorkspacePackageTests:arm64+0x8ea34)

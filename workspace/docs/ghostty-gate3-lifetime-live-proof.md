@@ -13,6 +13,49 @@ This closes that: every gate 3 property is measured against the shipped
 GhosttyKit artifact, under AddressSanitizer and ThreadSanitizer, with a positive
 control per claim.
 
+## The exercised binary is bound to this pin
+
+Before anything runs, the runner proves the GhosttyKit it is about to exercise
+was built from **this pin's source tuple**. Existence of an xcframework proves
+nothing: the artifact cache key is upstream-commit + Zig-SHA only, so it
+excludes `patchedTree` and `patchSeriesSha256`, and two different patch series
+collide on one key. That is not hypothetical — on this machine the same key has
+held both the current artifact (`patchedTree d92dc8fe`, lib `c4bd3998…`) and an
+older one (`patchedTree a27fc0e7`, lib `64cb23f1…`). Without this check a
+committed corpus cannot say which compatible binary produced it.
+
+Two links are verified, both **fail closed** — an absent
+`artifact-manifest.json` is a hard error, never a skipped check:
+
+- **A — identity:** all 16 `source` and `toolchain` fields in the artifact
+  manifest (commit, upstreamTree, patchedTree, declaredVersion, patch series,
+  public/bridge header, symbol list, Zig version + both archive SHAs, Xcode /
+  build / Swift, deployment target) must equal `native/toolchain-lock.json`.
+  A missing key reads back as null rather than raising, so null/empty is
+  treated as a mismatch explicitly instead of comparing equal to an absent
+  lock value.
+- **B — bytes:** the macOS library's actual sha256 must equal the digest the
+  manifest records for that path, so a manifest cannot vouch for a different
+  binary sitting beside it.
+
+Both digests are committed (`artifact-binding.txt`, echoed into
+`provenance.txt`): manifest `5614f6f5…`, macOS library `c4bd3998…`.
+
+The validator is itself positive-controlled, through the same function, because
+a validator that cannot go red is exactly the gap it was added to close:
+
+| Binding control | Result |
+|---|---|
+| `missing-manifest` | **RED** — `artifact_manifest=MISSING -> fail closed` |
+| `tampered-patched-tree` | **RED** — `patchedTree` mismatch against the lock |
+| `swapped-library` | **RED** — recorded digest ≠ actual library bytes |
+
+This closes the runner-level half of the "artifact caches have generations"
+hazard. It does not change the shared cache key itself — that key is
+`scripts/build-ghosttykit.sh`'s and is used by other gates, so narrowing it is
+a separate, cross-gate change. The binding check makes the key's weakness
+unexploitable here rather than papering over it.
+
 ## Two scopes, because one harness cannot cover both
 
 **Engine scope — `GhosttyGate3Probe`** (`workspace/Tests/GhosttyGate3Probe`)
@@ -106,6 +149,10 @@ shasum -c raw/qualification/ghostty-b1-gate3-lifetime/evidence-sha256.txt
 The manifest excludes itself and every evidence file is committed (`.txt` /
 `.jsonl`, nothing gitignored), so `shasum -c` self-verifies from a fresh
 checkout, not only for the author.
+
+The evidence directory now carries 25 manifested files (26 including the
+manifest itself), adding `artifact-binding.txt` and
+`artifact-binding-controls.txt`.
 
 ## Scope boundary
 

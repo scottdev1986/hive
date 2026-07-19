@@ -3,55 +3,64 @@
 Building for debugging...
 [2/15] Write sources
 [3/15] Write swift-version--58304C5D6DBC2206.txt
-[5/16] Compiling HiveTerminalKit ManualSurface.swift
-[6/16] Compiling HiveTerminalKit CallbackContext.swift
-[7/16] Emitting module HiveTerminalKit
-[8/24] Compiling HiveTerminalKit OutputRangeApplicator.swift
-[9/24] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
-[10/24] Compiling HiveTerminalKit HiveTerminalView+Input.swift
-[11/24] Compiling HiveTerminalKit ClipboardContext.swift
-[12/24] Compiling HiveTerminalKit AttachReplayClient.swift
-[13/24] Compiling HiveTerminalKit EngineContract.swift
+[5/16] Emitting module HiveTerminalKit
+[6/16] Compiling HiveTerminalKit ManualSurface.swift
+[7/16] Compiling HiveTerminalKit CallbackContext.swift
+[8/24] Compiling HiveTerminalKit ClipboardContext.swift
+[9/24] Compiling HiveTerminalKit ManualSurface+SemanticSnapshot.swift
+[10/24] Compiling HiveTerminalKit HiveTerminalView+Accessibility.swift
+[11/24] Compiling HiveTerminalKit OutputRangeApplicator.swift
+[12/24] Compiling HiveTerminalKit EngineContract.swift
+[13/24] Compiling HiveTerminalKit AttachReplayClient.swift
 [14/24] Compiling HiveTerminalKit HiveTerminalView.swift
-[15/24] Compiling HiveTerminalKit ManualSurface+SemanticSnapshot.swift
-[15/28] Write Objects.LinkFileList
+[15/24] Compiling HiveTerminalKit HiveTerminalView+Input.swift
+[15/30] Write Objects.LinkFileList
 [18/62] Compiling HiveTerminalB20Probe main.swift
 [19/62] Emitting module HiveTerminalB20Probe
 [19/63] Write Objects.LinkFileList
 [21/63] Compiling HiveWorkspace SessiondPaneTerminal.swift
 [22/63] Compiling HiveWorkspace PaneView.swift
-[23/63] Emitting module HiveTerminalKitTests
-[24/63] Compiling HiveTerminalKitTests LateFrameRejectionTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
+[23/63] Compiling HiveTerminalKitTests HeaderParityTests.swift
+[24/63] Compiling HiveTerminalKitTests InMemoryHostTransport.swift
+[25/63] Compiling HiveTerminalKitTests FakeHost.swift
+[26/63] Compiling HiveTerminalKitTests FocusStealTests.swift
+[27/63] Compiling HiveTerminalKitTests OrderedOutputEngineTests.swift
+[28/63] Compiling HiveTerminalKitTests OrderedOutputStressTests.swift
+[29/64] Emitting module HiveTerminalKitTests
+[30/64] Compiling HiveTerminalKitTests AppWakeupLifecycleTests.swift
+[31/64] Compiling HiveTerminalKitTests AttachReplayTests.swift
+[32/64] Emitting module HiveWorkspace
+[33/64] Compiling HiveTerminalKitTests Gate9ActionPolicyTests.swift
+[34/64] Compiling HiveTerminalKitTests Gate9CallbackMatrixTests.swift
+[35/64] Compiling HiveTerminalKitTests RendererReplySuppressionTests.swift
+[36/64] Compiling HiveTerminalKitTests Gate4ABIQualificationTests.swift
+[37/64] Compiling HiveTerminalKitTests Gate6SurfaceRestoreTests.swift
+[37/64] Write Objects.LinkFileList
+[39/64] Compiling HiveTerminalKitTests Gate3ConcurrentCreationTests.swift
+[40/64] Compiling HiveTerminalKitTests Gate3OperationDomainTests.swift
+[41/64] Compiling HiveTerminalKitTests B20EngineContractTests.swift
+[42/64] Compiling HiveTerminalKitTests CallbackDisciplineTests.swift
+[43/64] Compiling HiveTerminalKitTests Gate10AccessibilityTests.swift
+[44/64] Compiling HiveTerminalKitTests Gate10SemanticSnapshotTests.swift
+[45/64] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
+[46/64] Compiling HiveTerminalKitTests LateFrameRejectionTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
  85 |         generationOverride: Int? = nil
  86 |     ) throws -> (status: Int32, output: String) {
  87 |         var locator = proof.locator
     |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
  88 |         _ = locator
  89 |         var locatorLine = try locatorJSON(proof.locator)
-[25/63] Compiling HiveTerminalKitTests LiveHostAttachTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
+[47/64] Compiling HiveTerminalKitTests LiveHostAttachTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/LiveHostAttachTests.swift:87:13: warning: variable 'locator' was never mutated; consider changing to 'let' constant
  85 |         generationOverride: Int? = nil
  86 |     ) throws -> (status: Int32, output: String) {
  87 |         var locator = proof.locator
     |             `- warning: variable 'locator' was never mutated; consider changing to 'let' constant
  88 |         _ = locator
  89 |         var locatorLine = try locatorJSON(proof.locator)
-[26/64] Emitting module HiveWorkspace
-[26/64] Write Objects.LinkFileList
-[28/64] Compiling HiveTerminalKitTests Gate3ConcurrentCreationTests.swift
-[29/64] Compiling HiveTerminalKitTests Gate3OperationDomainTests.swift
-[30/64] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
-[31/64] Compiling HiveTerminalKitTests OutputRangeApplicatorTests.swift
-[32/64] Compiling HiveTerminalKitTests OrderedOutputEngineTests.swift
-[33/64] Compiling HiveTerminalKitTests OrderedOutputStressTests.swift
-[34/64] Compiling HiveTerminalKitTests Gate7RenderingTests.swift
-[35/64] Compiling HiveTerminalKitTests Gate8ClipboardTests.swift
-[36/64] Compiling HiveTerminalKitTests RendererReplySuppressionTests.swift
-[37/64] Compiling HiveTerminalKitTests FakeHost.swift
-[38/64] Compiling HiveTerminalKitTests FocusStealTests.swift
-[39/64] Compiling HiveTerminalKitTests Gate9ReachabilityTraceTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+[48/64] Compiling HiveTerminalKitTests Gate9ReachabilityTraceTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
  79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
  80 |         )
  81 |         weak var weakHost = externalHost
@@ -59,7 +68,7 @@ Building for debugging...
  82 | 
  83 |         let surface: GhosttyManualSurface
 
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
  93 |         defer { surface.free() }
  94 | 
  95 |         weak var weakCtx = surface.callbackContext
@@ -68,8 +77,8 @@ Building for debugging...
  97 | 
 
 [#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
-[40/64] Compiling HiveTerminalKitTests GhosttyBridgeLinkTests.swift
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
+[49/64] Compiling HiveTerminalKitTests GhosttyBridgeLinkTests.swift
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:81:18: warning: weak variable 'weakHost' was never mutated; consider changing to 'let' constant [#WeakMutability]
  79 |             frame: NSRect(x: 0, y: 0, width: 400, height: 240)
  80 |         )
  81 |         weak var weakHost = externalHost
@@ -77,7 +86,7 @@ Building for debugging...
  82 | 
  83 |         let surface: GhosttyManualSurface
 
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/GhosttyBridgeLinkTests.swift:95:18: warning: weak variable 'weakCtx' was never mutated; consider changing to 'let' constant [#WeakMutability]
  93 |         defer { surface.free() }
  94 | 
  95 |         weak var weakCtx = surface.callbackContext
@@ -86,22 +95,13 @@ Building for debugging...
  97 | 
 
 [#WeakMutability]: <https://docs.swift.org/compiler/documentation/diagnostics/weak-mutability>
-[41/64] Compiling HiveTerminalKitTests HeaderParityTests.swift
-[42/64] Compiling HiveTerminalKitTests InMemoryHostTransport.swift
-[43/64] Compiling HiveTerminalKitTests Gate9ActionPolicyTests.swift
-[44/64] Compiling HiveTerminalKitTests Gate9CallbackMatrixTests.swift
-[45/64] Compiling HiveTerminalKitTests AppWakeupLifecycleTests.swift
-[46/64] Compiling HiveTerminalKitTests AttachReplayTests.swift
-[47/64] Compiling HiveTerminalKitTests B20EngineContractTests.swift
-[48/64] Compiling HiveTerminalKitTests CallbackDisciplineTests.swift
-[49/64] Compiling HiveTerminalKitTests Gate10AccessibilityTests.swift
-[50/64] Compiling HiveTerminalKitTests Gate10SemanticSnapshotTests.swift
-[51/64] Compiling HiveTerminalKitTests Gate4ABIQualificationTests.swift
-[52/64] Compiling HiveTerminalKitTests Gate6SurfaceRestoreTests.swift
-[53/64] Compiling HiveTerminalKitTests InputEncodingTests.swift
-[54/64] Compiling HiveTerminalKitTests KittyKeyboardGoldenTests.swift
-[54/64] Linking GhosttyGate10Probe
-[55/64] Linking GhosttyGate3Probe
+[50/64] Compiling HiveTerminalKitTests InputEncodingTests.swift
+[51/64] Compiling HiveTerminalKitTests KittyKeyboardGoldenTests.swift
+[52/64] Compiling HiveTerminalKitTests Gate7RenderingTests.swift
+[53/64] Compiling HiveTerminalKitTests Gate8ClipboardTests.swift
+[54/64] Compiling HiveTerminalKitTests TerminalReplyCorpusTests.swift
+[54/64] Linking GhosttyGate3Probe
+[55/64] Linking GhosttyGate10Probe
 [56/64] Applying GhosttyGate10Probe
 [57/64] Applying GhosttyGate3Probe
 [58/64] Linking HiveTerminalB20Probe
@@ -110,36 +110,36 @@ Building for debugging...
 [61/64] Applying HiveWorkspace
 [62/64] Write Objects.LinkFileList
 [63/64] Linking HiveWorkspacePackageTests
-Build complete! (6.17s)
-Test Suite 'Selected tests' started at 2026-07-19 14:27:15.077.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 14:27:15.078.
-Test Suite 'CallbackDisciplineTests' started at 2026-07-19 14:27:15.078.
+Build complete! (6.35s)
+Test Suite 'Selected tests' started at 2026-07-19 16:53:54.207.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 16:53:54.208.
+Test Suite 'CallbackDisciplineTests' started at 2026-07-19 16:53:54.208.
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testCallbackMayRequestFreeOnlyAfterTrampolineReturns]' passed (0.013 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' started.
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineABI_isTwoParamStructPointer]' passed (0.013 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testEventTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' started.
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testHandlerRunsOnMainOnlyAfterTrampolineCallbackScopeEnds]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testRetainedPointerWouldFail_afterSameStorageOverwrite]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' started.
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/CallbackDisciplineTests.swift:189: error: -[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight] : XCTAssertEqual failed: ("1") is not equal to ("0") - delivery queued by the completed copy must drop after teardown
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' failed (0.490 seconds).
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/CallbackDisciplineTests.swift:189: error: -[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight] : XCTAssertEqual failed: ("1") is not equal to ("0") - delivery queued by the completed copy must drop after teardown
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testSurfaceFreeWaitsForCallbackCopyAlreadyInFlight]' failed (0.457 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' started.
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownAlsoDropsQueuedRendererHealthDelivery]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' started.
-/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.t7nr3x/workspace/Tests/HiveTerminalKitTests/CallbackDisciplineTests.swift:113: error: -[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree] : XCTAssertEqual failed: ("1") is not equal to ("0") - queued callbacks must self-drop once teardown closes admission
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-ghostty-gate3.fhiwP9/workspace/Tests/HiveTerminalKitTests/CallbackDisciplineTests.swift:113: error: -[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree] : XCTAssertEqual failed: ("1") is not equal to ("0") - queued callbacks must self-drop once teardown closes admission
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testTeardownDropsDeliveryAlreadyQueuedBeforeFree]' failed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' started.
-Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.013 seconds).
-Test Suite 'CallbackDisciplineTests' failed at 2026-07-19 14:27:15.648.
-	 Executed 9 tests, with 2 failures (0 unexpected) in 0.569 (0.570) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-07-19 14:27:15.648.
-	 Executed 9 tests, with 2 failures (0 unexpected) in 0.569 (0.570) seconds
-Test Suite 'Selected tests' failed at 2026-07-19 14:27:15.648.
-	 Executed 9 tests, with 2 failures (0 unexpected) in 0.569 (0.571) seconds
+Test Case '-[HiveTerminalKitTests.CallbackDisciplineTests testWriteTrampolineCopiesBeforeReturn_sameStorageOverwrite]' passed (0.014 seconds).
+Test Suite 'CallbackDisciplineTests' failed at 2026-07-19 16:53:54.742.
+	 Executed 9 tests, with 2 failures (0 unexpected) in 0.533 (0.534) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' failed at 2026-07-19 16:53:54.742.
+	 Executed 9 tests, with 2 failures (0 unexpected) in 0.533 (0.534) seconds
+Test Suite 'Selected tests' failed at 2026-07-19 16:53:54.742.
+	 Executed 9 tests, with 2 failures (0 unexpected) in 0.533 (0.534) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
