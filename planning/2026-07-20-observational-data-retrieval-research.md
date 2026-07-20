@@ -1,5 +1,15 @@
 # Observational-data retrieval for queen — research recommendation
 
+> **ADOPTED — user ruling 2026-07-20.** The hybrid recommendation is adopted:
+> this incremental skeleton (lena) plus priya's five green-field grafts
+> (`planning/2026-07-20-observational-data-retrieval-greenfield.md` §4.3). A
+> binding hardware floor is set: the **base 14-inch MacBook Pro — M1 Pro, 16 GB
+> unified memory** — against which every performance / memory / latency AC is
+> measured (`planning/terminal-ownership-methodology.md` §4a). **The normative
+> carriers are now the two story docs** — `planning/story-m3-s36-retrieval-core.md`
+> (L0+L1) and `planning/story-m3-s37-digests-lifecycle.md` (L2+L3); this research
+> doc is the rationale record, superseded by those stories as the execution spec.
+
 **Status: research recommendation, user-commissioned (2026-07-20). Not yet ratified.**
 Author: lena (writer agent, Fable 5, explicitly requested). External sources verified 2026-07-20.
 

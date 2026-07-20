@@ -1,5 +1,15 @@
 # Green-field design: observational-data retrieval for an agent-fleet orchestrator
 
+> **ADOPTED — user ruling 2026-07-20.** The hybrid recommendation is adopted:
+> lena's incremental skeleton (`planning/2026-07-20-observational-data-retrieval-research.md`)
+> plus this document's five green-field grafts (§4.3). A binding hardware floor is
+> set: the **base 14-inch MacBook Pro — M1 Pro, 16 GB unified memory** — against
+> which every performance / memory / latency AC is measured
+> (`planning/terminal-ownership-methodology.md` §4a). **The normative carriers are
+> now the two story docs** — `planning/story-m3-s36-retrieval-core.md` (L0+L1) and
+> `planning/story-m3-s37-digests-lifecycle.md` (L2+L3); this research doc is the
+> rationale record, superseded by those stories as the execution spec.
+
 **Date:** 2026-07-20
 **Author:** priya (writer agent), commissioned by the user via queen
 **Status:** research deliverable, complete — recommendation: adopt hybrid (see §4.3)
