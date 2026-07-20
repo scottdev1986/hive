@@ -446,10 +446,33 @@ clean:
 	   dev file on fd 3 was classified a mentioner, spared, and then had .dev\
 	   deleted out from under it. A held fd is binding evidence exactly as a\
 	   cwd is, and lsof keeps reporting both after the file is unlinked"; \
+	: "PATHS ARE NOT PATTERNS, AND PREFIXES ARE NOT COMPONENTS. This used to pipe\
+	   lsof into a grep anchored on the raw path, which had two ways to kill the\
+	   wrong thing:\
+	   the path was interpreted as a REGEX, so a '.' matched any character; and\
+	   there was no component boundary, so a sibling directory named .dev-other\
+	   matched .dev and its holder was killed. Measured, not theorised — the\
+	   probe that found it killed a bystander whose only real fd was under\
+	   .dev-other. Matching is now literal and component-wise: a name binds only\
+	   if it EQUALS a spelling or begins with that spelling plus '/'. The case\
+	   patterns quote the variable, which makes any glob character inside the\
+	   path literal, so a path containing * or ? cannot widen the match either"; \
 	is_bound() { \
-	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in "$$dev"/*|"$$devp"/*|"$$devl"/*) return 0;; esac; \
-	  lsof -n -P -a -p "$$1" -Fn 2>/dev/null \
-	    | grep -q -e "^n$$dev" -e "^n$$devp" -e "^n$$devl" && return 0; \
+	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in \
+	    "$$dev"/*|"$$devp"/*|"$$devl"/*) return 0;; esac; \
+	  : "awk, not shell, for this scan: index(p,d\"/\")==1 is a LITERAL\
+	     prefix test with a component boundary — no regex, so a '.' in the path\
+	     cannot match any character, and no bare-prefix match, so a sibling\
+	     .dev-other cannot pass as .dev. A shell while-read pipeline that broke\
+	     early on a match wedged here instead, so this is also the version that\
+	     terminates"; \
+	  if lsof -n -P -a -p "$$1" -Fn 2>/dev/null \
+	    | awk -v d="$$dev" -v dp="$$devp" -v dl="$$devl" ' \
+	        /^n/ { p = substr($$0, 2); \
+	               if (p == d  || index(p, d  "/") == 1) { found = 1; exit } \
+	               if (p == dp || index(p, dp "/") == 1) { found = 1; exit } \
+	               if (p == dl || index(p, dl "/") == 1) { found = 1; exit } } \
+	        END { exit(found ? 0 : 1) }'; then return 0; fi; \
 	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
 	  return 1; }; \
 	: "BOTH spellings here too, not just in is_bound. argv carries whatever the\
