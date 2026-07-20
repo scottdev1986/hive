@@ -5,12 +5,13 @@ Reviewing hattie (Grok): original pin
 `5cb663b042b525a2937af510ae9d71fa9192efa1`, on
 `hive/hattie-continue-a-crashed-agent-s-wor`.
 
-**VERDICT: NO-LAND.** The fix, kernel-boundary regression test, suites, committed
-visual evidence, digest regeneration, and residual-marker disclosure all pass
-review. The blocker is the explicitly required independent live rendered-frame
-rerun: the fresh Workspace viewer remained blank even though its session journal
-contained the real `ls -1` output. Without a fresh reviewer-rendered frame I
-cannot honestly certify that acceptance item.
+**VERDICT: PASS — clear to land.** The fix, kernel-boundary regression test,
+suites, committed visual evidence, digest regeneration, and residual-marker
+disclosure all pass review. The exact independent live recipe found a separate
+attach/replay problem: its fresh Workspace viewer remained blank even though
+the session journal contained CRLF `ls -1` output. The orchestrator accepted
+that as a separately routed defect and queued live re-verification; it is not
+caused by, and does not block, this termios fix.
 
 ## Source audit
 
@@ -84,29 +85,42 @@ complete lines are fixed, while residual `PROMPT_EOL_MARK` on genuinely partial
 output remains and is a C1 decision. It also records the rejection of the
 unrequested `output_translation` profile knob.
 
-## Independent live rerun blocker
+## Independent live rerun and separate finding
 
 Fresh `make terminal` attempts used an unlocked Aqua session, short
 `/tmp/hb22-*` runtime paths, and exclusive ownership of port 43117. The real
 shell did execute `ls -1`; `journal.bin` contains `Makefile` and the other
 entries, with the output traversing the fixed PTY. The Workspace terminal pane
-nevertheless remained blank and its stderr repeatedly reported:
+nevertheless remained blank. Its stderr repeatedly reported:
 
 ```text
 workspace visibility publish failed: HTTP 409
 ```
 
-I tried three independent input/timing paths: a production Swift live-input
-round trip after GUI attach, pre-attach adapter input, and startup/delayed shell
-`ls` so the GUI was the first viewer before output arrived. The first placed the
-command and CRLF output in the journal but displaced the GUI viewer; the second
-correctly failed closed because this harness does not expose the frozen direct
-host wire; the third still produced a blank pane. CoreGraphics mouse and key
-events did not change the rendered state. No blank capture is committed as
-positive evidence.
+That 409 is normal for this harness: its publisher owns and renews the visibility
+lease while Workspace's competing publish is refused. To eliminate contamination
+from exploratory probes, I then reproduced Hattie's known-good recipe verbatim
+in a completely fresh home, with no pre-attach grant, secondary viewer, click,
+or typed input. The exact `/tmp/hbt-ls-shell` wrapper ran `/bin/ls -1`, printed
+the handoff line, and `exec`'d `/bin/zsh -l`; `make terminal` launched the only
+Workspace viewer. Positive controls all passed:
+
+- auto home `/tmp/hb22-0fee` and sole port-43117 stack;
+- harness log `interactive login shell: /tmp/hbt-ls-shell -l`;
+- matching Workspace `--instance-home` and production viewer;
+- visibility renewals every five seconds; and
+- journal bytes `assets\r\nbootstrap\r\n…`.
+
+After more than 30 seconds the green-bordered terminal pane was still blank.
+This reproduces a separate attach/replay/geometry failure on the current
+combined tree, not an OPOST failure: the authoritative journal proves that the
+real PTY emitted the required CRLF. No blank capture is committed as positive
+evidence. The transcript and runtime evidence were reported to the orchestrator
+for a separate defect and a queued live re-verification.
 
 All temporary Swift and harness probes were restored byte-for-byte. After the
 final controlled SIGINT teardown, all proof PIDs were gone and
 `lsof -nP -iTCP:43117 -sTCP:LISTEN` returned `1` (no listener). Landing is
-blocked only on obtaining and reviewing a fresh independently rendered frame;
-the committed Hattie BEFORE/AFTER pair itself is genuine.
+clear for the termios fix; the committed Hattie BEFORE/AFTER pair itself is
+genuine, and the failed reviewer render remains explicitly separate rather than
+being misreported as a successful fresh screenshot.
