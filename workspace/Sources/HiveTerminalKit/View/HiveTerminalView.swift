@@ -246,7 +246,27 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     private var canPresentGhosttyFrame: Bool {
         !closed && rendererHealthy && !renderingSuspended && bounds.width > 0 && bounds.height > 0 &&
-            appliedOcclusionVisible != false
+            occlusionAllowsPresent
+    }
+
+    /// AppKit occlusion normally suppresses GPU work (Gate 7). Blank-pane #47:
+    /// attach can finish while the window still reports occluded. Ghostty skips
+    /// cell rebuild while invisible, so a host draw against occlusion=false
+    /// leaves a blank IOSurface. With journal content and no successful host
+    /// draw yet, keep the present gate open (and keep the engine visible —
+    /// see `synchronizeOcclusion`).
+    private var occlusionAllowsPresent: Bool {
+        if appliedOcclusionVisible != false { return true }
+        if highWater > 0 && drawScheduledCount == 0 { return true }
+        // Stale applied state: re-read the live window bit in case we missed
+        // didChangeOcclusionState (Gate7 physical evidence notes AppKit
+        // occlusion flakiness on this desktop).
+        if let window, window.occlusionState.contains(.visible) {
+            appliedOcclusionVisible = true
+            engineStorage?.setOcclusion(true)
+            return true
+        }
+        return false
     }
 
     /// Human-readable why `canPresentGhosttyFrame` is false (blank-pane wire probe).
@@ -257,7 +277,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         if bounds.width <= 0 || bounds.height <= 0 {
             return "zero-bounds(\(Int(bounds.width))x\(Int(bounds.height)))"
         }
-        if appliedOcclusionVisible == false { return "occlusion-hidden" }
+        if !occlusionAllowsPresent {
+            return "occlusion-hidden(hw=\(highWater),draws=\(drawScheduledCount))"
+        }
         return "open"
     }
 
@@ -367,7 +389,20 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// wipe already-applied journal output (blank pane with full journal).
     public func prepareThemeBeforeAttach() {
         engine.applyHiveConfiguration()
+        // #47: Ghostty skips cell rebuild while occluded. If AppKit still
+        // reports hidden at attach, processOutput would update the VT with no
+        // texture path. Force engine-visible before journal replay.
+        if appliedOcclusionVisible != true {
+            engine.setOcclusion(true)
+            appliedOcclusionVisible = true
+            NSLog("hive terminal wire: engine-visible for pre-attach journal")
+        }
         refreshReportedGeometryAfterConfiguration()
+    }
+
+    /// Test seam for #47 draw-gate: mark VT content applied without a full attach.
+    func testingMarkHighWaterForDrawGate(_ highWater: UInt64) {
+        self.highWater = highWater
     }
 
     private func presentFirstCorrectFrame(_ highWater: UInt64) {
@@ -701,14 +736,36 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
 
     private func synchronizeOcclusion() {
         guard let window else {
-            if appliedOcclusionVisible != nil {
+            // Do not thrift-hide the engine before the first content frame —
+            // attach journal needs cell rebuild (#47 blank pane).
+            if appliedOcclusionVisible != nil, drawScheduledCount > 0 {
                 engineStorage?.setOcclusion(false)
                 appliedOcclusionVisible = false
             }
             return
         }
-        let visible = window.occlusionState.contains(.visible)
-        guard appliedOcclusionVisible != visible else { return }
+        let appKitVisible = window.occlusionState.contains(.visible)
+        // With journal content and no successful host draw yet, keep the engine
+        // visible so processOutput rebuilds cells (render thread skips
+        // updateFrame while invisible — blank-pane #47).
+        let holdVisibleForFirstContent = highWater > 0 && drawScheduledCount == 0
+        let visible = appKitVisible || holdVisibleForFirstContent
+        guard appliedOcclusionVisible != visible else {
+            if visible { schedulePendingDrawIfPossible() }
+            return
+        }
+        if !visible {
+            NSLog(
+                "hive terminal wire: applying occlusion-hidden after first draw draws=%u hw=%llu",
+                drawScheduledCount,
+                highWater
+            )
+        } else if holdVisibleForFirstContent && !appKitVisible {
+            NSLog(
+                "hive terminal wire: holding engine-visible for first content present hw=%llu",
+                highWater
+            )
+        }
         engineStorage?.setOcclusion(visible)
         appliedOcclusionVisible = visible
         if visible { schedulePendingDrawIfPossible() }

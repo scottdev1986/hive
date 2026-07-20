@@ -273,6 +273,49 @@ final class Gate7RenderingTests: XCTestCase {
         XCTAssertEqual(view.drawScheduledCount, 1)
     }
 
+    /// #47: journal apply can complete while AppKit still reports occluded.
+    /// With VT content (highWater > 0) and no successful draw yet, present once
+    /// so the layer is not left blank forever if unocclusion never arrives.
+    func testOccludedAttachWithContentPresentsOneFrame() {
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 240),
+            engine: engine
+        )
+        defer { view.userClose() }
+        let window = ControlledWindow(
+            contentRect: view.bounds,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        // Explicitly occluded — same state live attach observes on #47.
+        window.controlledOcclusionState = []
+        window.contentView = view
+        NotificationCenter.default.post(
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
+        XCTAssertEqual(view.appliedOcclusionVisible, false)
+
+        // No content yet: still suppress (Gate 7 thrift).
+        engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        waitForMainQueue(delay: 0.05)
+        XCTAssertEqual(engine.drawCount, 0)
+
+        // Simulate first-correct-frame after journal processOutput.
+        view.testingMarkHighWaterForDrawGate(447)
+        engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        XCTAssertTrue(waitUntil { engine.drawCount == 1 })
+        XCTAssertEqual(view.drawScheduledCount, 1)
+
+        // Further invalidates while still occluded stay suppressed after the
+        // first textured frame (power thrift restored).
+        engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        waitForMainQueue(delay: 0.05)
+        XCTAssertEqual(engine.drawCount, 1)
+    }
+
     func testSleepDefersPendingDrawAndWakeRefreshesExactlyOnce() {
         let engine = FakeManualSurface()
         let view = HiveTerminalView(
