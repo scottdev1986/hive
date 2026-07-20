@@ -384,3 +384,46 @@ The automatable slice is clean. Remaining before the physical F/I rows are
 fully green: the three `PENDING_HUMAN` captures, plus the two restored OPEN
 rows (Instruments minimized/after-wake, ASan) either measured or explicitly
 waived by queen.
+
+## Addendum — F1's fail-closed branch positive-controlled
+
+Queen asked whether the F1 guard *bites*, not merely whether it exists. Reading
+it is not proof, so I shimmed the Power Profiler invocation two ways and ran
+the real runner end to end against a generation-matched artifact.
+
+| Control | Shim | Real exit | Guard fired |
+|---|---|---|---|
+| A — template unexpectedly succeeds | `xctrace record` → `/usr/bin/true` | 1 | `Power Profiler negative control DID NOT BITE (exit 0); energy claim needs re-measurement` |
+| B — fails, but with the wrong message | exits 3, prints `unrelated-xctrace-failure` | 1 | `Power Profiler failed but without the expected macOS-unsupported message; inspect summary` |
+
+Both reached the Power Profiler stage and aborted there. So the energy claim
+cannot silently survive either a future Xcode that supports the template or an
+unrelated xctrace failure wearing the same exit code.
+
+### Two self-corrections, recorded because either would have faked a PASS
+
+1. **My first control runs exited 1 for the wrong reason.** I passed `""` as
+   the artifact argument, so the script died on a missing xcframework long
+   before reaching the branch under test. An exit 1 from code that never
+   executed the guard is not evidence the guard bites — it is a control
+   failing open while looking green. Same defect class I flagged in the pin,
+   arriving from the opposite direction.
+2. **I nearly read a stale result.** `fc-b.exit.txt` still held the exit code
+   from that aborted attempt while variant B was in fact still running; the
+   file was three minutes older than the run I thought I was reading. Only the
+   mtime check caught it. Exit files must be deleted before a re-run, not
+   overwritten by it.
+
+### Two incidental findings for the campaign
+
+- **The shared artifact cache is mutated concurrently.** Mid-check,
+  `.cache/native/artifacts/ghostty-73534c46…/` had no `artifact-manifest.json`
+  and a copy of it caught the tree partially written — another agent was
+  rebuilding in place. The runner fails closed on this correctly (missing
+  manifest → exit 1), which is an unplanned validation of the binding design,
+  but any agent depending on that path can transiently observe a partial
+  artifact and should pin a private copy before a long run.
+- **duncan's cached artifact is an older generation.** Binding rejected it with
+  3 mismatches against this pin's lock — a second unplanned positive control
+  for the binding check, and consistent with that worktree being deliberately
+  preserved rather than current.
