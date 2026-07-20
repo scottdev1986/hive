@@ -14,12 +14,16 @@ extension HiveTerminalView {
 
     public override func becomeFirstResponder() -> Bool {
         let result = super.becomeFirstResponder()
-        if result { engine.setFocus(true) }
+        if result {
+            engine.setFocus(true)
+            accessibilityFocusDidChange()
+        }
         return result
     }
 
     public override func mouseDown(with event: NSEvent) {
         window?.makeFirstResponder(self)
+        accessibilityFocusDidChange()
         _ = forwardMouse(event, state: .press)
     }
 
@@ -441,11 +445,15 @@ extension HiveTerminalView {
 
     public func focusExplicitly() {
         window?.makeFirstResponder(self)
+        accessibilityFocusDidChange()
     }
 
     public override func resignFirstResponder() -> Bool {
         let result = super.resignFirstResponder()
-        if result { engine.setFocus(false) }
+        if result {
+            engine.setFocus(false)
+            accessibilityFocusDidChange()
+        }
         return result
     }
 

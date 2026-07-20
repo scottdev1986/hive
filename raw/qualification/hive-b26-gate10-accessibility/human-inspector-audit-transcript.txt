@@ -1,0 +1,4 @@
+slot=human-inspector-audit-transcript.txt
+STATUS=PENDING_HUMAN
+reason=Accessibility Inspector GUI audit requires an unlocked Aqua session and a human operator; machine-side AX tree dumps and role/child positive controls are in ax-tree-*.txt and inspector-audit-machine.txt.
+fills_when=Operator runs Accessibility Inspector audit on a live HiveTerminalView pane and pastes the audit summary here.

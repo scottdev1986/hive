@@ -1,0 +1,5 @@
+slot=human-voiceover-transcript.txt
+STATUS=PENDING_HUMAN
+reason=VoiceOver listening requires a human ear in an unlocked GUI session; automated property assertions and AX tree dumps cannot certify spoken output.
+fills_when=Operator enables VoiceOver, walks input/scroll/alternate-screen/replay/resize/teardown, and records what was spoken (plus optional external screen+audio path).
+covers=row navigation; cursor; selection; typed input; lifecycle/failure announcements; teardown

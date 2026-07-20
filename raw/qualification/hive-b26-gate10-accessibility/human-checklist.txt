@@ -1,0 +1,96 @@
+Gate 10 AppKit / B2.6 accessibility — HUMAN-REQUIRED checklist
+==============================================================
+Pin/runner: scripts/qualify-hive-b26-accessibility.sh
+Evidence dir: raw/qualification/hive-b26-gate10-accessibility/
+Evidence format: .txt (never .log). Drop each capture into the named slot.
+
+This follows the Gate 7 human-checklist pattern: machine-runnable AX tree
+dumps and notification positive controls land as RECORDED; anything that
+genuinely needs a human listener or the Accessibility Inspector GUI is an
+explicit PENDING_HUMAN slot — not a silent gap.
+
+Prereqs
+-------
+[ ] Unlocked GUI session on macOS (VoiceOver and Accessibility Inspector need
+    a real Aqua session; a headless CI agent cannot fill VO slots).
+[ ] Repo at the B2.6 pin; GhosttyKit artifact bound (patch series still
+    ddeaf792 — semantic snapshot is already 0004 in the series; no new
+    vendor patch for this slice).
+[ ] Machine evidence already green:
+      (cd workspace && HIVE_B26_AX_EVIDENCE=../raw/qualification/hive-b26-gate10-accessibility \
+         swift test --filter Gate10AccessibilityTests)
+[ ] Accessibility Inspector installed (Xcode → Open Developer Tool).
+[ ] VoiceOver: System Settings → Accessibility → VoiceOver → On (or Cmd-F5).
+
+A. Accessibility Inspector — hierarchy + audit
+----------------------------------------------
+1. Launch HiveWorkspace (or the Gate10-hosted test window if queen points you
+   at a probe binary) with one live terminal pane attached to a sessiond
+   shell or vendor TUI.
+2. Open Accessibility Inspector → target the terminal content area.
+3. Confirm against the machine dumps (ax-tree-*.txt):
+   - role AXTextArea / textArea
+   - parent/child: one row staticText element per visible terminal row
+   - frames non-zero for non-empty rows when window is on-screen
+   - focus follows first-responder
+   - value / selectedText / insertion line match what is on screen
+4. Run Inspector → Audit on the terminal element.
+5. Capture the audit summary into:
+     human-inspector-audit-transcript.txt
+   Replace the PENDING_HUMAN placeholder. Include pass/fail counts and any
+   finding that names HiveTerminalView / row elements.
+
+Pass criteria:
+  * role + child row count consistent with ax-tree-input.txt shape
+  * no stale/duplicate row elements after scroll/resize/teardown
+  * audit does not report broken parent/child for the terminal subtree
+
+B. VoiceOver — navigate, type, select, scroll, lifecycle
+--------------------------------------------------------
+1. Enable VoiceOver. Focus a live Hive terminal pane.
+2. Navigate by row (VO-Down/Up or equivalent) through several semantic rows.
+3. Locate the cursor / insertion point announcement.
+4. Type a short command; confirm committed output is announced or readable.
+5. Select text (Shift-arrows or drag); confirm selection is spoken.
+6. Scroll scrollback; confirm row focus survives without a full-tree wipe.
+7. Force a reconnect or mark-lost path if available; confirm lifecycle label
+   ("Terminal lost/exited/…") is spoken or inspectable.
+8. Close the pane; confirm no hanging AX focus on destroyed rows.
+
+Capture a short operator transcript (what you did + what VO said) into:
+  human-voiceover-transcript.txt
+If you can record screen+audio, drop a path reference in that file (do not
+commit large media into the repo — keep media outside and cite the path).
+
+Pass criteria:
+  * rows, cursor, selection, typed input, and lifecycle are all reachable
+  * teardown does not leave a zombie focused element
+
+C. Scenario coverage (map to machine dumps)
+-------------------------------------------
+The machine suite already wrote ax-tree-*.txt for:
+  input | alternate-screen | alternate-screen-exit | resize | replay | scroll | teardown
+
+Human VO/Inspector should exercise the same six live paths once with a real
+pane. Tick each when observed:
+
+[ ] input
+[ ] scroll
+[ ] alternate screen
+[ ] replay / reconnect output
+[ ] resize
+[ ] teardown
+
+What you do NOT need to invent
+------------------------------
+  * A second native Ghostty export — hive_ghostty_surface_semantic_snapshot_v1
+    is already qualified under raw/qualification/ghostty-b1-gate10-snapshot/.
+  * A new ghostty patch (series stamp stays ddeaf792; 0004 is semantic snapshot).
+  * Selection range from a second C read — selection range/text come from the
+    atomic semantic snapshot; Gate 9 only carries selectionChanged as a signal.
+
+When human slots no longer say STATUS=PENDING_HUMAN, re-run:
+  (cd raw/qualification/hive-b26-gate10-accessibility && /usr/bin/shasum -a 256 \
+     $(/usr/bin/find . -type f ! -name evidence-sha256.txt | /usr/bin/sort) \
+     > evidence-sha256.txt)
+and tell queen the human rows are filled for cross-vendor review.

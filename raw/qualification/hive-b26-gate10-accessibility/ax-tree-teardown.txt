@@ -1,0 +1,13 @@
+role=AXTextArea
+label=Terminal exited: user-close
+help=Terminal content area
+focused=true
+lifecycle=Terminal exited: user-close
+numberOfCharacters=0
+visibleRange={0, 0}
+selectedRange={9223372036854775807, 0}
+selectedText=nil
+insertionLine=9223372036854775807
+valueDescription=Terminal exited: user-close
+valuePrefix=""
+childCount=0

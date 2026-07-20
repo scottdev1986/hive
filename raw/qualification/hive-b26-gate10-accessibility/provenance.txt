@@ -1,0 +1,12 @@
+slice=hive-b26-gate10-accessibility
+story=planning/story-m1-b2-hive-terminal-view.md B2.6
+gate=Gate 10 AppKit / VoiceOver retained slice
+agent=hedda
+branch=hive/hedda-m1-item-5-hard-b2-6-accessibil
+foundation=duncan 943407ba "Build atomic terminal accessibility snapshot" (forward-ported/adapted)
+ghostty_commit=73534c4680a809398b396c94ac7f12fcccb7963d
+zig_sha256=3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
+patch_series_sha256=ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0
+patch_note=0004-hive-semantic-snapshot.patch already in series; no new vendor patch; no GhosttyKit rebuild required for this AppKit slice
+port_claim=43128 (reserved; this slice is in-process NSEvent/AX only — no listener bound)
+evidence_rule=.txt only; settle-then-assert; human VO/Inspector are explicit PENDING_HUMAN slots (Gate 7 pattern)

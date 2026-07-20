@@ -79,6 +79,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         wantsLayer = true
         synchronizeColorScheme()
         wireBridgeEvents()
+        wireAccessibilitySignals()
         wireWorkspaceEvents()
     }
 
@@ -106,6 +107,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         applicatorStorage = OutputRangeApplicator(engine: engine)
         synchronizeColorScheme()
         wireBridgeEvents()
+        wireAccessibilitySignals()
         wireWorkspaceEvents()
         synchronizeRenderingState()
     }
@@ -116,6 +118,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     deinit {
+        accessibilitySurfaceWillClose()
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
         removeWindowObservers()
@@ -155,6 +158,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         switch event.type {
         case .invalidate:
             scheduleDraw()
+            accessibilitySemanticStateDidInvalidate()
         case .title:
             lastTitle = String(data: event.bytes, encoding: .utf8) ?? ""
             notifyOutputStatusReconnect(reason: "title")
@@ -163,11 +167,14 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             notifyOutputStatusReconnect(reason: "pwd")
         case .bell:
             onBell?()
+            accessibilityAnnounce("Terminal bell", priority: .high)
             notifyOutputStatusReconnect(reason: "bell")
         case .clipboardDenied:
+            accessibilityAnnounce("Clipboard access denied", priority: .high)
             notifyOutputStatusReconnect(reason: "clipboard-denied")
         case .closeRequest:
             // §26: CLOSE_REQUEST → exact-generation TERMINATE seam, never DETACH.
+            accessibilityAnnounce("Terminal closed", priority: .medium)
             userClose()
         }
     }
@@ -315,6 +322,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         // Theme should already be applied pre-attach; one-shot no-op if so.
         engine.applyHiveConfiguration()
         setSurfaceState(.live)
+        accessibilityAnnounce("Terminal ready", priority: .low)
         notifyOutputStatusReconnect(reason: "first-correct-frame")
         onFirstCorrectFrame?(highWater)
         scheduleDraw()
@@ -450,6 +458,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         try admitBinding(newBinding, highWater: highWater)
         attachClient?.retarget(newBinding: newBinding, highWater: highWater)
         setSurfaceState(.attaching)
+        accessibilityAnnounce("Terminal reconnecting", priority: .low)
         notifyOutputStatusReconnect(reason: "binding-reconnect")
     }
 
@@ -563,6 +572,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public override func viewDidMoveToWindow() {
         super.viewDidMoveToWindow()
         synchronizeRenderingState()
+        accessibilityFocusDidChange()
     }
 
     public override func viewDidChangeBackingProperties() {
@@ -690,6 +700,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         resizeWorkItem?.cancel()
         appliedFramebufferSize = (widthPx, heightPx)
         engine.setSize(widthPx: widthPx, heightPx: heightPx)
+        accessibilityGeometryDidChange()
         updateReportedGeometry()
         schedulePendingDrawIfPossible()
     }
@@ -751,6 +762,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         pendingDraw = false
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
+        accessibilitySurfaceWillClose()
         onUserClose?()
         engine.free()
         if let renderHostView {
@@ -765,7 +777,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     // MARK: - State
 
     private func setSurfaceState(_ newState: TerminalSurfaceState) {
+        let changed = surfaceState != newState
         surfaceState = newState
+        if changed {
+            accessibilityLifecycleDidChange()
+        }
         notifyOutputStatusReconnect(reason: "state")
         onStateChange?(newState)
     }
