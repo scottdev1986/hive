@@ -20,6 +20,7 @@ import {
 } from "./session-host/tmux-host";
 import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
 import { SessiondWireNotReadyError } from "./session-host/sessiond-host";
+import type { SessiondAgentInput } from "./session-host/sessiond-agent-input";
 
 /** Senders to probe for idempotency: root aliases during the rename window. */
 function idempotencySenders(from: string): readonly string[] {
@@ -312,6 +313,10 @@ export class MessageDelivery {
     ) => Promise<PaneProcessState>,
     private readonly composerActive: (recipient: string) => boolean =
       isComposerLeased,
+    /** Daemon→idle-sessiond-agent input over the neutral viewer wire (#16
+     * interim, #68). Absent → sessiond recipients stay durably queued, the
+     * pre-wire behaviour. */
+    private readonly sessiondInput?: SessiondAgentInput,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -807,17 +812,43 @@ export class MessageDelivery {
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
-    // #67: a sessiond-hosted pane has no daemon-side input wire yet — that is
-    // M2's arbiter delivery (#16). The tmux paste path below cannot address a
-    // sessiond session: reaching it bounced hive_send with "mismatched
-    // SessionLocator" (a lie about a consistent locator), and thrown from the
-    // flush loops it silently ate every queued delivery on every tick. Until
-    // the wire lands the honest outcome is: validate the locator, leave the
-    // message durably QUEUED, and let the stalled-message triage say so out
-    // loud — never a fake locator error, never a fake "injected".
+    // A sessiond-hosted pane has no tmux paste target: the tmux path below
+    // cannot address it (reaching it once bounced hive_send with a false
+    // "mismatched SessionLocator", and thrown from the flush loops it silently
+    // ate every queued delivery on every tick). #16's interim wire (#68) is the
+    // daemon→idle-sessiond input channel — one automation claim + INPUT_SUBMIT
+    // over the neutral viewer wire, marked `injected` only. When it is absent,
+    // or it declines (a human owns the arbiter, or the paste was not accepted),
+    // the honest outcome is unchanged: validate the locator and leave the
+    // message durably QUEUED for the stalled-message triage — never a fake
+    // locator error, never a fabricated `injected`/`applied`.
     if (recipient.sessionLocator?.hostKind === "sessiond") {
       requireSessiondAgentLocator(recipient);
-      return this.getStoredMessage(message.id);
+      if (this.sessiondInput === undefined) return this.getStoredMessage(message.id);
+      let receipt;
+      try {
+        receipt = await this.sessiondInput.injectIdle(
+          recipient,
+          this.formatAgentMessage(message),
+          { messageId: message.id },
+        );
+      } catch (error) {
+        console.error(
+          `Hive could not inject message ${message.id} into ${message.to}'s sessiond pane ` +
+            `(${error instanceof Error ? error.message : "unknown error"}); leaving it queued.`,
+        );
+        return this.getStoredMessage(message.id);
+      }
+      // A queued/accepted/written receipt means the host took the bytes; a
+      // declined claim (null) or a rejected/unknown receipt means it did not.
+      if (
+        receipt === null ||
+        receipt.stage === "rejected" ||
+        receipt.stage === "unknown"
+      ) {
+        return this.getStoredMessage(message.id);
+      }
+      return this.markInjected(message);
     }
     const text = this.formatAgentMessage(message);
     const boundaryBefore = this.turnBoundaryAt(message.to);
