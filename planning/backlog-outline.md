@@ -1,6 +1,6 @@
 # Hive rebuild — milestone-structured backlog outline
 
-**PLAN STATUS: FINALIZED 2026-07-17 — awaiting user approval. Execution of any story is NOT authorized until the user approves this plan.** All user decisions (Q1–Q7) are ratified and folded in below.
+**PLAN STATUS: RATIFIED 2026-07-20 — user approval granted.** Execution of the M1–M5 stories is authorized, and all prior execution in the window 2026-07-17 → 2026-07-20 is retroactively ratified. This approval is **dated and scoped to the plan revision current on `main` at `0b604f6e`** (the SHA this ratification branches from) — not to the document by name, per the outline's own standing note that the `PLAN STATUS: FINALIZED` header recorded a drafting state, never immunity from supersession. See the approval-package digest preamble ruling **P1** (`planning/2026-07-20-approval-package-digest.md`). All user decisions (Q1–Q7) are ratified and folded in below.
 
 Lead planner: astrid · drafted 2026-07-17 · board: github.com/users/scottdev1986/projects/11
 Reviewed by: atlas (sequencing guardrail + vendor belief-injection finding + full R3 second opinion folded in: P0-1 contract audit → new story M1-A0; P0-2 M1/M2 ownership boundary; P0-3 atomic cut; P0-4 old-build pre-cut drain; P1 behavioral scope; tightened dependency edges; 3-way approval matrix; Q2 revised to main-at-cut + bootstrap binary)
@@ -122,4 +122,4 @@ Q7 Grok third opinion: RESOLVED (user) — not needed; atlas's official-sourced 
 
 ## Plan lifecycle
 
-1. ~~Draft~~ → 2. ~~atlas R3 review adopted~~ → 3. ~~User decisions Q1–Q7 folded in~~ → 4. **NOW: finalized plan awaiting USER approval** → 5. Execution authorization (starts with M1 terminal-BUILD stories A0/A1/B1, never the removals) → 6. Removal Gate → atomic cut → 7. M2…M5 → 8. Release/activation END gate.
+1. ~~Draft~~ → 2. ~~atlas R3 review adopted~~ → 3. ~~User decisions Q1–Q7 folded in~~ → 4. ~~Finalized plan awaiting USER approval~~ → **User approval GRANTED 2026-07-20 (ruling P1), scoped to `main@0b604f6e`; prior execution 2026-07-17→2026-07-20 retroactively ratified** → 5. Execution authorization (starts with M1 terminal-BUILD stories A0/A1/B1, never the removals) → 6. Removal Gate → atomic cut → 7. M2…M5 → 8. Release/activation END gate.

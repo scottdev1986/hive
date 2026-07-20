@@ -1,0 +1,36 @@
+2026-07-20T20:09:46.979Z B2.2 live proof home: /tmp/hb22-225a
+2026-07-20T20:09:46.979Z transcript: /tmp/hb22-225a/b22-proof-transcript.log
+2026-07-20T20:09:46.979Z Workspace project: /Users/scottkellar/Projects/hive
+2026-07-20T20:09:47.181Z broker live (pid 5273) at /tmp/hb22-225a/runtime/sessiond/broker.sock
+2026-07-20T20:09:47.304Z daemon live in-process on port 43117
+2026-07-20T20:09:47.378Z agent row inserted: terminal → ses_019f8126-206f-7856-9b8b-cb84e974749f generation 1
+2026-07-20T20:09:47.706Z session created: hostPid=5321 provider=5328
+2026-07-20T20:09:47.706Z interactive login shell: /bin/zsh -l (cwd /Users/scottkellar/Projects/hive)
+2026-07-20T20:09:47.991Z captured live session tree before action: 5321,5328
+2026-07-20T20:09:47.991Z launch the Workspace now:
+  /Users/scottkellar/Projects/hive/workspace/.build/debug/HiveWorkspaceDev --project /Users/scottkellar/Projects/hive --port 43117 --instance-id 164ddb3b64 --instance-home /tmp/hb22-225a --hive /tmp/hb22-225a/hive-cli --orchestrator-session hive-b22-orch
+2026-07-20T20:09:47.993Z workspace app launched (pid 5563)
+2026-07-20T20:09:47.993Z proof descriptor written for opt-in live tests: /tmp/hb22-225a/b22-proof.json
+2026-07-20T20:09:47.993Z terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down
+2026-07-20T20:09:53.058Z visibility renewed until 2026-07-20T20:10:08.057Z
+2026-07-20T20:09:58.050Z visibility renewed until 2026-07-20T20:10:13.050Z
+2026-07-20T20:10:03.066Z visibility renewed until 2026-07-20T20:10:18.065Z
+2026-07-20T20:10:08.045Z visibility renewed until 2026-07-20T20:10:23.045Z
+2026-07-20T20:10:13.068Z visibility renewed until 2026-07-20T20:10:28.068Z
+2026-07-20T20:10:18.062Z visibility renewed until 2026-07-20T20:10:33.062Z
+2026-07-20T20:10:23.053Z visibility renewed until 2026-07-20T20:10:38.053Z
+2026-07-20T20:10:28.080Z visibility renewed until 2026-07-20T20:10:43.080Z
+2026-07-20T20:10:33.085Z visibility renewed until 2026-07-20T20:10:48.085Z
+2026-07-20T20:10:38.083Z visibility renewed until 2026-07-20T20:10:53.083Z
+2026-07-20T20:10:43.086Z visibility renewed until 2026-07-20T20:10:58.086Z
+2026-07-20T20:10:48.084Z visibility renewed until 2026-07-20T20:11:03.084Z
+2026-07-20T20:10:53.089Z visibility renewed until 2026-07-20T20:11:08.088Z
+2026-07-20T20:10:58.091Z visibility renewed until 2026-07-20T20:11:13.090Z
+2026-07-20T20:11:03.092Z visibility renewed until 2026-07-20T20:11:18.092Z
+2026-07-20T20:11:08.091Z visibility renewed until 2026-07-20T20:11:23.091Z
+2026-07-20T20:11:13.094Z visibility renewed until 2026-07-20T20:11:28.093Z
+2026-07-20T20:11:18.087Z visibility renewed until 2026-07-20T20:11:33.086Z
+2026-07-20T20:11:23.098Z visibility renewed until 2026-07-20T20:11:38.097Z
+2026-07-20T20:11:28.533Z visibility renewal failed: SessiondWireError: sessiond VERIFICATION_UNKNOWN: verification_unknown
+2026-07-20T20:11:28.779Z shutting down (SIGTERM)
+2026-07-20T20:11:28.815Z daemon stopped; session torn down

@@ -2,7 +2,7 @@
 
 Milestone: M1, track B. Board item PVTI_lAHOBUNSMM4BdtCrzgzO08U.
 Contract semantics from atlas's B1 pre-review (2026-07-17), adopted in full.
-Status: fully specified; execution awaits user plan approval.
+Status: fully specified. Execution RATIFIED — user approval granted 2026-07-20 (backlog-outline.md ratified header + digest preamble ruling P1), scoped to `main@0b604f6e`; prior execution 2026-07-17→2026-07-20 retroactively ratified.
 
 ## Framing (what B1 may NOT assume)
 

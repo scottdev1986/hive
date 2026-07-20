@@ -1,0 +1,17 @@
+2026-07-20T20:12:19.072Z B2.2 live proof home: /tmp/hb22-a277
+2026-07-20T20:12:19.072Z transcript: /tmp/hb22-a277/b22-proof-transcript.log
+2026-07-20T20:12:19.072Z Workspace project: /Users/scottkellar/Projects/hive
+2026-07-20T20:12:19.174Z broker live (pid 9450) at /tmp/hb22-a277/runtime/sessiond/broker.sock
+2026-07-20T20:12:19.264Z daemon live in-process on port 43117
+2026-07-20T20:12:19.338Z agent row inserted: terminal → ses_019f8128-7208-7572-adbd-b8c4731f170e generation 1
+2026-07-20T20:12:19.532Z session created: hostPid=9484 provider=9491
+2026-07-20T20:12:19.532Z interactive login shell: /bin/zsh -l (cwd /Users/scottkellar/Projects/hive)
+2026-07-20T20:12:19.818Z captured live session tree before action: 9484,9491
+2026-07-20T20:12:19.818Z launch the Workspace now:
+  /Users/scottkellar/Projects/hive/workspace/.build/debug/HiveWorkspaceDev --project /Users/scottkellar/Projects/hive --port 43117 --instance-id 54e497ee1f --instance-home /tmp/hb22-a277 --hive /tmp/hb22-a277/hive-cli --orchestrator-session hive-b22-orch
+2026-07-20T20:12:19.819Z workspace app launched (pid 9684)
+2026-07-20T20:12:19.819Z proof descriptor written for opt-in live tests: /tmp/hb22-a277/b22-proof.json
+2026-07-20T20:12:19.819Z terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down
+2026-07-20T20:12:24.874Z visibility renewed until 2026-07-20T20:12:39.873Z
+2026-07-20T20:12:27.401Z shutting down (SIGTERM)
+2026-07-20T20:12:27.430Z daemon stopped; session torn down
