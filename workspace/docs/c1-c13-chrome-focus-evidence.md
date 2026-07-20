@@ -32,10 +32,83 @@ actually **located the pane background by `$0 is NSVisualEffectView`** — it
 encoded the defect in its locator, so it could never have caught it.
 
 **Fix:** `PaneBackgroundView` (new, `Sources/HiveWorkspace/PaneBackgroundView.swift`)
-— a plain opaque `NSView` filling with the semantic `controlBackgroundColor`,
-repainting on `viewDidChangeEffectiveAppearance` (the same pattern
-`PaneFocusRingView` already uses). The pre-existing test's locator was updated
-to `PaneBackgroundView`; its intent and every assertion are unchanged.
+— a plain opaque `NSView` filling with the semantic `controlBackgroundColor`.
+The pre-existing test's locator was updated to `PaneBackgroundView`; its intent
+and every assertion are unchanged.
+
+### The natural positive control — the check RED on the real pre-fix tree
+
+The strongest evidence that this check is real is that it fails against the
+actual shipped defect, at the actual commit, in a pristine checkout — not
+against a defect invented to be caught.
+
+```
+commit:  eccf2c58c8f7f1501be1f3ef54ee8a9c3cbf93ad
+tree:    pristine, via `git worktree add --detach`
+         PaneView.swift:12 reads `private let backgroundView = NSVisualEffectView()`
+command: cd workspace && swift test --filter C13NaturalControlTests
+```
+
+```
+C13NaturalControlTests.swift:44: error: -[...testTerminalContentHasNoVibrancyEnabledAncestor] :
+  XCTAssertTrue failed - Terminal content descends from a vibrancy-enabled view:
+  NSVisualEffectView (NSVisualEffectView).
+Test Case '-[...testTerminalContentHasNoVibrancyEnabledAncestor]' failed (0.406 seconds).
+Test Case '-[...testWalkSeesAPlantedVisualEffectView]'            passed (0.000 seconds).
+REAL_EXIT=1
+```
+
+The second line is what makes the first a *finding*: the walk's own instrument
+control passes on that same tree, so the failure is a real detection and not a
+broken traversal. Full record and the exact test source (which references
+nothing C1.3 adds, so it compiles on unmodified main):
+
+```
+workspace/docs/evidence/c13-natural-control-prefix-main.txt
+workspace/docs/evidence/c13-natural-control-test.swift.txt
+```
+
+The **synthetic** control — planting an `NSVisualEffectView` post-fix — is
+`testVibrancyCheckDetectsAPlantedVisualEffectView`, and mutation case
+`replant-visual-effect-background` re-creates the historical defect in place.
+Three independent ways of showing the check is not vacuous.
+
+### Behavioral fallout from dropping NSVisualEffectView
+
+`NSVisualEffectView` is not only a look: its material re-resolves automatically
+across light and dark. Pane chrome may have been riding that rather than owning
+it, so the replacement had to be **shown** to preserve what mattered, not
+assumed to.
+
+`testPaneBackgroundStillRespondsToAppearanceAfterDroppingVibrancy` renders the
+background under `.aqua` and `.darkAqua` and samples it:
+
+| Appearance | Center luminance |
+|---|---|
+| `.aqua` (light) | `1.0` |
+| `.darkAqua` (dark) | `0.11863740533590317` |
+
+The semantic `controlBackgroundColor` re-resolves, so the automatic response is
+preserved by a different mechanism rather than silently lost. Mutation case
+`hardcode-the-background-color` proves this check bites: swapping the semantic
+fill for `NSColor.white` turns it RED.
+
+**A finding against my own code, kept visible rather than tidied away.** I first
+also added an explicit `viewDidChangeEffectiveAppearance` override to schedule
+the repaint, plus a test for it. Mutation case
+`stop-repainting-on-appearance-change` came back **GREEN** — neutering the
+override changed nothing. A direct probe confirmed why: AppKit's own
+`super.viewDidChangeEffectiveAppearance()` already invalidates the view.
+
+```
+after super-only call, needsDisplay = true
+```
+
+The override was dead code and its test was decoration, so **the override, the
+test, and the mutation case were all removed**. This is recorded rather than
+quietly dropped because it is exactly what the mutation proof exists to find.
+(`PaneFocusRingView` carries the same likely-redundant pattern. It is
+pre-existing and was left alone — flagged, not touched.)
 
 ---
 
@@ -76,6 +149,13 @@ deadlock). The Swift suite is `cd workspace && swift test`.
 ---
 
 ## 3. The overlay-vs-sublayer hazard, demonstrated failing
+
+> **This proof is not the fix.** The overlay fix already landed, before this
+> increment: `PaneFocusRingView` and `PaneStatusBorderView` are sibling
+> overlays, hit-test transparent, and there are **zero** `addSublayer` calls in
+> `workspace/Sources/`. `PaneFocusRingView.swift:8-11` documents the original
+> bug in-source. C1.3's job on this hazard is to *prove* the rule that fix
+> encodes. Do not read what follows as introducing the pattern.
 
 Repo law says AppKit paints a view's own layer and its sublayers *beneath* the
 layers of that view's subviews, so a dimming `CALayer` sublayer under an opaque
@@ -169,42 +249,64 @@ run.
 
 ## 5. Test counts and the suite
 
-**Executed count equals the source-derived count.** Source says 8:
+**Executed count equals the source-derived count.** Source says 9:
 
 ```
-grep -cE '^    func test[A-Za-z]' workspace/Tests/HiveWorkspaceTests/C13PaneChromeTests.swift   # -> 8
+grep -cE '^    func test[A-Za-z]' workspace/Tests/HiveWorkspaceTests/C13PaneChromeTests.swift   # -> 9
+grep -cE '^Test Case .*C13PaneChromeTests.* (passed|failed)' <log>                             # -> 9
 ```
 
 The extractor is itself sanity-bounded (aborts outside 4…40) because a failed
-`rg`/`grep` once printed help text that parsed as a 124-name list. Executed:
+`rg`/`grep` once printed help text that parsed as a 124-name list.
 
-```
-grep -cE '^Test Case .*C13PaneChromeTests.* (passed|failed)' <log>   # -> 8
-```
-
-**Full suite, this branch:** `503 passed, 9 failed, REAL_EXIT=1`.
+**Full suite, this branch:** `512 passed, 2 failed, REAL_EXIT=1`.
 **Baseline, unmodified main in this same worktree:** `495 passed, 9 failed, REAL_EXIT=1`.
 
-503 = 495 + 8 new tests. The failure *sets* are identical — verified by set
-difference, not by count:
+### The environment changed mid-increment — read these numbers carefully
+
+The two runs are **not** directly comparable, and the difference is not
+attributable to this branch. The baseline ran while the GUI session was locked;
+by the final run the session had become available, so seven real-surface tests
+that were red under lock now pass. This is an environment change, not a fix
+delivered here — no line in this branch touches them.
+
+Reconciled exactly, by name-set difference rather than by count:
 
 ```
-comm -13 <sorted baseline failures> <sorted branch failures>   # empty
+baseline unique test cases: 504      final unique test cases: 514
+executed now but not at baseline:  9 C13 tests
+                                 + 1 pre-existing, GhosttyBridgeLinkTests
+                                     testSurfaceStronglyRetainsHostViewAndCallbackContext
+                                     (needs a real surface; could not run under lock)
+executed at baseline but not now:  none
 ```
 
-The 9 pre-existing failures are all real-GUI-surface tests, red in a locked
-agent shell and red identically on unmodified main:
+504 + 9 + 1 = 514. Nothing disappeared.
+
+Now-passing, previously red under lock (**not** this branch's doing):
+
+```
+HiveTerminalKitTests.Gate7RenderingTests       testBackingDisplayAndOcclusionChangesReachRealSurface
+HiveTerminalKitTests.Gate7RenderingTests       testProductionViewHostsPinnedGhosttyIOSurfaceLayer
+HiveTerminalKitTests.Gate7RenderingTests       testRealOutputProducesGPUBackedLayerContents
+HiveTerminalKitTests.Gate7RenderingTests       testRealViewAndRendererOwnerReleaseWithoutExplicitClose
+HiveTerminalKitTests.Gate7RenderingTests       testResizeUsesGhosttyReportedCellGeometryExactly
+HiveTerminalKitTests.Gate7RenderingTests       testRuntimeHealthActionTargetsOnlyItsRealSurface
+HiveWorkspaceTests.SessiondPaneInputFocusTests testFocusedSessiondPaneRoutesRealKeyEventThroughClaimAndOutput
+```
+
+Still failing, in the baseline set both times, unrelated to this branch:
 
 ```
 HiveTerminalKitTests.B20EngineContractTests  testProductionViewSuppressesRepliesAndPresentsOrderedNeutralReplay
 HiveTerminalKitTests.B24ViewerSemanticsTests testConfiguredHistoryPrunesOldestRowsButKeepsRecentRowsSearchable
-HiveTerminalKitTests.Gate7RenderingTests     testBackingDisplayAndOcclusionChangesReachRealSurface
-HiveTerminalKitTests.Gate7RenderingTests     testProductionViewHostsPinnedGhosttyIOSurfaceLayer
-HiveTerminalKitTests.Gate7RenderingTests     testRealOutputProducesGPUBackedLayerContents
-HiveTerminalKitTests.Gate7RenderingTests     testRealViewAndRendererOwnerReleaseWithoutExplicitClose
-HiveTerminalKitTests.Gate7RenderingTests     testResizeUsesGhosttyReportedCellGeometryExactly
-HiveTerminalKitTests.Gate7RenderingTests     testRuntimeHealthActionTargetsOnlyItsRealSurface
-HiveWorkspaceTests.SessiondPaneInputFocusTests testFocusedSessiondPaneRoutesRealKeyEventThroughClaimAndOutput
+```
+
+**Regressions introduced by this branch: none**, verified by set difference
+against the baseline failure set, not by comparing counts:
+
+```
+comm -13 <sorted baseline failures> <sorted branch failures>   # empty
 ```
 
 **One regression was caused and fixed during this increment**, recorded rather
