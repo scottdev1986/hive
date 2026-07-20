@@ -2,11 +2,17 @@
 # installed hive and its running instances.
 #
 #   make build                  build + stage the standalone dev release under .dev/
+#   make run                    run the staged dev build (defaults to .dev/project)
 #   make demo                   build fresh terminal artifacts + launch watched proof
 #   make terminal               build fresh artifacts + launch a real login shell
-#   make run PROJECT=/path      run the staged dev build against a separate test repo
 #   make test                   bun suites + sessiond (Zig) + Workspace (Swift)
 #   make cleanup                stop the dev instance and delete all dev artifacts
+#
+# `make build && make run` is the developer flow: it builds every artifact the
+# dev release needs (pinned Zig, GhosttyKit, ReleaseFast sessiond, the CLI and
+# the Workspace app) and launches the staged Workspace. Its terminal panes stay
+# blank for now: nothing in the shipped stack starts the sessiond broker yet, so
+# `make terminal` remains the entrypoint for a live M1 typeable terminal.
 #
 # Isolation: every rendezvous name (tmux socket/sessions, sessiond broker,
 # daemon port/pid, sqlite db, project registry) derives from HIVE_HOME, which
@@ -22,6 +28,7 @@ ROOT := $(CURDIR)
 DEV := $(ROOT)/.dev
 DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
+DEV_PROJECT := $(DEV)/project
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
 LOCK := $(ROOT)/native/toolchain-lock.json
@@ -120,13 +127,13 @@ DEV_ENV := \
 
 help:
 	@echo "make build                 build + stage the standalone dev release (.dev/)"
+	@echo "make run [PROJECT=/path]   run the dev build (defaults to the .dev/project scratch repo)"
 	@echo "make demo                  build fresh artifacts + launch watched typeable proof"
-	@echo "make terminal              build fresh artifacts + launch a real typeable login shell"
+	@echo "make terminal              build fresh artifacts + launch a real typeable login shell (live M1 terminal)"
 	@echo "make demo-artifacts        build only the proof's Ghostty/Swift/sessiond artifacts"
 	@echo "make native                build + stage the ReleaseFast sessiond proof binary"
 	@echo "make ghostty               build + stage the lock-pinned GhosttyKit"
 	@echo "make workspace             build the Workspace Swift executable"
-	@echo "make run PROJECT=/path     run the dev build against a separate test repo"
 	@echo "make test                  run all suites (bun, sessiond/Zig, Workspace/Swift)"
 	@echo "make test-e2e              opt-in real-CLI e2e suite (needs tmux on PATH)"
 	@echo "make cleanup               stop the dev instance, delete all dev artifacts"
@@ -231,7 +238,7 @@ terminal: demo-preflight demo-artifacts
 # Same pipeline the real installer consumes (src/release/build.ts), unsigned
 # because no Developer ID is in the environment, then staged in the exact
 # versions/<v> + current layout install.sh produces.
-build: toolchain ghosttykit
+build: toolchain ghosttykit sessiond
 	bun install --frozen-lockfile
 	bun run src/release/build.ts --version $(DEV_VERSION) \
 	  --commit $$(git rev-parse --short HEAD) --out "$(DIST)"
@@ -242,17 +249,28 @@ build: toolchain ghosttykit
 	ln -shf "versions/$(DEV_VERSION)" "$(INSTALL_ROOT)/current"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
 
-# PROJECT is mandatory and must be a git repo OUTSIDE this checkout, so the
-# dev Workspace always opens in the test repo, never in the hive repo.
+# With no PROJECT, the dev Workspace opens a scratch git repo inside the dev
+# sandbox, created on demand and deleted by make clean along with the rest of
+# .dev. An explicit PROJECT must be a git repo OUTSIDE this checkout, so the
+# dev Workspace never opens the hive repo itself.
 run:
-	@[ -n "$(PROJECT)" ] || { \
-	  echo "usage: make run PROJECT=/path/to/test-repo (e.g. ~/Projects/hive-test-project)" >&2; exit 2; }
 	@set -e; \
-	proj=$$(cd "$(PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(PROJECT)" >&2; exit 2; }; \
-	case "$$proj/" in "$(ROOT)/"*) \
-	  echo "refusing: PROJECT is the hive repo (or inside it); point at a separate test repo" >&2; exit 2;; esac; \
-	[ -d "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	[ -x "$(HIVE_BIN)" ] || { echo "no dev build staged; run 'make build' first" >&2; exit 2; }; \
+	if [ -n "$(PROJECT)" ]; then \
+	  proj=$$(cd "$(PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(PROJECT)" >&2; exit 2; }; \
+	  case "$$proj/" in "$(ROOT)/"*) \
+	    echo "refusing: PROJECT is the hive repo (or inside it); point at a separate test repo" >&2; exit 2;; esac; \
+	  [ -d "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
+	else \
+	  mkdir -p "$(DEV_PROJECT)"; \
+	  proj=$$(cd "$(DEV_PROJECT)" && pwd -P); \
+	  if [ ! -d "$$proj/.git" ]; then \
+	    echo "creating dev scratch project $$proj"; \
+	    git init -q "$$proj"; \
+	    git -C "$$proj" -c user.name=hive -c user.email=dev@hive.local \
+	      commit -q --allow-empty -m "dev scratch project"; \
+	  fi; \
+	fi; \
 	mkdir -p "$(DEV)/home" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
 	cd "$$proj" && env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify && exec env $(DEV_ENV) "$(HIVE_BIN)"
 

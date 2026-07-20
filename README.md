@@ -133,6 +133,24 @@ bun test
 bun run typecheck
 ```
 
+To build and run the development program itself:
+
+```sh
+make build   # pinned Zig, GhosttyKit, sessiond, the CLI and the Workspace app
+make run     # launch the staged dev Workspace against a scratch repo
+```
+
+`make build` stages a consumer-shaped, unsigned release under `.dev/`, and
+`make run` launches it fully isolated from any installed hive — every
+rendezvous name derives from `.dev/home`. Pass `PROJECT=/path/to/repo` to open
+a specific git repo instead of the `.dev/project` scratch repo; `make clean`
+stops the dev instance and removes all of it.
+
+Terminal panes in that build stay blank for now: nothing in the shipped stack
+starts the sessiond broker yet. Use `make terminal` for a live, typeable M1
+terminal — it builds the same artifacts and launches a real login shell
+through the broker. Both need an unlocked Aqua GUI session.
+
 Issues and focused pull requests are welcome.
 
 ## License
