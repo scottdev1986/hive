@@ -216,8 +216,13 @@ public final class AttachReplayClient {
             "claimToken": token,
             "kind": "cancel",
         ]
-        try? sendJSON(.claimRelease, object: payload, requestId: nextRequestId)
-        nextRequestId += 1
+        do {
+            try sendJSON(.claimRelease, object: payload, requestId: nextRequestId)
+            nextRequestId += 1
+            NSLog("hive claim: release cancel token=%@ viewer=%@", token, viewerId)
+        } catch {
+            NSLog("hive claim: release send failed viewer=%@ error=%@", viewerId, "\(error)")
+        }
         activeClaimToken = nil
         claimRequestId = nil
         claimPresentation = .free
@@ -472,6 +477,7 @@ public final class AttachReplayClient {
                let token = claim["token"] as? String {
                 activeClaimToken = token
                 claimPresentation = .humanOwned(viewerId: viewerId, claimId: token)
+                NSLog("hive claim: granted token=%@ viewer=%@", token, viewerId)
                 let batches = pendingInputBatches
                 pendingInputBatches.removeAll()
                 for batch in batches where batch.binding == binding {
@@ -481,18 +487,20 @@ public final class AttachReplayClient {
                 activeClaimToken = nil
                 pendingInputBatches.removeAll()
                 claimPresentation = .free
+                let diagnostic = result["diagnostic"] as? String ?? "human input is owned elsewhere"
+                NSLog("hive claim: denied viewer=%@ diagnostic=%@", viewerId, diagnostic)
                 refuseInput(
                     code: "CLAIM_DENIED",
-                    evidence: result["diagnostic"] as? String ?? "human input is owned elsewhere"
+                    evidence: diagnostic
                 )
             } else {
                 activeClaimToken = nil
                 pendingInputBatches.removeAll()
                 claimPresentation = .free
                 inputFenced = true
-                setInputSubmissionState(.unknown(
-                    evidence: result["diagnostic"] as? String ?? "human input claim is unknown"
-                ))
+                let diagnostic = result["diagnostic"] as? String ?? "human input claim is unknown"
+                NSLog("hive claim: unknown viewer=%@ diagnostic=%@", viewerId, diagnostic)
+                setInputSubmissionState(.unknown(evidence: diagnostic))
             }
             return .continueReplay
 

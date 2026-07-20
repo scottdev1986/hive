@@ -151,6 +151,50 @@ final class AttachInputTests: XCTestCase {
         XCTAssertEqual(view.inputSubmissionState, .idle)
     }
 
+    func testReleaseClaimBestEffortSendsCancelClaimRelease() throws {
+        let host = FakeHost(connectionId: "input-release")
+        let engine = FakeManualSurface()
+        let view = try attachView(host: host, engine: engine)
+        let binding = try XCTUnwrap(view.binding)
+
+        view.insertText("x", replacementRange: NSRange(location: NSNotFound, length: 0), associatedEvent: nil)
+        drainMainQueue()
+        try host.harvestViewerFrames()
+        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        let claimResult = try FrameCodec.jsonPayload([
+            "schemaVersion": 1,
+            "result": [
+                "state": "granted",
+                "claim": [
+                    "token": "claim-to-release",
+                    "writer": "input-viewer",
+                    "kind": "human",
+                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
+                ],
+            ],
+        ])
+        view.pumpHostFrame(
+            WireFrame(
+                type: .claimResult,
+                flags: [.response, .final],
+                requestId: claim.requestId,
+                payload: claimResult
+            ),
+            frameBinding: binding
+        )
+        XCTAssertEqual(view.claimPresentation, .humanOwned(viewerId: "input-viewer", claimId: "claim-to-release"))
+
+        view.releaseClaimBestEffort()
+        try host.harvestViewerFrames()
+        let release = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimRelease })
+        let object = try FrameCodec.parseJSONObject(release.payload)
+        XCTAssertEqual(object["claimToken"] as? String, "claim-to-release")
+        XCTAssertEqual(object["kind"] as? String, "cancel")
+        let session = try XCTUnwrap(object["session"] as? [String: Any])
+        XCTAssertEqual(session["key"] as? String, binding.locator.sessionId)
+        XCTAssertEqual(view.claimPresentation, .free)
+    }
+
     func testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames() throws {
         let host = FakeHost(connectionId: "input-oversize")
         let engine = FakeManualSurface()
