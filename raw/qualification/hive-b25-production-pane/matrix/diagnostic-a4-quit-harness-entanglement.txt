@@ -1,0 +1,46 @@
+B2.5 A4 app-quit negative evidence — b22 in-process-daemon entanglement
+Ruling applied: queen message delivered 2026-07-20T06:54:30.184Z.
+
+Why these runs are negative evidence
+
+The B2.2 live harness is real for sessiond host, locator, journal, and process
+tree behavior, but its Bun driver process also owns the daemon. A Workspace
+child cannot faithfully exercise the production daemon-self-owned quit
+handshake against that topology. Two distinct approaches measured the limit.
+
+Attempt 1 — NSApp.terminate only
+
+home=/tmp/hb25-z126 port=43147
+session=ses_019f7e3b-a40a-7565-a312-af359b77d4ab generation=1
+captured tree=19812,19816,19821,19858
+Workspace result:
+  A4 QUIT READY: agent=aria instance=45c78ed6ee session=ses_019f7e3b-a40a-7565-a312-af359b77d4ab generation=1 feedStatus=working rendererHighWater=unavailable
+  A4 QUIT REQUESTED FROM REAL WORKSPACE
+Observed:
+  2026-07-20T06:35:01.365Z visibility renewal failed: VERIFICATION_UNKNOWN
+  2026-07-20T06:35:11.387Z visibility renewal failed: NOT_FOUND
+  Workspace remained alive and the harness daemon remained alive; the host
+  directory had no final.json. An external `hive stop` was required before the
+  driver finally recorded shutdown at 2026-07-20T06:36:32.386Z.
+
+Attempt 2 — performClose followed by NSApp.terminate
+
+home=/tmp/hb25-z127 port=43148
+session=ses_019f7e3e-7b82-7004-8d2a-1cfaca7c9c90 generation=1
+captured tree=21505,21509,21514,21547
+Workspace result:
+  A4 QUIT READY: agent=aria instance=3ca906d5f0 session=ses_019f7e3e-7b82-7004-8d2a-1cfaca7c9c90 generation=1 feedStatus=working rendererHighWater=unavailable
+  A4 QUIT REQUESTED FROM REAL WORKSPACE
+Observed:
+  Workspace exited and the provider processes disappeared, but the sessiond
+  host was left as a zombie, no final.json was written, and the driver-owned
+  daemon/broker remained until manual SIGINT at 2026-07-20T06:40:32.473Z.
+
+Disposition
+
+These attempts MUST NOT satisfy the faithful app-quit row. Interim evidence is
+the separately GREEN live sentinel `hive stop`, p14 production Workspace/vendor
+lifecycle, and AppDelegate wait/refusal XCTest. The faithful app-quit run waits
+for the unlocked, daemon-self-owned production stack and will require final.json
+state=terminated, survivors=[], captured-tree absence, and designed daemon/
+broker behavior.

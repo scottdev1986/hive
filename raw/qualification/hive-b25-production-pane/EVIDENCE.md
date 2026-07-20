@@ -9,7 +9,7 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Production wiring substrate (daemon-owned broker + visibility + handshake under short home @43140) | GREEN (substrate) | matrix/production-wiring.txt |
 | Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | OPEN | matrix/production-wiring-pane.txt |
 | A4 exact per-pane close | GREEN | matrix/a4-exact-close.txt |
-| A4 concurrent quit + process-tree | GREEN (composed per queen ruling) | matrix/a4-quit.txt |
+| A4 concurrent quit + process-tree | COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK | matrix/a4-quit.txt; matrix/diagnostic-a4-quit-harness-entanglement.txt |
 | A4 non-Hive project | GREEN | matrix/a4-non-hive-project.txt |
 | A4 restart/reconnect/replay | GREEN | matrix/a4-reconnect-replay.txt |
 | 100 MiB pane ordered-output | OPEN | matrix/stress-100mib-pane.txt |
@@ -26,4 +26,5 @@ See `provenance.txt` and `evidence-sha256.txt` after first GREEN cell.
 The quit row composes three independently measured clauses: p14's real
 production Workspace/vendor lifecycle, the live sentinel provider-tree stop,
 and AppDelegate's wait-for-success / refuse-on-survivor tests. Vendor identity
-is required by row K, not by A4 lifecycle attribution.
+is required by row K, not by A4 lifecycle attribution. A faithful app-quit run
+on the daemon-self-owned production stack remains in the unlock batch.

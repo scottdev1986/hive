@@ -1,6 +1,7 @@
 {
   "cell": "a4-quit",
-  "ok": true,
+  "ok": false,
+  "status": "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK",
   "head": "82d63f920d4e33eae79d162643bca4f87c6bdcf8",
   "startedAt": "2026-07-20T06:50:15.809Z",
   "home": "/tmp/hb25-q72cf",
@@ -49,6 +50,11 @@
     "productionWorkspaceVendor": "matrix/diagnostic-p14-locked-screen-crop.txt",
     "lifecycleRequestAndRefusal": "/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/hive-b25-production-pane/matrix/a4-lifecycle-xctest.txt",
     "liveSentinelStop": "this manifest"
+  },
+  "faithfulPending": {
+    "requiresUnlockedProductionStack": true,
+    "diagnostic": "matrix/diagnostic-a4-quit-harness-entanglement.txt",
+    "reason": "b22 driver hosts the daemon in-process, so its app-quit path cannot measure the daemon-self-owned production shutdown handshake"
   },
   "mutation": {
     "xctest": "/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/hive-b25-production-pane/matrix/a4-lifecycle-xctest.txt",

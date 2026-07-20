@@ -9,4 +9,6 @@ Stopped the Hive daemon and its sessions.
 2026-07-20T06:50:42.143Z COMPOSED Workspace quit request/wait + failure refusal: /Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/hive-b25-production-pane/matrix/a4-lifecycle-xctest.txt
 2026-07-20T06:50:42.143Z COMPOSED real production Workspace/vendor lifecycle: diagnostic-p14-locked-screen-crop.txt
 2026-07-20T06:50:42.143Z MUTATION VERIFIED termination-failure refusal cancels quit and surfaces the survivor
-2026-07-20T06:50:42.143Z RESULT: A4 concurrent quit + provider-tree teardown GREEN
+2026-07-20T06:50:42.143Z INTERIM RESULT: live stop/tree teardown GREEN; Workspace request/wait behavior GREEN by composition
+2026-07-20T06:54:30.184Z NEGATIVE EVIDENCE: the in-process b22 driver cannot faithfully drive app quit; see diagnostic-a4-quit-harness-entanglement.txt
+2026-07-20T06:54:30.184Z RESULT: COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK on daemon-self-owned production stack
