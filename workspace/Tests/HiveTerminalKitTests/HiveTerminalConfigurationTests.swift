@@ -92,8 +92,8 @@ final class HiveTerminalConfigurationTests: XCTestCase {
         var operations: [(String, GhosttyOperationPhase)] = []
         surface.operationObserver = { operations.append(($0, $1)) }
 
-        surface.applyHiveConfiguration()
-        surface.applyHiveConfiguration()
+        XCTAssertTrue(surface.applyHiveConfiguration())
+        XCTAssertFalse(surface.applyHiveConfiguration())
 
         XCTAssertEqual(operations.map(\.0), ["surfaceUpdateConfig", "surfaceUpdateConfig"])
         XCTAssertEqual(operations.map(\.1), [.begin, .end])

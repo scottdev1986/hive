@@ -136,7 +136,8 @@ protocol ManualSurfaceEngine: AnyObject {
     func setSize(widthPx: UInt32, heightPx: UInt32)
     func setContentScale(x: Double, y: Double)
     func setColorScheme(_ scheme: TerminalColorScheme)
-    func applyHiveConfiguration()
+    @discardableResult
+    func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool
     func setDisplayID(_ displayID: UInt32)
     func setOcclusion(_ visible: Bool)
     func reportedSize() -> ManualSurfaceSize?
@@ -170,6 +171,13 @@ protocol ManualSurfaceEngine: AnyObject {
     func free()
 }
 
+extension ManualSurfaceEngine {
+    @discardableResult
+    func applyHiveConfiguration() -> Bool {
+        applyHiveConfiguration(theme: .hiveDark)
+    }
+}
+
 /// In-process fake for L1/L2 logic tests that do not need the real C boundary.
 final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapshotProviding {
     let callbackContext: BridgeCallbackContext
@@ -181,6 +189,7 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     private(set) var contentScaleCalls: [(Double, Double)] = []
     private(set) var colorSchemeCalls: [TerminalColorScheme] = []
     private(set) var hiveConfigurationApplyCount = 0
+    private(set) var hiveConfigurationTheme: HiveTerminalTheme?
     private(set) var displayIDCalls: [UInt32] = []
     private(set) var occlusionCalls: [Bool] = []
     var fakeReportedSize: ManualSurfaceSize?
@@ -260,9 +269,12 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     public func setSize(widthPx: UInt32, heightPx: UInt32) { sizeCalls.append((widthPx, heightPx)) }
     public func setContentScale(x: Double, y: Double) { contentScaleCalls.append((x, y)) }
     public func setColorScheme(_ scheme: TerminalColorScheme) { colorSchemeCalls.append(scheme) }
-    public func applyHiveConfiguration() {
-        guard hiveConfigurationApplyCount == 0 else { return }
-        hiveConfigurationApplyCount = 1
+    @discardableResult
+    public func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool {
+        guard hiveConfigurationTheme != theme else { return false }
+        hiveConfigurationTheme = theme
+        hiveConfigurationApplyCount += 1
+        return true
     }
     public func setDisplayID(_ displayID: UInt32) { displayIDCalls.append(displayID) }
     public func setOcclusion(_ visible: Bool) { occlusionCalls.append(visible) }
@@ -368,7 +380,8 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     private var rawThroughSeq: UInt64 = 0
     private var rawSurfaceHandle: ghostty_surface_t?
     private let clipboardContext: GhosttyClipboardContext
-    private var hiveConfigurationApplied = false
+    private var hiveConfigurationContents: String?
+    private let hiveConfigurationHeadless: Bool
 
     var throughSeq: UInt64 {
         performOnMainSync { self.rawThroughSeq }
@@ -408,7 +421,8 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         callbackContext: BridgeCallbackContext,
         hostView: NSView? = nil,
         appOwner: GhosttyAppOwner? = nil,
-        ownsSurface: Bool = true
+        ownsSurface: Bool = true,
+        hiveConfigurationHeadless: Bool = false
     ) {
         self.init(
             surface: surface,
@@ -416,7 +430,8 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
             clipboardContext: GhosttyClipboardContext(),
             hostView: hostView,
             appOwner: appOwner,
-            ownsSurface: ownsSurface
+            ownsSurface: ownsSurface,
+            hiveConfigurationHeadless: hiveConfigurationHeadless
         )
     }
 
@@ -426,7 +441,8 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         clipboardContext: GhosttyClipboardContext,
         hostView: NSView? = nil,
         appOwner: GhosttyAppOwner? = nil,
-        ownsSurface: Bool = true
+        ownsSurface: Bool = true,
+        hiveConfigurationHeadless: Bool = false
     ) {
         precondition(Thread.isMainThread, "Ghostty surface wrappers must be created on the main thread")
         self.rawSurfaceHandle = surface
@@ -435,6 +451,7 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         self.hostView = hostView
         self.appOwner = appOwner
         self.ownsSurface = ownsSurface
+        self.hiveConfigurationHeadless = hiveConfigurationHeadless
     }
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
@@ -498,19 +515,28 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         )
     }
 
-    public func applyHiveConfiguration() {
+    @discardableResult
+    public func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
-        guard !hiveConfigurationApplied,
+        let contents = HiveTerminalConfiguration.contents(
+            theme: theme,
+            headless: hiveConfigurationHeadless
+        )
+        guard hiveConfigurationContents != contents,
               let surface = rawSurfaceHandle,
-              let config = appOwner?.config else { return }
+              let config = try? GhosttyBridgeFactory.makeExplicitConfiguration(contents: contents)
+        else { return false }
+        defer { ghostty_config_free(config) }
         operationObserver?("surfaceUpdateConfig", .begin)
         ghostty_surface_update_config(surface, config)
-        hiveConfigurationApplied = true
+        hiveConfigurationContents = contents
         operationObserver?("surfaceUpdateConfig", .end)
         NSLog(
-            "ghostty_surface_update_config live C1 %@",
-            HiveTerminalConfiguration.liveLogFingerprint
+            "ghostty_surface_update_config live C1 %@ theme=%@",
+            HiveTerminalConfiguration.liveLogFingerprint,
+            theme.identifier
         )
+        return true
     }
 
     public func setDisplayID(_ displayID: UInt32) {
@@ -1322,7 +1348,8 @@ enum GhosttyBridgeFactory {
         heightPx: UInt32,
         terminalReplies: GhosttyTerminalReplyPolicy,
         configPolicyPath: UnsafePointer<CChar>,
-        clipboardContext: GhosttyClipboardContext = GhosttyClipboardContext()
+        clipboardContext: GhosttyClipboardContext = GhosttyClipboardContext(),
+        hiveConfigurationHeadless: Bool = false
     ) throws -> GhosttyManualSurface {
         dispatchPrecondition(condition: .onQueue(.main))
 
@@ -1399,7 +1426,8 @@ enum GhosttyBridgeFactory {
             clipboardContext: clipboardContext,
             hostView: hostView,
             appOwner: owner,
-            ownsSurface: true
+            ownsSurface: true,
+            hiveConfigurationHeadless: hiveConfigurationHeadless
         )
         clipboardContext.bind(surface: manualSurface)
         return manualSurface
@@ -1429,7 +1457,8 @@ enum GhosttyBridgeFactory {
                     widthPx: widthPx,
                     heightPx: heightPx,
                     terminalReplies: terminalReplies,
-                    configPolicyPath: configPath
+                    configPolicyPath: configPath,
+                    hiveConfigurationHeadless: true
                 )
             }
         }
@@ -1451,7 +1480,8 @@ enum GhosttyBridgeFactory {
                     heightPx: heightPx,
                     terminalReplies: terminalReplies,
                     configPolicyPath: configPath,
-                    clipboardContext: clipboardContext
+                    clipboardContext: clipboardContext,
+                    hiveConfigurationHeadless: true
                 )
             }
         }
@@ -1476,10 +1506,29 @@ enum GhosttyBridgeFactory {
                     heightPx: 480,
                     terminalReplies: .disabled,
                     configPolicyPath: configPath,
-                    clipboardContext: clipboardContext
+                    clipboardContext: clipboardContext,
+                    hiveConfigurationHeadless: true
                 )
             }
         }
+    }
+
+    static func makeExplicitConfiguration(contents: String) throws -> ghostty_config_t {
+        dispatchPrecondition(condition: .onQueue(.main))
+        let configURL = FileManager.default.temporaryDirectory
+            .appendingPathComponent("hive-ghostty-live-theme-\(UUID().uuidString).conf")
+        try Data(contents.utf8).write(to: configURL, options: .atomic)
+        defer { try? FileManager.default.removeItem(at: configURL) }
+
+        guard let config = ghostty_config_new() else { throw FactoryError.configFailed }
+        configURL.path.withCString { ghostty_config_load_file(config, $0) }
+        ghostty_config_finalize(config)
+        let diagnosticCount = ghostty_config_diagnostics_count(config)
+        guard diagnosticCount == 0 else {
+            ghostty_config_free(config)
+            throw FactoryError.invalidConfig(diagnosticCount)
+        }
+        return config
     }
 }
 

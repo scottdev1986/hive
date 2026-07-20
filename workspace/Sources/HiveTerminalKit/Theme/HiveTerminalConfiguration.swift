@@ -1,5 +1,41 @@
 import Foundation
 
+struct HiveTerminalTheme: Equatable, Sendable {
+    let identifier: String
+    let configurationLines: [String]
+
+    static let hiveDark = HiveTerminalTheme(
+        identifier: "hive-dark",
+        configurationLines: [
+            "# Hive C1 dark theme. Colors are inline; no user theme lookup occurs.",
+            "background = 0f1117",
+            "foreground = e6eaf2",
+            "palette = 0=626b7e",
+            "palette = 1=ff6b7a",
+            "palette = 2=75d39a",
+            "palette = 3=e6c978",
+            "palette = 4=7aa9ff",
+            "palette = 5=c89bff",
+            "palette = 6=67d9e8",
+            "palette = 7=dde3ec",
+            "palette = 8=8d95a7",
+            "palette = 9=ff8894",
+            "palette = 10=8be3ab",
+            "palette = 11=f0d98b",
+            "palette = 12=96bbff",
+            "palette = 13=d8b6ff",
+            "palette = 14=82e3ee",
+            "palette = 15=f8fafd",
+            "palette-generate = false",
+            "bold-color = bright",
+            "cursor-color = cell-foreground",
+            "cursor-text = cell-background",
+            "selection-background = cell-foreground",
+            "selection-foreground = cell-background",
+        ]
+    )
+}
+
 /// The generated Ghostty configuration for Hive-owned terminal surfaces.
 /// Theme lines stay first so the later product and security policy wins.
 enum HiveTerminalConfiguration {
@@ -8,34 +44,6 @@ enum HiveTerminalConfiguration {
     static let scrollbackLimitBytes = 48 * 1024 * 1024
     static let liveLogFingerprint =
         "background=0f1117 font-size=13 padding=\(horizontalPaddingPoints)x\(verticalPaddingPoints)"
-
-    private static let darkThemeLines = [
-        "# Hive C1 dark theme. Colors are inline; no user theme lookup occurs.",
-        "background = 0f1117",
-        "foreground = e6eaf2",
-        "palette = 0=626b7e",
-        "palette = 1=ff6b7a",
-        "palette = 2=75d39a",
-        "palette = 3=e6c978",
-        "palette = 4=7aa9ff",
-        "palette = 5=c89bff",
-        "palette = 6=67d9e8",
-        "palette = 7=dde3ec",
-        "palette = 8=8d95a7",
-        "palette = 9=ff8894",
-        "palette = 10=8be3ab",
-        "palette = 11=f0d98b",
-        "palette = 12=96bbff",
-        "palette = 13=d8b6ff",
-        "palette = 14=82e3ee",
-        "palette = 15=f8fafd",
-        "palette-generate = false",
-        "bold-color = bright",
-        "cursor-color = cell-foreground",
-        "cursor-text = cell-background",
-        "selection-background = cell-foreground",
-        "selection-foreground = cell-background",
-    ]
 
     private static let overrideLines = [
         "# Hive typography and pane metrics.",
@@ -63,23 +71,30 @@ enum HiveTerminalConfiguration {
         "clipboard-write = deny",
     ]
 
-    static func contents(headless: Bool = false) -> String {
-        var lines = darkThemeLines + overrideLines
+    static func contents(theme: HiveTerminalTheme = .hiveDark, headless: Bool = false) -> String {
+        var lines = theme.configurationLines + overrideLines
         if headless { lines.append("window-vsync = false") }
         return lines.joined(separator: "\n") + "\n"
     }
 
-    static func write(to url: URL, headless: Bool = false) throws {
-        try Data(contents(headless: headless).utf8).write(to: url, options: .atomic)
+    static func write(
+        to url: URL,
+        theme: HiveTerminalTheme = .hiveDark,
+        headless: Bool = false
+    ) throws {
+        try Data(contents(theme: theme, headless: headless).utf8).write(to: url, options: .atomic)
     }
 
     @discardableResult
-    static func writeProcessFile(headless: Bool = false) throws -> URL {
+    static func writeProcessFile(
+        theme: HiveTerminalTheme = .hiveDark,
+        headless: Bool = false
+    ) throws -> URL {
         let suffix = headless ? "test" : "manual"
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "hive-ghostty-\(suffix)-config-\(ProcessInfo.processInfo.processIdentifier).conf")
-        try write(to: url, headless: headless)
+        try write(to: url, theme: theme, headless: headless)
         return url
     }
 }
