@@ -3,13 +3,13 @@ label=Terminal starting
 help=Terminal content area
 focused=true
 lifecycle=Terminal starting
-numberOfCharacters=29
-visibleRange={0, 29}
+numberOfCharacters=45
+visibleRange={0, 45}
 selectedRange={9223372036854775807, 0}
 selectedText=nil
 insertionLine=1
-valueDescription=Terminal starting; viewport 0 of 16; cursor line 2 offset 15
-valuePrefix="ax-input-slice\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+valueDescription=Terminal starting; viewport 0 of 32; cursor line 2 offset 15
+valuePrefix="ax-input-slice\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
 childCount=16
   child[0] role=staticText label=Terminal row 1 range={0, 14} value="ax-input-slice"
   child[1] role=staticText label=Terminal row 2 range={15, 0} value="(blank)"
