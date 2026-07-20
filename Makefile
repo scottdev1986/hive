@@ -287,24 +287,80 @@ test: toolchain ghosttykit
 test-e2e:
 	HIVE_E2E=1 bun test src/cli/e2e-real.test.ts
 
-# Delete every dev artifact. This does NOT reliably stop a running dev
-# instance: both kills below are best-effort and swallow failure, and the
-# Workspace app is launched through `open -n` so it is nobody's child here and
-# is never signalled at all. Survivors are left bound to the deleted .dev/.
-# Quit the dev app first; issue #44 tracks making this stop the instance.
-# The tmux server name derives from .dev/home, so the kill can only ever hit
-# the dev server; the daemon is killed only if its pid still names a binary
-# under .dev/.
+# Stop the dev instance, then delete every dev artifact — and never the second
+# without the first. Deleting .dev/ out from under a live app was the defect
+# (#44): the Workspace is launched through `open -n`, so it is nobody's child
+# here and no signal ever reached it, and the two targeted kills below are
+# best-effort by nature, so a miss was undetectable.
+#
+# The fix is not a louder kill. Nothing here trusts a kill: the sweep re-reads
+# the process table afterwards, and `rm -rf` runs only if that readback is
+# empty. A survivor refuses the delete and exits non-zero, because reporting
+# success over a live process is what made this silent for so long.
+#
+# Selection is by PATH and ARGUMENTS, never by process name. The user's
+# installed instance runs its own Workspace, its own tmux server and its own
+# vendor CLI children; matching "HiveWorkspace" or "tmux" would kill those.
+# Three axes are needed because dev processes are bound to .dev/ three
+# different ways:
+#
+#   1. executable under .dev/     — the Workspace app, staged dev binaries
+#   2. .dev/ path in arguments    — the tmux server and vendor children, whose
+#                                   executables are system tmux and ~/.local/bin
+#   3. dev tmux socket in args    — dev agents' `tmux attach-session`, which
+#                                   names no path at all, only the socket
+#
+# Axis 3 has a precondition: the socket name derives from .dev/home, so if home
+# is already gone a surviving server is caught by axis 2 alone.
 clean:
-	@if [ -d "$(DEV)/home" ]; then \
+	@set -e; \
+	[ -d "$(DEV)" ] || exit 0; \
+	dev=$$(cd "$(DEV)" && pwd -P); \
+	self=$$$$; \
+	suffix=""; \
+	if [ -d "$(DEV)/home" ]; then \
 	  suffix=$$(printf '%s' "$$(cd "$(DEV)/home" && pwd -P)" | /usr/bin/shasum -a 256 | cut -c1-10); \
+	  [ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
 	  TMUX_TMPDIR="$(DEV)/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
-	fi
-	@if [ -f "$(DEV)/home/daemon.pid" ]; then \
+	fi; \
+	if [ -f "$(DEV)/home/daemon.pid" ]; then \
 	  pid=$$(cat "$(DEV)/home/daemon.pid"); \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
-	  case "$$command" in "$(DEV)/"*) kill "$$pid" 2>/dev/null || true;; esac; \
-	fi
+	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
+	fi; \
+	is_mine() { q=$$1; k=0; \
+	  : "a pid whose ancestry cannot be resolved has already exited — the sweep\
+	     spawns short-lived subshells that inherit this recipe's command line\
+	     and so match by args; gone is not a survivor"; \
+	  while [ $$k -lt 8 ]; do \
+	    [ "$$q" = "$$self" ] && return 0; \
+	    q=$$(ps -p "$$q" -o ppid= 2>/dev/null | tr -d ' '); \
+	    [ -n "$$q" ] || return 0; [ "$$q" = "1" ] && return 1; \
+	    k=$$((k + 1)); \
+	  done; return 1; }; \
+	dev_pids() { \
+	  { ps -axo pid=,comm= | while read -r p c; do \
+	      case "$$c" in "$$dev"/*) echo "$$p";; esac; done; \
+	    ps -axo pid=,command= | while read -r p rest; do \
+	      case "$$rest" in *"$$dev"/*) echo "$$p";; esac; done; \
+	    [ -z "$$suffix" ] || ps -axo pid=,command= | while read -r p rest; do \
+	      case "$$rest" in *"hive-$$suffix"*) echo "$$p";; esac; done; \
+	  } | sort -u | while read -r p; do is_mine "$$p" || echo "$$p"; done; }; \
+	pids=$$(dev_pids); \
+	if [ -n "$$pids" ]; then \
+	  echo "stopping dev processes:" $$pids; \
+	  for p in $$pids; do kill "$$p" 2>/dev/null || true; done; \
+	  alive=""; \
+	  i=0; while [ $$i -lt 20 ]; do \
+	    alive=$$(dev_pids); [ -n "$$alive" ] || break; sleep 0.5; i=$$((i + 1)); \
+	  done; \
+	  if [ -n "$$alive" ]; then \
+	    echo "refusing to delete $(DEV): still running:" $$alive >&2; \
+	    echo "they run from files under $(DEV); deleting it would strand them" >&2; \
+	    exit 1; \
+	  fi; \
+	  echo "all dev processes confirmed stopped"; \
+	fi; \
 	rm -rf "$(DEV)"
 
 cleanup: clean
