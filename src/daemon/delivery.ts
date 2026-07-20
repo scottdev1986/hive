@@ -105,6 +105,15 @@ export function queuedDeliveryNote(
     case "spawning":
       return `NOT received yet: ${name} is still spawning; the message is delivered when its session starts.`;
     case "idle":
+      // #67: a sessiond-hosted pane cannot be pushed to at all yet — saying
+      // "the paste was never submitted" about a paste that was never attempted
+      // sent the sender hunting a tmux loss that never happened.
+      if (recipient.sessionLocator?.hostKind === "sessiond") {
+        return `NOT received: ${name} is idle in a sessiond-hosted terminal, which has no ` +
+          "daemon delivery wire yet (M2 #16). The message stays durably queued and is " +
+          `delivered at the next turn boundary ${name} reaches on its own; an idle agent ` +
+          "reaches none, so treat it as unheard until a turn confirms it.";
+      }
       return `NOT received: the paste into ${name}'s pane was never submitted (no turn started), ` +
         `so the message stays queued and the daemon retries it on its next maintenance tick ` +
         `(the idle wake), as well as at any turn boundary ${name} reaches. ` +
@@ -523,7 +532,10 @@ export class MessageDelivery {
           if (this.nativeControl?.hasAgent(latestRecipient.name)) {
             delivered.push(await this.deliverNative(message, latestRecipient));
           } else {
-            delivered.push(await this.deliver(message, latestRecipient));
+            // deliver() can honestly decline (sessiond recipients, #67);
+            // only a message whose delivery actually landed counts.
+            const result = await this.deliver(message, latestRecipient);
+            if (result.deliveredAt !== null) delivered.push(result);
           }
         } catch (error) {
           // A failed pane must not prevent later queued messages from
@@ -574,9 +586,8 @@ export class MessageDelivery {
             delivered.push(await this.deliverNative(message, currentRecipient));
             continue;
           }
-          delivered.push(
-            await this.deliver(message, currentRecipient),
-          );
+          const result = await this.deliver(message, currentRecipient);
+          if (result.deliveredAt !== null) delivered.push(result);
         } catch (error) {
           console.error(
             `Hive failed to inject urgent message ${queued.id} to ${agentName} at a tool boundary: ${
@@ -613,7 +624,8 @@ export class MessageDelivery {
           } else {
             // The TUI queues for the next model step, which is the mid-turn
             // surface this priority promises.
-            delivered.push(await this.deliver(message, currentRecipient));
+            const result = await this.deliver(message, currentRecipient);
+            if (result.deliveredAt !== null) delivered.push(result);
           }
         } catch (error) {
           console.error(
@@ -795,6 +807,18 @@ export class MessageDelivery {
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
+    // #67: a sessiond-hosted pane has no daemon-side input wire yet — that is
+    // M2's arbiter delivery (#16). The tmux paste path below cannot address a
+    // sessiond session: reaching it bounced hive_send with "mismatched
+    // SessionLocator" (a lie about a consistent locator), and thrown from the
+    // flush loops it silently ate every queued delivery on every tick. Until
+    // the wire lands the honest outcome is: validate the locator, leave the
+    // message durably QUEUED, and let the stalled-message triage say so out
+    // loud — never a fake locator error, never a fake "injected".
+    if (recipient.sessionLocator?.hostKind === "sessiond") {
+      requireSessiondAgentLocator(recipient);
+      return this.getStoredMessage(message.id);
+    }
     const text = this.formatAgentMessage(message);
     const boundaryBefore = this.turnBoundaryAt(message.to);
     // This is what makes priority mean anything. Until now every level did the

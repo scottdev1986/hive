@@ -16,7 +16,6 @@ import {
   type SessionSender,
   type TmuxSender,
 } from "./delivery";
-import { SessiondWireNotReadyError } from "./session-host/sessiond-host";
 import { HiveDaemon } from "./server";
 import { actingAs } from "./testing";
 import type { Spawner } from "./spawner";
@@ -178,12 +177,20 @@ const unusedSpawner: Spawner = {
 };
 
 describe("MessageDelivery", () => {
-  test("routes sessiond delivery to the explicit frozen-attach boundary", async () => {
-    const db = new HiveDatabase(join(home, "sessiond-not-ready.db"));
+  test("a send to an idle sessiond agent queues honestly instead of bouncing (#67)", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-idle-send.db"));
     const tmuxCalls: AgentRecord[] = [];
+    // The production sender (BunSessionSender) binds the recipient as a tmux
+    // session, which throws "Agent <id> has a mismatched SessionLocator" for
+    // any sessiond locator — the exact bounce hive_send returned for sarah
+    // and alex on 2026-07-20. Delivery must never let a sessiond recipient
+    // reach this sender at all.
     const tmux: SessionSender = {
       async sendSessionMessage(recipient) {
         tmuxCalls.push(recipient);
+        if (recipient.sessionLocator?.hostKind === "sessiond") {
+          throw new Error(`Agent ${recipient.id} has a mismatched SessionLocator`);
+        }
       },
     };
     const delivery = new MessageDelivery(db, new CoexistingSessionSender(tmux));
@@ -202,13 +209,56 @@ describe("MessageDelivery", () => {
       };
       db.insertAgent(recipient);
 
-      await expect(delivery.send("sam", "maya", "Please review this."))
-        .rejects.toBeInstanceOf(SessiondWireNotReadyError);
+      const message = await delivery.send("sam", "maya", "Please review this.");
+      expect(message.state).toBe("queued");
+      expect(message.deliveredAt).toBeNull();
       expect(tmuxCalls).toEqual([]);
+      expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+
+      // The wake sweep and the flush loops hit the same wall: they must not
+      // throw, must not report the message delivered, and must leave it
+      // durably queued for the boundary that can actually take it.
+      expect(await delivery.flushQueued("maya")).toEqual([]);
+      expect(await delivery.wakeIdleRecipients()).toEqual([]);
       expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
     } finally {
       db.close();
     }
+  });
+
+  test("queuedDeliveryNote names the sessiond wire gap for idle recipients (#67)", () => {
+    const sessiondRecipient = {
+      ...agent("idle"),
+      sessionLocator: {
+        schemaVersion: 1 as const,
+        instanceId: "hive-fixture",
+        subject: { kind: "agent" as const, agentId: "agent-maya" },
+        generation: 1,
+        sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+        hostKind: "sessiond" as const,
+        engineBuildId: "engine-fixture",
+      },
+    };
+    const message = AgentMessageSchema.parse({
+      id: crypto.randomUUID(),
+      from: "queen",
+      to: "maya",
+      body: "hello",
+      createdAt: timestamp,
+      deliveredAt: null,
+      priority: "normal",
+      intent: "instruction",
+      state: "queued",
+      deadlineAt: null,
+      sequence: 1,
+      idempotencyKey: null,
+      capabilityEpoch: null,
+    });
+    const note = queuedDeliveryNote(message, sessiondRecipient);
+    expect(note).toContain("NOT received");
+    expect(note).toContain("sessiond");
+    // The old note claimed a paste was swallowed; no paste is ever attempted.
+    expect(note).not.toContain("paste");
   });
 
   test("steers a working native Codex session and interrupts it for urgent control", async () => {
