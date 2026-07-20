@@ -2,7 +2,7 @@
 template=Power Profiler
 role=negative_control_mac_unsupported
 exit_status=2
-captured_at=2026-07-20T00:53:18Z
+captured_at=2026-07-20T01:01:58Z
 expect=non_zero_exit_and_ios_only_message
 --- xctrace stdout ---
 Starting recording with the Power Profiler template. Launching process: GhosttyGate7Probe. Time limit: 15.0 s
@@ -20,10 +20,10 @@ template=Activity Monitor
 role=mac_energy_adjacent_positive
 exit_status=0
 trace=/Users/scottkellar/Projects/hive/.hive/worktrees/hilda/raw/qualification/ghostty-b1-gate7-physical/instruments-power-energy.trace
-captured_at=2026-07-20T00:53:30Z
-trace_bytes=6758400
+captured_at=2026-07-20T01:02:09Z
+trace_bytes=6602752
 trace_kind=package_directory
-trace_listing_sha256=5ff32a87ece273706dca13c851decc34258db70cec2733dde8d6eb297795aaf8
+trace_listing_sha256=88f80d60643221e0efee363bbbcd693636112d19daca5b758e131b160eb646a7
 toc_export=ok
 <?xml version="1.0"?>
 
@@ -32,12 +32,12 @@ toc_export=ok
         <info>
             <target>
                 <device platform="macOS" model="MacBook Pro" name="MacBook Pro" os-version="26.3.1 (25D2128)" uuid="FEAE66E1-B0BA-50C3-989F-078B2B7CEA3A"/>
-                <process type="launched" return-exit-status="0" name="GhosttyGate7Probe" pid="4956" termination-reason="exit(0)"/>
+                <process type="launched" return-exit-status="0" name="GhosttyGate7Probe" pid="58466" termination-reason="exit(0)"/>
             </target>
             <summary>
-                <start-date>2026-07-19T20:53:20.068-04:00</start-date>
-                <end-date>2026-07-19T20:53:26.859-04:00</end-date>
-                <duration>6.791240</duration>
+                <start-date>2026-07-19T21:01:59.494-04:00</start-date>
+                <end-date>2026-07-19T21:02:06.210-04:00</end-date>
+                <duration>6.715482</duration>
                 <end-reason>Target app exited</end-reason>
                 <instruments-version>16.0 (17F113)</instruments-version>
                 <template-name>Activity Monitor</template-name>
@@ -47,18 +47,18 @@ toc_export=ok
         </info>
         <processes>
             <process name="kernel" pid="0" path="/System/Library/Kernels/kernel.release.t6041"/>
-            <process name="GhosttyGate7Probe" pid="4956" path="/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.xwebiI/build-plain/arm64-apple-macosx/debug/GhosttyGate7Probe"/>
+            <process name="GhosttyGate7Probe" pid="58466" path="/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.68bNJs/build-plain/arm64-apple-macosx/debug/GhosttyGate7Probe"/>
         </processes>
         <data>
-            <table schema="sysmon-system" documentation="A raw system statastics update."/>
             <table schema="activity-monitor-process-ledger" target-pid="SINGLE" documentation="Tracks the historic updates of process activity at a given point in time."/>
+            <table schema="sysmon-system" documentation="A raw system statastics update."/>
             <table schema="tick" frequency="10" documentation="Provides modelers with a regular reference time for modeling fixed time-based statistics. The ticks are evenly spaced with a configurable frequency specifying the number of events to generate per second, so a tick schema with a frequency of 10 will generate a row every 100ms."/>
             <table schema="device-thermal-state-intervals" documentation="Denotes the current thermal state of the device."/>
             <table schema="dyld-library-load" target-pid="SINGLE"/>
             <table codes="&quot;0x1f,0x05&quot;" target="SINGLE" schema="kdebug-strings" documentation="Associates numeric arguments with strings in kdebug trace points."/>
-            <table schema="activity-monitor-process-live" target-pid="SINGLE" documentation="Tracks the most accurate totals of process activity at a given interval in time."/>
             <table codes="&quot;0x2b,0x65&quot;" schema="kdebug" documentation="Tracing the kernel and some system frameworks."/>
             <table codes="&quot;0x07,0x00&quot; &quot;0x1f,0x05&quot;" target="SINGLE" schema="kdebug" documentation="Tracing the kernel and some system frameworks."/>
+            <table schema="activity-monitor-process-live" target-pid="SINGLE" documentation="Tracks the most accurate totals of process activity at a given interval in time."/>
             <table schema="os-signpost" category="InduceCondition" subsystem="&quot;com.apple.ConditionInducer.LowSeverity&quot;" documentation="Holds a signpost event from the OS's Unified Logging and Tracing component."/>
             <table schema="process-info" documentation="Associates processes with their process names."/>
             <table schema="thread-info" documentation="Associates threads with their owning process."/>

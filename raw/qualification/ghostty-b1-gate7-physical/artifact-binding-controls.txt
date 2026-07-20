@@ -1,8 +1,8 @@
 control=missing-manifest exit_status=1
-  artifact=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.xwebiI/binding-missing
+  artifact=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.68bNJs/binding-missing
   artifact_manifest=MISSING -> fail closed
 control=tampered-patched-tree exit_status=1
-  artifact=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.xwebiI/binding-tampered
+  artifact=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.68bNJs/binding-tampered
   artifact_manifest_sha256=dfe063d6145c1c280cca31673569f6febef3dd71fcde5c5d687b35a4d65ee12f
   ok .source.commit=73534c4680a809398b396c94ac7f12fcccb7963d
   ok .source.upstreamTree=0aeaa44eda9efaf41523c3c0d4f6851eb81e536e
@@ -22,7 +22,7 @@ control=tampered-patched-tree exit_status=1
   MISMATCH macos_library manifest=[6d13f3ef3aa1f5cd8416c7aa51e66323914b947684c97a2d03287d76d78c6f7a] actual=[]
   mismatches=2
 control=swapped-library exit_status=1
-  artifact=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.xwebiI/binding-swapped
+  artifact=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.68bNJs/binding-swapped
   artifact_manifest_sha256=3ddb8e7fb2404c4911a400c762e5a20418f18c7f95d31178cce53f3d7b1c3c2e
   ok .source.commit=73534c4680a809398b396c94ac7f12fcccb7963d
   ok .source.upstreamTree=0aeaa44eda9efaf41523c3c0d4f6851eb81e536e

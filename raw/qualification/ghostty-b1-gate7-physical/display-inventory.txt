@@ -1,4 +1,4 @@
-captured_at=2026-07-20T00:52:06Z
+captured_at=2026-07-20T01:00:32Z
 screen_count_nsscreen_note=see probe bootstrap stage
 Graphics/Displays:
 

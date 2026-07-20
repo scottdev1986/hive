@@ -1,10 +1,10 @@
 template=Leaks
 exit_status=0
 trace=/Users/scottkellar/Projects/hive/.hive/worktrees/hilda/raw/qualification/ghostty-b1-gate7-physical/instruments-leaks.trace
-captured_at=2026-07-20T00:53:48Z
-trace_bytes=232882176
+captured_at=2026-07-20T01:02:26Z
+trace_bytes=233013248
 trace_kind=package_directory
-trace_listing_sha256=62794419eefec3b5eaa15805494017036fd0c7e33b66fc87850b819ee9de8257
+trace_listing_sha256=54ac1049ff5a39658d66f06f63911db6c264c4fd61d999a3bde2aee65b54690e
 toc_export=ok
 <?xml version="1.0"?>
 
@@ -13,12 +13,12 @@ toc_export=ok
         <info>
             <target>
                 <device platform="macOS" model="MacBook Pro" name="MacBook Pro" os-version="26.3.1 (25D2128)" uuid="FEAE66E1-B0BA-50C3-989F-078B2B7CEA3A"/>
-                <process type="launched" return-exit-status="0" name="GhosttyGate7Probe" pid="7437" termination-reason="exit(0)"/>
+                <process type="launched" return-exit-status="0" name="GhosttyGate7Probe" pid="59306" termination-reason="exit(0)"/>
             </target>
             <summary>
-                <start-date>2026-07-19T20:53:34.400-04:00</start-date>
-                <end-date>2026-07-19T20:53:43.525-04:00</end-date>
-                <duration>9.125060</duration>
+                <start-date>2026-07-19T21:02:13.431-04:00</start-date>
+                <end-date>2026-07-19T21:02:22.508-04:00</end-date>
+                <duration>9.077515</duration>
                 <end-reason>Target app exited</end-reason>
                 <instruments-version>16.0 (17F113)</instruments-version>
                 <template-name>Leaks</template-name>
@@ -39,40 +39,40 @@ Identities of virtual C++ objects"/>
             </summary>
         </info>
         <processes>
+            <process name="GhosttyGate7Probe" pid="59306" path="/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.68bNJs/build-plain/arm64-apple-macosx/debug/GhosttyGate7Probe"/>
             <process name="kernel" pid="0" path="/System/Library/Kernels/kernel.release.t6041"/>
-            <process name="GhosttyGate7Probe" pid="7437" path="/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.xwebiI/build-plain/arm64-apple-macosx/debug/GhosttyGate7Probe"/>
         </processes>
         <data>
-            <table category="PointsOfInterest" schema="os-log" documentation="Holds a message from the OS's Unified Logging and Tracing component."/>
+            <table schema="global-roi-layout" target-pid="SINGLE" documentation="Layout information for graphing regions of interest."/>
             <table category="PointsOfInterest" schema="os-signpost-arg" documentation="Holds a signpost metadata argument from the OS's Unified Logging and Tracing component."/>
-            <table exclude-os-logs="0" schema="global-poi-layout" target-pid="SINGLE" documentation="A point of interest that can be laid out on a graph view."/>
+            <table target-pid="SINGLE" schema="global-poi-layout" exclude-os-logs="0" documentation="A point of interest that can be laid out on a graph view."/>
             <table schema="tick" frequency="10" documentation="Provides modelers with a regular reference time for modeling fixed time-based statistics. The ticks are evenly spaced with a configurable frequency specifying the number of events to generate per second, so a tick schema with a frequency of 10 will generate a row every 100ms."/>
             <table schema="kdebug-signpost" target-pid="SINGLE" documentation="Marks a point in time denoted by a special type of kdebug trace."/>
-            <table schema="global-roi-layout" target-pid="SINGLE" documentation="Layout information for graphing regions of interest."/>
             <table category="PointsOfInterest" schema="os-log-arg" documentation="Holds a metadata argument from the OS's Unified Logging and Tracing component."/>
+            <table category="PointsOfInterest" schema="os-log" documentation="Holds a message from the OS's Unified Logging and Tracing component."/>
             <table schema="dyld-library-load" target-pid="SINGLE"/>
             <table schema="gcd-perf-event" target-pid="SINGLE" documentation="Find sub-optimal uses of Grand Central Dispatch."/>
             <table codes="&quot;0x1f,0x05&quot;" target="SINGLE" schema="kdebug-strings" documentation="Associates numeric arguments with strings in kdebug trace points."/>
             <table codes="&quot;46,2&quot;" schema="kdebug" callstack="user" target="SINGLE" documentation="Tracing the kernel and some system frameworks."/>
+            <table codes="&quot;0x21,0xa&quot;" schema="kdebug" callstack="user" target="SINGLE" documentation="Tracing the kernel and some system frameworks."/>
             <table codes="&quot;0x07,0x00&quot; &quot;0x1f,0x05&quot;" target="SINGLE" schema="kdebug" documentation="Tracing the kernel and some system frameworks."/>
             <table codes="&quot;0x1,0xa&quot;" schema="kdebug" callstack="user" target="SINGLE" documentation="Tracing the kernel and some system frameworks."/>
-            <table schema="os-signpost" dynamic-tracing-enabled-subsystems="&quot;com.apple.neappprivacy&quot;" category="PointsOfInterest" documentation="Holds a signpost event from the OS's Unified Logging and Tracing component."/>
-            <table exclude-os-logs="0" schema="roi-metadata" target-pid="SINGLE" documentation="Describes details about a given region of interest."/>
-            <table exclude-os-logs="0" schema="region-of-interest" target-pid="SINGLE" documentation="Determined by the modelers and represent a focus area that the developer is likely to be intereseted in."/>
+            <table target-pid="SINGLE" schema="roi-metadata" exclude-os-logs="0" documentation="Describes details about a given region of interest."/>
             <table schema="process-info" documentation="Associates processes with their process names."/>
+            <table exclude-os-logs="0" schema="region-of-interest" target-pid="SINGLE" documentation="Determined by the modelers and represent a focus area that the developer is likely to be intereseted in."/>
             <table schema="thread-info" documentation="Associates threads with their owning process."/>
-            <table codes="&quot;0x21,0xa&quot;" schema="kdebug" callstack="user" target="SINGLE" documentation="Tracing the kernel and some system frameworks."/>
+            <table schema="os-signpost" category="PointsOfInterest" dynamic-tracing-enabled-subsystems="&quot;com.apple.neappprivacy&quot;" documentation="Holds a signpost event from the OS's Unified Logging and Tracing component."/>
         </data>
         <tracks>
             <track name="Allocations">
                 <details>
-                    <detail name="Statistics" kind="table"/>
-                    <detail name="Allocations List" kind="table"/>
+                    <detail kind="table" name="Statistics"/>
+                    <detail kind="table" name="Allocations List"/>
                 </details>
             </track>
             <track name="Leaks">
                 <details>
-                    <detail name="Leaks" kind="table"/>
+                    <detail kind="table" name="Leaks"/>
                 </details>
             </track>
         </tracks>
