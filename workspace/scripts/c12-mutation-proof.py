@@ -26,9 +26,11 @@ import sys
 ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONF = ROOT / "Sources/HiveTerminalKit/Theme/HiveTerminalConfiguration.swift"
 WCAG = ROOT / "Sources/HiveTerminalKit/Theme/WCAGContrast.swift"
+MANUAL = ROOT / "Sources/HiveTerminalKit/Bridge/ManualSurface.swift"
 SUITE = "C12ThemeSystemTests"
+LIVE = "C12LiveReconfigurationTests"
 
-SNAPSHOT = {p: p.read_text() for p in (CONF, WCAG)}
+SNAPSHOT = {p: p.read_text() for p in (CONF, WCAG, MANUAL)}
 
 
 def restore():
@@ -101,17 +103,45 @@ CASES = [
      "testMalformedHexIsRejectedRatherThanTruncated",
      WCAG, "guard scalars.count == 6 else { throw ColorError.malformedHex(hex) }",
      "let trimmed = Array(scalars.prefix(6)); _ = trimmed"),
+
+    # Engine-boundary mutations. The first is the one that matters most: the
+    # operationObserver fires around the real call, so it still reports a
+    # begin/end pair after the call is deleted. Only a check that reads the
+    # engine's own result can tell consumption from call-boundary noise.
+    (
+        "the real ghostty_surface_update_config call deleted (consumption, not call-boundary)",
+        f"{LIVE}/testLiveThemeChangeRepaintsWithoutWipingPaneContent",
+        MANUAL, "ghostty_surface_update_config(surface, config)",
+        "_ = (surface, config)",
+    ),
+    (
+        "the real update_config deleted, every-theme push proof",
+        f"{LIVE}/testEveryFirstPartyThemePushesToARunningSurface",
+        MANUAL, "ghostty_surface_update_config(surface, config)",
+        "_ = (surface, config)",
+    ),
+    (
+        "dedup guard removed so every selection re-pushes",
+        f"{LIVE}/testRepeatedThemeSelectionPushesOnlyOnRealChange",
+        MANUAL, "guard hiveConfigurationContents != contents,", "guard true,",
+    ),
+    (
+        "font dropped at the live push site (the C1.1 gap, at the engine)",
+        f"{LIVE}/testLiveFontChangeAloneReachesTheEngine",
+        MANUAL, "            font: font,\n", "",
+    ),
 ]
 
 
 def main():
     failures = []
 
-    print("=== baseline: the suite must be GREEN before any mutation ===")
-    if run(SUITE):
-        print(f"  GREEN (expected)  {SUITE}")
-    else:
-        sys.exit("  RED at baseline -- fix the suite before proving anything")
+    print("=== baseline: both suites must be GREEN before any mutation ===")
+    for suite in (SUITE, LIVE):
+        if run(suite):
+            print(f"  GREEN (expected)  {suite}")
+        else:
+            sys.exit(f"  RED at baseline in {suite} -- fix it before proving anything")
 
     print("\n=== mutations: each must turn its own guard RED ===")
     for label, guard, path, old, new in CASES:
@@ -122,7 +152,7 @@ def main():
             print(f"  HARNESS ERROR  {label}: replacement matched nothing")
             continue
         path.write_text(mutated)
-        green = run(f"{SUITE}/{guard}")
+        green = run(guard if "/" in guard else f"{SUITE}/{guard}")
         restore()
         if green:
             failures.append(label)
@@ -130,12 +160,13 @@ def main():
         else:
             print(f"  RED       {label}")
 
-    print("\n=== every mutation reverted: suite GREEN again ===")
-    if run(SUITE):
-        print(f"  GREEN (expected)  {SUITE}")
-    else:
-        failures.append("post-run baseline")
-        print("  RED (UNEXPECTED) -- a mutation leaked")
+    print("\n=== every mutation reverted: both suites GREEN again ===")
+    for suite in (SUITE, LIVE):
+        if run(suite):
+            print(f"  GREEN (expected)  {suite}")
+        else:
+            failures.append(f"post-run baseline {suite}")
+            print(f"  RED (UNEXPECTED) in {suite} -- a mutation leaked")
 
     print(f"\ncases: {len(CASES)}   failures: {len(failures)}")
     if failures:
