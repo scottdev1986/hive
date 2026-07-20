@@ -6482,7 +6482,10 @@ test "optional provider graceful action reaches the PTY without fabricated bytes
         .running => {},
         .exec_failed => return error.TestUnexpectedResult,
     }
+    // Trailing NL is intentional input; OPOST|ONLCR expands it to CRLF on the
+    // master read path (same contract as the interactive shell).
     const action = "explicit-provider-graceful-action\n";
+    const echoed = "explicit-provider-graceful-action\r\n";
     try deliverGracefulAction(.{
         .pty = &pty,
         .directory = temporary.dir,
@@ -6491,7 +6494,7 @@ test "optional provider graceful action reaches the PTY without fabricated bytes
     var output: std.ArrayList(u8) = .{};
     defer output.deinit(std.testing.allocator);
     var attempts: usize = 0;
-    while (attempts < 200 and std.mem.indexOf(u8, output.items, action) == null) : (attempts += 1) {
+    while (attempts < 200 and std.mem.indexOf(u8, output.items, echoed) == null) : (attempts += 1) {
         const chunk = pty.readAvailable() catch |err| switch (err) {
             error.Closed => break,
             else => return err,
@@ -6499,7 +6502,7 @@ test "optional provider graceful action reaches the PTY without fabricated bytes
         try output.appendSlice(std.testing.allocator, chunk.bytes);
         if (chunk.bytes.len == 0) std.Thread.sleep(std.time.ns_per_ms);
     }
-    try std.testing.expect(std.mem.indexOf(u8, output.items, action) != null);
+    try std.testing.expect(std.mem.indexOf(u8, output.items, echoed) != null);
 }
 
 test "host.sock TERMINATE returns process evidence, writes final, and spares sentinel" {

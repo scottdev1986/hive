@@ -2654,10 +2654,11 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     if (!submitted.accepted) return error.InputSubmissionFailed;
     var attached = try client.call(allocator, .attach, "", "0");
     defer attached.deinit();
+    // Slave OPOST|ONLCR expands the written bare NL to CRLF on the master.
     if (!attached.accepted or std.mem.indexOf(
         u8,
         attached.payload,
-        "opaque neutral byte proof\n",
+        "opaque neutral byte proof\r\n",
     ) == null) return error.AttachOutputMissing;
     var terminated = try client.call(
         allocator,

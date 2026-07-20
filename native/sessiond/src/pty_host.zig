@@ -933,12 +933,17 @@ fn geometryFromWinsize(ws: c.struct_winsize) Geometry {
 }
 
 fn profileMatches(term: c.struct_termios, profile: TerminalProfile) bool {
+    // OPOST|ONLCR are not profile knobs: cfmakeraw clears them, but session
+    // PTYs must keep NL→CRNL output processing so bare '\n' (ls, printf,
+    // shells) does not staircase in a VT renderer. Always required.
     return (term.c_lflag & c.ICANON != 0) == (profile.input_mode == .canonical) and
         (term.c_lflag & c.ECHO != 0) == profile.echo and
         (term.c_lflag & c.ISIG != 0) == profile.signal_characters and
         (term.c_iflag & c.IXON != 0) == profile.software_flow_control and
         (term.c_iflag & c.IXOFF != 0) == profile.software_flow_control and
         (term.c_cflag & c.HUPCL != 0) == profile.hangup_on_last_close and
+        (term.c_oflag & c.OPOST != 0) and
+        (term.c_oflag & c.ONLCR != 0) and
         term.c_cc[c.VEOF] == profile.eof_byte and
         term.c_cc[c.VSTART] == profile.start_byte and
         term.c_cc[c.VSTOP] == profile.stop_byte;
@@ -948,6 +953,10 @@ fn applyTerminalProfile(fd: c_int, profile: TerminalProfile) ?c_int {
     var term: c.struct_termios = undefined;
     if (c.tcgetattr(fd, &term) != 0) return std.c._errno().*;
     c.cfmakeraw(&term);
+    // cfmakeraw clears OPOST (and thus ONLCR). Restore output processing so
+    // bare '\n' becomes '\r\n' on the master; keep the raw-mode input flags
+    // that cfmakeraw established (re-enabled selectively below from profile).
+    term.c_oflag |= c.OPOST | c.ONLCR;
     if (profile.input_mode == .canonical) term.c_lflag |= c.ICANON;
     if (profile.echo) term.c_lflag |= c.ECHO;
     if (profile.signal_characters) term.c_lflag |= c.ISIG;
@@ -1151,6 +1160,42 @@ test "spawn applies the exact terminal profile and reports real job-control evid
     try testing.expect(geometryFromWinsize(applied_window).eql(geometry));
 }
 
+// Catches the live-terminal staircase: cfmakeraw clears OPOST, so programs
+// that write bare '\n' (ls, printf) reach the VT renderer without CR and each
+// line continues at the previous column. Geometry-only live-shell tests pass
+// while the pane stairs — this asserts the kernel NL→CRNL expansion on the
+// production default (literal/raw input) profile.
+test "spawn default profile translates bare newlines via OPOST ONLCR" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    // Default TerminalProfile is literal input / no echo — same shape as the
+    // production session_host create path. Child writes bare '\n' only.
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "printf 'a\\nb\\n'" },
+        .geometry = defaultGeometry(),
+    }));
+
+    var got: std.ArrayList(u8) = .{};
+    defer got.deinit(testing.allocator);
+    var attempts: usize = 0;
+    while (attempts < 200) : (attempts += 1) {
+        const chunk = host.readAvailable() catch |err| switch (err) {
+            error.Closed => break,
+            else => return err,
+        };
+        if (chunk.bytes.len > 0)
+            try got.appendSlice(testing.allocator, chunk.bytes)
+        else
+            std.Thread.sleep(2 * std.time.ns_per_ms);
+        if (std.mem.indexOfScalar(u8, got.items, 'b') != null and got.items.len >= 4) break;
+    }
+    // Without OPOST|ONLCR the master sees "a\nb\n" (stairs in a VT pane).
+    // With output processing the kernel expands to CRLF.
+    try testing.expectEqualStrings("a\r\nb\r\n", got.items);
+}
+
 test "spawn passes the spec environment to the child" {
     if (builtin.os.tag != .macos) return error.SkipZigTest;
 
@@ -1299,7 +1344,12 @@ test "ordered read digest: 1 MiB fixture round-trip" {
         const f = try tmp_dir.dir.createFile(file_name, .{});
         defer f.close();
         var block: [4096]u8 = undefined;
-        for (&block, 0..) |*b, i| b.* = @truncate(i);
+        // Avoid 0x0A: session PTYs keep OPOST|ONLCR, so bare NL would expand
+        // to CRLF and break byte-exact digest round-trip through the slave.
+        for (&block, 0..) |*b, i| {
+            b.* = @truncate(i);
+            if (b.* == '\n') b.* = 0x80;
+        }
         var written: usize = 0;
         const target: usize = 1024 * 1024;
         while (written < target) {
@@ -1398,6 +1448,8 @@ test "100 MiB ordered read digest (SLO-04 seed)" {
         while (written < target) {
             for (&block) |*b| {
                 b.* = @truncate(seq);
+                // Same NL avoidance as the 1 MiB digest fixture (OPOST|ONLCR).
+                if (b.* == '\n') b.* = 0x80;
                 seq +%= 1;
             }
             const n = @min(block.len, target - written);
