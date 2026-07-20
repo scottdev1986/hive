@@ -93,6 +93,14 @@ AppDelegate wait/refusal XCTests — both
 `testTerminationWaitsForVerifiedStopBeforeAllowingQuit` and
 `testTerminationFailureCancelsQuitAndSurfacesReason` pass in my own run.
 
+The manifest is honest in machine-readable form, not only in prose: `a4-quit.json`
+alone among the four A4 manifests carries `"ok": false`, alongside
+`"status": "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK"` and a `faithfulPending` block
+naming the blocking condition (`requiresUnlockedProductionStack`), the diagnostic,
+and the reason — the b22 driver hosting the daemon in-process. A tool that reads
+`ok` gets the right answer without parsing prose. That is a point in the pin's
+favour and the correct disposition for a leg that is composed but not yet faithful.
+
 The b22 harness-entanglement limitation is recorded as committed negative evidence
 with both failed approaches and their real observed symptoms (attempt 1: visibility
 renewal `VERIFICATION_UNKNOWN` then `NOT_FOUND`, no `final.json`, external `hive stop`
@@ -111,16 +119,26 @@ fails. The `a4_pin=82d63f92` line is correct and *is* an ancestor, and every man
 records `head` correctly, so nothing downstream is misattributed — but the campaign's
 own rule is that provenance records the exact HEAD. Repoint it at `6c09eda6`.
 
-**F2 — queen's ruling survives only as a hand-edit the generator will clobber.**
-`COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK`, the `NEGATIVE EVIDENCE` line, and the
-entanglement pointer appear in `matrix/a4-quit.txt` but are not emitted anywhere in
-`scripts/b25-a4-proof.ts`; they were added by hand at `06:54:30.184Z`, four minutes
-after the run they annotate. Demonstrated, not theorised: my re-run of the script
-regenerated that file as `RESULT: A4 concurrent quit + provider-tree teardown GREEN`,
-silently reverting the downgrade. The hand-edit makes the claim *weaker*, so this is
-not overclaiming — but the next re-run erases the ruling and restores the stronger
-wording. Encode the status in the script, or mark the file as hand-annotated so a
-regeneration is visibly a conflict.
+**F2 — queen's ruling survives only as a hand-edit the generator will clobber, and
+the clobber flips a machine-readable field.** Every artefact carrying the ruling was
+hand-applied at `06:54:30.184Z`, four minutes after the run it annotates, and
+`scripts/b25-a4-proof.ts` emits none of it — `grep` for `ok: false`, `status:`, or
+`faithfulPending` in the generator returns nothing. The generator writes the quit
+manifest with a literal `ok: true`.
+
+So a re-run does not merely soften prose. It would:
+- rewrite `matrix/a4-quit.txt` back to `RESULT: A4 concurrent quit + provider-tree teardown GREEN`
+  (demonstrated — my re-run produced exactly that), and
+- rewrite `manifests/a4-quit.json` with `"ok": true`, dropping the `status` and
+  `faithfulPending` blocks entirely.
+
+The second is the sharper risk: `ok` is the field a tool or a later agent reads to
+decide whether the leg is done, and a regeneration silently flips it from a correct
+`false` to an incorrect `true` while deleting the record of why. The current state
+is right; it is the *durability* that is the defect. Encode the pending status in
+the generator — key it off the same condition the diagnostic names — or mark both
+files as hand-annotated so a regeneration surfaces as a conflict rather than a quiet
+revert. This is the one finding I would fix before the next A4 run, not after.
 
 **F3 — `runSwiftTest` gates on exit code alone, so a fully skipped suite reads GREEN.**
 `LiveHostAttachTests` is opt-in behind `HIVE_B22_PROOF_HOME`; without it the suite
