@@ -50,6 +50,16 @@ final class C11TypographyTests: XCTestCase {
 
         XCTAssertEqual(CTFontCopyFamilyName(font) as String, "JetBrains Mono")
         XCTAssertEqual(CTFontCopyPostScriptName(font) as String, "JetBrainsMono-Regular")
+        XCTAssertEqual(CTFontGetSize(font), 13, accuracy: 0.01)
+        XCTAssertFalse(CTFontGetSymbolicTraits(font).contains(.traitBold))
+        let weightAxis = try XCTUnwrap(
+            (CTFontCopyVariationAxes(font) as? [[CFString: Any]])?.first {
+                ($0[kCTFontVariationAxisNameKey] as? String) == "Weight"
+            }
+        )
+        XCTAssertEqual(weightAxis[kCTFontVariationAxisMinimumValueKey] as? Double, 100)
+        XCTAssertEqual(weightAxis[kCTFontVariationAxisDefaultValueKey] as? Double, 400)
+        XCTAssertEqual(weightAxis[kCTFontVariationAxisMaximumValueKey] as? Double, 800)
         for (tag, digest) in embeddedVariableTableDigests {
             XCTAssertEqual(try tableDigest(font, tag: tag), digest, "embedded table mismatch: \(tag)")
         }
