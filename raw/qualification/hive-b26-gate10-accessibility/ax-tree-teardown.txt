@@ -3,7 +3,6 @@ label=Terminal exited: user-close
 help=Terminal content area
 focused=true
 lifecycle=Terminal exited: user-close
-generation=none
 geometryRows=0
 geometryColumns=0
 numberOfCharacters=0

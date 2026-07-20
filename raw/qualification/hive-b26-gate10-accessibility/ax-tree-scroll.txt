@@ -3,7 +3,6 @@ label=Terminal starting
 help=Terminal content area
 focused=true
 lifecycle=Terminal starting
-generation=7
 geometryRows=9
 geometryColumns=37
 numberOfCharacters=33

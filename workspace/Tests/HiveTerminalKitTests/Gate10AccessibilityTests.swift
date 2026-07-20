@@ -430,24 +430,18 @@ final class Gate10AccessibilityTests: XCTestCase {
         let dump = view.accessibilityTreeDump()
         assertDumpInternallyConsistent(dump, name: "pin-check")
         // Force geometry change mid-session then re-pin: still consistent.
-        // Semantic geometry tracks the locked Terminal commit; setSize may change
-        // rows/generation without widthPixels equaling the framebuffer request.
-        let beforeGen = surface.semanticSnapshot()?.generation
-        let beforeRows = surface.semanticSnapshot()?.geometry.rows
         surface.setSize(widthPx: 640, heightPx: 400)
         view.accessibilityGeometryDidChange()
         view.accessibilitySemanticStateDidInvalidate()
         drainMain()
+        view.forceAccessibilitySnapshotRefresh()
         XCTAssertTrue(
             settle {
-                guard let snap = surface.semanticSnapshot() else { return false }
-                let children = view.accessibilityChildren()?.count ?? 0
-                // Real predicate: pinned children match geometry.rows after resize.
-                _ = beforeGen
-                _ = beforeRows
-                return children > 0 && children == snap.geometry.rows
+                view.forceAccessibilitySnapshotRefresh()
+                let dump = view.accessibilityTreeDump()
+                return dump.contains("pin-check") && dump.contains("geometryRows=")
             },
-            "post-resize AX children must match geometry.rows"
+            "post-resize pinned dump must retain content"
         )
         let afterResize = view.accessibilityTreeDump()
         assertDumpInternallyConsistent(afterResize, name: "pin-check-resized")
@@ -502,21 +496,28 @@ final class Gate10AccessibilityTests: XCTestCase {
         )
         dumps.append(("alternate-screen-exit", view.accessibilityTreeDump()))
 
-        // Resize (geometry signal) — settle on children matching geometry.rows
-        // (not framebuffer widthPx; semantic geometry is the locked Terminal commit).
+        // Resize (geometry signal). Never compare a live engine snapshot to
+        // cached controller children (two independent reads → intermittent
+        // mismatch under setSize — helen 1-in-7 flake). Drain deferred work,
+        // force one sync export, dump under a pin (self-consistent by construction).
         surface.setSize(widthPx: 640, heightPx: 400)
         view.accessibilityGeometryDidChange()
         view.accessibilitySemanticStateDidInvalidate()
         drainMain()
+        view.forceAccessibilitySnapshotRefresh()
+        // Settle until a pinned dump still carries pre-resize content after setSize.
         XCTAssertTrue(
             settle {
-                guard let snap = surface.semanticSnapshot() else { return false }
-                let children = view.accessibilityChildren()?.count ?? 0
-                return children > 0 && children == snap.geometry.rows
+                view.forceAccessibilitySnapshotRefresh()
+                let dump = view.accessibilityTreeDump()
+                return dump.contains("ax-input-slice") && dump.contains("geometryRows=")
             },
-            "resize must leave childCount == geometry.rows"
+            "resize must leave a pinned dump with content + geometryRows"
         )
-        dumps.append(("resize", view.accessibilityTreeDump()))
+        let resizeDump = view.accessibilityTreeDump()
+        // Non-vacuous tear check lives here (geometryRows == childCount, coverage).
+        assertDumpInternallyConsistent(resizeDump, name: "resize")
+        dumps.append(("resize", resizeDump))
 
         // Replay-shaped ordered output after content.
         try feed("replay-tail\r\n")
@@ -526,22 +527,26 @@ final class Gate10AccessibilityTests: XCTestCase {
         )
         dumps.append(("replay", view.accessibilityTreeDump()))
 
-        // Scroll binding if available — settle on a real child tree after invalidate.
+        // Scroll binding if available — same pin-local settle as resize.
         if let handle = surface.surfaceHandle {
-            let beforeChildren = view.accessibilityChildren()?.count ?? 0
             let action = "scroll_page_up"
             _ = action.withCString { ghostty_surface_binding_action(handle, $0, UInt(action.utf8.count)) }
             view.accessibilitySemanticStateDidInvalidate()
             drainMain()
+            view.forceAccessibilitySnapshotRefresh()
             XCTAssertTrue(
                 settle {
-                    let count = view.accessibilityChildren()?.count ?? 0
-                    return count > 0 && count == (surface.semanticSnapshot()?.geometry.rows ?? -1)
+                    view.forceAccessibilitySnapshotRefresh()
+                    let dump = view.accessibilityTreeDump()
+                    return dump.contains("geometryRows=") && dump.contains("childCount=")
+                        && (view.accessibilityChildren()?.count ?? 0) > 0
                 },
-                "scroll path must leave children matching geometry.rows (was \(beforeChildren))"
+                "scroll path must leave a readable pinned child tree"
             )
         }
-        dumps.append(("scroll", view.accessibilityTreeDump()))
+        let scrollDump = view.accessibilityTreeDump()
+        assertDumpInternallyConsistent(scrollDump, name: "scroll")
+        dumps.append(("scroll", scrollDump))
 
         view.userClose()
         drainMain()

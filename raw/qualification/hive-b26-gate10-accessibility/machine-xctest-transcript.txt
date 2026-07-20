@@ -3,4 +3,6 @@ command=cd workspace && HIVE_B26_AX_EVIDENCE=../raw/qualification/hive-b26-gate1
 result=PASS
 executed=15
 failures=0
-notes=Includes testAccessibilityGettersSharePinnedGeneration + regenerated consistent ax-tree dumps. Dual re-run dump sha256 matched. audit-hive-b26-ax-dumps.py --self-test: torn fixture RED, live dumps GREEN.
+stress_dump_test=20/20 PASS after resize settle fix (pre-fix measured 13/15 with 2 flakes on childCount==geometry.rows vs live engine snap)
+dump_repro_n5=see provenance; dual/N re-run of ax-tree-*.txt sha
+audit_self_test=torn fixture RED; live dumps GREEN

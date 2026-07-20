@@ -86,6 +86,9 @@ private final class TerminalAccessibilityController {
     /// One pinned generation for a multi-property AX read (dump, batch assert).
     func withPinnedSnapshot<R>(_ body: () -> R) -> R {
         dispatchPrecondition(condition: .onQueue(.main))
+        // Drop any deferred refresh so this pin is the sole export for the batch.
+        refreshScheduled = false
+        dirtyWhilePinned = false
         refresh(postNotifications: false)
         cacheValid = true
         pinDepth += 1
@@ -97,6 +100,17 @@ private final class TerminalAccessibilityController {
             }
         }
         return body()
+    }
+
+    /// Synchronous re-export (tests / post-mutation settle). Never call from a
+    /// native Ghostty callback stack — same rule as `semanticSnapshot()`.
+    func forceRefreshFromEngine() {
+        dispatchPrecondition(condition: .onQueue(.main))
+        refreshScheduled = false
+        dirtyWhilePinned = false
+        cacheValid = false
+        refresh(postNotifications: false)
+        cacheValid = true
     }
 
     func currentSnapshot() -> ManualSurfaceSemanticSnapshot? {
@@ -420,6 +434,13 @@ extension HiveTerminalView {
         terminalAccessibilityController.schedule(.geometry)
     }
 
+    /// Test/settle seam: one synchronous engine export into the AX cache.
+    /// Prefer this over comparing a live `surface.semanticSnapshot()` to
+    /// cached `accessibilityChildren()` — those are two different reads.
+    func forceAccessibilitySnapshotRefresh() {
+        terminalAccessibilityController.forceRefreshFromEngine()
+    }
+
     func accessibilityFocusDidChange() {
         terminalAccessibilityController.focusDidChange()
     }
@@ -497,11 +518,11 @@ extension HiveTerminalView {
             lines.append("focused=\(isAccessibilityFocused() || window != nil)")
             lines.append("lifecycle=\(accessibilityLifecycleDescription())")
             if let snap {
-                lines.append("generation=\(snap.generation)")
+                // Omit raw generation from evidence — it is monotonic and
+                // run-dependent; sha256 pins must not encode that noise.
                 lines.append("geometryRows=\(snap.geometry.rows)")
                 lines.append("geometryColumns=\(snap.geometry.columns)")
             } else {
-                lines.append("generation=none")
                 lines.append("geometryRows=0")
                 lines.append("geometryColumns=0")
             }
