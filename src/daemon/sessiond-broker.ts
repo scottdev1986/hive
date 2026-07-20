@@ -31,10 +31,6 @@ const DEFAULT_RESTART_WINDOW_MS = 60_000;
 const DEFAULT_READY_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const READY_POLL_MS = 50;
-/** How long a child must remain alive after a pre-existing socket is seen
- * before we accept ownership. An orphan's socket is already present; a child
- * that hits BrokerAlreadyRunning exits almost immediately. */
-const OWNERSHIP_SETTLE_MS = 250;
 
 export type SessiondBrokerState = "stopped" | "starting" | "running" | "failed";
 
@@ -114,10 +110,11 @@ function startupExitError(
   hiveHome: string,
   exitCode: number,
   socketExistedBeforeSpawn: boolean,
+  readLockHolder: (hiveHome: string) => number | null = readBrokerLockHolderPid,
 ): Error {
-  const holder = readBrokerLockHolderPid(hiveHome);
+  const holder = readLockHolder(hiveHome);
   // Pre-existing socket or a live lock holder means we never owned the broker
-  // (orphan / BrokerAlreadyRunning). Name the holder when lsof can see it.
+  // (orphan / BrokerAlreadyRunning). Name the holder when it can be measured.
   if (socketExistedBeforeSpawn || holder !== null) {
     if (holder !== null) {
       return new Error(
@@ -163,6 +160,11 @@ export interface SessiondBrokerSupervisorOptions {
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly socketExists?: (path: string) => boolean;
+  /**
+   * Who holds the exclusive flock on broker.lock. Defaults to lsof.
+   * Ready requires holder === owned child.pid — elapsed time never proves ownership.
+   */
+  readonly readLockHolder?: (hiveHome: string) => number | null;
 }
 
 /** Minimal process surface so tests can inject fakes without Bun types. */
@@ -185,6 +187,7 @@ export class SessiondBrokerSupervisor {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly socketExists: (path: string) => boolean;
+  private readonly readLockHolder: (hiveHome: string) => number | null;
 
   private child: SubprocessLike | null = null;
   private state: SessiondBrokerState = "stopped";
@@ -205,6 +208,7 @@ export class SessiondBrokerSupervisor {
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
     this.socketExists = options.socketExists ?? ((path) => existsSync(path));
+    this.readLockHolder = options.readLockHolder ?? readBrokerLockHolderPid;
   }
 
   get status(): SessiondBrokerState {
@@ -216,8 +220,8 @@ export class SessiondBrokerSupervisor {
   }
 
   /**
-   * Spawn the broker and wait until `broker.sock` exists.
-   * Call only while holding the daemon lock for `hiveHome`.
+   * Spawn the broker and wait until the owned child holds broker.lock and
+   * broker.sock is present. Call only while holding the daemon lock for `hiveHome`.
    */
   async start(): Promise<void> {
     if (this.state === "running" || this.state === "starting") {
@@ -247,9 +251,8 @@ export class SessiondBrokerSupervisor {
 
   private async spawnAndWaitReady(): Promise<void> {
     const socket = brokerSocketPath(this.hiveHome);
-    // An orphan broker leaves broker.sock in place. Readiness must prove OUR
-    // child owns the broker — a pre-existing socket alone is not ownership
-    // (horace B2: daemon stayed up while children hit BrokerAlreadyRunning).
+    // An orphan broker leaves broker.sock in place. Socket presence alone is
+    // not ownership (horace B2): only broker.lock holder === child.pid is.
     const socketExistedBeforeSpawn = this.socketExists(socket);
 
     const child = this.spawnImpl([this.binary, "serve"], {
@@ -270,32 +273,16 @@ export class SessiondBrokerSupervisor {
           this.hiveHome,
           child.exitCode,
           socketExistedBeforeSpawn,
+          this.readLockHolder,
         );
       }
-      if (this.socketExists(socket)) {
-        if (socketExistedBeforeSpawn) {
-          // Socket was already there: poll for a settle window so a child that
-          // immediately loses broker.lock is observed before we claim ready.
-          // Sleep-counted (not now()-based) so injectable test clocks still work.
-          const settlePolls = Math.ceil(OWNERSHIP_SETTLE_MS / READY_POLL_MS);
-          for (let i = 0; i < settlePolls; i += 1) {
-            if (child.exitCode !== null) {
-              throw startupExitError(
-                this.hiveHome,
-                child.exitCode,
-                socketExistedBeforeSpawn,
-              );
-            }
-            await this.sleep(READY_POLL_MS);
-          }
-          if (child.exitCode !== null) {
-            throw startupExitError(
-              this.hiveHome,
-              child.exitCode,
-              socketExistedBeforeSpawn,
-            );
-          }
-        }
+      // Positive ownership: the flock holder must be OUR child. A pre-existing
+      // orphan socket, or a slow child that has not yet lost BrokerAlreadyRunning,
+      // never counts as ready — elapsed time cannot prove who holds the lock.
+      if (
+        this.socketExists(socket) &&
+        this.readLockHolder(this.hiveHome) === child.pid
+      ) {
         return;
       }
       await this.sleep(READY_POLL_MS);
@@ -305,6 +292,14 @@ export class SessiondBrokerSupervisor {
         this.hiveHome,
         child.exitCode,
         socketExistedBeforeSpawn,
+        this.readLockHolder,
+      );
+    }
+    const holder = this.readLockHolder(this.hiveHome);
+    if (holder !== null && holder !== child.pid) {
+      throw new Error(
+        `hive-sessiond serve did not own broker.lock within ${this.readyTimeoutMs}ms: ` +
+          `broker.lock held by pid ${holder} (spawned child pid ${child.pid})`,
       );
     }
     if (!this.socketExists(socket)) {
@@ -312,6 +307,10 @@ export class SessiondBrokerSupervisor {
         `hive-sessiond serve did not create ${socket} within ${this.readyTimeoutMs}ms`,
       );
     }
+    throw new Error(
+      `hive-sessiond serve did not own broker.lock within ${this.readyTimeoutMs}ms ` +
+        `(spawned child pid ${child.pid}; lock holder unknown)`,
+    );
   }
 
   private watchExits(): void {

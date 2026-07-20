@@ -125,15 +125,21 @@ describe("SessiondBrokerSupervisor", () => {
     const socket = join(socketDir, "broker.sock");
     let spawned = 0;
     const child = makeChild({ pid: 4242 });
+    let ownsLock = false;
 
     const supervisor = new SessiondBrokerSupervisor({
       binary: "/tmp/fake-hive-sessiond",
       hiveHome: home,
       spawn: () => {
         spawned += 1;
-        setTimeout(() => writeFileSync(socket, ""), 20);
+        // Ownership appears with the socket: lock holder becomes the child.
+        setTimeout(() => {
+          writeFileSync(socket, "");
+          ownsLock = true;
+        }, 20);
         return child;
       },
+      readLockHolder: () => (ownsLock ? child.pid : null),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => Date.now(),
     });
@@ -154,6 +160,7 @@ describe("SessiondBrokerSupervisor", () => {
     let spawnCount = 0;
     const fatals: string[] = [];
     let clock = 1_000;
+    let ownerPid: number | null = null;
 
     const supervisor = new SessiondBrokerSupervisor({
       binary: "/tmp/fake-hive-sessiond",
@@ -163,15 +170,17 @@ describe("SessiondBrokerSupervisor", () => {
       readyTimeoutMs: 500,
       spawn: () => {
         spawnCount += 1;
+        const pid = 5000 + spawnCount;
+        ownerPid = pid;
         writeFileSync(socket, "");
-        // Must outlive ownership settle on restarts where the prior socket
-        // still exists (settle is only for orphan detection, then we crash).
+        // Crash after ready is accepted via positive ownership (lock === pid).
         return makeChild({
-          pid: 5000 + spawnCount,
-          exitAfterMs: 400,
+          pid,
+          exitAfterMs: 80,
           exitCode: 9,
         });
       },
+      readLockHolder: () => ownerPid,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => clock,
       onFatal: (error) => fatals.push(error.message),
@@ -181,14 +190,13 @@ describe("SessiondBrokerSupervisor", () => {
     expect(supervisor.status).toBe("running");
 
     // Advance clock inside the restart window for each crash cycle.
-    // Each cycle: ~400ms alive + restart settle (~250ms) + ready.
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 150));
     clock += 100;
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 150));
     clock += 100;
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 150));
     clock += 100;
-    await new Promise((r) => setTimeout(r, 700));
+    await new Promise((r) => setTimeout(r, 150));
 
     // start + 2 restarts = 3 spawns; next crash exhausts bound (maxRestarts=2 means
     // 2 restarts after initial, so 3 total; on 3rd crash restartAt.length is 2 already
@@ -217,6 +225,7 @@ describe("SessiondBrokerSupervisor", () => {
         writeFileSync(socket, "");
         return child;
       },
+      readLockHolder: () => child.pid,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       onFatal: (error) => fatals.push(error.message),
     });
@@ -236,8 +245,9 @@ describe("SessiondBrokerSupervisor", () => {
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
     const socket = join(socketDir, "broker.sock");
-    // Orphan already holding the socket (and, in production, broker.lock).
+    // Orphan already holding the socket and broker.lock.
     writeFileSync(socket, "");
+    const orphanPid = 4242;
     let spawned = 0;
 
     const supervisor = new SessiondBrokerSupervisor({
@@ -249,15 +259,58 @@ describe("SessiondBrokerSupervisor", () => {
         // Child loses the lock race and exits; socket remains the orphan's.
         return makeChild({ pid: 9001, exitAfterMs: 40, exitCode: 1 });
       },
+      // Lock never moves to the losing child.
+      readLockHolder: () => orphanPid,
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => Date.now(),
     });
 
     await expect(supervisor.start()).rejects.toThrow(
-      /exited 1 before becoming the live broker/,
+      /exited 1 before becoming the live broker.*pid 4242/,
     );
     expect(supervisor.status).toBe("failed");
     // Must fail at first spawn — not limp into restart loops.
     expect(spawned).toBe(1);
+  });
+
+  // Horace delta mutation: exitAfterMs 400 (past the old 250ms settle) used to
+  // let start() RESOLVE at ~259ms with advertise-then-fail. Positive ownership
+  // (lock holder === child) must keep this RED forever — no time-based ready.
+  test("slow-losing child + orphan socket never resolves start (ownership, not settle)", async () => {
+    const home = tempDir("hive-sessiond-slow-orphan-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const socket = join(socketDir, "broker.sock");
+    writeFileSync(socket, "");
+    const orphanPid = 7777;
+    let resolved = false;
+    let spawned = 0;
+
+    const supervisor = new SessiondBrokerSupervisor({
+      binary: "/tmp/fake-hive-sessiond",
+      hiveHome: home,
+      readyTimeoutMs: 5_000,
+      spawn: () => {
+        spawned += 1;
+        // Stalled >250ms before exit 1 — the exact mutation that beat settle.
+        return makeChild({ pid: 9002, exitAfterMs: 400, exitCode: 1 });
+      },
+      readLockHolder: () => orphanPid,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+    });
+
+    const started = Date.now();
+    await expect(
+      supervisor.start().then(() => {
+        resolved = true;
+      }),
+    ).rejects.toThrow(/exited 1 before becoming the live broker.*pid 7777/);
+    const elapsed = Date.now() - started;
+    expect(resolved).toBe(false);
+    expect(supervisor.status).toBe("failed");
+    expect(spawned).toBe(1);
+    // Must wait for the child's real exit, not a short settle window.
+    expect(elapsed).toBeGreaterThanOrEqual(350);
   });
 });
