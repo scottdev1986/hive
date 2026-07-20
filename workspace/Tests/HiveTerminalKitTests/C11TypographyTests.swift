@@ -281,6 +281,18 @@ final class C11TypographyTests: XCTestCase {
             surface.draw()
             RunLoop.main.run(until: Date().addingTimeInterval(0.02))
         }
+        var previous = try captureRenderedFrame(layer: layer)
+        for _ in 0 ..< 10 {
+            surface.draw()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+            let current = try captureRenderedFrame(layer: layer)
+            if current.digest == previous.digest { return current }
+            previous = current
+        }
+        return previous
+    }
+
+    private func captureRenderedFrame(layer: CALayer) throws -> RenderedFrame {
         let ioSurface = try XCTUnwrap(layer.contents as? IOSurface)
         let image = CIImage(ioSurface: ioSurface)
         let width = Int(image.extent.width)
