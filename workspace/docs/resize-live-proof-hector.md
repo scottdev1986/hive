@@ -20,9 +20,13 @@ The final run used port 43118:
 
 ```sh
 HIVE_SMOKE_VISIBLE=1 \
-HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT=terminal \
+HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT=1 \
 make DEMO_PORT=43118 terminal
 ```
+
+Port 43118 was assigned to this run at the time. It is now allocated to Horst;
+future reruns must use the port currently assigned by queen rather than reusing
+the historical command verbatim.
 
 ## Evidence
 

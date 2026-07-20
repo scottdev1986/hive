@@ -258,8 +258,8 @@ final class SmokeRunner {
 
     func run() {
         let env = ProcessInfo.processInfo.environment
-        if let agent = env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] {
-            runSessiondLiveResizeInputProof(agent: agent)
+        if env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1" {
+            runSessiondLiveResizeInputProof(agent: "terminal")
             return
         }
         let expectedAgents: [(name: String, marker: String)] = (env["HIVE_SMOKE_AGENTS"] ?? "")
