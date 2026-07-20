@@ -31,6 +31,10 @@ const DEFAULT_RESTART_WINDOW_MS = 60_000;
 const DEFAULT_READY_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const READY_POLL_MS = 50;
+/** How long a child must remain alive after a pre-existing socket is seen
+ * before we accept ownership. An orphan's socket is already present; a child
+ * that hits BrokerAlreadyRunning exits almost immediately. */
+const OWNERSHIP_SETTLE_MS = 250;
 
 export type SessiondBrokerState = "stopped" | "starting" | "running" | "failed";
 
@@ -81,6 +85,55 @@ function isExecutable(path: string): boolean {
 
 export function brokerSocketPath(hiveHome = getHiveHome()): string {
   return join(hiveHome, "runtime", "sessiond", "broker.sock");
+}
+
+export function brokerLockPath(hiveHome = getHiveHome()): string {
+  return join(hiveHome, "runtime", "sessiond", "broker.lock");
+}
+
+/** Best-effort: who holds the exclusive flock on broker.lock (lsof). */
+export function readBrokerLockHolderPid(hiveHome: string): number | null {
+  const lockPath = brokerLockPath(hiveHome);
+  if (!existsSync(lockPath)) return null;
+  try {
+    const result = Bun.spawnSync(["lsof", "-t", lockPath], {
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    if (result.exitCode !== 0) return null;
+    const text = new TextDecoder().decode(result.stdout).trim();
+    if (text === "") return null;
+    const pid = Number(text.split(/\s+/)[0]);
+    return Number.isFinite(pid) && pid > 0 ? pid : null;
+  } catch {
+    return null;
+  }
+}
+
+function startupExitError(
+  hiveHome: string,
+  exitCode: number,
+  socketExistedBeforeSpawn: boolean,
+): Error {
+  const holder = readBrokerLockHolderPid(hiveHome);
+  // Pre-existing socket or a live lock holder means we never owned the broker
+  // (orphan / BrokerAlreadyRunning). Name the holder when lsof can see it.
+  if (socketExistedBeforeSpawn || holder !== null) {
+    if (holder !== null) {
+      return new Error(
+        `hive-sessiond serve exited ${exitCode} before becoming the live broker: ` +
+          `broker.lock held by pid ${holder}`,
+      );
+    }
+    return new Error(
+      `hive-sessiond serve exited ${exitCode} before becoming the live broker ` +
+        `(could not acquire exclusive broker.lock — another process owns the ` +
+        `sessiond broker for this HIVE_HOME)`,
+    );
+  }
+  return new Error(
+    `hive-sessiond serve exited ${exitCode} before broker.sock appeared`,
+  );
 }
 
 export interface SessiondBrokerSupervisorOptions {
@@ -193,6 +246,12 @@ export class SessiondBrokerSupervisor {
   }
 
   private async spawnAndWaitReady(): Promise<void> {
+    const socket = brokerSocketPath(this.hiveHome);
+    // An orphan broker leaves broker.sock in place. Readiness must prove OUR
+    // child owns the broker — a pre-existing socket alone is not ownership
+    // (horace B2: daemon stayed up while children hit BrokerAlreadyRunning).
+    const socketExistedBeforeSpawn = this.socketExists(socket);
+
     const child = this.spawnImpl([this.binary, "serve"], {
       env: {
         ...process.env,
@@ -204,16 +263,49 @@ export class SessiondBrokerSupervisor {
     });
     this.child = child;
 
-    const socket = brokerSocketPath(this.hiveHome);
     const deadline = this.now() + this.readyTimeoutMs;
     while (this.now() < deadline) {
-      if (this.socketExists(socket)) return;
       if (child.exitCode !== null) {
-        throw new Error(
-          `hive-sessiond serve exited ${child.exitCode} before broker.sock appeared`,
+        throw startupExitError(
+          this.hiveHome,
+          child.exitCode,
+          socketExistedBeforeSpawn,
         );
       }
+      if (this.socketExists(socket)) {
+        if (socketExistedBeforeSpawn) {
+          // Socket was already there: poll for a settle window so a child that
+          // immediately loses broker.lock is observed before we claim ready.
+          // Sleep-counted (not now()-based) so injectable test clocks still work.
+          const settlePolls = Math.ceil(OWNERSHIP_SETTLE_MS / READY_POLL_MS);
+          for (let i = 0; i < settlePolls; i += 1) {
+            if (child.exitCode !== null) {
+              throw startupExitError(
+                this.hiveHome,
+                child.exitCode,
+                socketExistedBeforeSpawn,
+              );
+            }
+            await this.sleep(READY_POLL_MS);
+          }
+          if (child.exitCode !== null) {
+            throw startupExitError(
+              this.hiveHome,
+              child.exitCode,
+              socketExistedBeforeSpawn,
+            );
+          }
+        }
+        return;
+      }
       await this.sleep(READY_POLL_MS);
+    }
+    if (child.exitCode !== null) {
+      throw startupExitError(
+        this.hiveHome,
+        child.exitCode,
+        socketExistedBeforeSpawn,
+      );
     }
     if (!this.socketExists(socket)) {
       throw new Error(

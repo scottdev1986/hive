@@ -128,6 +128,70 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     supervisor = null; // owned stop already ran
   }, 30_000);
 
+  // Horace's staged probe: orphan holds broker.lock; daemon must NOT create
+  // daemon.port and limp brokerless — supervisor.start must fail visibly.
+  test("orphan broker.lock fails startup with lock-holder error (no limp)", async () => {
+    home = shortHome("or");
+    process.env.HIVE_HOME = home;
+    process.env.HIVE_PORT = "0";
+
+    // Orphan: a real hive-sessiond serve that holds broker.lock + broker.sock.
+    const orphan = Bun.spawn([binary!, "serve"], {
+      env: { ...process.env, HIVE_HOME: home },
+      stdin: "ignore",
+      stdout: "ignore",
+      stderr: "ignore",
+    });
+    const socket = brokerSocketPath(home);
+    const orphanDeadline = Date.now() + 15_000;
+    while (Date.now() < orphanDeadline) {
+      if (existsSync(socket) && orphan.exitCode === null) break;
+      if (orphan.exitCode !== null) {
+        throw new Error(`orphan broker exited ${orphan.exitCode} before ready`);
+      }
+      await Bun.sleep(20);
+    }
+    expect(existsSync(socket)).toBe(true);
+    expect(orphan.exitCode).toBeNull();
+    const orphanPid = orphan.pid;
+
+    await acquireDaemonLock();
+    supervisor = new SessiondBrokerSupervisor({
+      binary: binary!,
+      hiveHome: home,
+      readyTimeoutMs: 5_000,
+      maxRestarts: 3,
+    });
+
+    let startError: unknown;
+    try {
+      await supervisor.start();
+    } catch (error) {
+      startError = error;
+    }
+    expect(startError).toBeInstanceOf(Error);
+    const message = (startError as Error).message;
+    expect(message).toMatch(/before becoming the live broker/);
+    // Name the lock holder when lsof can see it (macOS flock).
+    expect(message).toMatch(new RegExp(`pid ${orphanPid}|broker\\.lock`));
+    expect(supervisor.status).toBe("failed");
+    // Still exactly one broker — the orphan. We did not adopt or replace it.
+    expect(existsSync(socket)).toBe(true);
+    expect(orphan.exitCode).toBeNull();
+
+    // Daemon must not have been started (no port advertisement).
+    expect(daemon).toBeNull();
+
+    await supervisor.stop();
+    supervisor = null;
+    try {
+      orphan.kill("SIGTERM");
+    } catch {
+      // already dead
+    }
+    await Promise.race([orphan.exited, Bun.sleep(2_000)]);
+  }, 30_000);
+
   test("broker crash is restarted within the bound; HELLO recovers", async () => {
     home = shortHome("cr");
     process.env.HIVE_HOME = home;

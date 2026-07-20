@@ -164,8 +164,13 @@ describe("SessiondBrokerSupervisor", () => {
       spawn: () => {
         spawnCount += 1;
         writeFileSync(socket, "");
-        // Crash shortly after becoming ready.
-        return makeChild({ pid: 5000 + spawnCount, exitAfterMs: 30, exitCode: 9 });
+        // Must outlive ownership settle on restarts where the prior socket
+        // still exists (settle is only for orphan detection, then we crash).
+        return makeChild({
+          pid: 5000 + spawnCount,
+          exitAfterMs: 400,
+          exitCode: 9,
+        });
       },
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => clock,
@@ -176,13 +181,14 @@ describe("SessiondBrokerSupervisor", () => {
     expect(supervisor.status).toBe("running");
 
     // Advance clock inside the restart window for each crash cycle.
-    await new Promise((r) => setTimeout(r, 80));
+    // Each cycle: ~400ms alive + restart settle (~250ms) + ready.
+    await new Promise((r) => setTimeout(r, 700));
     clock += 100;
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 700));
     clock += 100;
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 700));
     clock += 100;
-    await new Promise((r) => setTimeout(r, 80));
+    await new Promise((r) => setTimeout(r, 700));
 
     // start + 2 restarts = 3 spawns; next crash exhausts bound (maxRestarts=2 means
     // 2 restarts after initial, so 3 total; on 3rd crash restartAt.length is 2 already
@@ -220,5 +226,38 @@ describe("SessiondBrokerSupervisor", () => {
     await supervisor.stop();
     expect(supervisor.status).toBe("stopped");
     expect(fatals).toEqual([]);
+  });
+
+  // Horace B2: orphan's pre-existing broker.sock must not make start() succeed
+  // while the child dies with BrokerAlreadyRunning. Old readiness only checked
+  // existsSync(broker.sock) and returned immediately — this test goes RED there.
+  test("orphan pre-existing socket + child exit fails start visibly", async () => {
+    const home = tempDir("hive-sessiond-orphan-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const socket = join(socketDir, "broker.sock");
+    // Orphan already holding the socket (and, in production, broker.lock).
+    writeFileSync(socket, "");
+    let spawned = 0;
+
+    const supervisor = new SessiondBrokerSupervisor({
+      binary: "/tmp/fake-hive-sessiond",
+      hiveHome: home,
+      readyTimeoutMs: 2_000,
+      spawn: () => {
+        spawned += 1;
+        // Child loses the lock race and exits; socket remains the orphan's.
+        return makeChild({ pid: 9001, exitAfterMs: 40, exitCode: 1 });
+      },
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+    });
+
+    await expect(supervisor.start()).rejects.toThrow(
+      /exited 1 before becoming the live broker/,
+    );
+    expect(supervisor.status).toBe("failed");
+    // Must fail at first spawn — not limp into restart loops.
+    expect(spawned).toBe(1);
   });
 });
