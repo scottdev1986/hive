@@ -1,4 +1,4 @@
-import { existsSync, readFileSync } from "node:fs";
+import { readFileSync } from "node:fs";
 import { factVerificationFlag } from "../adapters/memory";
 import {
   cleanupLifecycleFiles,
@@ -7,7 +7,7 @@ import {
   readDaemonPort,
   type DaemonInstanceLiveness,
 } from "../daemon/lifecycle";
-import { getDatabasePath, getHiveHome, HiveDatabase } from "../daemon/db";
+import { getHiveHome } from "../daemon/db";
 import {
   captureProcessTree,
   defaultReapDependencies,
@@ -19,11 +19,14 @@ import type {
   MemoryWriteInput,
   QuotaObservationInput,
 } from "../schemas";
+import type { SessionLocator } from "../schemas";
 import {
-  isLiveAgent,
-  type AgentRecord,
-  type SessionLocator,
-} from "../schemas";
+  captureInvokerIdentity,
+  formatInvokerOrigin,
+  isTestRunnerEnv,
+  type InvokerIdentity,
+} from "./invoker";
+import { confirmOnTty, type ConfirmFn } from "./prompt";
 import { hiveInstanceSuffix, isTmuxSessionForInstance } from "../daemon/tmux-sessions";
 import {
   deleteMemory,
@@ -38,16 +41,7 @@ import {
 import { operatorFetch, operatorHeaders } from "./credential";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { formatQuotaStatus, formatStatusTable } from "./status";
-import {
-  bindAgentSession,
-  TmuxSessionHost,
-} from "../daemon/session-host/tmux-host";
-
-const isNoSuchProcessError = (error: unknown): boolean =>
-  typeof error === "object" &&
-  error !== null &&
-  "code" in error &&
-  error.code === "ESRCH";
+import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 
 interface StopTmux {
   listSessions(): Promise<string[]>;
@@ -255,16 +249,17 @@ export async function attachGrantCli(
   console.log(JSON.stringify(body.grant));
 }
 
-/** The provenance string a kill carries to the daemon's audit log (#64):
- * which CLI subcommand asked, with what argv, launched by which parent
- * process. Captured at the origin because the audit row is the only record
- * that survives the teardown cascade — the 2026-07-20 pane-close kills left
- * empty reasons on all three rows and took a forensic reconstruction to
- * attribute. */
-export function killOrigin(subcommand: "kill" | "stop"): string {
-  return `hive ${subcommand} ppid=${process.ppid} argv=${
-    JSON.stringify(process.argv.slice(2))
-  }`;
+/** The provenance string a kill carries to the daemon's audit log (#64/#70):
+ * full invoker identity — pid, parent chain with process names, argv, cwd and
+ * the agent-worktree flag. Captured at the origin because the audit row is
+ * the only record that survives the teardown cascade — the 2026-07-20 fleet
+ * kills were audited as a bare `ppid=<gone> argv=[]` and needed a full
+ * forensic reconstruction to attribute. */
+export function killOrigin(
+  subcommand: "kill" | "stop",
+  invoker: InvokerIdentity = captureInvokerIdentity(),
+): string {
+  return formatInvokerOrigin(subcommand, invoker);
 }
 
 export async function killAgentCli(
@@ -504,68 +499,105 @@ export async function recoverAgentsCli(name?: string): Promise<void> {
   }
 }
 
+/** One agent's unlanded state, as the daemon's `/stop` refusal names it. */
+export interface StopUnlandedAgent {
+  readonly name: string;
+  readonly branch: string | null;
+  readonly dirtyFiles: number;
+  readonly unmergedCommits: number;
+}
+
+export interface StopRequestBody {
+  readonly origin: string;
+  readonly invoker: { readonly cwd: string; readonly agentWorktree: boolean };
+  readonly confirmUnlanded: boolean;
+}
+
+export type StopResponseBody =
+  | { state: "stopping"; killed: string[] }
+  | { state: "already-stopping" }
+  | { state: "refused-unlanded"; unlanded: StopUnlandedAgent[]; error?: string }
+  | { state: "refused-unverifiable" | "refused-invoker"; error?: string }
+  | { state: "stop-failed"; failures: string[]; error?: string };
+
+/** POST /stop — the daemon's own atomic-or-abortive shutdown (#70). One
+ * request; every gate (agent-worktree invoker, #65 binding verification,
+ * unlanded work) is evaluated daemon-side before anything dies, and past the
+ * commit point the daemon drives kills and its own exit to completion whether
+ * or not this client survives to see the answer. */
+async function defaultRequestStop(
+  body: StopRequestBody,
+): Promise<StopResponseBody> {
+  const response = await operatorFetch(
+    `http://127.0.0.1:${requireDaemonPort()}/stop`,
+    {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(body),
+    },
+  );
+  const parsed = await response.json().catch(() => null) as
+    | (Partial<StopResponseBody> & { error?: string })
+    | null;
+  if (parsed === null || typeof parsed.state !== "string") {
+    throw new Error(
+      `hive stop failed (HTTP ${response.status}): the daemon returned no stop state`,
+    );
+  }
+  return parsed as StopResponseBody;
+}
+
 export interface StopHiveDependencies {
   readonly tmux?: StopTmux;
   readonly sessions?: TmuxSessionHost;
-  readonly readAgents?: () => readonly AgentRecord[];
-  /** #65 preflight: does this sessiond locator have a terminal-host binding,
-   * i.e. can its teardown be verified at all? Defaults to a readonly read of
-   * the instance database. */
-  readonly readSessiondBinding?: (
-    locator: SessionLocator & { hostKind: "sessiond" },
-  ) => boolean;
-  readonly stopSessiond?: (agent: AgentRecord) => Promise<void>;
   readonly readPid?: () => number | null;
-  readonly kill?: (pid: number, signal: NodeJS.Signals) => void;
   readonly liveness?: () => Promise<DaemonInstanceLiveness>;
   readonly cleanup?: (pid?: number) => void;
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly timeoutMs?: number;
   readonly log?: (message: string) => void;
+  /** Captured once per invocation; injectable for tests. */
+  readonly invoker?: InvokerIdentity;
+  /** `hive stop --force`: skip the unlanded-work confirmation. */
+  readonly force?: boolean;
+  /** TTY confirmation for the unlanded-work gate; defaults to asking the
+   * terminal (default no), refusing outright without one. */
+  readonly confirm?: ConfirmFn;
+  /** The daemon `/stop` transport. Deliberately the ONLY lethal dependency:
+   * under a test runner it must be injected explicitly — a defaulted
+   * transport reaching through ambient HIVE_HOME is exactly how `bun test`
+   * killed the real fleet twice on 2026-07-20 (#70). */
+  readonly requestStop?: (body: StopRequestBody) => Promise<StopResponseBody>;
+  /** Set only by the `hive stop` CLI action: a real CLI subprocess is a
+   * process boundary, not an in-process test caller, even when the test
+   * runner's NODE_ENV=test leaks into its environment (e2e suites). */
+  readonly invokedViaCli?: boolean;
 }
 
-/** Reads binding presence for the #65 preflight from the instance database.
- * A database that cannot be read answers "not verifiable" — fail closed. */
-function defaultReadSessiondBinding(
-  locator: SessionLocator & { hostKind: "sessiond" },
-): boolean {
-  if (!existsSync(getDatabasePath())) return false;
-  const db = HiveDatabase.openReadonly();
-  try {
-    return db.getTerminalHostBindingByLocator(locator) !== null;
-  } finally {
-    db.close();
-  }
+function formatUnlanded(unlanded: readonly StopUnlandedAgent[]): string {
+  return unlanded.map((agent) =>
+    `${agent.name} (branch ${agent.branch ?? "none"}: ` +
+    `${agent.unmergedCommits} unmerged commit(s), ` +
+    `${agent.dirtyFiles} uncommitted file(s))`
+  ).join("; ");
 }
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
+  const invoker = deps.invoker ?? captureInvokerIdentity();
+  // #70 gate 1: an agent worktree shell carries no fleet-kill authority. Both
+  // 2026-07-20 waves were launched from agent shells; refuse before touching
+  // anything, daemon contacted or not.
+  if (invoker.agentWorktree) {
+    throw new Error(
+      "Hive refused `hive stop`: it was invoked from inside an agent worktree " +
+        `(${invoker.cwd}), and agent shells hold no fleet-kill authority.\n` +
+        "No agent was killed and the daemon was not signalled. " +
+        "Fix: run `hive stop` from the project root, outside .hive/worktrees/.",
+    );
+  }
   const sessions = deps.sessions ?? (deps.tmux === undefined
     ? new TmuxSessionHost()
     : undefined);
-  let agents: readonly AgentRecord[] = [];
-  if (deps.readAgents !== undefined) {
-    agents = deps.readAgents();
-  } else if (existsSync(getDatabasePath())) {
-    const db = HiveDatabase.openReadonly();
-    try {
-      agents = db.listAgents();
-    } finally {
-      db.close();
-    }
-  }
-  if (sessions !== undefined) {
-    for (const agent of agents) {
-      if (
-        isLiveAgent(agent) &&
-        agent.sessionLocator?.hostKind === "tmux"
-      ) {
-        bindAgentSession(sessions, agent);
-      }
-    }
-  }
-  const sessiondAgents = agents.filter((agent): agent is AgentRecord & {
-    sessionLocator: SessionLocator & { hostKind: "sessiond" };
-  } => isLiveAgent(agent) && agent.sessionLocator?.hostKind === "sessiond");
   const pid = (deps.readPid ?? readDaemonPid)();
   const liveness = deps.liveness ?? (() =>
     daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
@@ -580,65 +612,71 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
   }
   const daemonWasLive = state === "live";
   if (daemonWasLive) {
+    // #70 gate 2: inside a test-runner process, the stop transport must be an
+    // explicit injection. A defaulted transport would resolve the ambient
+    // HIVE_HOME's daemon.port and operator credential — which, inherited from
+    // a live instance, is the fleet-kill this command audited twice on
+    // 2026-07-20 as `hive stop ppid=<gone> argv=[]`.
+    if (
+      isTestRunnerEnv() && deps.requestStop === undefined &&
+      deps.invokedViaCli !== true
+    ) {
+      throw new Error(
+        "Hive refused `hive stop`: this is a test-runner process (NODE_ENV=test) " +
+          "and no stop transport was injected.\n" +
+          "No agent was killed and the daemon was not signalled. " +
+          "Fix: pass an explicit requestStop dependency (tests), or unset NODE_ENV.",
+      );
+    }
     if (pid === null) {
       throw new Error(
         "the daemon is live but has no recorded pid\n" +
           "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
       );
     }
-    // #65: verify shutdown eligibility BEFORE the first kill. This command
-    // used to fan out kills over every sessiond agent and only then discover
-    // that a teardown could not be verified — throwing with the agents
-    // already dead, the daemon never signalled, and the GUI reporting "still
-    // running": a live app over a dead fleet, twice on 2026-07-20. An agent
-    // whose sessiond locator has no terminal-host binding can never produce a
-    // verified teardown, so its presence refuses the shutdown while every
-    // agent is still untouched.
-    const readBinding = deps.readSessiondBinding ?? defaultReadSessiondBinding;
-    const unverifiable = sessiondAgents.filter((agent) =>
-      !readBinding(agent.sessionLocator)
-    );
-    if (unverifiable.length > 0) {
-      throw new Error(
-        "Hive refused shutdown before touching any agent: " +
-          unverifiable.map((agent) =>
-            `${agent.name}: sessiond locator has no terminal-host binding in this Hive instance`
-          ).join("; ") +
-          "\nNo agent was killed and the daemon was not signalled. " +
-          "Fix: inspect the named agents (hive status), close them individually, then rerun `hive stop`.",
+    const requestStop = deps.requestStop ?? defaultRequestStop;
+    const body: StopRequestBody = {
+      origin: killOrigin("stop", invoker),
+      invoker: { cwd: invoker.cwd, agentWorktree: invoker.agentWorktree },
+      confirmUnlanded: deps.force === true,
+    };
+    let response = await requestStop(body);
+    if (response.state === "refused-unlanded") {
+      // #70 gate 3: unlanded work stops the stop. Name the agents and their
+      // state, ask a real terminal, and refuse everywhere else.
+      const summary = formatUnlanded(response.unlanded);
+      const confirm = deps.confirm ?? confirmOnTty;
+      (deps.log ?? console.log)(
+        `Unlanded work would die with this stop: ${summary}`,
       );
-    }
-    const stopSessiond = deps.stopSessiond ?? ((agent: AgentRecord) =>
-      killAgentCli(
-        agent.name,
-        requireDaemonPort(),
-        agent.sessionLocator,
-        killOrigin("stop"),
-      ));
-    const sessiondResults = await Promise.allSettled(
-      sessiondAgents.map((agent) => stopSessiond(agent)),
-    );
-    const sessiondFailures = sessiondResults.flatMap((result, index) =>
-      result.status === "rejected"
-        ? [`${sessiondAgents[index]!.name}: ${
-          result.reason instanceof Error
-            ? result.reason.message
-            : String(result.reason)
-        }`]
-        : []
-    );
-    if (sessiondFailures.length > 0) {
-      throw new Error(
-        "Hive refused shutdown because sessiond teardown was not verified: " +
-          sessiondFailures.join("; "),
+      const answer = await confirm(
+        `Stop anyway and kill ${response.unlanded.length} agent(s) with unlanded work?`,
+        false,
       );
-    }
-    try {
-      (deps.kill ?? process.kill)(pid, "SIGTERM");
-    } catch (error) {
-      if (!isNoSuchProcessError(error)) {
-        throw error;
+      if (answer !== true) {
+        throw new Error(
+          `Hive refused shutdown: ${response.unlanded.length} agent(s) hold ` +
+            `unlanded work: ${summary}\n` +
+            "No agent was killed and the daemon was not signalled. " +
+            "Fix: land or discard their work, or rerun `hive stop --force`.",
+        );
       }
+      response = await requestStop({ ...body, confirmUnlanded: true });
+    }
+    if (response.state === "stop-failed") {
+      throw new Error(
+        "Hive refused shutdown because agent teardown failed: " +
+          response.failures.join("; "),
+      );
+    }
+    if (
+      response.state === "refused-unverifiable" ||
+      response.state === "refused-invoker" ||
+      response.state === "refused-unlanded"
+    ) {
+      throw new Error(
+        response.error ?? `Hive refused shutdown (${response.state})`,
+      );
     }
     const sleep = deps.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
     const attempts = Math.max(1, Math.ceil((deps.timeoutMs ?? 5_000) / 50));

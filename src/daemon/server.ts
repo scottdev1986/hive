@@ -513,6 +513,12 @@ export interface HiveDaemonOptions {
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
+  /** How POST /stop takes the daemon itself down once every agent is torn
+   * down (#70). Defaults to SIGTERMing this process when it manages its own
+   * lifecycle — the exact path the signal handlers already own — and to a
+   * no-op for embedded daemons, whose host process owns its own lifetime.
+   * Injectable so a test can prove the sequence without dying. */
+  initiateShutdown?: () => void;
   /**
    * Production owner of `hive-sessiond serve`. Started by the daemon entry
    * before listen; torn down after agent kill so terminate still has a broker.
@@ -611,6 +617,10 @@ export class HiveDaemon {
   private readonly port: number;
   private readonly hostname: string;
   private readonly manageLifecycle: boolean;
+  private readonly initiateShutdown: () => void;
+  /** POST /stop's commit latch: set once its gates pass, never unset while
+   * the kills it authorized are still executing. */
+  private stopInProgress = false;
   private readonly sessiondBroker: SessiondBrokerSupervisor | null;
   private readonly machineMutations:
     | Pick<MachineMutationCoordinator, "beginOperation">
@@ -719,6 +729,13 @@ export class HiveDaemon {
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
+    this.initiateShutdown = options.initiateShutdown ?? (() => {
+      // The short delay lets the /stop response flush before stop() force-closes
+      // the listener; the signal handlers own the rest of the teardown.
+      if (this.manageLifecycle) {
+        setTimeout(() => process.kill(process.pid, "SIGTERM"), 100);
+      }
+    });
     this.sessiondBroker = options.sessiondBroker ?? null;
     if (options.machineMutations !== undefined) {
       this.machineMutations = options.machineMutations;
@@ -1835,6 +1852,28 @@ export class HiveDaemon {
    * worktree still refuses to delete stranded work unless the caller passes
    * discardWork.
    */
+  /** Can this agent's process tree be positively read as gone? Fail closed:
+   * an unreachable host or broker proves nothing (#70). */
+  private async agentTreeAbsent(agent: AgentRecord): Promise<boolean> {
+    try {
+      if (agent.sessionLocator?.hostKind === "sessiond") {
+        const inspection = await this.terminalHost.inspect(
+          requireSessiondAgentLocator({
+            id: agent.id,
+            sessionLocator: agent.sessionLocator,
+          }),
+        );
+        return inspection.presence === "exited";
+      }
+      const inspection = await this.tmux.inspectLegacyTmuxSession(
+        agent.tmuxSession,
+      );
+      return inspection.presence === "lost";
+    } catch {
+      return false;
+    }
+  }
+
   private async killAgentTeardown(
     agent: AgentRecord,
     options: {
@@ -1868,10 +1907,24 @@ export class HiveDaemon {
     // durable; a teardown that fails in between leaves it set, because a
     // deliberately killed agent must never be resurrected by the sweep.
     this.recovery.noteDeliberateKill(agent.id);
-    const reaped = await this.stopAgentProcesses(agent, () => {
+    let reaped: ReapOutcome;
+    try {
+      reaped = await this.stopAgentProcesses(agent, () => {
+        this.capabilities.revokeSubject(agent.name);
+        removeCredential(agent.name);
+      });
+    } catch (error) {
+      // #70 (lucas, 2026-07-20): a teardown that throws AFTER the processes
+      // are gone used to leave the row `working` forever — an audited-allow
+      // kill whose victim hive_status still reported as alive. If the tree is
+      // provably absent the agent IS dead; record that and finish the
+      // teardown. A tree whose absence cannot be proved keeps the failure:
+      // unreachable is not dead.
+      if (!(await this.agentTreeAbsent(agent))) throw error;
       this.capabilities.revokeSubject(agent.name);
       removeCredential(agent.name);
-    });
+      reaped = { killed: [], survivors: [] };
+    }
     const timestamp = options.at ?? new Date().toISOString();
     const killed = this.db.markAgentDead(
       agent.id,
@@ -2506,6 +2559,9 @@ export class HiveDaemon {
     }
     if (url.pathname === "/recover" && request.method === "POST") {
       return this.recoverEndpoint(request);
+    }
+    if (url.pathname === "/stop" && request.method === "POST") {
+      return this.stopEndpoint(request);
     }
     if (url.pathname === "/codex-root-token" && request.method === "POST") {
       return this.mintCodexRootToken(request);
@@ -3274,6 +3330,205 @@ export class HiveDaemon {
         { status: 500 },
       );
     }
+  }
+
+  /**
+   * POST /stop — fleet shutdown as ONE atomic-or-abortive daemon request (#70).
+   *
+   * `hive stop` used to fan kills out client-side (`/agents/:name/kill` per
+   * agent) and only then SIGTERM the daemon. Any mid-flight failure — or the
+   * caller dying, which is guaranteed when the caller is itself an agent the
+   * stop kills — left partial kills under a live daemon: the 2026-07-20
+   * incident, twice. Here every gate is evaluated before anything dies:
+   *
+   *   1. operator authorization (the same agent:kill the pane X needs);
+   *   2. the invoker must not be an agent worktree shell — client-reported and
+   *      therefore accident prevention, not a security boundary (a same-UID
+   *      process can read the operator credential; credentials.ts says so);
+   *   3. every live sessiond agent must hold a terminal-host binding, or its
+   *      teardown could never be verified (#65, now enforced daemon-side);
+   *   4. unlanded work refuses the stop unless explicitly confirmed, naming
+   *      the agents and their unlanded state.
+   *
+   * Past the commit latch, the daemon drives every kill and then its own exit
+   * to completion whether or not the requesting client survives — the handler
+   * is not cancelled by a vanished request. A teardown failure reports
+   * stop-failed and leaves the daemon up: exiting over survivors would strand
+   * them with nothing left to supervise or reap them.
+   */
+  private async stopEndpoint(request: Request): Promise<Response> {
+    const authenticated = this.authenticate(request, "/stop");
+    if (!authenticated.ok) return this.denied(authenticated);
+    let rawBody: unknown;
+    try {
+      rawBody = await request.json();
+    } catch {
+      rawBody = {};
+    }
+    const parsed = z.object({
+      origin: z.string().optional(),
+      confirmUnlanded: z.boolean().optional(),
+      invoker: z.object({
+        cwd: z.string(),
+        agentWorktree: z.boolean(),
+      }).optional(),
+    }).safeParse(rawBody);
+    if (!parsed.success) {
+      return json(
+        { error: "Invalid stop request", issues: parsed.error.issues },
+        { status: 400 },
+      );
+    }
+    const origin = parsed.data.origin?.slice(0, 1_024) ?? null;
+    const capability = authenticated.capability;
+    const fleet = this.authorize(capability, "/stop", "agent:kill", undefined, false);
+    if (!fleet.ok) return this.denied(fleet);
+    const deny = (reason: string): void =>
+      this.capabilities.audit({
+        route: "/stop",
+        action: "agent:kill",
+        callerSubject: capability.subject,
+        callerRole: capability.role,
+        capabilityId: capability.id,
+        requestedSubject: null,
+        epoch: capability.epoch,
+        decision: "deny",
+        reason: origin === null ? reason : `${reason}; ${origin}`,
+      });
+    const live = this.db.listAgents().filter((agent) =>
+      LIVE_STATUSES.includes(agent.status)
+    );
+    const invoker = parsed.data.invoker;
+    const worktreeRoot = join(this.repoRoot, ".hive", "worktrees");
+    const cwd = invoker?.cwd;
+    const insideAgentWorktree = invoker?.agentWorktree === true ||
+      (cwd !== undefined && (
+        cwd === worktreeRoot || cwd.startsWith(`${worktreeRoot}/`) ||
+        live.some((agent) =>
+          agent.worktreePath !== null &&
+          (cwd === agent.worktreePath ||
+            cwd.startsWith(`${agent.worktreePath}/`))
+        )
+      ));
+    if (insideAgentWorktree) {
+      deny("invoker inside an agent worktree");
+      return json({
+        state: "refused-invoker",
+        error:
+          "Hive refused shutdown: `hive stop` was invoked from inside an agent " +
+          "worktree, and agent shells hold no fleet-kill authority. " +
+          "No agent was killed.",
+      }, { status: 403 });
+    }
+    const unverifiable = live.filter((agent) => {
+      const locator = agent.sessionLocator;
+      if (locator === undefined || locator.hostKind !== "sessiond") return false;
+      return this.db.getTerminalHostBindingByLocator({
+        ...locator,
+        hostKind: "sessiond",
+      }) === null;
+    });
+    if (unverifiable.length > 0) {
+      deny(
+        `unverifiable sessiond teardown: ${
+          unverifiable.map((agent) => agent.name).join(", ")
+        }`,
+      );
+      return json({
+        state: "refused-unverifiable",
+        error: "Hive refused shutdown before touching any agent: " +
+          unverifiable.map((agent) =>
+            `${agent.name}: sessiond locator has no terminal-host binding in this Hive instance`
+          ).join("; ") +
+          "\nNo agent was killed. Fix: inspect the named agents (hive status), " +
+          "close them individually, then rerun `hive stop`.",
+      }, { status: 409 });
+    }
+    const unlanded: Array<{
+      name: string;
+      branch: string | null;
+      dirtyFiles: number;
+      unmergedCommits: number;
+    }> = [];
+    for (const agent of live) {
+      if (agent.worktreePath === null && agent.branch === null) continue;
+      try {
+        const work = await this.assessStranded(
+          this.repoRoot,
+          agent.worktreePath,
+          agent.branch,
+        );
+        if (work.dirtyFiles.length > 0 || work.unmergedCommits > 0) {
+          unlanded.push({
+            name: agent.name,
+            branch: agent.branch,
+            dirtyFiles: work.dirtyFiles.length,
+            unmergedCommits: work.unmergedCommits,
+          });
+        }
+      } catch {
+        // Unassessable is not "clean": a worktree whose state cannot be read
+        // must gate the stop exactly as unlanded work would.
+        unlanded.push({
+          name: agent.name,
+          branch: agent.branch,
+          dirtyFiles: 0,
+          unmergedCommits: 0,
+        });
+      }
+    }
+    if (unlanded.length > 0 && parsed.data.confirmUnlanded !== true) {
+      deny(
+        `unlanded work without confirmation: ${
+          unlanded.map((agent) => agent.name).join(", ")
+        }`,
+      );
+      return json({
+        state: "refused-unlanded",
+        unlanded,
+        error: "Hive refused shutdown: agent(s) hold unlanded work. " +
+          "No agent was killed.",
+      }, { status: 409 });
+    }
+    if (this.stopInProgress) {
+      return json({ state: "already-stopping" }, { status: 409 });
+    }
+    // COMMIT. From here the stop proceeds to completion regardless of the
+    // requesting client's fate; nothing above this line killed anything.
+    this.stopInProgress = true;
+    const failures: string[] = [];
+    for (const agent of live) {
+      const kill = this.authorize(
+        capability,
+        "/stop",
+        "agent:kill",
+        agent.name,
+        true,
+        origin,
+      );
+      if (!kill.ok) {
+        failures.push(`${agent.name}: ${kill.message}`);
+        continue;
+      }
+      try {
+        await this.killAgentTeardown(agent);
+      } catch (error) {
+        failures.push(
+          `${agent.name}: ${
+            error instanceof Error ? error.message : "kill failed"
+          }`,
+        );
+      }
+    }
+    if (failures.length > 0) {
+      this.stopInProgress = false;
+      return json({ state: "stop-failed", failures }, { status: 500 });
+    }
+    this.initiateShutdown();
+    return json({
+      state: "stopping",
+      killed: live.map((agent) => agent.name),
+    });
   }
 
   /** POST /agents/<name>/attach-grant — §19/§20 one-use viewer attach for the

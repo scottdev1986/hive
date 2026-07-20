@@ -119,6 +119,7 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `POST /token-usage/**` | `token-usage:write` | — | yes | `src/daemon/server.ts:2375-2390` |
 | `POST /recover` | `agent:recover` | any | yes | `src/daemon/server.ts:2398-2400` |
 | `POST /agents/:name/kill` | `agent:kill` | any | yes | `src/daemon/server.ts:3156-3217` |
+| `POST /stop` | `agent:kill` | fleet, then per-agent | yes (one allow per killed agent, carrying the invoker origin) | `src/daemon/server.ts` (`stopEndpoint`) |
 | `POST /codex-root-token` | `root-token:mint` | — | yes | `src/daemon/server.ts:2401-2403`, `:2416-2441` |
 | `hive_status`, `hive_models`, `graph_locate` | `status:read` | — | no | `src/daemon/server.ts:3427-3433`, `:3533-3539`, `:4044-4054` |
 | `hive_quota_status` | `quota:read` | — | no | `src/daemon/server.ts:3505-3512` |
@@ -137,6 +138,8 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3918-3927` |
 | `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3981-3988`, `:4005-4012` |
 | `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3991-3998`, `:4019-4026`, `:4029-4036` |
+
+`POST /stop` (#70) is the fleet shutdown `hive stop` sends: it authorizes `agent:kill` with no subject as the fleet gate, then re-authorizes (and audits) `agent:kill` per agent as it kills. Beyond the capability check it applies daemon-side *invoker* gates — a caller reporting (or provably running from) an agent worktree is refused with an audited deny, as is a stop over unlanded work without explicit confirmation. Those gates are accident prevention on top of authorization, not a substitute for it: the invoker identity is client-reported.
 
 `/health` and `/handshake` are public and non-authorizing. Health proves liveness; the handshake proves *identity* (build hash, project, protocol range) so a launcher can decide whether this daemon is the right one to talk to. **Neither may ever grow a side effect** — a handshake that writes is a handshake that needs a capability, and the launcher has none by construction: it is trying to find out whether a capability would even be worth minting.
 

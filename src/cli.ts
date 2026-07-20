@@ -733,7 +733,13 @@ export function createProgram(): Command {
   program
     .command("stop")
     .description("Stop live agents and the Hive daemon")
-    .action(() => stopHive());
+    .option(
+      "--force",
+      "stop even when agents hold unlanded work (skips the confirmation)",
+    )
+    .action((options: { force?: boolean }) =>
+      stopHive({ force: options.force === true, invokedViaCli: true })
+    );
 
   program
     .command("event <kind>")

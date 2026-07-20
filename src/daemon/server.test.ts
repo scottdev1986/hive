@@ -4741,3 +4741,539 @@ describe("landed is not live", () => {
     });
   });
 });
+
+describe("POST /stop — atomic-or-abortive fleet shutdown (#70)", () => {
+  const stopBody = (overrides: Record<string, unknown> = {}) =>
+    JSON.stringify({
+      origin: 'hive stop pid=1 ppid=2 argv=["stop"] cwd=/repo agentWorktree=no chain=[2:zsh]',
+      invoker: { cwd: "/somewhere/else", agentWorktree: false },
+      confirmUnlanded: false,
+      ...overrides,
+    });
+
+  function stopDaemon(options: {
+    db: HiveDatabase;
+    tmux: FakeDaemonTmux;
+    assessStranded?: () => Promise<{ dirtyFiles: string[]; unmergedCommits: number }>;
+    panePids?: () => Promise<number[]>;
+    repoRoot?: string;
+    onShutdown?: () => void;
+  }): HiveDaemon {
+    return new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db: options.db,
+      spawner: new StubSpawner(),
+      tmux: options.tmux,
+      resourceRunners: {
+        panePids: options.panePids ?? (async () => []),
+        orphans: null,
+      },
+      ...(options.repoRoot === undefined ? {} : { repoRoot: options.repoRoot }),
+      assessStrandedWork: options.assessStranded ??
+        (async () => ({ dirtyFiles: [], unmergedCommits: 0 })),
+      initiateShutdown: options.onShutdown ?? (() => {}),
+    });
+  }
+
+  test("refuses unlanded work without confirmation and kills nothing", async () => {
+    const db = new HiveDatabase(join(home, "stop-unlanded-refusal.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    let shutdown = false;
+    const daemon = stopDaemon({
+      db,
+      tmux,
+      assessStranded: async () => ({
+        dirtyFiles: ["src/a.ts", "src/b.ts"],
+        unmergedCommits: 3,
+      }),
+      onShutdown: () => {
+        shutdown = true;
+      },
+    });
+    db.insertAgent(agent({
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+    }));
+    try {
+      const response = await actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody(),
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        state: "refused-unlanded",
+        unlanded: [{
+          name: "maya",
+          branch: "hive/maya-server",
+          dirtyFiles: 2,
+          unmergedCommits: 3,
+        }],
+      });
+      expect(tmux.killed).toEqual([]);
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+      expect(shutdown).toBe(false);
+      const deny = listAuditEntries(db).find((row) =>
+        row.route === "/stop" && row.decision === "deny"
+      );
+      expect(deny?.reason).toContain("unlanded work without confirmation: maya");
+      expect(deny?.reason).toContain("hive stop pid=1");
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("confirmed stop kills the fleet, audits each kill with the invoker origin, then shuts down", async () => {
+    const db = new HiveDatabase(join(home, "stop-confirmed.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    let shutdown = false;
+    const daemon = stopDaemon({
+      db,
+      tmux,
+      assessStranded: async () => ({ dirtyFiles: ["src/a.ts"], unmergedCommits: 1 }),
+      onShutdown: () => {
+        shutdown = true;
+      },
+    });
+    db.insertAgent(agent({
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+    }));
+    try {
+      const response = await actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody({ confirmUnlanded: true }),
+      });
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        state: "stopping",
+        killed: ["maya"],
+      });
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(db.getAgentByName("maya")?.status).toBe("dead");
+      expect(shutdown).toBe(true);
+      const allow = listAuditEntries(db).find((row) =>
+        row.route === "/stop" && row.decision === "allow" &&
+        row.requestedSubject === "maya"
+      );
+      expect(allow?.action).toBe("agent:kill");
+      expect(allow?.reason).toContain("hive stop pid=1");
+      expect(allow?.reason).toContain("chain=[2:zsh]");
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("refuses an agent-worktree invoker outright, confirmation or not", async () => {
+    const db = new HiveDatabase(join(home, "stop-worktree-invoker.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    const repoRoot = join(home, "stop-repo");
+    let shutdown = false;
+    const daemon = stopDaemon({
+      db,
+      tmux,
+      repoRoot,
+      onShutdown: () => {
+        shutdown = true;
+      },
+    });
+    db.insertAgent(agent({
+      worktreePath: null,
+      branch: null,
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+    }));
+    try {
+      // The self-declared flag refuses.
+      const flagged = await actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody({
+          confirmUnlanded: true,
+          invoker: { cwd: "/innocuous", agentWorktree: true },
+        }),
+      });
+      expect(flagged.status).toBe(403);
+      expect(await flagged.json()).toMatchObject({ state: "refused-invoker" });
+
+      // And so does a cwd under the repo's worktree root, flag or no flag.
+      const pathed = await actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody({
+          confirmUnlanded: true,
+          invoker: {
+            cwd: join(repoRoot, ".hive", "worktrees", "mallory"),
+            agentWorktree: false,
+          },
+        }),
+      });
+      expect(pathed.status).toBe(403);
+
+      expect(tmux.killed).toEqual([]);
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+      expect(shutdown).toBe(false);
+      const denies = listAuditEntries(db).filter((row) =>
+        row.route === "/stop" && row.decision === "deny"
+      );
+      expect(denies.length).toBe(2);
+      expect(denies[0]?.reason).toContain("invoker inside an agent worktree");
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("refuses before touching any agent when a sessiond teardown is unverifiable (#65)", async () => {
+    const db = new HiveDatabase(join(home, "stop-unverifiable.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    let shutdown = false;
+    const daemon = stopDaemon({
+      db,
+      tmux,
+      onShutdown: () => {
+        shutdown = true;
+      },
+    });
+    // A sessiond locator with NO terminal-host binding row.
+    db.insertAgent(agent({
+      worktreePath: null,
+      branch: null,
+      sessionLocator: {
+        ...mintAgentTmuxSessionLocator("agent-maya", 1),
+        hostKind: "sessiond" as const,
+        engineBuildId: "engine-stop",
+      },
+    }));
+    try {
+      const response = await actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody({ confirmUnlanded: true }),
+      });
+      expect(response.status).toBe(409);
+      expect(await response.json()).toMatchObject({
+        state: "refused-unverifiable",
+      });
+      expect(tmux.killed).toEqual([]);
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+      expect(shutdown).toBe(false);
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("a vanished client does not abort a committed stop", async () => {
+    const db = new HiveDatabase(join(home, "stop-vanished-client.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    let shutdown = false;
+    const daemon = stopDaemon({
+      db,
+      tmux,
+      onShutdown: () => {
+        shutdown = true;
+      },
+    });
+    db.insertAgent(agent({
+      worktreePath: null,
+      branch: null,
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+    }));
+    try {
+      // The client aborts as soon as the request is dispatched and never reads
+      // the answer. The commit point owns completion, not the connection.
+      const controller = new AbortController();
+      const pending = actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody(),
+        signal: controller.signal,
+      }).catch(() => null);
+      controller.abort();
+      await pending;
+      // Poll: the daemon-side sequence finishes on its own schedule.
+      for (let attempt = 0; attempt < 100 && !shutdown; attempt += 1) {
+        await Bun.sleep(10);
+      }
+      expect(db.getAgentByName("maya")?.status).toBe("dead");
+      expect(tmux.killed).toEqual(["hive-maya"]);
+      expect(shutdown).toBe(true);
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("a second stop while one is committed answers already-stopping", async () => {
+    const db = new HiveDatabase(join(home, "stop-concurrent.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    let releaseKill = () => {};
+    const gate = new Promise<void>((resolve) => {
+      releaseKill = resolve;
+    });
+    const gatedTmux = new class extends FakeDaemonTmux {
+      override async killSession(session: string): Promise<void> {
+        await gate;
+        this.killed.push(session);
+        this.sessions.delete(session);
+      }
+    }();
+    gatedTmux.sessions.add("hive-maya");
+    const daemon = stopDaemon({ db, tmux: gatedTmux });
+    db.insertAgent(agent({
+      worktreePath: null,
+      branch: null,
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+    }));
+    try {
+      const operator = actingAs(daemon, "operator");
+      const first = operator("http://hive/stop", {
+        method: "POST",
+        body: stopBody(),
+      });
+      // Give the first request time to reach its commit point.
+      await Bun.sleep(20);
+      const second = await operator("http://hive/stop", {
+        method: "POST",
+        body: stopBody(),
+      });
+      expect(second.status).toBe(409);
+      expect(await second.json()).toEqual({ state: "already-stopping" });
+      releaseKill();
+      expect((await first).status).toBe(200);
+    } finally {
+      releaseKill();
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("a failed teardown reports stop-failed and leaves the daemon up", async () => {
+    const db = new HiveDatabase(join(home, "stop-teardown-failed.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add("hive-maya");
+    let shutdown = false;
+    const daemon = stopDaemon({
+      db,
+      tmux,
+      panePids: async () => {
+        throw new Error("tmux pane probe failed");
+      },
+      onShutdown: () => {
+        shutdown = true;
+      },
+    });
+    db.insertAgent(agent({
+      worktreePath: null,
+      branch: null,
+      sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+    }));
+    try {
+      const response = await actingAs(daemon, "operator")("http://hive/stop", {
+        method: "POST",
+        body: stopBody(),
+      });
+      expect(response.status).toBe(500);
+      expect(await response.json()).toMatchObject({
+        state: "stop-failed",
+        failures: ["maya: tmux pane probe failed"],
+      });
+      expect(shutdown).toBe(false);
+      // The session survives; the daemon must stay alive to supervise it.
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+    } finally {
+      tmux.sessions.clear();
+      await daemon.stop();
+      db.close();
+    }
+  });
+});
+
+describe("audited kill never leaves a dead agent reported as working (#70)", () => {
+  // lucas, 2026-07-20: /agents/lucas/kill was audited allow, his processes
+  // died, sessiond termination readback failed — and his row said `working`
+  // at 21:45+ while `ps` was empty. The teardown must record a provably-gone
+  // tree as dead even when its own instrument failed.
+  const exitStatus = {
+    code: 0,
+    signal: null,
+    observedAt: "2026-07-20T21:30:44.000Z",
+  };
+  const neutralInspection = (
+    session: { key: string; incarnation: string },
+    lifecycle: "running" | "exited",
+  ) => ({
+    session,
+    lifecycle,
+    completeness: "complete" as const,
+    host: null,
+    child: null,
+    jobControl: null,
+    window: {
+      value: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+      revision: "1",
+    },
+    output: { closed: true, retained: { start: "0", endExclusive: "0" } },
+    checkpoints: { retained: 0, newest: null },
+    inputOwner: null,
+    exit: lifecycle === "exited" ? exitStatus : null,
+    reap: {
+      authority: "direct-parent" as const,
+      reaped: lifecycle === "exited",
+      status: lifecycle === "exited" ? exitStatus : null,
+      completeness: "complete" as const,
+    },
+    descendants: [],
+    survivors: [],
+    evidenceAt: "2026-07-20T21:30:44.000Z",
+    diagnostics: [],
+  });
+  const unverifiedTermination = {
+    state: "unknown" as const,
+    exit: null,
+    reap: {
+      authority: "unavailable" as const,
+      reaped: false,
+      status: null,
+      completeness: "unknown" as const,
+    },
+    survivors: [],
+    completeness: "unknown" as const,
+    diagnostics: ["TEST_TERMINATION_UNVERIFIED"],
+  };
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected terminal-host operation");
+  };
+
+  function sessiondKillHarness(name: string, lifecycle: "running" | "exited") {
+    const db = new HiveDatabase(join(home, name));
+    const locator = {
+      ...mintAgentTmuxSessionLocator("agent-maya", 2),
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-stop-70",
+    };
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
+      resourceRunners: { panePids: async () => [], orphans: null },
+      terminalHost: {
+        create: unsupported,
+        claimInput: unsupported,
+        submitInput: unsupported,
+        resize: unsupported,
+        issueAttach: unsupported,
+        renewVisibility: unsupported,
+        list: async () => [
+          neutralInspection(
+            { key: locator.sessionId, incarnation: "inc-1" },
+            lifecycle,
+          ),
+        ],
+        inspect: async (session) => neutralInspection(session, lifecycle),
+        terminate: async () => unverifiedTermination,
+      },
+    });
+    db.insertAgent(agent({
+      worktreePath: null,
+      branch: null,
+      sessionLocator: locator,
+    }));
+    const geometry = {
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
+    };
+    db.bindTerminalHostSession({
+      locator,
+      visibility: {
+        workspaceSessionId: "ws-stop-70",
+        workspacePid: 7301,
+        workspaceStartToken: "7301:100",
+        openTerminalRevision: "1",
+      },
+    });
+    db.completeTerminalHostSession(locator, {
+      expectedExecutable: "/bin/sh",
+      executableVerified: true,
+      verifiedProviderRoot: {
+        pid: 4242,
+        startToken: "4242:1",
+        processGroupId: 4242,
+      },
+      geometry,
+      visibility: {
+        state: "visible",
+        workspaceSessionId: "ws-stop-70",
+        openTerminalRevision: "1",
+        expiresAt: "2027-01-01T00:00:00.000Z",
+      },
+    });
+    return { db, daemon, locator };
+  }
+
+  test("a teardown that fails over a provably-exited tree still marks the row dead", async () => {
+    const { db, daemon, locator } = sessiondKillHarness(
+      "kill-dead-tree-unverified.db",
+      "exited",
+    );
+    try {
+      const response = await actingAs(daemon, "operator")(
+        "http://hive/agents/maya/kill",
+        {
+          method: "POST",
+          body: JSON.stringify({
+            sessionLocator: locator,
+            origin: "hive stop pid=1 ppid=2 argv=[] cwd=/x agentWorktree=no chain=[]",
+          }),
+        },
+      );
+      expect(response.status).toBe(200);
+      // The audited-allow row exists AND the agent row is dead: hive_status
+      // can never again serve `working` for this agent.
+      const allow = listAuditEntries(db).find((row) =>
+        row.route === "/agents/kill" && row.decision === "allow"
+      );
+      expect(allow).toBeDefined();
+      expect(db.getAgentByName("maya")?.status).toBe("dead");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+
+  test("positive control: the same failure over a still-running tree keeps the refusal", async () => {
+    // The guard must fail closed: a tree whose absence cannot be proved keeps
+    // the 500 and the honest `working` row — a deliberately-broken guard that
+    // marked everything dead would go red here.
+    const { db, daemon, locator } = sessiondKillHarness(
+      "kill-live-tree-unverified.db",
+      "running",
+    );
+    try {
+      const response = await actingAs(daemon, "operator")(
+        "http://hive/agents/maya/kill",
+        {
+          method: "POST",
+          body: JSON.stringify({ sessionLocator: locator }),
+        },
+      );
+      expect(response.status).toBe(500);
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+    } finally {
+      await daemon.stop();
+      db.close();
+    }
+  });
+});

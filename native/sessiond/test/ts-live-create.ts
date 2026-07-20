@@ -511,6 +511,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             ),
           ).toHaveLength(1);
 
+          // #70 moved the sessiond fan-out from stopHive into the daemon's
+          // POST /stop. This harness has no daemon, so the injected transport
+          // performs the same teardown the daemon's commit path would — the
+          // live proof (real host process absence, termination audit) is
+          // unchanged.
           let stoppedSurvivors: readonly unknown[] | null = null;
           const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
           await stopHive({
@@ -519,19 +524,25 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               listPanePids: async () => [],
               killSession: async (name) => tmux.killSession(name),
             },
-            readAgents: () => [sessiondAgent],
-            stopSessiond: async (agent) => {
-              const stopped = await stopSpawnedSession(agent);
-              stoppedSurvivors = stopped.survivors;
-            },
             readPid: () => process.pid,
-            kill: () => {
-              expect(stoppedSurvivors).toEqual([]);
-            },
             liveness: async () => daemonStates.shift() ?? "dead",
             cleanup: () => {},
             sleep: async () => {},
             log: () => {},
+            invoker: {
+              pid: process.pid,
+              ppid: process.ppid,
+              argv: [],
+              cwd: home,
+              chain: [],
+              agentWorktree: false,
+            },
+            requestStop: async () => {
+              const stopped = await stopSpawnedSession(sessiondAgent);
+              stoppedSurvivors = stopped.survivors;
+              expect(stoppedSurvivors).toEqual([]);
+              return { state: "stopping", killed: [sessiondAgent.name] };
+            },
           });
           expect(stoppedSurvivors).toEqual([]);
           expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit)
