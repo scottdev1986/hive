@@ -1,0 +1,42 @@
+{
+  "cell": "diagnostic-p9-display-asleep",
+  "ok": false,
+  "head": "5a8500f3dbf6eb42c7c0e41ee02a9ea75653d001",
+  "home": "/tmp/hb25-p9",
+  "port": 43150,
+  "project": "/tmp/hb25-project-b7eba4",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "workspacePid": 49238,
+  "workspaceInstanceId": "f298318af4",
+  "sessionLocator": {
+    "instanceId": "f298318af4",
+    "sessionId": "ses_019f7dfa-2b8d-7038-820b-fd90e4abdbcc",
+    "generation": 1,
+    "hostKind": "sessiond",
+    "engineBuildId": "0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300"
+  },
+  "failure": "Ghostty display-link initialization found no active displays",
+  "nativeError": "CVDisplayLinkCreateWithCGDisplays error -6661 due to invalid display count (0)",
+  "displayPositiveControl": {
+    "coreGraphicsReturn": 0,
+    "activeDisplays": 0,
+    "mainDisplayOnline": true,
+    "builtInDisplayAsleep": true,
+    "activeDisplaysAfterCaffeinateUserActivity": 1
+  },
+  "diagnosticJournal": {
+    "path": "raw/qualification/hive-b25-production-pane/transcripts/diagnostic-claude-ses_019f7dfa-2b8d-7038-820b-fd90e4abdbcc.journal.bin",
+    "bytes": 1223,
+    "sha256": "de645b1efe5142b18f7fdf7fc0a43aedab71ac579d4ce0aeffef2cd3965e5675",
+    "sequencePrefixHex": "00000000000062ac0000000000006763",
+    "captureTiming": "after hive_kill from retained exact sessiond host directory; diagnostic only"
+  },
+  "workspaceWindowPng": null,
+  "exactRootSession": "hive-orchestrator-f298318af4",
+  "capturedProcessCount": 3,
+  "cleanup": "hive_kill completed; exact root session and all captured processes absent",
+  "startedAt": "2026-07-20T05:22:48.050Z",
+  "writtenAt": "2026-07-20T05:23:46.341Z"
+}

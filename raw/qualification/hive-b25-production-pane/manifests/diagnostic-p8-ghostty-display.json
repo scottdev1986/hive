@@ -1,0 +1,25 @@
+{
+  "cell": "diagnostic-p8-ghostty-display",
+  "ok": false,
+  "head": "d5794078e3e160dfb42abe9032e0faa35ef6c6b6",
+  "home": "/tmp/hb25-p8",
+  "port": 43149,
+  "project": "/tmp/hb25-project-f66823",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "workspaceInstanceId": "c42777df54",
+  "sessionLocator": {
+    "sessionId": "ses_019f7de8-61e0-739d-8882-45fd099e95b0",
+    "hostKind": "sessiond",
+    "instanceId": "c42777df54"
+  },
+  "failure": "Ghostty display-link initialization found no active displays",
+  "nativeError": "CVDisplayLinkCreateWithCGDisplays error -6661 due to invalid display count (0)",
+  "diagnosisEstablishedBy": "p9 same-host CoreGraphics and system_profiler positive controls",
+  "exactRootSession": "hive-orchestrator-c42777df54",
+  "capturedProcessCount": 3,
+  "cleanup": "hive_kill completed; exact root session and all captured processes absent",
+  "startedAt": "2026-07-20T05:03:22.079Z",
+  "writtenAt": "2026-07-20T05:04:20.323Z"
+}

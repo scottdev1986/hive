@@ -80,6 +80,8 @@ const workspaceStdoutPath = join(home, "workspace.stdout.log");
 const workspaceStderrPath = join(home, "workspace.stderr.log");
 const daemonStdoutPath = join(home, "daemon.stdout.log");
 const daemonStderrPath = join(home, "daemon.stderr.log");
+const caffeinateStdoutPath = join(home, "caffeinate.stdout.log");
+const caffeinateStderrPath = join(home, "caffeinate.stderr.log");
 const startedAt = new Date().toISOString();
 const marker = `B25_PRODUCTION_PANE_EXECUTED_${crypto.randomUUID()}`;
 const lines: string[] = [];
@@ -88,11 +90,17 @@ let sideEffectMessageId: string | null = null;
 let paneReport: string | null = null;
 let daemon: Child | null = null;
 let workspace: Child | null = null;
+let displayLease: Child | null = null;
 let client: Client | null = null;
 let boundPort: number | null = null;
 let instanceId: string | null = null;
 let spawned = false;
 let ok = false;
+let displayPreflight: {
+  initialActiveDisplays: number;
+  activeDisplays: number;
+  wokeDisplay: boolean;
+} | null = null;
 let capture: {
   journal: { path: string; bytes: number; sha256: string; sequencePrefixHex: string };
   screenshot: { path: string; bytes: number; sha256: string; windowNumber: number };
@@ -112,6 +120,55 @@ function command(argv: string[], cwd: string, env = process.env): string {
     );
   }
   return result.stdout.toString().trim();
+}
+
+function activeDisplayCount(): number {
+  const output = command([
+    "/usr/bin/swift", "-e",
+    "import CoreGraphics; var count: UInt32 = 0; " +
+      "let result = CGGetActiveDisplayList(0, nil, &count); " +
+      "print(\"\\(result.rawValue) \\(count)\")",
+  ], repoRoot);
+  const match = output.match(/^0 (\d+)$/);
+  if (match === null) throw new Error(`active-display probe failed: ${output}`);
+  return Number(match[1]);
+}
+
+function requireActiveDisplay(count: number): void {
+  if (!Number.isInteger(count) || count < 1) {
+    throw new Error(`real Workspace qualification requires an active display (got ${count})`);
+  }
+}
+
+async function prepareActiveDisplay(): Promise<void> {
+  const initialActiveDisplays = activeDisplayCount();
+  let activeDisplays = initialActiveDisplays;
+  if (activeDisplays === 0) {
+    command(["/usr/bin/caffeinate", "-u", "-t", "1"], repoRoot);
+    const deadline = Date.now() + 10_000;
+    while (activeDisplays === 0 && Date.now() < deadline) {
+      await Bun.sleep(250);
+      activeDisplays = activeDisplayCount();
+    }
+  }
+  requireActiveDisplay(activeDisplays);
+  let mutationRejected = false;
+  try {
+    requireActiveDisplay(0);
+  } catch {
+    mutationRejected = true;
+  }
+  if (!mutationRejected) throw new Error("zero-display mutation did not break the preflight");
+  displayPreflight = {
+    initialActiveDisplays,
+    activeDisplays,
+    wokeDisplay: initialActiveDisplays === 0,
+  };
+  log(
+    `GREEN active-display preflight: initial=${initialActiveDisplays} ` +
+      `settled=${activeDisplays} woke=${initialActiveDisplays === 0}`,
+  );
+  log("MUTATION VERIFIED: zero active displays breaks the real-Workspace preflight");
 }
 
 function toolValue(result: unknown, key: string): unknown {
@@ -197,6 +254,7 @@ function flush(): void {
     sideEffectMessageId,
     paneReport,
     capture,
+    displayPreflight,
     startedAt,
     writtenAt: new Date().toISOString(),
   }, null, 2) + "\n");
@@ -379,6 +437,21 @@ async function main(): Promise<void> {
   log(`stagedSessiond=${realpathSync(stagedSessiond)}`);
   log(`workspace=${realpathSync(workspaceBinary)}`);
 
+  await prepareActiveDisplay();
+  const keepAwake = Bun.spawn(["/usr/bin/caffeinate", "-d"], {
+    cwd: project,
+    env,
+    stdin: "ignore",
+    stdout: Bun.file(caffeinateStdoutPath),
+    stderr: Bun.file(caffeinateStderrPath),
+  });
+  displayLease = keepAwake;
+  await Bun.sleep(100);
+  if (keepAwake.exitCode !== null) {
+    throw new Error(`display keep-awake exited ${keepAwake.exitCode}`);
+  }
+  log(`display keep-awake active pid=${keepAwake.pid}`);
+
   const daemonProcess = Bun.spawn([stagedHive, "daemon"], {
     cwd: project,
     env,
@@ -555,6 +628,7 @@ try {
     await activeClient.close().catch(() => undefined);
   }
   await stopChild(workspace, "Workspace");
+  await stopChild(displayLease, "display keep-awake");
   try {
     await cleanupRootSession();
   } catch (error) {
