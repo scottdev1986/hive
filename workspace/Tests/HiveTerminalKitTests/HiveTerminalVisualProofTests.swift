@@ -1,5 +1,6 @@
 import AppKit
 import CoreImage
+import CryptoKit
 import IOSurface
 import XCTest
 @testable import HiveTerminalKit
@@ -9,6 +10,74 @@ import XCTest
 /// path without making framebuffer availability part of the default test gate.
 @MainActor
 final class HiveTerminalVisualProofTests: XCTestCase {
+    func testAuthenticClaudeJournalWritesC11WindowPNG() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let journalPath = environment["HIVE_C11_JOURNAL_PATH"],
+              let outputPath = environment["HIVE_C11_RENDER_PROOF_PATH"],
+              !journalPath.isEmpty,
+              !outputPath.isEmpty else {
+            throw XCTSkip("set HIVE_C11_JOURNAL_PATH and HIVE_C11_RENDER_PROOF_PATH to opt in")
+        }
+
+        let journal = try Data(contentsOf: URL(fileURLWithPath: journalPath))
+        XCTAssertEqual(
+            SHA256.hash(data: journal).map { String(format: "%02x", $0) }.joined(),
+            "c0ff7ee10c6fab47913de59b25f262b68569a517a95b391686241429a19584ad"
+        )
+        XCTAssertGreaterThan(journal.count, 16)
+        let startSequence = journal.prefix(8).reduce(UInt64(0)) { ($0 << 8) | UInt64($1) }
+        let endSequence = journal.dropFirst(8).prefix(8).reduce(UInt64(0)) {
+            ($0 << 8) | UInt64($1)
+        }
+        let payload = journal.dropFirst(16)
+        XCTAssertEqual(endSequence - startSequence, UInt64(payload.count))
+
+        _ = NSApplication.shared
+        let view = try HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 1_200, height: 700),
+            viewerId: "c11-claude-window-proof"
+        )
+        defer { view.userClose() }
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Hive C1.1 Typography — Authenticated Claude Journal"
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        let surface = try XCTUnwrap(view.engine as? GhosttyManualSurface)
+        surface.setOcclusion(true)
+        XCTAssertEqual(
+            surface.processOutput(bytes: Data(payload), streamSeq: startSequence),
+            .success
+        )
+        let snapshot = try XCTUnwrap(surface.semanticSnapshot())
+        XCTAssertTrue(snapshot.text.contains("⏸"))
+        XCTAssertTrue(snapshot.text.contains("manual"))
+        for _ in 0 ..< 10 {
+            surface.draw()
+            RunLoop.main.run(until: Date().addingTimeInterval(0.03))
+        }
+        let layer = try XCTUnwrap(view.ghosttyRenderingLayer)
+        XCTAssertTrue(waitUntil(timeout: 3) { layer.contents is IOSurface })
+
+        try capture(window: window, at: outputPath)
+        let png = try Data(contentsOf: URL(fileURLWithPath: outputPath))
+        XCTAssertGreaterThan(png.count, 10_000)
+        let bitmap = try XCTUnwrap(NSBitmapImageRep(data: png))
+        assertRepresentativeForeground(bitmap)
+    }
+
     func testProductionSurfaceWritesC1PNGAtLiveGeometry() throws {
         guard let outputPath = ProcessInfo.processInfo.environment["HIVE_C1_RENDER_PROOF_PATH"],
               !outputPath.isEmpty else {
@@ -211,6 +280,20 @@ final class HiveTerminalVisualProofTests: XCTestCase {
             }
         }
         XCTAssertGreaterThan(foregroundSamples, 500, "PNG contains only the C1 background")
+    }
+
+    private func capture(window: NSWindow, at path: String) throws {
+        let outputURL = URL(fileURLWithPath: path)
+        try FileManager.default.createDirectory(
+            at: outputURL.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        process.arguments = ["-x", "-l", String(window.windowNumber), path]
+        try process.run()
+        process.waitUntilExit()
+        XCTAssertEqual(process.terminationStatus, 0)
     }
 
     private func waitUntil(
