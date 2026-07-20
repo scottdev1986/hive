@@ -358,8 +358,10 @@ extension HiveTerminalView {
             switch notification {
             case .selectionChanged:
                 self.terminalAccessibilityController.schedule(.selection)
-            case .scrollbar:
+            case .scrollbar, .searchSelected:
                 self.terminalAccessibilityController.schedule(.scroll)
+            case .searchTotal:
+                break
             }
         }
     }

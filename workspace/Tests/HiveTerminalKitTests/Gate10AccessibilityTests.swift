@@ -90,8 +90,9 @@ final class Gate10AccessibilityTests: XCTestCase {
 
         let children = view.accessibilityChildren() ?? []
         XCTAssertGreaterThan(children.count, 0, "semantic snapshot must publish row elements")
+        let snapshot = try XCTUnwrap(surface.semanticSnapshot())
         XCTAssertEqual(children.count, view.accessibilityNumberOfCharacters() > 0
-                       ? (surface.semanticSnapshot()?.geometry.rows ?? 0)
+                       ? snapshot.visibleRows.count
                        : children.count)
 
         let joined = children.compactMap { child -> String? in
