@@ -373,16 +373,58 @@ Not a blocker: the threading is proven at the generator
 the view (`testChangingTheFontReconfiguresAnAlreadyRunningView`), and all three
 mutations go RED. The unproven link is only the final engine parse.
 
-Cheap to close, and the tools are already in the tree:
+How to close it. The first suggestion in the original version of this review was
+**wrong**, and hollis2 was right to check it rather than implement it; both the
+correction and the resolution are recorded here.
 
-- `ghostty_config_get` is `void*`-generic;
-  `HiveTerminalConfigurationTests.swift:136` already reads a non-colour value
-  through it, so a `font-family` readback needs no new bridge surface.
-- Stronger, and probably the right assertion: the pinned header exposes
-  `ghostty_config_diagnostics_count` / `ghostty_config_get_diagnostic`. Asserting
-  **zero diagnostics** after pushing `font-family = .AppleSystemUIFontMonospaced`
-  proves the engine *accepted* the key, which is the thing currently unproven —
-  and it would also catch a future typo'd config key in any theme.
+**Reading `font-family` back through `ghostty_config_get` is not merely
+unverified — it is structurally impossible at this pin.** The original review
+cited `HiveTerminalConfigurationTests.swift:136` as precedent for a
+`void*`-generic read. That helper is generic, but its only two in-tree callers
+read a `Float` (`font-size`, :81) and a colour struct (`background`, :85).
+Nothing in-tree reads a string key back. Tracing the vendored implementation:
+
+- `font-family` is declared `RepeatableString` (`vendor/ghostty/src/config/Config.zig:168`)
+- `RepeatableString` is a plain struct wrapping an `ArrayListUnmanaged([:0]const u8)`
+  (`Config.zig:5983`) — not `packed`, and it declares no `cval`
+- `ghostty_config_get` delegates to `c_get.get` → `getValue`, whose `.@"struct"`
+  branch requires either a `cval` decl or a packed layout that fits `c_uint`;
+  with neither it hits `if (info.layout != .@"packed") return false`
+  (`config/c_get.zig`)
+
+So the call returns **false** for `font-family`. (Grep positive-controlled: the
+same search does find `pub fn cval` on `Color`, `Palette` and others, so the
+absence on `RepeatableString` is a real absence.) Upstream's own tests show the
+getter returning C strings for *enum* keys, which is what makes the wrong guess
+plausible — enums work, repeatable strings do not.
+
+**The diagnostics route is the one that works**, and the header confirms it at
+this pin: `ghostty_config_diagnostics_count` (`ghostty.h:1083`) and
+`ghostty_config_get_diagnostic` (`:1084`), the latter returning
+`ghostty_diagnostic_s { const char* message; }` — a message, not just a count.
+
+**It needs a negative control, or it joins the class of check this review has
+been killing.** "Assert zero diagnostics after pushing font-family" passes
+vacuously if diagnostics read zero for *every* input. hollis2 identified this
+independently and it is the right shape — the same discipline as validating a
+contrast implementation against reference values before trusting its output:
+
+1. Push a deliberately invalid `font-family`; assert diagnostics **> 0** and
+   capture the message. This proves the channel discriminates.
+2. Push `font-family = .AppleSystemUIFontMonospaced`; assert **zero**
+   diagnostics — the engine's own parser accepted it.
+3. Record the `ghostty_config_get` limitation above as a measured finding rather
+   than leaving a silent gap.
+4. Add a mutation case dropping the font from the push, and confirm the new
+   check goes RED.
+5. Correct the evidence doc to claim **parse-level acceptance**, not
+   consumption, and say which is which.
+
+Note what this does and does not buy: zero diagnostics proves the engine *parsed
+and accepted* the key. It does not prove the glyphs on screen changed face —
+that remains a production-window observation, environment-deferred with the rest
+of the GUI legs. Claiming acceptance and labelling the rest is the honest
+position, and is what closes F1.
 
 Recommended as a C1.2 follow-up before C1.4 builds on the font path.
 
