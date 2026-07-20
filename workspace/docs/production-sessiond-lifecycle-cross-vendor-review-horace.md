@@ -224,3 +224,75 @@ non-temporal ownership evidence), not elapsed liveness.
 | exact staged orphan probe | correct fail-loud result, exit 0 |
 | staged lifecycle proof | PASS; broker 36270 -> 36294; clean teardown |
 | `bun run typecheck` | exit 0 |
+
+## Second delta re-review: Helga `b3a12f51` — **NO-LAND**
+
+- Pin: `b3a12f513218ce829199f751fa1cd87ef1aac619` on
+  `hive/helga-fix-two-review-blockers-on-the`.
+- `ec6866fb` is an ancestor. The delta is confined to
+  `src/daemon/sessiond-broker.ts` and
+  `src/daemon/sessiond-broker.test.ts` (99 insertions, 47 deletions), so B1 and
+  the earlier positive evidence transfer unchanged.
+
+### B1 delta — PASS
+
+The teardown implementation and tests are untouched by this delta. Heidi's
+teardown/server matrix again passed 92/92 as part of a 100/100 focused run.
+`killAllAgents()` therefore still precedes broker stop, while broker stop stays
+outside the teardown-refusal catch and before timer/socket/database cleanup.
+
+### B2 delta — still blocking on false lock ownership
+
+The elapsed-time flaw is fixed. `spawnAndWaitReady()` no longer has the 250 ms
+settle threshold: while the socket exists but the observed PID differs from the
+child, it continues polling until child exit or the overall deadline. The new
+400 ms slow-loser regression passes in the 8/8 unit suite.
+
+The default ownership reader is not actually lock-specific, however. It runs
+`lsof -t broker.lock` and parses the first PID. That command reports processes
+which merely have the file open, including an opener which holds no lock. This
+is reachable in the real broker: `native/sessiond/src/broker.zig` opens and
+validates `broker.lock` before calling `tryLock(.exclusive)`.
+
+Two direct probes at the exact pin prove the false-positive gate:
+
+1. A shell opened `broker.lock` read/write and slept without calling `flock`.
+   Normal `lsof` showed FD `3u` with no `W` lock marker, yet
+   `readBrokerLockHolderPid()` returned that process's PID.
+2. With a pre-existing `broker.sock`, a fake sessiond child merely opened
+   `broker.lock` and slept for five seconds, never locking it. The production
+   `SessiondBrokerSupervisor.start()` resolved and reported `running`, with the
+   unlocked child's PID as the supposed holder.
+
+Thus a real child can be observed during its open-before-`tryLock` acquisition
+window and falsely satisfy readiness. The implementation must query actual
+kernel lock ownership (for example, correctly parse a lock-status field), not
+the first process that has the lock file open. A regression must hold the file
+open without locking it and prove startup cannot resolve.
+
+The requested normal-load staged orphan case does behave correctly:
+
+```text
+orphan pid: 7150 (the only broker/lock opener)
+daemon exit: 1
+daemon.port advertised: no
+stderr: ... before becoming the live broker: broker.lock held by pid 7150
+```
+
+That common ordering does not exercise the acquisition-window false positive
+above, so it cannot establish positive ownership by itself.
+
+### Second-delta proofs
+
+| Check | Result |
+|---|---|
+| exact materialized HEAD | `b3a12f513218ce829199f751fa1cd87ef1aac619`, clean |
+| delta from `ec6866fb` | only supervisor implementation + unit test |
+| supervisor + Heidi teardown/server suites | 100 pass / 0 fail (8 + 92), exit 0 |
+| real-binary broker live suite | 3 pass / 0 fail, exit 0 |
+| 400 ms slow-loser regression | included in unit 8/8, exit 0 |
+| unlocked-opener ownership probe | false positive: `start()` resolved `running` |
+| `make build` | exit 0; staged version reports `b3a12f51` |
+| exact staged normal orphan probe | fail-loud before advertisement, probe exit 0 |
+| staged lifecycle proof | PASS; broker 89165 -> 89315; clean teardown |
+| `bun run typecheck` | exit 0 |
