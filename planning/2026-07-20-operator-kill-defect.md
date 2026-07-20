@@ -115,3 +115,112 @@ already dead. `docs/daemon/authorization.md` "Audit" (:189-194) is satisfied in 
 three rows and `terminationAuditJson.reason` is only `"stop agent <uuid>"`. The matrix proves *who
 was allowed*; nothing proves *what asked*. That gap is the reason this incident needed a
 reconstruction at all.
+
+---
+
+## 2. The trigger, ranked
+
+### H1 — `hive stop` fan-out from a termination attempt that never completed. **REFUTED for this incident, but a real defect that fired earlier the same day.**
+
+The mechanism, read from `src/cli/control.ts:530-575`: `hive stop` collects
+`sessiondAgents` (live agents with `hostKind === "sessiond"`), kills them all concurrently via
+`Promise.allSettled`, and only *afterwards* verifies and SIGTERMs the daemon. If verification fails
+it throws **after the agents are already dead**:
+
+```ts
+if (sessiondFailures.length > 0) {
+  throw new Error("Hive refused shutdown because sessiond teardown was not verified: " + ...);
+}
+try { (deps.kill ?? process.kill)(pid, "SIGTERM"); }
+```
+
+The GUI then takes the `.failure` branch at `AppDelegate.swift:424-437`: sets
+`terminationPending = false`, calls `replyToApplicationTermination(false)`, and shows an alert. **The
+app comes back to life; the agents do not.**
+
+**Evidence for.** The cardinality fits perfectly. At 16:07:40Z the live sessiond agents were exactly
+maya and david (sam already dead; queen has no `agents` row at all, so the fan-out would skip it) —
+and they died 20ms apart, the signature of `Promise.allSettled`. At 16:17:23Z the only live agent
+was john — one kill. The daemon survived both times, which the `throw`-before-`SIGTERM` ordering
+explains exactly. And this failure mode is **not hypothetical** — it is in the unified log, verbatim,
+naming this exact pair:
+
+```
+2026-07-20 11:44:56.454 HiveWorkspace[45900] hive-terminate phase=requested  reason=last-window-closed detail=last window closed
+2026-07-20 11:44:56.455 HiveWorkspace[45900] hive-terminate phase=decision   reason=last-window-closed detail=reply=terminateLater awaiting-verified-hive-stop
+2026-07-20 11:44:56.613 HiveWorkspace[45900] hive-terminate phase=resolved   reason=last-window-closed
+    detail=outcome=cancelled still-running: hive: Hive refused shutdown because sessiond teardown was
+    not verified: maya: sessiond locator has no terminal-host binding in this Hive instance;
+    david: sessiond locator has no terminal-host binding in this Hive instance
+```
+
+(An earlier occurrence at 11:15:30/11:15:41/11:15:49 local shows the same thing for `reconciler`.)
+
+**Evidence against — decisive.** That log entry is **pid 45900**, a *different, now-dead* workspace
+process, at 11:44:56 local = **15:44:56Z** — 23 minutes *before* maya (15:57:30Z) and david
+(15:58:43Z) were even created. Those are name reuses from a previous instance. It is a precedent,
+not this incident.
+
+For *this* incident the refutation is direct: `stopForTermination` has **exactly one call site**
+(`AppDelegate.swift:418`), inside `applicationShouldTerminate`, which unconditionally logs
+`phase=requested` and `phase=decision` (`:387`, `:414-416`) *before* running `hive stop`. There is
+**no `hive-terminate` record at 12:07:40 or 12:17:23 local** (= 16:07:40Z / 16:17:23Z).
+
+*Positive control on that negative* (per Hive protocol 3): the unified log is retained and readable
+at that instant — 5,208 log lines exist in the 15s around 12:07:40 local, and 291 lines from process
+`HiveWorkspace` in 12:05-12:20, including pid 75200 activity at 12:07:45-12:08:16. The reader sees
+positives there. The absence of `hive-terminate` is real, not a bad query.
+
+**Therefore no termination was attempted, so `hive stop` never ran, so H1 did not kill these three.**
+H1 remains an open, separately-reportable defect: *`hive stop` destroys agents before it has earned
+the right to, and its caller treats the resulting failure as "nothing happened".*
+
+### H2 — pane close → `hive kill`. **The only surviving route; mechanism confirmed, initiator unproven.**
+
+With H1 refuted and no Swift HTTP client existing, `hive kill` via
+`ProjectWindowController.swift:144-154` is the *only* remaining way these audit rows could exist.
+One `.closePane` dispatch on an agent pane ⇒ one named kill. Two dispatches ⇒ maya and david. One
+⇒ john. This is consistent with everything observed.
+
+What is **not** established is what dispatched `.closePane`. There is no fan-out loop over panes
+anywhere in the tree (all sites enumerated in §1.3), so maya and david required **two separate
+dispatches 20ms apart**. Ranked sub-hypotheses:
+
+- **H2a — ⇧⌘W / menu `closeFocusedPane` firing twice.** After the first pane closes, focus advances
+  to the next pane, so a repeated invocation closes a *second, different* agent. *For:* explains a
+  pair with one intent, and explains why the user does not remember issuing a kill — they closed a
+  pane, not an agent. *Against:* 20ms is faster than macOS key-repeat (typical initial delay is
+  hundreds of ms); this looks like two dispatches in a single run-loop pass, not two keystrokes.
+- **H2b — the accessibility action (`PaneView.swift:373`) driven programmatically** by VoiceOver, a
+  window manager, or automation. *For:* would be machine-speed and invisible to the user. *Against:*
+  no evidence of an accessibility client in the log window.
+- **H2c — one X-button action delivered to two panes** in a single pass (stale `paneID` capture or a
+  duplicated action send). *For:* matches the 20ms timing best. *Against:* purely structural; no
+  direct evidence.
+
+**The user-facing symptom that distinguishes H2 from a normal close:** after each kill the GUI
+requested `terminal:observe` **for the agent it had just killed** — maya at 16:07:43.572Z; david at
+16:07:45.599, 16:07:46.601, 16:07:48.615; john at 16:17:26.608, 16:17:27.605. A pane that was
+genuinely closed by the user would not be re-attached three times. The GUI killed the agent while
+*keeping the pane*. That is why the user is certain they issued no kill: **from the screen, nothing
+closed.**
+
+### H3 — daemon-internal idle reap. **REFUTED.**
+
+`reapIdleAgents()` (`src/daemon/server.ts:2150-2219`) kills after two warnings, and the `events`
+table is superficially suggestive: a `notification` fires ~60s after each `turn-end` (david
+16:02:55.467→16:03:55.589; maya 16:04:55.418→16:05:55.637; queen 16:15:25.075→16:16:25.189).
+
+It is refuted twice over. First, that path calls `killAgentTeardown` **in-process**, with no HTTP
+and no capability check, so it cannot produce `route=/agents/kill, callerSubject=operator` rows.
+Second, the timing does not fit a per-agent timer at all: maya died 105s after her notification and
+david 225s after his — *yet they died together*. A per-agent idle timeout cannot produce a
+simultaneous pair.
+
+### H4 — GUI roster-reconcile cull. **REFUTED.**
+
+`ProjectWindowController.applyFeed` (`:120-126`) only dismisses stale kill-failure sheets; it never
+kills. The one timer that could have — `scheduleGracefulClose` (`:357-368`) — routes to
+`removeClosedPane` (`:162-164`), which calls `state.apply(.closePane(...))` **directly, bypassing
+`dispatch`**, deliberately and with a comment saying so at `:159-161`. The kill is only reachable
+through `dispatch`. A registry that forgot rows could not have killed anything.
