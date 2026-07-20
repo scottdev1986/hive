@@ -6,6 +6,16 @@ import WorkspaceCore
 @MainActor
 final class AppDelegateLifecycleTests: XCTestCase {
 
+    func testLiveResizeSmokeTargetsTheAgentCreatedByEachHarnessMode() {
+        XCTAssertEqual(
+            SmokeRunner.sessiondLiveResizeInputAgent(
+                environment: ["HIVE_B22_REAL_SHELL": "1"]),
+            "terminal")
+        XCTAssertEqual(
+            SmokeRunner.sessiondLiveResizeInputAgent(environment: [:]),
+            "aria")
+    }
+
     func testTerminationWaitsForVerifiedStopBeforeAllowingQuit() async {
         _ = NSApplication.shared
         let owner = AppDelegate(config: completeConfig())
