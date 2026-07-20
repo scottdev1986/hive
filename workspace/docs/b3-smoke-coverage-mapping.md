@@ -207,9 +207,12 @@ by the replacement smoke today.
 - **GAP-4 — scrollback readback from outside.** Legacy SMOKE-39/65 captured
   scrollback via `tmux capture-pane` after the app died. `journal.bin` is NOT
   an equivalent: it is a small rolling window (~2.4 KB observed) that the
-  session's own output rotates out within seconds. The driver keeps it as an
-  artifact but does NOT assert on it, and no assertion should be built on it
-  without fixing that first.
+  session's own output rotates out within seconds. The driver DOES snapshot it
+  to `artifacts/journal-snapshot.bin`, taken while the session is still live so
+  the window is as full as it gets, for whoever builds this check — but it
+  asserts NOTHING on it, because a partial window cannot support a
+  completeness claim. Anyone implementing GAP-4 needs a durable readback, not
+  this snapshot.
 
 ## 6. Improvements over the legacy harness
 

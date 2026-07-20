@@ -89,6 +89,12 @@ fi
 HOST_DIR="$HOME_DIR/runtime/sessiond/hosts/$SESSION_ID"
 RECORD="$HOST_DIR/record.json"
 cp "$RECORD" "$ARTIFACTS/record-after-detach.json" 2>/dev/null
+# Snapshot the journal NOW, while the session is still live. It is a small
+# rolling window that the session's own output rotates out within seconds, so
+# a copy taken later would capture less. This is kept for whoever builds the
+# outside-the-app readback (GAP-4) and is deliberately NOT asserted on: a
+# partial window cannot support a completeness claim.
+cp "$HOST_DIR/journal.bin" "$ARTIFACTS/journal-snapshot.bin" 2>/dev/null
 
 echo "[3/5] detach never kills (legacy SMOKE-61/62)"
 if [ ! -f "$HOST_DIR/final.json" ]; then
