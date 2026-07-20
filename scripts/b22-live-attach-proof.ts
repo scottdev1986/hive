@@ -291,6 +291,9 @@ const workspaceArgs = [
   "--hive", hiveWrapper,
   "--orchestrator-session", `hive-b22-orch`,
 ];
+if (process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT !== undefined) {
+  workspaceArgs.push("--smoke");
+}
 log(`launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`);
 const workspace = process.env.HIVE_B22_NO_APP === "1" ? null : Bun.spawn(
   [workspaceBinary, ...workspaceArgs],
@@ -305,7 +308,7 @@ const workspace = process.env.HIVE_B22_NO_APP === "1" ? null : Bun.spawn(
 if (workspace !== null) log(`workspace app launched (pid ${workspace.pid})`);
 
 let shuttingDown = false;
-const shutdown = async (reason: string) => {
+const shutdown = async (reason: string, requestedExitCode = 0) => {
   if (shuttingDown) {
     // A second Ctrl-C means "stop waiting": force the exit rather than
     // re-entering the orderly path.
@@ -327,7 +330,7 @@ const shutdown = async (reason: string) => {
   // to prevent. Since 16908cc1 an unreachable broker is treated as an
   // already-dead session, so stop() refuses only when teardown ACTIVELY failed:
   // something it captured is still running.
-  let exitCode = 0;
+  let exitCode = requestedExitCode;
   try {
     await daemon.stop();
     log("daemon stopped; session torn down");
@@ -373,4 +376,9 @@ log("proof descriptor written for opt-in live tests: " + join(home, "b22-proof.j
 log(realShell
   ? "terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down"
   : "proof stack is up — Ctrl-C to tear down");
+if (workspace !== null && process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT !== undefined) {
+  const proofExit = await workspace.exited;
+  log(`Workspace live-resize proof exited ${proofExit}`);
+  await shutdown("Workspace live-resize proof complete", proofExit);
+}
 await new Promise(() => {});
