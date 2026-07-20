@@ -243,3 +243,144 @@ failed create throws into `fail(...)` — just less than the name suggests.
 F1, F2 and F4 are cheap fixes that do not require re-running the physical pass
 (F1 adds one recorded command). Once they land, and the three human rows are
 filled or explicitly waived, I see no obstacle to this package.
+
+---
+
+# DELTA-VERIFY — pin `ddd15a3f` (F-fixes)
+
+Second pass over `ddd15a3f7dfa961d1e4957471fa3814de37937c8`
+("fix(gate7): hester F1/F2/F4 required + F3 main-thread derivation"), a single
+commit atop the reviewed pin.
+
+**VERDICT: PASS.** F1, F2, F4 and F3 are all genuinely fixed. Diffs are
+confined to the F-items. Evidence re-verifies from HEAD. No new findings.
+
+## Scope confinement — PASS
+
+Source files touched, against the baselines I pinned before the fix landed:
+
+| File | Change | In scope |
+|---|---|---|
+| `scripts/qualify-ghostty-gate7-physical.sh` | F1 negative control + F2 checklist | yes |
+| `workspace/Tests/GhosttyGate7Probe/main.swift` | F3 derivation | yes |
+| `workspace/docs/ghostty-gates-3-7-evidence.md` | F4 restored rows | yes |
+| `workspace/docs/ghostty-gate7-physical-live-proof.md` | F1/F3/F4 wording | yes |
+| `workspace/Tests/HiveTerminalKitTests/Gate7RenderingTests.swift` | rename + doc comment only, no behavioural change | yes (F3 tail) |
+| `planning/story-m1-b1-ghosttykit-qualification.md` | status line | yes |
+
+`workspace/Package.swift` **unchanged**, as required. Remaining diff is
+regenerated evidence.
+
+## F1 — PASS, exceeds the ask
+
+The runner now attempts Power Profiler for real and records the outcome:
+
+```
+template=Power Profiler
+role=negative_control_mac_unsupported
+exit_status=2
+* [Error] The Power Profiler instrument is not supported on macOS. Record on iOS or iPadOS instead.
+negative_control=BIT
+```
+
+Exit status and stderr are the process's own, not a `printf` — which was the
+defect. It also fails closed in **both** directions, which I did not ask for
+and which is the right instinct: exit 0 aborts the run ("negative control DID
+NOT BITE"), and a non-zero exit *without* the expected macOS-unsupported
+message also aborts. So the claim self-invalidates if a future Xcode starts
+supporting the template, rather than silently continuing to assert it.
+
+The Activity Monitor positive pass appends to the same summary
+(`exit_status=0`), so the forced choice reads as one record. The negative
+control's trace is removed rather than committed.
+
+## F2 — PASS
+
+`human-checklist.txt` §C now names Activity Monitor and explicitly warns off
+Power Profiler, and the section was widened to "drag / minimize / wake" to
+match the F4 rows.
+
+## F4 — PASS
+
+Both narrowed requirements are restored under a "Restored prior requirements —
+still OPEN (not silently narrowed)" table, each with a stated reason and a
+named closure path. The ASan row is honest that Instruments Leaks is not ASan
+coverage and does not claim it.
+
+## F3 — PASS, and the tautology is genuinely gone
+
+The `onMain { }` wrapper is removed from the admission stage entirely; the
+calls run directly on the process main thread, `pthread_main_np()` is sampled
+at each call site, and the emitted record now carries observed values:
+
+```
+"layerClass":"IOSurfaceLayer","layerIsIOSurface":true,
+"drawCount":1,"hasPresentedContents":true,
+"createPthreadMainNp":true,"presentPthreadMainNp":true,"freePthreadMainNp":true
+```
+
+I did not take this on the diff's word. Two mutations, both built and run:
+
+1. **Impossible layer class** — `REAL_EXIT=1`,
+   `{"error":"admission missing IOSurfaceLayer (got IOSurfaceLayer)","stage":"failed"}`.
+   The observed-value assertion still bites after the rewrite.
+2. **Creation moved off the main thread** — `REAL_EXIT=133` (SIGTRAP),
+   `Precondition failed: LiveSurface must be constructed on main`, and the
+   protocol never reaches the `main-thread-admission` stage (so
+   `assert_protocol` fails the runner too).
+
+Mutation 2 is the one that settles my original objection. Under the old code
+the three booleans could not go red no matter what, because `onMain` supplied
+the property being certified. Under the new code there is a demonstrated path
+to red. The check now has a failure mode, which is what makes the green
+meaningful.
+
+## Reproduction at the new pin — PASS
+
+```
+REAL_EXIT=0
+corpus-gate7.txt: Executed 16 tests, with 1 test skipped and 0 failures
+Time Profiler / Allocations / Leaks: exit_status=0
+Power Profiler negative control: exit_status=2, BIT
+Activity Monitor positive: exit_status=0
+rapid-churn: completed:20, concurrentCreation:false, sigkillUsed:false
+```
+
+Per queen's ruling my physical measurements transfer, so I did not re-derive
+them — but I re-ran the runner end-to-end anyway, because F1 changed the
+control flow of a fail-closed script and an untested edit there is exactly
+where a green run stops meaning anything.
+
+## Evidence hygiene at the new pin — PASS
+
+From a pristine `git archive` of `ddd15a3f`:
+
+```
+21 of 21 committed files: OK   (shasum -c, exit 0)
+files on disk (excl. manifest): 21   manifest entries: 21
+comm both directions: empty  (nothing unmanifested, no phantom entries)
+```
+
+The three human slots still read `STATUS=PENDING_HUMAN` — the F-fixes did not
+disturb them, and this second run newly exercised the runner's
+preserve-human-slots branch, which had never run against pre-existing slots
+before.
+
+*Method note:* an intermediate count of mine appeared to show two unmanifested
+files. That was my own instrument — this shell aliases `ls` to long format, so
+`ls -A1 | wc -l` counts listing rows, not names. Re-run through `/bin/ls` the
+reconciliation is exact in both directions. Recording it because a hygiene
+check that disagrees with a `shasum -c` that just passed 21/21 should draw
+suspicion onto the check first.
+
+## F5 / F6
+
+Optional per queen; not addressed in this pin, and neither affects
+correctness. They stand as noted in the original review.
+
+## Standing
+
+The automatable slice is clean. Remaining before the physical F/I rows are
+fully green: the three `PENDING_HUMAN` captures, plus the two restored OPEN
+rows (Instruments minimized/after-wake, ASan) either measured or explicitly
+waived by queen.
