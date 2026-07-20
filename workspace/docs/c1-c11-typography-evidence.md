@@ -79,4 +79,6 @@ The deferred Grok row is a declared follow-up delta after the reset, not a green
 
 ## Test transcript
 
-With both fallback proofs, the focused C1.1 suite exits 0 with 8 tests and 0 failures. The complete-suite count below will be refreshed after the real-window artifact lands and the branch is rebased for review.
+After rebasing onto `660540a8`, the focused C1.1 suite exits 0 with 8 tests and 0 failures. The cursor-shaping raster proof also exits 0 in five consecutive isolated runs after requiring two identical presented IOSurface masks before comparison. The opt-in authenticated-journal WindowServer proof exits 0 with 1 test and 0 failures.
+
+With the display held awake (`CGGetActiveDisplayList` positive control: one active display, main display not asleep), the complete Swift suite exits 0 with 479 tests executed, 13 skipped, and 0 failures. The TypeScript suite reports 1,743 passed, 11 skipped, and 0 failed across 136 files; `bun run typecheck` exits 0. The earlier asleep-display attempt is not counted: it failed two unrelated surface constructors with `hive_ghostty_surface_new_manual_v1 failed`, then the controlled awake rerun passed.
