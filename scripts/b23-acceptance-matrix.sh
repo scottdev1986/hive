@@ -39,6 +39,8 @@ overall=0
 run_suite "mouse-mode-matrix" "B23MouseModeMatrixTests" || overall=1
 run_suite "paste-boundary-matrix" "B23PasteBoundaryMatrixTests" || overall=1
 run_suite "unknown-retry-matrix" "B23UnknownRetryMatrixTests" || overall=1
+run_suite "kitty-stack-matrix" "B23KittyStackMatrixTests" || overall=1
+run_suite "special-key-matrix" "B23SpecialKeyMatrixTests" || overall=1
 
 # Pre-existing suites this matrix cites as the proof for its recorded rows.
 run_suite "attach-input" "AttachInputTests" || overall=1

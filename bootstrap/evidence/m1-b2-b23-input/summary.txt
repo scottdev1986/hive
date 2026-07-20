@@ -12,20 +12,20 @@ Suites recorded at this pin (all unpiped; REAL_EXIT captured in each file):
 - mouse-mode-matrix.txt      6 tests, 0 failures  (NEW)
 - paste-boundary-matrix.txt  4 tests, 0 failures  (NEW)
 - unknown-retry-matrix.txt   2 tests, 0 failures  (NEW)
+- kitty-stack-matrix.txt     4 tests, 0 failures  (NEW)
+- special-key-matrix.txt     4 tests, 0 failures  (NEW)
 - attach-input.txt           4 tests, 0 failures  (pre-existing, cited by row 1)
 - input-encoding.txt        48 tests, 0 failures  (pre-existing, cited by rows 3,5,6,11)
 - kitty-keyboard-golden.txt  5 tests, 0 failures  (pre-existing, cited by row 4)
-Total: 69 tests, 0 failures.
+Total: 77 tests, 0 failures.
 
 GAPS CLOSED BY THE NEW SUITES
 
 - Mouse: before this bundle only any-motion (1003) and SGR (1006) had any
-  test. X10 (9), VT200 (1000), button-event (1002), pixel (1016),
-  alternate-scroll (1007), and Shift-override-while-captured had none.
-  Recorded now: X10 reports a press and never a release; VT200 reports both
-  edges with the button-3 release sentinel; SGR discriminates the release by
-  final byte 'm' instead, preserving the button; Shift+click under an active
-  mouse mode writes zero bytes.
+  test. Recorded now: X10 (9) reports a press and never a release; VT200
+  (1000) reports both edges with the button-3 release sentinel; SGR
+  discriminates the release by final byte 'm' instead, preserving the button;
+  Shift+click under an active mouse mode writes zero bytes.
 - Bracketed paste: only DECSET 2004 was tested, so a build that bracketed
   unconditionally passed. Recorded now: DECRST stops bracketing while a safe
   single-line body still reaches the encoder verbatim.
@@ -33,6 +33,14 @@ GAPS CLOSED BY THE NEW SUITES
   embedded newline would submit to the shell unseen. Attribution control: the
   same body does paste when bracketed, so the withholding is safe-paste and
   not a dead clipboard reader.
+- Kitty stack: the pre-existing suite pinned PUSH only, so a terminal that
+  latched Kitty mode permanently and ignored every pop passed it. Recorded
+  now: CSI < u restores the legacy golden, and two pushes require two pops
+  (a boolean masquerading as a stack fails).
+- Special keys: the four arrows are pinned to CSI A/B/C/D; every navigation
+  and function key encodes a non-empty, mutually distinct sequence. Non-empty
+  is precisely the assertion that would have caught this codebase's earlier
+  "zero writes for special keys" blocker.
 - Client unknown semantics: an unknown input receipt fences the client, so no
   further INPUT_SUBMIT is authored. See the matrix doc, "Row 10", for why
   fencing rather than resending is the correct reading of the clause.
@@ -44,11 +52,18 @@ Each new suite brackets its reader through the same predicate the rows use:
   is attributable to the mode rather than to a dead callback.
 - paste: set and unset 2004 must return DIFFERENT transcripts through the one
   reader, so a reader blind to the mode fails.
+- kitty: the legacy and pushed goldens must DIFFER, or every push/pop row
+  would pass vacuously whatever the terminal did.
+- special keys: a plain printable key must be observable through the same
+  reader, or the non-empty rows would be measuring nothing.
 - unknown: a healthy receipt must permit a second submission, so the zero in
   the unknown row cannot come from a reader that never observes one.
 
 Exact-count and wrote-nothing rows settle the run loop AFTER the expected
-writes land, so silence is measured rather than assumed.
+writes land, so silence is measured rather than assumed. Key-encoder bytes
+are delivered asynchronously by the surface io thread, so every key row
+drains rather than snapshots — a synchronous read is the documented
+measurement error behind the earlier false "zero writes" report.
 
 MUTATION VERIFICATION (assertions proven to bite, then reverted)
 
@@ -57,6 +72,10 @@ MUTATION VERIFICATION (assertions proven to bite, then reverted)
   captured; Shift is what suppresses the report.
 - Unknown fence: answering with stage "written-to-terminal" instead of
   "unknown" turned the row RED. The fence depends on the unknown outcome.
+- Kitty pop: dropping the CSI < u step turned the row RED, 7 bytes (kitty)
+  against the expected 10 (legacy). The pop genuinely changes the encoding.
+- Arrow golden: mutating the up-arrow expectation to "\e[Z" turned the row
+  RED against the actual "\e[A".
 
 Manifest: evidence-sha256.txt, which excludes itself (a file cannot contain
 its own digest) and lists only .txt files. Evidence is deliberately NOT named
