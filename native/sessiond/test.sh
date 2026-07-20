@@ -43,6 +43,8 @@ if [ -f "$ROOT/vendor/ghostty/include/ghostty.h" ]; then
     "$ROOT/native/tests/abi/header-standalone.c"
 fi
 
+# real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
+# inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
 cd "$ROOT/native/sessiond"
 "$ZIG" build --global-cache-dir "$CACHE/zig-global" \
   test identity-probe install -Dtarget="$TARGET" --sysroot "$OVERLAY"

@@ -485,10 +485,17 @@ pub const InputArbiter = struct {
 
     // ── HUMAN_ORPHANED + operator resume ────────────────────────────────────
 
+    /// Resume an orphaned human claim for `viewer_id` under a new claim id.
+    ///
+    /// `kind` is enforced HERE (by-construction): only `"human"` may resume.
+    /// Callers must not treat a string-compare at the host claim path as the
+    /// sole never-steal guard — a future second caller that skips host-side
+    /// filtering still cannot bypass this check.
     pub fn operatorResume(
         self: *InputArbiter,
         viewer_id: []const u8,
         new_claim_id: []const u8,
+        kind: []const u8,
     ) Error!ClaimResult {
         try self.requireLive();
         if (self.state != .human_orphaned) {
@@ -498,6 +505,9 @@ pub const InputArbiter = struct {
                 else => error.InputBusy,
             };
         }
+        // Never-steal for orphaned human leases: automation/other kinds cannot
+        // resume through this door regardless of caller discipline.
+        if (!std.mem.eql(u8, kind, "human")) return error.HumanOrphaned;
         if (!self.lease_current) {
             try self.terminate();
             return error.Closed;
@@ -1245,11 +1255,30 @@ test "HUMAN_ORPHANED + operator resume → HUMAN_OWNED at prior sequence" {
     _ = try arb.claimAcquire("v1", "clm_1");
     _ = try arb.humanInput("v1", "clm_1", 1, sha256("x"), "x");
     try arb.viewerDisconnect();
-    const r = try arb.operatorResume("v2", "clm_2");
+    const r = try arb.operatorResume("v2", "clm_2", "human");
     try std.testing.expectEqual(State.human_owned, arb.currentState());
     try std.testing.expectEqual(@as(u64, 2), r.next_sequence);
     // Do not replay acknowledged bytes — sink still only has "x".
     try std.testing.expectEqualStrings("x", sink.writes.items);
+}
+
+test "HUMAN_ORPHANED + non-human operatorResume is denied at the arbiter" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    _ = try arb.claimAcquire("v1", "clm_1");
+    try arb.viewerDisconnect();
+    try std.testing.expectEqual(State.human_orphaned, arb.currentState());
+    // By-construction never-steal: kind is enforced inside operatorResume, not
+    // only at a host-side caller compare.
+    try std.testing.expectError(error.HumanOrphaned, arb.operatorResume("auto-v", "clm_auto", "automation"));
+    try std.testing.expectEqual(State.human_orphaned, arb.currentState());
+    // Human resume still works after the denied non-human attempt.
+    const r = try arb.operatorResume("v2", "clm_2", "human");
+    try std.testing.expectEqual(State.human_owned, arb.currentState());
+    try std.testing.expectEqualStrings("clm_2", r.claim_id);
 }
 
 test "HUMAN_ORPHANED + operator discard → FREE after cancel enqueued" {
@@ -1969,7 +1998,7 @@ test "B2 positive control: operatorResume dupe failure leaves no freed pointers"
         try arb.viewerDisconnect();
         // Switch allocator to failing for resume path only.
         arb.allocator = fail.allocator();
-        const err = arb.operatorResume("viewer-new", "clm_new");
+        const err = arb.operatorResume("viewer-new", "clm_new", "human");
         try std.testing.expectError(error.Internal, err);
         // Fields must be null — not dangling freed pointers.
         try std.testing.expect(arb.owner_viewer_id == null);
@@ -1998,7 +2027,7 @@ test "B2 positive control: operatorResume dupe failure leaves no freed pointers"
         // For second-dupe failure: n=2.
         var fail = FailNth{ .parent = gpa, .n = 2 };
         arb.allocator = fail.allocator();
-        const err = arb.operatorResume("viewer-new", "clm_new");
+        const err = arb.operatorResume("viewer-new", "clm_new", "human");
         try std.testing.expectError(error.Internal, err);
         // Viewer may have been allocated then freed by errdefer; both null.
         try std.testing.expect(arb.owner_viewer_id == null);

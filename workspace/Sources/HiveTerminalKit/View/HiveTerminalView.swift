@@ -325,6 +325,13 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         refreshReportedGeometryAfterConfiguration()
     }
 
+    /// #40: clean CLAIM_RELEASE before viewer transport teardown.
+    public func releaseClaimBestEffort() {
+        attachClient?.releaseClaimBestEffort()
+        claimPresentation = attachClient?.claimPresentation ?? .free
+        inputSubmissionState = attachClient?.inputSubmissionState ?? .idle
+    }
+
     private func presentFirstCorrectFrame(_ highWater: UInt64) {
         self.highWater = highWater
         guard surfaceState != .live else { return }
@@ -774,6 +781,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         pendingDraw = false
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
+        // #40 clean CLAIM_RELEASE, then B2.6 AX teardown (both required; hedda on-call).
+        releaseClaimBestEffort()
         accessibilitySurfaceWillClose()
         onUserClose?()
         engine.free()

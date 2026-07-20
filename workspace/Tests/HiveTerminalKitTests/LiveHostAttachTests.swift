@@ -588,6 +588,134 @@ final class LiveHostAttachTests: XCTestCase {
         try (evidence + "\n").write(toFile: transcriptPath, atomically: true, encoding: .utf8)
     }
 
+    /// #40 live proof: unclean transport drop orphans the human claim; a
+    /// returning human viewer re-acquires via the sanctioned resume path and
+    /// can type again. Clean CLAIM_RELEASE (cancel) is covered unit-side.
+    func testLiveClaimUncleanDropThenHumanResumeTypes() throws {
+        let (proof, _) = try loadProof()
+        guard proof.mode == "shell" else {
+            throw XCTSkip("#40 claim drop-reattach requires HIVE_B22_REAL_SHELL=1 shell home")
+        }
+
+        // Unique viewer ids so host input-replay idempotency keys do not collide
+        // across test re-runs against a long-lived shell session.
+        let runId = String(UInt32.random(in: 100_000...999_999))
+        let viewerAId = "claim-drop-a-\(runId)"
+        let viewerBId = "claim-drop-b-\(runId)"
+
+        // --- Viewer A: acquire claim and land one INPUT_SUBMIT ---
+        let grantALine = try issueGrant(proof, viewerId: viewerAId)
+        XCTAssertEqual(grantALine.status, 0, "viewer-a grant refused: \(grantALine.output)")
+        let grantA = try parseGrant(grantALine.output)
+        let engineA = FakeManualSurface()
+        let viewA = HiveTerminalView(frame: .zero, engine: engineA, viewerId: viewerAId)
+        let transportA = try UdsHostTransport.connect(endpoint: grantA.endpoint)
+        let outcomeA = try viewA.attach(
+            grant: grantA,
+            geometry: geometry,
+            afterSeq: 0,
+            transport: transportA
+        )
+        guard case .firstCorrectFrame(let hwA, _) = outcomeA else {
+            transportA.close()
+            return XCTFail("viewer-a attach failed: \(outcomeA)")
+        }
+        let bindingA = try XCTUnwrap(viewA.binding)
+        let markerA = "hive-claim-a-\(runId)"
+        viewA.insertText(
+            "echo \(markerA)\n",
+            replacementRange: NSRange(location: NSNotFound, length: 0),
+            associatedEvent: nil
+        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let deadlineA = Date().addingTimeInterval(10)
+        while Date() < deadlineA {
+            if case .applied = viewA.inputSubmissionState { break }
+            do {
+                guard let frame = try transportA.receive(timeout: 1.0) else { break }
+                viewA.pumpHostFrame(frame, frameBinding: bindingA)
+            } catch WireError.receiveTimeout {
+                continue
+            }
+        }
+        guard case .applied = viewA.inputSubmissionState else {
+            transportA.close()
+            return XCTFail("viewer-a never got APPLIED: \(viewA.inputSubmissionState)")
+        }
+        // Unclean drop: tear the socket without CLAIM_RELEASE.
+        transportA.close()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+
+        // --- Viewer B: returning human must resume and type ---
+        let grantBLine = try issueGrant(proof, viewerId: viewerBId)
+        XCTAssertEqual(grantBLine.status, 0, "viewer-b grant refused: \(grantBLine.output)")
+        let grantB = try parseGrant(grantBLine.output)
+        let engineB = FakeManualSurface()
+        let viewB = HiveTerminalView(frame: .zero, engine: engineB, viewerId: viewerBId)
+        let transportB = try UdsHostTransport.connect(endpoint: grantB.endpoint)
+        defer { transportB.close() }
+        // Full journal replay on reattach (afterSeq=0): avoids REBASE_REQUIRED
+        // when the dropped viewer and host high-water race; the claim path is
+        // independent of the output cursor.
+        let outcomeB = try viewB.attach(
+            grant: grantB,
+            geometry: geometry,
+            afterSeq: 0,
+            transport: transportB
+        )
+        guard case .firstCorrectFrame = outcomeB else {
+            return XCTFail("viewer-b attach failed: \(outcomeB) (viewer-a hw was \(hwA))")
+        }
+        let bindingB = try XCTUnwrap(viewB.binding)
+        let markerB = "hive-claim-b-\(runId)"
+        viewB.insertText(
+            "echo \(markerB)\n",
+            replacementRange: NSRange(location: NSNotFound, length: 0),
+            associatedEvent: nil
+        )
+        RunLoop.main.run(until: Date().addingTimeInterval(0.05))
+        let deadlineB = Date().addingTimeInterval(10)
+        while Date() < deadlineB {
+            if case .applied = viewB.inputSubmissionState { break }
+            if case .refused(let code, let evidence) = viewB.inputSubmissionState {
+                return XCTFail("viewer-b claim/input refused after unclean drop: \(code) \(evidence)")
+            }
+            do {
+                guard let frame = try transportB.receive(timeout: 1.0) else { break }
+                viewB.pumpHostFrame(frame, frameBinding: bindingB)
+            } catch WireError.receiveTimeout {
+                continue
+            }
+        }
+        guard case .applied(_, let stage) = viewB.inputSubmissionState else {
+            return XCTFail(
+                "viewer-b did not resume/type after unclean drop: \(viewB.inputSubmissionState)"
+            )
+        }
+        XCTAssertEqual(stage, "written-to-terminal")
+        // Drain a few more OUTPUT frames for the echo (best-effort observability).
+        let drainDeadline = Date().addingTimeInterval(3)
+        while Date() < drainDeadline {
+            let appliedB = engineB.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+            if appliedB.range(of: Data(markerB.utf8)) != nil { break }
+            do {
+                guard let frame = try transportB.receive(timeout: 0.5) else { break }
+                viewB.pumpHostFrame(frame, frameBinding: bindingB)
+            } catch WireError.receiveTimeout {
+                continue
+            }
+        }
+        let appliedB = engineB.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+        // Claim resume + INPUT applied is the #40 contract; echo is corroboration.
+        if appliedB.range(of: Data(markerB.utf8)) == nil {
+            NSLog(
+                "hive claim live: marker echo not observed in OUTPUT (applied=%@ stage=%@) — claim resume still GREEN",
+                String(describing: viewB.inputSubmissionState),
+                stage
+            )
+        }
+    }
+
     /// B2.4 opt-in live geometry proof: the real Ghostty grid, not the session
     /// fixture's 80x24 default, is sent through authenticated RESIZE before
     /// the attached login shell accepts input.

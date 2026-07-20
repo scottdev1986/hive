@@ -131,6 +131,8 @@ final class SessiondPaneTerminal {
         geometryPollTimer?.invalidate()
         geometryPollTimer = nil
         stopRecovery()
+        // #40: clean release before transport close so host claim does not orphan.
+        view?.releaseClaimBestEffort()
         transport?.close()
         transport = nil
     }

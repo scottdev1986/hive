@@ -185,6 +185,7 @@ public final class AttachReplayClient {
     }
 
     func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
+        releaseClaimBestEffort()
         transport?.close()
         transport = nil
         binding = newBinding
@@ -198,10 +199,33 @@ public final class AttachReplayClient {
     }
 
     func failDeferredPresentation(_ failure: TerminalSurfaceState) {
+        releaseClaimBestEffort()
         transport?.close()
         transport = nil
         state = failure
         resetInputState()
+    }
+
+    /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport (#40).
+    /// Best-effort: transport may already be half-dead; host also clears on drop.
+    public func releaseClaimBestEffort() {
+        guard let token = activeClaimToken, let binding, transport != nil else { return }
+        let payload: [String: Any] = [
+            "schemaVersion": 1,
+            "session": sessionReference(binding.locator),
+            "claimToken": token,
+            "kind": "cancel",
+        ]
+        do {
+            try sendJSON(.claimRelease, object: payload, requestId: nextRequestId)
+            nextRequestId += 1
+            NSLog("hive claim: release cancel token=%@ viewer=%@", token, viewerId)
+        } catch {
+            NSLog("hive claim: release send failed viewer=%@ error=%@", viewerId, "\(error)")
+        }
+        activeClaimToken = nil
+        claimRequestId = nil
+        claimPresentation = .free
     }
 
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {
@@ -453,6 +477,7 @@ public final class AttachReplayClient {
                let token = claim["token"] as? String {
                 activeClaimToken = token
                 claimPresentation = .humanOwned(viewerId: viewerId, claimId: token)
+                NSLog("hive claim: granted token=%@ viewer=%@", token, viewerId)
                 let batches = pendingInputBatches
                 pendingInputBatches.removeAll()
                 for batch in batches where batch.binding == binding {
@@ -462,18 +487,20 @@ public final class AttachReplayClient {
                 activeClaimToken = nil
                 pendingInputBatches.removeAll()
                 claimPresentation = .free
+                let diagnostic = result["diagnostic"] as? String ?? "human input is owned elsewhere"
+                NSLog("hive claim: denied viewer=%@ diagnostic=%@", viewerId, diagnostic)
                 refuseInput(
                     code: "CLAIM_DENIED",
-                    evidence: result["diagnostic"] as? String ?? "human input is owned elsewhere"
+                    evidence: diagnostic
                 )
             } else {
                 activeClaimToken = nil
                 pendingInputBatches.removeAll()
                 claimPresentation = .free
                 inputFenced = true
-                setInputSubmissionState(.unknown(
-                    evidence: result["diagnostic"] as? String ?? "human input claim is unknown"
-                ))
+                let diagnostic = result["diagnostic"] as? String ?? "human input claim is unknown"
+                NSLog("hive claim: unknown viewer=%@ diagnostic=%@", viewerId, diagnostic)
+                setInputSubmissionState(.unknown(evidence: diagnostic))
             }
             return .continueReplay
 
