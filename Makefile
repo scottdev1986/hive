@@ -306,101 +306,62 @@ test-e2e:
 
 # Stop the dev instance, then delete every dev artifact — and never the second
 # without the first. Deleting .dev/ out from under a live app was the defect
-# (#44): the Workspace is launched through `open -n`, so it is nobody's child
+# (#44): the Workspace is launched through open -n, so it is nobody's child
 # here and no signal ever reached it, and the two targeted kills below are
 # best-effort by nature, so a miss was undetectable.
 #
 # The fix is not a louder kill. Nothing here trusts a kill: the sweep re-reads
-# the process table afterwards, and `rm -rf` runs only if that readback is
+# the process table afterwards, and rm -rf runs only if that readback is
 # empty. A survivor refuses the delete and exits non-zero, because reporting
 # success over a live process is what made this silent for so long.
 #
 # Selection is by PATH and ARGUMENTS, never by process name. The user's
 # installed instance runs its own Workspace, its own tmux server and its own
-# vendor CLI children; matching "HiveWorkspace" or "tmux" would kill those.
+# vendor CLI children; matching HiveWorkspace or tmux would kill those.
 # Three axes are needed because dev processes are bound three different ways:
 #
 #   1. executable under .dev/     — the Workspace app, staged dev binaries
 #   2. .dev/ OR HIVE_HOME in args — tmux/vendor children and settings paths;
 #                                   HIVE_HOME is the short /tmp/hive-dev-* path
-#                                   (sessiond --instance-home, runtime files)
 #   3. dev tmux socket in args    — hash of the short HIVE_HOME literal (same
 #                                   string make run exports / hiveInstanceSuffix)
 #
-# A clean must also work when .dev/ and/or the short home is ALREADY GONE. That
-# is not a hypothetical: it is exactly what a half-finished clean leaves behind
-# — the directory deleted and the processes still running. The guard is now
-# "either directory exists OR the sweep finds processes bound to either".
+# A clean must also work when .dev/ and/or the short home is ALREADY GONE.
+# The guard is: either directory exists OR the sweep finds processes bound
+# to either.
 #
 # The socket digest hashes the short HIVE_HOME literal — not a path under
-# .dev/. That has no dependency on either directory existing, so axis 3 still
-# names the live tmux server when home is gone. (Earlier: hashing
-# `cd .dev/home && pwd -P` went dark the moment home was deleted.)
+# .dev/. That has no dependency on either directory existing.
 #
 # Every refusal below is deliberate. An empty path or an empty digest must STOP
-# the target, never let it proceed or quietly exit 0 — an empty `dev` would make
-# the axis-1 prefix `/*`, which matches every absolute path on the machine.
+# the target. An empty dev would make the axis-1 prefix match every absolute
+# path on the machine.
 #
-# NAMING THE DEV INSTANCE IS NOT BEING IT. Argv matching alone cannot tell a
-# process BOUND to this instance from one that merely mentions it — an editor,
-# a grep, a log tail, or the very shell that invoked `make clean DEV=<path>`.
-# That is not hypothetical: the first real-world run of this target killed its
-# own invoking shell (observed; exit 144 and a sweep line naming a pid that was
-# neither orphan — the precise match reason remains unproven).
-#
-# So argv only nominates a CANDIDATE. Killing requires binding evidence that
-# outlives the directory:
+# NAMING THE DEV INSTANCE IS NOT BEING IT. Argv only nominates a CANDIDATE.
+# Killing requires binding evidence that outlives the directory:
 #   - executable under the dev path (any of its three spellings)
-#   - cwd (or an open file) under the dev path OR the short HIVE_HOME path,
+#   - cwd or an open file under the dev path OR the short HIVE_HOME path,
 #     per lsof, with literal component-boundary matching
-#   - being the tmux server for the dev socket, or one of its clients, which
-#     tmux answers authoritatively by pid — no argv involved
+#   - being the tmux server for the dev socket, or one of its clients
 # Anything else is a mentioner: reported, never signalled.
 #
-# That the evidence outlives deletion is measured, not assumed: a process whose
-# cwd was under a .dev still reported that exact path via lsof AFTER the .dev
-# was rm -rf'd, because the kernel holds the vnode. Without that, requiring
-# binding evidence would have un-fixed the orphan case above, where .dev is
-# gone by definition.
+# SHORT-HOME SPELLINGS: HIVE_HOME is /tmp/hive-dev-TAG. On macOS /tmp links
+# to /private/tmp, so the same three-spelling discipline applies to home:
+# homel is the literal DEV_HOME string (argv + socket digest), home is that
+# string after emptiness checks, homep is the deepest-surviving-ancestor
+# physical form for lsof. The socket digest always hashes the literal home
+# string, never realpath. Component boundary stops home-sibling matches.
 #
-# SHORT-HOME SPELLINGS (#51 × #49): HIVE_HOME is /tmp/hive-dev-<digest>. On
-# macOS /tmp → /private/tmp, so the same three-spelling discipline that applies
-# to .dev applies to home: homel is the literal DEV_HOME string (what argv and
-# hiveInstanceSuffix use), home is that same string after emptiness checks,
-# homep is the deepest-surviving-ancestor realpath form for lsof. The socket
-# digest always hashes the literal home string, never realpath.
+# The invoking process whole ancestor chain is excluded (full walk to pid 1).
 #
-# The invoking process's whole ancestor chain is excluded too. `is_mine` walks
-# ppid UPWARD from a candidate, so it can recognise self and descendants but an
-# ancestor can never reach self and would otherwise stay eligible.
+# Prefer stranding to killing: wrong inclusion is unbounded; wrong exclusion
+# is recoverable. The found-mentioners line is load-bearing.
 #
-# WHY SPARING IS PREFERRED, STATED HONESTLY. An earlier version of this comment
-# claimed a wrong exclusion "fails safe" because the survivor readback would
-# find the process alive and refuse the delete. THAT IS FALSE, and it was
-# disproved by probe rather than argument: the readback calls the same
-# dev_pids, so it applies the same classification. A process wrongly judged a
-# mentioner is invisible to the readback too — it never appears in `alive`,
-# clean exits 0, and .dev is deleted out from under it.
-#
-# So both errors are real harms and the choice between them is a judgement, not
-# a free lunch:
-#   wrong INCLUSION -> a bystander is killed. Immediate, unrecoverable, and it
-#     can reach the user's installed instance or another agent's work.
-#   wrong EXCLUSION -> a genuine dev process is STRANDED against a deleted .dev
-#     and keeps running. Recoverable (it can be killed by hand) but silent
-#     unless something says so.
-# We prefer stranding to killing, because the blast radius of a wrong kill is
-# unbounded while a stranded process is inert and fixable. The `found
-# mentioners, not killing:` line is what keeps the stranding from being silent,
-# and it is therefore load-bearing, not decoration — it is the ONLY signal that
-# a spared process may have needed reaping.
+# Survivor readback gates BOTH deletions: if anything bound to .dev or the
+# short home is still alive, neither directory is removed.
 clean:
 	@set -e; \
-	: "every command substitution below is guarded, because this recipe has been\
-	   bitten TWICE by errexit reaching inside a command substitution and aborting the target\
-	   at a command whose failure is not interesting. Where a value is genuinely\
-	   required, the guard is followed by an explicit emptiness REFUSAL rather\
-	   than a silent default -- tolerate the failure, then refuse on the result"; \
+	: "every command substitution below is guarded against errexit aborting the target on a non-interesting failure; required values are refused when empty rather than defaulted"; \
 	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P) || true; else dev="$(DEV)"; fi; \
 	[ -n "$$dev" ] || { echo "refusing: could not determine the dev directory path" >&2; exit 1; }; \
 	case "$$dev" in /*) ;; *) echo "refusing: dev path is not absolute ($$dev)" >&2; exit 1;; esac; \
@@ -412,27 +373,20 @@ clean:
 	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
 	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	if [ -f "$$home/daemon.pid" ]; then \
-	  pid=$$(cat "$$home/daemon.pid") || true; \
+	  pid=$$(cat "$$home/daemon.pid" 2>/dev/null) || true; \
+	  [ -n "$$pid" ] || { echo "refusing: could not read daemon.pid under HIVE_HOME" >&2; exit 1; }; \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
 	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
 	fi; \
 	is_mine() { q=$$1; k=0; \
-	  : "a pid whose ancestry cannot be resolved has already exited — the sweep\
-	     spawns short-lived subshells that inherit this recipe's command line\
-	     and so match by args; gone is not a survivor"; \
+	  : "a pid whose ancestry cannot be resolved has already exited"; \
 	  while [ $$k -lt 8 ]; do \
 	    [ "$$q" = "$$self" ] && return 0; \
 	    q=$$(ps -p "$$q" -o ppid= 2>/dev/null | tr -d ' '); \
 	    [ -n "$$q" ] || return 0; [ "$$q" = "1" ] && return 1; \
 	    k=$$((k + 1)); \
 	  done; return 1; }; \
-	: "the WHOLE chain, terminating on pid 1 / pid 0 / an unresolvable parent —\
-	   not an arbitrary depth. A cap that is silently exceeded leaves real\
-	   ancestors eligible to be killed, which is the defect this exclusion\
-	   exists to prevent. The 4096 bound is a cycle backstop, not a depth\
-	   policy: no process tree reaches it, so hitting it means the walk is not\
-	   terminating and the honest response is to REFUSE rather than proceed\
-	   with an ancestor set known to be incomplete"; \
+	: "full ancestor walk terminates on pid 1, pid 0, or unresolvable parent; 4096 is a cycle backstop that refuses"; \
 	ancestors=" "; a=$$self; k=0; complete=no; \
 	while [ $$k -lt 4096 ]; do \
 	  a=$$(ps -p "$$a" -o ppid= 2>/dev/null | tr -d ' '); \
@@ -448,59 +402,40 @@ clean:
 	tmuxpids=" $$( { tmux -L "hive-$$suffix" display -p '$(HASH){pid}' 2>/dev/null; \
 	    tmux -L "hive-$$suffix" list-clients -F '$(HASH){client_pid}' 2>/dev/null; \
 	  } | tr '\n' ' ')"; \
-	: "lsof reports PHYSICAL paths, and a deleted .dev cannot be resolved with\
-	   pwd -P. On macOS /tmp is a symlink to /private/tmp, so the literal path\
-	   never matches what lsof prints and every cwd-bound orphan was misread as\
-	   a mere mentioner. Resolve the deepest ancestor that still exists and\
-	   re-attach the deleted remainder, then match on either spelling"; \
-	: "three spellings can all name the same directory and each shows up in a\
-	   different place: devl is exactly what the caller typed and is what argv\
-	   carries; dev is that after pwd -P when it exists; devp resolves the\
-	   deepest surviving ancestor so a DELETED dir still compares against the\
-	   physical path lsof prints. Match all three everywhere or a process is\
-	   missed by whichever spelling the check happens not to hold"; \
+	: "three spellings for .dev: literal caller path, pwd-P when present, deepest surviving ancestor for deleted dirs"; \
 	devl="$(DEV)"; \
 	devp="$$dev"; d="$$dev"; rest=""; \
 	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
-	  rest="/$$(basename "$$d")$$rest" || true; d=$$(dirname "$$d") || true; \
+	  b=$$(basename "$$d") || true; \
+	  [ -n "$$b" ] || { echo "refusing: could not basename a deleted-dev path component" >&2; exit 1; }; \
+	  rest="/$$b$$rest"; \
+	  d=$$(dirname "$$d") || true; \
+	  [ -n "$$d" ] || { echo "refusing: could not dirname a deleted-dev path component" >&2; exit 1; }; \
 	done; \
-	if [ -d "$$d" ]; then devp="$$(cd "$$d" && pwd -P)$$rest" || true; fi; \
-	: "same three-spelling discipline for the short HIVE_HOME: homel is the\
-	   literal DEV_HOME string (argv + socket digest), home is that string after\
-	   emptiness checks, homep is the physical form lsof prints under /private/tmp"; \
+	if [ -d "$$d" ]; then \
+	  base=$$(cd "$$d" && pwd -P) || true; \
+	  [ -n "$$base" ] || { echo "refusing: could not resolve surviving ancestor of the dev path" >&2; exit 1; }; \
+	  devp="$$base$$rest"; \
+	fi; \
+	: "same three-spelling discipline for short HIVE_HOME under tmp"; \
 	homel="$(DEV_HOME)"; \
 	homep="$$home"; hd="$$home"; hrest=""; \
 	while [ ! -d "$$hd" ] && [ "$$hd" != "/" ] && [ -n "$$hd" ]; do \
-	  hrest="/$$(basename "$$hd")$$hrest" || true; hd=$$(dirname "$$hd") || true; \
+	  hb=$$(basename "$$hd") || true; \
+	  [ -n "$$hb" ] || { echo "refusing: could not basename a deleted-home path component" >&2; exit 1; }; \
+	  hrest="/$$hb$$hrest"; \
+	  hd=$$(dirname "$$hd") || true; \
+	  [ -n "$$hd" ] || { echo "refusing: could not dirname a deleted-home path component" >&2; exit 1; }; \
 	done; \
-	if [ -d "$$hd" ]; then homep="$$(cd "$$hd" && pwd -P)$$hrest" || true; fi; \
-	: "EVERY descriptor, not just cwd. An earlier version passed -d cwd here,\
-	   which silently narrowed this to the working directory while the comment\
-	   above promised 'cwd or an open file' — measured: a process holding a\
-	   dev file on fd 3 was classified a mentioner, spared, and then had .dev\
-	   deleted out from under it. A held fd is binding evidence exactly as a\
-	   cwd is, and lsof keeps reporting both after the file is unlinked"; \
-	: "PATHS ARE NOT PATTERNS, AND PREFIXES ARE NOT COMPONENTS. This used to pipe\
-	   lsof into a grep anchored on the raw path, which had two ways to kill the\
-	   wrong thing:\
-	   the path was interpreted as a REGEX, so a '.' matched any character; and\
-	   there was no component boundary, so a sibling directory named .dev-other\
-	   matched .dev and its holder was killed. Measured, not theorised — the\
-	   probe that found it killed a bystander whose only real fd was under\
-	   .dev-other. Matching is now literal and component-wise: a name binds only\
-	   if it EQUALS a spelling or begins with that spelling plus '/'. The case\
-	   patterns quote the variable, which makes any glob character inside the\
-	   path literal, so a path containing * or ? cannot widen the match either.\
-	   The same boundary applies to short HIVE_HOME: $$home-sibling must NOT match"; \
+	if [ -d "$$hd" ]; then \
+	  hbase=$$(cd "$$hd" && pwd -P) || true; \
+	  [ -n "$$hbase" ] || { echo "refusing: could not resolve surviving ancestor of HIVE_HOME" >&2; exit 1; }; \
+	  homep="$$hbase$$hrest"; \
+	fi; \
+	: "is_bound: executable under any spelling, any open fd under any spelling with literal component boundary, or tmux server or client pid"; \
 	is_bound() { \
 	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in \
 	    "$$dev"/*|"$$devp"/*|"$$devl"/*|"$$home"/*|"$$homep"/*|"$$homel"/*) return 0;; esac; \
-	  : "awk, not shell, for this scan: index(p,d\"/\")==1 is a LITERAL\
-	     prefix test with a component boundary — no regex, so a '.' in the path\
-	     cannot match any character, and no bare-prefix match, so a sibling\
-	     .dev-other cannot pass as .dev. A shell while-read pipeline that broke\
-	     early on a match wedged here instead, so this is also the version that\
-	     terminates"; \
 	  if lsof -n -P -a -p "$$1" -Fn 2>/dev/null \
 	    | awk -v d="$$dev" -v dp="$$devp" -v dl="$$devl" \
 	          -v h="$$home" -v hp="$$homep" -v hl="$$homel" ' \
@@ -514,13 +449,7 @@ clean:
 	        END { exit(found ? 0 : 1) }'; then return 0; fi; \
 	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
 	  return 1; }; \
-	: "BOTH spellings here too, not just in is_bound. argv carries whatever the\
-	   caller typed — usually the unresolved /tmp/... — while dev has been\
-	   through pwd -P into /private/tmp/... Matching only the resolved form\
-	   meant a process naming the symlinked path was never even NOMINATED, so\
-	   is_bound never ran and no amount of binding evidence could save it.\
-	   Short-home argv tokens ($$home/$$homel, often /tmp/...) are nominated the\
-	   same way, with component boundary so $$home-sibling is not a candidate"; \
+	: "nominate on any spelling of dev or home, on the socket token, and on tmux-reported pids; exclude self and ancestors"; \
 	candidates() { \
 	  { ps -axo pid=,comm= | while read -r p c; do \
 	      case "$$c" in \
@@ -535,32 +464,15 @@ clean:
 	    printf '%s\n' $$tmuxpids; \
 	  } | sort -u | while read -r p; do \
 	    [ -n "$$p" ] || continue; excluded "$$p" || echo "$$p"; done; }; \
-	: "these are FILTERS: a final candidate that does not match leaves the loop\
-	   with a non-zero status, which under set -e would abort the whole target.\
-	   'the last item was not selected' is not a failure, so both end with ':'"; \
-	: "the trailing ':' below does NOT make these safe under errexit and must not\
-	   be trusted as a guard: set -e reaches inside the command substitution and\
-	   aborts at the failing classification, so the ':' never runs. EVERY call\
-	   site therefore needs its own '|| true'. Measured the hard way — the\
-	   readback assignment lacked one, so a run whose last surviving candidate\
-	   was a mentioner aborted with exit 2 and preserved .dev after correctly\
-	   killing the bound process"; \
+	: "filters: empty selection is not a failure; every call site needs its own or-true against errexit"; \
 	dev_pids() { candidates | while read -r p; do is_bound "$$p" && echo "$$p"; done; :; }; \
 	mentioners() { candidates | while read -r p; do is_bound "$$p" || echo "$$p"; done; :; }; \
-	: "set -e reaches inside these command substitutions, so ANY untested failure\
-	   in the classification helpers (a gone pid, an lsof miss) would abort the\
-	   whole target silently — observed: with a bystander present the recipe\
-	   exited 1 having printed nothing at all. An empty result is a legitimate\
-	   answer here and is handled explicitly below, so the substitutions are\
-	   allowed to fail and the emptiness is what gets acted on"; \
 	pids=$$(dev_pids) || true; \
 	named=$$(mentioners) || true; \
 	[ -z "$$named" ] || echo "found mentioners, not killing:" $$named; \
 	if [ ! -d "$(DEV)" ] && [ ! -d "$$home" ] && [ -z "$$pids" ]; then exit 0; \
 	fi; \
-	: "reaching here with no directory means the sweep found processes, and an\
-	   empty sweep is trustworthy only because every derivation it depends on\
-	   refused above rather than defaulting"; \
+	: "empty sweep is trustworthy only because every derivation refused rather than defaulted"; \
 	if [ -n "$$pids" ]; then \
 	  echo "stopping dev processes:" $$pids; \
 	  for p in $$pids; do kill "$$p" 2>/dev/null || true; done; \
@@ -576,6 +488,7 @@ clean:
 	  echo "all dev processes confirmed stopped"; \
 	fi; \
 	rm -rf "$(DEV)" "$$home"
+
 
 cleanup: clean
 
