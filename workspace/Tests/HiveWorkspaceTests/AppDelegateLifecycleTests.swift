@@ -198,6 +198,39 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertTrue(didTerminate)
     }
 
+    func testLastWindowClosedRecordsItsOwnTerminationReason() {
+        _ = NSApplication.shared
+        let owner = AppDelegate(config: LaunchConfig())
+
+        XCTAssertTrue(owner.applicationShouldTerminateAfterLastWindowClosed(.shared))
+        XCTAssertEqual(owner.terminationReason, .lastWindowClosed)
+    }
+
+    /// A self-quit closes its own windows on the way out, which trips the
+    /// last-window-closed callback. The recorded reason has to stay the cause,
+    /// not become the consequence — otherwise an investigator reads a
+    /// feed-failure death as a deliberate window close.
+    func testFeedFailureKeepsItsReasonWhenClosingWindowsTripsLastWindowClosed() {
+        _ = NSApplication.shared
+        let owner = AppDelegate(config: LaunchConfig())
+
+        owner.terminateAfterFeedFailure {}
+        XCTAssertEqual(owner.terminationReason, .feedFailure)
+
+        _ = owner.applicationShouldTerminateAfterLastWindowClosed(.shared)
+        XCTAssertEqual(owner.terminationReason, .feedFailure)
+    }
+
+    /// A quit no in-app path claimed, with no Apple Event in flight, is the
+    /// user's own Cmd-Q.
+    func testAnUnclaimedQuitIsRecordedAsAUserQuit() {
+        _ = NSApplication.shared
+        let owner = AppDelegate(config: LaunchConfig())
+
+        XCTAssertEqual(owner.applicationShouldTerminate(.shared), .terminateNow)
+        XCTAssertEqual(owner.terminationReason, .userQuit)
+    }
+
     func testProjectCloseEndsEverySheetBeforeClosingOtherWindows() {
         let project = NSObject()
         let settings = NSObject()

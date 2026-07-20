@@ -42,6 +42,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// out. Weak, and per-instance: nothing here outlives this process.
     private weak var trackingMenu: NSMenu?
     private let workspaceSessionID = UUID().uuidString
+    /// Why this process is ending, recorded by the first path that decides it.
+    /// First writer wins: a self-quit closes its own windows on the way out, so
+    /// the last-window-closed callback would otherwise overwrite the real
+    /// reason with its own consequence.
+    private(set) var terminationReason: TerminationLog.Reason?
     private var terminationPending = false
     private var terminationFailureAlert: NSAlert?
     private var terminationProcess: Process?
@@ -86,6 +91,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if config.smoke {
                 // Smoke must never hang on a bad invocation.
                 print("SMOKE FAIL:\n  --smoke requires --project, --port, and --hive")
+                TerminationLog.record(
+                    .exiting, reason: .smokeInvalidInvocation,
+                    detail: "code=1 --smoke requires --project, --port, and --hive")
                 exit(1)
             }
             // Dock click / bare CLI launch: project-neutral home, never cwd data.
@@ -255,6 +263,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     /// A permanently lost feed makes this instance unable to own its agent UI
     /// honestly. End its nested UI sessions and windows before terminating.
     func terminateAfterFeedFailure(terminate: () -> Void = { NSApp.terminate(nil) }) {
+        // Before closing surfaces: closing the last window is what triggers
+        // the last-window-closed path, and this is the reason that path is
+        // reached at all.
+        noteTerminationReason(
+            .feedFailure,
+            detail: "workspace-feed exhausted \(Self.feedRestartLimit) restarts")
         NSLog("workspace-feed could not be restarted; terminating the workspace")
         closeOwnedSurfaces()
         retireFeed()
@@ -359,21 +373,64 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
         // One launch invocation owns one project window. Once it closes, no UI
         // surface remains to own this Hive instance.
-        true
+        noteTerminationReason(.lastWindowClosed, detail: "last window closed")
+        return true
+    }
+
+    /// First writer wins, so a self-quit keeps its own reason even though it
+    /// closes windows — and reaches the last-window-closed path — on the way
+    /// out.
+    private func noteTerminationReason(
+        _ reason: TerminationLog.Reason, detail: String
+    ) {
+        guard terminationReason == nil else { return }
+        terminationReason = reason
+        TerminationLog.record(.requested, reason: reason, detail: detail)
+    }
+
+    /// A quit no in-app path claimed came from outside this code: an Apple
+    /// Event (Dock Quit, `osascript`, logout) or the user's own Cmd-Q.
+    private func unclaimedTerminationReason() -> TerminationLog.Reason {
+        NSAppleEventManager.shared().currentAppleEvent?.eventID == kAEQuitApplication
+            ? .appleEventQuit
+            : .userQuit
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        guard config.isComplete, !config.smoke else { return .terminateNow }
-        guard !terminationPending else { return .terminateLater }
+        let reason = terminationReason ?? unclaimedTerminationReason()
+        terminationReason = reason
+        guard config.isComplete, !config.smoke else {
+            TerminationLog.record(
+                .decision, reason: reason,
+                detail: "reply=terminateNow no-session-to-stop")
+            return .terminateNow
+        }
+        guard !terminationPending else {
+            TerminationLog.record(
+                .decision, reason: reason,
+                detail: "reply=terminateLater already-pending")
+            return .terminateLater
+        }
         terminationPending = true
+        TerminationLog.record(
+            .decision, reason: reason,
+            detail: "reply=terminateLater awaiting-verified-hive-stop")
         stopForTermination { [weak self] result in
             DispatchQueue.main.async {
                 guard let self else { return }
                 switch result {
                 case .success:
+                    TerminationLog.record(
+                        .resolved, reason: reason, detail: "outcome=allowed hive-stop-verified")
                     self.replyToApplicationTermination(true)
                 case .failure(let error):
+                    TerminationLog.record(
+                        .resolved, reason: reason,
+                        detail: "outcome=cancelled still-running: \(error.localizedDescription)")
                     self.terminationPending = false
+                    // The app is still alive; the next quit re-derives its own
+                    // reason rather than inheriting this cancelled one.
+                    self.terminationReason = nil
                     self.replyToApplicationTermination(false)
                     self.presentTerminationFailure(error.localizedDescription)
                 }
@@ -391,6 +448,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     }
 
     func applicationWillTerminate(_ notification: Notification) {
+        TerminationLog.record(
+            .willTerminate, reason: terminationReason, detail: "teardown starting")
         composerLeases?.clear()
         closeOwnedSurfaces()
         retireFeed()

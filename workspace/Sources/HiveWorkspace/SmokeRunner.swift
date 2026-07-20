@@ -276,13 +276,22 @@ final class SmokeRunner {
         finishSessiondLiveResizeInputProof()
     }
 
+    /// A finished smoke run is a process death too: an agent's harness
+    /// instance must be distinguishable in the unified log from the user's
+    /// Workspace quitting.
+    private func exitSmoke(_ code: Int32, proof: String) -> Never {
+        TerminationLog.record(
+            .exiting, reason: .smokeFinished, detail: "code=\(code) proof=\(proof)")
+        exit(code)
+    }
+
     private func finishSessiondLiveResizeInputProof() {
         if failures.isEmpty {
             print("LIVE RESIZE INPUT PROOF OK")
-            exit(0)
+            exitSmoke(0, proof: "sessiond-live-resize-input")
         } else {
             print("LIVE RESIZE INPUT PROOF FAIL:\n  " + failures.joined(separator: "\n  "))
-            exit(1)
+            exitSmoke(1, proof: "sessiond-live-resize-input")
         }
     }
 
@@ -497,7 +506,7 @@ final class SmokeRunner {
             guard Date() < deadline else {
                 check(false, "closed A4 pane disappeared after verified daemon kill")
                 finishA4Proof("\(ready)\nA4 CLOSE PROOF FAIL")
-                exit(1)
+                exitSmoke(1, proof: "a4-close")
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
                 self?.waitForA4Close(
@@ -506,7 +515,7 @@ final class SmokeRunner {
             return
         }
         finishA4Proof("\(ready)\nA4 CLOSE PROOF OK: exact pane removed after daemon kill")
-        exit(failures.isEmpty ? 0 : 1)
+        exitSmoke(failures.isEmpty ? 0 : 1, proof: "a4-close")
     }
 
     private func finishA4Proof(_ body: String) {
@@ -796,10 +805,10 @@ final class SmokeRunner {
 
         if failures.isEmpty {
             print("SMOKE OK — \(controller.state.panes.count) panes over real tmux")
-            exit(0)
+            exitSmoke(0, proof: "tmux-smoke")
         } else {
             print("SMOKE FAIL:\n  " + failures.joined(separator: "\n  "))
-            exit(1)
+            exitSmoke(1, proof: "tmux-smoke")
         }
     }
 }
