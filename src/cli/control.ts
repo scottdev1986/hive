@@ -255,10 +255,23 @@ export async function attachGrantCli(
   console.log(JSON.stringify(body.grant));
 }
 
+/** The provenance string a kill carries to the daemon's audit log (#64):
+ * which CLI subcommand asked, with what argv, launched by which parent
+ * process. Captured at the origin because the audit row is the only record
+ * that survives the teardown cascade — the 2026-07-20 pane-close kills left
+ * empty reasons on all three rows and took a forensic reconstruction to
+ * attribute. */
+export function killOrigin(subcommand: "kill" | "stop"): string {
+  return `hive ${subcommand} ppid=${process.ppid} argv=${
+    JSON.stringify(process.argv.slice(2))
+  }`;
+}
+
 export async function killAgentCli(
   name: string,
   port: number = requireDaemonPort(),
   expectedLocator?: SessionLocator,
+  origin?: string,
 ): Promise<void> {
   const locator = expectedLocator ?? (await fetchAgentStatus(port)).find(
     (agent) => agent.name === name,
@@ -271,7 +284,10 @@ export async function killAgentCli(
     {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ sessionLocator: locator }),
+      body: JSON.stringify({
+        sessionLocator: locator,
+        ...(origin === undefined ? {} : { origin }),
+      }),
     },
   );
   const body = await response.json().catch(() => null) as
@@ -555,6 +571,7 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
         agent.name,
         requireDaemonPort(),
         agent.sessionLocator,
+        killOrigin("stop"),
       ));
     const sessiondResults = await Promise.allSettled(
       sessiondAgents.map((agent) => stopSessiond(agent)),

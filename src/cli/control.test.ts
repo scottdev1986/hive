@@ -1,6 +1,10 @@
-import { describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import type { KillSessionOptions } from "../adapters/tmux";
-import { stopAgentSessions, stopHive } from "./control";
+import { killAgentCli, killOrigin, stopAgentSessions, stopHive } from "./control";
+import { writeCredential } from "../daemon/credentials";
 import { agentTmuxSession, orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import type { AgentRecord } from "../schemas";
 
@@ -118,6 +122,87 @@ describe("hive stop agent sessions", () => {
       /process tree could not be captured.*ps unavailable/s,
     );
     expect(tmux.killed).toEqual([]);
+  });
+});
+
+describe("kill origin instrumentation (#64)", () => {
+  let killHome = "";
+  let previousHome: string | undefined;
+  const realFetch = globalThis.fetch;
+
+  beforeEach(() => {
+    killHome = mkdtempSync(join(tmpdir(), "hive-kill-origin-"));
+    previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = killHome;
+    writeCredential("operator", "test-operator-token");
+  });
+
+  afterEach(() => {
+    globalThis.fetch = realFetch;
+    if (previousHome === undefined) {
+      delete process.env.HIVE_HOME;
+    } else {
+      process.env.HIVE_HOME = previousHome;
+    }
+    rmSync(killHome, { recursive: true, force: true });
+  });
+
+  test("killAgentCli sends its origin with the kill request", async () => {
+    const requests: Array<{ url: string; body: unknown }> = [];
+    globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+      requests.push({
+        url: String(input),
+        body: JSON.parse(String(init?.body)),
+      });
+      return new Response(
+        JSON.stringify({ reaped: { killed: [], survivors: [] } }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+
+    const maya = sessiondAgent("maya");
+    await killAgentCli(
+      "maya",
+      4483,
+      maya.sessionLocator,
+      killOrigin("kill"),
+    );
+
+    expect(requests).toHaveLength(1);
+    expect(requests[0]!.url).toContain("/agents/maya/kill");
+    const body = requests[0]!.body as { sessionLocator: unknown; origin?: string };
+    expect(body.sessionLocator).toEqual(maya.sessionLocator);
+    expect(body.origin).toStartWith("hive kill ppid=");
+    expect(body.origin).toContain(`ppid=${process.ppid}`);
+    expect(body.origin).toContain("argv=");
+  });
+
+  test("hive stop's fan-out kills carry a stop origin, not a kill origin", async () => {
+    const bodies: Array<{ origin?: string }> = [];
+    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
+      bodies.push(JSON.parse(String(init?.body)));
+      return new Response(
+        JSON.stringify({ reaped: { killed: [], survivors: [] } }),
+        { status: 200 },
+      );
+    }) as typeof fetch;
+    const states: Array<"live" | "dead"> = ["live", "dead"];
+
+    await Bun.write(join(killHome, "daemon.port"), "4483\n");
+    await stopHive({
+      tmux: new FakeStopTmux([]),
+      readAgents: () => [sessiondAgent("maya")],
+      readPid: () => 4242,
+      kill: () => {},
+      liveness: async () => states.shift() ?? "dead",
+      cleanup: () => {},
+      sleep: async () => {},
+      timeoutMs: 50,
+      log: () => {},
+    });
+
+    expect(bodies).toHaveLength(1);
+    expect(bodies[0]!.origin).toStartWith("hive stop ppid=");
   });
 });
 

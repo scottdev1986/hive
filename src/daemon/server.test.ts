@@ -466,6 +466,125 @@ test("agent kill rejects a stale locator without killing the current generation"
   }
 });
 
+test("kill records the caller-supplied origin on the allow audit row (#64)", async () => {
+  const db = new HiveDatabase(join(home, "kill-audit-origin.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    resourceRunners: { panePids: async () => [], orphans: null },
+  });
+  const current = agent({
+    worktreePath: null,
+    branch: null,
+    sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+  });
+  db.insertAgent(current);
+  try {
+    const origin = 'hive kill ppid=4242 argv=["kill","maya","--port","1"]';
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionLocator: current.sessionLocator, origin }),
+      },
+    );
+    expect(response.status).toBe(200);
+    const allow = listAuditEntries(db).find((row) =>
+      row.route === "/agents/kill" && row.decision === "allow"
+    );
+    expect(allow?.reason).toBe(origin);
+  } finally {
+    tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
+test("kill without an origin still kills and leaves the audit reason empty", async () => {
+  const db = new HiveDatabase(join(home, "kill-audit-no-origin.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    resourceRunners: { panePids: async () => [], orphans: null },
+  });
+  const current = agent({
+    worktreePath: null,
+    branch: null,
+    sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+  });
+  db.insertAgent(current);
+  try {
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionLocator: current.sessionLocator }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(db.getAgentByName("maya")?.status).toBe("dead");
+    const allow = listAuditEntries(db).find((row) =>
+      row.route === "/agents/kill" && row.decision === "allow"
+    );
+    expect(allow).toBeDefined();
+    expect(allow?.reason).toBeNull();
+  } finally {
+    tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
+test("an oversized kill origin is truncated, never a refused kill", async () => {
+  const db = new HiveDatabase(join(home, "kill-audit-long-origin.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    resourceRunners: { panePids: async () => [], orphans: null },
+  });
+  const current = agent({
+    worktreePath: null,
+    branch: null,
+    sessionLocator: mintAgentTmuxSessionLocator("agent-maya", 1),
+  });
+  db.insertAgent(current);
+  try {
+    const response = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      {
+        method: "POST",
+        body: JSON.stringify({
+          sessionLocator: current.sessionLocator,
+          origin: "hive kill ".padEnd(9_000, "x"),
+        }),
+      },
+    );
+    expect(response.status).toBe(200);
+    expect(db.getAgentByName("maya")?.status).toBe("dead");
+    const allow = listAuditEntries(db).find((row) =>
+      row.route === "/agents/kill" && row.decision === "allow"
+    );
+    expect(allow?.reason?.length).toBe(1_024);
+    expect(allow?.reason?.startsWith("hive kill ")).toBe(true);
+  } finally {
+    tmux.sessions.clear();
+    await daemon.stop();
+    db.close();
+  }
+});
+
 test("attach grant is fenced by the exact locator and a completed binding", async () => {
   const db = new HiveDatabase(join(home, "locator-fenced-attach.db"));
   const locator = {

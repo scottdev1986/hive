@@ -6,6 +6,7 @@ import {
   autonomyCli,
   attachGrantCli,
   killAgentCli,
+  killOrigin,
   deleteMemoryCli,
   printQuotaStatus,
   printStatus,
@@ -518,6 +519,7 @@ export function createProgram(): Command {
         agent,
         options.port === undefined ? undefined : parsePort(options.port),
         locator,
+        killOrigin("kill"),
       );
     });
 

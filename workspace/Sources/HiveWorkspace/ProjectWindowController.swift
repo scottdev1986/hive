@@ -22,7 +22,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
-    private var killFailureSheets: [String: NSWindow] = [:]
     private var feedFailureWindow: NSWindow?
     private var isClosing = false
 
@@ -118,10 +117,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     /// One feed snapshot in, pane set reconciled.
     func applyFeed(_ agents: [AgentSnapshot], orchestrator: OrchestratorSnapshot? = nil) {
-        let liveAgents = Set(agents.lazy.filter { $0.closedAt == nil }.map(\.name))
-        for agent in Array(killFailureSheets.keys) where !liveAgents.contains(agent) {
-            dismissKillFailure(for: agent)
-        }
         react(to: state.apply(feed: agents, orchestrator: orchestrator))
     }
 
@@ -133,25 +128,18 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     /// The one shared command entry: menu items, keyboard shortcuts, clicks,
     /// double-clicks, and accessibility actions all end here.
     func dispatch(_ command: WorkspaceCommand) {
-        // Closing an agent pane means closing the AGENT. It used to mean only
-        // "drop the pane and detach the tmux client", which left the agent
-        // running — so the next feed snapshot, which lists every live agent,
-        // found no pane for it and built a new one. The X appeared not to work
-        // because the pane came straight back, and the agent never died either
-        // way. The kill goes to the daemon, which owns the teardown: it dies at
-        // once, and if it holds unlanded work its branch is preserved and the
-        // orchestrator is told.
+        // Closing an agent pane closes the PANE, never the agent (#64).
+        // This branch used to shell out to `hive kill`, which is how three
+        // agents died on 2026-07-20 from close gestures the user never meant
+        // as kills. The product truth is #60 in reverse: terminal lifecycle is
+        // decoupled from agent lifecycle, so the view goes away and the agent
+        // runs on headless. The userClosed suppression keeps the feed from
+        // rebuilding the pane while that agent is still listed live — ending
+        // an agent is the daemon's job, reached through hive_kill or
+        // `hive kill`, never through a pane or window close.
         if case .closePane(let paneID) = command,
            let pane = state.panes[paneID], pane.kind == .agent {
-            react(to: state.markUserClosed(paneID))
-            guard let locator = pane.sessionLocator else {
-                reportKillFailure(
-                    agent: pane.title,
-                    reason: "The pane has no exact session locator; nothing was killed.")
-                return
-            }
-            killAgent(pane.title, locator)
-            return
+            _ = state.markUserClosed(paneID)
         }
         react(to: state.apply(command))
     }
@@ -163,78 +151,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         react(to: state.apply(.closePane(paneID)))
     }
 
-    /// How the workspace ends an agent: the daemon's own kill path, reached the
-    /// same way the Agents menu reaches the daemon (`hive <verb> --port`).
-    /// Overridable so the smoke harness can assert that a close asks for a kill
-    /// without ending a real agent.
-    lazy var killAgent: (String, AgentSessionLocator) -> Void = {
-        [weak self, hivePath, daemonPort, instanceHome] name, locator in
-        let process = Process()
-        process.executableURL = URL(fileURLWithPath: hivePath)
-        guard let encoded = try? JSONEncoder().encode(locator),
-              let locatorJSON = String(data: encoded, encoding: .utf8) else {
-            self?.reportKillFailure(agent: name, reason: "Could not encode session locator")
-            return
-        }
-        process.arguments = [
-            "kill", name, "--port", String(daemonPort),
-            "--session-locator", locatorJSON,
-        ]
-        var environment = ProcessInfo.processInfo.environment
-        environment["HIVE_HOME"] = instanceHome
-        process.environment = environment
-        process.standardOutput = FileHandle.nullDevice
-        let stderr = Pipe()
-        process.standardError = stderr
-        // Nothing waits on this: the user asked for immediate, and the daemon's
-        // exit code is what asserts the agent is dead — a zero means the process
-        // tree was reaped, not that a signal was sent. A failure is never
-        // swallowed: the agent is then still alive, so the next feed snapshot
-        // puts its pane back, and the reason goes on screen rather than only
-        // into the log.
-        process.terminationHandler = { finished in
-            guard finished.terminationStatus != 0 else { return }
-            let reason = String(
-                data: stderr.fileHandleForReading.readDataToEndOfFile(), encoding: .utf8) ?? ""
-            NSLog("hive kill %@ failed (exit %d): %@", name, finished.terminationStatus, reason)
-            DispatchQueue.main.async { self?.reportKillFailure(agent: name, reason: reason) }
-        }
-        do {
-            try process.run()
-        } catch {
-            NSLog("could not run hive kill %@: %@", name, error.localizedDescription)
-            self?.reportKillFailure(agent: name, reason: error.localizedDescription)
-        }
-    }
-
-    /// A kill that failed means an agent the user believes is gone is still
-    /// running. Say so, and stop hiding it: the next snapshot puts its pane back.
-    ///
-    /// A sheet, never a modal alert: a modal alert runs its own loop, and a quit
-    /// that lands while one is up would be held behind it — the same "the window
-    /// went away but something is still on screen" failure this app already had.
-    /// The sheet rides the window, so the teardown takes it down with everything
-    /// else.
-    func reportKillFailure(agent: String, reason: String) {
-        state.clearUserClosed(ProjectState.paneID(forAgent: agent))
-        dismissKillFailure(for: agent)
-        let alert = NSAlert()
-        alert.alertStyle = .warning
-        alert.messageText = "Could not close \(agent)"
-        let detail = reason.trimmingCharacters(in: .whitespacesAndNewlines)
-        alert.informativeText = detail.isEmpty
-            ? "The daemon did not close this agent. It is still running."
-            : detail
-        alert.addButton(withTitle: "OK")
-        guard let window else { return }
-        let sheet = alert.window
-        killFailureSheets[agent] = sheet
-        alert.beginSheetModal(for: window) { [weak self, weak sheet] _ in
-            guard let self, self.killFailureSheets[agent] === sheet else { return }
-            self.killFailureSheets.removeValue(forKey: agent)
-        }
-    }
-
     func reportFeedFailure(reason: String) {
         feedFailureWindow?.close()
         let alert = NSAlert()
@@ -244,11 +160,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         alert.addButton(withTitle: "OK")
         feedFailureWindow = alert.window
         alert.window.makeKeyAndOrderFront(nil)
-    }
-
-    private func dismissKillFailure(for agent: String) {
-        guard let sheet = killFailureSheets.removeValue(forKey: agent) else { return }
-        sheet.sheetParent?.endSheet(sheet)
     }
 
     private func react(to changes: [StateChange]) {
