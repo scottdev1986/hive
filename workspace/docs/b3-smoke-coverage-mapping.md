@@ -29,24 +29,89 @@ set against 1..81. Re-derive it with:
 ```
 /usr/bin/python3 - <<'EOF'
 import re
-txt=open('workspace/docs/b3-smoke-coverage-mapping.md').read()
+lines=open('workspace/docs/b3-smoke-coverage-mapping.md').read().split('\n')
 ids=set()
-for m in re.finditer(r'SMOKE-(\d+)((?:\s*(?:\.\.|,|and|&)\s*\d+)*)', txt):
-    start=int(m.group(1)); ids.add(start); tail=m.group(2) or ''
-    rng=re.match(r'\s*\.\.\s*(\d+)', tail)
-    if rng:
-        for i in range(start,int(rng.group(1))+1): ids.add(i)
-    for n in re.findall(r'(\d+)', tail): ids.add(int(n))
+for ln in lines:
+    st=ln.strip()
+    # Only a classification TABLE ROW or a GAP bullet counts. A bare prose
+    # mention must NOT satisfy this, or an id named only in the "these were
+    # missing" note below would count as classified and the check could never
+    # fail.
+    if not (st.startswith('|') or st.startswith('- **GAP-')): continue
+    for m in re.finditer(r'SMOKE-(\d+)((?:\s*(?:\.\.|,|and|&)\s*\d+)*)', ln):
+        start=int(m.group(1)); ids.add(start); tail=m.group(2) or ''
+        rng=re.match(r'\s*\.\.\s*(\d+)', tail)
+        if rng:
+            for i in range(start,int(rng.group(1))+1): ids.add(i)
+        for n in re.findall(r'(\d+)', tail): ids.add(int(n))
 print(len(ids), sorted(set(range(1,82))-ids))
 EOF
 ```
 
 Expected: `81 []`.
 
+Note the row-scoping in that script. An earlier version of this derivation
+counted any `SMOKE-NN` anywhere in the file, which meant the "SMOKE-06, 70 and
+72 were missing" sentence below would itself have satisfied the check — a
+derivation that cannot fail is no better than the asserted count it replaced.
+It now counts only ids inside a classification row or a GAP bullet.
+
 An earlier revision of this document claimed all 81 were classified while
 actually classifying 78 — SMOKE-06, 70 and 72 were missing. That claim was
 asserted rather than derived, and cross-vendor review caught it. Hence the
 runnable derivation above: a count nobody can re-run is a claim, not a fact.
+
+## Numbering basis — how to audit this table
+
+**The `SMOKE-NN` ids are ORIGINAL to this document.** They do not appear
+anywhere in the legacy source. Nothing in `SmokeRunner.swift` or `smoke.sh`
+carries them, and they are NOT `check(` call order — so they cannot be
+reconstructed by reading the current files, which is what makes stating the
+basis mandatory rather than tidy.
+
+**What enumerates 1..81.** The ids were assigned by a single inventory pass
+over the two legacy files, in harness execution order: `smoke.sh` preconditions
+first (1-6), then `SmokeRunner.run()`'s in-process checks in source order
+(7-21), pane-menu lifecycle (22-37), input round trip (38-39), focus and
+active-pane indicator (40-51), pane close lifecycle (52-59), `smoke.sh`
+post-mortem after the app exits (60-65), and finally the separate opt-in
+sessiond mode `runSessiondLiveResizeInputProof` (66-81), which `smoke.sh`
+never reaches.
+
+**Pinned to exact blobs, not to a commit.** Line numbers below are valid at
+these blob SHAs, which are immutable and content-addressed:
+
+```
+59882aa795eeabf6a6636d56087c3a046428b98c  workspace/Sources/HiveWorkspace/SmokeRunner.swift
+faadf6a9dc3d13b45e445d9f29d9c6c7a52cee0f  workspace/scripts/smoke.sh
+```
+
+Materialize exactly what was inventoried:
+
+```
+git cat-file -p 59882aa795eeabf6a6636d56087c3a046428b98c   # SmokeRunner.swift
+git cat-file -p faadf6a9dc3d13b45e445d9f29d9c6c7a52cee0f   # smoke.sh
+```
+
+**LINE NUMBERS DRIFT; LABEL STRINGS DO NOT.** `smoke.sh` is unchanged
+(`faadf6a9` on both the inventory base and current main), so its citations hold
+anywhere. `SmokeRunner.swift` has since moved to `8df0b4fd` on main, and the
+line numbers in this table DO NOT hold against it — for example the two lines
+cited for SMOKE-70 and SMOKE-72 land on a blank line and a closing brace
+respectively at current main.
+
+So audit by the `check(` LABEL STRING, not by line number. The labels are
+stable across that shift (each appears exactly once in both blobs), and they
+are what a reviewer can grep for in whatever version they happen to have:
+
+```
+git show main:workspace/Sources/HiveWorkspace/SmokeRunner.swift \
+  | grep -n "pre-resize command produced new PTY output"
+```
+
+This drift is not hypothetical: the inventory base predates hector's
+`d5750507`, which is why the blobs differ. Pinning the blob rather than a
+branch is what keeps the table checkable after the file moves again.
 
 ## Verdict key
 
@@ -107,7 +172,7 @@ with no PTY involved.
 | Feed contract | SMOKE-03, 04, 10 |
 | Reducer/view agreement | SMOKE-08, 54, 55 |
 | Daemon kill boundary | SMOKE-53 |
-| Private orchestrator boundary | SMOKE-06 |
+| Private orchestrator boundary | SMOKE-06 — REHOMED rather than DROPPED because the assertion is "the app invokes the private `hive workspace-orchestrator` subcommand and nothing else", which outlives the substrate; only the *fixture's* response to it (`tmux attach-session` at `smoke.sh:69`) is tmux, and a fixture's mechanism does not decide the bucket. |
 
 ## 4. Substrate artifacts — DROPPED
 
