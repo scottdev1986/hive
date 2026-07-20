@@ -310,19 +310,33 @@ test-e2e:
 #   3. dev tmux socket in args    — dev agents' `tmux attach-session`, which
 #                                   names no path at all, only the socket
 #
-# Axis 3 has a precondition: the socket name derives from .dev/home, so if home
-# is already gone a surviving server is caught by axis 2 alone.
+# A clean must also work when .dev/ is ALREADY GONE. That is not a hypothetical:
+# it is exactly what a half-finished clean leaves behind — the directory deleted
+# and the processes still running — so guarding on `[ -d .dev ]` made the target
+# useless in the one state that most needs it. The guard is now "the directory
+# exists OR the sweep finds processes bound to its path".
+#
+# Which forces the socket digest to stop depending on the directory. It used to
+# hash `cd .dev/home && pwd -P`; with home deleted that cd fails, the digest is
+# taken over an EMPTY string, and axis 3 goes dark exactly when the orphan it
+# should catch is a tmux server whose home no longer exists. Hashing the literal
+# path string has no such dependency, and it is not a guess: measured against a
+# real orphaned dev server whose .dev/home had already been deleted, the literal
+# digest reproduced its live socket name exactly, while the cd form could not be
+# computed at all.
+#
+# Every refusal below is deliberate. An empty path or an empty digest must STOP
+# the target, never let it proceed or quietly exit 0 — an empty `dev` would make
+# the axis-1 prefix `/*`, which matches every absolute path on the machine.
 clean:
 	@set -e; \
-	[ -d "$(DEV)" ] || exit 0; \
-	dev=$$(cd "$(DEV)" && pwd -P); \
+	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P); else dev="$(DEV)"; fi; \
+	[ -n "$$dev" ] || { echo "refusing: could not determine the dev directory path" >&2; exit 1; }; \
+	case "$$dev" in /*) ;; *) echo "refusing: dev path is not absolute ($$dev)" >&2; exit 1;; esac; \
 	self=$$$$; \
-	suffix=""; \
-	if [ -d "$(DEV)/home" ]; then \
-	  suffix=$$(printf '%s' "$$(cd "$(DEV)/home" && pwd -P)" | /usr/bin/shasum -a 256 | cut -c1-10); \
-	  [ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
-	  TMUX_TMPDIR="$(DEV)/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
-	fi; \
+	suffix=$$(printf '%s' "$$dev/home" | /usr/bin/shasum -a 256 | cut -c1-10); \
+	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
+	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	if [ -f "$(DEV)/home/daemon.pid" ]; then \
 	  pid=$$(cat "$(DEV)/home/daemon.pid"); \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
@@ -347,6 +361,11 @@ clean:
 	      case "$$rest" in *"hive-$$suffix"*) echo "$$p";; esac; done; \
 	  } | sort -u | while read -r p; do is_mine "$$p" || echo "$$p"; done; }; \
 	pids=$$(dev_pids); \
+	if [ ! -d "$(DEV)" ] && [ -z "$$pids" ]; then exit 0; \
+	fi; \
+	: "reaching here with no directory means the sweep found processes, and an\
+	   empty sweep is trustworthy only because every derivation it depends on\
+	   refused above rather than defaulting"; \
 	if [ -n "$$pids" ]; then \
 	  echo "stopping dev processes:" $$pids; \
 	  for p in $$pids; do kill "$$p" 2>/dev/null || true; done; \
