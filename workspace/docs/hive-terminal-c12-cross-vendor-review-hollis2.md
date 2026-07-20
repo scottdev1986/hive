@@ -416,12 +416,38 @@ yellow 11.67 vs light 4.81).
 
 **One point not in the author's disclosure, and it matters for C1.2b: the fix
 direction is compatible with the floors, not in tension with them.** Mirroring
-about L\*50 means light-mode `L* = 100 − dark-mode L*`. Yellow is dark 81.8, so
-light wants 18.2 and currently sits at 46.6 — going *darker* in light mode
-restores symmetry **and** raises the light ratio. Every tight light entry moves
-the right way: green 5.04, yellow 4.81 and br.black 3.15 all rise under
-mirroring. The light theme is simply the loose half of the pair; symmetry and
-headroom are the same fix, not competing ones.
+about L\*50 means light-mode `L* = 100 − dark-mode L*`. The light theme is the
+loose half of the pair, so mirroring tightens it.
+
+This was computed rather than asserted, because the author is carrying it into
+the C1.2b brief. For each slot: mirror the dark-mode L\*, convert back to
+luminance, and take the WCAG ratio against the **existing** light background.
+Hue drops out — the ratio depends only on relative luminance and L\* fixes it
+exactly — so these are exact ratios for the mirrored design at any hue:
+
+| | now | mirrored | floor |
+| --- | --- | --- | --- |
+| 2 green | 5.04 | **11.58** | 4.5 |
+| 3 yellow | 4.81 | **13.17** | 4.5 |
+| 8 br.black | 3.15 | **6.50** | 3.0 |
+| foreground | 15.83 | 17.11 | 7.0 |
+
+**Entries below floor under mirroring: 0. The background `f7f9fc` does not have
+to move,** and the foreground does not collide. Mean ratio change across the 16
+slots: **+4.92**.
+
+> **Qualification, and the one thing C1.2b must carry:** 15 of 16 slots improve,
+> not 16. **Slot 0 black degrades, 4.43 → 3.58** — still clear of its 3.0
+> de-emphasis floor, but it becomes the *new tightest entry* in the light theme,
+> displacing br.black. Slot 0 is the only accent whose dark-mode L\* sits below
+> the midpoint (45.1), so mirroring pushes it *up* to 54.9 — lighter, on a light
+> background — while every other slot mirrors downward. A brief promising that
+> everything improves would send someone hunting for a bug when slot 0 comes back
+> lower by design.
+
+This corrects a warning the author had already sent upstream — that mirroring
+would fight the 7:1 foreground and might force the background off `f7f9fc`.
+It does not. That correction is theirs and is in flight to queen.
 
 This does not block landing: no defect, no false claim, floors all met, and the
 gap was disclosed rather than discovered.
