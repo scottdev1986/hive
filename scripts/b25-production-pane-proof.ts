@@ -8,7 +8,7 @@
  *   1. the Workspace reports a first-correct HiveTerminalView frame on the
  *      exact sessiond locator, with no hidden SwiftTerm child PTY; and
  *   2. the real vendor agent executes its one-step task by sending a nonce to
- *      a fresh durable proof-sink inbox in the isolated daemon.
+ *      queen, recorded in the isolated daemon's durable message store.
  *
  * Env:
  *   HIVE_B25_HOME       short fresh home (default /tmp/hb25-pane-<random>)
@@ -26,10 +26,12 @@ import {
   mkdirSync,
   readFileSync,
   realpathSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
+import { Database } from "bun:sqlite";
 import { operatorFetch } from "../src/cli/credential";
 import { hiveInstanceSuffix } from "../src/daemon/tmux-sessions";
 import { captureProcessTree, reapCapturedTree } from "../src/daemon/teardown";
@@ -76,7 +78,6 @@ const evidence = process.env.HIVE_B25_EVIDENCE ??
 const outPath = join(evidence, "matrix/production-wiring-pane.txt");
 const manifestPath = join(evidence, "manifests/production-wiring-pane.json");
 const paneResultPath = join(home, "production-pane-result.txt");
-const paneScreenshotPath = join(home, "production-pane-window.png");
 const workspaceStdoutPath = join(home, "workspace.stdout.log");
 const workspaceStderrPath = join(home, "workspace.stderr.log");
 const daemonStdoutPath = join(home, "daemon.stdout.log");
@@ -85,10 +86,10 @@ const caffeinateStdoutPath = join(home, "caffeinate.stdout.log");
 const caffeinateStderrPath = join(home, "caffeinate.stderr.log");
 const startedAt = new Date().toISOString();
 const marker = `B25_PRODUCTION_PANE_EXECUTED_${crypto.randomUUID()}`;
-const sideEffectRecipient = `b25-proof-${suffix}`;
 const lines: string[] = [];
 let observed: AgentStatus | null = null;
 let sideEffectMessageId: string | null = null;
+let sideEffectMessageState: string | null = null;
 let paneReport: string | null = null;
 let daemon: Child | null = null;
 let workspace: Child | null = null;
@@ -105,7 +106,15 @@ let displayPreflight: {
 } | null = null;
 let capture: {
   journal: { path: string; bytes: number; sha256: string; sequencePrefixHex: string };
-  screenshot: { path: string; bytes: number; sha256: string; windowNumber: number };
+  screenshot: {
+    path: string;
+    bytes: number;
+    sha256: string;
+    windowNumber: number;
+    captureRect: string;
+    pixelWidth: number;
+    pixelHeight: number;
+  };
 } | null = null;
 
 function log(line: string): void {
@@ -191,6 +200,19 @@ function toolValue(result: unknown, key: string): unknown {
   return JSON.parse(text) as unknown;
 }
 
+function findSideEffectMessage(body: string): { id: string; state: string } | null {
+  const database = new Database(join(home, "hive.db"), { readonly: true });
+  try {
+    return database.query(
+      `SELECT id, state FROM messages
+       WHERE "from" = ?1 AND "to" IN ('queen', 'orchestrator') AND body = ?2
+       LIMIT 1`,
+    ).get(agent, body) as { id: string; state: string } | null;
+  } finally {
+    database.close();
+  }
+}
+
 async function withTimeout<T>(promise: Promise<T>, milliseconds: number, label: string): Promise<T> {
   let timer: ReturnType<typeof setTimeout> | undefined;
   try {
@@ -254,7 +276,7 @@ function flush(): void {
     agent,
     observed,
     sideEffectMessageId,
-    sideEffectRecipient,
+    sideEffectMessageState,
     paneReport,
     capture,
     displayPreflight,
@@ -265,6 +287,19 @@ function flush(): void {
 
 function sha256(bytes: Uint8Array): string {
   return createHash("sha256").update(bytes).digest("hex");
+}
+
+function imageDimensions(path: string): { width: number; height: number } {
+  const output = command(
+    ["/usr/bin/sips", "-g", "pixelWidth", "-g", "pixelHeight", path],
+    project,
+  );
+  const width = Number(output.match(/pixelWidth: (\d+)/)?.[1]);
+  const height = Number(output.match(/pixelHeight: (\d+)/)?.[1]);
+  if (!Number.isInteger(width) || width < 1 || !Number.isInteger(height) || height < 1) {
+    throw new Error(`could not read PNG dimensions: ${output}`);
+  }
+  return { width, height };
 }
 
 function locatorFromPaneReport(report: string): SessionLocator {
@@ -316,19 +351,44 @@ async function captureVendorArtifacts(
   const windowMatch = report.match(/ window=(\d+)/);
   if (windowMatch === null) throw new Error("Workspace pane report has no window number");
   const windowNumber = Number(windowMatch[1]);
+  const captureMatch = report.match(
+    / captureRect=(-?\d+),(-?\d+),(\d+),(\d+) screenSize=(\d+),(\d+)/,
+  );
+  if (captureMatch === null) throw new Error("Workspace pane report has no capture rectangle");
+  const [x, y, width, height, screenWidth, screenHeight] = captureMatch.slice(1).map(Number);
+  if (x! < 0 || y! < 0 || width! < 1 || height! < 1 ||
+      x! + width! > screenWidth! || y! + height! > screenHeight!) {
+    throw new Error(`Workspace capture rectangle is outside the main screen: ${captureMatch[0]}`);
+  }
   const screenshotPath = join(
     screenshotDirectory,
     `${requestedTool}-${locator.sessionId}-workspace.png`,
   );
-  const screenshotDeadline = Date.now() + 5_000;
-  while (!existsSync(paneScreenshotPath) && Date.now() < screenshotDeadline) {
-    await Bun.sleep(250);
+  const fullScreenPath = join(home, `production-pane-screen-${phase}.png`);
+  command(["/usr/sbin/screencapture", "-x", "-m", fullScreenPath], project);
+  const fullScreen = imageDimensions(fullScreenPath);
+  const xScale = fullScreen.width / screenWidth!;
+  const yScale = fullScreen.height / screenHeight!;
+  const pixelX = Math.round(x! * xScale);
+  const pixelY = Math.round(y! * yScale);
+  const pixelWidth = Math.round(width! * xScale);
+  const pixelHeight = Math.round(height! * yScale);
+  command([
+    "/usr/bin/sips",
+    "--cropToHeightWidth", String(pixelHeight), String(pixelWidth),
+    "--cropOffset", String(pixelY), String(pixelX),
+    fullScreenPath,
+    "--out", screenshotPath,
+  ], project);
+  unlinkSync(fullScreenPath);
+  const cropped = imageDimensions(screenshotPath);
+  if (cropped.width !== pixelWidth || cropped.height !== pixelHeight) {
+    throw new Error(
+      `Workspace crop has ${cropped.width}x${cropped.height}, ` +
+        `expected ${pixelWidth}x${pixelHeight}`,
+    );
   }
-  if (!existsSync(paneScreenshotPath)) {
-    throw new Error("Workspace did not persist its own window PNG after settle");
-  }
-  const screenshot = readFileSync(paneScreenshotPath);
-  writeFileSync(screenshotPath, screenshot);
+  const screenshot = readFileSync(screenshotPath);
   const preservedScreenshot = readFileSync(screenshotPath);
   if (!preservedScreenshot.equals(screenshot)) {
     throw new Error("preserved Workspace screenshot is not byte-exact");
@@ -364,6 +424,9 @@ async function captureVendorArtifacts(
       bytes: screenshot.byteLength,
       sha256: sha256(screenshot),
       windowNumber,
+      captureRect: `${x},${y},${width},${height}`,
+      pixelWidth,
+      pixelHeight,
     },
   };
   log(
@@ -525,7 +588,6 @@ async function main(): Promise<void> {
       ...env,
       HIVE_B25_PRODUCTION_PANE_AGENT: agent,
       HIVE_B25_PRODUCTION_PANE_RESULT: paneResultPath,
-      HIVE_B25_PRODUCTION_PANE_SCREENSHOT: paneScreenshotPath,
     },
     stdin: "ignore",
     stdout: Bun.file(workspaceStdoutPath),
@@ -540,8 +602,7 @@ async function main(): Promise<void> {
 
   const task = [
     "Production-pane qualification; do not edit any file.",
-    `Immediately call hive_send with from=${JSON.stringify(agent)}, ` +
-      `to=${JSON.stringify(sideEffectRecipient)},`,
+    `Immediately call hive_send with from=${JSON.stringify(agent)}, to=\"queen\",`,
     `priority=\"normal\", and body=${JSON.stringify(marker)}.`,
     "After the tool reports the message state, wait for further instructions.",
   ].join(" ");
@@ -572,18 +633,12 @@ async function main(): Promise<void> {
   paneReport = report.trim();
   for (const line of paneReport.split("\n")) log(`workspace: ${line}`);
 
-  let messages: Array<{ id?: string; body?: string }> = [];
   const markerDeadline = Date.now() + 120_000;
   while (Date.now() < markerDeadline) {
-    const result = await client.callTool({
-      name: "hive_inbox",
-      arguments: { agent: sideEffectRecipient },
-    });
-    const batch = toolValue(result, "messages") as Array<{ id?: string; body?: string }>;
-    messages = messages.concat(batch);
-    const match = messages.find((message) => message.body === marker);
-    if (match !== undefined) {
-      sideEffectMessageId = match.id ?? null;
+    const match = findSideEffectMessage(marker);
+    if (match !== null) {
+      sideEffectMessageId = match.id;
+      sideEffectMessageState = match.state;
       break;
     }
     await Bun.sleep(250);
@@ -591,8 +646,11 @@ async function main(): Promise<void> {
   if (sideEffectMessageId === null) {
     throw new Error("real vendor session did not deliver the execution side effect");
   }
-  log(`GREEN execution side effect received messageId=${sideEffectMessageId}`);
-  if (messages.some((message) => message.body === `${marker}-mutated`)) {
+  log(
+    `GREEN execution side effect persisted messageId=${sideEffectMessageId} ` +
+      `state=${sideEffectMessageState}`,
+  );
+  if (findSideEffectMessage(`${marker}-mutated`) !== null) {
     throw new Error("mutated execution marker unexpectedly matched");
   }
   log("MUTATION VERIFIED: exact marker check rejects a one-suffix mutation");
