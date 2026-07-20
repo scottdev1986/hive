@@ -373,9 +373,13 @@ log("proof descriptor written for opt-in live tests: " + join(home, "b22-proof.j
 log(realShell
   ? "terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down"
   : "proof stack is up — Ctrl-C to tear down");
-if (workspace !== null && process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT !== undefined) {
+if (workspace !== null && process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT === "1") {
   const proofExit = await workspace.exited;
-  log(`Workspace live-resize proof exited ${proofExit}`);
-  await shutdown("Workspace live-resize proof complete", proofExit);
+  // A signal-driven shutdown kills the app too; that passive exit must not
+  // re-enter shutdown and masquerade as the user's second Ctrl-C.
+  if (!shuttingDown) {
+    log(`Workspace live-resize proof exited ${proofExit}`);
+    await shutdown("Workspace live-resize proof complete", proofExit);
+  }
 }
 await new Promise(() => {});
