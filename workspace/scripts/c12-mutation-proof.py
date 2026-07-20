@@ -167,11 +167,16 @@ CASES = [
         VIEW, "            self?.applySelectedAppearance()\n", "",
     ),
     (
-        "the view stops resolving against its own appearance",
+        "the appearance state stops reading light/dark from the appearance",
         f"{PREFS_SUITE}/testSystemSelectionFollowsTheViewAppearance",
-        VIEW,
-        "            TerminalColorScheme(appearance: effectiveAppearance) == .dark ? .dark : .light",
-        "            .dark",
+        PREFS,
+        "appearance: TerminalColorScheme(appearance: nsAppearance) == .dark ? .dark : .light",
+        "appearance: .dark",
+    ),
+    (
+        "the view stops passing its own appearance to the resolver",
+        f"{PREFS_SUITE}/testSystemSelectionFollowsTheViewAppearance",
+        VIEW, "                    effectiveAppearance,", "                    NSAppearance(named: .darkAqua)!,",
     ),
     (
         "the view ignores the selected font when pushing",
