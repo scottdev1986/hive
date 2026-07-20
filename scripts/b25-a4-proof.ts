@@ -434,6 +434,14 @@ async function exactClose(): Promise<{ project: string; proof: B22Proof; stack: 
 
 async function concurrentQuit(unitPath: string): Promise<{ project: string; proof: B22Proof; stack: Stack }> {
   const lines: string[] = [];
+  const faithfulPending = {
+    requiresUnlockedProductionStack: true,
+    diagnostic: "matrix/diagnostic-a4-quit-harness-entanglement.txt",
+    reason: "b22 driver hosts the daemon in-process, so its app-quit path cannot measure the daemon-self-owned production shutdown handshake",
+  };
+  const status = faithfulPending.requiresUnlockedProductionStack
+    ? "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK"
+    : "GREEN";
   const project = makePlainProject("quit");
   const stack = startStack("quit", basePort + 2, project);
   try {
@@ -474,10 +482,13 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
     stamp(lines, `COMPOSED Workspace quit request/wait + failure refusal: ${unitPath}`);
     stamp(lines, "COMPOSED real production Workspace/vendor lifecycle: diagnostic-p14-locked-screen-crop.txt");
     stamp(lines, "MUTATION VERIFIED termination-failure refusal cancels quit and surfaces the survivor");
-    stamp(lines, "RESULT: A4 concurrent quit + provider-tree teardown GREEN");
+    stamp(lines, "INTERIM RESULT: live stop/tree teardown GREEN; Workspace request/wait behavior GREEN by composition");
+    stamp(lines, `NEGATIVE EVIDENCE: the in-process b22 driver cannot faithfully drive app quit; see ${faithfulPending.diagnostic.replace("matrix/", "")}`);
+    stamp(lines, "RESULT: COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK on daemon-self-owned production stack");
     writeMatrix("a4-quit.txt", lines);
     writeManifest("a4-quit.json", {
-      cell: "a4-quit", ok: true, head, startedAt,
+      cell: "a4-quit", ok: !faithfulPending.requiresUnlockedProductionStack, status,
+      head, startedAt,
       home: stack.home, project, port: proof.port, locator: proof.locator,
       capturedProcessTree: proof.processTree, final, stopOutput,
       composition: {
@@ -485,6 +496,7 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
         lifecycleRequestAndRefusal: unitPath,
         liveSentinelStop: "this manifest",
       },
+      faithfulPending,
       mutation: {
         xctest: unitPath,
         control: "testTerminationFailureCancelsQuitAndSurfacesReason",
