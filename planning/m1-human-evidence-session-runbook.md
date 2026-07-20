@@ -16,6 +16,10 @@ satisfied by an agent, and every one refuses a locked screen.
 | **Gate 7** dual-display + sleep/wake | ✅ | `raw/qualification/ghostty-b1-gate7-physical/` |
 | **A4** faithful app-quit | ❌ **BLOCKED** | — see §7 |
 
+**This list is closed at five.** "Clean machine" gates were checked against this
+session and none join it — see §6. **You need no second machine for anything
+here.**
+
 ---
 
 ## Why this order
@@ -554,14 +558,39 @@ check is treated as unchecked.
 - **C1.5 aesthetic signoff.** Depends on C1.3 and C1.4 (neither started) and
   closes only after the B2 integrated pane. It is the true last gate of M1 and
   cannot be pulled forward.
-- **STORY-001/002 DoD 2** — independent reproduction by a **second** operator.
-  You cannot be that second operator.
 - **Gate 7's two restored OPEN rows** — Instruments (minimized / after-wake) and
   **ASan**. Re-qualification did not carry their evidence forward. §3's optional
   Instruments block covers part of the first; ASan is untouched here.
 - **Gate 4 notarization** — blocked on Apple notary credentials, not on you being
   at the machine.
 - **B2.5 row K** — the vendor matrix, agent work, blocked on vendor quota.
+
+### The three "clean machine" gates — none of them are yours
+
+Ruled 2026-07-20 (audit §5 Q6, settled from source by `indira`). The phrase
+"clean machine" appears in three places testing three *different* variables, and
+summarising them together made them look like one user-owed hardware gate. They
+are not:
+
+- **STORY-001 DoD 2** — the variable is **one binary's absence** (tmux), against
+  a **dev** build. The doc text explicitly authorises *"a machine (or
+  PATH-sanitized env)"*. **Agent-doable.** Its "reproduced by someone other than
+  the author" clause is a **second-party** requirement, not a hardware one — a
+  different agent satisfies it. *(An earlier draft of this runbook said you had
+  to be that second operator. That was wrong.)*
+- **B2 DoD-7** — the variable is the **reproducer's independence**: *"a different
+  model vendor reproduces the runbook… Code presence and author-only recordings
+  are not evidence."* Not packaging, not tmux. **Agent-doable by a
+  different-vendor agent.**
+- **C2 acceptance** — genuinely **user-only**: quarantine/Gatekeeper evaluation,
+  notarization, code-signature acceptance, **two architectures** (Intel *and*
+  Apple Silicon), network absent, against a **shipped** artifact. PATH sanitising
+  cannot fake a Gatekeeper evaluation or a second architecture. **But it is
+  POST-CUT** — `backlog-outline.md:52` says clean-machine acceptance closes only
+  on the cut tree, so scheduling it now is premature. It is a separate future
+  session, and it will need hardware this one does not.
+
+**Net: bring no second machine to this sitting.**
 
 ---
 
@@ -641,6 +670,45 @@ a normally launched app.
 **Therefore: A4's faithful quit is blocked on B2.5's production-wiring pane, not
 merely on a missing script.** Sizing the script alone understates it. Overall
 effort: **unknown**, and honestly so — B2.5 itself has no effort estimate.
+
+### Does A4's harness discharge other gates too? **No — but a different harness discharges two.**
+
+Worth asking, because "one harness closes three gates" would change whether you
+build before scheduling. Checked against source; the answer is no for A4, and the
+real shared harness is a **different** piece of work.
+
+**A4's harness is disjoint from everything else.** It is a read-only *observer*
+of a production quit: it watches a process tree, reads `final.json`, and touches
+the broker not at all. Nothing else in M1 wants that shape.
+
+**The genuinely shared harness is the mode-emitting PTY child**, and it discharges
+**two** gates, both agent-side:
+
+- **A3 / B2.3 — six rows**: 4 (Kitty), 7 and 7b (paste), 8, 8b and 8c (mouse).
+  All six hold encoder-level evidence only. They need an application mode set
+  first, and `DECSET cannot be injected with processOutput` on a live attach —
+  the ordered-output engine owns the stream sequence and rejects a hand-fed
+  frame as `invalidValue`. The mode must come from the PTY child as *real
+  output*.
+- **B3 GAP-3 — mouse reporting forwarded from a pane.** Its own text:
+  *"Blocked on the same mode-emitting-child harness work."*
+
+**Correction to the framing this section was asked under: A3 row 2b is _not_ in
+that set and does not need this harness.** Row 2b (no automation-TIMEOUT steal)
+is `RECORDED (by construction)` — a source property of `input_arbiter.zig`, which
+invents no timeout, routes lease expiry to `terminate()`, and refuses automation
+from `human_owned`/`human_orphaned`. The matrix argues explicitly that a timing
+test *"would pass identically against an arbiter with no automation path
+whatsoever"* — i.e. it would pass for the wrong reason. So if audit §5 Q7 rules
+the structural argument insufficient, the remedy is a **competing-writer test
+against the Zig arbiter**, not a PTY harness. Different work, different file,
+different skill. Bundling row 2b into the mode-emitting-child job would oversize
+it and still not answer Q7.
+
+**Net for scheduling:** there is no three-gate harness. There is a **two-gate**
+one (A3's six rows + B3 GAP-3) that is pure agent work and does not touch this
+session, and A4's separate observer, which is blocked behind B2.5 regardless. The
+build-first calculus is unchanged for *your* sitting.
 
 ### Can A4 be attempted without the harness?
 
