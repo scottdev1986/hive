@@ -1,4 +1,5 @@
 import AppKit
+import HiveTerminalKit
 import WorkspaceCore
 
 /// Headless end-to-end checks against the REAL substrate: real SwiftTerm
@@ -77,8 +78,148 @@ final class SmokeRunner {
         }
     }
 
+    private func runSessiondLiveResizeInputProof(agent: String) {
+        let paneID = ProjectState.paneID(forAgent: agent)
+        let paneArrived = waitUntil(20) {
+            self.controller.state.panes[paneID] != nil
+                && self.controller.sessiondTerminalView(pane: paneID) != nil
+        }
+        check(paneArrived, "sessiond pane \(agent) appeared in the actual app")
+        guard let window = controller.window,
+              let terminal = controller.sessiondTerminalView(pane: paneID) else {
+            finishSessiondLiveResizeInputProof()
+            return
+        }
+
+        check(waitUntil(10) { window.isKeyWindow }, "actual app window became key")
+        check(waitUntil(10) { terminal.surfaceState == .live },
+              "sessiond terminal reached live before resize (\(terminal.surfaceState))")
+        controller.dispatch(.focusPane(paneID))
+        check(waitUntil(3) { window.firstResponder === terminal },
+              "sessiond terminal owns the actual app keyboard")
+
+        let geometryBefore = terminal.reportedGeometry
+        let resizeFramesBefore = terminal.resizeFramesSent
+        let frameBefore = window.frame
+        var sawLiveResizeStart = false
+        var sawLiveResizeEnd = false
+        var sawInLiveResize = false
+        let center = NotificationCenter.default
+        let startObserver = center.addObserver(
+            forName: NSWindow.willStartLiveResizeNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            sawLiveResizeStart = true
+            sawInLiveResize = window.inLiveResize
+        }
+        let endObserver = center.addObserver(
+            forName: NSWindow.didEndLiveResizeNotification,
+            object: window,
+            queue: .main
+        ) { _ in
+            sawLiveResizeEnd = true
+        }
+
+        let start = NSPoint(x: window.contentLayoutRect.maxX - 1, y: 1)
+        let end = NSPoint(x: start.x + 160, y: start.y - 90)
+        func mouseEvent(_ type: NSEvent.EventType, at point: NSPoint, number: Int) -> NSEvent? {
+            NSEvent.mouseEvent(
+                with: type,
+                location: point,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                eventNumber: number,
+                clickCount: 1,
+                pressure: type == .leftMouseDown ? 1 : 0
+            )
+        }
+        if let down = mouseEvent(.leftMouseDown, at: start, number: 1),
+           let dragged = mouseEvent(.leftMouseDragged, at: end, number: 2),
+           let up = mouseEvent(.leftMouseUp, at: end, number: 3) {
+            // The mouse-down enters AppKit's modal live-resize tracking loop;
+            // it consumes the queued drag/up before sendEvent returns.
+            NSApp.postEvent(dragged, atStart: false)
+            NSApp.postEvent(up, atStart: false)
+            window.sendEvent(down)
+        } else {
+            failures.append("constructed in-process live-resize mouse events")
+        }
+        center.removeObserver(startObserver)
+        center.removeObserver(endObserver)
+
+        check(sawLiveResizeStart && sawInLiveResize,
+              "mouse drag entered NSWindow live resize with inLiveResize=true")
+        check(sawLiveResizeEnd, "mouse drag completed NSWindow live resize")
+        check(window.frame != frameBefore, "mouse drag changed the actual app window frame")
+        check(waitUntil(5) {
+            terminal.reportedGeometry != geometryBefore
+                && terminal.resizeFramesSent > resizeFramesBefore
+        }, "live resize changed Ghostty geometry and sent RESIZE")
+        check(terminal.surfaceState == .live,
+              "terminal remained live after resize (\(terminal.surfaceState))")
+        check(window.firstResponder === terminal,
+              "live resize preserved the sessiond terminal first responder")
+
+        let highWaterBefore = terminal.highWater
+        let marker = "HIVE_LIVE_RESIZE_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        for character in "echo \(marker)\n" {
+            let isReturn = character == "\n"
+            let characters = isReturn ? "\r" : String(character)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: isReturn ? 36 : 0
+            ) else {
+                failures.append("constructed in-process key event for \(character)")
+                continue
+            }
+            window.sendEvent(event)
+        }
+        check(waitUntil(10) {
+            if case .applied(_, let stage) = terminal.inputSubmissionState {
+                return stage == "written-to-terminal"
+            }
+            return false
+        }, "post-resize in-process keys were written to the terminal")
+        check(waitUntil(10) { terminal.highWater > highWaterBefore },
+              "post-resize command produced new PTY output")
+
+        print(
+            "LIVE RESIZE INPUT PROOF: frame \(frameBefore) -> \(window.frame), "
+                + "geometry \(String(describing: geometryBefore)) -> "
+                + "\(String(describing: terminal.reportedGeometry)), marker \(marker), "
+                + "input \(terminal.inputSubmissionState), highWater "
+                + "\(highWaterBefore) -> \(terminal.highWater)"
+        )
+        finishSessiondLiveResizeInputProof()
+    }
+
+    private func finishSessiondLiveResizeInputProof() {
+        if failures.isEmpty {
+            print("LIVE RESIZE INPUT PROOF OK")
+            exit(0)
+        } else {
+            print("LIVE RESIZE INPUT PROOF FAIL:\n  " + failures.joined(separator: "\n  "))
+            exit(1)
+        }
+    }
+
     func run() {
         let env = ProcessInfo.processInfo.environment
+        if let agent = env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] {
+            runSessiondLiveResizeInputProof(agent: agent)
+            return
+        }
         let expectedAgents: [(name: String, marker: String)] = (env["HIVE_SMOKE_AGENTS"] ?? "")
             .split(separator: ",")
             .compactMap { entry in

@@ -1,4 +1,5 @@
 import AppKit
+import HiveTerminalKit
 import WorkspaceCore
 
 /// One project's workspace window: owns the pane views (real terminals),
@@ -479,6 +480,10 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     func terminalChildRunning(pane: PaneID) -> Bool {
         paneViews[pane]?.contentView.childRunning ?? false
+    }
+
+    func sessiondTerminalView(pane: PaneID) -> HiveTerminalView? {
+        paneViews[pane]?.sessiondTerminal?.view
     }
 
     /// Delivers a real left-click at the pane's center through the window's own
