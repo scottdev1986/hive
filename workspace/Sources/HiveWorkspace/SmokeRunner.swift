@@ -96,6 +96,21 @@ final class SmokeRunner {
         NSApp.activate(ignoringOtherApps: true)
         window.orderFrontRegardless()
         window.makeKey()
+        if !window.isKeyWindow {
+            let cocoaPoint = NSPoint(x: window.frame.midX, y: window.frame.maxY - 12)
+            let mainDisplayHeight = CGDisplayBounds(CGMainDisplayID()).height
+            let quartzPoint = CGPoint(x: cocoaPoint.x, y: mainDisplayHeight - cocoaPoint.y)
+            for type in [CGEventType.leftMouseDown, .leftMouseUp] {
+                if let event = CGEvent(
+                    mouseEventSource: nil,
+                    mouseType: type,
+                    mouseCursorPosition: quartzPoint,
+                    mouseButton: .left
+                ) {
+                    event.post(tap: .cghidEventTap)
+                }
+            }
+        }
         check(waitUntil(10) { window.isKeyWindow }, "actual app window became key")
         check(waitUntil(10) { terminal.surfaceState == .live },
               "sessiond terminal reached live before resize (\(terminal.surfaceState))")
