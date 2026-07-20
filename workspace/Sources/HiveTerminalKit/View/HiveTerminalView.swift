@@ -61,6 +61,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var windowObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
     private var pendingDraw = false
+    private var hasCompletedInitialDraw = false
     private var renderingSuspended = false
     private var closed = false
     private var appliedFramebufferSize: (width: UInt32, height: UInt32)?
@@ -185,6 +186,10 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             self.pendingDraw = false
             self.drawScheduledCount += 1
             self.engine.draw()
+            if !self.hasCompletedInitialDraw {
+                self.hasCompletedInitialDraw = true
+                self.synchronizeOcclusion()
+            }
         }
         drawWorkItem = work
         DispatchQueue.main.async(execute: work)
@@ -627,7 +632,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             }
             return
         }
-        let visible = window.occlusionState.contains(.visible)
+        // A newly shown, inactive CLI-launched window can report a stale
+        // non-visible occlusion state indefinitely. Allow exactly one frame to
+        // seed its IOSurface, then return to the real occlusion state.
+        let visible = window.occlusionState.contains(.visible) ||
+            (!hasCompletedInitialDraw && window.isVisible && !window.isMiniaturized)
         guard appliedOcclusionVisible != visible else { return }
         engineStorage?.setOcclusion(visible)
         appliedOcclusionVisible = visible
