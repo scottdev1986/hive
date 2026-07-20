@@ -27,10 +27,16 @@ ROOT = pathlib.Path(__file__).resolve().parent.parent
 CONF = ROOT / "Sources/HiveTerminalKit/Theme/HiveTerminalConfiguration.swift"
 WCAG = ROOT / "Sources/HiveTerminalKit/Theme/WCAGContrast.swift"
 MANUAL = ROOT / "Sources/HiveTerminalKit/Bridge/ManualSurface.swift"
+PREFS = ROOT / "Sources/HiveTerminalKit/Theme/HiveAppearancePreferences.swift"
+VIEW = ROOT / "Sources/HiveTerminalKit/View/HiveTerminalView.swift"
+PAGE = ROOT / "Sources/HiveWorkspace/Settings/AppearanceSettingsController.swift"
+WINDOW = ROOT / "Sources/HiveWorkspace/Settings/SettingsWindowController.swift"
 SUITE = "C12ThemeSystemTests"
 LIVE = "C12LiveReconfigurationTests"
+PREFS_SUITE = "C12AppearancePreferencesTests"
+PAGE_SUITE = "C12AppearanceSettingsTests"
 
-SNAPSHOT = {p: p.read_text() for p in (CONF, WCAG, MANUAL)}
+SNAPSHOT = {p: p.read_text() for p in (CONF, WCAG, MANUAL, PREFS, VIEW, PAGE, WINDOW)}
 
 
 def restore():
@@ -130,6 +136,75 @@ CASES = [
         f"{LIVE}/testLiveFontChangeAloneReachesTheEngine",
         MANUAL, "            font: font,\n", "",
     ),
+
+    # Persistence and delivery to running panes.
+    (
+        "stored theme selection ignored on read (persistence broken)",
+        f"{PREFS_SUITE}/testAbsentSelectionsReadAsDefaults",
+        PREFS,
+        "            defaults.string(forKey: Key.themeSelection)\n"
+        "                .flatMap(HiveTerminalThemeSelection.init(rawValue:)) ?? .system",
+        "            .system",
+    ),
+    (
+        "theme selection never written (persistence broken)",
+        f"{PREFS_SUITE}/testSelectionsPersistAcrossInstances",
+        PREFS, "        defaults.set(value, forKey: key)\n", "",
+    ),
+    (
+        "change notification posted unconditionally (selector thrashes the engine)",
+        f"{PREFS_SUITE}/testOnlyARealChangePostsTheNotification",
+        PREFS, "        guard changed else { return }\n", "",
+    ),
+    (
+        "unknown stored value no longer falls back",
+        f"{PREFS_SUITE}/testUnknownStoredValueFallsBackToTheDefault",
+        PREFS, "?? .system", "?? .dark",
+    ),
+    (
+        "running panes stop observing the preference change",
+        f"{PREFS_SUITE}/testChangingASelectionReconfiguresAnAlreadyRunningView",
+        VIEW, "            self?.applySelectedAppearance()\n", "",
+    ),
+    (
+        "the view stops resolving against its own appearance",
+        f"{PREFS_SUITE}/testSystemSelectionFollowsTheViewAppearance",
+        VIEW,
+        "            TerminalColorScheme(appearance: effectiveAppearance) == .dark ? .dark : .light",
+        "            .dark",
+    ),
+    (
+        "the view ignores the selected font when pushing",
+        f"{PREFS_SUITE}/testChangingTheFontReconfiguresAnAlreadyRunningView",
+        VIEW, "font: appearancePreferences.font", "font: .embedded",
+    ),
+
+    # The settings surface.
+    (
+        "the theme selector writes nothing",
+        f"{PAGE_SUITE}/testSelectingAThemeWritesThePreference",
+        PAGE, "        preferences.themeSelection = choices[sender.indexOfSelectedItem]\n", "",
+    ),
+    (
+        "the font selector writes nothing",
+        f"{PAGE_SUITE}/testSelectingAFontWritesThePreference",
+        PAGE, "        preferences.font = choices[sender.indexOfSelectedItem]\n", "",
+    ),
+    (
+        "the page opens on the default instead of the stored selection",
+        f"{PAGE_SUITE}/testPageOpensOnTheStoredSelections",
+        PAGE,
+        "                selectedIndex: HiveTerminalThemeSelection.allCases\n"
+        "                    .firstIndex(of: preferences.themeSelection),",
+        "                selectedIndex: 0,",
+    ),
+    (
+        "the appearance section falls through to the Tasks page",
+        f"{PAGE_SUITE}/testWindowSelectsTheAppearanceSectionRatherThanFallingThroughToTasks",
+        WINDOW,
+        '            : section == "appearance" ? appearanceController : tasksController',
+        "            : tasksController",
+    ),
 ]
 
 
@@ -137,7 +212,7 @@ def main():
     failures = []
 
     print("=== baseline: both suites must be GREEN before any mutation ===")
-    for suite in (SUITE, LIVE):
+    for suite in (SUITE, LIVE, PREFS_SUITE, PAGE_SUITE):
         if run(suite):
             print(f"  GREEN (expected)  {suite}")
         else:
@@ -161,7 +236,7 @@ def main():
             print(f"  RED       {label}")
 
     print("\n=== every mutation reverted: both suites GREEN again ===")
-    for suite in (SUITE, LIVE):
+    for suite in (SUITE, LIVE, PREFS_SUITE, PAGE_SUITE):
         if run(suite):
             print(f"  GREEN (expected)  {suite}")
         else:
