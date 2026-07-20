@@ -77,6 +77,43 @@ stderr: sessiond broker failed to start: ... kernel peer pid 82679 is not the
 Normal-load control at the same commit still comes up healthy and serving, so
 the fix does not cost the success path.
 
+### Every broker-failure route reaches the same cleanup, not just orphan-reject
+
+The staged orphan probe and Helga's `startup-fail` test both exercise only the
+child-**exit** route (`BrokerAlreadyRunning`), where the child is already dead by
+the time cleanup runs. The HELLO-failure and ready-timeout routes differ in a way
+that matters: the child is still **alive** at failure, so `sessiondBroker.stop()`
+must kill a live child and `daemon.stop()` must not hang before
+`process.exit(1)` — a hang there would resurrect hole 6 exactly.
+
+Probed with a fake sessiond injected via `HIVE_SESSIOND_BIN` that binds the real
+`broker.sock` (so the peer gate legitimately **passes**) and then stays mute and
+alive, forcing the ready-timeout route:
+
+```text
+control:      fake sessiond WAS used (as pid 14555)
+daemon exit:  1  (after 15s; ready timeout is 10s)
+daemon.port:  absent
+daemon.pid:   absent
+daemon.lock:  absent
+daemon alive: no
+leaked fake broker children: 0
+stderr: sessiond broker failed to start: ... did not prove kernel ownership ...
+        within 10000ms (last ready error: sessiond HELLO request timed out)
+```
+
+Same cleanup, same exit 1, and the live child is reaped rather than leaked.
+Connect-timeout converges on this same throw site — a failed connect is retryable
+and ends at the identical deadline throw — so the two teardown-relevant shapes
+(child-dead and child-alive) are both measured. Combined with the single `catch`
+wrapping the whole `start()` call, every broker-failure route is covered.
+
+The `control:` line is load-bearing. On the first run I had not made the fake
+executable, so `resolveSessiondBinary` rejected it, the daemon silently fell back
+to the real staged sessiond, and it simply started up healthy — a reading that
+superficially looks like a hole but was purely a probe defect. The probe now
+aborts as unattributable unless the fake's own stderr proves it was spawned.
+
 ## The five prior holes — all dead, verified against the real gate
 
 Helga encoded all five as unit tests, and they pass 12/12. But four of those
@@ -133,7 +170,8 @@ the stdout announce to debug, exactly as the redesign directed.
 | `sessiond-broker.live.test.ts` | 3 pass / 0 fail, exit 0 |
 | teardown + server (Heidi, hole-1 guard) | 92 pass / 0 fail, exit 0 |
 | independent hole 3/5 re-derivation | 0 holes alive, control valid, exit 0 |
-| staged orphan ordering probe | exit 1, nothing advertised |
+| staged orphan ordering probe (child-exit route) | exit 1, nothing advertised |
+| HELLO-failure / ready-timeout route (child alive) | exit 1, nothing advertised, 0 leaked children |
 | normal-load control | healthy, serving |
 | `bun scripts/sessiond-lifecycle-staged-proof.ts` | PASS, exit 0 |
 | `bun run typecheck` | exit 0 |
