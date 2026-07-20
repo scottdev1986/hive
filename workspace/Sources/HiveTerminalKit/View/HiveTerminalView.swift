@@ -60,6 +60,10 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var renderHostView: NSView?
     private var windowObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
+    /// Registered on NotificationCenter.default rather than the workspace
+    /// center, so it is removed on its own rather than with the workspace ones.
+    private var appearancePreferenceObserver: NSObjectProtocol?
+    var appearancePreferences: HiveAppearancePreferences = .shared
     var searchOverlayStorage: TerminalSearchOverlay?
     var searchStateStorage = TerminalSearchState()
     var newOutputIndicatorStorage: NSButton?
@@ -127,6 +131,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         resizeWorkItem?.cancel()
         removeWindowObservers()
         removeWorkspaceObservers()
+        if let appearancePreferenceObserver {
+            NotificationCenter.default.removeObserver(appearancePreferenceObserver)
+        }
         engineStorage?.free()
     }
 
@@ -321,8 +328,21 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// Must run before HOST_ATTACH so `ghostty_surface_update_config` cannot
     /// wipe already-applied journal output (blank pane with full journal).
     public func prepareThemeBeforeAttach() {
-        engine.applyHiveConfiguration()
+        applySelectedAppearance()
         refreshReportedGeometryAfterConfiguration()
+    }
+
+    /// Pushes the theme and font the user has selected, resolved against the
+    /// appearance this view is actually drawn in. The push is content-keyed, so
+    /// calling this when nothing changed costs nothing.
+    @discardableResult
+    func applySelectedAppearance() -> Bool {
+        let appearance: HiveTerminalAppearance =
+            TerminalColorScheme(appearance: effectiveAppearance) == .dark ? .dark : .light
+        return engine.applyHiveConfiguration(
+            theme: appearancePreferences.resolvedTheme(appearance: appearance),
+            font: appearancePreferences.font
+        )
     }
 
     /// #40: clean CLAIM_RELEASE before viewer transport teardown.
@@ -336,7 +356,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         self.highWater = highWater
         guard surfaceState != .live else { return }
         // Theme should already be applied pre-attach; one-shot no-op if so.
-        engine.applyHiveConfiguration()
+        applySelectedAppearance()
         setSurfaceState(.live)
         accessibilityAnnounce("Terminal ready", priority: .low)
         notifyOutputStatusReconnect(reason: "first-correct-frame")
@@ -351,7 +371,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     ) throws {
         guard let expectedBinding = binding else { return }
         // Prefer pre-attach theme; still one-shot safe if caller skipped it.
-        engine.applyHiveConfiguration()
+        applySelectedAppearance()
         if engine is GhosttyManualSurface {
             let deadline = Date().addingTimeInterval(2)
             DispatchQueue.main.async { [weak self] in
@@ -560,6 +580,16 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
                 self.schedulePendingDrawIfPossible()
             },
         ]
+
+        // A theme or font selection must reach panes that are already running,
+        // not only ones created afterwards.
+        appearancePreferenceObserver = NotificationCenter.default.addObserver(
+            forName: HiveAppearancePreferences.didChangeNotification,
+            object: nil,
+            queue: .main
+        ) { [weak self] _ in
+            self?.applySelectedAppearance()
+        }
     }
 
     public override func viewWillMove(toWindow newWindow: NSWindow?) {
@@ -600,6 +630,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public override func viewDidChangeEffectiveAppearance() {
         super.viewDidChangeEffectiveAppearance()
         synchronizeColorScheme()
+        // Under the .system selection the palette follows the appearance too,
+        // so the theme is re-resolved rather than only the color scheme.
+        applySelectedAppearance()
     }
 
     var ghosttyRenderingLayer: CALayer? {

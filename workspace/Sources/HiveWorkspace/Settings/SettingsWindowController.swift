@@ -6,10 +6,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     private static let tasksItem = NSToolbarItem.Identifier("hive.settings.tasks")
     private static let modelsItem = NSToolbarItem.Identifier("hive.settings.models")
     private static let usageItem = NSToolbarItem.Identifier("hive.settings.usage")
+    private static let appearanceItem = NSToolbarItem.Identifier("hive.settings.appearance")
 
     private var tasksController: TasksSettingsController!
     private var modelsController: ModelsSettingsController!
     private var usageController: UsageSettingsController!
+    private var appearanceController: AppearanceSettingsController!
     private(set) var dataSource: ModelControlDataSource!
     private let container = NSViewController()
 
@@ -18,6 +20,7 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         let tasks = TasksSettingsController(dataSource: dataSource)
         let models = ModelsSettingsController(dataSource: dataSource)
         let usage = UsageSettingsController(dataSource: dataSource)
+        let appearance = AppearanceSettingsController(dataSource: dataSource)
 
         let width = CGFloat(initialWidth ?? 880)
         let container = NSViewController()
@@ -39,7 +42,8 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
         tasksController = tasks
         modelsController = models
         usageController = usage
-        for page in [tasks, models, usage] as [NSViewController] {
+        appearanceController = appearance
+        for page in [tasks, models, usage, appearance] as [NSViewController] {
             container.addChild(page)
             page.view.translatesAutoresizingMaskIntoConstraints = false
             container.view.addSubview(page.view)
@@ -99,12 +103,15 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
 
     private func select(page: SettingsPageController) {
         currentSection = page === tasksController ? "tasks"
-            : page === modelsController ? "models" : "usage"
+            : page === modelsController ? "models"
+            : page === appearanceController ? "appearance" : "usage"
         tasksController.view.isHidden = page !== tasksController
         modelsController.view.isHidden = page !== modelsController
         usageController.view.isHidden = page !== usageController
+        appearanceController.view.isHidden = page !== appearanceController
         window?.title = page === tasksController ? "Settings — Tasks"
-            : page === modelsController ? "Settings — Models" : "Settings — Usage"
+            : page === modelsController ? "Settings — Models"
+            : page === appearanceController ? "Settings — Appearance" : "Settings — Usage"
     }
 
     func show() {
@@ -127,13 +134,14 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
             self.tasksController.scrollToTop()
             self.modelsController.scrollToTop()
             self.usageController.scrollToTop()
+            self.appearanceController.scrollToTop()
         }
     }
 
     // MARK: NSToolbarDelegate
 
     func toolbarDefaultItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
-        [Self.tasksItem, Self.modelsItem, Self.usageItem]
+        [Self.tasksItem, Self.modelsItem, Self.usageItem, Self.appearanceItem]
     }
 
     func toolbarAllowedItemIdentifiers(_ toolbar: NSToolbar) -> [NSToolbarItem.Identifier] {
@@ -169,6 +177,12 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
                 systemSymbolName: "chart.bar.xaxis",
                 accessibilityDescription: "Session token usage")
             item.action = #selector(showUsage(_:))
+        case Self.appearanceItem:
+            item.label = "Appearance"
+            item.image = NSImage(
+                systemSymbolName: "paintpalette",
+                accessibilityDescription: "Terminal theme and font")
+            item.action = #selector(showAppearance(_:))
         default:
             return nil
         }
@@ -179,14 +193,17 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     @objc private func showTasks(_ sender: Any?) { select(page: tasksController) }
     @objc private func showModels(_ sender: Any?) { select(page: modelsController) }
     @objc private func showUsage(_ sender: Any?) { select(page: usageController) }
+    @objc private func showAppearance(_ sender: Any?) { select(page: appearanceController) }
 
     /// Programmatic section selection ("tasks" / "models" / "usage") — used by the
     /// launch affordance and the smoke harness.
     func select(section: String) {
         let page: SettingsPageController = section == "models" ? modelsController
-            : section == "usage" ? usageController : tasksController
+            : section == "usage" ? usageController
+            : section == "appearance" ? appearanceController : tasksController
         window?.toolbar?.selectedItemIdentifier = section == "models" ? Self.modelsItem
-            : section == "usage" ? Self.usageItem : Self.tasksItem
+            : section == "usage" ? Self.usageItem
+            : section == "appearance" ? Self.appearanceItem : Self.tasksItem
         select(page: page)
     }
 }
