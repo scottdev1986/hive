@@ -8,6 +8,31 @@ source change), so findings taken against the earlier tip carry forward unchange
 
 **VERDICT: PASS.** Queen may clear the land. The 100-MiB leg is out of this pin's scope.
 
+> **F2 CLOSED (2026-07-20, after this review landed).** horatio fixed the durability
+> defect in `6bd1f702` ("fix(b25): preserve pending quit disposition"). The generator
+> now derives `ok: !faithfulPending.requiresUnlockedProductionStack` instead of a
+> literal `true`, emits `status` and the whole `faithfulPending` block, and stamps the
+> `NEGATIVE EVIDENCE` and `RESULT: COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK` lines into
+> the matrix itself. A re-run can no longer flip `ok` from a correct `false` to an
+> incorrect `true` or delete the reason. `a4-quit.json` has a single write site, and
+> the failure path writes a differently-named diagnostic file, so nothing competes to
+> overwrite it. Verified from source rather than execution, which is sufficient here
+> because the value is a constant expression (`!true`) with no runtime dependence.
+>
+> One residual, an observation and not a defect: `requiresUnlockedProductionStack` is
+> a hardcoded `true`, so the row can never report GREEN from a run — after the faithful
+> run succeeds under unlock, someone must edit the constant. That fails in the safe
+> direction (under-claiming a passing leg rather than over-claiming a pending one) and
+> matches queen's ruling, but the eventual green depends on remembering to flip it
+> rather than on the harness observing that the stack is daemon-self-owned.
+>
+> Separately, horatio has clarified the intended durability boundary: the generator
+> owns the per-cell manifest, matrix, and transcript, while `EVIDENCE.md`'s status row,
+> `provenance.txt`, and the aggregate `evidence-sha256.txt` are deliberately post-run
+> catalog and checksum maintenance. That split is correct and consistent with what I
+> measured — F2 was only ever about per-cell fields, which is where the flip would have
+> occurred.
+
 Every A4 row carries its claim, the pin reproduces end-to-end on an independent
 stack, and the concurrent-quit cell is honestly bounded rather than overclaimed.
 Five non-blocking findings are recorded below; none of them falsify a claim.
