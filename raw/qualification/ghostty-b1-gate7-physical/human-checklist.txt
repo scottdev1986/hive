@@ -64,11 +64,14 @@ Pass criteria:
   * applied occlusion visible after wake
   * no crash / no hung draw path
 
-C. Optional: attach Instruments during human drag
--------------------------------------------------
+C. Optional: attach Instruments during human drag / minimize / wake
+------------------------------------------------------------------
 If queen asks for Instruments on the multi-display path specifically:
-  1. Start Instruments (Time Profiler + Allocations + Power Profiler) against
-     the running xctest/HiveTerminalKitTests process during the drag and sleep.
+  1. Start Instruments (Time Profiler + Allocations + Activity Monitor — the
+     Mac energy-adjacent template; do NOT use Power Profiler on macOS, it is
+     iOS/iPadOS-only and is already recorded as a measured negative control)
+     against the running xctest/HiveTerminalKitTests process during the drag,
+     while minimized, and after wake.
   2. Export run notes as additional .txt beside the transcripts (do not use
      .log). Name them instruments-human-*.txt.
 

@@ -7,8 +7,9 @@
 #   * Gate7RenderingTests XCTest corpus (physical multi-display test skipped)
 #   * GhosttyGate7Probe: main-thread admission, idle, live-resize,
 #     occlusion-via-window-ordering, serial rapid-churn (clean teardown)
-#   * Instruments via xctrace: Time Profiler, Allocations, Power Profiler
-#     (modern Xcode's Energy equivalent), Leaks — launched against the probe
+#   * Instruments via xctrace: Time Profiler, Allocations, Activity Monitor
+#     (Mac energy-adjacent), Leaks — launched against the probe. Power Profiler
+#     is attempted once as a measured negative control (iOS/iPadOS-only).
 #   * GPU/device-fault honesty scope document (no fabricated recovery path)
 #
 # HUMAN-REQUIRED (slots only; checklist written for the operator):
@@ -223,7 +224,7 @@ GATE7_FILTER='Gate7RenderingTests'
     "$EVIDENCE/artifact-binding.txt" | /usr/bin/sed 's/^ok //'
   printf 'gui_session=required_unlocked\n'
   printf 'instruments_tool=xctrace\n'
-  printf 'energy_template_note=Power Profiler and classic Energy Log are not supported on macOS hosts (xctrace: iOS/iPadOS only). Activity Monitor is the Mac energy/CPU-power-adjacent pass recorded here.\n'
+  printf 'energy_template_note=Power Profiler is attempted once as a measured negative control (see instruments-power-energy-summary.txt); Activity Monitor is the Mac energy/CPU-power-adjacent positive pass.\n'
 } >"$EVIDENCE/provenance.txt" 2>&1
 
 echo "== display inventory (authoring host) =="
@@ -414,12 +415,99 @@ record_instruments "Time Profiler" \
 record_instruments "Allocations" \
   "$EVIDENCE/instruments-allocations.trace" \
   "$EVIDENCE/instruments-allocations-summary.txt"
-# Energy: Power Profiler is iOS/iPadOS-only (xctrace error measured on this
-# host). Activity Monitor is the supported Mac template that covers CPU energy
-# impact / idle power-adjacent signals for a desktop process.
-record_instruments "Activity Monitor" \
-  "$EVIDENCE/instruments-power-energy.trace" \
-  "$EVIDENCE/instruments-power-energy-summary.txt"
+
+# Energy: MEASURED negative control first (F1). Power Profiler must fail on
+# macOS; we record real exit+stderr so the claim is not prose-only. Then the
+# Mac energy-adjacent positive pass uses Activity Monitor into the same
+# summary file (negative control first, then positive).
+echo "== instruments: Power Profiler (measured negative control) =="
+POWER_NEG_TRACE="$EVIDENCE/instruments-power-profiler-negative.trace"
+POWER_NEG_STATUS=0
+rm -rf "$POWER_NEG_TRACE"
+if /usr/bin/xctrace record \
+    --template "Power Profiler" \
+    --time-limit 15s \
+    --output "$POWER_NEG_TRACE" \
+    --no-prompt \
+    --launch -- "$PLAIN_PROBE" \
+    >"$TMP/xctrace-PowerProfiler.stdout.txt" 2>"$TMP/xctrace-PowerProfiler.stderr.txt"; then
+  POWER_NEG_STATUS=0
+else
+  POWER_NEG_STATUS=$?
+fi
+{
+  printf '%s\n' '=== measured_negative_control: Power Profiler ==='
+  printf 'template=Power Profiler\n'
+  printf 'role=negative_control_mac_unsupported\n'
+  printf 'exit_status=%s\n' "$POWER_NEG_STATUS"
+  printf 'captured_at=%s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  printf 'expect=non_zero_exit_and_ios_only_message\n'
+  printf '%s\n' '--- xctrace stdout ---'
+  /bin/cat "$TMP/xctrace-PowerProfiler.stdout.txt"
+  printf '%s\n' '--- xctrace stderr ---'
+  /bin/cat "$TMP/xctrace-PowerProfiler.stderr.txt"
+} >"$EVIDENCE/instruments-power-energy-summary.txt"
+# Fail closed if the "unsupported" claim no longer holds (template suddenly works).
+if [[ "$POWER_NEG_STATUS" -eq 0 ]]; then
+  echo "Power Profiler negative control DID NOT BITE (exit 0); energy claim needs re-measurement" >&2
+  exit 1
+fi
+if ! /usr/bin/grep -qiE 'not supported on macOS|iOS or iPadOS' \
+  "$TMP/xctrace-PowerProfiler.stderr.txt" \
+  "$TMP/xctrace-PowerProfiler.stdout.txt"; then
+  echo "Power Profiler failed but without the expected macOS-unsupported message; inspect summary" >&2
+  /bin/cat "$EVIDENCE/instruments-power-energy-summary.txt" >&2
+  exit 1
+fi
+printf 'negative_control=BIT\n' >>"$EVIDENCE/instruments-power-energy-summary.txt"
+rm -rf "$POWER_NEG_TRACE"
+
+# Positive energy-adjacent pass: Activity Monitor (append after negative control).
+echo "== instruments: Activity Monitor (Mac energy-adjacent positive) =="
+ACTIVITY_TRACE="$EVIDENCE/instruments-power-energy.trace"
+ACTIVITY_STATUS=0
+if /usr/bin/xctrace record \
+    --template "Activity Monitor" \
+    --time-limit 120s \
+    --output "$ACTIVITY_TRACE" \
+    --no-prompt \
+    --launch -- "$PLAIN_PROBE" \
+    >"$TMP/xctrace-ActivityMonitor.stdout.txt" 2>"$TMP/xctrace-ActivityMonitor.stderr.txt"; then
+  ACTIVITY_STATUS=0
+else
+  ACTIVITY_STATUS=$?
+fi
+{
+  printf '\n%s\n' '=== positive_pass: Activity Monitor (Mac energy-adjacent) ==='
+  printf 'template=Activity Monitor\n'
+  printf 'role=mac_energy_adjacent_positive\n'
+  printf 'exit_status=%s\n' "$ACTIVITY_STATUS"
+  printf 'trace=%s\n' "$ACTIVITY_TRACE"
+  printf 'captured_at=%s\n' "$(/bin/date -u +%Y-%m-%dT%H:%M:%SZ)"
+  if [[ -e "$ACTIVITY_TRACE" ]]; then
+    printf 'trace_bytes=%s\n' "$(/usr/bin/du -sk "$ACTIVITY_TRACE" | /usr/bin/awk '{print $1 * 1024}')"
+    printf 'trace_kind=package_directory\n'
+    printf 'trace_listing_sha256=%s\n' \
+      "$(/usr/bin/find "$ACTIVITY_TRACE" -type f -print0 | /usr/bin/sort -z | /usr/bin/xargs -0 /usr/bin/shasum -a 256 | /usr/bin/shasum -a 256 | /usr/bin/cut -d' ' -f1)"
+    if /usr/bin/xctrace export --input "$ACTIVITY_TRACE" --toc \
+        >"$TMP/toc-ActivityMonitor.xml" 2>"$TMP/toc-ActivityMonitor.err"; then
+      printf 'toc_export=ok\n'
+      /usr/bin/sed -n '1,200p' "$TMP/toc-ActivityMonitor.xml"
+    else
+      printf 'toc_export=failed\n'
+      /bin/cat "$TMP/toc-ActivityMonitor.err"
+    fi
+  else
+    printf 'error=trace package missing\n'
+  fi
+  printf '%s\n' '--- xctrace stderr ---'
+  /bin/cat "$TMP/xctrace-ActivityMonitor.stderr.txt"
+} >>"$EVIDENCE/instruments-power-energy-summary.txt"
+if [[ "$ACTIVITY_STATUS" -ne 0 || ! -e "$ACTIVITY_TRACE" ]]; then
+  echo "Activity Monitor positive energy pass failed (exit $ACTIVITY_STATUS)" >&2
+  exit 1
+fi
+
 record_instruments "Leaks" \
   "$EVIDENCE/instruments-leaks.trace" \
   "$EVIDENCE/instruments-leaks-summary.txt"
@@ -492,11 +580,14 @@ Pass criteria:
   * applied occlusion visible after wake
   * no crash / no hung draw path
 
-C. Optional: attach Instruments during human drag
--------------------------------------------------
+C. Optional: attach Instruments during human drag / minimize / wake
+------------------------------------------------------------------
 If queen asks for Instruments on the multi-display path specifically:
-  1. Start Instruments (Time Profiler + Allocations + Power Profiler) against
-     the running xctest/HiveTerminalKitTests process during the drag and sleep.
+  1. Start Instruments (Time Profiler + Allocations + Activity Monitor — the
+     Mac energy-adjacent template; do NOT use Power Profiler on macOS, it is
+     iOS/iPadOS-only and is already recorded as a measured negative control)
+     against the running xctest/HiveTerminalKitTests process during the drag,
+     while minimized, and after wake.
   2. Export run notes as additional .txt beside the transcripts (do not use
      .log). Name them instruments-human-*.txt.
 

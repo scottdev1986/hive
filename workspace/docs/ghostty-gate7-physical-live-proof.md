@@ -29,28 +29,26 @@ Pinned Ghostty: `73534c4680a809398b396c94ac7f12fcccb7963d`.
 | Stage / artifact | Claim | Result |
 |---|---|---|
 | `corpus-gate7.txt` | Gate7RenderingTests (incl. health, sleep *notification*, controlled occlusion, IOSurfaceLayer) | 16 executed, 1 skipped (physical multi-display), 0 failures |
-| `main-thread-admission` | AppKit/Metal main-thread proof deferred from Gate 3 row E: create / present / free of a real IOSurface surface on main | create/present/free all on main; layer class `IOSurfaceLayer` |
+| `main-thread-admission` | AppKit/Metal main-thread proof deferred from Gate 3 row E: create / present / free of a real IOSurface surface on main | derived `pthread_main_np` + `Thread.isMainThread` at call sites (no `onMain` helper); `layerClass` read back from live layer, not a literal |
 | `idle` | Idle surface schedules no frames without INVALIDATE | 2s silence, 0 idle draws; contents presented |
 | `live-resize` | Geometry from `ghostty_surface_size` after distinct framebuffers | 3 size commits; non-zero rows/cols/cell geometry |
 | `occlusion-window-order` | Real NSWindow ordering attempted; host gate when occluded=false | Ordering attempted; on this desktop AppKit did not flip the bit under cover (honest note); controlled-occlusion corpus still covers the host gate |
 | `rapid-churn` | 20 **serial** create/use/free cycles, clean teardown | 20/20 complete; concurrent=false; sigkill=false |
 | Instruments Time Profiler | Live probe under xctrace | exit 0; probe exit(0); TOC exported |
 | Instruments Allocations | Live probe under xctrace (leak/UAF hunting companion) | exit 0; probe exit(0); TOC exported |
-| Instruments Activity Monitor | Mac energy/CPU-power-adjacent pass | exit 0; see Energy note below |
+| Instruments Energy | Power Profiler **measured negative control** + Activity Monitor positive | non-zero exit + stderr recorded; then Activity Monitor exit 0 |
 | Instruments Leaks | Live probe under xctrace | exit 0; probe exit(0); TOC exported |
 | `gpu-device-fault-scope.txt` | Honesty scope for device-loss recovery | HOST_CONTRACT green; HARDWARE_FAULT / B2 replacement OPEN |
 
-### Energy template note (measured)
+### Energy template note (measured, not prose-only)
 
-`xctrace record --template 'Power Profiler'` fails on macOS:
-
-> The Power Profiler instrument is not supported on macOS. Record on iOS or
-> iPadOS instead.
-
-Classic Energy Log is likewise not a Mac-host standard template. The Energy
-row is therefore recorded with **Activity Monitor** (CPU energy impact /
-process power-adjacent signals). Summaries state the template used; this is
-not silently relabeled as Power Profiler.
+The runner **attempts** `xctrace record --template 'Power Profiler'` once and
+writes the real `exit_status` + stdout/stderr into
+`instruments-power-energy-summary.txt` as `measured_negative_control`. It
+requires a non-zero exit and a macOS-unsupported / iOS-or-iPadOS message; a
+surprise exit 0 fails the run. The Mac energy-adjacent **positive** pass is
+then **Activity Monitor** in the same summary file. Classic Energy Log is
+likewise not a Mac-host standard template.
 
 ### Hazards enforced (not papered over)
 
@@ -76,6 +74,13 @@ host-owned `CAMetalLayer`, and exposes **no device-recreation API**.
 Replacement path (Gate 6/B2 ownership): close old admission → create fresh
 same-architecture surface → restore sessiond checkpoint → replay from
 `through_seq` → reconcile geometry → first fully restored frame.
+
+## Restored prior requirements (still OPEN — not silently narrowed)
+
+| Item | Status |
+|---|---|
+| Instruments while minimized and after wake | OPEN — human checklist §C / sleep-wake path |
+| Address Sanitizer across multi-surface + rapid create/free | OPEN for this package (prior authoring-host ASAN rows exist in the gates 3/7 evidence doc; not re-run here) |
 
 ## Human-required rows (still OPEN)
 

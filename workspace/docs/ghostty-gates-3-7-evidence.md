@@ -169,15 +169,26 @@ Prose: `workspace/docs/ghostty-gate7-physical-live-proof.md`
 | Item | Slot / artifact | Status |
 |---|---|---|
 | Gate7RenderingTests corpus | `corpus-gate7.txt` | GREEN (16 exec, 1 physical skip, 0 fail) |
-| AppKit/Metal main-thread (Gate 3 row E handoff) | `main-thread-admission.txt` | GREEN |
+| AppKit/Metal main-thread (Gate 3 row E handoff) | `main-thread-admission.txt` | GREEN (derived pthread_main_np + observed layerClass; not a seam) |
 | Idle / live-resize / serial rapid-churn | protocol + `rapid-churn.txt` | GREEN (20 serial cycles; no SIGKILL) |
 | Occlusion via window ordering | `occlusion-window-ordering.txt` | ATTEMPTED (AppKit bit did not flip on this desktop; controlled-occlusion corpus still covers host gate) |
 | Instruments Time Profiler | `instruments-time-profiler-summary.txt` | GREEN (probe exit 0 under xctrace) |
 | Instruments Allocations | `instruments-allocations-summary.txt` | GREEN |
-| Instruments Energy (Mac) | `instruments-power-energy-summary.txt` | GREEN via **Activity Monitor** — Power Profiler is iOS/iPadOS-only on this Xcode (measured) |
+| Instruments Energy (Mac) | `instruments-power-energy-summary.txt` | GREEN: **Power Profiler measured negative control** (real non-zero exit + stderr) then **Activity Monitor** positive pass |
 | Instruments Leaks | `instruments-leaks-summary.txt` | GREEN |
 | GPU/device-fault recovery | `gpu-device-fault-scope.txt` | HOST_CONTRACT GREEN; HARDWARE_FAULT / B2 replacement OPEN (no device-recreation API; IOSurfaceLayer not CAMetalLayer) |
 | Debug↔ReleaseFast fence note | `engine-fence-note.txt` | recorded (sessiond-coupled runs only) |
+
+### Restored prior requirements — still OPEN (not silently narrowed)
+
+These rows were in the pre-physical-slice hold and must stay visible until
+measured or explicitly waived. They are **not** covered by the automatable
+idle/resize/occluded Activity Monitor pass above.
+
+| Item | Why still OPEN | Closure path |
+|---|---|---|
+| Instruments while **minimized** and **after wake** | Automatable xctrace launch covers idle/resize/occlusion-attempt/churn inside the probe lifecycle only; it does not miniaturize the window or cross a real sleep/wake boundary under Instruments | Human checklist §B/C (or an extended probe phase that miniaturizes + records) — capture as `instruments-human-*.txt` beside the sleep/wake transcript |
+| **Address Sanitizer** across multi-surface and rapid create/free | Authoring-host ASAN Gate 3/7 filter was recorded earlier in this doc's "Recorded authoring-host runs" table; this physical-slice package does **not** re-run ASAN and does not claim ASAN coverage from Instruments Leaks | Re-run focused ASAN filter (or full Gate 3/7 ASAN) into an evidence slot under this directory, or waive only if queen accepts the prior authoring-host ASAN rows as sufficient |
 
 ### Human-required slice — OPEN
 

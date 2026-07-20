@@ -198,25 +198,29 @@ emit(stage: "bootstrap", facts: [
 
 // MARK: - main-thread-admission
 // AppKit/Metal main-thread proof deferred from Gate 3 row E.
+//
+// Values are DERIVED from the live surface — not hardcoded literals and not
+// "Thread.isMainThread inside onMain { }" (that is always true and cannot go
+// red). Create/present/free run directly on the process main thread (the
+// probe's NSApplication entry); pthread_main_np() is the observable. Layer
+// class is read back from the installed renderer layer.
 
-var mainThreadCreate = false
-var mainThreadPresent = false
-var mainThreadFree = false
+check(Thread.isMainThread, "probe entry must already be the main thread")
+check(pthread_main_np() != 0, "probe entry must be pthread main")
 
-let admission: LiveSurface = onMain {
-    mainThreadCreate = Thread.isMainThread
-    do {
-        return try LiveSurface(label: "admission", identity: identity)
-    } catch {
-        fail("admission create: \(error)")
-    }
+let admission: LiveSurface
+do {
+    admission = try LiveSurface(label: "admission", identity: identity)
+} catch {
+    fail("admission create: \(error)")
 }
-check(mainThreadCreate, "surface creation left main thread")
+// Recorded at the call site AFTER construction returns on this thread.
+let createPthreadMain = pthread_main_np() != 0
+let createIsMainThread = Thread.isMainThread
+check(createPthreadMain && createIsMainThread, "surface creation left main")
 
-let admissionFeed: OutputApplyResult = onMain {
-    admission.view.viewDidChangeBackingProperties()
-    return admission.feed("gate7-main-thread\r\n")
-}
+admission.view.viewDidChangeBackingProperties()
+let admissionFeed = admission.feed("gate7-main-thread\r\n")
 check(
     {
         if case .applied = admissionFeed { return true }
@@ -226,36 +230,38 @@ check(
 )
 check(
     waitUntil(timeout: 5) {
-        onMain {
-            let e = admission.view.renderEvidence
-            // Prefer full present; accept scheduled draw + live layer as the
-            // GPU-backed path when contents assignment is slightly delayed.
-            return (e.drawCount > 0 && e.hasPresentedContents)
-                || (e.drawCount > 0 && e.layerClass?.contains("IOSurfaceLayer") == true)
-        }
+        let e = admission.view.renderEvidence
+        return (e.drawCount > 0 && e.hasPresentedContents)
+            || (e.drawCount > 0 && e.layerClass?.contains("IOSurfaceLayer") == true)
     },
     "admission never presented (occlusion=\(String(describing: admission.view.appliedOcclusionVisible)) draws=\(admission.view.drawScheduledCount) layer=\(admission.view.renderEvidence.layerClass ?? "nil") feed=\(admissionFeed))"
 )
-onMain {
-    mainThreadPresent = Thread.isMainThread
-    check(
-        admission.view.renderEvidence.layerClass?.contains("IOSurfaceLayer") == true,
-        "admission missing IOSurfaceLayer (got \(admission.view.renderEvidence.layerClass ?? "nil"))"
-    )
-}
-check(mainThreadPresent, "present observation left main")
+let presentEvidence = admission.view.renderEvidence
+let presentPthreadMain = pthread_main_np() != 0
+let presentIsMainThread = Thread.isMainThread
+let observedLayerClass = presentEvidence.layerClass ?? "nil"
+let layerIsIOSurface = observedLayerClass.contains("IOSurfaceLayer")
+check(layerIsIOSurface, "admission missing IOSurfaceLayer (got \(observedLayerClass))")
+check(presentPthreadMain && presentIsMainThread, "present observation left main")
+check(presentEvidence.drawCount > 0, "present drawCount must be derived > 0")
 
-onMain {
-    admission.close()
-    mainThreadFree = Thread.isMainThread
-}
-check(mainThreadFree, "free left main thread")
+admission.close()
+let freePthreadMain = pthread_main_np() != 0
+let freeIsMainThread = Thread.isMainThread
+check(freePthreadMain && freeIsMainThread, "free left main")
 
 emit(stage: "main-thread-admission", facts: [
-    "createOnMain": mainThreadCreate,
-    "presentObservedOnMain": mainThreadPresent,
-    "freeOnMain": mainThreadFree,
-    "layerClass": "IOSurfaceLayer",
+    "createPthreadMainNp": createPthreadMain,
+    "createIsMainThread": createIsMainThread,
+    "presentPthreadMainNp": presentPthreadMain,
+    "presentIsMainThread": presentIsMainThread,
+    "freePthreadMainNp": freePthreadMain,
+    "freeIsMainThread": freeIsMainThread,
+    "layerClass": observedLayerClass,
+    "layerIsIOSurface": layerIsIOSurface,
+    "drawCount": presentEvidence.drawCount,
+    "hasPresentedContents": presentEvidence.hasPresentedContents,
+    "onMainHelperUsed": false,
     "scope": "AppKit/Metal main-thread proof deferred from Gate 3 row E",
 ])
 

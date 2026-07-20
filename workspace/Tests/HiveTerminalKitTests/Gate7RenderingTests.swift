@@ -159,7 +159,10 @@ final class Gate7RenderingTests: XCTestCase {
         XCTAssertTrue(waitUntil { view.appliedOcclusionVisible == false })
     }
 
-    func testRenderingStateUsesMainConfinedEngineWrappers() {
+    /// Forwards scale / display / occlusion into the engine on synchronize.
+    /// Does **not** prove main-thread confinement — that is Gate7Probe's
+    /// main-thread-admission stage (pthread_main_np + live IOSurfaceLayer).
+    func testRenderingStateForwardsScaleDisplayAndOcclusionToEngine() {
         let engine = FakeManualSurface()
         let view = HiveTerminalView(
             frame: NSRect(x: 0, y: 0, width: 400, height: 240),
