@@ -401,11 +401,11 @@ pub const RealVtEngine = struct {
         _ = userdata;
         if (out_attrs == null) return false;
         out_attrs.* = std.mem.zeroes(ghostty_c.GhosttyDeviceAttributes);
-        out_attrs.primary.conformance_level = 62;
-        out_attrs.primary.features[0] = 22;
-        out_attrs.primary.num_features = 1;
-        out_attrs.secondary.device_type = 1;
-        out_attrs.secondary.firmware_version = 10;
+        out_attrs.*.primary.conformance_level = 62;
+        out_attrs.*.primary.features[0] = 22;
+        out_attrs.*.primary.num_features = 1;
+        out_attrs.*.secondary.device_type = 1;
+        out_attrs.*.secondary.firmware_version = 10;
         return true;
     }
 
