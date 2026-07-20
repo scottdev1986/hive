@@ -3,11 +3,11 @@
 Building for debugging...
 [2/16] Write swift-version--58304C5D6DBC2206.txt
 Build complete! (0.10s)
-Test Suite 'Selected tests' started at 2026-07-19 22:24:58.159.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:24:58.160.
-Test Suite 'KittyKeyboardGoldenTests' started at 2026-07-19 22:24:58.160.
+Test Suite 'Selected tests' started at 2026-07-19 22:29:55.067.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:29:55.068.
+Test Suite 'KittyKeyboardGoldenTests' started at 2026-07-19 22:29:55.068.
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint]' started.
-Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint]' passed (0.115 seconds).
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint]' passed (0.079 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' started.
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' passed (0.013 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyPhysicalLeftAndRightShiftProduceDistinctPinnedCodes]' started.
@@ -16,12 +16,12 @@ Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyShiftEnterPr
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyShiftEnterPressRepeatReleaseMatchesPinnedGhosttyBytes]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' started.
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' passed (0.012 seconds).
-Test Suite 'KittyKeyboardGoldenTests' passed at 2026-07-19 22:24:58.325.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 0.164 (0.165) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:24:58.325.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 0.164 (0.165) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 22:24:58.325.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 0.164 (0.166) seconds
+Test Suite 'KittyKeyboardGoldenTests' passed at 2026-07-19 22:29:55.196.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.127 (0.128) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:29:55.196.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.127 (0.128) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:29:55.196.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.127 (0.129) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
