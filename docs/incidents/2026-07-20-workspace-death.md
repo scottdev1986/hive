@@ -76,15 +76,77 @@ and finding no `hattie` is reading the wrong database, not data loss.
   log" is **unreachable**, not evidence of absence — the feed-failure self-quit
   path (`AppDelegate.swift:257 terminateAfterFeedFailure`) cannot be ruled out
   for the 06:47 event.
+  **Resolved 2026-07-20 — see below. The call above was right: the channel was
+  redacted, and the reason it returned empty is now measured.**
 - **Exact pkill wall-clock.** No timestamped shell history.
+
+## Follow-up: feed-failure is now positively ruled out
+
+The unreachability above was called correctly, and it has since been closed —
+but from the opposite direction than expected. Not by finding the missing log
+line: by proving the suspect path **cannot produce the observed outcome**.
+
+**Why the channel was blind.** `NSLog` reaches the unified log with an empty
+subsystem, an empty category, and an `eventMessage` of `<private>` — the text
+is redacted. No `log show` predicate can match or read it. The positive control
+was therefore reading a channel that structurally cannot answer, which is
+exactly what "unreachable, not absent" meant. (A second, independent trap: `log`
+is a shell builtin in zsh and shadows `/usr/bin/log`, so an unqualified
+`log show --predicate` fails with `too many arguments` rather than returning
+results.)
+
+**Why feed-failure could not have caused either death.**
+`terminateAfterFeedFailure` does not terminate the app — it **hangs** it. The
+feed-restart path runs inside a `DispatchQueue.main.asyncAfter` block; from
+inside that block it calls `NSApp.terminate(nil)`; `applicationShouldTerminate`
+returns `.terminateLater`; AppKit spins a nested event loop in
+`-[NSApplication _shouldTerminate]`. The reply is then delivered via
+`DispatchQueue.main.async` — which can never run, because the main *dispatch*
+queue is already inside `_dispatch_main_queue_drain` and is not reentrant. A
+nested AppKit event loop pumps events, not the main dispatch queue.
+
+Reproduced twice against real launches: a stub `hive` touched a marker file, so
+`hive stop` demonstrably ran and exited 0, yet the process stayed alive at 0%
+CPU with no reply and no exit. `sample(1)` shows the full stack. Every route
+into that path is inside a main-queue block — `FeedClient.onExit` is itself
+dispatched through `DispatchQueue.main.async` — so the hang is unconditional,
+not a race.
+
+Both the 02:35 and the ~06:47 processes **exited**, and 02:35 exited through a
+full, orderly AppKit teardown. A feed-failure self-quit cannot produce that. So
+`terminateAfterFeedFailure` is **ruled out** for both events — positively, on
+mechanism, not merely unproven.
+
+Cmd-Q is unaffected and still quits normally: it enters `terminate:` from the
+event loop, so the main queue is free and the reply lands.
+
+The hang is a real defect, filed separately. It is deliberately **not** fixed as
+part of the instrumentation work — changing termination behavior needs its own
+scoped task and review.
 
 ## Instrumentation that would settle this next time
 
 1. `setopt EXTENDED_HISTORY` in the user's zsh config — would have clocked the
    pkill immediately.
-2. Emit the **quit reason** from every terminate path via `os_log` under a
-   stable subsystem/category (`dev.hive.workspace` / `lifecycle`):
-   `terminateAfterFeedFailure`, `applicationShouldTerminateAfterLastWindowClosed`,
-   and Cmd-Q are currently indistinguishable in the unified log.
+2. ~~Emit the **quit reason** from every terminate path via `os_log` under a
+   stable subsystem/category (`dev.hive.workspace` / `lifecycle`)~~ — **done**,
+   `workspace/Sources/HiveWorkspace/TerminationLog.swift`. Read it back with:
+
+   ```
+   /usr/bin/log show --last 1h \
+     --predicate 'subsystem == "dev.hive.workspace"' --style compact
+   ```
+
+   Line shape: `hive-terminate phase=<p> reason=<r> detail=<d>`. Reasons:
+   `feed-failure`, `last-window-closed`, `user-quit`, `apple-event-quit`,
+   `smoke-invalid-invocation`, `smoke-finished`. Phases separate the decision
+   from the outcome, because a `.terminateLater` reply resolves later — or is
+   cancelled and the app never exits at all.
+
+   **Absence is now evidence.** Every in-app route to exit records a line
+   first, so a process that vanishes with *no* `hive-terminate` line was killed
+   from outside (a signal, a `pkill`, a crash) rather than quitting itself.
+   Pair any query with a negative control — a subsystem that does not exist
+   returns a bare header — so an empty result is proven to mean absence.
 3. Give agent worktree debug builds a distinct process or bundle name, so a
    test instance can never be mistaken for the user's Workspace in the log.
