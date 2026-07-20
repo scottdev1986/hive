@@ -1,0 +1,8 @@
+2026-07-20T06:04:11.324Z HEAD=59d79123bb48fc579aaf09cb98a1299fa11723bd
+2026-07-20T06:04:11.324Z home=/tmp/hb25-p15 (42-byte broker path)
+2026-07-20T06:04:11.324Z project=/tmp/hb25-project-32f27c (non-Hive throwaway git repository)
+2026-07-20T06:04:11.324Z stagedHive=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/.dev/root/versions/0.0.0/hive
+2026-07-20T06:04:11.324Z stagedSessiond=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/.dev/root/versions/0.0.0/hive-sessiond
+2026-07-20T06:04:11.324Z workspace=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/.dev/root/versions/0.0.0/HiveWorkspace.app/Contents/MacOS/HiveWorkspace
+2026-07-20T06:04:12.348Z MUTATION VERIFIED: locked session breaks the real-window pixel preflight
+2026-07-20T06:04:12.348Z FAIL: real Workspace pixel qualification requires an unlocked macOS session
