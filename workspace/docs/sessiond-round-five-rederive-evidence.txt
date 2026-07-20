@@ -1,0 +1,35 @@
+
+variant: opener-without-flock + stamp matching child pid
+  hole:     3 (+5 stamp)
+  lockMode: open-no-flock, stamp==childPid: true
+  childPid: 95229, socket peer (this process): 90987
+  status:   failed
+  outcome:  rejected: hive-sessiond serve exited 1 before kernel peer ownership of broker.sock was proven for child pid 95229 (last ready error: broker.sock kernel peer pid 90987 is not the owned child 95229)
+  VERDICT:  hole dead (start refused)
+    [setup] real LOCK_EX held by pid 90987 on broker.lock
+
+variant: real LOCK_EX holder + stamp matching child pid
+  hole:     3/4 (+5 stamp)
+  lockMode: real-LOCK_EX, stamp==childPid: true
+  childPid: 95229, socket peer (this process): 90987
+  status:   failed
+  outcome:  rejected: hive-sessiond serve exited 1 before kernel peer ownership of broker.sock was proven for child pid 95229 (last ready error: broker.sock kernel peer pid 90987 is not the owned child 95229)
+  VERDICT:  hole dead (start refused)
+
+variant: NO lock exists at all + stale stamp matching child pid
+  hole:     5 (exact: start resolved with no flock existing)
+  lockMode: absent, stamp==childPid: true
+  childPid: 95229, socket peer (this process): 90987
+  status:   failed
+  outcome:  rejected: hive-sessiond serve exited 1 before kernel peer ownership of broker.sock was proven for child pid 95229 (last ready error: broker.sock kernel peer pid 90987 is not the owned child 95229)
+  VERDICT:  hole dead (start refused)
+
+variant: POSITIVE CONTROL — child pid IS the socket binder
+  hole:     none: proves the probe can get PAST the peer gate
+  lockMode: absent, stamp==childPid: false
+  childPid: 90987, socket peer (this process): 90987
+  status:   failed
+  outcome:  rejected: hive-sessiond serve did not prove kernel ownership of /var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hen-rederive-NOci5t/runtime/sessiond/broker.sock for child pid 90987 within 1500ms (last ready error: sessiond HELLO request timed out)
+  VERDICT:  control OK (peer gate passed; failed later, as designed)
+
+=== re-derivation complete: 0 hole(s) alive ===
