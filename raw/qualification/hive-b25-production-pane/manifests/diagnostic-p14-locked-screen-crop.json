@@ -1,0 +1,61 @@
+{
+  "cell": "diagnostic-p14-locked-screen-crop",
+  "ok": false,
+  "harnessReportedOk": true,
+  "semanticPixelReviewOk": false,
+  "head": "a9e0fecb2cedaed6bdac8f9808433ca00f51d475",
+  "home": "/tmp/hb25-p14",
+  "port": 43155,
+  "project": "/tmp/hb25-project-d56c68",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "workspaceInstanceId": "a7d083bb15",
+  "paneReport": {
+    "ok": true,
+    "sessionId": "ses_019f7e1b-967b-74f6-bf50-597d5e33353f",
+    "generation": 1,
+    "hostKind": "sessiond",
+    "engineBuildId": "0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300",
+    "highWater": 4904,
+    "drawCount": 1,
+    "hasPresentedContents": true,
+    "feedStatus": "working",
+    "captureRect": "224,96,1280,832",
+    "screenSize": "1728,1117",
+    "visible": true
+  },
+  "executionSideEffect": {
+    "messageId": "83fe4a7d-7b13-4ac4-b4e9-d147fc4b5b97",
+    "state": "queued",
+    "exactNoncePersisted": true,
+    "mutatedNonceAbsent": true
+  },
+  "preKillJournal": {
+    "path": "raw/qualification/hive-b25-production-pane/transcripts/claude-ses_019f7e1b-967b-74f6-bf50-597d5e33353f.journal.bin",
+    "bytes": 21455,
+    "sha256": "2648e490bec0b2f9502d24ee4f57256625cae3c8917989515a6ae29b6ba61a45",
+    "sequencePrefixHex": "000000000000000000000000000053bf",
+    "semanticAssessment": "substantive post-side-effect Claude TUI output"
+  },
+  "workspaceWindowPng": {
+    "path": "raw/qualification/hive-b25-production-pane/screenshots/claude-ses_019f7e1b-967b-74f6-bf50-597d5e33353f-workspace.png",
+    "bytes": 5765351,
+    "sha256": "5c212b95350ac4918c0d52e25048c1066a8facf698ed71cb875432b7db9687f8",
+    "pixelWidth": 2560,
+    "pixelHeight": 1664,
+    "semanticAssessment": "invalid: macOS lock screen, not Workspace"
+  },
+  "screenLockPositiveControl": {
+    "CGSSessionScreenIsLocked": 1,
+    "sessionLoginDone": true
+  },
+  "uncroppedTemporaryPresentAfterRun": false,
+  "failure": "locked login session hides application pixels from WindowServer screenshot APIs",
+  "exactHiveKillCompleted": true,
+  "processAudit": "agent dead; exact root session and all captured processes absent",
+  "exactRootSession": "hive-orchestrator-a7d083bb15",
+  "capturedRootProcessCount": 2,
+  "startedAt": "2026-07-20T05:59:15.450Z",
+  "writtenAt": "2026-07-20T05:59:54.107Z"
+}

@@ -1,0 +1,30 @@
+2026-07-20T05:59:15.772Z HEAD=a9e0fecb2cedaed6bdac8f9808433ca00f51d475
+2026-07-20T05:59:15.772Z home=/tmp/hb25-p14 (42-byte broker path)
+2026-07-20T05:59:15.772Z project=/tmp/hb25-project-d56c68 (non-Hive throwaway git repository)
+2026-07-20T05:59:16.150Z GREEN active-display preflight: initial=1 settled=1 woke=false
+2026-07-20T05:59:16.560Z daemon ready pid=92972 port=43155
+2026-07-20T05:59:16.587Z real Workspace launched pid=93045 instanceId=a7d083bb15
+2026-07-20T05:59:17.591Z hive_spawn requested tool=claude name=aria readOnly=true
+2026-07-20T05:59:31.203Z Workspace pane positive control:
+  PRODUCTION PANE PROOF: agent=aria instance=a7d083bb15 session=ses_019f7e1b-967b-74f6-bf50-597d5e33353f generation=1 engine=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0f300 highWater=4904 frame=(0.0, 0.0, 514.0, 743.0) drawCount=1 presented=true feedStatus=working window=13175 visible=true captureRect=224,96,1280,832 screenSize=1728,1117
+  PRODUCTION PANE PROOF OK
+2026-07-20T05:59:44.906Z GREEN execution side effect persisted messageId=83fe4a7d-7b13-4ac4-b4e9-d147fc4b5b97 state=queued
+2026-07-20T05:59:44.937Z GREEN exact production locator: ses_019f7e1b-967b-74f6-bf50-597d5e33353f generation=1 hostKind=sessiond
+2026-07-20T05:59:45.525Z CAPTURED before hive_kill phase=post-side-effect: journalBytes=21455 window=13175
+2026-07-20T05:59:45.525Z HARNESS RESULT: production spawn + real Workspace HiveTerminalView GREEN
+2026-07-20T05:59:48.752Z cleanup: hive_kill aria completed
+2026-07-20T05:59:49.091Z cleanup: exact root session hive-orchestrator-a7d083bb15 and 2 captured process(es) absent
+2026-07-20T05:59:54.093Z daemon required SIGKILL during harness cleanup
+
+POST-RUN PIXEL REVIEW INVALIDATED THE SCREENSHOT ROW:
+  CGSSessionScreenIsLocked=1
+  the 2560x1664 crop visibly contains the macOS lock-screen clock and wallpaper,
+  not the Workspace window
+  the uncropped temporary was absent as required
+
+DIAGNOSTIC ONLY: every non-pixel production leg is green at this pin, including
+the exact real vendor side effect, locator, substantive late journal, renderer
+state, hive_kill, and process-tree absence. The WindowServer full-screen API
+cannot expose application windows while the login session is locked. The next
+pin refuses a locked session before daemon or vendor launch, mutation-verifies
+that refusal, and preserves the full-screen/crop path for an unlocked rerun.

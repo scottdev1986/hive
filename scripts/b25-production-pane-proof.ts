@@ -103,6 +103,7 @@ let displayPreflight: {
   initialActiveDisplays: number;
   activeDisplays: number;
   wokeDisplay: boolean;
+  screenLocked: boolean;
 } | null = null;
 let capture: {
   journal: { path: string; bytes: number; sha256: string; sequencePrefixHex: string };
@@ -151,8 +152,47 @@ function requireActiveDisplay(count: number): void {
   }
 }
 
+function sessionScreenLocked(): boolean {
+  const output = command([
+    "/usr/bin/swift", "-e",
+    "import CoreGraphics; import Foundation; " +
+      "let value = CGSessionCopyCurrentDictionary() as? [String: Any]; " +
+      "print((value?[\"CGSSessionScreenIsLocked\"] as? NSNumber)?.intValue ?? -1)",
+  ], repoRoot);
+  if (output !== "0" && output !== "1") {
+    throw new Error(`screen-lock probe failed: ${output}`);
+  }
+  return output === "1";
+}
+
+function requireUnlockedSession(locked: boolean): void {
+  if (locked) {
+    throw new Error(
+      "real Workspace pixel qualification requires an unlocked macOS session",
+    );
+  }
+}
+
 async function prepareActiveDisplay(): Promise<void> {
   const initialActiveDisplays = activeDisplayCount();
+  const screenLocked = sessionScreenLocked();
+  displayPreflight = {
+    initialActiveDisplays,
+    activeDisplays: initialActiveDisplays,
+    wokeDisplay: false,
+    screenLocked,
+  };
+  let lockedMutationRejected = false;
+  try {
+    requireUnlockedSession(true);
+  } catch {
+    lockedMutationRejected = true;
+  }
+  if (!lockedMutationRejected) {
+    throw new Error("locked-session mutation did not break the preflight");
+  }
+  log("MUTATION VERIFIED: locked session breaks the real-window pixel preflight");
+  requireUnlockedSession(screenLocked);
   let activeDisplays = initialActiveDisplays;
   if (activeDisplays === 0) {
     command(["/usr/bin/caffeinate", "-u", "-t", "1"], repoRoot);
@@ -174,6 +214,7 @@ async function prepareActiveDisplay(): Promise<void> {
     initialActiveDisplays,
     activeDisplays,
     wokeDisplay: initialActiveDisplays === 0,
+    screenLocked,
   };
   log(
     `GREEN active-display preflight: initial=${initialActiveDisplays} ` +
