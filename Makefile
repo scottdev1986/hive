@@ -377,7 +377,7 @@ clean:
 	elif [ -f "$$dev/home/daemon.pid" ]; then pidfile="$$dev/home/daemon.pid"; fi; \
 	if [ -n "$$pidfile" ]; then \
 	  pid=$$(cat "$$pidfile" 2>/dev/null) || true; \
-	  [ -n "$$pid" ] || { echo "refusing: could not read daemon.pid ($$pidfile)" >&2; exit 1; }; \
+	  [ -n "$$pid" ] || { echo "refusing: daemon.pid exists but could not be read" >&2; exit 1; }; \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
 	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
 	fi; \
@@ -413,13 +413,14 @@ clean:
 	  [ -n "$$b" ] || { echo "refusing: could not basename a deleted-dev path component" >&2; exit 1; }; \
 	  rest="/$$b$$rest"; \
 	  d=$$(dirname "$$d") || true; \
-	  [ -n "$$d" ] || { echo "refusing: could not dirname a deleted-dev path component" >&2; exit 1; }; \
+	  [ -n "$$d" ] || { echo "refusing: could not walk to a surviving ancestor of the dev path" >&2; exit 1; }; \
 	done; \
 	if [ -d "$$d" ]; then \
 	  base=$$(cd "$$d" && pwd -P) || true; \
-	  [ -n "$$base" ] || { echo "refusing: could not resolve surviving ancestor of the dev path" >&2; exit 1; }; \
+	  [ -n "$$base" ] || { echo "refusing: could not resolve the physical dev path" >&2; exit 1; }; \
 	  devp="$$base$$rest"; \
 	fi; \
+	[ -n "$$devp" ] || { echo "refusing: could not resolve the physical dev path" >&2; exit 1; }; \
 	: "same three-spelling discipline for short HIVE_HOME under tmp"; \
 	homel="$(DEV_HOME)"; \
 	homep="$$home"; hd="$$home"; hrest=""; \
@@ -428,13 +429,14 @@ clean:
 	  [ -n "$$hb" ] || { echo "refusing: could not basename a deleted-home path component" >&2; exit 1; }; \
 	  hrest="/$$hb$$hrest"; \
 	  hd=$$(dirname "$$hd") || true; \
-	  [ -n "$$hd" ] || { echo "refusing: could not dirname a deleted-home path component" >&2; exit 1; }; \
+	  [ -n "$$hd" ] || { echo "refusing: could not walk to a surviving ancestor of the dev HIVE_HOME" >&2; exit 1; }; \
 	done; \
 	if [ -d "$$hd" ]; then \
 	  hbase=$$(cd "$$hd" && pwd -P) || true; \
-	  [ -n "$$hbase" ] || { echo "refusing: could not resolve surviving ancestor of HIVE_HOME" >&2; exit 1; }; \
+	  [ -n "$$hbase" ] || { echo "refusing: could not resolve the physical dev HIVE_HOME" >&2; exit 1; }; \
 	  homep="$$hbase$$hrest"; \
 	fi; \
+	[ -n "$$homep" ] || { echo "refusing: could not resolve the physical dev HIVE_HOME" >&2; exit 1; }; \
 	: "is_bound: executable under any spelling, any open fd under any spelling with literal component boundary, or tmux server or client pid"; \
 	is_bound() { \
 	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in \
