@@ -79,6 +79,27 @@ final class SmokeRunner {
         }
     }
 
+    private func sendInProcessKeys(_ text: String, to window: NSWindow) -> Bool {
+        for character in text {
+            let isReturn = character == "\n"
+            let characters = isReturn ? "\r" : String(character)
+            guard let event = NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: isReturn ? 36 : 0
+            ) else { return false }
+            window.sendEvent(event)
+        }
+        return true
+    }
+
     private func runSessiondLiveResizeInputProof(agent: String) {
         let paneID = ProjectState.paneID(forAgent: agent)
         let paneArrived = waitUntil(20) {
@@ -117,6 +138,25 @@ final class SmokeRunner {
         controller.dispatch(.focusPane(paneID))
         check(waitUntil(3) { window.firstResponder === terminal },
               "sessiond terminal owns the actual app keyboard")
+
+        let preResizeHighWater = terminal.highWater
+        let preResizeMarker = "HIVE_BEFORE_RESIZE_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        check(sendInProcessKeys("echo \(preResizeMarker)\n", to: window),
+              "constructed pre-resize in-process key events")
+        check(waitUntil(10) {
+            if case .applied(_, let stage) = terminal.inputSubmissionState {
+                return stage == "written-to-terminal"
+            }
+            return false
+        }, "pre-resize in-process keys were written to the terminal")
+        check(waitUntil(10) { terminal.highWater > preResizeHighWater },
+              "pre-resize command produced new PTY output")
+        let preResizeTransaction: String?
+        if case .applied(let transactionId, _) = terminal.inputSubmissionState {
+            preResizeTransaction = transactionId
+        } else {
+            preResizeTransaction = nil
+        }
 
         let geometryBefore = terminal.reportedGeometry
         let resizeFramesBefore = terminal.resizeFramesSent
@@ -185,29 +225,11 @@ final class SmokeRunner {
 
         let highWaterBefore = terminal.highWater
         let marker = "HIVE_LIVE_RESIZE_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
-        for character in "echo \(marker)\n" {
-            let isReturn = character == "\n"
-            let characters = isReturn ? "\r" : String(character)
-            guard let event = NSEvent.keyEvent(
-                with: .keyDown,
-                location: .zero,
-                modifierFlags: [],
-                timestamp: ProcessInfo.processInfo.systemUptime,
-                windowNumber: window.windowNumber,
-                context: nil,
-                characters: characters,
-                charactersIgnoringModifiers: characters,
-                isARepeat: false,
-                keyCode: isReturn ? 36 : 0
-            ) else {
-                failures.append("constructed in-process key event for \(character)")
-                continue
-            }
-            window.sendEvent(event)
-        }
+        check(sendInProcessKeys("echo \(marker)\n", to: window),
+              "constructed post-resize in-process key events")
         check(waitUntil(10) {
-            if case .applied(_, let stage) = terminal.inputSubmissionState {
-                return stage == "written-to-terminal"
+            if case .applied(let transactionId, let stage) = terminal.inputSubmissionState {
+                return transactionId != preResizeTransaction && stage == "written-to-terminal"
             }
             return false
         }, "post-resize in-process keys were written to the terminal")
