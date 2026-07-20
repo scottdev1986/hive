@@ -210,6 +210,13 @@ CASES = [
         '            : section == "appearance" ? appearanceController : tasksController',
         "            : tasksController",
     ),
+    (
+        "knownSections goes stale (lists a key the chain no longer resolves)",
+        f"{PAGE_SUITE}/testEveryKnownSectionResolvesToItsOwnPage",
+        WINDOW,
+        '    static let knownSections = ["tasks", "models", "usage", "appearance"]',
+        '    static let knownSections = ["tasks", "models", "usage", "appearance", "ghosts"]',
+    ),
 ]
 
 

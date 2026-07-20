@@ -195,9 +195,17 @@ final class SettingsWindowController: NSWindowController, NSToolbarDelegate {
     @objc private func showUsage(_ sender: Any?) { select(page: usageController) }
     @objc private func showAppearance(_ sender: Any?) { select(page: appearanceController) }
 
-    /// Programmatic section selection ("tasks" / "models" / "usage") — used by the
-    /// launch affordance and the smoke harness.
+    /// Every section key the chain below actually resolves. An unrecognised key
+    /// still falls through to Tasks — that behaviour is pre-existing and kept —
+    /// but it is now reported instead of silently looking correct.
+    static let knownSections = ["tasks", "models", "usage", "appearance"]
+
+    /// Programmatic section selection ("tasks" / "models" / "usage" /
+    /// "appearance") — used by the launch affordance and the smoke harness.
     func select(section: String) {
+        if !Self.knownSections.contains(section) {
+            NSLog("hive settings: unknown section %@, falling back to tasks", section)
+        }
         let page: SettingsPageController = section == "models" ? modelsController
             : section == "usage" ? usageController
             : section == "appearance" ? appearanceController : tasksController

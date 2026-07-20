@@ -16,6 +16,22 @@ them: a Hive-authored configuration file pushed through
 `surface_update_config`, the default loaders never called, inline colors only,
 theme lines emitted before the product overrides, and no default font family.
 
+## The load-bearing measurement
+
+**A live theme change repaints a running pane without wiping its content.**
+
+`SessiondPaneTerminal` records that applying a configuration after
+`processOutput` was observed to wipe the VT, leaving a blank pane with a full
+journal. Live re-theming is exactly that sequence, so this was measured at the
+real engine boundary rather than designed around: on a running surface holding
+known content, a dark → light push repaints the presented background to
+`f7f9fc` **and** the content survives in the semantic grid.
+
+That single result is what makes a live theme selector safe to offer at all. If
+it had failed, the selector would have had to be restricted to new panes and
+this increment would look very different. Details and the surrounding proofs are
+under [Live pane reconfiguration](#live-pane-reconfiguration).
+
 ## The paired themes
 
 Four first-party themes ship: `hive-dark`, `hive-light`, and an
@@ -122,8 +138,25 @@ reaching the light `[247, 249, 252]`.
 Settings gains an Appearance page carrying the two selectors C1.0 and C1.1 both
 deferred to this increment: the terminal theme and the terminal font. Both
 persist in `UserDefaults` — these are local presentation preferences, not
-routing policy, so they do not round-trip through the daemon. This is the first
-`UserDefaults` use in the workspace sources.
+routing policy, so they do not round-trip through the daemon. Routing a
+per-machine aesthetic choice through the daemon would turn it into distributed
+configuration. This is the first `UserDefaults` use in the workspace sources
+(queen ruling, 2026-07-20).
+
+Two keys are written, both namespaced:
+
+| Key | Values | Default |
+| --- | --- | --- |
+| `hive.terminal.themeSelection` | `system`, `dark`, `light` | `system` |
+| `hive.terminal.font` | `embedded`, `systemMonospaced` | `embedded` |
+
+Persistence is proven the same way everything else here is: a value is written,
+read back through a **separate** preferences instance over the same defaults
+suite, and mutation-proven in both directions — dropping the write and ignoring
+the stored value on read each turn their guard RED. The absent-key check carries
+a positive control (a written value must read back), because without it a
+misspelled key would return every default and the test would pass while reading
+nothing.
 
 Selecting a theme or font posts a change notification that running panes
 observe and reconfigure from, so a choice reaches panes that are already open
@@ -138,11 +171,40 @@ independently. A pinned dark terminal theme is proven to hold against a light
 appearance, and under the `.system` selection the palette follows the
 appearance the view is drawn in.
 
+### The section fall-through, measured
+
 The Settings window routes sections through nested ternaries that fall through
-to the Tasks page for anything unrecognised, so the appearance section is
-asserted to reach the Appearance page rather than assumed to; removing the
-appearance branch turns that check RED. The fall-through is pre-existing and is
-noted rather than refactored.
+to the Tasks page for anything unrecognised. This is pre-existing and was **not**
+refactored (queen ruling: surgical, follow the existing pattern). It is recorded
+here as a measured observation rather than an impression:
+
+- `select(section:)` with an unrecognised key (`"not-a-section"`) leaves the
+  window showing the Tasks page. Measured, not inferred.
+- The appearance section is asserted to reach the Appearance page rather than
+  assumed to; removing the appearance branch turns that check RED.
+- A one-line defensive default now makes an unknown key **visible** — it is
+  logged before the fall-through, so the behaviour is unchanged but no longer
+  silent.
+- `knownSections` is kept honest by a check that every listed key resolves to a
+  distinct page. A stale list would otherwise report a real section as unknown,
+  or stay silent on one that genuinely falls through.
+
+Adding a fifth page still requires editing several sites by hand; that fragility
+is flagged, not fixed, and belongs to whoever next touches this window.
+
+### Sweep for other hardcoded theme-derived constants
+
+`liveLogFingerprint` hardcoded the dark background, so it would have logged
+`background=0f1117` while pushing the light theme. That is the same class that
+bit C1.1's font threading, so the sources were swept for others: no
+theme-derived literal (`0f1117`, `e6eaf2`, `f7f9fc`, `1a1e26`, any authored
+palette entry, `hive-dark`, `hive-light`) appears anywhere in production sources
+outside the single theme definition, and no `font-size`, `window-padding`, or
+`adjust-cell-height` literal appears outside the generator. The search carries a
+positive control — the same pattern run against the generator returns hits — so
+the empty result is an empty world rather than a bad pattern. Two test files do
+assert `background = 0f1117`; those are C1.0/B2.4 checks on the *default* theme's
+emission and remain correct.
 
 ## Increase Contrast is C1.4's live signal, and why
 
@@ -170,9 +232,9 @@ defaulting it somewhere it would look wired and be inert.
 Every check in this increment is mutation-proven: the check is written, then
 exactly what it guards is broken, and the check must go RED.
 
-`workspace/scripts/c12-mutation-proof.py` runs 30 cases across the theme
+`workspace/scripts/c12-mutation-proof.py` runs 31 cases across the theme
 system, the engine boundary, persistence, delivery to running panes, and the
-settings wiring. All 30 turn their own guard RED, and all four C1.2 suites are
+settings wiring. All 31 turn their own guard RED, and all four C1.2 suites are
 GREEN before and after the run.
 
 The harness enforces three properties about itself, because an earlier shell
@@ -193,7 +255,7 @@ destroyed uncommitted work:
 
 Recorded after rebasing onto `ea8bbdfd`.
 
-`swift test` executes 512 tests with 14 skipped and 9 failures. Those 9 are
+`swift test` executes 513 tests with 14 skipped and 9 failures. Those 9 are
 proven pre-existing rather than assumed: the full suite was run against
 unmodified `main` in a separate worktree at the same commit, and the
 failing-test **sets** are identical. All nine are real-production-surface tests

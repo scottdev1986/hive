@@ -134,6 +134,33 @@ final class C12AppearanceSettingsTests: XCTestCase {
         )
     }
 
+    /// `knownSections` is only useful if it matches what the chain actually
+    /// resolves. A stale list would report a real section as unknown, or stay
+    /// silent on one that genuinely falls through -- so every listed key must
+    /// select a distinct page, and an unlisted key must land on Tasks.
+    func testEveryKnownSectionResolvesToItsOwnPage() {
+        let window = SettingsWindowController(hivePath: nil, daemonPort: nil, initialWidth: 880)
+        defer { window.close() }
+
+        var titles: [String: String] = [:]
+        for section in SettingsWindowController.knownSections {
+            window.select(section: section)
+            titles[section] = window.window?.title ?? ""
+        }
+
+        XCTAssertEqual(
+            Set(titles.values).count, SettingsWindowController.knownSections.count,
+            "each known section must reach a distinct page; got \(titles)"
+        )
+        XCTAssertEqual(titles["appearance"], "Settings — Appearance")
+
+        window.select(section: "not-a-section")
+        XCTAssertEqual(
+            window.window?.title, titles["tasks"],
+            "an unrecognised section keeps the pre-existing fall-through to Tasks"
+        )
+    }
+
     private func isHidden(_ view: NSView) -> Bool {
         var current: NSView? = view
         while let node = current {
