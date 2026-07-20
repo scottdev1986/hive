@@ -46,16 +46,26 @@ not that those bytes reached a PTY.
 
 ## Sequencing hold
 
-Two input/rendering defects were being fixed in parallel with this matrix:
+Two input/rendering defects were fixed in parallel with this matrix.
+Recording a live row before they landed would have pinned known-broken
+behavior as acceptance.
 
-- hattie — PTY OPOST staircase (`native/sessiond/src/pty_host.zig`)
-- henry — resize kills input (`SessiondPaneInputFocusTests.swift`)
+- hattie — PTY OPOST staircase. **LANDED** (`025f75b6`, `pty_host.zig:959`
+  restores `OPOST|ONLCR` after `cfmakeraw`, with its own regression test at
+  `:1168`). This unblocked the live rows recorded below.
+- hector — resize. Henry originally owned this and died in a vendor crash
+  wave; hector salvaged the WIP and owns it now. NOT yet landed, so row 9
+  stays HELD. Hector's outcome also shifted: faithful resize is reported as a
+  non-repro and the real defect is attach/claim, so row 9's final shape may
+  become SIGWINCH-as-signal plus geometry correctness rather than a
+  resize-breaks-input RED. Queen confirms before that row is recorded.
 
-Recording a live row before those land would pin known-broken behavior as
-acceptance. Rows whose evidence depends on live PTY output rendering, or on a
-resize, are therefore marked HELD and are not recorded here until queen
-confirms both fixes are on main. All defect-independent rows (encoder,
-fake-host, and daemon-side arbiter) are recorded now.
+Also open on main while this was recorded: a BLANK-PANE attach defect (a
+fresh attach can render nothing while the session journal provably carries
+correct CRLF bytes; isolated by hubert, owned by hattie). It does not affect
+the rows here — the live traversal below is verified at the host write
+boundary and never renders a pane, and the harness is run with
+`HIVE_B22_NO_APP=1`.
 
 ## Matrix
 
@@ -64,18 +74,59 @@ fake-host, and daemon-side arbiter) are recorded now.
 | 1 | claim-before-input | RECORDED | fake-host | `AttachInputTests.swift:15` `testGate8TextWaitsForClaimThenUsesFrozenInputSubmit` — text is held until `CLAIM_RESULT`; asserts `INPUT_SUBMIT` is absent before the grant. Superseded-connection variant at `:104`. |
 | 2 | no competing-writer steal | RECORDED | live-pty | `native/sessiond/test/real-host-golden.zig:817` — an `automation` contender against an incumbent human claim is `denied` and the reported owner token is the incumbent's. |
 | 2b | no automation-TIMEOUT steal | RECORDED (by construction) | source | `input_arbiter.zig` invents no timeouts (L9). `onVisibilityLeaseExpired` (L283-293) TERMINATES rather than releasing to automation; `claimAcquire` (L308-314) refuses from `human_owned`/`human_orphaned`. There is no timer that can release a human claim, so this is a structural property, not a timing test. See "Row 2b" below for why it is recorded this way. |
-| 3 | keys | RECORDED (new, encoder) · OPEN for closure | encoder | Ctrl chord `InputEncodingTests.swift:325`; Option mapping `:205`; press/repeat/release `:818-868`. NEW `B23SpecialKeyMatrixTests.swift` pins the four arrows to `CSI A/B/C/D` and asserts every navigation/function key (Home, End, PageUp/Down, forward Delete, F1/F2/F5/F12) encodes a NON-EMPTY and MUTUALLY DISTINCT sequence. See "Row 3" below for why the non-arrow keys are not pinned to byte goldens. |
+| 3 | keys | RECORDED (encoder) + LIVE-PTY (write boundary) | encoder + live-pty | Ctrl chord `InputEncodingTests.swift:325`; Option mapping `:205`; press/repeat/release `:818-868`. NEW `B23SpecialKeyMatrixTests.swift` pins the four arrows to `CSI A/B/C/D` and asserts every navigation/function key (Home, End, PageUp/Down, forward Delete, F1/F2/F5/F12) encodes a NON-EMPTY and MUTUALLY DISTINCT sequence. See "Row 3" below for why the non-arrow keys are not pinned to byte goldens. |
 | 4 | Kitty progressive modes | RECORDED (new, encoder) · OPEN for closure | encoder | `KittyKeyboardGoldenTests.swift:148` (`CSI > 1 u` -> `\x1b[13;2u`) pins PUSH only — a terminal that latched Kitty mode permanently and ignored every pop passed that suite. NEW `B23KittyStackMatrixTests.swift` adds pop (`CSI < u` restores the legacy golden), stack nesting (two pushes need two pops), and query (`CSI ? u` reports flags that TRACK the push, asserted as a round trip so a terminal answering a constant fails). |
-| 5 | dead key | RECORDED (encoder) · OPEN for closure | encoder | `InputEncodingTests.swift:516` — real surface, `´` -> `é` committed byte-exactly once; choreography at `:487`. |
-| 6 | CJK IME | RECORDED (encoder) · OPEN for closure | encoder | `InputEncodingTests.swift:516` — multi-stage `日`/`日本` preedit writes nothing, then commits exactly `日本語`. |
+| 5 | dead key | RECORDED (encoder) + LIVE-PTY (write boundary) | encoder + live-pty | `InputEncodingTests.swift:516` — real surface, `´` -> `é` committed byte-exactly once; choreography at `:487`. |
+| 6 | CJK IME | RECORDED (encoder) + LIVE-PTY (write boundary) | encoder + live-pty | `InputEncodingTests.swift:516` — multi-stage `日`/`日本` preedit writes nothing, then commits exactly `日本語`. |
 | 7 | bracketed paste | RECORDED (new, encoder) · OPEN for closure | encoder | `Gate8ClipboardTests.swift:43` pins the SET direction. NEW `B23PasteBoundaryMatrixTests.swift` adds the RESET direction (`?2004l` stops bracketing while a safe single-line body still reaches the encoder verbatim) and asserts exactly one marker pair on set. Without the reset row, a build that bracketed unconditionally passed. |
 | 7b | safe paste while unbracketed (SECURITY) | RECORDED (new) | encoder | `B23PasteBoundaryMatrixTests.swift` — with 2004 reset, a MULTILINE body is withheld entirely (zero bytes). **This is a SECURITY behavior, not a limitation:** an embedded newline would submit the pasted line to the shell without the user ever seeing it, which is the classic paste-injection vector. Do NOT "fix" this into sending. This discharges the clause's "with it reset, Ghostty's safe-paste rules apply." See "Row 7b" below. |
 | 8 | mouse modes, local vs captured | RECORDED (new) | encoder | NEW `B23MouseModeMatrixTests.swift` — X10 (9) press-only, VT200 (1000) press+release with button-3 release sentinel, SGR (1006) `M`/`m` edge discrimination, Shift override writes zero bytes while captured. Pre-existing any-motion (1003) + SGR at `InputEncodingTests.swift:747`, `:775`. |
 | 8b | mouse format 1005 (UTF-8) | RECORDED (new, encoder) · OPEN for closure | encoder | NEW `B23MouseFormatMatrixTests.swift` — at column 125 the default format emits the coordinate as one raw byte `0x9D` (not valid UTF-8 alone); DECSET 1005 re-encodes the SAME logical 157 as `0xC2 0x9D`. See "Rows 8b/8c" below on why the coordinate had to move. |
 | 8c | mouse format 1015 (urxvt) | RECORDED (new, encoder) · OPEN for closure | encoder | `B23MouseFormatMatrixTests.swift` — DECSET 1015 reports `ESC [ 32 ; 125 ; 14 M`: same button (+32 biased) and same cell, in decimal, with no SGR `<` introducer. A cross-format row asserts all three transports agree on the same logical cell. |
-| 9 | Retina resize coordinates | HELD (henry) | mixed | Backing-pixel coords `InputEncodingTests.swift:656`, `:676`; measured cell geometry `Gate7RenderingTests.swift:99`; `RESIZE`/`APPLIED` readback + stale-revision refusal `real-host-golden.zig:945`; independent `TIOCGWINSZ` readback `pending-a1-contract.zig:273`. End-to-end live Retina row `LiveHostAttachTests.swift:344` is skip-gated. HELD: henry's resize/input fix changes this path. |
+| 9 | Retina resize coordinates | HELD (hector) | mixed | Backing-pixel coords `InputEncodingTests.swift:656`, `:676`; measured cell geometry `Gate7RenderingTests.swift:99`; `RESIZE`/`APPLIED` readback + stale-revision refusal `real-host-golden.zig:945`; independent `TIOCGWINSZ` readback `pending-a1-contract.zig:273`. End-to-end live Retina row `LiveHostAttachTests.swift:344` is skip-gated. HELD: hector (henry's respawn) owns resize; his landing gates this row. |
 | 10 | retry / unknown semantics | RECORDED (new) | live-pty + fake-host | HOST side: `real-host-golden.zig:882` — identical `INPUT_SUBMIT` under a new transport correlation id returns a byte-identical `APPLIED` and the PTY echoes exactly once. CLIENT side (NEW `B23UnknownRetryMatrixTests.swift`): an `unknown` receipt fences input, so no further `INPUT_SUBMIT` is authored. See "Row 10" below for why fencing, not resending, is the correct reading of this clause. |
 | 11 | no-duplicate-input | RECORDED (encoder) · OPEN for closure | encoder | `InputEncodingTests.swift:277`, `:291`, `:311` — a printable is embedded in the key event and never also sent as text; `:516` asserts writes equal the commit list exactly. |
+
+## Live-PTY traversal (partial) — and why it is the substance of closure
+
+Today's "live input proof",
+`LiveHostAttachTests.testLiveGate8InputRoundTrip`, drives a
+`FakeManualSurface` — so it never exercises the real Gate 8 encoder at all.
+The encoder rows meanwhile capture bytes at `onWrite` from a real
+`GhosttyManualSurface` that never reaches a PTY. The two halves of the input
+proof had therefore never been connected, which makes the real-encoder ->
+real-PTY connection the actual substance of B2.3/A3 closure rather than a
+formality.
+
+`B23LiveEncoderTraversalTests.swift` establishes that connection for the rows
+that need no application mode. The claim it earns, stated exactly:
+
+> each row's real encoder bytes were **written to a live PTY, verified at the
+> host write boundary with a correlated `written-to-terminal` receipt**.
+
+That is deliberately NOT a "byte-verbatim round-tripped" claim. Reading the
+bytes back would mean echoing them through the proof child (`read -r` plus
+`printf %s`), which is a normalizer — it cannot carry NUL, and it would
+certify the normalizer rather than the transport. The write-boundary claim has
+no normalizer in the path. If story closure later wants the stronger
+round-trip claim, it is a separate addendum requiring an echo-capable child.
+
+Attribution: exactly one input event is driven per transaction, so each
+receipt is attributable to that row's encoder bytes and nothing else. The
+assertion is mutation-verified — asserting stage `queued` instead turns all
+four rows RED against the actual `written-to-terminal`, proving it reads the
+host's real stage rather than a default.
+
+Rows with live traversal recorded: 3 (keys), 5 (dead key), 6 (CJK IME), plus
+the plain-text positive control.
+
+Rows still WITHOUT live traversal, and why: 4 (Kitty), 7 and 7b (paste), 8,
+8b and 8c (mouse) all require an application mode to be set first. DECSET
+cannot be injected with `processOutput` on a live attach — the ordered-output
+engine owns the stream sequence and rejects a hand-fed frame as
+`invalidValue`. Setting them faithfully needs the PTY child to emit the mode
+as real output, which is harness work not undertaken here. Row 11
+(no-duplicate-input) is also not yet driven live.
 
 ## What "OPEN for closure" means
 

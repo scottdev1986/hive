@@ -1,0 +1,36 @@
+B2.3/A3 live-PTY traversal — write-boundary verification
+main: ef25d41d  hattie OPOST fix: 025f75b6
+harness: scripts/b22-live-attach-proof.ts HIVE_B22_NO_APP=1 port 43217
+
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/17] Write sources
+[3/17] Write swift-version--58304C5D6DBC2206.txt
+[5/7] Compiling HiveTerminalKitTests B23LiveEncoderTraversalTests.swift
+[6/7] Emitting module HiveTerminalKitTests
+[6/8] Write Objects.LinkFileList
+[7/8] Linking HiveWorkspacePackageTests
+Build complete! (3.36s)
+Test Suite 'Selected tests' started at 2026-07-19 21:55:01.537.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:55:01.538.
+Test Suite 'B23LiveEncoderTraversalTests' started at 2026-07-19 21:55:01.538.
+Test Case '-[HiveTerminalKitTests.B23LiveEncoderTraversalTests testEncoderBytesReachTheLivePtyAtTheWriteBoundary]' started.
+2026-07-19 21:55:02.063 xctest[61018:42147361] ghostty_surface_update_config live C1 background=0f1117 font-size=13 padding=10x8
+Test Case '-[HiveTerminalKitTests.B23LiveEncoderTraversalTests testEncoderBytesReachTheLivePtyAtTheWriteBoundary]' passed (0.922 seconds).
+Test Suite 'B23LiveEncoderTraversalTests' passed at 2026-07-19 21:55:02.461.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.922 (0.922) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:55:02.461.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.922 (0.922) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:55:02.461.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.922 (0.923) seconds
+B23-LIVE-TRAVERSAL-TRANSCRIPT
+row control-plain [matrix positive control]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-0 stage=written-to-terminal
+row key-arrow-up [matrix 3 (keys)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-1 stage=written-to-terminal
+row ime-cjk-commit [matrix 6 (CJK IME)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-2 stage=written-to-terminal
+row dead-key-commit [matrix 5 (dead key)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-3 stage=written-to-terminal
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+REAL_EXIT=0
