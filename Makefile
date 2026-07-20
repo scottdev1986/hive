@@ -20,8 +20,9 @@
 # daemon port/pid, sqlite db, project registry) derives from HIVE_HOME. make
 # run points HIVE_HOME at a short per-checkout path under /tmp (see DEV_HOME
 # below), not at .dev/home: sessiond places AF_UNIX sockets under
-# $HIVE_HOME/runtime/sessiond/..., and macOS sun_path (~104 bytes) rejects a
-# deep worktree path with SocketPathTooLong. Staged binaries stay under .dev/;
+# $HIVE_HOME/runtime/sessiond/..., and macOS sun_path holds at most 103
+# path chars against the CANONICAL home (sessiond realpaths it, so /tmp
+# counts as /private/tmp). Staged binaries stay under .dev/;
 # HIVE_INSTALL_ROOT points at the staged dev root so the dev CLI launches the
 # dev-built HiveWorkspace.app, never the installed one. Nothing here reads or
 # writes ~/.hive, ~/.local/share/hive, or ~/.local/bin/hive.
@@ -42,11 +43,16 @@ DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
 # Short per-checkout HIVE_HOME: digest of the resolved checkout path keeps
 # worktrees isolated from each other while the path itself stays short enough
-# for sessiond host sockets. clean hashes this same literal string for the
+# for sessiond host sockets. Budget the CANONICAL spelling: sessiond
+# realpaths the home, so /tmp/hv-<10 hex> binds as /private/tmp/hv-<10 hex>
+# (26 chars); the per-session suffix /runtime/sessiond/hosts/ses_<uuid>/
+# host.sock adds 74 more, totalling 100 of the 103 sun_path chars. The
+# former /tmp/hive-dev-<10 hex> home canonicalized to 32 chars and
+# overflowed at 106. clean hashes this same literal string for the
 # tmux socket token (axis 3) so it still finds the live server after a move.
 ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
 DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
-DEV_HOME := /tmp/hive-dev-$(DEV_HOME_TAG)
+DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
 LOCK := $(ROOT)/native/toolchain-lock.json
 NATIVE_CACHE ?= $(ROOT)/.cache/native
 DEMO_CACHE := $(NATIVE_CACHE)/demo
@@ -334,7 +340,7 @@ test-e2e:
 #
 #   1. executable under .dev/     — the Workspace app, staged dev binaries
 #   2. .dev/ OR HIVE_HOME in args — tmux/vendor children and settings paths;
-#                                   HIVE_HOME is the short /tmp/hive-dev-* path
+#                                   HIVE_HOME is the short /tmp/hv-* path
 #   3. dev tmux socket in args    — hash of the short HIVE_HOME literal (same
 #                                   string make run exports / hiveInstanceSuffix)
 #
@@ -357,7 +363,7 @@ test-e2e:
 #   - being the tmux server for the dev socket, or one of its clients
 # Anything else is a mentioner: reported, never signalled.
 #
-# SHORT-HOME SPELLINGS: HIVE_HOME is /tmp/hive-dev-TAG. On macOS /tmp links
+# SHORT-HOME SPELLINGS: HIVE_HOME is /tmp/hv-TAG. On macOS /tmp links
 # to /private/tmp, so the same three-spelling discipline applies to home:
 # homel is the literal DEV_HOME string (argv + socket digest), home is that
 # string after emptiness checks, homep is the deepest-surviving-ancestor

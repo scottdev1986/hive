@@ -213,6 +213,11 @@ final class SessiondPaneTerminal {
         }
     }
 
+    /// Cap on frames applied per main-queue turn: bounds how long one
+    /// coalesced output burst occupies the main queue before a keystroke
+    /// block can interleave (32 × 64 KiB = 2 MiB worst case per turn).
+    private static let maxFramesPerMainQueueTurn = 32
+
     /// Background frame pump: live OUTPUT keeps flowing after the attach
     /// handshake returns. Frames apply on the main thread through the
     /// locator-fenced view entry; transport loss triggers a re-attach to the
@@ -222,12 +227,26 @@ final class SessiondPaneTerminal {
             while true {
                 guard let self, !self.detached, !transport.isClosed else { return }
                 do {
-                    guard let frame = try transport.receive(timeout: 1.0) else {
+                    guard let first = try transport.receive(timeout: 1.0) else {
                         break // orderly close
                     }
+                    // Coalesce: drain everything already buffered behind
+                    // `first` and apply it in ONE main-queue block. Per-frame
+                    // dispatch let a scrollback flood queue hundreds of blocks
+                    // ahead of keystrokes, which also take a main-queue hop.
+                    // Order is preserved and acks still fire from
+                    // pumpHostFrame in applied order — only the main-queue
+                    // block count changes.
+                    let batch = transport.drainAvailableFrames(
+                        first: first,
+                        maxFrames: Self.maxFramesPerMainQueueTurn
+                    )
                     DispatchQueue.main.async {
-                        self.view?.pumpHostFrame(frame, frameBinding: binding)
+                        for frame in batch.frames {
+                            self.view?.pumpHostFrame(frame, frameBinding: binding)
+                        }
                     }
+                    if batch.hostClosed { break }
                 } catch let error as WireError {
                     if case .receiveTimeout = error { continue }
                     break

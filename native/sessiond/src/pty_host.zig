@@ -60,6 +60,7 @@ pub const Error = error{
     IdentityUnavailable,
     IoFailed,
     NotCanonical,
+    DrainStalled,
     Internal,
 };
 
@@ -643,15 +644,29 @@ pub const PtyHost = struct {
         return n;
     }
 
+    /// Consecutive would-block retries before writeDrainAll gives up (~1.5 s
+    /// at 100 µs per retry). Progress resets the count, so only a child that
+    /// stops reading entirely hits the bound; the old flat 1M-iteration guard
+    /// could spin ~100 s on the host's single loop.
+    pub const write_drain_stall_budget: usize = 15_000;
+
     /// Drain until the queue is empty or a would-block/error stops progress.
+    /// A continuously stalled consumer yields error.DrainStalled after
+    /// write_drain_stall_budget retries — the queued bytes are NOT dropped and
+    /// the host loop's writeDrain keeps making progress afterwards.
     pub fn writeDrainAll(self: *PtyHost) Error!void {
         var guard: usize = 0;
+        var stalls: usize = 0;
         while (self.write_queue.items.len > 0) : (guard += 1) {
             if (guard > 1_000_000) return error.IoFailed;
             const n = try self.writeDrain();
             if (n == 0) {
+                stalls += 1;
+                if (stalls > write_drain_stall_budget) return error.DrainStalled;
                 // Briefly yield for the PTY consumer.
                 std.Thread.sleep(100 * std.time.ns_per_us);
+            } else {
+                stalls = 0;
             }
         }
     }
@@ -1284,6 +1299,34 @@ test "write-queue atomic acceptance: whole range or nothing" {
             std.Thread.sleep(2 * std.time.ns_per_ms);
     }
     try testing.expectEqualStrings("hello world", got.items);
+}
+
+test "writeDrainAll bounds a stalled consumer with DrainStalled and keeps the queue" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    // sleep never reads stdin: once the kernel tty buffer fills, every drain
+    // would-blocks.
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sleep", "30" },
+        .geometry = defaultGeometry(),
+    }));
+
+    const chunk = try testing.allocator.alloc(u8, 256 * 1024);
+    defer testing.allocator.free(chunk);
+    @memset(chunk, 'x');
+    _ = try host.writeAccept(chunk);
+
+    const started = std.time.milliTimestamp();
+    try testing.expectError(error.DrainStalled, host.writeDrainAll());
+    const elapsed = std.time.milliTimestamp() - started;
+    // Bounded to the ~1.5 s stall budget, far under the old ~100 s worst case.
+    try testing.expect(elapsed < 10_000);
+    // Bytes are not dropped: the undrained tail stays queued and the host
+    // loop's writeDrain keeps working after the stall.
+    try testing.expect(host.write_queue.items.len > 0);
+    _ = try host.writeDrain();
 }
 
 test "resize enforces geometry bounds" {

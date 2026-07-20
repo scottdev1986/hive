@@ -143,8 +143,9 @@ make run     # launch the staged dev Workspace against this hive checkout
 `make build` stages a consumer-shaped, unsigned release under `.dev/`, and
 `make run` launches it fully isolated from any installed hive — every
 rendezvous name derives from a short per-checkout `HIVE_HOME` under
-`/tmp/hive-dev-<digest>` (deep worktree paths overflow macOS `sun_path` for
-sessiond sockets). With no argument it opens the checkout you run it from —
+`/tmp/hv-<digest>` (sessiond canonicalizes the home to `/private/tmp/...`
+before binding per-session sockets, and a longer home overflows macOS
+`sun_path`). With no argument it opens the checkout you run it from —
 inside an agent worktree, that worktree. Pass `PROJECT=/path/to/repo` to open a
 different git repo instead.
 

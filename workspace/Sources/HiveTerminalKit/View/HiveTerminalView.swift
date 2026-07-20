@@ -73,6 +73,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var renderingSuspended = false
     private var closed = false
     private var appliedFramebufferSize: (width: UInt32, height: UInt32)?
+    /// One-shot per attach: see forceRendererResizeIfSemanticGridIsStale.
+    private var postRestoreResizeForced = false
     private let resizeQuiescence: TimeInterval = 0.100
     // internal (not private): HiveTerminalView+Input.swift (gate 8) reads/writes these.
     var markedText = NSMutableAttributedString()
@@ -513,6 +515,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         }
         sessionLocator = newBinding.locator
         binding = newBinding
+        // A new attach may restore another stale-geometry checkpoint; re-arm
+        // the one-shot forced resize for its post-restore geometry refresh.
+        postRestoreResizeForced = false
         applicator.bind(newBinding, highWater: highWater)
         self.highWater = highWater
     }
@@ -806,6 +811,40 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
                 heightPx: appliedFramebufferSize.height
             )
         }
+        updateReportedGeometry(scheduleResize: false)
+        forceRendererResizeIfSemanticGridIsStale()
+    }
+
+    /// A checkpoint restore swaps the VT core in at the checkpoint's grid
+    /// geometry, but ghostty's embedded `updateSize` early-returns when the
+    /// framebuffer pixels are unchanged (apprt/embedded.zig), so the plain
+    /// `setSize` above cannot repair a stale grid: `reportedSize()` derives
+    /// from the stored pixel size while the semantic grid stays behind. When
+    /// the two disagree, nudge the pixel size once so ghostty performs a REAL
+    /// resize (`Surface.resize`/`queueIo(.resize)`) and the terminal core
+    /// adopts the live geometry — the same repair a window drag performs.
+    /// One-shot per attach: if the mismatch persists (configuration still
+    /// settling), the C1 settle loop keeps its old retry/deadline path.
+    private func forceRendererResizeIfSemanticGridIsStale() {
+        guard !postRestoreResizeForced,
+              let appliedFramebufferSize,
+              let reportedGeometry,
+              let snapshot = (engine as? ManualSurfaceSemanticSnapshotProviding)?.semanticSnapshot(),
+              reportedGeometry.columns != snapshot.geometry.columns ||
+                reportedGeometry.rows != snapshot.geometry.rows
+        else { return }
+        postRestoreResizeForced = true
+        // Any pixel difference defeats the unchanged-size early return; the
+        // immediate follow-up with the real size is itself a change, so the
+        // grid lands exactly on the live geometry.
+        let nudgedWidth = appliedFramebufferSize.width > 1
+            ? appliedFramebufferSize.width - 1
+            : appliedFramebufferSize.width + 1
+        engine.setSize(widthPx: nudgedWidth, heightPx: appliedFramebufferSize.height)
+        engine.setSize(
+            widthPx: appliedFramebufferSize.width,
+            heightPx: appliedFramebufferSize.height
+        )
         updateReportedGeometry(scheduleResize: false)
     }
 

@@ -36,6 +36,10 @@ pub const stream_chunk_max_bytes: usize = 64 * 1024;
 pub const checkpoint_output_interval_bytes: u64 = 2 * 1024 * 1024;
 /// Checkpoint after this many nanoseconds of mono time since last verified (§23).
 pub const checkpoint_interval_ns: u64 = 30 * std.time.ns_per_s;
+/// Journal persistence batching: journal.bin rewrites at most once per this
+/// interval while output streams (§18 durability is unchanged at checkpoints,
+/// termination, and forced persists — only the streaming path is batched).
+pub const journal_persist_interval_ns: u64 = 250 * std.time.ns_per_ms;
 
 // ── HVTCP001 envelope (116 bytes, network byte order) ───────────────────────
 
@@ -184,6 +188,14 @@ pub const VtEngine = struct {
     digestFn: *const fn (context: *anyopaque) [32]u8,
     /// Snapshot of PTY-bound effect bytes collected since create/import (for TG2 stream compare).
     effectsFn: *const fn (context: *anyopaque) []const u8,
+    /// Resize the shadow terminal grid; cell px are whole pixels per cell.
+    resizeFn: *const fn (
+        context: *anyopaque,
+        columns: u32,
+        rows: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) anyerror!void,
 
     pub fn deinit(self: VtEngine) void {
         self.deinitFn(self.context);
@@ -207,6 +219,16 @@ pub const VtEngine = struct {
 
     pub fn effects(self: VtEngine) []const u8 {
         return self.effectsFn(self.context);
+    }
+
+    pub fn resize(
+        self: VtEngine,
+        columns: u32,
+        rows: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) anyerror!void {
+        return self.resizeFn(self.context, columns, rows, cell_width_px, cell_height_px);
     }
 };
 
@@ -503,6 +525,10 @@ pub const TerminalState = struct {
     bytes_since_checkpoint: u64 = 0,
     /// Mono nanos of last verified checkpoint (or create).
     last_checkpoint_mono: u64 = 0,
+    /// Journal bytes/seq changed since the last persistJournal (§18 batching).
+    journal_dirty: bool = false,
+    /// Mono nanos of the last persistJournal (or create).
+    last_journal_persist_mono: u64 = 0,
     /// When true, reconnect must surface CHECKPOINT_UNAVAILABLE (no silent approx).
     reconnect_available: bool = true,
     closed: bool = false,
@@ -516,7 +542,7 @@ pub const TerminalState = struct {
         geometry: Geometry,
     ) TerminalState {
         const now = clock.now();
-        return .{
+        var state: TerminalState = .{
             .allocator = allocator,
             .engine = engine,
             .factory = factory,
@@ -526,7 +552,19 @@ pub const TerminalState = struct {
             .journal = Journal.init(allocator),
             .checkpoints = CheckpointStore.init(allocator),
             .last_checkpoint_mono = now,
+            .last_journal_persist_mono = now,
         };
+        // Sync the engine's pixel geometry once so XTWINOPS size reports and
+        // future checkpoint envelopes agree with `geometry` from the start.
+        // Non-fatal: the grid size is already correct from engine create; only
+        // cell px would stay unknown (reported as 0) if this fails.
+        state.engine.resize(
+            geometry.columns,
+            geometry.rows,
+            geometry.cell_width_px_16_16 >> 16,
+            geometry.cell_height_px_16_16 >> 16,
+        ) catch {};
+        return state;
     }
 
     pub fn deinit(self: *TerminalState) void {
@@ -567,6 +605,29 @@ pub const TerminalState = struct {
     pub fn newestCheckpoint(self: *const TerminalState) ?*const StoredCheckpoint {
         if (!self.reconnect_available) return null;
         return self.checkpoints.newest();
+    }
+
+    /// §23 geometry: the shadow VT follows every applied window resize so the
+    /// next verified checkpoint carries the live geometry — envelope fields
+    /// AND opaque payload agree, so restoreInto renders at the real size
+    /// instead of the create-time 80x24.
+    pub fn resize(self: *TerminalState, geometry: Geometry) Error!void {
+        if (self.closed) return error.Closed;
+        if (geometry.columns == 0 or geometry.rows == 0 or
+            geometry.columns > std.math.maxInt(u16) or
+            geometry.rows > std.math.maxInt(u16)) return error.Internal;
+        self.engine.resize(
+            geometry.columns,
+            geometry.rows,
+            geometry.cell_width_px_16_16 >> 16,
+            geometry.cell_height_px_16_16 >> 16,
+        ) catch {
+            // A VT that cannot take the new geometry would checkpoint/restore
+            // divergent geometry — never claim a clean restore from here.
+            self.reconnect_available = false;
+            return error.Internal;
+        };
+        self.geometry = geometry;
     }
 
     /// Feed PTY output: journal first (durability), then VT. On journal pressure,
@@ -614,6 +675,7 @@ pub const TerminalState = struct {
                     // that frees space). Journal after this is incomplete.
                     self.journal.bytes.clearRetainingCapacity();
                     self.journal.start_seq = self.output_seq; // hole from prior start..now
+                    self.journal_dirty = true;
                 }
             }
         }
@@ -631,6 +693,7 @@ pub const TerminalState = struct {
             self.reconnect_available = false;
             return err;
         };
+        self.journal_dirty = true;
         self.output_seq += chunk.len;
         self.bytes_since_checkpoint += chunk.len;
 
@@ -734,6 +797,7 @@ pub const TerminalState = struct {
 
         // Evict journal bytes covered by the verified checkpoint.
         try self.journal.evictThrough(through_seq);
+        self.journal_dirty = true;
     }
 
     /// Restore path for attach: import newest verified checkpoint into `dest`,
@@ -776,7 +840,7 @@ pub const TerminalState = struct {
     }
 
     /// Persist journal.bin atomically with mode 0600 on the file itself.
-    pub fn persistJournal(self: *const TerminalState, dir: std.fs.Dir) Error!void {
+    pub fn persistJournal(self: *TerminalState, dir: std.fs.Dir) Error!void {
         // Layout: 16-byte prefix (start_seq u64 BE + end_seq u64 BE) + raw bytes.
         var prefix: [16]u8 = undefined;
         std.mem.writeInt(u64, prefix[0..8], self.journal.start_seq, .big);
@@ -790,6 +854,20 @@ pub const TerminalState = struct {
             @memcpy(buf[16..][0..self.journal.bytes.items.len], self.journal.bytes.items);
         }
         try writeAtomic(dir, "journal.bin", buf);
+        self.journal_dirty = false;
+        self.last_journal_persist_mono = self.clock.now();
+    }
+
+    /// Batched streaming persist (§18): rewrites journal.bin at most once per
+    /// journal_persist_interval_ns so chatty output does not fsync-storm the
+    /// whole journal per batch. No-op while clean or inside the window.
+    /// Checkpoint/terminate/read-paths that need durability must call
+    /// persistJournal directly — batching never delays those.
+    pub fn persistJournalIfDue(self: *TerminalState, dir: std.fs.Dir) Error!void {
+        if (!self.journal_dirty) return;
+        const now = self.clock.now();
+        if (now -% self.last_journal_persist_mono < journal_persist_interval_ns) return;
+        try self.persistJournal(dir);
     }
 };
 
@@ -1001,6 +1079,12 @@ const MockEngine = struct {
     incomplete_export: bool = false,
     /// When true, write returns error (F1 fallible VT write).
     fail_write: bool = false,
+    /// Last applied resize (init-time geometry sync counts as a resize).
+    columns: u32 = 0,
+    rows: u32 = 0,
+    cell_width_px: u32 = 0,
+    cell_height_px: u32 = 0,
+    resize_calls: usize = 0,
 
     fn create(allocator: std.mem.Allocator) !*MockEngine {
         const self = try allocator.create(MockEngine);
@@ -1023,7 +1107,23 @@ const MockEngine = struct {
             .importFn = importCb,
             .digestFn = digestCb,
             .effectsFn = effectsCb,
+            .resizeFn = resizeCb,
         };
+    }
+
+    fn resizeCb(
+        ctx: *anyopaque,
+        columns: u32,
+        rows: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) anyerror!void {
+        const self: *MockEngine = @ptrCast(@alignCast(ctx));
+        self.columns = columns;
+        self.rows = rows;
+        self.cell_width_px = cell_width_px;
+        self.cell_height_px = cell_height_px;
+        self.resize_calls += 1;
     }
 
     fn deinitCb(ctx: *anyopaque) void {

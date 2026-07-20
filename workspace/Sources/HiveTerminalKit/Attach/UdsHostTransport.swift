@@ -14,6 +14,11 @@ public final class UdsHostTransport: HostTransport {
     private var fd: Int32
     private var pendingBytes = Data()
     private let lock = NSLock()
+    /// Serial background writer: keeps the blocking `write(2)` loop off the
+    /// caller's (usually main) thread while preserving per-transport FIFO
+    /// order. The fd is closed ONLY as a barrier on this queue (see `close`),
+    /// so a queued write can never land on a recycled fd.
+    private let writeQueue = DispatchQueue(label: "hive.uds-host-transport.write")
 
     public static func connect(endpoint: String) throws -> UdsHostTransport {
         let fd = socket(AF_UNIX, SOCK_STREAM, 0)
@@ -51,16 +56,39 @@ public final class UdsHostTransport: HostTransport {
     }
 
     deinit {
-        closeLocked()
+        close()
     }
 
+    /// Enqueues the frame on the serial background writer and returns without
+    /// blocking the caller on `write(2)`. Throws synchronously only when the
+    /// transport is already closed (or the frame fails to encode); a write
+    /// that fails on the queue closes the transport, which the read side
+    /// surfaces as end-of-stream. The enqueue happens under `lock` so FIFO
+    /// order matches caller order even with concurrent senders.
     public func send(_ frame: WireFrame) throws {
         let bytes = try FrameCodec.encode(frame)
         lock.lock()
-        defer { lock.unlock() }
-        guard !isClosed else { throw WireError.closed }
+        guard !isClosed else {
+            lock.unlock()
+            throw WireError.closed
+        }
+        writeQueue.async { [weak self] in
+            self?.writeAll(bytes)
+        }
+        lock.unlock()
+    }
+
+    /// Runs on `writeQueue`; `self` is retained for the duration of the call,
+    /// so the fd snapshot taken under `lock` stays valid until the barrier
+    /// close (queued after this block) runs.
+    private func writeAll(_ bytes: Data) {
+        lock.lock()
+        let open = !isClosed
+        let fd = self.fd
+        lock.unlock()
+        guard open, fd >= 0 else { return }
         var written = 0
-        try bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
+        let failed: Bool = bytes.withUnsafeBytes { (raw: UnsafeRawBufferPointer) in
             while written < raw.count {
                 let sent = write(fd, raw.baseAddress!.advanced(by: written), raw.count - written)
                 if sent > 0 {
@@ -68,9 +96,11 @@ public final class UdsHostTransport: HostTransport {
                     continue
                 }
                 if sent < 0 && errno == EINTR { continue }
-                throw WireError.closed
+                return true
             }
+            return false
         }
+        if failed { close() }
     }
 
     public func receive(timeout: TimeInterval?) throws -> WireFrame? {
@@ -96,17 +126,19 @@ public final class UdsHostTransport: HostTransport {
         }
     }
 
+    /// Marks the transport closed immediately (new sends fail, queued writes
+    /// self-drop, `receive` winds down) and closes the fd as a BARRIER on the
+    /// write queue: it runs after every already-enqueued write, so an
+    /// in-flight or pending write always completes on the real fd and never
+    /// on a recycled one. Returns without waiting for the queue.
     public func close() {
         lock.lock()
-        defer { lock.unlock() }
-        closeLocked()
-    }
-
-    private func closeLocked() {
-        guard !isClosed else { return }
+        let staleFd = isClosed ? -1 : fd
         isClosed = true
-        Darwin.close(fd)
         fd = -1
+        lock.unlock()
+        guard staleFd >= 0 else { return }
+        writeQueue.async { Darwin.close(staleFd) }
     }
 
     /// Complete frame from the accumulation buffer, if one is fully buffered.

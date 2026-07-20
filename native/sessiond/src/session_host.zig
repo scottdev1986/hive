@@ -146,6 +146,15 @@ pub const RealVtEngine = struct {
     digest_value: [32]u8 = @splat(0),
     last_bridge_address: usize = 0,
     last_copy_address: usize = 0,
+    /// Live grid + cell pixel geometry, updated by resize; drives XTWINOPS
+    /// size reports (CSI 14/16/18 t).
+    columns: u32,
+    rows: u32,
+    cell_width_px: u32 = 0,
+    cell_height_px: u32 = 0,
+    /// XTVERSION reply text ("ghostty <version>"), built once at create.
+    xtversion_buf: [80]u8 = undefined,
+    xtversion_len: usize = 0,
 
     pub fn create(
         allocator: std.mem.Allocator,
@@ -171,7 +180,31 @@ pub const RealVtEngine = struct {
             .allocator = allocator,
             .terminal = terminal,
             .effect_sink = effect_sink,
+            .columns = columns,
+            .rows = rows,
         };
+        // XTVERSION identifies as the pinned Ghostty engine build (claude's
+        // detection requires the reply to start with "ghostty"); the default
+        // "libghostty" string fails that check.
+        const fallback = "ghostty libghostty-vt";
+        var version: ghostty_c.GhosttyString = .{ .ptr = null, .len = 0 };
+        if (ghostty_c.ghostty_build_info(
+            ghostty_c.GHOSTTY_BUILD_INFO_VERSION_STRING,
+            @ptrCast(&version),
+        ) == ghostty_c.GHOSTTY_SUCCESS and version.ptr != null and version.len > 0) {
+            const text = std.fmt.bufPrint(
+                &self.xtversion_buf,
+                "ghostty {s}",
+                .{version.ptr[0..version.len]},
+            ) catch blk: {
+                @memcpy(self.xtversion_buf[0..fallback.len], fallback);
+                break :blk fallback;
+            };
+            self.xtversion_len = text.len;
+        } else {
+            @memcpy(self.xtversion_buf[0..fallback.len], fallback);
+            self.xtversion_len = fallback.len;
+        }
         if (ghostty_c.ghostty_terminal_set(
             terminal,
             ghostty_c.GHOSTTY_TERMINAL_OPT_USERDATA,
@@ -181,6 +214,23 @@ pub const RealVtEngine = struct {
             terminal,
             ghostty_c.GHOSTTY_TERMINAL_OPT_WRITE_PTY,
             @ptrCast(&writePtyCallback),
+        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
+        // Startup probes (claude et al.): answer DA / XTVERSION / XTWINOPS the
+        // way ghostty-the-app does, or the client stalls waiting on replies.
+        if (ghostty_c.ghostty_terminal_set(
+            terminal,
+            ghostty_c.GHOSTTY_TERMINAL_OPT_DEVICE_ATTRIBUTES,
+            @ptrCast(&deviceAttributesCallback),
+        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
+        if (ghostty_c.ghostty_terminal_set(
+            terminal,
+            ghostty_c.GHOSTTY_TERMINAL_OPT_XTVERSION,
+            @ptrCast(&xtversionCallback),
+        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
+        if (ghostty_c.ghostty_terminal_set(
+            terminal,
+            ghostty_c.GHOSTTY_TERMINAL_OPT_SIZE,
+            @ptrCast(&sizeCallback),
         ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineCreateFailed;
         var image_limit: u64 = 16 * 1024 * 1024;
         if (ghostty_c.ghostty_terminal_set(
@@ -210,6 +260,7 @@ pub const RealVtEngine = struct {
             .importFn = importCb,
             .digestFn = digestCb,
             .effectsFn = effectsCb,
+            .resizeFn = resizeCb,
         };
     }
 
@@ -300,6 +351,89 @@ pub const RealVtEngine = struct {
         self.effects.appendSlice(self.allocator, bytes) catch {
             self.effect_failed = true;
         };
+    }
+
+    /// §23: keep the shadow VT grid/pixel geometry in lockstep with the host's
+    /// applied window so checkpoints and XTWINOPS replies carry the real size.
+    pub fn resize(
+        self: *RealVtEngine,
+        columns: u32,
+        rows: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) !void {
+        if (columns == 0 or columns > std.math.maxInt(u16) or
+            rows == 0 or rows > std.math.maxInt(u16))
+            return error.InvalidGeometry;
+        if (ghostty_c.ghostty_terminal_resize(
+            self.terminal,
+            @intCast(columns),
+            @intCast(rows),
+            cell_width_px,
+            cell_height_px,
+        ) != ghostty_c.GHOSTTY_SUCCESS) return error.EngineResizeFailed;
+        self.columns = columns;
+        self.rows = rows;
+        self.cell_width_px = cell_width_px;
+        self.cell_height_px = cell_height_px;
+        try self.updateDigest();
+    }
+
+    fn resizeCb(
+        context: *anyopaque,
+        columns: u32,
+        rows: u32,
+        cell_width_px: u32,
+        cell_height_px: u32,
+    ) anyerror!void {
+        const self: *RealVtEngine = @ptrCast(@alignCast(context));
+        try self.resize(columns, rows, cell_width_px, cell_height_px);
+    }
+
+    /// DA1/DA2/DA3 answers mirror ghostty-the-app (apprt/embedded.zig
+    /// deviceAttributes): VT220 level-2 conformance + ANSI color (no clipboard
+    /// 52 — clipboard writes are denied), DA2 firmware 10, DA3 unit 0.
+    fn deviceAttributesCallback(
+        _: ghostty_c.GhosttyTerminal,
+        userdata: ?*anyopaque,
+        out_attrs: [*c]ghostty_c.GhosttyDeviceAttributes,
+    ) callconv(.c) bool {
+        _ = userdata;
+        if (out_attrs == null) return false;
+        out_attrs.* = std.mem.zeroes(ghostty_c.GhosttyDeviceAttributes);
+        out_attrs.primary.conformance_level = 62;
+        out_attrs.primary.features[0] = 22;
+        out_attrs.primary.num_features = 1;
+        out_attrs.secondary.device_type = 1;
+        out_attrs.secondary.firmware_version = 10;
+        return true;
+    }
+
+    fn xtversionCallback(
+        _: ghostty_c.GhosttyTerminal,
+        userdata: ?*anyopaque,
+    ) callconv(.c) ghostty_c.GhosttyString {
+        const self: *RealVtEngine = @ptrCast(@alignCast(userdata orelse return .{
+            .ptr = null,
+            .len = 0,
+        }));
+        return .{ .ptr = &self.xtversion_buf, .len = self.xtversion_len };
+    }
+
+    fn sizeCallback(
+        _: ghostty_c.GhosttyTerminal,
+        userdata: ?*anyopaque,
+        out_size: [*c]ghostty_c.GhosttySizeReportSize,
+    ) callconv(.c) bool {
+        const self: *RealVtEngine = @ptrCast(@alignCast(userdata orelse return false));
+        if (out_size == null) return false;
+        out_size.* = .{
+            .rows = @intCast(self.rows),
+            .columns = @intCast(self.columns),
+            .cell_width = self.cell_width_px,
+            .cell_height = self.cell_height_px,
+        };
+        return true;
     }
 
     fn bridgeAllocate(
@@ -2303,6 +2437,11 @@ pub const HostCore = struct {
     lease: VisibilityLease,
     grants: std.ArrayList(GrantEntry) = .{},
     active_claim: ?ActiveInputClaim = null,
+    /// Last human claim orphaned by an unclean viewer drop (#40). Retained only
+    /// so inspection can still name the input owner of record while the arbiter
+    /// holds HUMAN_ORPHANED — never consulted for authorization. Cleared on the
+    /// next grant or clean release.
+    orphaned_claim: ?ActiveInputClaim = null,
     input_replays: std.ArrayList(InputReplay) = .{},
     resize_replays: std.ArrayList(ResizeReplay) = .{},
     termination: ?TerminationBinding = null,
@@ -2335,6 +2474,7 @@ pub const HostCore = struct {
         for (self.grants.items) |*grant| grant.deinit(self.allocator);
         self.grants.deinit(self.allocator);
         if (self.active_claim) |*claim| claim.deinit(self.allocator);
+        if (self.orphaned_claim) |*claim| claim.deinit(self.allocator);
         for (self.input_replays.items) |*replay| replay.deinit(self.allocator);
         self.input_replays.deinit(self.allocator);
         for (self.resize_replays.items) |*replay| replay.deinit(self.allocator);
@@ -2519,6 +2659,7 @@ pub const HostCore = struct {
                 };
             };
             claim.next_sequence = resumed.next_sequence;
+            self.clearOrphanedClaim();
             self.active_claim = claim;
             initialized_fields = 0;
             return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
@@ -2536,23 +2677,41 @@ pub const HostCore = struct {
             };
         };
         claim.next_sequence = granted.next_sequence;
+        self.clearOrphanedClaim();
         self.active_claim = claim;
         initialized_fields = 0;
         return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
     }
 
     /// Unclean viewer drop: orphan the arbiter claim (lease current) and clear
-    /// the host `active_claim` so a returning human can re-enter (#40).
+    /// the host `active_claim` so a returning human can re-enter (#40). The
+    /// dropped claim moves to `orphaned_claim` so inspection still reports the
+    /// input owner of record while HUMAN_ORPHANED holds; if the arbiter did
+    /// not orphan (expired lease → Closed), the claim is dropped for real.
     pub fn onViewerDetached(self: *HostCore, viewer_id: []const u8) void {
         const claim = if (self.active_claim) |*active| active else return;
         if (!std.mem.eql(u8, claim.owner_viewer_id, viewer_id)) return;
+        var orphaned = false;
         if (self.termination) |binding| {
             if (binding.arbiter) |arbiter| {
                 arbiter.viewerDisconnect() catch {};
+                orphaned = arbiter.currentState() == .human_orphaned;
             }
         }
-        claim.deinit(self.allocator);
+        if (orphaned) {
+            if (self.orphaned_claim) |*stale| stale.deinit(self.allocator);
+            self.orphaned_claim = self.active_claim;
+        } else {
+            claim.deinit(self.allocator);
+        }
         self.active_claim = null;
+    }
+
+    /// Ownership resolved (grant or clean release): the retained orphan no
+    /// longer names the input owner of record.
+    fn clearOrphanedClaim(self: *HostCore) void {
+        if (self.orphaned_claim) |*claim| claim.deinit(self.allocator);
+        self.orphaned_claim = null;
     }
 
     /// Clean CLAIM_RELEASE → FREE + clear host claim (no orphan).
@@ -2588,6 +2747,7 @@ pub const HostCore = struct {
         };
         claim.deinit(self.allocator);
         self.active_claim = null;
+        self.clearOrphanedClaim();
         return self.encodeInputApplied(.{
             .transaction_id = "claim-release",
             .stage = "accepted",
@@ -2864,9 +3024,13 @@ pub const HostCore = struct {
             return error.InputSequenceOverflow;
         const ordered_at = binding.pty.operationSequence();
         binding.pty.writeDrainAll() catch |err| {
+            // DrainStalled: the child stopped reading and the bounded drain
+            // gave up, but the bytes are still queued and the host loop keeps
+            // draining — receipt "queued"/"partial" (never "unknown", which
+            // would permanently fence client input).
             replay.receipt = .{
                 .transaction_id = replay.transaction_id,
-                .stage = "unknown",
+                .stage = if (err == error.DrainStalled) "queued" else "unknown",
                 .byte_range = accepted.byte_range,
                 .ordered_at = ordered_at,
                 .available_credit_bytes = @min(
@@ -2953,7 +3117,11 @@ pub const HostCore = struct {
         return &self.resize_replays.items[self.resize_replays.items.len - 1];
     }
 
-    pub fn resizeTerminal(self: *HostCore, payload: []const u8) ![]u8 {
+    pub fn resizeTerminal(
+        self: *HostCore,
+        payload: []const u8,
+        state: *terminal_state.TerminalState,
+    ) ![]u8 {
         if (!protocol.validateControlPayload(
             self.allocator,
             generated.wire_schema.resize_payload,
@@ -2993,6 +3161,18 @@ pub const HostCore = struct {
         self.registration.record.geometry.rows = @intCast(receipt.readback.rows);
         self.registration.record.geometry.width_px = receipt.readback.width_px;
         self.registration.record.geometry.height_px = receipt.readback.height_px;
+        // The shadow VT follows the applied window so future checkpoints carry
+        // the real geometry (§23: a checkpoint restore renders at the live
+        // size, not the create-time 80x24).
+        state.resize(.{
+            .columns = receipt.readback.columns,
+            .rows = receipt.readback.rows,
+            .cell_width_px_16_16 = cellFixed16_16(receipt.readback.width_px, receipt.readback.columns),
+            .cell_height_px_16_16 = cellFixed16_16(receipt.readback.height_px, receipt.readback.rows),
+        }) catch |err| {
+            replay.result = .{ .unknown = @errorName(err) };
+            return self.encodeResizeApplied(replay.result.?);
+        };
         replay.result = .{ .applied = receipt };
         return self.encodeResizeApplied(replay.result.?);
     }
@@ -3286,6 +3466,21 @@ pub const HostCore = struct {
         self.registration.record.visibility.state = .visible;
         self.registration.record.visibility.open_terminal_revision = revision;
         self.registration.record.visibility.expires_mono_ns = self.lease.expires_mono_ns;
+        // The grant-time clamp ties claim lifetime to the visibility lease
+        // (claimInput), so a live renewal must extend both. Without this the
+        // claim expires 10–15 s after acquire even while the pane stays
+        // visible, and the next keystroke is rejected "input claim expired".
+        if (self.active_claim) |*claim| {
+            if (claim.expires_mono_ns < self.lease.expires_mono_ns) {
+                claim.expires_mono_ns = self.lease.expires_mono_ns;
+                const claim_remaining_ms = (self.lease.expires_mono_ns - now_ns) / std.time.ns_per_ms;
+                var claim_expiry_storage: [24]u8 = undefined;
+                const claim_expiry = try broker.wallDeadline(&claim_expiry_storage, claim_remaining_ms);
+                const updated_expiry = try self.allocator.dupe(u8, claim_expiry);
+                self.allocator.free(claim.lease_expires_at);
+                claim.lease_expires_at = updated_expiry;
+            }
+        }
         var expiry_storage: [24]u8 = undefined;
         const expires_at = try self.leaseWallDeadline(now_ns, &expiry_storage);
         var revision_storage: [32]u8 = undefined;
@@ -3953,6 +4148,7 @@ fn handleViewerFrame(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
+    state: *terminal_state.TerminalState,
     authorization: *const ViewerAuthorization,
     request: *const protocol.Frame,
     now_ns: u64,
@@ -4003,7 +4199,7 @@ fn handleViewerFrame(
                 return;
             }
             response_type = generated.frame_type.applied;
-            break :blk core.resizeTerminal(request.payload) catch |err| {
+            break :blk core.resizeTerminal(request.payload, state) catch |err| {
                 try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
                 return;
             };
@@ -4245,6 +4441,7 @@ fn pumpAttachedViewer(
                 allocator,
                 viewer.stream,
                 core,
+                state,
                 &viewer.authorization,
                 &frame,
                 timer.read(),
@@ -4381,6 +4578,13 @@ fn geometryFixed16_16(value: f64) !u32 {
     return @intFromFloat(value * scale);
 }
 
+/// Whole-pixel total ÷ cell count as unsigned fixed-point 16.16; 0 when the
+/// pixel size or cell count is unknown (matches Geometry's "0 = unknown").
+fn cellFixed16_16(total_px: u32, cells: u32) u32 {
+    if (total_px == 0 or cells == 0) return 0;
+    return @intCast((@as(u64, total_px) << 16) / cells);
+}
+
 fn verifyWorkspaceIdentity(pid: i32, start_token: []const u8) !void {
     const identity = switch (process_inspector.observeProcess(pid)) {
         .present => |identity| identity,
@@ -4405,17 +4609,29 @@ const PersistenceCursor = struct {
     checkpoint_seq: ?u64 = null,
 };
 
+/// Streaming output batches persist the journal on the §18 batch window; any
+/// path that needs the tail durable NOW (terminate, lease expiry, startup) or
+/// that just verified a checkpoint (which evicted the covered journal prefix)
+/// forces the rewrite.
+const JournalPersist = enum { batched, forced };
+
 fn persistTerminalState(
     state: *terminal_state.TerminalState,
     directory: std.fs.Dir,
     cursor: *PersistenceCursor,
+    journal: JournalPersist,
 ) !void {
-    try state.persistJournal(directory);
-    if (!state.checkpointAvailable()) return;
-    const checkpoint_seq = checkpointWireSeq(state);
-    if (cursor.checkpoint_seq == checkpoint_seq) return;
+    const checkpoint_seq: ?u64 = if (state.checkpointAvailable()) checkpointWireSeq(state) else null;
+    const new_checkpoint = checkpoint_seq != null and cursor.checkpoint_seq != checkpoint_seq;
+    if (journal == .forced or new_checkpoint) {
+        try state.persistJournal(directory);
+    } else {
+        try state.persistJournalIfDue(directory);
+    }
+    const seq = checkpoint_seq orelse return;
+    if (cursor.checkpoint_seq == seq) return;
     try state.persistCheckpoints(directory);
-    cursor.checkpoint_seq = checkpoint_seq;
+    cursor.checkpoint_seq = seq;
 }
 
 fn refreshRegistration(
@@ -4471,7 +4687,9 @@ const NeutralLiveEvidenceSource = struct {
                 .opaqueBytes = checkpoint.opaquePayload(),
             } else null;
         var input_owner: ?neutral_control_plane.WireInputClaim = null;
-        if (self.core.active_claim) |claim| {
+        // Active claim first; otherwise the retained orphan still names the
+        // input owner of record while the arbiter holds HUMAN_ORPHANED (#40).
+        if (self.core.active_claim orelse self.core.orphaned_claim) |claim| {
             const kind = std.meta.stringToEnum(
                 @FieldType(neutral_control_plane.WireInputClaim, "kind"),
                 claim.kind,
@@ -4597,7 +4815,7 @@ fn runHostLoop(
         refreshRegistration(core, state);
         const now_ns = timer.read();
         if (core.lease.expired(now_ns)) {
-            try persistTerminalState(state, runtime.directory, persistence);
+            try persistTerminalState(state, runtime.directory, persistence, .forced);
             refreshRegistration(core, state);
             _ = try core.enforceVisibilityExpiry(now_ns);
             break;
@@ -4607,7 +4825,7 @@ fn runHostLoop(
             const connection_now_ns = timer.read();
             if (core.lease.expired(connection_now_ns)) {
                 stream.close();
-                try persistTerminalState(state, runtime.directory, persistence);
+                try persistTerminalState(state, runtime.directory, persistence, .forced);
                 refreshRegistration(core, state);
                 _ = try core.enforceVisibilityExpiry(connection_now_ns);
                 break;
@@ -4679,7 +4897,7 @@ fn runHostLoop(
         };
         const output = pty.readAvailable() catch |err| switch (err) {
             error.Closed => {
-                try persistTerminalState(state, runtime.directory, persistence);
+                try persistTerminalState(state, runtime.directory, persistence, .forced);
                 refreshRegistration(core, state);
                 // Best-effort tail push: every journaled byte reaches the
                 // attached viewer before the endpoint closes (§20 drain).
@@ -4692,7 +4910,9 @@ fn runHostLoop(
         };
         if (output.bytes.len > 0) {
             try state.feedOutput(output.bytes);
-            try persistTerminalState(state, runtime.directory, persistence);
+            // Streaming batch: journal rewrite rides the §18 batch window;
+            // checkpoints still persist the moment they verify.
+            try persistTerminalState(state, runtime.directory, persistence, .batched);
             refreshRegistration(core, state);
         }
         pumpAttachedViewer(core.allocator, &attached, core, state, timer);
@@ -4861,7 +5081,7 @@ pub fn runHostRole(
     defer arbiter.deinit();
     try queueInitialInput(allocator, real_encoder, &sink, boot.initial_input);
     var persistence: PersistenceCursor = .{};
-    try persistTerminalState(&state, runtime.directory, &persistence);
+    try persistTerminalState(&state, runtime.directory, &persistence, .forced);
 
     const host_identity = switch (process_inspector.observeProcess(c.getpid())) {
         .present => |identity| identity,
@@ -5296,14 +5516,14 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     var cursor: PersistenceCursor = .{};
-    try persistTerminalState(&state, temporary.dir, &cursor);
+    try persistTerminalState(&state, temporary.dir, &cursor, .forced);
     const first_checkpoint = try std.posix.fstatat(
         temporary.dir.fd,
         "checkpoint-0.bin",
         std.posix.AT.SYMLINK_NOFOLLOW,
     );
     try state.feedOutput("tail");
-    try persistTerminalState(&state, temporary.dir, &cursor);
+    try persistTerminalState(&state, temporary.dir, &cursor, .forced);
     const unchanged_checkpoint = try std.posix.fstatat(
         temporary.dir.fd,
         "checkpoint-0.bin",
@@ -6286,6 +6506,13 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     core.onViewerDetached("viewer-a");
     try std.testing.expect(core.active_claim == null);
     try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
+    // The dropped claim is retained as the input owner of record for
+    // inspection (real-host-golden inspects inputOwner after viewer detach).
+    try std.testing.expect(core.orphaned_claim != null);
+    try std.testing.expectEqualStrings("viewer-a", core.orphaned_claim.?.writer);
+    try std.testing.expectEqualStrings("human", core.orphaned_claim.?.kind);
+    try std.testing.expect(core.orphaned_claim.?.token.len > 0);
+    try std.testing.expect(core.orphaned_claim.?.lease_expires_at.len > 0);
 
     // Never-steal mutation: automation still cannot take an orphaned human lease.
     const automation = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
@@ -6324,6 +6551,8 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     defer std.testing.allocator.free(resumed);
     try std.testing.expect(std.mem.indexOf(u8, resumed, "\"state\":\"granted\"") != null);
     try std.testing.expect(core.active_claim != null);
+    // A grant resolves ownership: the retained orphan is gone.
+    try std.testing.expect(core.orphaned_claim == null);
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 
     // Clean CLAIM_RELEASE → FREE; next human acquires without resume.
@@ -6359,6 +6588,77 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     defer std.testing.allocator.free(clean);
     try std.testing.expect(std.mem.indexOf(u8, clean, "\"state\":\"granted\"") != null);
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
+}
+
+test "VISIBILITY_RENEW extends the active input claim with the lease" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    // The viewer's 60 s request clamps to the residual visibility lease, so
+    // the claim starts life with the lease's expiry.
+    const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-a",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-renewal",
+    }, .{});
+    defer std.testing.allocator.free(claim_payload);
+    const granted = try core.claimInput(claim_payload, "viewer-a", 2_000);
+    defer std.testing.allocator.free(granted);
+    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
+    // The grant-time clamp floors to whole milliseconds, so the claim starts
+    // at or just under the lease expiry — never beyond it.
+    try std.testing.expect(core.active_claim.?.expires_mono_ns <= core.lease.expires_mono_ns);
+
+    // Renewing visibility extends the claim too. Without this the claim dies
+    // 10–15 s after acquire while the pane is still visible, and the next
+    // keystroke is rejected "input claim expired".
+    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
+        return error.MissingWorkspaceIdentity;
+    var token_storage: [64]u8 = undefined;
+    const token = try workspace.start_token.format(&token_storage);
+    const renew = try visibilityRenewPayload(
+        std.testing.allocator,
+        registration,
+        c.getpid(),
+        token,
+        2,
+    );
+    defer std.testing.allocator.free(renew);
+    const renewed = try core.renewVisibility(renew, 10_000);
+    defer std.testing.allocator.free(renewed);
+    try std.testing.expectEqual(
+        @as(u64, 10_000 + generated.limits.visibility_expiry_ms * std.time.ns_per_ms),
+        core.lease.expires_mono_ns,
+    );
+    try std.testing.expectEqual(core.lease.expires_mono_ns, core.active_claim.?.expires_mono_ns);
 }
 
 test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {

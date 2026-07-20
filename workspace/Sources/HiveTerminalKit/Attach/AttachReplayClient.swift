@@ -23,11 +23,19 @@ public final class AttachReplayClient {
     private struct PendingInputBatch {
         let binding: SurfaceBinding
         let bytes: Data
+        /// Set when the batch is re-queued after an "input claim expired"
+        /// rejection — a second expiry means the host will not honor a fresh
+        /// claim, so the retry happens at most once per batch.
+        var retriedAfterExpiry = false
     }
 
     private struct PendingInputRequest {
         let binding: SurfaceBinding
         let transactionId: String
+        /// Retained so a transient rejection (expired claim) can be resubmitted
+        /// under a fresh claim instead of dropping the user's keystrokes.
+        let bytes: Data
+        var retriedAfterExpiry = false
     }
 
     private struct PendingResizeRequest {
@@ -556,10 +564,27 @@ public final class AttachReplayClient {
             }
             pendingInputRequests.removeValue(forKey: frame.requestId)
             if stage == "rejected" {
-                refuseInput(
-                    code: "INPUT_REJECTED",
-                    evidence: receipt["diagnostic"] as? String ?? "host rejected terminal input"
-                )
+                let diagnostic = receipt["diagnostic"] as? String ?? "host rejected terminal input"
+                // An expired claim is transient: the host drops it and lets a
+                // returning human re-claim (orphan→resume), so re-acquire and
+                // resubmit the held bytes once instead of fencing input
+                // permanently. Any other rejection stays terminal.
+                if diagnostic == "input claim expired", !pending.retriedAfterExpiry {
+                    NSLog("hive claim: expired; re-acquiring and resubmitting viewer=%@", viewerId)
+                    activeClaimToken = nil
+                    pendingInputBatches.append(PendingInputBatch(
+                        binding: pending.binding,
+                        bytes: pending.bytes,
+                        retriedAfterExpiry: true
+                    ))
+                    do {
+                        try beginClaimAcquire()
+                    } catch {
+                        refuseInput(code: "CLAIM_FAILED", evidence: String(describing: error))
+                    }
+                } else {
+                    refuseInput(code: "INPUT_REJECTED", evidence: diagnostic)
+                }
             } else if stage == "unknown" {
                 inputFenced = true
                 setInputSubmissionState(.unknown(
@@ -622,7 +647,9 @@ public final class AttachReplayClient {
             )
             pendingInputRequests[requestId] = PendingInputRequest(
                 binding: binding,
-                transactionId: transactionId
+                transactionId: transactionId,
+                bytes: batch.bytes,
+                retriedAfterExpiry: batch.retriedAfterExpiry
             )
             nextRequestId += 1
             setInputSubmissionState(.pending(transactionId: transactionId))

@@ -359,6 +359,22 @@ pub fn decodePingPong(allocator: std.mem.Allocator, payload: []const u8) ?u64 {
     return std.fmt.parseInt(u64, parsed.value.monoNanos, 10) catch null;
 }
 
+/// The ~325 KB schema fixture parses ONCE per process (broker and host are
+/// separate processes — each caches its own tree) instead of on every frame
+/// validation. The tree is read-only after parse; page_allocator is deliberate
+/// because the cache is process-lifetime and never freed.
+var schema_document: ?std.json.Parsed(std.json.Value) = null;
+var schema_document_once = std.once(parseSchemaFixtureOnce);
+
+fn parseSchemaFixtureOnce() void {
+    schema_document = std.json.parseFromSlice(
+        std.json.Value,
+        std.heap.page_allocator,
+        generated.schema_fixture,
+        .{},
+    ) catch null;
+}
+
 pub fn validateControlPayload(
     allocator: std.mem.Allocator,
     schema_name: []const u8,
@@ -367,8 +383,8 @@ pub fn validateControlPayload(
     if (payload.len > generated.limits.control_json_bytes or !std.unicode.utf8ValidateSlice(payload))
         return false;
 
-    var document = std.json.parseFromSlice(std.json.Value, allocator, generated.schema_fixture, .{}) catch return false;
-    defer document.deinit();
+    schema_document_once.call();
+    const document = &(schema_document orelse return false);
     var value = std.json.parseFromSlice(std.json.Value, allocator, payload, .{}) catch return false;
     defer value.deinit();
 
@@ -895,6 +911,20 @@ test "control JSON uses generated strict schemas" {
     ;
     try std.testing.expect(validateControlPayload(std.testing.allocator, generated.wire_schema.hello_payload, hello));
     try std.testing.expect(!validateControlPayload(std.testing.allocator, generated.wire_schema.hello_payload, claimed));
+}
+
+test "schema fixture parses once and serves repeated validations" {
+    const hello =
+        \\{"schemaVersion":1,"clientRole":"viewer","buildId":"build","instanceId":"hive","protocol":{"major":1,"minMinor":0,"maxMinor":0},"grantToken":"token"}
+    ;
+    // First call populates the process-lifetime cache; later calls reuse it
+    // with identical verdicts (the 325 KB fixture is not re-parsed per call).
+    try std.testing.expect(validateControlPayload(std.testing.allocator, generated.wire_schema.hello_payload, hello));
+    try std.testing.expect(schema_document != null);
+    for (0..8) |_| {
+        try std.testing.expect(validateControlPayload(std.testing.allocator, generated.wire_schema.hello_payload, hello));
+        try std.testing.expect(!validateControlPayload(std.testing.allocator, generated.wire_schema.hello_payload, "{}"));
+    }
 }
 
 test "common UTC timestamps reject impossible calendar values" {

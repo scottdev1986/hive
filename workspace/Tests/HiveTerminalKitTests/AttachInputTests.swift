@@ -101,6 +101,121 @@ final class AttachInputTests: XCTestCase {
         )
     }
 
+    func testExpiredClaimRejectionReacquiresAndResubmitsInput() throws {
+        let host = FakeHost(connectionId: "input-expired-claim")
+        let engine = FakeManualSurface()
+        let view = try attachView(host: host, engine: engine)
+        let binding = try XCTUnwrap(view.binding)
+
+        view.insertText("second-command\n", replacementRange: NSRange(location: NSNotFound, length: 0), associatedEvent: nil)
+        drainMainQueue()
+        try host.harvestViewerFrames()
+        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        view.pumpHostFrame(
+            WireFrame(
+                type: .claimResult,
+                flags: [.response, .final],
+                requestId: claim.requestId,
+                payload: try claimGrantedPayload(token: "claim-one")
+            ),
+            frameBinding: binding
+        )
+        try host.harvestViewerFrames()
+        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
+        let inputObject = try FrameCodec.parseJSONObject(input.payload)
+        let transactionId = try XCTUnwrap(inputObject["transactionId"] as? String)
+
+        // The host rejects with "input claim expired" (claim outlived its
+        // lease-clamped expiry): the client must re-claim and resubmit the
+        // held bytes, not fence input permanently.
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                flags: [.response, .final],
+                requestId: input.requestId,
+                payload: try inputRejectedPayload(
+                    transactionId: transactionId,
+                    diagnostic: "input claim expired"
+                )
+            ),
+            frameBinding: binding
+        )
+        try host.harvestViewerFrames()
+        if case .refused(let code, _) = view.inputSubmissionState {
+            XCTFail("expired claim must not fence input, got refusal \(code)")
+        }
+        let reclaim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        XCTAssertNotEqual(reclaim.requestId, claim.requestId)
+
+        view.pumpHostFrame(
+            WireFrame(
+                type: .claimResult,
+                flags: [.response, .final],
+                requestId: reclaim.requestId,
+                payload: try claimGrantedPayload(token: "claim-two")
+            ),
+            frameBinding: binding
+        )
+        try host.harvestViewerFrames()
+        let resubmitted = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
+        let resubmittedObject = try FrameCodec.parseJSONObject(resubmitted.payload)
+        XCTAssertEqual(resubmittedObject["claimToken"] as? String, "claim-two")
+        let operation = try XCTUnwrap(resubmittedObject["operation"] as? [String: Any])
+        XCTAssertEqual(
+            Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String)),
+            Data("second-command\n".utf8)
+        )
+
+        // A second expiry for the same bytes means the host will not honor a
+        // fresh claim — the retry happens once, then the refusal is terminal.
+        let resubmittedTransactionId = try XCTUnwrap(resubmittedObject["transactionId"] as? String)
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                flags: [.response, .final],
+                requestId: resubmitted.requestId,
+                payload: try inputRejectedPayload(
+                    transactionId: resubmittedTransactionId,
+                    diagnostic: "input claim expired"
+                )
+            ),
+            frameBinding: binding
+        )
+        guard case .refused(let code, _) = view.inputSubmissionState else {
+            return XCTFail("repeated claim expiry must fence input")
+        }
+        XCTAssertEqual(code, "INPUT_REJECTED")
+    }
+
+    private func claimGrantedPayload(token: String) throws -> Data {
+        try FrameCodec.jsonPayload([
+            "schemaVersion": 1,
+            "result": [
+                "state": "granted",
+                "claim": [
+                    "token": token,
+                    "writer": "input-viewer",
+                    "kind": "human",
+                    "leaseExpiresAt": "2099-01-01T00:00:00.000Z",
+                ],
+            ],
+        ])
+    }
+
+    private func inputRejectedPayload(transactionId: String, diagnostic: String) throws -> Data {
+        try FrameCodec.jsonPayload([
+            "schemaVersion": 1,
+            "resultKind": "input",
+            "receipt": [
+                "transactionId": transactionId,
+                "stage": "rejected",
+                "availableCreditBytes": FrameCodec.inputTransactionMaxBytes,
+                "completeness": "complete",
+                "diagnostic": diagnostic,
+            ],
+        ])
+    }
+
     func testSupersededConnectionClaimCannotReleaseHeldInput() throws {
         let locator = makeTestLocator()
         let hostA = FakeHost(connectionId: "input-old")
