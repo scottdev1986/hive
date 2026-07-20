@@ -1,0 +1,2 @@
+62ec72bb036e503518e4ba427bfbe864c3637adfaa3985bc68b00a6ea1646211  raw/qualification/hive-b25-production-pane/matrix/production-wiring.txt
+a6fbeb8350d01f9dfdedbebf540381db5698113df8157dd18fa7854a6ca4d9e0  raw/qualification/hive-b25-production-pane/manifests/production-wiring.json

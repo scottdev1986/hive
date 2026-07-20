@@ -1,0 +1,18 @@
+2026-07-20T03:21:50.701Z home=/tmp/hb25-wiring
+2026-07-20T03:21:50.701Z port=43140
+2026-07-20T03:21:50.701Z broker.sock path bytes=45
+2026-07-20T03:21:50.701Z stagedHive=/Users/scottkellar/Projects/hive/.hive/worktrees/helga/.dev/root/current/hive
+2026-07-20T03:21:50.701Z stagedSessiond=/Users/scottkellar/Projects/hive/.hive/worktrees/helga/.dev/root/versions/0.0.0/hive-sessiond
+2026-07-20T03:21:51.059Z GREEN daemon+broker: port=43140 peerPid=81391 (daemon pid 81370)
+2026-07-20T03:21:51.059Z no SocketPathTooLong (broker listening at 45-byte path)
+2026-07-20T03:21:51.060Z instanceId=a4c792bdcc
+2026-07-20T03:21:51.060Z publisher pid=81369 startToken=1784517710:642042
+2026-07-20T03:21:51.096Z workspace-visibility status=200 body={"state":"accepted","inventoryRevision":"1","renewals":{"state":"complete","renewed":0}}
+2026-07-20T03:21:51.096Z GREEN workspace-visibility: operator publish accepted (Workspace contract)
+2026-07-20T03:21:51.163Z handshake status=200 instanceId=a4c792bdcc version=0.0.0
+2026-07-20T03:21:51.163Z GREEN handshake
+2026-07-20T03:21:51.163Z RESULT: production wiring substrate GREEN
+2026-07-20T03:21:51.163Z   - make-run-shaped short home + staged binaries
+2026-07-20T03:21:51.163Z   - daemon-owned broker (kernel peer pid == sessiond child)
+2026-07-20T03:21:51.163Z   - workspace-visibility operator path open
+2026-07-20T03:21:51.163Z   - next cell: sessiond agent spawn + HiveTerminalView attach under real Workspace

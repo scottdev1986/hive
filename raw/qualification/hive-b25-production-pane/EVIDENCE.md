@@ -6,7 +6,8 @@ Pin series owned by helga. Ports 43140+. Short homes only.
 
 | Cell | Status | Artifact |
 |------|--------|----------|
-| Production wiring (sessiond pane under make-run stack) | OPEN | matrix/production-wiring.txt |
+| Production wiring substrate (daemon-owned broker + visibility + handshake under short home @43140) | GREEN (substrate) | matrix/production-wiring.txt |
+| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | OPEN | matrix/production-wiring-pane.txt |
 | A4 exact per-pane close | OPEN | matrix/a4-exact-close.txt |
 | A4 concurrent quit + process-tree | OPEN | matrix/a4-quit.txt |
 | A4 non-Hive project | OPEN | matrix/a4-non-hive-project.txt |
