@@ -4,6 +4,8 @@
 **Author:** ingo · **Evidence:** prior instance DB `run-bc65ab00-416d-4032-91c1-7937388aa255`
 **Companion issue:** #57 (hive's own MCP failing at resume — a *different* defect, not this one)
 
+> **#57 REMAINS OPEN.** Commits `9ebd0268` and `4a7ed9db` fix the resume *liveness* defect described in this doc. They do **not** fix #57, and must never be cited as closing it — they sit directly above #57 in the log with matching vocabulary, which is exactly how `#55` happened. #57's issue body now carries this same guard.
+
 ---
 
 ## 1. What the fix changes
