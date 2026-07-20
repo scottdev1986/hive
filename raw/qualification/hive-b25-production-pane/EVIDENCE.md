@@ -63,12 +63,88 @@ so even "deferred due to Grok" is narrower than what was measured. The
 deferral was recorded for C1 and then carried to row K in conversation without
 ever being written down.
 
-Two consequences for whoever picks this up: row K's blocker is currently
-**unknown**, not "Grok quota" — re-measure vendor capacity rather than assuming
-the C1 reading still holds; and if the deferral is real, record it *here*, where
-row K is tracked, with its own measurement. Whether a documented Grok deferral
-could close M1's exit at all is an open user ruling
-(`planning/m1-definition-of-done-audit.md` §5 Q3) — B1 DoD-1 grants no carve-out.
+Two consequences for whoever picks this up: row K's blocker was **unknown**, not
+"Grok quota" — so vendor capacity was re-measured rather than inherited; and if
+a deferral is real, it belongs *here*, where row K is tracked, with its own
+measurement. Whether a documented Grok deferral could close M1's exit at all is
+an open user ruling (`planning/m1-definition-of-done-audit.md` §5 Q3) — B1 DoD-1
+grants no carve-out. **That re-measurement is below, and it resolves the blocker
+to something that is not quota at all.**
+
+### Re-measured 2026-07-20 — quota is NOT row K's binding blocker
+
+Measured by ines at 2026-07-20T12:43–12:46Z via `hive_quota_status`, reading the
+live vendor surfaces. Every figure below is quoted with its surface, its
+observation time and its confidence label; none is carried from a document, and
+none is smoothed. A bare percentage in this table would be unusable — the label
+is what makes it evidence.
+
+| Vendor | State | Surface | Raw reading (weekly unless noted) | Confidence / freshness |
+|---|---|---|---|---|
+| Claude | measured | statusline | 5h: used 15, remaining 67.5% (reset 2026-07-20T13:30:00Z). Weekly: used 45, remaining 51.7% (reset 2026-07-25T19:00:00Z) | reported / fresh; observed 12:45:45.824Z. Both windows carry an ESTIMATED reservation (17.5 / 3.3) |
+| Codex | measured | provider `account/rateLimits/read` | pool `codex` (prolite, models `["*"]`): used **100**, remaining **0%**, reset 2026-07-26T00:00:27Z. Five-hour: `not-metered` | **authoritative** / fresh; observed 12:43:37.513Z |
+| Grok | measured | ACP `_x.ai/billing` → `config.creditUsagePercent` | used **100**, remaining **0%**, reset 2026-07-26T17:18:56Z (rolling). Five-hour: `not-metered` | reported / fresh; observed 12:43:38.486Z |
+
+Codex's `not-metered` five-hour is a **positive statement**, not a failed read:
+that pool meters one weekly window and no five-hour window exists.
+
+**Grok is measurable — an older reading that said otherwise is superseded.**
+`config.creditUsagePercent` is a validated 0–100 used-gauge: across a measured
+burn it moved 2→3→4→7→8 while the money rails stayed flat at zero, and a
+probe-only control run three times did not move it
+(`docs/providers/quota-surfaces.md:70+`). The parser
+(`src/daemon/quota-sources.ts:940-982`) refuses to fabricate 0/100 — an
+unreadable percent yields `weeklyMeterState: "unknown"` — so the 100 above is a
+real measurement, not an absence rendered as a number. What is *not* a gauge is
+the money-guard set (`onDemandCap` / `onDemandUsed` / `prepaidBalance`); those
+zeros mean paid overflow is off, never "empty tank", and must never be rendered
+as remaining capacity.
+
+#### The binding blocker is the unlocked-GUI gate, not quota
+
+`matrix/production-wiring-pane.txt` (2026-07-20T06:04:12.348Z):
+
+    MUTATION VERIFIED: locked session breaks the real-window pixel preflight
+    FAIL: real Workspace pixel qualification requires an unlocked macOS session
+
+Row K is defined as the real vendor TUIs driven **through the production pane**,
+so it inherits that same real-window preflight. Consequence: **row K is
+unattemptable today on all three vendors — including Claude, which has ample
+quota.** The production-wiring-full cell is a hard prerequisite, and it is
+gated on a human action, not on capacity.
+
+#### Codex and Grok at 0% is a SECOND constraint, not the reason row K is open
+
+Once the GUI gate clears, quota bites next: Claude could attempt row K
+immediately, Codex and Grok not until their resets (Codex 2026-07-26T00:00:27Z;
+Grok 2026-07-26T17:18:56Z, rolling — it drifts, so do not treat it as a calendar
+boundary). This is sequencing information. It is **not** the reason row K is
+open, and it must not be restated as one.
+
+On the date itself: 2026-07-26 is **real and independently re-measured today**,
+not a C1-era artifact. But the attribution in the received story was wrong twice
+over — the earliest 07-26 reset is **Codex's**, roughly 17 hours before Grok's,
+so "deferred because of Grok" is narrower than what was measured. The C1 record
+naming *both* pools was the accurate one.
+
+#### Trap: a full sub-pool does not mean the vendor is available
+
+`hive_quota_status` also reports Codex pool `codex_bengalfox`
+(`gpt-5.3-codex-spark`) at used **0**, remaining **100%**, reset
+2026-07-27T12:43:37Z. **This does not give Codex capacity today.** A run reserves
+against *every* pool that meters the model, all-or-nothing, and the tightest pool
+governs (`src/daemon/quota-ledger.ts:1158-1164`). The account-wide `["*"]` pool
+sits at 0% remaining, so it gates spark too. Reading the spark row alone — or
+checking only the first matching pool — is exactly how two deep-tier agents were
+once routed onto a model whose own weekly pool was at 99%.
+
+#### No capacity deferral is recorded for row K
+
+Deliberately. The measured binding blocker is the unlocked-GUI gate; recording a
+capacity deferral would re-attribute row K's openness to quota and recreate the
+defect this section exists to correct. B1 DoD-1 grants no carve-out, and none is
+sought here. The critical path is a human unlock session, after which Claude's
+row K becomes attemptable and Codex/Grok follow their 07-26 resets.
 
 ## Provenance
 
