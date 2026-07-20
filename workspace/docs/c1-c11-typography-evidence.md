@@ -59,7 +59,15 @@ The selector is intentionally deferred to C1.2 together with the paired-theme Ap
 
 ## Vendor glyph fixtures and real rendered capture
 
-Pending the authenticated raw byte transcripts and real production-pane captures from B2.5 row K. C1.1 will use only glyphs that the live Claude, Codex, and Grok status/trust UIs actually emitted; no synthetic vendor fixture is admissible.
+C1.1 uses only glyphs that the live vendor status/trust UIs actually emitted; no synthetic vendor fixture is admissible. The source is B2.5 row K's authenticated raw byte transcripts and real production-pane captures.
+
+| Vendor | Qualification state | C1.1 glyph state |
+| --- | --- | --- |
+| Claude | One real session approved | Awaiting B2.5 transcript and capture |
+| Codex | One attempt subject to its 9.5% weekly-capacity gate | Awaiting the gate outcome |
+| Grok | Measured 0% weekly capacity | `CAPACITY-DEFERRED` until the 2026-07-26 reset; no attempt and no fabricated fixture |
+
+The deferred Grok row is a declared follow-up delta after the reset, not a green row and not a reason to block the independently provable C1.1 font-chain behavior.
 
 ## Test transcript
 
