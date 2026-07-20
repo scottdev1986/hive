@@ -89,6 +89,33 @@ CASES = [
         guards="The pane background must be opaque behind terminal content.",
     ),
 
+    # --- behavioral fallout from dropping NSVisualEffectView -----------------
+    Case(
+        name="hardcode-the-background-color",
+        path=BACKGROUND,
+        old="NSColor.controlBackgroundColor.setFill()",
+        new="NSColor.white.setFill()",
+        tests="C13PaneChromeTests/testPaneBackgroundStillRespondsToAppearanceAfterDroppingVibrancy",
+        guards=(
+            "Replaces the semantic fill with a fixed color — exactly the silent "
+            "loss that dropping NSVisualEffectView's automatic material "
+            "response could cause. The pane would look right in light mode and "
+            "be wrong in dark."
+        ),
+    ),
+    Case(
+        name="stop-repainting-on-appearance-change",
+        path=BACKGROUND,
+        old="needsDisplay = true",
+        new="needsDisplay = false",
+        tests="C13PaneChromeTests/testPaneBackgroundRepaintsOnAppearanceChange",
+        guards=(
+            "Drops the redraw that a live light/dark switch depends on. "
+            "NSVisualEffectView did this for free; the replacement must do it "
+            "explicitly."
+        ),
+    ),
+
     # --- the overlay-vs-sublayer hazard demonstration ------------------------
     Case(
         name="sublayer-becomes-an-overlay",

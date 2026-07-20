@@ -1,0 +1,15 @@
+C1.3 NATURAL POSITIVE CONTROL — no-vibrancy-ancestor check against unmodified main
+commit:  eccf2c58c8f7f1501be1f3ef54ee8a9c3cbf93ad (feat(c1.2): close F1 font acceptance)
+tree:    pristine checkout via 'git worktree add --detach', PaneView.swift:12 reads
+         'private let backgroundView = NSVisualEffectView()'
+command: cd workspace && swift test --filter C13NaturalControlTests
+date:    2026-07-20
+
+RESULT: REAL_EXIT=1 — the check FAILS on the real pre-fix tree, naming the offender.
+The instrument control PASSES on the same tree, so the failure is a finding
+and not a broken traversal.
+
+----- verbatim output -----
+/private/tmp/c13pre/workspace/Tests/HiveWorkspaceTests/C13NaturalControlTests.swift:44: error: -[HiveWorkspaceTests.C13NaturalControlTests testTerminalContentHasNoVibrancyEnabledAncestor] : XCTAssertTrue failed - Terminal content descends from a vibrancy-enabled view: NSVisualEffectView (NSVisualEffectView).
+Test Case '-[HiveWorkspaceTests.C13NaturalControlTests testTerminalContentHasNoVibrancyEnabledAncestor]' failed (0.406 seconds).
+Test Case '-[HiveWorkspaceTests.C13NaturalControlTests testWalkSeesAPlantedVisualEffectView]' passed (0.000 seconds).

@@ -238,7 +238,60 @@ final class C13PaneChromeTests: XCTestCase {
             "The pane background must be opaque.")
     }
 
-    // MARK: - 3. Focus by attenuation
+    // MARK: - 3. Behavioral fallout from dropping NSVisualEffectView
+
+    /// An `NSVisualEffectView` does not only look like something — its material
+    /// re-resolves automatically across light and dark. Pane chrome may have
+    /// been riding that automatic appearance behavior rather than owning it.
+    /// The replacement must therefore be shown to still repaint across an
+    /// appearance switch; a plain view filled with a hardcoded color would look
+    /// right in one mode and be silently wrong in the other.
+    func testPaneBackgroundStillRespondsToAppearanceAfterDroppingVibrancy() throws {
+        func backgroundLuminance(under appearance: NSAppearance.Name) throws -> CGFloat {
+            let background = PaneBackgroundView(frame: Self.bounds)
+            background.appearance = NSAppearance(named: appearance)
+            return try luminance(try centerColor(of: background))
+        }
+
+        let light = try backgroundLuminance(under: .aqua)
+        let dark = try backgroundLuminance(under: .darkAqua)
+        print("C13_APPEARANCE light=\(light) dark=\(dark)")
+
+        XCTAssertGreaterThan(
+            light, dark + 0.2,
+            """
+            The pane background did not change across the appearance switch \
+            (light=\(light), dark=\(dark)). Dropping NSVisualEffectView lost \
+            the automatic material response and nothing replaced it, so the \
+            background is now painted the same in both modes.
+            """)
+    }
+
+    /// The same guarantee stated structurally: the fill must come from a
+    /// semantic color that re-resolves, which is what makes the test above
+    /// pass for the right reason.
+    ///
+    /// The view must be inside a window for this: `needsDisplay` does not latch
+    /// on a windowless view (it reads back `false` however it is set), so
+    /// asserting it offscreen would fail for a reason that has nothing to do
+    /// with the property under test. The window is never ordered front, so this
+    /// still needs no window server.
+    func testPaneBackgroundRepaintsOnAppearanceChange() throws {
+        let window = NSWindow(
+            contentRect: Self.bounds, styleMask: [.titled],
+            backing: .buffered, defer: true)
+        let background = PaneBackgroundView(frame: Self.bounds)
+        try XCTUnwrap(window.contentView).addSubview(background)
+
+        background.needsDisplay = false
+        background.viewDidChangeEffectiveAppearance()
+
+        XCTAssertTrue(
+            background.needsDisplay,
+            "The pane background must mark itself for redraw when the effective appearance changes.")
+    }
+
+    // MARK: - 4. Focus by attenuation
 
     func testUnfocusedPaneIsAttenuatedAndFocusedPaneIsNot() {
         let view = PaneAttenuationView()
