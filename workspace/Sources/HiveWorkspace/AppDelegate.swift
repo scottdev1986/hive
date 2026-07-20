@@ -155,7 +155,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
                 }
             }
             controller.window?.layoutIfNeeded()
-            runner.run() // exits the process 0/1
+            if ProcessInfo.processInfo.environment["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] != nil {
+                // The app cannot become active/key until this launch callback
+                // returns. The live-resize proof refuses a non-key window.
+                DispatchQueue.main.async { runner.run() }
+            } else {
+                runner.run() // exits the process 0/1
+            }
         } else {
             controller.showWindow(nil)
             NSApp.activate(ignoringOtherApps: true)
