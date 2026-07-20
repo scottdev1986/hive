@@ -339,15 +339,47 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         expectedBinding: SurfaceBinding,
         deadline: Date
     ) {
+        // Already live (e.g. a concurrent present) — do not re-enter resize.
+        if surfaceState == .live { return }
         guard surfaceState == .attaching,
               binding == expectedBinding,
               attachClient === client,
               client.binding == expectedBinding
-        else { return }
+        else {
+            // Attach returned first-correct-frame to the pane before settle
+            // finished; if we abort silently here the pane stays blank forever
+            // with no recovery (SessiondPaneTerminal only recovers on .failed).
+            NSLog(
+                "hive terminal: deferred first-correct-frame aborted (state=%@) — presenting fallback",
+                String(describing: surfaceState)
+            )
+            presentFirstCorrectFrame(highWater)
+            return
+        }
         refreshReportedGeometryAfterConfiguration()
         if !reportedGeometryMatchesSemanticSnapshot() {
             guard Date() < deadline else {
-                setSurfaceState(.rendererFailed(evidence: "C1 config geometry did not settle"))
+                // Blank pane is worse than a briefly-wrong grid: journal bytes
+                // are already on the surface. Present with best-known geometry
+                // and log the mismatch for diagnosis (hubert blank-pane finding).
+                NSLog(
+                    "hive terminal: C1 geometry settle timed out reported=%@ semantic=%@ — presenting anyway",
+                    reportedGeometry.map { "\($0.columns)x\($0.rows)" } ?? "nil",
+                    (engine as? ManualSurfaceSemanticSnapshotProviding)?
+                        .semanticSnapshot()
+                        .map { "\($0.geometry.columns)x\($0.geometry.rows)" } ?? "nil"
+                )
+                do {
+                    try finalizeFirstCorrectFrame(
+                        highWater,
+                        client: client,
+                        fallbackGeometry: fallbackGeometry
+                    )
+                } catch {
+                    // Last resort: go live without a resize receipt so output shows.
+                    NSLog("hive terminal: initial resize after settle timeout failed: %@", "\(error)")
+                    presentFirstCorrectFrame(highWater)
+                }
                 return
             }
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.001) { [weak self] in
@@ -371,6 +403,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
             let failure = TerminalSurfaceState.lost(evidence: "initial-resize: \(error)")
             client.failDeferredPresentation(failure)
             setSurfaceState(failure)
+            NSLog("hive terminal: initial-resize failed: %@", "\(error)")
         }
     }
 
