@@ -140,6 +140,9 @@ LIVE_TEST='HiveTerminalKitTests.B24ViewerSemanticsTests/testLiveRenderedSustaine
   printf 'gui_session=required_unlocked\n'
   printf 'scrollback_limit_bytes=50331648\n'
   printf 'live_input_floor_bytes=83886080\n'
+  printf 'vttest_version=2.7 (20251205)\n'
+  printf 'vttest_archive_sha256=cd6886f9aefe6a3f6c566fa61271a55710901a71849c630bf5376aa984bf77cc\n'
+  printf 'vttest_binary_sha256=adac6a5d2c3cc23d977b657a3caee887261df6bcd7a746b7d9b06b8f5e4337cc\n'
 } >"$EVIDENCE/provenance.txt" 2>&1
 
 (
@@ -252,7 +255,8 @@ record_instruments 'Metal System Trace' metal-system-trace
   printf 'memory_bounds=settled growth <= 128 MiB; peak growth <= 192 MiB during >= 80 MiB input\n'
   printf 'physical_sleep=REUSE Gate7 independently recorded human row; notification transition is automated here\n'
   printf 'gpu_recreation=NO_VIEW_API; renderer-health pending-frame recovery is proven, hardware fault/replacement remains Gate7/B2 orchestration scope\n'
-  printf 'vttest=record only after OPOST/ONLCR dependency lands; see capability-manifest.txt\n'
+  printf 'vttest=PASS semantic live 1049 traversal after OPOST/ONLCR landing; see vttest-live.txt\n'
+  printf 'vttest_pixels=BLOCKED draw-path #47; background-only capture is explicitly not accepted as rendered terminal proof\n'
   printf 'renderer_frame_observer=NON_AUTHORITATIVE; rendered-viewer.png is the B2.4 AppKit UI proof\n'
 } >"$EVIDENCE/qualification-summary.txt"
 

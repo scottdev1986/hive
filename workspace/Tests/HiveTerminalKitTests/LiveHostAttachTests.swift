@@ -418,7 +418,7 @@ final class LiveHostAttachTests: XCTestCase {
 
         _ = NSApplication.shared
         let view = try HiveTerminalView(
-            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            frame: NSRect(x: 0, y: 0, width: 660, height: 448),
             viewerId: "b24-vttest-live"
         )
         let window = NSWindow(
@@ -433,6 +433,7 @@ final class LiveHostAttachTests: XCTestCase {
         window.center()
         window.makeKeyAndOrderFront(nil)
         NSApplication.shared.activate(ignoringOtherApps: true)
+        XCTAssertTrue(window.makeFirstResponder(view))
         defer {
             view.userClose()
             window.orderOut(nil)
@@ -466,7 +467,7 @@ final class LiveHostAttachTests: XCTestCase {
         )
 
         var returnedOutput = Data()
-        func pump(until predicate: () -> Bool, timeout: TimeInterval = 10) throws -> Bool {
+        func pump(until predicate: () -> Bool, timeout: TimeInterval = 5) throws -> Bool {
             let deadline = Date().addingTimeInterval(timeout)
             while !predicate(), Date() < deadline {
                 do {
@@ -480,27 +481,67 @@ final class LiveHostAttachTests: XCTestCase {
             }
             return predicate()
         }
-        func submit(_ text: String) {
-            view.insertText(
-                text,
-                replacementRange: NSRange(location: NSNotFound, length: 0),
-                associatedEvent: nil
+        func submit(_ text: String) throws {
+            for character in text {
+                let isReturn = character == "\n"
+                let characters = isReturn ? "\r" : String(character)
+                let event = try XCTUnwrap(NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: characters,
+                    charactersIgnoringModifiers: characters,
+                    isARepeat: false,
+                    keyCode: isReturn ? 36 : 0
+                ))
+                view.keyDown(with: event)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertNotEqual(
+                view.inputSubmissionState,
+                .idle,
+                "positive control: Ghostty key encoding must reach the claim-bound write callback"
             )
-            RunLoop.main.run(until: Date().addingTimeInterval(0.05))
         }
 
         // main 11 → non-VT100 8 → XTERM 7 → alternate-screen 5 (1049).
-        submit("11\n8\n7\n5\n")
-        XCTAssertTrue(try pump(until: {
+        try submit("11\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("Non-VT100 Tests") == true
+        }) else {
+            return XCTFail("vttest did not enter non-VT100 menu; input=\(view.inputSubmissionState)")
+        }
+        try submit("8\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("XTERM special features") == true
+        }) else {
+            return XCTFail("vttest did not enter XTERM menu; input=\(view.inputSubmissionState)")
+        }
+        try submit("7\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("XTERM Alternate-Screen features") == true
+        }) else {
+            return XCTFail("vttest did not enter alternate-screen menu; input=\(view.inputSubmissionState)")
+        }
+        try submit("5\n")
+        guard try pump(until: {
             surface.semanticSnapshot()?.text.contains("The next screen will be filled with E's") == true
-        }))
+        }) else {
+            return XCTFail("vttest did not enter 1049 test; input=\(view.inputSubmissionState)")
+        }
 
-        submit("\n")
-        XCTAssertTrue(try pump(until: {
+        try submit("\n")
+        guard try pump(until: {
             let text = surface.semanticSnapshot()?.text ?? ""
             return text.filter { $0 == "E" }.count > 1_000
-        }))
-        let alternateECount = surface.semanticSnapshot()?.text.filter { $0 == "E" }.count ?? 0
+        }) else {
+            return XCTFail("vttest did not fill alternate screen; input=\(view.inputSubmissionState)")
+        }
+        let alternateSnapshot = try XCTUnwrap(surface.semanticSnapshot())
+        let alternateECount = alternateSnapshot.text.filter { $0 == "E" }.count
         XCTAssertGreaterThan(alternateECount, 1_000)
 
         let capture = Process()
@@ -510,23 +551,32 @@ final class LiveHostAttachTests: XCTestCase {
         capture.waitUntilExit()
         XCTAssertEqual(capture.terminationStatus, 0)
 
-        submit("\n")
-        XCTAssertTrue(try pump(until: {
+        try submit("\n")
+        guard try pump(until: {
             surface.semanticSnapshot()?.text.contains(
                 "The original screen should be restored except for this line."
             ) == true
-        }))
+        }) else {
+            return XCTFail("vttest did not restore primary screen; input=\(view.inputSubmissionState)")
+        }
         XCTAssertNotNil(returnedOutput.range(of: Data("\u{1B}[?1049h".utf8)))
         XCTAssertNotNil(returnedOutput.range(of: Data("\u{1B}[?1049l".utf8)))
+        guard case .applied(_, let inputStage) = view.inputSubmissionState else {
+            return XCTFail("vttest input did not receive correlated APPLIED: \(view.inputSubmissionState)")
+        }
+        XCTAssertEqual(inputStage, "written-to-terminal")
         try returnedOutput.write(to: URL(fileURLWithPath: bytesPath), options: .atomic)
 
         let evidence = """
         qualification=M1-B2 B2.4 pinned vttest alternate-screen path
         vttest_version=VT100 test program, version 2.7 (20251205)
         terminal=xterm-ghostty
-        geometry=24x80.80
+        launch_geometry=24x80.80
+        rendered_geometry=\(alternateSnapshot.geometry.rows)x\(alternateSnapshot.geometry.columns)
         menu_path=11/8/7/5 (non-VT100/XTERM/alternate-screen/1049)
         input_path=authenticated human claim + INPUT_SUBMIT/APPLIED
+        input_receipt=\(view.inputSubmissionState)
+        launch_termios_handoff=stty sane (canonical CR-to-NL state normally inherited from an interactive shell)
         alternate_e_count=\(alternateECount)
         decset_1049=observed
         decrst_1049=observed

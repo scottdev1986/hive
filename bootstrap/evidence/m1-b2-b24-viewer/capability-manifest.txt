@@ -48,4 +48,6 @@ mouse_exact_bytes_source_pin=0777b185 (global-1005-drop hardening)
 mouse_exact_bytes_recording_pin=61817ae9 (rebased transcript)
 viewer_behavior=B24ViewerSemanticsTests
 renderer_gpu_occlusion_sleep=landed Gate7RenderingTests plus the B2.4 live sustained-output run
-vttest_visual=post-OPOST/ONLCR live recording path enabled; final recording pending draw-path #47 proof
+vttest_semantic=PASS; pinned live 1049 path recorded after OPOST/ONLCR landing
+vttest_evidence=bootstrap/evidence/m1-b2-b24-viewer/vttest-live.txt
+vttest_visual=BLOCKED_DRAW_PATH_47; captured window is background-only and is not accepted as terminal pixel proof

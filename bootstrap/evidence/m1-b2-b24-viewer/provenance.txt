@@ -13,3 +13,6 @@ artifact=/Users/scottkellar/Projects/hive/.hive/worktrees/howard/.cache/native/a
 gui_session=required_unlocked
 scrollback_limit_bytes=50331648
 live_input_floor_bytes=83886080
+vttest_version=2.7 (20251205)
+vttest_archive_sha256=cd6886f9aefe6a3f6c566fa61271a55710901a71849c630bf5376aa984bf77cc
+vttest_binary_sha256=adac6a5d2c3cc23d977b657a3caee887261df6bcd7a746b7d9b06b8f5e4337cc
