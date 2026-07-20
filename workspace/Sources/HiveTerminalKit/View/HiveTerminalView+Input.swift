@@ -458,6 +458,7 @@ extension HiveTerminalView {
     }
 
     @IBAction public func copy(_ sender: Any?) {
+        guard canCopySelection else { return }
         _ = engine.performBindingAction("copy_to_clipboard")
     }
 
@@ -472,7 +473,8 @@ extension HiveTerminalView {
 
     @discardableResult
     public func search(_ needle: String) -> Bool {
-        engine.performBindingAction("search:\(needle)")
+        updateSearchQuery(needle)
+        return engine.performBindingAction("search:\(needle)")
     }
 
     @discardableResult
@@ -487,6 +489,7 @@ extension HiveTerminalView {
 
     public func endSearch() {
         _ = engine.performBindingAction("end_search")
+        dismissSearchUI(restoreTerminalFocus: true)
     }
 
     // MARK: - Input helpers

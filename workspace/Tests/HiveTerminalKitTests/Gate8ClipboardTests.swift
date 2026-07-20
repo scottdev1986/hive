@@ -156,8 +156,9 @@ final class Gate8ClipboardTests: XCTestCase {
         XCTAssertEqual(surface.processOutput(bytes: output, streamSeq: 0), .success)
 
         terminal.selectAll(nil)
-        drainMain(until: { !copied.isEmpty })
-        copied.removeAll()
+        drainMain(until: { surface.semanticSnapshot()?.selection != nil })
+        drainMain(for: 0.1)
+        XCTAssertTrue(copied.isEmpty, "selection is viewer-local until the explicit host copy gesture")
         let before = HiveGhosttyRuntimeCallbackProbes.count(.writeClipboard)
 
         terminal.copy(nil)

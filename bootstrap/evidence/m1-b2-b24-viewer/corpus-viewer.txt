@@ -1,0 +1,82 @@
+Test Suite 'Selected tests' started at 2026-07-19 21:31:32.750.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:31:32.751.
+Test Suite 'B24ViewerSemanticsTests' started at 2026-07-19 21:31:32.751.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testAlternateScreenLeavesPrimaryScrollbackAndViewportIntact]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testAlternateScreenLeavesPrimaryScrollbackAndViewportIntact]' passed (0.055 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testCapturedDragRoutesToApplicationButShiftOverrideSelectsLocally]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testCapturedDragRoutesToApplicationButShiftOverrideSelectsLocally]' passed (0.028 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testCommandCopyIsConsumedLocallyAndEnabledOnlyForASelection]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testCommandCopyIsConsumedLocallyAndEnabledOnlyForASelection]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testConfiguredHistoryPrunesOldestRowsButKeepsRecentRowsSearchable]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testConfiguredHistoryPrunesOldestRowsButKeepsRecentRowsSearchable]' passed (0.042 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testCopyOnSelectPolicyReachesTheEngineAndHostCopyRemainsReachable]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testCopyOnSelectPolicyReachesTheEngineAndHostCopyRemainsReachable]' passed (0.174 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testFindKeyEquivalentsOwnSearchWithoutBecomingProviderInput]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testFindKeyEquivalentsOwnSearchWithoutBecomingProviderInput]' passed (0.004 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testLiveRenderedSustainedOutputQualification]' started.
+/private/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T/hive-terminal-b24.Wt5PAH/workspace/Tests/HiveTerminalKitTests/B24ViewerSemanticsTests.swift:466: -[HiveTerminalKitTests.B24ViewerSemanticsTests testLiveRenderedSustainedOutputQualification] : Test skipped - set HIVE_B24_LIVE=1 for the unlocked-GUI Instruments proof
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testLiveRenderedSustainedOutputQualification]' skipped (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testProductionHostFrameMarksNewOutputWhileViewportIsAnchored]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testProductionHostFrameMarksNewOutputWhileViewportIsAnchored]' passed (0.017 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testProductPolicyPinsBoundedHistoryAndLocalSelectionAfterTheme]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testProductPolicyPinsBoundedHistoryAndLocalSelectionAfterTheme]' passed (0.001 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testSearchCoversRetainedScrollbackAndReceivesRealProgressActions]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testSearchCoversRetainedScrollbackAndReceivesRealProgressActions]' passed (0.041 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testSearchOverlayReportsRetainedHistoryScopeAndLiveEngineCounts]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testSearchOverlayReportsRetainedHistoryScopeAndLiveEngineCounts]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testUncapturedDragSelectsLocallyWithoutProviderBytes]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testUncapturedDragSelectsLocallyWithoutProviderBytes]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testUserCloseRemovesSearchUIAndDropsLateSearchNotifications]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testUserCloseRemovesSearchUIAndDropsLateSearchNotifications]' passed (0.118 seconds).
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testWheelMovesRetainedViewportLocallyButCapturedWheelDoesNot]' started.
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testWheelMovesRetainedViewportLocallyButCapturedWheelDoesNot]' passed (0.040 seconds).
+Test Suite 'B24ViewerSemanticsTests' passed at 2026-07-19 21:31:33.298.
+	 Executed 14 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.546 (0.548) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:31:33.298.
+	 Executed 14 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.546 (0.548) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:31:33.299.
+	 Executed 14 tests, with 1 test skipped and 0 failures (0 unexpected) in 0.546 (0.549) seconds
+Test Suite 'Selected tests' started at 2026-07-19 21:31:33.350.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:31:33.351.
+Test Suite 'Gate8ClipboardTests' started at 2026-07-19 21:31:33.351.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testConfirmedClipboardWriteIsDroppedWithoutHostAuthorizationUI]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testConfirmedClipboardWriteIsDroppedWithoutHostAuthorizationUI]' passed (0.113 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testDisabledReplySurfaceRoutesKeyTextAndBracketedPasteThroughOneWriteCallback]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testDisabledReplySurfaceRoutesKeyTextAndBracketedPasteThroughOneWriteCallback]' passed (0.200 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testOSC52CannotReachClipboardCallbacksUnderDisabledPolicy]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testOSC52CannotReachClipboardCallbacksUnderDisabledPolicy]' passed (0.223 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testPendingClipboardRequestCompletesEmptyBeforeTeardown]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testPendingClipboardRequestCompletesEmptyBeforeTeardown]' passed (0.106 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testQueuedClipboardCompletionDropsAfterSurfaceTeardown]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testQueuedClipboardCompletionDropsAfterSurfaceTeardown]' passed (0.117 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testSelectionCopyCopiesCallbackContentBeforeDeferredHostWrite]' passed (0.120 seconds).
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testUnsafePasteConfirmationFailsClosed]' started.
+Test Case '-[HiveTerminalKitTests.Gate8ClipboardTests testUnsafePasteConfirmationFailsClosed]' passed (0.112 seconds).
+Test Suite 'Gate8ClipboardTests' passed at 2026-07-19 21:31:34.342.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.990 (0.991) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:31:34.342.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.990 (0.991) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:31:34.342.
+	 Executed 7 tests, with 0 failures (0 unexpected) in 0.990 (0.992) seconds
+Test Suite 'Selected tests' started at 2026-07-19 21:31:34.400.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:31:34.402.
+Test Suite 'Gate9ActionPolicyTests' started at 2026-07-19 21:31:34.402.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testDefaultWindowBindingsAreStrippedFromManualConfig]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testDefaultWindowBindingsAreStrippedFromManualConfig]' passed (0.073 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testEveryPinnedActionTagHasExactlyOneVerdictAndMatchesTheHeader]' passed (0.002 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testHandleRoutesThroughTheVerdictNotABlanketFalse]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testHandleRoutesThroughTheVerdictNotABlanketFalse]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testLiveCallbackFiringsCarryTheCorrectVerdict]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testLiveCallbackFiringsCarryTheCorrectVerdict]' passed (0.508 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testOSC9NotificationBytesAreInertAndDoNotPoisonTheStream]' passed (0.010 seconds).
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testSecurityRulingsArePinned]' started.
+Test Case '-[HiveTerminalKitTests.Gate9ActionPolicyTests testSecurityRulingsArePinned]' passed (0.000 seconds).
+Test Suite 'Gate9ActionPolicyTests' passed at 2026-07-19 21:31:34.996.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.594 (0.594) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:31:34.996.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.594 (0.594) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:31:34.996.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 0.594 (0.596) seconds

@@ -380,6 +380,8 @@ final class InputEncodingTests: XCTestCase {
 
     func testCopyPasteSelectionAndSearchUsePinnedBindingActions() {
         let engine = FakeManualSurface()
+        engine.fakeSelection = (offset: 0, length: 4)
+        engine.fakeSelectedText = "copy"
         let terminal = makeTerminal(engine)
 
         terminal.copy(nil)

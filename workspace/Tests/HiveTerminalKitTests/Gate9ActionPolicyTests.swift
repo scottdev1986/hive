@@ -96,6 +96,8 @@ final class Gate9ActionPolicyTests: XCTestCase {
         XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_OPEN_URL), .deniedPolicy)
         XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_SET_TITLE), .handledByEffects)
         XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_QUIT), .deniedGesture)
+        XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_SEARCH_TOTAL), .engineInert)
+        XCTAssertEqual(HiveGhosttyActionPolicy.classify(GHOSTTY_ACTION_SEARCH_SELECTED), .engineInert)
     }
 
     /// BEHAVIOR, not the table (cross-vendor review 2026-07-18): the earlier
@@ -114,6 +116,8 @@ final class Gate9ActionPolicyTests: XCTestCase {
             (GHOSTTY_ACTION_DESKTOP_NOTIFICATION, .deniedPolicy),
             (GHOSTTY_ACTION_QUIT, .deniedGesture),
             (GHOSTTY_ACTION_SCROLLBAR, .engineInert),
+            (GHOSTTY_ACTION_SEARCH_TOTAL, .engineInert),
+            (GHOSTTY_ACTION_SEARCH_SELECTED, .engineInert),
         ]
         for (tag, _) in cases {
             let action = ghostty_action_s(tag: tag, action: ghostty_action_u())

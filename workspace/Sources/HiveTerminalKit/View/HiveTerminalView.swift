@@ -60,6 +60,10 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var renderHostView: NSView?
     private var windowObservers: [NSObjectProtocol] = []
     private var workspaceObservers: [NSObjectProtocol] = []
+    var searchOverlayStorage: TerminalSearchOverlay?
+    var searchStateStorage = TerminalSearchState()
+    var newOutputIndicatorStorage: NSButton?
+    var scrollStateStorage = TerminalScrollState()
     private var pendingDraw = false
     private var hasCompletedInitialDraw = false
     private var renderingSuspended = false
@@ -151,6 +155,9 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         }
         engine.callbackContext.onRendererHealth = { [weak self] health in
             self?.handleRendererHealth(health)
+        }
+        engine.callbackContext.onActionNotification = { [weak self] note in
+            self?.handleTerminalActionNotification(note)
         }
     }
 
@@ -292,9 +299,11 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// client and never mutate the surface. Main-thread confined.
     public func pumpHostFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) {
         guard let client = attachClient else { return }
+        let priorHighWater = highWater
         let outcome = (try? client.handleFrame(frame, frameBinding: frameBinding))
             ?? .rejectedLateFrame
         highWater = client.highWater
+        if highWater > priorHighWater { noteOutputApplied() }
         claimPresentation = client.claimPresentation
         inputSubmissionState = client.inputSubmissionState
         switch outcome {
@@ -484,6 +493,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         let result = applicator.apply(bytes: bytes, streamSeq: streamSeq, frameBinding: frameBinding)
         if case .applied(let hw) = result {
             highWater = hw
+            noteOutputApplied()
             notifyOutputStatusReconnect(reason: "output")
         }
         return result
@@ -759,6 +769,8 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public func userClose() {
         guard !closed else { return }
         closed = true
+        dismissSearchUI(restoreTerminalFocus: false)
+        dismissNewOutputIndicator()
         pendingDraw = false
         drawWorkItem?.cancel()
         resizeWorkItem?.cancel()
