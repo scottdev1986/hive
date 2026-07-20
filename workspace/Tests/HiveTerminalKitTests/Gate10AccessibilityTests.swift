@@ -62,6 +62,12 @@ final class Gate10AccessibilityTests: XCTestCase {
         return window
     }
 
+    private func dumpField(_ dump: String, _ key: String) -> String? {
+        dump.split(separator: "\n")
+            .first(where: { $0.hasPrefix(key + "=") })
+            .map { String($0.dropFirst(key.count + 1)) }
+    }
+
     /// Flat props vs children must describe one generation (henrietta F1).
     private func assertDumpInternallyConsistent(
         _ dump: String,
@@ -69,11 +75,7 @@ final class Gate10AccessibilityTests: XCTestCase {
         file: StaticString = #filePath,
         line: UInt = #line
     ) {
-        func field(_ key: String) -> String? {
-            dump.split(separator: "\n")
-                .first(where: { $0.hasPrefix(key + "=") })
-                .map { String($0.dropFirst(key.count + 1)) }
-        }
+        func field(_ key: String) -> String? { dumpField(dump, key) }
         guard let nocStr = field("numberOfCharacters"),
               let noc = Int(nocStr),
               let childCountStr = field("childCount"),
@@ -496,27 +498,38 @@ final class Gate10AccessibilityTests: XCTestCase {
         )
         dumps.append(("alternate-screen-exit", view.accessibilityTreeDump()))
 
-        // Resize (geometry signal). Never compare a live engine snapshot to
-        // cached controller children (two independent reads → intermittent
-        // mismatch under setSize — helen 1-in-7 flake). Drain deferred work,
-        // force one sync export, dump under a pin (self-consistent by construction).
+        // Resize (geometry signal). Capture pre-geometry, apply setSize, settle
+        // only when the pinned dump shows a REAL geometry transition (not just
+        // "stable content" — that would mint a consistent pre-transition dump).
+        view.forceAccessibilitySnapshotRefresh()
+        let preResizeDump = view.accessibilityTreeDump()
+        let preResizeRows = Int(dumpField(preResizeDump, "geometryRows") ?? "")
+        let preResizeCols = Int(dumpField(preResizeDump, "geometryColumns") ?? "")
         surface.setSize(widthPx: 640, heightPx: 400)
         view.accessibilityGeometryDidChange()
         view.accessibilitySemanticStateDidInvalidate()
         drainMain()
         view.forceAccessibilitySnapshotRefresh()
-        // Settle until a pinned dump still carries pre-resize content after setSize.
         XCTAssertTrue(
             settle {
                 view.forceAccessibilitySnapshotRefresh()
                 let dump = view.accessibilityTreeDump()
-                return dump.contains("ax-input-slice") && dump.contains("geometryRows=")
+                guard dump.contains("ax-input-slice") else { return false }
+                let rows = Int(self.dumpField(dump, "geometryRows") ?? "")
+                let cols = Int(self.dumpField(dump, "geometryColumns") ?? "")
+                // Real transition: rows and/or columns changed after setSize.
+                return rows != preResizeRows || cols != preResizeCols
             },
-            "resize must leave a pinned dump with content + geometryRows"
+            "resize must change geometryRows and/or geometryColumns (pre rows=\(String(describing: preResizeRows)) cols=\(String(describing: preResizeCols)))"
         )
         let resizeDump = view.accessibilityTreeDump()
-        // Non-vacuous tear check lives here (geometryRows == childCount, coverage).
         assertDumpInternallyConsistent(resizeDump, name: "resize")
+        let postResizeRows = Int(dumpField(resizeDump, "geometryRows") ?? "")
+        let postResizeCols = Int(dumpField(resizeDump, "geometryColumns") ?? "")
+        XCTAssertTrue(
+            postResizeRows != preResizeRows || postResizeCols != preResizeCols,
+            "resize dump must not be a pre-transition capture"
+        )
         dumps.append(("resize", resizeDump))
 
         // Replay-shaped ordered output after content.
@@ -527,8 +540,11 @@ final class Gate10AccessibilityTests: XCTestCase {
         )
         dumps.append(("replay", view.accessibilityTreeDump()))
 
-        // Scroll binding if available — same pin-local settle as resize.
+        // Scroll binding if available — require viewport transition, not mere stability.
         if let handle = surface.surfaceHandle {
+            view.forceAccessibilitySnapshotRefresh()
+            let preScrollDump = view.accessibilityTreeDump()
+            let preViewport = dumpField(preScrollDump, "valueDescription")
             let action = "scroll_page_up"
             _ = action.withCString { ghostty_surface_binding_action(handle, $0, UInt(action.utf8.count)) }
             view.accessibilitySemanticStateDidInvalidate()
@@ -538,10 +554,14 @@ final class Gate10AccessibilityTests: XCTestCase {
                 settle {
                     view.forceAccessibilitySnapshotRefresh()
                     let dump = view.accessibilityTreeDump()
-                    return dump.contains("geometryRows=") && dump.contains("childCount=")
-                        && (view.accessibilityChildren()?.count ?? 0) > 0
+                    guard (view.accessibilityChildren()?.count ?? 0) > 0 else { return false }
+                    let viewport = self.dumpField(dump, "valueDescription")
+                    // Prefer a viewport string change; if scroll is a no-op at bottom,
+                    // still require a consistent non-empty child tree (documented).
+                    return viewport != preViewport
+                        || (dump.contains("geometryRows=") && dump.contains("replay-tail"))
                 },
-                "scroll path must leave a readable pinned child tree"
+                "scroll path must change viewport description or retain post-replay content"
             )
         }
         let scrollDump = view.accessibilityTreeDump()
@@ -550,7 +570,12 @@ final class Gate10AccessibilityTests: XCTestCase {
 
         view.userClose()
         drainMain()
-        dumps.append(("teardown", view.accessibilityTreeDump()))
+        let teardownDump = view.accessibilityTreeDump()
+        XCTAssertTrue(
+            teardownDump.contains("exited") || teardownDump.contains("lifecycle=Terminal exited"),
+            "teardown dump must capture post-close lifecycle, not pre-close"
+        )
+        dumps.append(("teardown", teardownDump))
 
         for (name, dump) in dumps {
             XCTAssertTrue(dump.contains("role="), "\(name) dump must include role")
@@ -567,9 +592,9 @@ final class Gate10AccessibilityTests: XCTestCase {
         XCTAssertTrue(altDump.contains("alt-screen-row"), "alt-screen dump must carry alt content")
         let replayDump = dumps.first(where: { $0.0 == "replay" })?.1 ?? ""
         XCTAssertTrue(replayDump.contains("replay-tail"), "replay dump must carry replay-tail")
-        let teardownDump = dumps.first(where: { $0.0 == "teardown" })?.1 ?? ""
+        let teardownFromList = dumps.first(where: { $0.0 == "teardown" })?.1 ?? ""
         XCTAssertTrue(
-            teardownDump.contains("exited") || teardownDump.contains("lifecycle=Terminal exited"),
+            teardownFromList.contains("exited") || teardownFromList.contains("lifecycle=Terminal exited"),
             "teardown dump must show exited lifecycle"
         )
 
