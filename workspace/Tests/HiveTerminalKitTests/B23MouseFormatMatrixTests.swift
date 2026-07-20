@@ -115,6 +115,15 @@ final class B23MouseFormatMatrixTests: XCTestCase {
         let urxvt = try pressReport(enabling: "\u{1B}[?1000h\u{1B}[?1015h")
 
         // Default and UTF-8 carry coord+32; urxvt carries the bare decimal.
+        // Check LENGTHS before indexing. A mutation that disables 1005 at every
+        // enabling site makes utf8Mode a 6-byte default report, and indexing
+        // [6] on it would trap and abort the whole suite rather than failing
+        // this row. A row that crashes under mutation reports less than one
+        // that fails, so the shape is asserted first.
+        XCTAssertEqual(x10.count, 6, "default report shape changed: \(Self.hex(x10))")
+        XCTAssertEqual(utf8Mode.count, 7, "1005 report shape changed: \(Self.hex(utf8Mode))")
+        guard x10.count == 6, utf8Mode.count == 7 else { return }
+
         XCTAssertEqual(x10[4], 125 + 32)
         XCTAssertEqual(x10[5], 14 + 32)
         XCTAssertEqual(Array(utf8Mode[4...5]), Array(Data([0xC2, 0x9D])))

@@ -2,34 +2,29 @@
 [1/1] Compiling plugin GenerateManual
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
-[2/18] Write sources
-[3/18] Write swift-version--58304C5D6DBC2206.txt
-[5/8] Compiling HiveTerminalKitTests B23MouseFormatMatrixTests.swift
-[6/8] Emitting module HiveTerminalKitTests
-[6/8] Write Objects.LinkFileList
-[7/8] Linking HiveWorkspacePackageTests
-Build complete! (3.88s)
-Test Suite 'Selected tests' started at 2026-07-19 21:09:42.884.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:09:42.884.
-Test Suite 'B23MouseModeMatrixTests' started at 2026-07-19 21:09:42.884.
+[2/16] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.74s)
+Test Suite 'Selected tests' started at 2026-07-19 21:12:40.510.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:12:40.511.
+Test Suite 'B23MouseModeMatrixTests' started at 2026-07-19 21:12:40.511.
 Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testPositiveControlEnabledModeProducesReportsThroughSamePredicate]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testPositiveControlEnabledModeProducesReportsThroughSamePredicate]' passed (0.372 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testPositiveControlEnabledModeProducesReportsThroughSamePredicate]' passed (0.384 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testPositiveControlNoModeEnabledProducesNoMouseReports]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testPositiveControlNoModeEnabledProducesNoMouseReports]' passed (0.260 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testPositiveControlNoModeEnabledProducesNoMouseReports]' passed (0.269 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testSGRDiscriminatesReleaseByFinalByteNotButtonThree]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testSGRDiscriminatesReleaseByFinalByteNotButtonThree]' passed (0.269 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testSGRDiscriminatesReleaseByFinalByteNotButtonThree]' passed (0.267 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testShiftOverrideWritesZeroBytesWhileApplicationHasCapturedMouse]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testShiftOverrideWritesZeroBytesWhileApplicationHasCapturedMouse]' passed (0.262 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testShiftOverrideWritesZeroBytesWhileApplicationHasCapturedMouse]' passed (0.266 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testVT200ReportsPressAndReleaseWithButtonThreeOnRelease]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testVT200ReportsPressAndReleaseWithButtonThreeOnRelease]' passed (0.267 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testVT200ReportsPressAndReleaseWithButtonThreeOnRelease]' passed (0.270 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testX10ReportsPressAndNeverRelease]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testX10ReportsPressAndNeverRelease]' passed (0.275 seconds).
-Test Suite 'B23MouseModeMatrixTests' passed at 2026-07-19 21:09:44.591.
-	 Executed 6 tests, with 0 failures (0 unexpected) in 1.706 (1.706) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:09:44.591.
-	 Executed 6 tests, with 0 failures (0 unexpected) in 1.706 (1.706) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 21:09:44.591.
-	 Executed 6 tests, with 0 failures (0 unexpected) in 1.706 (1.707) seconds
+Test Case '-[HiveTerminalKitTests.B23MouseModeMatrixTests testX10ReportsPressAndNeverRelease]' passed (0.265 seconds).
+Test Suite 'B23MouseModeMatrixTests' passed at 2026-07-19 21:12:42.233.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 1.722 (1.723) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:12:42.233.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 1.722 (1.723) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:12:42.233.
+	 Executed 6 tests, with 0 failures (0 unexpected) in 1.722 (1.723) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
