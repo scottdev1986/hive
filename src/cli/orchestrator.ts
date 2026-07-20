@@ -228,6 +228,7 @@ export async function prepareOrchestratorConfig(
         daemonPort: port,
         name: ORCHESTRATOR_NAME,
         readOnly: true,
+        boardTools: true,
         hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
       });
       return;

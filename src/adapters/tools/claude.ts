@@ -37,6 +37,12 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
+  /** Let a read-only session run `gh` so the orchestrator can manage the GitHub
+   * Project itself instead of spawning an agent per board mutation. Edit, Write
+   * and NotebookEdit stay denied, and the grant is scoped to `Bash(gh:*)`: every
+   * other shell command still raises a prompt. Must stay off for the read-only
+   * restart of a revoked writer, which shares the same deny list. */
+  boardTools?: boolean;
   /** Suppress interactive permission prompts. Read-only authority remains
    * enforced independently by denied tools and server capabilities. */
   dangerous?: boolean;
@@ -70,6 +76,7 @@ export type ClaudeAgentConfigOptions = Pick<
   | "name"
   | "daemonPort"
   | "readOnly"
+  | "boardTools"
   | "dangerous"
   | "graphifyUrl"
   | "hiveCommand"
@@ -551,6 +558,16 @@ export async function writeClaudeAgentConfig(
   // Denied tools are removed from the session and its subagents, including in
   // bypass mode; the permission mode alone does not make a session read-only.
   const readOnlyDeny = ["Edit", "Write", "NotebookEdit", "Bash"];
+  // A board-tools session drops only the bare Bash denial, and only here: the
+  // constant above is shared with the read-only restart of a revoked writer,
+  // which must keep its shell taken away. Attended mode only — under bypass
+  // there is no prompt left to scope the grant, so that branch keeps the
+  // unmodified list.
+  const boardTools = (options.boardTools ?? false) &&
+    !(options.dangerous ?? false);
+  const attendedDeny = boardTools
+    ? readOnlyDeny.filter((tool) => tool !== "Bash")
+    : readOnlyDeny;
 
   const permissions = options.readOnly
     ? (options.dangerous ?? false)
@@ -562,7 +579,7 @@ export async function writeClaudeAgentConfig(
         }
       : {
           defaultMode: "default",
-          deny: readOnlyDeny,
+          deny: attendedDeny,
           allow: [
             "Read",
             "Glob",
@@ -571,6 +588,8 @@ export async function writeClaudeAgentConfig(
             // reader capability still denies write/land server-side, while this
             // rule lets the agent report, acknowledge, and escalate unattended.
             "mcp__hive__*",
+            // Prefix match: covers `gh issue`, `gh project item-edit`, `gh api`.
+            ...(boardTools ? ["Bash(gh:*)"] : []),
           ],
         }
     : (options.dangerous ?? false)
@@ -709,6 +728,16 @@ export async function writeClaudeAgentConfig(
     mergedSettings.hooks.PreToolUse = mergedSettings.hooks.PreToolUse.filter(
       (entry) => !JSON.stringify(entry).includes(GRAPHIFY_HOOK_SCRIPT),
     );
+  }
+
+  // deepMerge unions arrays under `permissions`, so a config written before the
+  // grant existed keeps its bare "Bash" denial through every respawn and the
+  // allow rule never gets a chance to apply. Take it back out.
+  if (boardTools && isRecord(mergedSettings.permissions)) {
+    const merged = mergedSettings.permissions;
+    if (Array.isArray(merged.deny)) {
+      merged.deny = merged.deny.filter((tool) => tool !== "Bash");
+    }
   }
 
   await Promise.all([

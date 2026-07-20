@@ -52,6 +52,19 @@ beforeEach(async () => {
   await mkdir(worktreePath, { recursive: true });
 });
 
+async function readPermissions(root: string): Promise<{
+  defaultMode: string;
+  deny: string[];
+  allow: string[];
+}> {
+  const settings = JSON.parse(
+    await readFile(join(root, ".claude", "settings.local.json"), "utf8"),
+  ) as {
+    permissions: { defaultMode: string; deny: string[]; allow: string[] };
+  };
+  return settings.permissions;
+}
+
 afterAll(async () => {
   if (previousHiveHome === undefined) {
     delete Bun.env.HIVE_HOME;
@@ -509,6 +522,71 @@ describe("Claude adapter", () => {
         },
       },
     });
+  });
+
+  test("board tools scope Bash to gh, and only for the session that asked", async () => {
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "orchestrator",
+      daemonPort: 4317,
+      readOnly: true,
+      boardTools: true,
+    });
+
+    const permissions = await readPermissions(worktreePath);
+    expect(permissions).toEqual({
+      defaultMode: "default",
+      // Editing tools stay denied: the grant is shell-for-the-board, not write
+      // access. Every non-gh command still raises a prompt.
+      deny: ["Edit", "Write", "NotebookEdit"],
+      allow: [
+        "Read",
+        "Glob",
+        "Grep",
+        "mcp__hive__*",
+        "Bash(gh:*)",
+      ],
+    });
+
+    // The negative control the shared constant demands: a revoked writer
+    // restarted read-only asks for no board tools and must keep losing its
+    // shell outright. This is spawner-impl's call verbatim.
+    const revoked = join(worktreePath, "revoked");
+    await writeClaudeAgentConfig(revoked, {
+      name: "revoked-writer",
+      daemonPort: 4317,
+      readOnly: true,
+    });
+    expect((await readPermissions(revoked)).deny).toContain("Bash");
+    expect((await readPermissions(revoked)).allow).not.toContain("Bash(gh:*)");
+  });
+
+  test("a stale bare Bash denial does not survive a board-tools rewrite", async () => {
+    // deepMerge unions arrays under `permissions`, so a config written before
+    // the grant existed would otherwise re-deny Bash on every respawn and the
+    // allow rule would never apply.
+    await mkdir(join(worktreePath, ".claude"), { recursive: true });
+    await writeFile(
+      join(worktreePath, ".claude", "settings.local.json"),
+      JSON.stringify({
+        permissions: {
+          defaultMode: "default",
+          deny: ["Edit", "Write", "NotebookEdit", "Bash"],
+          allow: ["Read", "Glob", "Grep", "mcp__hive__*"],
+        },
+      }),
+    );
+
+    await writeClaudeAgentConfig(worktreePath, {
+      name: "orchestrator",
+      daemonPort: 4317,
+      readOnly: true,
+      boardTools: true,
+    });
+
+    const permissions = await readPermissions(worktreePath);
+    expect(permissions.deny).not.toContain("Bash");
+    expect(permissions.allow).toContain("Bash(gh:*)");
+    expect(permissions.deny).toEqual(["Edit", "Write", "NotebookEdit"]);
   });
 
   test("a graphify URL becomes an http entry; its absence removes a stale one", async () => {
