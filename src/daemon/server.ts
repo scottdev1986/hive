@@ -1075,7 +1075,10 @@ export class HiveDaemon {
     return this.bunServer?.port ?? null;
   }
 
-  get sessiondTerminalHost(): Pick<HiveTerminalHostAdapter, "create" | "inspect"> {
+  get sessiondTerminalHost(): Pick<
+    HiveTerminalHostAdapter,
+    "create" | "inspect" | "terminate"
+  > {
     return this.terminalHost;
   }
 
