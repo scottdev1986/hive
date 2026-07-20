@@ -137,15 +137,16 @@ To build and run the development program itself:
 
 ```sh
 make build   # pinned Zig, GhosttyKit, sessiond, the CLI and the Workspace app
-make run     # launch the staged dev Workspace against a scratch repo
+make run     # launch the staged dev Workspace against this hive checkout
 ```
 
 `make build` stages a consumer-shaped, unsigned release under `.dev/`, and
 `make run` launches it fully isolated from any installed hive — every
 rendezvous name derives from a short per-checkout `HIVE_HOME` under
 `/tmp/hive-dev-<digest>` (deep worktree paths overflow macOS `sun_path` for
-sessiond sockets). Pass `PROJECT=/path/to/repo` to open a specific git repo
-instead of the `.dev/project` scratch repo.
+sessiond sockets). With no argument it opens the checkout you run it from —
+inside an agent worktree, that worktree. Pass `PROJECT=/path/to/repo` to open a
+different git repo instead.
 
 `make clean` stops the dev instance and then deletes `.dev/` — in that order,
 and never the second without the first. It signals the dev Workspace app, its

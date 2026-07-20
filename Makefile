@@ -2,7 +2,7 @@
 # installed hive and its running instances.
 #
 #   make build                  build + stage the standalone dev release under .dev/
-#   make run                    run the staged dev build (defaults to .dev/project)
+#   make run                    run the staged dev build (defaults to this checkout)
 #   make demo                   build fresh terminal artifacts + launch watched proof
 #   make terminal               build fresh artifacts + launch a real login shell
 #   make test                   bun suites + sessiond (Zig) + Workspace (Swift)
@@ -30,13 +30,14 @@ SHELL := /bin/sh
 .DEFAULT_GOAL := help
 
 ROOT := $(CURDIR)
+# `make run` with no argument opens Hive on this checkout; PROJECT=/path wins.
+PROJECT ?= $(ROOT)
 DEV := $(ROOT)/.dev
 # `#` opens a comment in makefile text, so a tmux format like #{pid} cannot be
 # written inline; escaping it reaches the shell as a literal backslash.
 HASH := \#
 DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
-DEV_PROJECT := $(DEV)/project
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
 # Short per-checkout HIVE_HOME: digest of the resolved checkout path keeps
@@ -156,7 +157,7 @@ DEV_ENV := \
 
 help:
 	@echo "make build                 build + stage the standalone dev release (.dev/)"
-	@echo "make run [PROJECT=/path]   run the dev build (defaults to the .dev/project scratch repo)"
+	@echo "make run [PROJECT=/path]   run the dev build (defaults to this hive checkout)"
 	@echo "make demo                  build fresh artifacts + launch watched typeable proof"
 	@echo "make terminal              build fresh artifacts + launch a real typeable login shell (live M1 terminal)"
 	@echo "make demo-artifacts        build only the proof's Ghostty/Swift/sessiond artifacts"
@@ -282,28 +283,23 @@ build: toolchain ghosttykit sessiond
 	ln -shf "versions/$(DEV_VERSION)" "$(INSTALL_ROOT)/current"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
 
-# With no PROJECT, the dev Workspace opens a scratch git repo inside the dev
-# sandbox, created on demand and deleted by make clean along with the rest of
-# .dev. An explicit PROJECT must be a git repo OUTSIDE this checkout, so the
-# dev Workspace never opens the hive repo itself.
+# PROJECT defaults to this checkout, so `make run` opens Hive on Hive. It is
+# derived from $(ROOT) rather than hardcoded so any clone works; the knock-on is
+# that inside an agent worktree it opens THAT worktree, which is correct — the
+# project is the checkout you are standing in, and it keeps a worktree's dev run
+# out of the main checkout's live .hive/worktrees.
+# An explicit PROJECT still wins, and is still refused if it points somewhere
+# else inside this checkout (.dev/, a sibling worktree) — only the root itself
+# is now allowed.
 run:
 	@set -e; \
 	[ -x "$(HIVE_BIN)" ] || { echo "no dev build staged; run 'make build' first" >&2; exit 2; }; \
-	if [ -n "$(PROJECT)" ]; then \
-	  proj=$$(cd "$(PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(PROJECT)" >&2; exit 2; }; \
+	proj=$$(cd "$(PROJECT)" 2>/dev/null && pwd -P) || { echo "PROJECT does not exist: $(PROJECT)" >&2; exit 2; }; \
+	if [ "$$proj" != "$(ROOT)" ]; then \
 	  case "$$proj/" in "$(ROOT)/"*) \
-	    echo "refusing: PROJECT is the hive repo (or inside it); point at a separate test repo" >&2; exit 2;; esac; \
-	  [ -d "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
-	else \
-	  mkdir -p "$(DEV_PROJECT)"; \
-	  proj=$$(cd "$(DEV_PROJECT)" && pwd -P); \
-	  if [ ! -d "$$proj/.git" ]; then \
-	    echo "creating dev scratch project $$proj"; \
-	    git init -q "$$proj"; \
-	    git -C "$$proj" -c user.name=hive -c user.email=dev@hive.local \
-	      commit -q --allow-empty -m "dev scratch project"; \
-	  fi; \
+	    echo "refusing: PROJECT is inside the hive checkout but is not its root; point at the root or a separate repo" >&2; exit 2;; esac; \
 	fi; \
+	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
 	cd "$$proj" && env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify && exec env $(DEV_ENV) "$(HIVE_BIN)"
 
