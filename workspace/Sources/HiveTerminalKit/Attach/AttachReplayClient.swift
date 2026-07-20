@@ -185,6 +185,7 @@ public final class AttachReplayClient {
     }
 
     func retarget(newBinding: SurfaceBinding, highWater: UInt64 = 0) {
+        releaseClaimBestEffort()
         transport?.close()
         transport = nil
         binding = newBinding
@@ -198,10 +199,28 @@ public final class AttachReplayClient {
     }
 
     func failDeferredPresentation(_ failure: TerminalSurfaceState) {
+        releaseClaimBestEffort()
         transport?.close()
         transport = nil
         state = failure
         resetInputState()
+    }
+
+    /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport (#40).
+    /// Best-effort: transport may already be half-dead; host also clears on drop.
+    public func releaseClaimBestEffort() {
+        guard let token = activeClaimToken, let binding, transport != nil else { return }
+        let payload: [String: Any] = [
+            "schemaVersion": 1,
+            "session": sessionReference(binding.locator),
+            "claimToken": token,
+            "kind": "cancel",
+        ]
+        try? sendJSON(.claimRelease, object: payload, requestId: nextRequestId)
+        nextRequestId += 1
+        activeClaimToken = nil
+        claimRequestId = nil
+        claimPresentation = .free
     }
 
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {

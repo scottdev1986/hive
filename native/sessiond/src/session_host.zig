@@ -1891,6 +1891,16 @@ const WireClaimAcquire = struct {
     idempotencyKey: []const u8,
 };
 
+/// CLAIM_RELEASE has a frame type but no frozen payload schema yet — host
+/// accepts this minimal shape (token + submit|cancel). Encoded release bytes
+/// for submit are optional; cancel uses empty encoding (arbiter accepts).
+const WireClaimRelease = struct {
+    schemaVersion: u8,
+    session: WireTerminalSessionRef,
+    claimToken: []const u8,
+    kind: []const u8,
+};
+
 const WireInputOperation = struct {
     kind: []const u8,
     encoding: ?[]const u8 = null,
@@ -2422,13 +2432,15 @@ pub const HostCore = struct {
                 std.mem.eql(u8, claim.kind, request.kind) and
                 std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
                 return self.encodeClaimResult(.{ .granted = claim });
-            return self.encodeClaimResult(.{ .denied = .{
-                .owner = claim,
-                .diagnostic = if (claim.expires_mono_ns <= now_ns)
-                    "input owner lease expired; operator resolution required"
-                else
-                    "input already claimed",
-            } });
+            if (claim.expires_mono_ns > now_ns) {
+                return self.encodeClaimResult(.{ .denied = .{
+                    .owner = claim,
+                    .diagnostic = "input already claimed",
+                } });
+            }
+            // Expired host claim with no clean release — drop it so a returning
+            // viewer can re-enter through free/orphaned arbiter paths (#40).
+            self.onViewerDetached(claim.owner_viewer_id);
         }
         const binding = self.termination orelse
             return self.encodeClaimResult(.{ .unknown = "input binding unavailable" });
@@ -2481,6 +2493,22 @@ pub const HostCore = struct {
         claim.lease_expires_at = try self.allocator.dupe(u8, expiry);
         initialized_fields = 6;
 
+        // Returning human after unclean drop: arbiter is HUMAN_ORPHANED until
+        // operatorResume (never-steal still blocks concurrent HUMAN_OWNED).
+        if (arbiter.currentState() == .human_orphaned) {
+            const resumed = arbiter.operatorResume(viewer_id, claim.token) catch |err| return switch (err) {
+                error.HumanOwned, error.InputBusy, error.NotReady => self.encodeClaimResult(.{ .denied = .{
+                    .owner = null,
+                    .diagnostic = @errorName(err),
+                } }),
+                else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
+            };
+            claim.next_sequence = resumed.next_sequence;
+            self.active_claim = claim;
+            initialized_fields = 0;
+            return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
+        }
+
         const granted = arbiter.claimAcquire(viewer_id, claim.token) catch |err| return switch (err) {
             error.HumanOwned, error.HumanOrphaned, error.InputBusy => self.encodeClaimResult(.{ .denied = .{
                 .owner = null,
@@ -2492,6 +2520,64 @@ pub const HostCore = struct {
         self.active_claim = claim;
         initialized_fields = 0;
         return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
+    }
+
+    /// Unclean viewer drop: orphan the arbiter claim (lease current) and clear
+    /// the host `active_claim` so a returning human can re-enter (#40).
+    pub fn onViewerDetached(self: *HostCore, viewer_id: []const u8) void {
+        const claim = if (self.active_claim) |*active| active else return;
+        if (!std.mem.eql(u8, claim.owner_viewer_id, viewer_id)) return;
+        if (self.termination) |binding| {
+            if (binding.arbiter) |arbiter| {
+                arbiter.viewerDisconnect() catch {};
+            }
+        }
+        claim.deinit(self.allocator);
+        self.active_claim = null;
+    }
+
+    /// Clean CLAIM_RELEASE → FREE + clear host claim (no orphan).
+    pub fn releaseInput(
+        self: *HostCore,
+        payload: []const u8,
+        viewer_id: []const u8,
+        now_ns: u64,
+    ) ![]u8 {
+        _ = now_ns;
+        var parsed = try std.json.parseFromSlice(WireClaimRelease, self.allocator, payload, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        const request = parsed.value;
+        if (request.schemaVersion != 1 or !self.terminalSessionMatches(request.session))
+            return error.GenerationMismatch;
+        const claim = if (self.active_claim) |*active| active else return error.InvalidClaimAcquire;
+        if (!std.mem.eql(u8, claim.token, request.claimToken) or
+            !std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
+            return error.InvalidClaimAcquire;
+        const kind: input_arbiter.ReleaseKind = if (std.mem.eql(u8, request.kind, "submit"))
+            .submit
+        else if (std.mem.eql(u8, request.kind, "cancel"))
+            .cancel
+        else
+            return error.InvalidClaimAcquire;
+        const binding = self.termination orelse return error.InvalidClaimAcquire;
+        const arbiter = binding.arbiter orelse return error.InvalidClaimAcquire;
+        _ = arbiter.claimRelease(viewer_id, claim.token, kind, "") catch |err| return switch (err) {
+            error.HumanOrphaned, error.HumanOwned, error.NotReady, error.InputBusy => error.InvalidClaimAcquire,
+            else => error.OutOfMemory,
+        };
+        claim.deinit(self.allocator);
+        self.active_claim = null;
+        return self.encodeInputApplied(.{
+            .transaction_id = "claim-release",
+            .stage = "accepted",
+            .byte_range = null,
+            .ordered_at = null,
+            .available_credit_bytes = 0,
+            .completeness = "complete",
+            .diagnostic = null,
+        });
     }
 
     fn encodeInputApplied(self: *HostCore, receipt: InputReceiptData) ![]u8 {
@@ -3903,6 +3989,21 @@ fn handleViewerFrame(
                 return;
             };
         },
+        generated.frame_type.claim_release => blk: {
+            if (!authorization.operations.human_input) {
+                try writeHostFailure(allocator, stream, request.header, .forbidden);
+                return;
+            }
+            response_type = generated.frame_type.applied;
+            break :blk core.releaseInput(
+                request.payload,
+                authorization.viewer_id,
+                now_ns,
+            ) catch |err| {
+                try writeHostFailure(allocator, stream, request.header, viewerFailureCode(err));
+                return;
+            };
+        },
         else => {
             try writeHostFailure(allocator, stream, request.header, .unsupported_frame);
             return;
@@ -4062,6 +4163,19 @@ const viewer_inbound_frames_per_iteration = 32;
 /// OUTPUT (paused while the unacknowledged window exceeds the negotiated
 /// viewer queue bound), then dispatches any ready inbound frames. Any wire
 /// error detaches the viewer; the logical pane representation is untouched.
+fn detachAttachedViewer(
+    allocator: std.mem.Allocator,
+    core: *HostCore,
+    viewer_slot: *?AttachedViewer,
+) void {
+    if (viewer_slot.*) |*viewer| {
+        // #40: unclean drop must orphan+clear host claim before free of viewer_id.
+        core.onViewerDetached(viewer.authorization.viewer_id);
+        viewer.close(allocator);
+        viewer_slot.* = null;
+    }
+}
+
 fn pumpAttachedViewer(
     allocator: std.mem.Allocator,
     viewer_slot: *?AttachedViewer,
@@ -4074,8 +4188,7 @@ fn pumpAttachedViewer(
             viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
         {
             pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch {
-                viewer.close(allocator);
-                viewer_slot.* = null;
+                detachAttachedViewer(allocator, core, viewer_slot);
                 return;
             };
         }
@@ -4089,8 +4202,7 @@ fn pumpAttachedViewer(
             const ready = std.posix.poll(&fds, 0) catch 0;
             if (ready == 0 or fds[0].revents == 0) return;
             var frame = readRequiredFrame(allocator, viewer.stream) catch {
-                viewer.close(allocator);
-                viewer_slot.* = null;
+                detachAttachedViewer(allocator, core, viewer_slot);
                 return;
             };
             defer {
@@ -4107,8 +4219,7 @@ fn pumpAttachedViewer(
                         continue;
                     }
                 }
-                viewer.close(allocator);
-                viewer_slot.* = null;
+                detachAttachedViewer(allocator, core, viewer_slot);
                 return;
             }
             handleViewerFrame(
@@ -4119,8 +4230,7 @@ fn pumpAttachedViewer(
                 &frame,
                 timer.read(),
             ) catch {
-                viewer.close(allocator);
-                viewer_slot.* = null;
+                detachAttachedViewer(allocator, core, viewer_slot);
                 return;
             };
         }
@@ -4460,6 +4570,7 @@ fn runHostLoop(
 ) !void {
     var attached: ?AttachedViewer = null;
     defer if (attached) |*viewer| {
+        core.onViewerDetached(viewer.authorization.viewer_id);
         viewer.close(core.allocator);
         attached = null;
     };
@@ -4505,7 +4616,11 @@ fn runHostLoop(
             if (accepted) |viewer| {
                 // §26 retarget: a later successful attach for this exact
                 // generation supersedes the previous viewer connection.
-                if (attached) |*old| old.close(core.allocator);
+                if (attached) |*old| {
+                    // #40: supersede is an unclean drop for the prior viewer.
+                    core.onViewerDetached(old.authorization.viewer_id);
+                    old.close(core.allocator);
+                }
                 attached = viewer;
             } else {
                 stream.close();
@@ -6145,8 +6260,32 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     defer std.testing.allocator.free(denied);
     try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, denied, "input already claimed") != null);
-    // Host still holds the first claim — second reattach cannot recover.
+    // Host still holds the first claim — second reattach cannot recover without detach.
     try std.testing.expect(core.active_claim != null);
+
+    // Unclean drop path (#40 fix): onViewerDetached clears host claim + orphans arbiter.
+    core.onViewerDetached("viewer-a");
+    try std.testing.expect(core.active_claim == null);
+    try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
+
+    // Returning human (viewer-b as operator resume) is granted a new claim.
+    const third = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-b",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-b-resume",
+    }, .{});
+    defer std.testing.allocator.free(third);
+    const resumed = try core.claimInput(third, "viewer-b", 4_000);
+    defer std.testing.allocator.free(resumed);
+    try std.testing.expect(std.mem.indexOf(u8, resumed, "\"state\":\"granted\"") != null);
+    try std.testing.expect(core.active_claim != null);
+    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 }
 
 test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {

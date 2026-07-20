@@ -62,8 +62,17 @@ One dropped viewer leaves input permanently unusable:
 2. Unit (host): grant → `onViewerDetached` → second acquire granted (GREEN after fix).
 3. Live: attach shell → force transport drop / pane recovery reattach → observe CLAIM_DENIED vs grant (port 43119).
 
-## Fix surfaces (do not land until rebased over horst/hector)
+## Fix surfaces (implemented on branch; land only after rebase over horst/hector)
 
-- `session_host.zig`: handle `claim_release`; `onViewerDetached` / close path; claimInput resume when orphaned.
-- `AttachReplayClient`: `releaseClaim()` send; call from retarget/fail/close.
-- `SessiondPaneTerminal.detach` / view `userClose`: release before close.
+- `session_host.zig`: `onViewerDetached` on stream drop/supersede/host exit; `CLAIM_RELEASE` handler via `releaseInput`; `claimInput` operatorResume when HUMAN_ORPHANED; clear expired host claims.
+- `AttachReplayClient.releaseClaimBestEffort` (cancel) on retarget/fail.
+- `HiveTerminalView.releaseClaimBestEffort` + `userClose`; `SessiondPaneTerminal.detach`.
+
+### Unit proof
+
+`CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared`:
+1. First grant → denied for second while uncleared (documents death).
+2. `onViewerDetached` → active_claim null, arbiter HUMAN_ORPHANED.
+3. Returning human grant via operatorResume path.
+
+sessiond unit suite: 199/199 passed after fix.
