@@ -513,9 +513,15 @@ pub const Runtime = struct {
 
         // Publish exclusive-owner identity under the kernel flock. macOS lsof
         // does not report flock holders (empty lock field even with LOCK_EX),
-        // and a supervisor try-lock would race this acquisition. The daemon
-        // supervisor treats the stdout line + pid stamped into the lock file
-        // as positive ownership only after this exclusive tryLock succeeded.
+        // and a supervisor try-lock would race this acquisition. The pid
+        // stamped into the lock file is advisory identity only; the daemon
+        // supervisor's ready-proof is kernel-bound (LOCAL_PEERPID + HELLO on
+        // broker.sock — see src/daemon/sessiond-broker.ts), never stdout.
+        //
+        // This library must never write to ambient stdout: under `zig build
+        // test` a test binary's stdout IS the build-runner `--listen` IPC
+        // pipe, and any stray bytes desync that framed protocol into a
+        // permanent build<->runner deadlock (issue #54).
         {
             const pid = c.getpid();
             var pid_buf: [32]u8 = undefined;
@@ -524,16 +530,6 @@ pub const Runtime = struct {
             try lock_file.writeAll(pid_line);
             try lock_file.setEndPos(pid_line.len);
             try lock_file.sync();
-            // Machine-readable ready handshake for the supervisor (stdout).
-            // Must stay on one line; only emitted after exclusive ownership.
-            const stdout = std.fs.File.stdout();
-            var announce_buf: [64]u8 = undefined;
-            const announce = try std.fmt.bufPrint(
-                &announce_buf,
-                "hive-sessiond-owner {d}\n",
-                .{pid},
-            );
-            try stdout.writeAll(announce);
         }
 
         const socket_stat = std.posix.fstatat(directory.fd, "broker.sock", std.posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
@@ -4424,4 +4420,51 @@ test "post-connect socket guard rejects a substituted filesystem socket" {
         protocol.WireError.unauthenticated,
         verifyPostConnectSocket(before, before, after).?.code,
     );
+}
+
+test "Runtime.open writes no bytes to ambient stdout (issue #54 runner-IPC deadlock)" {
+    // Under `zig build test` this binary's stdout is the build-runner
+    // `--listen` IPC pipe; a single stray byte desyncs the framed protocol
+    // and deadlocks the whole build. Capture fd 1 across Runtime.open and
+    // require silence. The capture also shields the runner protocol if the
+    // regression ever returns, so the failure reports instead of hanging.
+    var root_storage: [48]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/hq{x}", .{std.crypto.random.int(u32)});
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+
+    const saved_stdout = try std.posix.dup(1);
+    const capture = try std.posix.pipe();
+    _ = try std.posix.dup2(capture[1], 1);
+    std.posix.close(capture[1]);
+
+    // Positive control for the instrument: bytes written to fd 1 while the
+    // capture is installed must land in the pipe.
+    const probe: std.fs.File = .{ .handle = 1 };
+    try probe.writeAll("+");
+
+    var open_error: ?anyerror = null;
+    if (Runtime.open(std.testing.allocator, root)) |opened| {
+        var runtime = opened;
+        runtime.deinit();
+    } else |err| {
+        open_error = err;
+    }
+
+    _ = try std.posix.dup2(saved_stdout, 1);
+    std.posix.close(saved_stdout);
+
+    var captured: [128]u8 = undefined;
+    var total: usize = 0;
+    while (total < captured.len) {
+        const count = try std.posix.read(capture[0], captured[total..]);
+        if (count == 0) break;
+        total += count;
+    }
+    std.posix.close(capture[0]);
+
+    // The open must have succeeded (a failed open never reaches the historic
+    // announce site, which would make a silent stdout vacuous).
+    try std.testing.expect(open_error == null);
+    try std.testing.expectEqualStrings("+", captured[0..total]);
 }
