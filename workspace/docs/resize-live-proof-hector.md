@@ -49,3 +49,48 @@ The durable fallback change correlates host resize receipts in
 `AttachReplayClient`. That material was ported only from the reviewed immutable
 source `geoff@519c5eb0`; neither Geoff's moving branch tip nor its unreviewed
 `0d8e80e7` commit was used.
+
+## Claim-path handoff for Hattie
+
+The resize attempt exposed a likely earlier attach/claim defect:
+
+- In the clean final run, both pre- and post-resize input stopped at
+  `waitingForClaim`. That state is set only after `CLAIM_ACQUIRE` is written by
+  `AttachReplayClient.beginClaimAcquire`; no correlated `CLAIM_RESULT` reached
+  the client, no `INPUT_SUBMIT` followed, and output high-water stayed at 218.
+- Two other fresh attempts (`/tmp/hb22-f0f5` and `/tmp/hb22-e7d5`) also ended at
+  `waitingForClaim` with high-water 218. They lacked the pre-resize control and
+  are corroboration only.
+- An earlier reused-host attempt was invalid as a resize proof, but its claim
+  evidence is still useful: the surface became lost after `MALFORMED_FRAME`,
+  and a later acquisition was denied while the arbiter reported an orphaned
+  human lease. Treat this as a lifecycle clue, not a clean reproduction.
+- Henry's production-pump synthetic control completed the healthy sequence:
+  `CLAIM_ACQUIRE` -> granted `CLAIM_RESULT` -> `INPUT_SUBMIT` -> input APPLIED,
+  with PTY output advancing. Removing the receive pump left request 5
+  unanswered on a closed transport, proving that version was a harness
+  artifact.
+- Hubert separately observed a blank pane on fresh attach while the host
+  journal already contained bytes. That is not evidence from this run, but it
+  may share the same missing host-to-viewer delivery boundary.
+
+A healthy client consumes `CLAIM_RESULT` in
+`AttachReplayClient.handleHostFrame`, drains the held input batch, and submits
+it. The actual app's background receive/delivery boundary is
+`SessiondPaneTerminal.startPump`. On the host,
+`session_host.zig` maps `CLAIM_ACQUIRE` through `HostCore.claimInput`; an
+existing active claim, expired visibility lease, missing binding/arbiter, or an
+arbiter in `human_orphaned` produces denied/unknown rather than granted.
+
+The next live probe should correlate one request ID across four points:
+
+1. client `CLAIM_ACQUIRE` send, frozen binding/generation, and idempotency key;
+2. host receipt plus active-claim, visibility-lease, `lease_current`, and
+   arbiter state before `claimAcquire`;
+3. encoded `CLAIM_RESULT` state/diagnostic on the host and receipt by
+   `SessiondPaneTerminal.startPump`;
+4. main-thread delivery into `handleHostFrame`, including whether request ID
+   still equals `claimRequestId`.
+
+That will distinguish a host-side orphan/lease refusal from a pump or
+main-thread delivery loss without inferring state from a successful send.
