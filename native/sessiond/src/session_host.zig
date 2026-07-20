@@ -2496,6 +2496,8 @@ pub const HostCore = struct {
         // Returning human after unclean drop: arbiter is HUMAN_ORPHANED until
         // operatorResume (never-steal still blocks concurrent HUMAN_OWNED).
         // Automation must not reclaim an orphaned human lease (#40 invariant).
+        // Kind enforcement is by-construction inside operatorResume(kind=…);
+        // the early host compare is a diagnostic shortcut only.
         if (arbiter.currentState() == .human_orphaned) {
             if (!std.mem.eql(u8, request.kind, "human")) {
                 claim.deinit(self.allocator);
@@ -2505,11 +2507,11 @@ pub const HostCore = struct {
                     .diagnostic = "HumanOrphaned",
                 } });
             }
-            const resumed = arbiter.operatorResume(viewer_id, claim.token) catch |err| {
+            const resumed = arbiter.operatorResume(viewer_id, claim.token, request.kind) catch |err| {
                 claim.deinit(self.allocator);
                 initialized_fields = 0;
                 return switch (err) {
-                    error.HumanOwned, error.InputBusy, error.NotReady => self.encodeClaimResult(.{ .denied = .{
+                    error.HumanOwned, error.HumanOrphaned, error.InputBusy, error.NotReady => self.encodeClaimResult(.{ .denied = .{
                         .owner = null,
                         .diagnostic = @errorName(err),
                     } }),
@@ -6300,8 +6302,9 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     defer std.testing.allocator.free(automation);
     const auto_denied = try core.claimInput(automation, "automation-contender", 3_500);
     defer std.testing.allocator.free(auto_denied);
-    try std.testing.expect(std.mem.indexOf(u8, auto_denied, "\"state\":\"denied\"") != null or
-        std.mem.indexOf(u8, auto_denied, "\"state\":\"unknown\"") != null);
+    // Invariant must bite as a real denial — unknown/error paths do not count.
+    try std.testing.expect(std.mem.indexOf(u8, auto_denied, "\"state\":\"denied\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, auto_denied, "HumanOrphaned") != null);
     try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
 
     // Returning human (viewer-b as operator resume) is granted a new claim.

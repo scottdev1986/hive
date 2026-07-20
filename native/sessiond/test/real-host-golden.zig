@@ -1,3 +1,9 @@
+//! Real broker → real host → real `/bin/sh` provider golden.
+//!
+//! Agent shells often inherit a live `HIVE_HOME`. This suite *must* override it
+//! to a private temp root before spawning the host role (see `setenv` in
+//! `runGolden`); running under an ambient agent home collides with live daemons
+//! and can surface as `AttachLocatorMismatch` / inspect failures.
 const std = @import("std");
 const broker = @import("broker");
 const generated = @import("session_protocol_generated");
