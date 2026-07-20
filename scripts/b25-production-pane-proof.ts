@@ -103,7 +103,7 @@ let displayPreflight: {
   initialActiveDisplays: number;
   activeDisplays: number;
   wokeDisplay: boolean;
-  screenLocked: boolean;
+  sessionLockState: SessionLockState;
 } | null = null;
 let capture: {
   journal: { path: string; bytes: number; sha256: string; sequencePrefixHex: string };
@@ -152,47 +152,66 @@ function requireActiveDisplay(count: number): void {
   }
 }
 
-function sessionScreenLocked(): boolean {
+// macOS OMITS CGSSessionScreenIsLocked from the session dictionary when the
+// screen is UNLOCKED; it appears (as 1) only while locked. Absence therefore
+// means "unlocked" ONLY on a dictionary we can actually read — we use the
+// presence of kCGSSessionOnConsoleKey to prove readability, so an unreadable
+// dictionary stays a distinct, still-failing state rather than reading unlocked.
+type SessionLockState = "locked" | "unlocked" | "unreadable";
+
+function sessionLockState(): SessionLockState {
   const output = command([
     "/usr/bin/swift", "-e",
     "import CoreGraphics; import Foundation; " +
       "let value = CGSessionCopyCurrentDictionary() as? [String: Any]; " +
-      "print((value?[\"CGSSessionScreenIsLocked\"] as? NSNumber)?.intValue ?? -1)",
+      "if value?[\"kCGSSessionOnConsoleKey\"] == nil { print(\"unreadable\") } " +
+      "else if ((value?[\"CGSSessionScreenIsLocked\"] as? NSNumber)?.intValue ?? 0) == 1 { print(\"locked\") } " +
+      "else { print(\"unlocked\") }",
   ], repoRoot);
-  if (output !== "0" && output !== "1") {
+  if (output !== "locked" && output !== "unlocked" && output !== "unreadable") {
     throw new Error(`screen-lock probe failed: ${output}`);
   }
-  return output === "1";
+  return output;
 }
 
-function requireUnlockedSession(locked: boolean): void {
-  if (locked) {
+function requireUnlockedSession(state: SessionLockState): void {
+  if (state === "locked") {
     throw new Error(
       "real Workspace pixel qualification requires an unlocked macOS session",
+    );
+  }
+  if (state === "unreadable") {
+    throw new Error(
+      "real Workspace pixel qualification could not read the macOS session dictionary",
     );
   }
 }
 
 async function prepareActiveDisplay(): Promise<void> {
   const initialActiveDisplays = activeDisplayCount();
-  const screenLocked = sessionScreenLocked();
+  const lockState = sessionLockState();
   displayPreflight = {
     initialActiveDisplays,
     activeDisplays: initialActiveDisplays,
     wokeDisplay: false,
-    screenLocked,
+    sessionLockState: lockState,
   };
-  let lockedMutationRejected = false;
-  try {
-    requireUnlockedSession(true);
-  } catch {
-    lockedMutationRejected = true;
+  // Branch control over the ASSERTION only: both non-passing states must still
+  // throw, so the absent-key fix cannot have collapsed them into "unlocked".
+  // This says nothing about this session's state; that is the measured line
+  // logged below and gated by requireUnlockedSession(lockState).
+  for (const rejected of ["locked", "unreadable"] as const) {
+    let threw = false;
+    try {
+      requireUnlockedSession(rejected);
+    } catch {
+      threw = true;
+    }
+    if (!threw) throw new Error(`${rejected}-session state did not break the preflight`);
   }
-  if (!lockedMutationRejected) {
-    throw new Error("locked-session mutation did not break the preflight");
-  }
-  log("MUTATION VERIFIED: locked session breaks the real-window pixel preflight");
-  requireUnlockedSession(screenLocked);
+  log("ASSERTION CONTROL (literals, not this session): locked and unreadable both break the preflight");
+  log(`MEASURED session lock state: ${lockState}`);
+  requireUnlockedSession(lockState);
   let activeDisplays = initialActiveDisplays;
   if (activeDisplays === 0) {
     command(["/usr/bin/caffeinate", "-u", "-t", "1"], repoRoot);
@@ -214,7 +233,7 @@ async function prepareActiveDisplay(): Promise<void> {
     initialActiveDisplays,
     activeDisplays,
     wokeDisplay: initialActiveDisplays === 0,
-    screenLocked,
+    sessionLockState: lockState,
   };
   log(
     `GREEN active-display preflight: initial=${initialActiveDisplays} ` +
