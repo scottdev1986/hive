@@ -174,7 +174,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             if ProcessInfo.processInfo.environment["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] != nil {
                 let runner = SmokeRunner(controller: controller, config: config)
                 smokeRunner = runner
-                DispatchQueue.main.async { runner.run() }
+                DispatchQueue.main.asyncAfter(deadline: .now() + 3) { runner.run() }
             }
             if config.settings { showSettings(nil) }
         }
