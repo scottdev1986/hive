@@ -91,6 +91,10 @@ final class SmokeRunner {
             return
         }
 
+        NSRunningApplication.current.activate(options: [.activateAllWindows])
+        NSApp.activate(ignoringOtherApps: true)
+        window.orderFrontRegardless()
+        window.makeKey()
         check(waitUntil(10) { window.isKeyWindow }, "actual app window became key")
         check(waitUntil(10) { terminal.surfaceState == .live },
               "sessiond terminal reached live before resize (\(terminal.surfaceState))")
