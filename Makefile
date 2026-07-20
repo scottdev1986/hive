@@ -6,7 +6,7 @@
 #   make demo                   build fresh terminal artifacts + launch watched proof
 #   make terminal               build fresh artifacts + launch a real login shell
 #   make test                   bun suites + sessiond (Zig) + Workspace (Swift)
-#   make cleanup                stop the dev instance and delete all dev artifacts
+#   make cleanup                delete all dev artifacts (does NOT stop running dev processes)
 #
 # `make build && make run` is the developer flow: it builds every artifact the
 # dev release needs (pinned Zig, GhosttyKit, ReleaseFast sessiond, the CLI and
@@ -136,7 +136,7 @@ help:
 	@echo "make workspace             build the Workspace Swift executable"
 	@echo "make test                  run all suites (bun, sessiond/Zig, Workspace/Swift)"
 	@echo "make test-e2e              opt-in real-CLI e2e suite (needs tmux on PATH)"
-	@echo "make cleanup               stop the dev instance, delete all dev artifacts"
+	@echo "make cleanup               delete all dev artifacts (quit the dev app first; see #44)"
 	@echo "make deepclean             cleanup + delete native toolchain/build caches"
 	@echo "demo/terminal need Bun $(BUN_VERSION), Xcode/Swift + Metal Toolchain, and an unlocked Aqua GUI session"
 
@@ -287,9 +287,14 @@ test: toolchain ghosttykit
 test-e2e:
 	HIVE_E2E=1 bun test src/cli/e2e-real.test.ts
 
-# Stop the dev instance (its tmux server name is derived from .dev/home, so
-# this can only ever hit the dev server), kill the dev daemon only if the pid
-# still names a binary under .dev/, then delete everything.
+# Delete every dev artifact. This does NOT reliably stop a running dev
+# instance: both kills below are best-effort and swallow failure, and the
+# Workspace app is launched through `open -n` so it is nobody's child here and
+# is never signalled at all. Survivors are left bound to the deleted .dev/.
+# Quit the dev app first; issue #44 tracks making this stop the instance.
+# The tmux server name derives from .dev/home, so the kill can only ever hit
+# the dev server; the daemon is killed only if its pid still names a binary
+# under .dev/.
 clean:
 	@if [ -d "$(DEV)/home" ]; then \
 	  suffix=$$(printf '%s' "$$(cd "$(DEV)/home" && pwd -P)" | /usr/bin/shasum -a 256 | cut -c1-10); \

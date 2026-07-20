@@ -143,8 +143,13 @@ make run     # launch the staged dev Workspace against a scratch repo
 `make build` stages a consumer-shaped, unsigned release under `.dev/`, and
 `make run` launches it fully isolated from any installed hive — every
 rendezvous name derives from `.dev/home`. Pass `PROJECT=/path/to/repo` to open
-a specific git repo instead of the `.dev/project` scratch repo; `make clean`
-stops the dev instance and removes all of it.
+a specific git repo instead of the `.dev/project` scratch repo.
+
+`make clean` deletes `.dev/`, but it does not stop dev processes that are
+already running — the dev Workspace app, its tmux server, and provider CLIs
+started under it survive, left bound to the directory that was just removed.
+Quit the dev app before running `make clean`, and check for stragglers with
+`ps -axo pid,args | grep '\.dev/root'`. Issue #44 tracks this.
 
 Terminal panes in that build stay blank for now: nothing in the shipped stack
 starts the sessiond broker yet. Use `make terminal` for a live, typeable M1
