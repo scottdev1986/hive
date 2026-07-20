@@ -12,10 +12,15 @@ version silently failed all three:
     and one bad pathspec aborts the revert of every other file too.
   * Every restore is verified byte-for-byte. A failed restore would leak a
     mutation into the next case and into the recorded result.
+  * RED is split into RED_GUARD and RED_COMPILE. A mutation that fails to
+    build would otherwise score exactly like a guard firing.
   * Every mutation must actually change the file. A replacement that matches
     nothing leaves the source intact, the guard GREEN, and would otherwise be
     recorded as a surviving guard -- a false alarm indistinguishable from a
     real one.
+
+NOT crash-safe: mutations are applied in place and undone in a finally block,
+so a SIGKILL mid-run leaves the tree mutated. Commit before running.
 """
 
 import pathlib
@@ -35,6 +40,7 @@ SUITE = "C12ThemeSystemTests"
 LIVE = "C12LiveReconfigurationTests"
 PREFS_SUITE = "C12AppearancePreferencesTests"
 PAGE_SUITE = "C12AppearanceSettingsTests"
+FONT_SUITE = "C12FontAcceptanceTests"
 
 SNAPSHOT = {p: p.read_text() for p in (CONF, WCAG, MANUAL, PREFS, VIEW, PAGE, WINDOW)}
 
@@ -47,18 +53,36 @@ def restore():
             sys.exit(f"FATAL: restore of {path} failed; aborting before results are polluted")
 
 
-def run(filter_expr):
-    """Return True when GREEN. A build error is RED, never a pass."""
+def classify(filter_expr):
+    """GREEN | RED_GUARD | RED_COMPILE | RED_OTHER.
+
+    RED alone is not enough: a mutation that fails to BUILD scores identically
+    to a guard actually firing, so a non-viable mutation could inflate the
+    result. Splitting them keeps the count honest. Reviewer note: this was
+    reached independently two ways with no shared failure mode -- parsing the
+    failure text here, and build-testing each case without executing it -- and
+    both say every case compiles.
+    """
     proc = subprocess.run(
         ["swift", "test", "--filter", filter_expr],
         cwd=ROOT, capture_output=True, text=True,
     )
     out = proc.stdout + proc.stderr
-    if re.search(r"error:", out):
-        return False
+    # XCTest reports a failing assertion as `error: -[Suite testName] ...`.
+    if re.search(r"error: -\[", out) or re.search(r"^Test Case .*failed \(", out, re.M):
+        return "RED_GUARD"
+    # A Swift compile error carries file:line:col ahead of `error:`.
+    if re.search(r"\.swift:\d+:\d+: error:", out):
+        return "RED_COMPILE"
     # Never read the tail: the trailing swift-testing banner reports
     # "0 tests in 0 suites" while XCTest ran the real suite.
-    return bool(re.search(r"Executed \d+ tests, with 0 failures", out))
+    if re.search(r"Executed \d+ tests, with 0 failures", out):
+        return "GREEN"
+    return "RED_OTHER"
+
+
+def run(filter_expr):
+    return classify(filter_expr) == "GREEN"
 
 
 CASES = [
@@ -210,6 +234,38 @@ CASES = [
         '            : section == "appearance" ? appearanceController : tasksController',
         "            : tasksController",
     ),
+    # F1: engine acceptance of the selected font.
+    (
+        "the engine's diagnostics guard removed from the config factory",
+        f"{FONT_SUITE}/testDiagnosticsChannelReportsAMalformedFontValue",
+        MANUAL,
+        # The guard block appears TWICE in this file -- the other site is a
+        # different factory. Anchoring on the surrounding explicit-config lines
+        # makes the target unique; a bare guard match removes the wrong one and
+        # the test passes while looking mutated.
+        "        configURL.path.withCString { ghostty_config_load_file(config, $0) }\n"
+        "        ghostty_config_finalize(config)\n"
+        "        let diagnosticCount = ghostty_config_diagnostics_count(config)\n"
+        "        guard diagnosticCount == 0 else {\n"
+        "            ghostty_config_free(config)\n"
+        "            throw FactoryError.invalidConfig(diagnosticCount)\n"
+        "        }\n",
+        "        configURL.path.withCString { ghostty_config_load_file(config, $0) }\n"
+        "        ghostty_config_finalize(config)\n",
+    ),
+    (
+        "the live push stops refusing a config the engine rejects",
+        f"{FONT_SUITE}/testLivePushRefusesAConfigurationTheEngineRejects",
+        MANUAL,
+        "              let config = try? GhosttyBridgeFactory.makeExplicitConfiguration(contents: contents)",
+        "              let config = try? GhosttyBridgeFactory.makeExplicitConfiguration(\n"
+        "                  contents: HiveTerminalConfiguration.contents(headless: hiveConfigurationHeadless))",
+    ),
+    (
+        "wrongly-typed stored preference stops falling back",
+        f"{PREFS_SUITE}/testWronglyTypedStoredValuesFallBackRatherThanCrash",
+        PREFS, "?? .embedded", "?? .systemMonospaced",
+    ),
     (
         "knownSections goes stale (lists a key the chain no longer resolves)",
         f"{PAGE_SUITE}/testEveryKnownSectionResolvesToItsOwnPage",
@@ -224,7 +280,7 @@ def main():
     failures = []
 
     print("=== baseline: both suites must be GREEN before any mutation ===")
-    for suite in (SUITE, LIVE, PREFS_SUITE, PAGE_SUITE):
+    for suite in (SUITE, LIVE, PREFS_SUITE, PAGE_SUITE, FONT_SUITE):
         if run(suite):
             print(f"  GREEN (expected)  {suite}")
         else:
@@ -239,16 +295,19 @@ def main():
             print(f"  HARNESS ERROR  {label}: replacement matched nothing")
             continue
         path.write_text(mutated)
-        green = run(guard if "/" in guard else f"{SUITE}/{guard}")
+        verdict = classify(guard if "/" in guard else f"{SUITE}/{guard}")
         restore()
-        if green:
+        if verdict == "GREEN":
             failures.append(label)
-            print(f"  SURVIVED  {label}\n            guard {guard} stayed GREEN")
+            print(f"  SURVIVED     {label}\n               guard {guard} stayed GREEN")
+        elif verdict == "RED_COMPILE":
+            failures.append(label)
+            print(f"  RED_COMPILE  {label}\n               did not build; the guard never ran")
         else:
-            print(f"  RED       {label}")
+            print(f"  {verdict:<12} {label}")
 
     print("\n=== every mutation reverted: both suites GREEN again ===")
-    for suite in (SUITE, LIVE, PREFS_SUITE, PAGE_SUITE):
+    for suite in (SUITE, LIVE, PREFS_SUITE, PAGE_SUITE, FONT_SUITE):
         if run(suite):
             print(f"  GREEN (expected)  {suite}")
         else:

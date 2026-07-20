@@ -130,17 +130,36 @@ The light theme sits in a systematically lower contrast band. Held to the story'
 carried deliberately and recorded here rather than left for a reader to infer
 from a table where every row says "ok".
 
-Scoped as C1.2b: a CIELAB re-authoring of the light palette. The review
-established one thing this increment did not claim, and it makes C1.2b easier
-than first briefed: mirroring about L\*50 (light L\* = 100 − dark L\*) **raises**
-the light-mode ratios rather than fighting them — yellow wants L\* 18.2 and sits
-at 46.6, so going darker fixes symmetry and lifts 4.81 at the same time. Every
-tight light entry (green 5.04, yellow 4.81, br.black 3.15) moves away from its
-floor under mirroring. The method and the floors are not in tension; the light
-theme is simply the loose half. C1.2b feeds C1.5, where the user judges whether
-perceived symmetry across an appearance switch matters more than the current
-per-entry floors — and whether the target is mirror-ratios or mirror-L\*, which
-are different jobs.
+**Acceptance criterion 4 is therefore UNMET until C1.2b lands.** C1.2 satisfies
+its floors clause in full; the symmetric-lightness clause of the same criterion
+is not satisfied by this increment. C1.2b is required work to close a stated
+criterion, not optional polish awaiting a preference.
+
+Scoped as C1.2b: a CIELAB re-authoring of the light palette. The review computed
+the mirrored design exactly rather than by direction — for each slot, mirror the
+dark-mode L\*, convert back to luminance, and take the WCAG ratio against the
+existing light background; hue drops out because ratio depends only on relative
+luminance, so these are exact ratios at any hue, not estimates:
+
+- **0 entries fall below floor**, and background `f7f9fc` does **not** have to move.
+- Foreground mirrors to 17.11 against a 7.0 floor, so nothing collides there.
+- green 5.04 → 11.58, yellow 4.81 → 13.17, br.black 3.15 → 6.50. Mean ratio
+  change across the 16 slots: **+4.92**.
+
+**15 of 16 slots improve — not 16.** Slot 0 black **degrades**, 4.43 → 3.58. It
+still clears its 3.0 de-emphasis floor, so there is no violation, but it becomes
+the light theme's **new tightest entry** and is the entry C1.2b must watch for
+headroom. The mechanism: slot 0 is the only accent whose dark-mode L\* sits below
+the midpoint (45.1), so mirroring pushes it *up* to 54.9 — lighter, on a light
+background — while every other slot mirrors downward. This exception is recorded
+deliberately, because a brief promising "everything improves" would send the
+C1.2b author hunting a bug that is in fact the design.
+
+So the method and the floors are not in tension; the light theme is simply the
+loose half, and symmetry buys headroom nearly everywhere. C1.2b feeds C1.5, where
+the user's call is narrowed to **mirror-ratios or mirror-L\*** — two different
+jobs — rather than whether symmetry matters at all, since the criterion itself is
+not optional.
 
 ### Structural rules
 
@@ -179,33 +198,49 @@ Also measured at the real engine boundary:
   background reaches that theme's authored value.
 - The push is content-keyed: re-selecting the running theme is a no-op, and a
   genuine change pushes exactly once.
-- A font change alone reaches the push. Before this increment it could not:
+- A font change alone reaches the push and is accepted by the engine's parser. Before this increment it could not:
   `applyHiveConfiguration` accepted no font and never passed one to the
   generator, so the option C1.1 deferred here had no path to a live surface.
   **The bound on that claim is stated below** — reaching the push is not the
   same as the engine consuming the value.
 
-### What is NOT proven about the font
+### Engine acceptance of the font (F1), and its exact ceiling
 
-The font check asserts that the push returned true and then reads back
-`background` — a *theme* property. It never reads the font back. So what is
-measured is that the generated contents string differed and the push path
-executed; **engine acceptance of the font value is unproven**.
+The original font check asserted that the push returned true and then read back
+`background` — a *theme* property that does not change across a font switch. If
+the engine had rejected `font-family`, every assertion in it still passed. That
+is the same consumption-vs-call-boundary distinction this document draws for the
+theme one paragraph above, and it was not applied here. The C1.2 reviewer found
+it; it is recorded rather than quietly narrowed.
 
-This is the same distinction this document draws for the theme one paragraph
-above, and it was not applied here. The C1.2 reviewer found it; it is recorded
-rather than quietly narrowed. The accurate claim is: the font now reaches the
-generator and the live push — strictly more than before, when it could not reach
-a live surface at all — and nothing beyond that.
+**Reading `font-family` back is structurally impossible at this pin**, not merely
+unprecedented: it is declared `RepeatableString` (vendor `config/Config.zig:168`),
+a plain struct over an `ArrayListUnmanaged` that is neither packed nor
+`cval`-bearing (`Config.zig:5983`), so `ghostty_config_get`'s struct branch takes
+neither exit and returns false. The trap worth carrying: that getter *does*
+return C strings for **enum** keys (upstream's own `window-theme` → `"dark"`
+test), so "the getter can return strings" is true and useless — it depends
+entirely on the field's Zig type.
 
-Closing it is scoped follow-up work, and the mechanism is verified present in the
-pinned macOS header: `ghostty_config_diagnostics_count` and
-`ghostty_config_get_diagnostic` (returning a message). The closure must carry its
-own negative control — an invalid `font-family` must produce a diagnostic before
-a zero count means anything, since a channel that always reads zero passes
-forever. Note also that reading `font-family` back through the void\*-generic
-getter is *unverified*: every in-tree caller of that helper reads a numeric or a
-colour, never a string, and `font-family` is a repeatable-string type.
+Acceptance is therefore proven through the diagnostics channel, with a negative
+control that is what makes a zero count mean anything, since a channel that
+always reads zero passes forever:
+
+- **Negative control**: a malformed font value (`font-size = notanumber`) makes
+  the config factory throw with a diagnostic count above zero.
+- **Positive**: every selectable font produces zero diagnostics — the engine's
+  own parser accepted the key.
+- The live push already refuses a configuration the engine rejects, so a push
+  returning true implies zero diagnostics. Nothing pinned that before; a
+  refactor could have dropped the guard unnoticed. Removing it now turns the
+  check RED.
+
+**The ceiling, stated precisely rather than moved down a level.** Zero
+diagnostics proves the engine **parsed and accepted the key**. It does not prove
+the family resolves to an installed face — `font-family` takes any string, and a
+name matching nothing is measured here to be a clean parse, not an error — and it
+does not prove rendered glyphs changed face. Rendered-face confirmation stays a
+production-window observation, environment-deferred with the other GUI legs.
 
 The deleted-call mutation is the one that matters. The operation observer fires
 around the real `ghostty_surface_update_config` call, so it still reports a
@@ -313,9 +348,9 @@ defaulting it somewhere it would look wired and be inert.
 Every check in this increment is mutation-proven: the check is written, then
 exactly what it guards is broken, and the check must go RED.
 
-`workspace/scripts/c12-mutation-proof.py` runs 31 cases across the theme
+`workspace/scripts/c12-mutation-proof.py` runs 34 cases across the theme
 system, the engine boundary, persistence, delivery to running panes, and the
-settings wiring. All 31 turn their own guard RED, and all four C1.2 suites are
+settings wiring. All 34 turn their own guard RED, and all four C1.2 suites are
 GREEN before and after the run.
 
 The harness enforces three properties about itself, because an earlier shell

@@ -56,6 +56,37 @@ final class C12AppearancePreferencesTests: XCTestCase {
         XCTAssertEqual(preferences.font, .embedded)
     }
 
+    /// A stored value of the wrong TYPE must fall back, not crash. Today the
+    /// fallback is robust by construction — `string(forKey:)` returns nil or a
+    /// coerced string, neither reaches a valid rawValue, and nothing
+    /// force-unwraps — but nothing pinned that. A refactor to
+    /// `defaults.object(forKey:) as! String` would crash on a Data value and no
+    /// other test would catch it. Reported by the C1.2 reviewer.
+    func testWronglyTypedStoredValuesFallBackRatherThanCrash() {
+        let wrongTypes: [Any] = [
+            Data([0x00, 0x01]),
+            ["an", "array"],
+            ["a": "dictionary"],
+            true,
+            42,
+            3.14,
+            "",
+        ]
+        for value in wrongTypes {
+            defaults.set(value, forKey: "hive.terminal.themeSelection")
+            defaults.set(value, forKey: "hive.terminal.font")
+            let preferences = makePreferences()
+            XCTAssertEqual(
+                preferences.themeSelection, .system,
+                "theme must fall back for stored \(type(of: value))"
+            )
+            XCTAssertEqual(
+                preferences.font, .embedded,
+                "font must fall back for stored \(type(of: value))"
+            )
+        }
+    }
+
     func testSelectionsPersistAcrossInstances() {
         let writer = makePreferences()
         writer.themeSelection = .dark
