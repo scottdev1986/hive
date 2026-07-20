@@ -1,0 +1,15 @@
+2026-07-20T02:34:31.343Z B2.2 live proof home: /tmp/hb22-fa45
+2026-07-20T02:34:31.343Z transcript: /tmp/hb22-fa45/b22-proof-transcript.log
+2026-07-20T02:34:31.445Z broker live (pid 52690) at /tmp/hb22-fa45/runtime/sessiond/broker.sock
+2026-07-20T02:34:31.557Z daemon live in-process on port 43122
+2026-07-20T02:34:31.625Z agent row inserted: terminal → ses_019f7d60-0146-7e7b-8eee-de4654be94cf generation 1
+2026-07-20T02:34:31.797Z session created: hostPid=52727 provider=52734
+2026-07-20T02:34:31.797Z interactive login shell: /bin/zsh -l (cwd /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta)
+2026-07-20T02:34:31.797Z launch the Workspace now:
+  /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta/workspace/.build/debug/HiveWorkspace --project /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta --port 43122 --instance-id 0a7a4f767c --instance-home /tmp/hb22-fa45 --hive /tmp/hb22-fa45/hive-cli --orchestrator-session hive-b22-orch
+2026-07-20T02:34:31.798Z workspace app launched (pid 52772)
+2026-07-20T02:34:31.798Z proof descriptor written for opt-in live tests: /tmp/hb22-fa45/b22-proof.json
+2026-07-20T02:34:31.798Z terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down
+2026-07-20T02:34:36.866Z visibility renewed until 2026-07-20T02:34:51.862Z
+2026-07-20T02:34:40.904Z shutting down (SIGINT)
+2026-07-20T02:34:40.946Z daemon stopped; session torn down

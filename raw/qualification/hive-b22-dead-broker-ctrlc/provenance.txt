@@ -1,0 +1,17 @@
+qualification=#45 item 1 — LIVE b22 dead-broker Ctrl-C re-run
+origin=#41 (closed; closure explicitly did not claim end-to-end proof), deferred by harold's review ruling
+executed_by=henrietta (Claude)
+date=2026-07-20
+repo_head=79179d4197cbff632a3235d8da0f5796f7742d24
+main_head=4ab8a45d309ddb2d12a7b9b59435b99410e2076f
+host_arch=arm64
+macos=26.3.1
+harness=scripts/b22-live-attach-proof.ts via 'make terminal DEMO_PORT=43122'
+broker_binary=native/sessiond/zig-out/bin/hive-sessiond
+gui_session=unlocked Aqua (console user matches uid 501); Workspace app launched, HIVE_B22_NO_APP=0
+real_shell=1 (interactive /bin/zsh -l)
+port=43122
+fixes_under_test=16908cc1 (heidi daemon shutdown), heidi harness hardening (first-Ctrl-C clean exit, SIGINT-immune broker), helga broker lifecycle
+identity_discipline=broker re-identified AT KILL TIME via LOCAL_PEERPID of the live broker.sock, positive-controlled against 'ps comm' before signalling; the script refuses to kill a non-hive-sessiond target
+runs=2 independent runs, distinct broker pids (51305, 52690)
+f6_isolation=HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT was ABSENT from the environment for both runs (verified with env(1)). The app-mode branch at b22-live-attach-proof.ts:376 is gated on `!== undefined`, so "0" or "" would still ENTER it; genuine absence is required to skip it. Both runs therefore fell through to `await new Promise(() => {})` and were torn down solely by the SIGINT handler — helen's F6 two-teardowns-race path was never entered, and neither run showed a forced-exit line or a leaked session.

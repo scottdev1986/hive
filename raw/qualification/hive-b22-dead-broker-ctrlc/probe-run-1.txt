@@ -1,0 +1,16 @@
+launching a real interactive login shell (keep the Aqua session unlocked)
+2026-07-20T02:33:46.396Z B2.2 live proof home: /tmp/hb22-1934
+2026-07-20T02:33:46.396Z transcript: /tmp/hb22-1934/b22-proof-transcript.log
+2026-07-20T02:33:46.499Z broker live (pid 51305) at /tmp/hb22-1934/runtime/sessiond/broker.sock
+2026-07-20T02:33:46.667Z daemon live in-process on port 43122
+2026-07-20T02:33:46.778Z agent row inserted: terminal → ses_019f7d5f-5212-7a67-b7b7-128ea289e66b generation 1
+2026-07-20T02:33:46.911Z session created: hostPid=51410 provider=51416
+2026-07-20T02:33:46.911Z interactive login shell: /bin/zsh -l (cwd /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta)
+2026-07-20T02:33:46.911Z launch the Workspace now:
+  /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta/workspace/.build/debug/HiveWorkspace --project /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta --port 43122 --instance-id 59d63ca4b0 --instance-home /tmp/hb22-1934 --hive /tmp/hb22-1934/hive-cli --orchestrator-session hive-b22-orch
+2026-07-20T02:33:46.913Z workspace app launched (pid 51427)
+2026-07-20T02:33:46.913Z proof descriptor written for opt-in live tests: /tmp/hb22-1934/b22-proof.json
+2026-07-20T02:33:46.913Z terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down
+2026-07-20T02:33:51.945Z visibility renewal failed: SessiondBrokerUnavailableError: sessiond broker is unavailable at /tmp/hb22-1934/runtime/sessiond/broker.sock
+2026-07-20T02:33:55.775Z shutting down (SIGINT)
+2026-07-20T02:33:55.839Z daemon stopped; session torn down
