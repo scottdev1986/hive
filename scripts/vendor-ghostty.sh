@@ -43,11 +43,28 @@ patch_series_sha256() {
   printf '%s\n' "$digest"
 }
 
+# git apply DISCOVERS the enclosing repository. When the target directory is
+# nested inside this repo (the default TMPDIR is <repo>/.dev/tmp, and the
+# fetch cache is <repo>/.cache/native), `git -C "$target" apply` resolves the
+# hive checkout as the repository and treats $target as a subdirectory — every
+# path in the patch is then "outside the subdirectory" and silently IGNORED:
+# all applies exit 0 while changing nothing (#58). A ceiling at the target
+# stops the upward discovery, so apply always runs in plain patch mode
+# against the target tree, exactly as it does when TMPDIR is /tmp.
+# The ceiling must be the target's PARENT: git only honours a ceiling while
+# ascending INTO it, so a ceiling at the start directory itself is ignored
+# (measured: discovery still resolved the enclosing repo).
+apply_in() {
+  dir=$1
+  shift
+  GIT_CEILING_DIRECTORIES="$(dirname -- "$dir")" git -C "$dir" apply "$@"
+}
+
 apply_series() {
   target=$1
   series_entries | while IFS= read -r patch; do
     echo "applying Ghostty patch: $patch"
-    git -C "$target" apply --whitespace=error-all "$PATCH_DIR/$patch"
+    apply_in "$target" --whitespace=error-all "$PATCH_DIR/$patch"
   done
 }
 
@@ -64,7 +81,7 @@ verify_vendor() {
   reverse=$(series_entries | /usr/bin/awk '{ line[NR] = $0 } END { for (i = NR; i > 0; i--) print line[i] }')
   if [ -n "$reverse" ]; then
     printf '%s\n' "$reverse" | while IFS= read -r patch; do
-      git -C "$tmp" apply --reverse --whitespace=error-all "$PATCH_DIR/$patch"
+      apply_in "$tmp" --reverse --whitespace=error-all "$PATCH_DIR/$patch"
     done
   fi
 
