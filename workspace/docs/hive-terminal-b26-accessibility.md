@@ -30,9 +30,10 @@ Directory: `raw/qualification/hive-b26-gate10-accessibility/`
 
 | Artifact | Status |
 |---|---|
-| `ax-tree-{input,alternate-screen,alternate-screen-exit,resize,replay,scroll,teardown}.txt` | RECORDED |
+| `ax-tree-{input,alternate-screen,alternate-screen-exit,resize,replay,scroll}.txt` | RECORDED — pre-`.live` / xctest host / no present (see Honest limits) |
+| `ax-tree-teardown.txt` | RECORDED — post-`userClose` |
 | `inspector-audit-machine.txt` | RECORDED (dump-shape audit; not a substitute for human Inspector) |
-| `notification-positive-controls.txt` | RECORDED |
+| `notification-positive-controls.txt` | RECORDED (probe path only; not `NSAccessibility.post`) |
 | `machine-xctest-transcript.txt` | RECORDED (14/14) |
 | `human-checklist.txt` | RECORDED (executable checklist) |
 | `human-inspector-audit-transcript.txt` | **PENDING_HUMAN** |
@@ -45,7 +46,8 @@ Runner: `scripts/qualify-hive-b26-accessibility.sh`
 ## Honest limits
 
 - A clean automated audit / property suite is not DoD-3a alone. Human VoiceOver listening and Inspector GUI audit remain explicit slots (Gate 7 pattern).
-- In-process `NSAccessibility.post` probes prove the post path; they do not prove a screen reader spoke the string.
+- **Real `NSAccessibility.post` coverage is human-only.** The call site is `HiveTerminalView+Accessibility.swift:311-313` (`TerminalAccessibilityController.post` → `NSAccessibility.post(...)`). Machine tests (`Gate10AccessibilityTests`) observe only the in-process `notificationProbe` installed beside that call. **No machine test covers the real AppKit post.** A green Gate-10 suite is not permission to delete or skip `NSAccessibility.post`; only the PENDING_HUMAN Inspector/VoiceOver slots cover it.
+- **AX tree dumps are pre-`.live` semantic property dumps**, not live-surface or system-AX captures. The six non-teardown dumps were recorded with `lifecycle=Terminal starting` on an xctest-hosted view whose renderer never presents (same semantics-vs-pixels split as #47). Content strings come from the live manual surface's semantic snapshot; pixels and system AX hierarchy are not claimed.
 - Full product DoD still wants live pane VO with sessiond-attached vendor TUIs once human slots fill.
 
 ## Reproduce

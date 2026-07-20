@@ -1,10 +1,11 @@
 STATUS=RECORDED
 suite=Gate10AccessibilityTests
 tests=
-  testSelectionChangePostsAccessibilityNotification  # posts NSAccessibility.selectedTextChanged
-  testOutputChangePostsValueChangedNotification      # posts NSAccessibility.valueChanged
+  testSelectionChangePostsAccessibilityNotification  # probe sees .selectedTextChanged schedule path
+  testOutputChangePostsValueChangedNotification      # probe sees .valueChanged schedule path
   testLifecycleAndFailureStatesAreAccessible         # label/lifecycle for lost/exited
   testAccessibilityExposesSemanticRowChildren        # row staticText children
   testAccessibilityInsertionPointTracksCursor        # insertion line + valueDescription
-method=in-process notification probe on TerminalAccessibilityController; settle-then-assert on main RunLoop
-claim=selection-change AX posting was unclaimed by Gate 10 engine slice; claimed here via HiveTerminalActionNotification.selectionChanged + snapshot diff
+method=in-process notificationProbe on TerminalAccessibilityController; settle-then-assert on main RunLoop
+claim=selection-change AX posting was unclaimed by Gate 10 engine slice; schedule path claimed here via HiveTerminalActionNotification.selectionChanged + snapshot diff
+nsaccessibility_post_coverage=OUTRIGHT: the real NSAccessibility.post at HiveTerminalView+Accessibility.swift:311-313 is NOT covered by any machine test in this suite. Machine green only proves the probe ran. AppKit delivery of NSAccessibility.post is covered ONLY by PENDING_HUMAN Inspector/VoiceOver slots (human-inspector-audit-transcript.txt, human-voiceover-transcript.txt). Do not treat a green Gate-10 suite as permission to remove NSAccessibility.post.
