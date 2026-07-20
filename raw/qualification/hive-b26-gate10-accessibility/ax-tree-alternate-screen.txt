@@ -1,0 +1,45 @@
+role=AXTextArea
+label=Terminal starting
+help=Terminal content area
+focused=true
+lifecycle=Terminal starting
+numberOfCharacters=45
+visibleRange={0, 45}
+selectedRange={9223372036854775807, 0}
+selectedText=nil
+insertionLine=2
+valueDescription=Terminal starting; viewport 0 of 32; cursor line 3 offset 16
+valuePrefix="\nalt-screen-row\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+childCount=32
+  child[0] role=staticText label=Terminal row 1 range={0, 0} value="(blank)"
+  child[1] role=staticText label=Terminal row 2 range={1, 14} value="alt-screen-row"
+  child[2] role=staticText label=Terminal row 3 range={16, 0} value="(blank)"
+  child[3] role=staticText label=Terminal row 4 range={17, 0} value="(blank)"
+  child[4] role=staticText label=Terminal row 5 range={18, 0} value="(blank)"
+  child[5] role=staticText label=Terminal row 6 range={19, 0} value="(blank)"
+  child[6] role=staticText label=Terminal row 7 range={20, 0} value="(blank)"
+  child[7] role=staticText label=Terminal row 8 range={21, 0} value="(blank)"
+  child[8] role=staticText label=Terminal row 9 range={22, 0} value="(blank)"
+  child[9] role=staticText label=Terminal row 10 range={23, 0} value="(blank)"
+  child[10] role=staticText label=Terminal row 11 range={24, 0} value="(blank)"
+  child[11] role=staticText label=Terminal row 12 range={25, 0} value="(blank)"
+  child[12] role=staticText label=Terminal row 13 range={26, 0} value="(blank)"
+  child[13] role=staticText label=Terminal row 14 range={27, 0} value="(blank)"
+  child[14] role=staticText label=Terminal row 15 range={28, 0} value="(blank)"
+  child[15] role=staticText label=Terminal row 16 range={29, 0} value="(blank)"
+  child[16] role=staticText label=Terminal row 17 range={30, 0} value="(blank)"
+  child[17] role=staticText label=Terminal row 18 range={31, 0} value="(blank)"
+  child[18] role=staticText label=Terminal row 19 range={32, 0} value="(blank)"
+  child[19] role=staticText label=Terminal row 20 range={33, 0} value="(blank)"
+  child[20] role=staticText label=Terminal row 21 range={34, 0} value="(blank)"
+  child[21] role=staticText label=Terminal row 22 range={35, 0} value="(blank)"
+  child[22] role=staticText label=Terminal row 23 range={36, 0} value="(blank)"
+  child[23] role=staticText label=Terminal row 24 range={37, 0} value="(blank)"
+  child[24] role=staticText label=Terminal row 25 range={38, 0} value="(blank)"
+  child[25] role=staticText label=Terminal row 26 range={39, 0} value="(blank)"
+  child[26] role=staticText label=Terminal row 27 range={40, 0} value="(blank)"
+  child[27] role=staticText label=Terminal row 28 range={41, 0} value="(blank)"
+  child[28] role=staticText label=Terminal row 29 range={42, 0} value="(blank)"
+  child[29] role=staticText label=Terminal row 30 range={43, 0} value="(blank)"
+  child[30] role=staticText label=Terminal row 31 range={44, 0} value="(blank)"
+  child[31] role=staticText label=Terminal row 32 range={45, 0} value="(blank)"

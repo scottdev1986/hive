@@ -1,0 +1,10 @@
+STATUS=RECORDED
+suite=Gate10AccessibilityTests
+tests=
+  testSelectionChangePostsAccessibilityNotification  # posts NSAccessibility.selectedTextChanged
+  testOutputChangePostsValueChangedNotification      # posts NSAccessibility.valueChanged
+  testLifecycleAndFailureStatesAreAccessible         # label/lifecycle for lost/exited
+  testAccessibilityExposesSemanticRowChildren        # row staticText children
+  testAccessibilityInsertionPointTracksCursor        # insertion line + valueDescription
+method=in-process notification probe on TerminalAccessibilityController; settle-then-assert on main RunLoop
+claim=selection-change AX posting was unclaimed by Gate 10 engine slice; claimed here via HiveTerminalActionNotification.selectionChanged + snapshot diff

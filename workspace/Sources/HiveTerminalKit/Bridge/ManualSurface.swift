@@ -1015,11 +1015,12 @@ enum HiveGhosttyActionPolicy {
     /// unknown tag is a loud error in debug, never a silent false — so the
     /// "never a blanket false" property holds at the binding.
     ///
-    /// Observe-only side channel (Gate 10 consumer): SELECTION_CHANGED and
-    /// SCROLLBAR are additionally forwarded — payload value-copied, async
-    /// on main, per-surface — via `GhosttyManualSurface.onActionNotification`.
+    /// Observe-only side channel (Gate 10/B2.4 consumer): SELECTION_CHANGED,
+    /// SCROLLBAR, SEARCH_TOTAL, and SEARCH_SELECTED are additionally forwarded —
+    /// payload value-copied, async on main, per-surface — via
+    /// `GhosttyManualSurface.onActionNotification`.
     /// The return value to the engine is unchanged (still false), so the
-    /// security disposition of both tags is unaffected.
+    /// security disposition of all four tags is unaffected.
     static func handle(_ action: ghostty_action_s, target: ghostty_target_s) -> Bool {
         let tag = action.tag
         observerLock.lock()
@@ -1036,6 +1037,12 @@ enum HiveGhosttyActionPolicy {
             // Value copy of the C payload before the callback returns.
             let sb = action.action.scrollbar
             notifySurface(target, .scrollbar(total: sb.total, offset: sb.offset, len: sb.len))
+        case GHOSTTY_ACTION_SEARCH_TOTAL:
+            let total = action.action.search_total.total
+            notifySurface(target, .searchTotal(total >= 0 ? Int(total) : nil))
+        case GHOSTTY_ACTION_SEARCH_SELECTED:
+            let selected = action.action.search_selected.selected
+            notifySurface(target, .searchSelected(selected >= 0 ? Int(selected) : nil))
         default:
             break
         }
@@ -1071,9 +1078,9 @@ enum HiveGhosttyActionPolicy {
 
 /// Gate 9 → Gate 10 carrier: announcement-worthy engine actions bridged
 /// per-surface. Observe-only — the action callback still returns false to
-/// the engine for both tags, so nothing privileged is enabled by listening.
-/// `scrollbar` fields map 1:1 to `ghostty_action_scrollbar_s` (pinned
-/// ghostty.h); `selectionChanged` carries no payload at the pinned header.
+/// the engine for every carried tag, so nothing privileged is enabled by listening.
+/// Payloads map 1:1 to the pinned action structs; `selectionChanged` carries
+/// no payload. Search's `-1` sentinel is projected to nil before enqueue.
 /// ACCESSIBILITY consumers must source selection range/text from the atomic
 /// semantic snapshot (queen ruling c1784ed2) — a separate `readSelection()`
 /// read can tear against the snapshot's text/cursor/viewport; treat the
@@ -1082,6 +1089,8 @@ enum HiveGhosttyActionPolicy {
 public enum HiveTerminalActionNotification: Equatable, Sendable {
     case selectionChanged
     case scrollbar(total: UInt64, offset: UInt64, len: UInt64)
+    case searchTotal(Int?)
+    case searchSelected(Int?)
 }
 
 /// Gate 9 observability for the four non-action runtime callbacks
@@ -1438,6 +1447,31 @@ enum GhosttyBridgeFactory {
                     widthPx: widthPx,
                     heightPx: heightPx,
                     terminalReplies: terminalReplies,
+                    configPolicyPath: configPath,
+                    clipboardContext: clipboardContext
+                )
+            }
+        }
+    }
+
+    /// B2.4 mutation seam: loads an explicit generated policy file so tests
+    /// can prove a viewer setting changes real engine behavior at its
+    /// consumption site. Production always uses HiveTerminalConfiguration.
+    static func makeManualSurfaceForConfigurationTesting(
+        contents: String,
+        clipboardContext: GhosttyClipboardContext = GhosttyClipboardContext()
+    ) throws -> GhosttyManualSurface {
+        try performOnMainSync {
+            let configURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent("hive-ghostty-policy-\(UUID().uuidString).conf")
+            try Data(contents.utf8).write(to: configURL, options: .atomic)
+            defer { try? FileManager.default.removeItem(at: configURL) }
+            return try configURL.path.withCString { configPath in
+                try makeManualSurfaceOnMain(
+                    hostView: NSView(frame: NSRect(x: 0, y: 0, width: 800, height: 480)),
+                    widthPx: 800,
+                    heightPx: 480,
+                    terminalReplies: .disabled,
                     configPolicyPath: configPath,
                     clipboardContext: clipboardContext
                 )

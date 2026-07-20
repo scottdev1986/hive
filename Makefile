@@ -15,11 +15,14 @@
 # `make terminal` remains the entrypoint for a live M1 typeable terminal.
 #
 # Isolation: every rendezvous name (tmux socket/sessions, sessiond broker,
-# daemon port/pid, sqlite db, project registry) derives from HIVE_HOME, which
-# make run points at .dev/home. HIVE_INSTALL_ROOT points at the staged dev
-# root so the dev CLI launches the dev-built HiveWorkspace.app, never the
-# installed one. Nothing here reads or writes ~/.hive, ~/.local/share/hive,
-# or ~/.local/bin/hive.
+# daemon port/pid, sqlite db, project registry) derives from HIVE_HOME. make
+# run points HIVE_HOME at a short per-checkout path under /tmp (see DEV_HOME
+# below), not at .dev/home: sessiond places AF_UNIX sockets under
+# $HIVE_HOME/runtime/sessiond/..., and macOS sun_path (~104 bytes) rejects a
+# deep worktree path with SocketPathTooLong. Staged binaries stay under .dev/;
+# HIVE_INSTALL_ROOT points at the staged dev root so the dev CLI launches the
+# dev-built HiveWorkspace.app, never the installed one. Nothing here reads or
+# writes ~/.hive, ~/.local/share/hive, or ~/.local/bin/hive.
 
 SHELL := /bin/sh
 .DEFAULT_GOAL := help
@@ -34,6 +37,13 @@ INSTALL_ROOT := $(DEV)/root
 DEV_PROJECT := $(DEV)/project
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
+# Short per-checkout HIVE_HOME: digest of the resolved checkout path keeps
+# worktrees isolated from each other while the path itself stays short enough
+# for sessiond host sockets. clean hashes this same literal string for the
+# tmux socket token (axis 3) so it still finds the live server after a move.
+ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
+DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
+DEV_HOME := /tmp/hive-dev-$(DEV_HOME_TAG)
 LOCK := $(ROOT)/native/toolchain-lock.json
 NATIVE_CACHE ?= $(ROOT)/.cache/native
 DEMO_CACHE := $(NATIVE_CACHE)/demo
@@ -42,10 +52,12 @@ export HIVE_NATIVE_CACHE := $(NATIVE_CACHE)
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),arm64)
 CLI_ASSET := hive-darwin-arm64
+SESSIOND_ASSET := hive-sessiond-darwin-arm64
 ZIG_ARCH := aarch64
 ZIG_LOCK_ARCH := arm64
 else ifeq ($(UNAME_M),x86_64)
 CLI_ASSET := hive-darwin-x64
+SESSIOND_ASSET := hive-sessiond-darwin-x64
 ZIG_ARCH := x86_64
 ZIG_LOCK_ARCH := x86_64
 else
@@ -117,7 +129,7 @@ SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 
 # The complete isolation envelope for the dev instance.
 DEV_ENV := \
-	HIVE_HOME=$(DEV)/home \
+	HIVE_HOME=$(DEV_HOME) \
 	HIVE_INSTALL_ROOT=$(INSTALL_ROOT) \
 	HIVE_BIN_LINK=$(DEV)/bin/hive \
 	HIVE_DISABLE_UPDATES=1 \
@@ -248,6 +260,8 @@ build: toolchain ghosttykit sessiond
 	rm -rf "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"
 	mkdir -p "$(INSTALL_ROOT)/versions/$(DEV_VERSION)" "$(DEV)/bin"
 	install -m 755 "$(DIST)/$(CLI_ASSET)" "$(INSTALL_ROOT)/versions/$(DEV_VERSION)/hive"
+	install -m 755 "$(DIST)/$(SESSIOND_ASSET)" \
+	  "$(INSTALL_ROOT)/versions/$(DEV_VERSION)/hive-sessiond"
 	tar -xzf "$(DIST)/HiveWorkspace.tar.gz" -C "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"
 	ln -shf "versions/$(DEV_VERSION)" "$(INSTALL_ROOT)/current"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
@@ -274,7 +288,7 @@ run:
 	      commit -q --allow-empty -m "dev scratch project"; \
 	  fi; \
 	fi; \
-	mkdir -p "$(DEV)/home" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
+	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
 	cd "$$proj" && env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify && exec env $(DEV_ENV) "$(HIVE_BIN)"
 
 # The project's own definition of the suites: bun test + sessiond (test.sh
@@ -304,29 +318,24 @@ test-e2e:
 # Selection is by PATH and ARGUMENTS, never by process name. The user's
 # installed instance runs its own Workspace, its own tmux server and its own
 # vendor CLI children; matching "HiveWorkspace" or "tmux" would kill those.
-# Three axes are needed because dev processes are bound to .dev/ three
-# different ways:
+# Three axes are needed because dev processes are bound three different ways:
 #
 #   1. executable under .dev/     — the Workspace app, staged dev binaries
-#   2. .dev/ path in arguments    — the tmux server and vendor children, whose
-#                                   executables are system tmux and ~/.local/bin
-#   3. dev tmux socket in args    — dev agents' `tmux attach-session`, which
-#                                   names no path at all, only the socket
+#   2. .dev/ OR HIVE_HOME in args — tmux/vendor children and settings paths;
+#                                   HIVE_HOME is the short /tmp/hive-dev-* path
+#                                   (sessiond --instance-home, runtime files)
+#   3. dev tmux socket in args    — hash of the short HIVE_HOME literal (same
+#                                   string make run exports / hiveInstanceSuffix)
 #
-# A clean must also work when .dev/ is ALREADY GONE. That is not a hypothetical:
-# it is exactly what a half-finished clean leaves behind — the directory deleted
-# and the processes still running — so guarding on `[ -d .dev ]` made the target
-# useless in the one state that most needs it. The guard is now "the directory
-# exists OR the sweep finds processes bound to its path".
+# A clean must also work when .dev/ and/or the short home is ALREADY GONE. That
+# is not a hypothetical: it is exactly what a half-finished clean leaves behind
+# — the directory deleted and the processes still running. The guard is now
+# "either directory exists OR the sweep finds processes bound to either".
 #
-# Which forces the socket digest to stop depending on the directory. It used to
-# hash `cd .dev/home && pwd -P`; with home deleted that cd fails, the digest is
-# taken over an EMPTY string, and axis 3 goes dark exactly when the orphan it
-# should catch is a tmux server whose home no longer exists. Hashing the literal
-# path string has no such dependency, and it is not a guess: measured against a
-# real orphaned dev server whose .dev/home had already been deleted, the literal
-# digest reproduced its live socket name exactly, while the cd form could not be
-# computed at all.
+# The socket digest hashes the short HIVE_HOME literal — not a path under
+# .dev/. That has no dependency on either directory existing, so axis 3 still
+# names the live tmux server when home is gone. (Earlier: hashing
+# `cd .dev/home && pwd -P` went dark the moment home was deleted.)
 #
 # Every refusal below is deliberate. An empty path or an empty digest must STOP
 # the target, never let it proceed or quietly exit 0 — an empty `dev` would make
@@ -341,8 +350,9 @@ test-e2e:
 #
 # So argv only nominates a CANDIDATE. Killing requires binding evidence that
 # outlives the directory:
-#   - executable under the dev path
-#   - cwd (or an open file) under the dev path, per lsof
+#   - executable under the dev path (any of its three spellings)
+#   - cwd (or an open file) under the dev path OR the short HIVE_HOME path,
+#     per lsof, with literal component-boundary matching
 #   - being the tmux server for the dev socket, or one of its clients, which
 #     tmux answers authoritatively by pid — no argv involved
 # Anything else is a mentioner: reported, never signalled.
@@ -352,6 +362,13 @@ test-e2e:
 # was rm -rf'd, because the kernel holds the vnode. Without that, requiring
 # binding evidence would have un-fixed the orphan case above, where .dev is
 # gone by definition.
+#
+# SHORT-HOME SPELLINGS (#51 × #49): HIVE_HOME is /tmp/hive-dev-<digest>. On
+# macOS /tmp → /private/tmp, so the same three-spelling discipline that applies
+# to .dev applies to home: homel is the literal DEV_HOME string (what argv and
+# hiveInstanceSuffix use), home is that same string after emptiness checks,
+# homep is the deepest-surviving-ancestor realpath form for lsof. The socket
+# digest always hashes the literal home string, never realpath.
 #
 # The invoking process's whole ancestor chain is excluded too. `is_mine` walks
 # ppid UPWARD from a candidate, so it can recognise self and descendants but an
@@ -380,19 +397,22 @@ test-e2e:
 clean:
 	@set -e; \
 	: "every command substitution below is guarded, because this recipe has been\
-	   bitten TWICE by errexit reaching inside $$(...) and aborting the target\
+	   bitten TWICE by errexit reaching inside a command substitution and aborting the target\
 	   at a command whose failure is not interesting. Where a value is genuinely\
 	   required, the guard is followed by an explicit emptiness REFUSAL rather\
 	   than a silent default -- tolerate the failure, then refuse on the result"; \
 	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P) || true; else dev="$(DEV)"; fi; \
 	[ -n "$$dev" ] || { echo "refusing: could not determine the dev directory path" >&2; exit 1; }; \
 	case "$$dev" in /*) ;; *) echo "refusing: dev path is not absolute ($$dev)" >&2; exit 1;; esac; \
+	home="$(DEV_HOME)"; \
+	[ -n "$$home" ] || { echo "refusing: could not determine the dev HIVE_HOME path" >&2; exit 1; }; \
+	case "$$home" in /*) ;; *) echo "refusing: dev HIVE_HOME is not absolute ($$home)" >&2; exit 1;; esac; \
 	self=$$$$; \
-	suffix=$$(printf '%s' "$$dev/home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
+	suffix=$$(printf '%s' "$$home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
 	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
 	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
-	if [ -f "$(DEV)/home/daemon.pid" ]; then \
-	  pid=$$(cat "$(DEV)/home/daemon.pid") || true; \
+	if [ -f "$$home/daemon.pid" ]; then \
+	  pid=$$(cat "$$home/daemon.pid") || true; \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
 	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
 	fi; \
@@ -445,6 +465,15 @@ clean:
 	  rest="/$$(basename "$$d")$$rest" || true; d=$$(dirname "$$d") || true; \
 	done; \
 	if [ -d "$$d" ]; then devp="$$(cd "$$d" && pwd -P)$$rest" || true; fi; \
+	: "same three-spelling discipline for the short HIVE_HOME: homel is the\
+	   literal DEV_HOME string (argv + socket digest), home is that string after\
+	   emptiness checks, homep is the physical form lsof prints under /private/tmp"; \
+	homel="$(DEV_HOME)"; \
+	homep="$$home"; hd="$$home"; hrest=""; \
+	while [ ! -d "$$hd" ] && [ "$$hd" != "/" ] && [ -n "$$hd" ]; do \
+	  hrest="/$$(basename "$$hd")$$hrest" || true; hd=$$(dirname "$$hd") || true; \
+	done; \
+	if [ -d "$$hd" ]; then homep="$$(cd "$$hd" && pwd -P)$$hrest" || true; fi; \
 	: "EVERY descriptor, not just cwd. An earlier version passed -d cwd here,\
 	   which silently narrowed this to the working directory while the comment\
 	   above promised 'cwd or an open file' — measured: a process holding a\
@@ -461,10 +490,11 @@ clean:
 	   .dev-other. Matching is now literal and component-wise: a name binds only\
 	   if it EQUALS a spelling or begins with that spelling plus '/'. The case\
 	   patterns quote the variable, which makes any glob character inside the\
-	   path literal, so a path containing * or ? cannot widen the match either"; \
+	   path literal, so a path containing * or ? cannot widen the match either.\
+	   The same boundary applies to short HIVE_HOME: $$home-sibling must NOT match"; \
 	is_bound() { \
 	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in \
-	    "$$dev"/*|"$$devp"/*|"$$devl"/*) return 0;; esac; \
+	    "$$dev"/*|"$$devp"/*|"$$devl"/*|"$$home"/*|"$$homep"/*|"$$homel"/*) return 0;; esac; \
 	  : "awk, not shell, for this scan: index(p,d\"/\")==1 is a LITERAL\
 	     prefix test with a component boundary — no regex, so a '.' in the path\
 	     cannot match any character, and no bare-prefix match, so a sibling\
@@ -472,11 +502,15 @@ clean:
 	     early on a match wedged here instead, so this is also the version that\
 	     terminates"; \
 	  if lsof -n -P -a -p "$$1" -Fn 2>/dev/null \
-	    | awk -v d="$$dev" -v dp="$$devp" -v dl="$$devl" ' \
+	    | awk -v d="$$dev" -v dp="$$devp" -v dl="$$devl" \
+	          -v h="$$home" -v hp="$$homep" -v hl="$$homel" ' \
 	        /^n/ { p = substr($$0, 2); \
 	               if (p == d  || index(p, d  "/") == 1) { found = 1; exit } \
 	               if (p == dp || index(p, dp "/") == 1) { found = 1; exit } \
-	               if (p == dl || index(p, dl "/") == 1) { found = 1; exit } } \
+	               if (p == dl || index(p, dl "/") == 1) { found = 1; exit } \
+	               if (p == h  || index(p, h  "/") == 1) { found = 1; exit } \
+	               if (p == hp || index(p, hp "/") == 1) { found = 1; exit } \
+	               if (p == hl || index(p, hl "/") == 1) { found = 1; exit } } \
 	        END { exit(found ? 0 : 1) }'; then return 0; fi; \
 	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
 	  return 1; }; \
@@ -484,12 +518,18 @@ clean:
 	   caller typed — usually the unresolved /tmp/... — while dev has been\
 	   through pwd -P into /private/tmp/... Matching only the resolved form\
 	   meant a process naming the symlinked path was never even NOMINATED, so\
-	   is_bound never ran and no amount of binding evidence could save it"; \
+	   is_bound never ran and no amount of binding evidence could save it.\
+	   Short-home argv tokens ($$home/$$homel, often /tmp/...) are nominated the\
+	   same way, with component boundary so $$home-sibling is not a candidate"; \
 	candidates() { \
 	  { ps -axo pid=,comm= | while read -r p c; do \
-	      case "$$c" in "$$dev"/*|"$$devp"/*|"$$devl"/*) echo "$$p";; esac; done; \
+	      case "$$c" in \
+	        "$$dev"/*|"$$devp"/*|"$$devl"/*|"$$home"/*|"$$homep"/*|"$$homel"/*) echo "$$p";; \
+	      esac; done; \
 	    ps -axo pid=,command= | while read -r p rest; do \
-	      case "$$rest" in *"$$dev"/*|*"$$devp"/*|*"$$devl"/*) echo "$$p";; esac; done; \
+	      case "$$rest" in \
+	        *"$$dev"/*|*"$$devp"/*|*"$$devl"/*|*"$$home"/*|*"$$homep"/*|*"$$homel"/*) echo "$$p";; \
+	      esac; done; \
 	    ps -axo pid=,command= | while read -r p rest; do \
 	      case "$$rest" in *"hive-$$suffix"*) echo "$$p";; esac; done; \
 	    printf '%s\n' $$tmuxpids; \
@@ -516,7 +556,7 @@ clean:
 	pids=$$(dev_pids) || true; \
 	named=$$(mentioners) || true; \
 	[ -z "$$named" ] || echo "found mentioners, not killing:" $$named; \
-	if [ ! -d "$(DEV)" ] && [ -z "$$pids" ]; then exit 0; \
+	if [ ! -d "$(DEV)" ] && [ ! -d "$$home" ] && [ -z "$$pids" ]; then exit 0; \
 	fi; \
 	: "reaching here with no directory means the sweep found processes, and an\
 	   empty sweep is trustworthy only because every derivation it depends on\
@@ -529,13 +569,13 @@ clean:
 	    alive=$$(dev_pids) || true; [ -n "$$alive" ] || break; sleep 0.5; i=$$((i + 1)); \
 	  done; \
 	  if [ -n "$$alive" ]; then \
-	    echo "refusing to delete $(DEV): still running:" $$alive >&2; \
-	    echo "they run from files under $(DEV); deleting it would strand them" >&2; \
+	    echo "refusing to delete $(DEV) / $$home: still running:" $$alive >&2; \
+	    echo "they run from files under $(DEV) or $$home; deleting would strand them" >&2; \
 	    exit 1; \
 	  fi; \
 	  echo "all dev processes confirmed stopped"; \
 	fi; \
-	rm -rf "$(DEV)"
+	rm -rf "$(DEV)" "$$home"
 
 cleanup: clean
 

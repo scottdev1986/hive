@@ -23,6 +23,10 @@ import WorkspaceCore
 ///                           afterwards (detaching a client never kills agents)
 final class SmokeRunner {
 
+    static func sessiondLiveResizeInputAgent(environment: [String: String]) -> String {
+        environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"
+    }
+
     private let controller: ProjectWindowController
     private let config: LaunchConfig
     private var failures: [String] = []
@@ -258,8 +262,9 @@ final class SmokeRunner {
 
     func run() {
         let env = ProcessInfo.processInfo.environment
-        if let agent = env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] {
-            runSessiondLiveResizeInputProof(agent: agent)
+        if env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1" {
+            runSessiondLiveResizeInputProof(
+                agent: Self.sessiondLiveResizeInputAgent(environment: env))
             return
         }
         let expectedAgents: [(name: String, marker: String)] = (env["HIVE_SMOKE_AGENTS"] ?? "")

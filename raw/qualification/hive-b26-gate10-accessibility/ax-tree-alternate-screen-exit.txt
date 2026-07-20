@@ -1,0 +1,29 @@
+role=AXTextArea
+label=Terminal starting
+help=Terminal content area
+focused=true
+lifecycle=Terminal starting
+numberOfCharacters=45
+visibleRange={0, 45}
+selectedRange={9223372036854775807, 0}
+selectedText=nil
+insertionLine=1
+valueDescription=Terminal starting; viewport 0 of 32; cursor line 2 offset 15
+valuePrefix="ax-input-slice\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+childCount=16
+  child[0] role=staticText label=Terminal row 1 range={0, 14} value="ax-input-slice"
+  child[1] role=staticText label=Terminal row 2 range={15, 0} value="(blank)"
+  child[2] role=staticText label=Terminal row 3 range={16, 0} value="(blank)"
+  child[3] role=staticText label=Terminal row 4 range={17, 0} value="(blank)"
+  child[4] role=staticText label=Terminal row 5 range={18, 0} value="(blank)"
+  child[5] role=staticText label=Terminal row 6 range={19, 0} value="(blank)"
+  child[6] role=staticText label=Terminal row 7 range={20, 0} value="(blank)"
+  child[7] role=staticText label=Terminal row 8 range={21, 0} value="(blank)"
+  child[8] role=staticText label=Terminal row 9 range={22, 0} value="(blank)"
+  child[9] role=staticText label=Terminal row 10 range={23, 0} value="(blank)"
+  child[10] role=staticText label=Terminal row 11 range={24, 0} value="(blank)"
+  child[11] role=staticText label=Terminal row 12 range={25, 0} value="(blank)"
+  child[12] role=staticText label=Terminal row 13 range={26, 0} value="(blank)"
+  child[13] role=staticText label=Terminal row 14 range={27, 0} value="(blank)"
+  child[14] role=staticText label=Terminal row 15 range={28, 0} value="(blank)"
+  child[15] role=staticText label=Terminal row 16 range={29, 0} value="(blank)"

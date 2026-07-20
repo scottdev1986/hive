@@ -159,14 +159,32 @@ policy (douglas/donna converged, queen approved):
   flag RED); the empty-list disabling mutation was replayed and turns all
   three detector controls RED.
 
+## B2.4 amendment (2026-07-19, queen-approved viewer policy)
+
+- `copy-on-select = false` is a mandatory generated-config override after
+  the theme and before the clipboard deny settings. A local selection
+  gesture therefore changes selection only; clipboard mutation remains an
+  explicit host copy gesture. `testCopyOnSelectPolicyReachesTheEngineAndHostCopyRemainsReachable`
+  proves the setting at the live engine boundary with a `false` versus
+  `true` mutation and separately proves explicit host copy still reaches
+  the standard clipboard callback.
+- SEARCH_TOTAL and SEARCH_SELECTED remain `engineInert`: the action
+  callback value-copies their numeric payloads into the lifetime-gated
+  bridge carrier for Hive's own search overlay, then still returns false.
+  This is observe-only presentation state, not a new engine action or
+  privileged sink. The exhaustive Gate-9 classification continues to pin
+  both tags in `engineInertTags`; B2.4 tests prove live retained-history
+  search and teardown drops.
+
 ## Residual risk / honesty notes
 
 - The hostile corpus is finite; the classification's exhaustiveness
   guarantee is the pinned-header parse + hard-pin equality, not corpus
   size. A new byte→action path in a future vendor bump fails the pin.
-- SELECTION_CHANGED/SCROLLBAR forwarding delivers to Hive's OWN view
-  layer only; nothing terminal-byte-controlled crosses a privilege
-  boundary (delivery is observe-only and the engine still gets false).
+- SELECTION_CHANGED/SCROLLBAR/SEARCH_TOTAL/SEARCH_SELECTED forwarding
+  delivers to Hive's OWN view layer only; nothing terminal-byte-controlled
+  crosses a privilege boundary (delivery is observe-only and the engine
+  still gets false).
 - `confirm_read_clipboard_cb` has no direct-invocation positive control of
   its own (its C signature takes an opaque request pointer we will not
   fabricate); its flat-probe negative rides the same probe mechanism

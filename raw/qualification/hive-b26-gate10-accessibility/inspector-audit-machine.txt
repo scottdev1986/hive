@@ -1,0 +1,15 @@
+inspector-audit-machine.txt
+STATUS=RECORDED
+method=parse ax-tree-*.txt dumps produced by Gate10AccessibilityTests
+note=This is NOT a substitute for the human Accessibility Inspector audit slot.
+
+file=ax-tree-input.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=32
+file=ax-tree-alternate-screen.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=32
+file=ax-tree-alternate-screen-exit.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
+file=ax-tree-resize.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
+file=ax-tree-replay.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
+file=ax-tree-scroll.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
+file=ax-tree-teardown.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'teardown_safe': True} child_lines=0
+
+failures=0
+result=PASS

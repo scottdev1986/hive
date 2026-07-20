@@ -49,7 +49,7 @@ const ReleaseVersionSchema = z.string().regex(/^\d+\.\d+\.\d+$/);
 const ArtifactSchema = z.strictObject({
   /** Release asset name, e.g. `hive-darwin-arm64`. */
   name: AssetNameSchema,
-  kind: z.enum(["cli", "workspace"]),
+  kind: z.enum(["cli", "workspace", "sessiond"]),
   platform: z.literal("darwin"),
   arch: z.enum(["arm64", "x64"]),
   size: z.number().int().nonnegative(),

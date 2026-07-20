@@ -26,7 +26,14 @@ import {
   versionsToPrune,
   writeInstallState,
 } from "./install";
-import { cliPath, currentLink, stagingDir, versionDir, versionsDir } from "./paths";
+import {
+  cliPath,
+  currentLink,
+  sessiondPath,
+  stagingDir,
+  versionDir,
+  versionsDir,
+} from "./paths";
 
 let root: string;
 beforeEach(() => {
@@ -35,6 +42,7 @@ beforeEach(() => {
 afterEach(() => rmSync(root, { recursive: true, force: true }));
 
 const CLI_BYTES = new TextEncoder().encode("#!/bin/sh\necho hive 0.0.7\n");
+const SESSIOND_BYTES = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
 const RELEASE_KEY = (() => {
   const { publicKey, privateKey } = generateKeyPairSync("ed25519");
   return {
@@ -43,7 +51,11 @@ const RELEASE_KEY = (() => {
   };
 })();
 
-const manifestFor = (version: string, bytes: Uint8Array): ReleaseManifest => ({
+const manifestFor = (
+  version: string,
+  bytes: Uint8Array,
+  sessiondBytes: Uint8Array = SESSIOND_BYTES,
+): ReleaseManifest => ({
   schema: 1,
   version,
   tag: `v${version}`,
@@ -53,15 +65,26 @@ const manifestFor = (version: string, bytes: Uint8Array): ReleaseManifest => ({
   securityCritical: false,
   wireProtocol: { min: 1, max: 1 },
   schemaEpoch: 1,
-  artifacts: [{
-    name: "hive-darwin-arm64",
-    kind: "cli",
-    platform: "darwin",
-    arch: "arm64",
-    size: bytes.byteLength,
-    sha256: sha256(bytes),
-    buildHash: `hash-of-${version}`,
-  }],
+  artifacts: [
+    {
+      name: "hive-darwin-arm64",
+      kind: "cli",
+      platform: "darwin",
+      arch: "arm64",
+      size: bytes.byteLength,
+      sha256: sha256(bytes),
+      buildHash: `hash-of-${version}`,
+    },
+    {
+      name: "hive-sessiond-darwin-arm64",
+      kind: "sessiond",
+      platform: "darwin",
+      arch: "arm64",
+      size: sessiondBytes.byteLength,
+      sha256: sha256(sessiondBytes),
+      buildHash: `sessiond-hash-of-${version}`,
+    },
+  ],
 });
 
 const stageDeps = (
@@ -77,7 +100,10 @@ const stageDeps = (
     arch: "arm64" as const,
     root,
     publicKey: RELEASE_KEY.publicKey,
-    download: async () => CLI_BYTES,
+    download: async (name: string) => {
+      if (name.startsWith("hive-sessiond-")) return SESSIOND_BYTES;
+      return CLI_BYTES;
+    },
     probeVersion: async () => `hive ${version} (abc1234)`,
     ...over,
   };
@@ -89,6 +115,8 @@ function fakeVersion(version: string, exitOk = true): void {
   mkdirSync(dir, { recursive: true });
   writeFileSync(cliPath(dir), `#!/bin/sh\n${exitOk ? "echo hive " + version : "exit 1"}\n`);
   chmodSync(cliPath(dir), 0o755);
+  writeFileSync(sessiondPath(dir), "#!/bin/sh\necho sessiond\n");
+  chmodSync(sessiondPath(dir), 0o755);
 }
 
 async function signedVersion(version: string): Promise<void> {
@@ -108,6 +136,7 @@ describe("staging a release", () => {
     const result = await stageRelease(stageDeps("0.0.7"));
     expect(result.version).toEqual("0.0.7");
     expect(isStaged("0.0.7", root)).toEqual(true);
+    expect(existsSync(sessiondPath(versionDir("0.0.7", root)))).toEqual(true);
   });
 
   test("refuses an unsigned release when no release key is available", async () => {

@@ -74,6 +74,13 @@ via other APIs — verify no double-path). SECURE_INPUT: DENIED in B1
 (Hive's agent terminals are not password UIs; document; revisit for human
 attach mode — flag to queen). Others: DENIED (inert notification).
 
+B2.4 clarification (2026-07-19): SEARCH_TOTAL and SEARCH_SELECTED remain
+engine-inert and the callback still returns false. Their value-copied
+payloads may feed Hive's own lifetime-gated search overlay as observe-only
+presentation state; this does not authorize an engine action or privileged
+sink. Local selection is also pinned with `copy-on-select = false`, so only
+an explicit host copy gesture may request a clipboard write.
+
 ## Implementation shape (next round)
 1. Replace the blanket closure with `hiveGhosttyActionCallback` trampoline
    that switches on tag: emits the A-class events (or defers to effects

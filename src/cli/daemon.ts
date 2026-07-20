@@ -14,11 +14,16 @@ import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import {
   acquireDaemonLock,
+  cleanupLifecycleFiles,
   macProcessIdentity,
   readConfiguredPort,
   releaseDaemonLock,
 } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
+import {
+  resolveSessiondBinary,
+  SessiondBrokerSupervisor,
+} from "../daemon/sessiond-broker";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { StatusStore } from "../daemon/status-store";
 import { agentRecordStatusIncarnationGenerationSource } from "../daemon/status-generation";
@@ -60,11 +65,32 @@ import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
+import { getHiveHome } from "../daemon/db";
 
 export async function runDaemon(): Promise<void> {
+  // Lock first: the broker authenticates the single daemon-lock identity, so
+  // spawn under that identity only after the exclusive lock is held.
   await acquireDaemonLock();
   process.once("exit", () => releaseDaemonLock());
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
+  const sessiondBinary = resolveSessiondBinary({ repoRoot });
+  if (sessiondBinary === null) {
+    throw new Error(
+      "hive-sessiond binary not found. Stage a release build (make build) or " +
+        "build the ReleaseFast proof binary (make native), or set HIVE_SESSIOND_BIN.",
+    );
+  }
+  // Construct the supervisor now; start() only after the daemon is listening.
+  // Ready-proof connects to broker.sock, checks LOCAL_PEERPID, and completes
+  // HELLO — which loads daemon.lock + GET /handshake from daemon.port.
+  const sessiondBroker = new SessiondBrokerSupervisor({
+    binary: sessiondBinary,
+    hiveHome: getHiveHome(),
+    repoRoot,
+    onFatal: (error) => {
+      console.error(`sessiond broker supervision failed fatally: ${error.message}`);
+    },
+  });
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
@@ -231,6 +257,7 @@ export async function runDaemon(): Promise<void> {
     graphify,
     port,
     manageLifecycle: true,
+    sessiondBroker,
     quota,
     modelInventory: () =>
       readModelInventory({ readPolicy: () => routingPolicy.read() }),
@@ -252,6 +279,48 @@ export async function runDaemon(): Promise<void> {
       : { selectionPreferences: ordinarySelection }),
   });
   daemon.start();
+  // Daemon must be on a port (and daemon.port written) before HELLO can auth.
+  // That write must not become advertise-then-fail: any broker start failure
+  // tears the daemon down and removes lifecycle files before a non-zero exit.
+  for (let i = 0; i < 100 && daemon.listeningPort === null; i += 1) {
+    await Bun.sleep(20);
+  }
+  if (daemon.listeningPort === null) {
+    try {
+      await daemon.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      cleanupLifecycleFiles();
+    } catch {
+      // ignore
+    }
+    throw new Error("daemon failed to bind a listening port before sessiond broker start");
+  }
+  try {
+    await sessiondBroker.start();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`sessiond broker failed to start: ${message}`);
+    try {
+      await sessiondBroker.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      await daemon.stop();
+    } catch {
+      // stop may refuse on unrelated teardown; still drop lifecycle below
+    }
+    try {
+      cleanupLifecycleFiles();
+    } catch {
+      // stop() with manageLifecycle already cleaned; belt-and-braces
+    }
+    // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
+    process.exit(1);
+  }
 
   let stopping = false;
   const stop = async (): Promise<void> => {
@@ -259,7 +328,13 @@ export async function runDaemon(): Promise<void> {
       return;
     }
     stopping = true;
-    await daemon.stop();
+    try {
+      await daemon.stop();
+    } finally {
+      // stop() owns the supervisor when wired; belt-and-braces if construction
+      // failed after start or stop threw before the broker field was torn down.
+      await sessiondBroker.stop();
+    }
     quotaDb.close();
     db.close();
     process.exit(0);

@@ -399,6 +399,195 @@ final class LiveHostAttachTests: XCTestCase {
         transport.close()
     }
 
+    /// B2.4 pinned-vttest path through the real sessiond PTY and authenticated
+    /// human-input claim. The harness command must be run-pinned-vttest-b24.sh.
+    /// Output is retained in this process as it arrives; the rolling sessiond
+    /// journal is not read later as though it were unbounded history.
+    func testLivePinnedVttestAlternateScreenPath() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard environment["HIVE_B24_VTTEST_LIVE"] == "1" else {
+            throw XCTSkip("set HIVE_B24_VTTEST_LIVE=1 for the pinned-vttest path")
+        }
+        let transcriptPath = try XCTUnwrap(environment["HIVE_B24_VTTEST_TRANSCRIPT_PATH"])
+        let bytesPath = try XCTUnwrap(environment["HIVE_B24_VTTEST_BYTES_PATH"])
+        let screenshotPath = try XCTUnwrap(environment["HIVE_B24_VTTEST_SCREENSHOT_PATH"])
+        let (proof, _) = try loadProof()
+        guard proof.mode == "shell" else {
+            throw XCTSkip("pinned vttest requires the live-shell harness mode")
+        }
+
+        _ = NSApplication.shared
+        let view = try HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 660, height: 448),
+            viewerId: "b24-vttest-live"
+        )
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: [.titled, .closable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "Hive B2.4 · vttest 20251205"
+        window.isReleasedWhenClosed = false
+        window.contentView = view
+        window.center()
+        window.makeKeyAndOrderFront(nil)
+        NSApplication.shared.activate(ignoringOtherApps: true)
+        XCTAssertTrue(window.makeFirstResponder(view))
+        defer {
+            view.userClose()
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+
+        let grantLine = try issueGrant(proof, viewerId: "b24-vttest-live")
+        XCTAssertEqual(grantLine.status, 0, "vttest grant refused: \(grantLine.output)")
+        let grant = try parseGrant(grantLine.output)
+        let transport = try UdsHostTransport.connect(endpoint: grant.endpoint)
+        defer { transport.close() }
+        let outcome = try view.attach(
+            grant: grant,
+            geometry: geometry,
+            afterSeq: 0,
+            transport: transport
+        )
+        guard case .firstCorrectFrame = outcome else {
+            return XCTFail("vttest attach failed: \(outcome)")
+        }
+        let binding = try XCTUnwrap(view.binding)
+        let surface = try XCTUnwrap(view.engine as? GhosttyManualSurface)
+        let liveDeadline = Date().addingTimeInterval(3)
+        while view.surfaceState != .live, Date() < liveDeadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        XCTAssertEqual(view.surfaceState, .live)
+        XCTAssertTrue(
+            surface.semanticSnapshot()?.text.contains("VT100 test program, version 2.7 (20251205)") == true,
+            "positive control: the pinned vttest main menu must be in the initial replay"
+        )
+
+        var returnedOutput = Data()
+        func pump(until predicate: () -> Bool, timeout: TimeInterval = 5) throws -> Bool {
+            let deadline = Date().addingTimeInterval(timeout)
+            while !predicate(), Date() < deadline {
+                do {
+                    guard let frame = try transport.receive(timeout: 1) else { break }
+                    if frame.type == .output { returnedOutput.append(frame.payload) }
+                    view.pumpHostFrame(frame, frameBinding: binding)
+                    RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+                } catch WireError.receiveTimeout {
+                    continue
+                }
+            }
+            return predicate()
+        }
+        func submit(_ text: String) throws {
+            for character in text {
+                let isReturn = character == "\n"
+                let characters = isReturn ? "\r" : String(character)
+                let event = try XCTUnwrap(NSEvent.keyEvent(
+                    with: .keyDown,
+                    location: .zero,
+                    modifierFlags: [],
+                    timestamp: ProcessInfo.processInfo.systemUptime,
+                    windowNumber: window.windowNumber,
+                    context: nil,
+                    characters: characters,
+                    charactersIgnoringModifiers: characters,
+                    isARepeat: false,
+                    keyCode: isReturn ? 36 : 0
+                ))
+                view.keyDown(with: event)
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.1))
+            XCTAssertNotEqual(
+                view.inputSubmissionState,
+                .idle,
+                "positive control: Ghostty key encoding must reach the claim-bound write callback"
+            )
+        }
+
+        // main 11 → non-VT100 8 → XTERM 7 → alternate-screen 5 (1049).
+        try submit("11\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("Non-VT100 Tests") == true
+        }) else {
+            return XCTFail("vttest did not enter non-VT100 menu; input=\(view.inputSubmissionState)")
+        }
+        try submit("8\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("XTERM special features") == true
+        }) else {
+            return XCTFail("vttest did not enter XTERM menu; input=\(view.inputSubmissionState)")
+        }
+        try submit("7\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("XTERM Alternate-Screen features") == true
+        }) else {
+            return XCTFail("vttest did not enter alternate-screen menu; input=\(view.inputSubmissionState)")
+        }
+        try submit("5\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains("The next screen will be filled with E's") == true
+        }) else {
+            return XCTFail("vttest did not enter 1049 test; input=\(view.inputSubmissionState)")
+        }
+
+        try submit("\n")
+        guard try pump(until: {
+            let text = surface.semanticSnapshot()?.text ?? ""
+            return text.filter { $0 == "E" }.count > 1_000
+        }) else {
+            return XCTFail("vttest did not fill alternate screen; input=\(view.inputSubmissionState)")
+        }
+        let alternateSnapshot = try XCTUnwrap(surface.semanticSnapshot())
+        let alternateECount = alternateSnapshot.text.filter { $0 == "E" }.count
+        XCTAssertGreaterThan(alternateECount, 1_000)
+
+        let capture = Process()
+        capture.executableURL = URL(fileURLWithPath: "/usr/sbin/screencapture")
+        capture.arguments = ["-x", "-l", String(window.windowNumber), screenshotPath]
+        try capture.run()
+        capture.waitUntilExit()
+        XCTAssertEqual(capture.terminationStatus, 0)
+
+        try submit("\n")
+        guard try pump(until: {
+            surface.semanticSnapshot()?.text.contains(
+                "The original screen should be restored except for this line."
+            ) == true
+        }) else {
+            return XCTFail("vttest did not restore primary screen; input=\(view.inputSubmissionState)")
+        }
+        XCTAssertNotNil(returnedOutput.range(of: Data("\u{1B}[?1049h".utf8)))
+        XCTAssertNotNil(returnedOutput.range(of: Data("\u{1B}[?1049l".utf8)))
+        guard case .applied(_, let inputStage) = view.inputSubmissionState else {
+            return XCTFail("vttest input did not receive correlated APPLIED: \(view.inputSubmissionState)")
+        }
+        XCTAssertEqual(inputStage, "written-to-terminal")
+        try returnedOutput.write(to: URL(fileURLWithPath: bytesPath), options: .atomic)
+
+        let evidence = """
+        qualification=M1-B2 B2.4 pinned vttest alternate-screen path
+        vttest_version=VT100 test program, version 2.7 (20251205)
+        terminal=xterm-ghostty
+        launch_geometry=24x80.80
+        rendered_geometry=\(alternateSnapshot.geometry.rows)x\(alternateSnapshot.geometry.columns)
+        menu_path=11/8/7/5 (non-VT100/XTERM/alternate-screen/1049)
+        input_path=authenticated human claim + INPUT_SUBMIT/APPLIED
+        input_receipt=\(view.inputSubmissionState)
+        launch_termios_handoff=stty sane (canonical CR-to-NL state normally inherited from an interactive shell)
+        alternate_e_count=\(alternateECount)
+        decset_1049=observed
+        decrst_1049=observed
+        primary_restore=observed
+        captured_output_bytes=\(returnedOutput.count)
+        screenshot=\(screenshotPath)
+        pixel_disposition=inspect screenshot; semantic success is not pixel proof
+        """
+        try (evidence + "\n").write(toFile: transcriptPath, atomically: true, encoding: .utf8)
+    }
+
     /// B2.4 opt-in live geometry proof: the real Ghostty grid, not the session
     /// fixture's 80x24 default, is sent through authenticated RESIZE before
     /// the attached login shell accepts input.

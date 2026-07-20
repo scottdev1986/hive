@@ -30,6 +30,11 @@ public final class AttachReplayClient {
         let transactionId: String
     }
 
+    private struct PendingResizeRequest {
+        let binding: SurfaceBinding
+        let geometry: TerminalGeometry
+    }
+
     public private(set) var state: TerminalSurfaceState = .starting
     public private(set) var binding: SurfaceBinding?
     public private(set) var highWater: UInt64 = 0
@@ -53,7 +58,7 @@ public final class AttachReplayClient {
     private var inputFenced = false
     private var inputSequence: UInt64 = 0
     private var resizeRevision: UInt64 = 0
-    private var pendingResizeRequests: [UInt64: TerminalGeometry] = [:]
+    private var pendingResizeRequests: [UInt64: PendingResizeRequest] = [:]
     /// Last host answer to a RESIZE, e.g. "applied 61x39" or
     /// "stale currentRevision=2" — the host refuses resizes silently on the
     /// wire, so the outcome must be observable here.
@@ -275,7 +280,10 @@ public final class AttachReplayClient {
             "revision": String(resizeRevision),
             "idempotencyKey": "resize-\(viewerId)-\(binding.generation)-\(resizeRevision)",
         ]
-        pendingResizeRequests[nextRequestId] = geometry
+        pendingResizeRequests[nextRequestId] = PendingResizeRequest(
+            binding: binding,
+            geometry: geometry
+        )
         try sendJSON(.resize, object: object, requestId: nextRequestId)
         nextRequestId += 1
     }
@@ -306,6 +314,19 @@ public final class AttachReplayClient {
         case .error:
             let object = try FrameCodec.parseJSONObject(frame.payload)
             let code = object["code"] as? String ?? "INTERNAL"
+            if let pending = pendingResizeRequests[frame.requestId],
+               pending.binding == binding {
+                pendingResizeRequests.removeValue(forKey: frame.requestId)
+                lastResizeResult =
+                    "error \(code): \(object["message"] as? String ?? "host refused terminal resize")"
+                NSLog(
+                    "hive-terminal RESIZE %dx%d result: %@",
+                    pending.geometry.columns,
+                    pending.geometry.rows,
+                    lastResizeResult ?? "nil"
+                )
+                return .continueReplay
+            }
             if frame.requestId == claimRequestId || pendingInputRequests[frame.requestId] != nil {
                 if frame.requestId == claimRequestId {
                     claimRequestId = nil
@@ -457,9 +478,19 @@ public final class AttachReplayClient {
             return .continueReplay
 
         case .applied:
-            if let requestedGeometry = pendingResizeRequests[frame.requestId] {
+            if let pending = pendingResizeRequests[frame.requestId],
+               pending.binding == binding {
                 pendingResizeRequests.removeValue(forKey: frame.requestId)
-                let object = try FrameCodec.parseJSONObject(frame.payload)
+                guard let object = try? FrameCodec.parseJSONObject(frame.payload) else {
+                    lastResizeResult = "unknown malformed resize receipt"
+                    NSLog(
+                        "hive-terminal RESIZE %dx%d result: %@",
+                        pending.geometry.columns,
+                        pending.geometry.rows,
+                        lastResizeResult ?? "nil"
+                    )
+                    return .continueReplay
+                }
                 let result = (object["resultKind"] as? String == "resize")
                     ? object["result"] as? [String: Any]
                     : nil
@@ -477,8 +508,8 @@ public final class AttachReplayClient {
                 }
                 NSLog(
                     "hive-terminal RESIZE %dx%d result: %@",
-                    requestedGeometry.columns,
-                    requestedGeometry.rows,
+                    pending.geometry.columns,
+                    pending.geometry.rows,
                     lastResizeResult ?? "nil"
                 )
                 return .continueReplay
@@ -587,9 +618,11 @@ public final class AttachReplayClient {
         claimIdempotencyKey = nil
         pendingInputBatches.removeAll()
         pendingInputRequests.removeAll()
+        pendingResizeRequests.removeAll()
         inputFenced = false
         claimPresentation = .free
         setInputSubmissionState(.idle)
+        lastResizeResult = nil
     }
 
     private func refuseInput(code: String, evidence: String, fence: Bool = true) {

@@ -208,3 +208,71 @@ catch a regression in that gate.
 F2/F3/F4 share one root cause and are best fixed as a single change that brings
 the resize map to parity with the input map, with tests feeding an `.error` frame
 and a non-JSON payload.
+
+## Delta reviews of the fixes — all PASS
+
+### `fcc3e05b` — F1–F4 (PASS)
+
+Each original bug was reintroduced in production code to prove the new tests
+bite. Every one went RED with the literal stale-success symptom:
+
+- `.error` fix reverted -> `testResizeErrorReplacesStaleSuccessAndClearsRequest`
+  reported `"applied 80x24"` instead of `"error CLOSED: resize rejected"`.
+- non-JSON throw restored -> `testMalformedResizeReceiptReplacesStaleSuccess`
+  reported `"applied 80x24"` instead of `"unknown malformed resize receipt"`.
+- reset fix reverted -> `testRebindClears…` failed `XCTAssertNil` with
+  `"applied 80x24"`.
+
+The tests are stronger than the fix strictly required: each seeds
+`lastResizeResult` with a real success first, so every assertion distinguishes
+*reports failure* from *retained stale success*. The F1 gate was additionally
+verified in the real app — `"1"` fires the seam, `"0"` and `""` do not — which
+closed the coverage gap this review had flagged.
+
+### `4dad7269` — F6/F7 (PASS)
+
+Verified by swapping only `scripts/b22-live-attach-proof.ts` between refs (no
+rebuild, so nothing else could differ), same port, same env value, app provably
+alive at Ctrl-C in both runs:
+
+- OLD ts: `shutting down (SIGINT)` -> `forced exit`, **no** `daemon stopped`.
+- NEW ts: `shutting down (SIGINT)` -> `daemon stopped; session torn down`.
+
+The race is gone, and gone because of that change. The diff is surgical — 12
+changed lines including headers — and does not reach heidi's four behaviors.
+`if (!shuttingDown)` is sound in single-threaded JS: `shutdown()` sets the flag
+synchronously before its first await, so the block resuming from
+`await workspace.exited` always observes it, and the genuine second-SIGINT
+force-exit 130 is preserved.
+
+### `d5750507` — F5 (PASS, one low note)
+
+The derivation now matches the harness exactly, which is the property that
+matters: harness `HIVE_B22_REAL_SHELL === "1" ? "terminal" : "aria"` versus
+Swift `environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"` — same
+rule, same strict comparison.
+
+**F5a (low, non-blocking):** the test is not sensitive to the bug class it
+descends from. Mutating `== "1"` to `!= nil` — exactly the presence-only
+semantics F1 was about — left the suite GREEN, because the test covers only
+`"1"` and an empty environment. One added case would bite:
+
+```swift
+XCTAssertEqual(
+    SmokeRunner.sessiondLiveResizeInputAgent(environment: ["HIVE_B22_REAL_SHELL": "0"]),
+    "aria")
+```
+
+### `d2c97987` — F5a (PASS)
+
+The added assertion was verified the only way that means anything: the **same
+mutation, before and after**.
+
+- At `d5750507`: mutate `== "1"` to `!= nil` -> suite GREEN, 14/0/0. The gap was
+  real.
+- At `d2c97987`: identical mutation -> **RED**,
+  `XCTAssertEqual failed: ("terminal") is not equal to ("aria")` at
+  `AppDelegateLifecycleTests.swift:17` — the new assertion.
+
+Same mutation, opposite outcomes, a one-line delta between them. The guard now
+exists, and its attribution is unambiguous.

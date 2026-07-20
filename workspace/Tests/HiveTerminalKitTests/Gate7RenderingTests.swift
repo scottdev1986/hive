@@ -273,6 +273,78 @@ final class Gate7RenderingTests: XCTestCase {
         XCTAssertEqual(view.drawScheduledCount, 1)
     }
 
+    func testVisibleWindowBootstrapsOneFrameWhenInitialOcclusionStateIsStale() {
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 240),
+            engine: engine
+        )
+        defer { view.userClose() }
+        let window = ControlledWindow(
+            contentRect: view.bounds,
+            styleMask: [.titled, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        window.orderFrontRegardless()
+        defer { window.orderOut(nil) }
+        XCTAssertTrue(window.isVisible)
+        XCTAssertFalse(window.controlledOcclusionState.contains(.visible))
+
+        NotificationCenter.default.post(
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
+        XCTAssertEqual(engine.occlusionCalls.last, true)
+
+        engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        XCTAssertTrue(waitUntil { engine.drawCount == 1 })
+        XCTAssertEqual(engine.occlusionCalls.suffix(2), [true, false])
+        XCTAssertEqual(view.appliedOcclusionVisible, false)
+
+        engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        waitForMainQueue(delay: 0.05)
+        XCTAssertEqual(engine.drawCount, 1, "true occlusion must suppress draws after the bootstrap frame")
+
+        window.controlledOcclusionState = [.visible]
+        NotificationCenter.default.post(
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
+        XCTAssertTrue(waitUntil { engine.drawCount == 2 }, "real visibility must release the pending frame")
+    }
+
+    func testMiniaturizedWindowNeverUsesInitialVisibilityBootstrap() {
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 400, height: 240),
+            engine: engine
+        )
+        defer { view.userClose() }
+        let window = ControlledWindow(
+            contentRect: view.bounds,
+            styleMask: [.titled, .miniaturizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        window.orderFrontRegardless()
+        window.controlledMiniaturized = true
+        defer { window.orderOut(nil) }
+        XCTAssertTrue(window.isMiniaturized)
+
+        NotificationCenter.default.post(
+            name: NSWindow.didChangeOcclusionStateNotification,
+            object: window
+        )
+        engine.callbackContext.onEvent?(BridgeEvent(type: .invalidate))
+        waitForMainQueue(delay: 0.05)
+
+        XCTAssertEqual(engine.occlusionCalls.last, false)
+        XCTAssertEqual(engine.drawCount, 0)
+    }
+
     func testSleepDefersPendingDrawAndWakeRefreshesExactlyOnce() {
         let engine = FakeManualSurface()
         let view = HiveTerminalView(
@@ -482,9 +554,14 @@ final class Gate7RenderingTests: XCTestCase {
 
     private final class ControlledWindow: NSWindow {
         var controlledOcclusionState: NSWindow.OcclusionState = []
+        var controlledMiniaturized = false
 
         override var occlusionState: NSWindow.OcclusionState {
             controlledOcclusionState
+        }
+
+        override var isMiniaturized: Bool {
+            controlledMiniaturized
         }
     }
 }

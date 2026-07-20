@@ -234,9 +234,7 @@ final class AttachInputTests: XCTestCase {
         ]
 
         for receipt in receipts {
-            try view.attachClient?.sendResize(geometry)
-            try host.harvestViewerFrames()
-            let resize = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .resize })
+            let resize = try sendResize(from: view, to: host)
             let payload = try FrameCodec.jsonPayload(receipt.object)
             view.pumpHostFrame(
                 WireFrame(
@@ -249,6 +247,115 @@ final class AttachInputTests: XCTestCase {
             )
             XCTAssertEqual(view.attachClient?.lastResizeResult, receipt.expected)
         }
+    }
+
+    func testResizeErrorReplacesStaleSuccessAndClearsRequest() throws {
+        let host = FakeHost(connectionId: "input-resize-error")
+        let view = try attachView(host: host, engine: FakeManualSurface())
+        let binding = try XCTUnwrap(view.binding)
+
+        try recordSuccessfulResize(on: view, host: host, binding: binding)
+
+        let failed = try sendResize(from: view, to: host)
+        let error = try FrameCodec.jsonPayload([
+            "schemaVersion": 1,
+            "code": "CLOSED",
+            "message": "resize rejected",
+        ])
+        view.pumpHostFrame(
+            WireFrame(type: .error, requestId: failed.requestId, payload: error),
+            frameBinding: binding
+        )
+        XCTAssertEqual(view.attachClient?.lastResizeResult, "error CLOSED: resize rejected")
+
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                requestId: failed.requestId,
+                payload: try resizeAppliedPayload()
+            ),
+            frameBinding: binding
+        )
+        XCTAssertEqual(view.attachClient?.lastResizeResult, "error CLOSED: resize rejected")
+    }
+
+    func testMalformedResizeReceiptReplacesStaleSuccess() throws {
+        let host = FakeHost(connectionId: "input-resize-malformed")
+        let view = try attachView(host: host, engine: FakeManualSurface())
+        let binding = try XCTUnwrap(view.binding)
+
+        try recordSuccessfulResize(on: view, host: host, binding: binding)
+
+        let malformed = try sendResize(from: view, to: host)
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                requestId: malformed.requestId,
+                payload: Data("not-json".utf8)
+            ),
+            frameBinding: binding
+        )
+        XCTAssertEqual(view.attachClient?.lastResizeResult, "unknown malformed resize receipt")
+    }
+
+    func testRebindClearsResizeResultAndRejectsPriorBindingReceipt() throws {
+        let host = FakeHost(connectionId: "input-resize-rebind")
+        let view = try attachView(host: host, engine: FakeManualSurface())
+        let binding = try XCTUnwrap(view.binding)
+
+        try recordSuccessfulResize(on: view, host: host, binding: binding)
+
+        let pending = try sendResize(from: view, to: host)
+        let rebound = SurfaceBinding(
+            locator: makeTestLocator(generation: 2),
+            connectionId: "input-resize-rebound"
+        )
+        view.attachClient?.retarget(newBinding: rebound)
+        XCTAssertNil(view.attachClient?.lastResizeResult)
+
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                requestId: pending.requestId,
+                payload: try resizeAppliedPayload()
+            ),
+            frameBinding: rebound
+        )
+        XCTAssertNil(view.attachClient?.lastResizeResult)
+    }
+
+    private func sendResize(from view: HiveTerminalView, to host: FakeHost) throws -> WireFrame {
+        try view.attachClient?.sendResize(geometry)
+        try host.harvestViewerFrames()
+        return try XCTUnwrap(host.receivedFromViewer.last { $0.type == .resize })
+    }
+
+    private func recordSuccessfulResize(
+        on view: HiveTerminalView,
+        host: FakeHost,
+        binding: SurfaceBinding
+    ) throws {
+        let resize = try sendResize(from: view, to: host)
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                requestId: resize.requestId,
+                payload: try resizeAppliedPayload()
+            ),
+            frameBinding: binding
+        )
+        XCTAssertEqual(view.attachClient?.lastResizeResult, "applied 80x24")
+    }
+
+    private func resizeAppliedPayload() throws -> Data {
+        try FrameCodec.jsonPayload([
+            "schemaVersion": 1,
+            "resultKind": "resize",
+            "result": [
+                "state": "applied",
+                "readback": ["columns": 80, "rows": 24],
+            ],
+        ])
     }
 
     private func attachView(

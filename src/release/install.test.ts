@@ -51,6 +51,7 @@ function manifestFor(
   version: string,
   cliBytes: Uint8Array,
   workspaceBytes: Uint8Array,
+  sessiondBytes: Uint8Array = new TextEncoder().encode("#!/bin/sh\necho sessiond\n"),
 ): ReleaseManifest {
   return {
     schema: 1,
@@ -71,6 +72,15 @@ function manifestFor(
         size: cliBytes.byteLength,
         sha256: sha256(cliBytes),
         buildHash: `hash-${version}`,
+      },
+      {
+        name: "hive-sessiond-darwin-arm64",
+        kind: "sessiond",
+        platform: "darwin",
+        arch: "arm64",
+        size: sessiondBytes.byteLength,
+        sha256: sha256(sessiondBytes),
+        buildHash: `sessiond-hash-${version}`,
       },
       {
         name: "HiveWorkspace.tar.gz",
@@ -115,9 +125,11 @@ async function createInstallerFixture(
   const cliBytes = new TextEncoder().encode(
     `#!/bin/sh\necho 'hive ${version}'\n`,
   );
+  const sessiondBytes = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
   await writeFile(join(fixtures, "hive-darwin-arm64"), cliBytes);
+  await writeFile(join(fixtures, "hive-sessiond-darwin-arm64"), sessiondBytes);
 
-  const manifest = manifestFor(version, cliBytes, workspaceBytes);
+  const manifest = manifestFor(version, cliBytes, workspaceBytes, sessiondBytes);
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   await writeFile(join(fixtures, "hive-release.json"), manifestBytes);
   if (withSignature) {
@@ -186,7 +198,8 @@ async function selfUpdate(
   const cliBytes = new TextEncoder().encode(
     `#!/bin/sh\necho 'hive ${version}'\n`,
   );
-  const manifest = manifestFor(version, cliBytes, fixture.workspaceBytes);
+  const sessiondBytes = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
+  const manifest = manifestFor(version, cliBytes, fixture.workspaceBytes, sessiondBytes);
   const manifestBytes = new TextEncoder().encode(JSON.stringify(manifest));
   await stageRelease({
     manifest,
@@ -196,6 +209,7 @@ async function selfUpdate(
     root: fixture.installRoot,
     publicKey: RELEASE_KEY.publicKey,
     download: async (name) => {
+      if (name === "hive-sessiond-darwin-arm64") return sessiondBytes;
       if (name !== "hive-darwin-arm64") throw new Error(`unexpected asset ${name}`);
       return cliBytes;
     },
@@ -292,7 +306,9 @@ describe("the standalone installer", () => {
     await symlink(join(installRoot, "current", "hive"), join(binDir, "hive"));
 
     const badBinary = new TextEncoder().encode("#!/bin/sh\necho 'hive 9.9.9'\n");
+    const sessiondBytes = new TextEncoder().encode("#!/bin/sh\necho sessiond\n");
     await writeFile(join(fixtures, "hive-darwin-arm64"), badBinary);
+    await writeFile(join(fixtures, "hive-sessiond-darwin-arm64"), sessiondBytes);
     const workspaceRoot = join(root, "workspace-archive");
     await mkdir(join(workspaceRoot, "HiveWorkspace.app"), { recursive: true });
     await writeFile(join(workspaceRoot, "HiveWorkspace.app", "replacement"), "new\n");
@@ -309,6 +325,10 @@ describe("the standalone installer", () => {
         {
           name: "hive-darwin-arm64",
           sha256: sha256(badBinary),
+        },
+        {
+          name: "hive-sessiond-darwin-arm64",
+          sha256: sha256(sessiondBytes),
         },
         {
           name: "HiveWorkspace.tar.gz",

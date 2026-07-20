@@ -1,0 +1,53 @@
+M1 B2.4 VIEWER CAPABILITY DECLARATION
+declared_at=2026-07-19T20:53:00-04:00
+declaration_timing=before B2.4 vttest execution
+
+ENGINE PIN
+ghostty_upstream_commit=73534c4680a809398b396c94ac7f12fcccb7963d
+ghostty_patch_series_sha256=ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0
+vttest_version=2.7 (20251205)
+vttest_archive_sha256=cd6886f9aefe6a3f6c566fa61271a55710901a71849c630bf5376aa984bf77cc
+canonical_vttest_pin_record=raw/qualification/ghostty-b1-gate2-replies/vttest-version.txt
+terminal_declaration=xterm-ghostty
+upstream_reverified_at=2026-07-19T21:40:00-04:00
+upstream_reverified_source=https://invisible-island.net/archives/vttest/
+
+APPLICABLE VT/VIEWER GROUPS
+vt100=cursor movement; screen features; wrapping; insert/delete; character sets; double-width/height; keyboard; reports; reset
+vt220_vt520=applicable screen/editing/keyboard/report paths supported by the xterm-ghostty declaration
+iso6429=color and SGR
+xterm=primary/alternate screen 1049; bracketed paste 2004; focus 1004; mouse features; synchronized output
+unicode=narrow/wide CJK; combining; variation selectors; skin tone; flags; family ZWJ; byte-boundary splits
+viewer=bounded scrollback/search; hard/soft-wrap selection; local/captured routing; resize/reflow; occlusion; sleep/wake; renderer-health recovery; sustained-output memory bound
+
+MOUSE APPLICABILITY (DECLARED BEFORE RUN)
+mode_9_x10=APPLICABLE
+mode_1000_vt200=APPLICABLE
+mode_1002_button_event=APPLICABLE
+mode_1003_any_event=APPLICABLE
+mode_1005_utf8=APPLICABLE
+mode_1006_sgr=APPLICABLE
+mode_1007_alternate_scroll=APPLICABLE
+mode_1015_urxvt=APPLICABLE
+mode_1016_sgr_pixels=APPLICABLE
+
+1005_basis=vendor/ghostty/src/terminal/mouse.zig declares utf8 format; terminal/stream_terminal.zig maps DECSET 1005; input/mouse_encode.zig emits UTF-8 coordinates
+1015_basis=vendor/ghostty/src/terminal/mouse.zig declares urxvt format; terminal/stream_terminal.zig maps DECSET 1015; input/mouse_encode.zig emits decimal urxvt reports
+applicability_rule=an applicable failure blocks; results cannot retroactively change this declaration
+
+EXPLICIT NON-APPLICABLE HISTORICAL/HARDWARE GROUPS
+printer_port=NOT_APPLICABLE (not advertised by xterm-ghostty)
+tek4014=NOT_APPLICABLE (not advertised by xterm-ghostty)
+physical_vt52_hardware=NOT_APPLICABLE (not advertised by xterm-ghostty)
+sixels=NOT_APPLICABLE_TO_B2.4 (outside the frozen viewer corpus)
+
+OWNERSHIP / EVIDENCE ROUTING
+mouse_exact_bytes=B2.3 mouse-mode matrix owned by harvey; B2.4 consumes its landed transcript
+mouse_exact_bytes_evidence=bootstrap/evidence/m1-b2-b23-input/mouse-format-matrix.txt
+mouse_exact_bytes_source_pin=0777b185 (global-1005-drop hardening)
+mouse_exact_bytes_recording_pin=61817ae9 (rebased transcript)
+viewer_behavior=B24ViewerSemanticsTests
+renderer_gpu_occlusion_sleep=landed Gate7RenderingTests plus the B2.4 live sustained-output run
+vttest_semantic=PASS; pinned live 1049 path recorded after OPOST/ONLCR landing
+vttest_evidence=bootstrap/evidence/m1-b2-b24-viewer/vttest-live.txt
+vttest_visual=DEFERRED_PENDING_#47; captured window is background-only and is not accepted as terminal pixel proof

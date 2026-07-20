@@ -1,0 +1,15 @@
+2026-07-20T02:42:17.067Z B2.2 live proof home: /tmp/hb22-da61
+2026-07-20T02:42:17.067Z transcript: /tmp/hb22-da61/b22-proof-transcript.log
+2026-07-20T02:42:17.169Z broker live (pid 81091) at /tmp/hb22-da61/runtime/sessiond/broker.sock
+2026-07-20T02:42:17.282Z daemon live in-process on port 43122
+2026-07-20T02:42:17.354Z agent row inserted: terminal → ses_019f7d67-1c88-7fd1-b1d0-da7bb783da99 generation 1
+2026-07-20T02:42:17.539Z session created: hostPid=81210 provider=81222
+2026-07-20T02:42:17.539Z interactive login shell: /bin/zsh -l (cwd /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta)
+2026-07-20T02:42:17.540Z launch the Workspace now:
+  /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta/workspace/.build/debug/HiveWorkspace --project /Users/scottkellar/Projects/hive/.hive/worktrees/henrietta --port 43122 --instance-id 89ad1d704b --instance-home /tmp/hb22-da61 --hive /tmp/hb22-da61/hive-cli --orchestrator-session hive-b22-orch
+2026-07-20T02:42:17.541Z workspace app launched (pid 81291)
+2026-07-20T02:42:17.541Z proof descriptor written for opt-in live tests: /tmp/hb22-da61/b22-proof.json
+2026-07-20T02:42:17.541Z terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down
+2026-07-20T02:42:22.568Z visibility renewal failed: SessiondBrokerUnavailableError: sessiond broker is unavailable at /tmp/hb22-da61/runtime/sessiond/broker.sock
+2026-07-20T02:42:26.572Z shutting down (SIGINT)
+2026-07-20T02:42:26.614Z daemon stopped; session torn down

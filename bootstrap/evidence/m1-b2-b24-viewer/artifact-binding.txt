@@ -1,0 +1,4 @@
+true
+manifest_lock_match=true
+artifact_manifest_sha256=97543dde862513436da7d656d484877bf2c8bc1f9a3a2428132960a27e321181
+macos_library_sha256=5abc40d9e521109b609689cbb85d15fa822b1e6ef72b43edc46a8c34b8d13bde

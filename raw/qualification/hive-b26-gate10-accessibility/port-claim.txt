@@ -1,0 +1,4 @@
+port=43128
+status=reserved
+bound=false
+reason=B2.6 AppKit accessibility slice uses in-process NSEvents and NSAccessibility APIs only; no TCP listener. Port reserved per hive port hygiene so a later VO harness can bind without collision.

@@ -5,6 +5,7 @@ import Foundation
 enum HiveTerminalConfiguration {
     static let horizontalPaddingPoints = 10
     static let verticalPaddingPoints = 8
+    static let scrollbackLimitBytes = 48 * 1024 * 1024
     static let liveLogFingerprint =
         "background=0f1117 font-size=13 padding=\(horizontalPaddingPoints)x\(verticalPaddingPoints)"
 
@@ -53,8 +54,11 @@ enum HiveTerminalConfiguration {
         "cursor-style = block",
         "cursor-opacity = 1",
         "mouse-hide-while-typing = true",
+        "# Viewer state is retained only to this product-owned memory bound.",
+        "scrollback-limit = \(scrollbackLimitBytes)",
         "# Hive owns every app/window/pane action and denies terminal clipboard OSC.",
         "keybind = clear",
+        "copy-on-select = false",
         "clipboard-read = deny",
         "clipboard-write = deny",
     ]

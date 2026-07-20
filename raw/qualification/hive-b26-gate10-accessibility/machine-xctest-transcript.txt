@@ -1,0 +1,6 @@
+STATUS=RECORDED
+command=cd workspace && HIVE_B26_AX_EVIDENCE=../raw/qualification/hive-b26-gate10-accessibility swift test --filter Gate10AccessibilityTests
+result=PASS
+executed=14
+failures=0
+notes=Also Gate10SemanticSnapshotTests 6/6 PASS; Gate9CallbackMatrixTests 9/9 PASS (selectionChanged carrier + scrollbar).

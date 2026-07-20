@@ -1,0 +1,6 @@
+observer=CIImage(IOSurface) raw frame export
+status=NON_AUTHORITATIVE_BACKGROUND_ONLY_ON_AUTHORING_RUN
+frame_sha256=f686f93f452cfa67a3be72424682eb99fec8903f750b2f603ddee0816d9df82d
+frame_bytes=37642
+positive_control=HiveTerminalVisualProofTests/testProductionSurfaceWritesC1PNGAtLiveGeometry
+disposition=known renderer-test observer blind spot; do not treat raw export as pixel proof

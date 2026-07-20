@@ -2,26 +2,26 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/16] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.10s)
-Test Suite 'Selected tests' started at 2026-07-19 21:21:30.867.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:21:30.868.
-Test Suite 'B23KittyStackMatrixTests' started at 2026-07-19 21:21:30.868.
+Build complete! (0.13s)
+Test Suite 'Selected tests' started at 2026-07-19 22:37:32.895.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:37:32.896.
+Test Suite 'B23KittyStackMatrixTests' started at 2026-07-19 22:37:32.896.
 Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testBaselineShiftEnterIsLegacyGolden]' started.
-Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testBaselineShiftEnterIsLegacyGolden]' passed (0.397 seconds).
+Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testBaselineShiftEnterIsLegacyGolden]' passed (0.357 seconds).
 Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testPopRestoresLegacyEncoding]' started.
-Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testPopRestoresLegacyEncoding]' passed (0.537 seconds).
+Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testPopRestoresLegacyEncoding]' passed (0.533 seconds).
 Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testPositiveControlPushAndLegacyEncodingsDiffer]' started.
-Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testPositiveControlPushAndLegacyEncodingsDiffer]' passed (0.533 seconds).
+Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testPositiveControlPushAndLegacyEncodingsDiffer]' passed (0.525 seconds).
 Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testQueryReportsFlagsThatTrackThePushedStack]' started.
-Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testQueryReportsFlagsThatTrackThePushedStack]' passed (0.784 seconds).
+Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testQueryReportsFlagsThatTrackThePushedStack]' passed (0.833 seconds).
 Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testStackNestsSoTwoPushesNeedTwoPops]' started.
-Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testStackNestsSoTwoPushesNeedTwoPops]' passed (0.523 seconds).
-Test Suite 'B23KittyStackMatrixTests' passed at 2026-07-19 21:21:33.642.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 2.773 (2.774) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:21:33.642.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 2.773 (2.774) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 21:21:33.642.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 2.773 (2.774) seconds
+Test Case '-[HiveTerminalKitTests.B23KittyStackMatrixTests testStackNestsSoTwoPushesNeedTwoPops]' passed (0.534 seconds).
+Test Suite 'B23KittyStackMatrixTests' passed at 2026-07-19 22:37:35.678.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.782 (2.782) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:37:35.678.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.782 (2.782) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:37:35.678.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.782 (2.783) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
