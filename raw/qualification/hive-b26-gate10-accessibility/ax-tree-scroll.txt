@@ -1,5 +1,3 @@
-scroll_scenario=NO_OP_ON_THIS_BUFFER
-scroll_note=byte-identical to ax-tree-replay.txt; scroll_page_up produced zero AX/viewport change on this short buffer (already at/near bottom). Slot retained as honest no-op evidence, not a scroll transition proof.
 role=AXTextArea
 label=Terminal starting
 help=Terminal content area

@@ -31,7 +31,7 @@ Directory: `raw/qualification/hive-b26-gate10-accessibility/`
 | Artifact | Status |
 |---|---|
 | `ax-tree-{input,alternate-screen,alternate-screen-exit,resize,replay}.txt` | RECORDED — pre-`.live` / xctest host / no present (see Honest limits) |
-| `ax-tree-scroll.txt` | RECORDED — **no-op on this buffer** (byte-identical to replay; `scroll_page_up` produced zero AX change; annotated in-file) |
+| `ax-tree-scroll.txt` | RECORDED — **no-op on this buffer** (byte-identical to replay; `scroll_page_up` produced zero AX change; see `provenance.txt` `scroll_slot=`, not hand-edited into the dump) |
 | `ax-tree-teardown.txt` | RECORDED — post-`userClose` |
 | `inspector-audit-machine.txt` | RECORDED (consistency cross-check; torn fixture positive control) |
 | `fixtures/torn-ax-tree-alternate-screen-exit.txt` | RECORDED historical tear (audit must RED) |
