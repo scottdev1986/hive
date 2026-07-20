@@ -35,9 +35,9 @@ final class PaneView: NSView {
     func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
         guard sessiondTerminal == nil else { return }
         do {
-            let terminalView = try terminal.makeView(
-                frame: contentView.bounds, parent: contentView)
+            let terminalView = try terminal.makeView()
             terminalView.frame = contentView.bounds
+            contentView.addSubview(terminalView)
             sessiondTerminal = terminal
             // §26 bounded recovery: when the renderer gives up reconnecting,
             // surface a visible failure on the pane instead of a silently

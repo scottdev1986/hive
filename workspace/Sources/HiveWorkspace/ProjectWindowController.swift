@@ -304,18 +304,18 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         view.contentView.onComposerInput = { [weak self] action in
             self?.onComposerInput?(recipient, action)
         }
-        let sessiondTerminal: SessiondPaneTerminal?
         if pane.kind == .agent,
            let locator = pane.sessionLocator,
            locator.hostKind == "sessiond" {
-            sessiondTerminal = SessiondPaneTerminal(
+            // B2.2: a sessiond-backed pane renders through the exact-locator
+            // HiveTerminalView; no tmux client is spawned for it.
+            view.installSessiondTerminal(SessiondPaneTerminal(
                 agentName: pane.title,
                 locator: locator,
                 hivePath: hivePath,
                 daemonPort: daemonPort,
-                instanceHome: instanceHome)
+                instanceHome: instanceHome))
         } else {
-            sessiondTerminal = nil
             view.contentView.schedule(
                 command: terminalCommand(for: pane),
                 workingDirectory: projectDirectory)
@@ -331,21 +331,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         // New panes appear at their final slot's center and grow into place;
         // creation must be visible but never steal focus.
         if let target = state.frames(in: container.bounds)[paneID] {
-            if sessiondTerminal == nil {
-                view.frame = CGRect(x: target.midX, y: target.midY, width: 0, height: 0)
-            } else {
-                // Ghostty cannot create a macOS surface against a zero-sized
-                // host. Sessiond panes start at their settled frame instead of
-                // borrowing the tmux pane's grow-from-zero animation.
-                view.frame = target
-                view.layoutSubtreeIfNeeded()
-            }
-        }
-        if let sessiondTerminal {
-            // Ghostty's macOS surface requires a real window-backed NSView.
-            // Install only after this pane belongs to the controller's window;
-            // the pane already carries its settled nonzero geometry above.
-            view.installSessiondTerminal(sessiondTerminal)
+            view.frame = CGRect(x: target.midX, y: target.midY, width: 0, height: 0)
         }
     }
 
