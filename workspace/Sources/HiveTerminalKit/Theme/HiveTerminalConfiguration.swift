@@ -1,5 +1,24 @@
 import Foundation
 
+public enum HiveTerminalFont: String, CaseIterable, Sendable {
+    case embedded
+    case systemMonospaced
+
+    public var displayName: String {
+        switch self {
+        case .embedded: "JetBrains Mono (Built In)"
+        case .systemMonospaced: "System Monospaced"
+        }
+    }
+
+    var configurationLines: [String] {
+        switch self {
+        case .embedded: []
+        case .systemMonospaced: ["font-family = .AppleSystemUIFontMonospaced"]
+        }
+    }
+}
+
 struct HiveTerminalTheme: Equatable, Sendable {
     let identifier: String
     let configurationLines: [String]
@@ -71,8 +90,12 @@ enum HiveTerminalConfiguration {
         "clipboard-write = deny",
     ]
 
-    static func contents(theme: HiveTerminalTheme = .hiveDark, headless: Bool = false) -> String {
-        var lines = theme.configurationLines + overrideLines
+    static func contents(
+        theme: HiveTerminalTheme = .hiveDark,
+        font: HiveTerminalFont = .embedded,
+        headless: Bool = false
+    ) -> String {
+        var lines = theme.configurationLines + font.configurationLines + overrideLines
         if headless { lines.append("window-vsync = false") }
         return lines.joined(separator: "\n") + "\n"
     }
@@ -80,21 +103,24 @@ enum HiveTerminalConfiguration {
     static func write(
         to url: URL,
         theme: HiveTerminalTheme = .hiveDark,
+        font: HiveTerminalFont = .embedded,
         headless: Bool = false
     ) throws {
-        try Data(contents(theme: theme, headless: headless).utf8).write(to: url, options: .atomic)
+        try Data(contents(theme: theme, font: font, headless: headless).utf8)
+            .write(to: url, options: .atomic)
     }
 
     @discardableResult
     static func writeProcessFile(
         theme: HiveTerminalTheme = .hiveDark,
+        font: HiveTerminalFont = .embedded,
         headless: Bool = false
     ) throws -> URL {
         let suffix = headless ? "test" : "manual"
         let url = FileManager.default.temporaryDirectory
             .appendingPathComponent(
                 "hive-ghostty-\(suffix)-config-\(ProcessInfo.processInfo.processIdentifier).conf")
-        try write(to: url, theme: theme, headless: headless)
+        try write(to: url, theme: theme, font: font, headless: headless)
         return url
     }
 }
