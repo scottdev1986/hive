@@ -295,9 +295,19 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         }
     }
 
+    /// Apply C1 theme + refresh grid metrics before any attach/replay bytes
+    /// land. Safe to call repeatedly (`applyHiveConfiguration` is one-shot).
+    /// Must run before HOST_ATTACH so `ghostty_surface_update_config` cannot
+    /// wipe already-applied journal output (blank pane with full journal).
+    public func prepareThemeBeforeAttach() {
+        engine.applyHiveConfiguration()
+        refreshReportedGeometryAfterConfiguration()
+    }
+
     private func presentFirstCorrectFrame(_ highWater: UInt64) {
         self.highWater = highWater
         guard surfaceState != .live else { return }
+        // Theme should already be applied pre-attach; one-shot no-op if so.
         engine.applyHiveConfiguration()
         setSurfaceState(.live)
         notifyOutputStatusReconnect(reason: "first-correct-frame")
@@ -311,6 +321,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         fallbackGeometry: TerminalGeometry
     ) throws {
         guard let expectedBinding = binding else { return }
+        // Prefer pre-attach theme; still one-shot safe if caller skipped it.
         engine.applyHiveConfiguration()
         if engine is GhosttyManualSurface {
             let deadline = Date().addingTimeInterval(2)
