@@ -1,5 +1,5 @@
 import AppKit
-import HiveTerminalKit
+@testable import HiveTerminalKit
 import XCTest
 @testable import HiveWorkspace
 import WorkspaceCore
@@ -10,6 +10,14 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         _ = NSApplication.shared
         let buildID = HiveTerminalEngineIdentity.current.buildId
         XCTAssertFalse(buildID.isEmpty)
+        SessiondPaneTerminal.viewFactoryForTesting = { frame, viewerID in
+            HiveTerminalView(
+                frame: frame,
+                engine: try GhosttyBridgeFactory.makeManualSurfaceForTesting(),
+                viewerId: viewerID
+            )
+        }
+        defer { SessiondPaneTerminal.viewFactoryForTesting = nil }
 
         let state = ProjectState(projectID: "project", displayName: "Project")
         let controller = ProjectWindowController(

@@ -11,6 +11,11 @@ import WorkspaceCore
 /// recreation re-attaches to the SAME exact generation with a fresh one-use
 /// grant, resuming at the acknowledged high-water.
 final class SessiondPaneTerminal {
+    /// Test seam for the production construction boundary. Production nil.
+    static var attachmentObserver: ((NSRect, NSView) -> Void)?
+    /// Keeps input-routing tests headless; production always uses makeAttached.
+    static var viewFactoryForTesting: ((NSRect, String) throws -> HiveTerminalView)?
+
     let agentName: String
     let paneLocator: AgentSessionLocator
     private let hivePath: String
@@ -89,8 +94,16 @@ final class SessiondPaneTerminal {
 
     /// Creates the production surface. Throws when the pinned engine library
     /// cannot be loaded; the pane then keeps its native failure representation.
-    func makeView() throws -> HiveTerminalView {
-        let terminal = try HiveTerminalView(frame: .zero, viewerId: viewerId)
+    func makeView(frame: NSRect, parent: NSView) throws -> HiveTerminalView {
+        Self.attachmentObserver?(frame, parent)
+        let terminal: HiveTerminalView
+        if let viewFactoryForTesting = Self.viewFactoryForTesting {
+            terminal = try viewFactoryForTesting(frame, viewerId)
+            parent.addSubview(terminal)
+        } else {
+            terminal = try HiveTerminalView.makeAttached(
+                frame: frame, viewerId: viewerId, parent: parent)
+        }
         terminal.autoresizingMask = [.width, .height]
         view = terminal
         return terminal

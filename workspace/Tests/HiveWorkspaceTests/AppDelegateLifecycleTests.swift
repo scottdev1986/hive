@@ -89,6 +89,9 @@ final class AppDelegateLifecycleTests: XCTestCase {
             instanceID: "instance", instanceHome: "/tmp")
         controller.window?.isReleasedWhenClosed = false
         defer { controller.close() }
+        controller.showWindow(nil)
+        controller.window?.makeKeyAndOrderFront(nil)
+        controller.commitInitialGeometry()
         let locator = AgentSessionLocator(
             instanceId: "instance",
             subject: AgentSessionSubject(kind: "agent", agentId: "agent-worker"),
@@ -96,12 +99,20 @@ final class AppDelegateLifecycleTests: XCTestCase {
             sessionId: "ses_0198a8f0-0000-7000-8000-000000000007",
             hostKind: "sessiond", engineBuildId: "engine")
         var killed: (String, AgentSessionLocator)?
+        var rendererHadWindowAndGeometry = false
+        SessiondPaneTerminal.attachmentObserver = { frame, parent in
+            rendererHadWindowAndGeometry = parent.window != nil
+                && frame.width > 0 && frame.height > 0
+        }
+        defer { SessiondPaneTerminal.attachmentObserver = nil }
         controller.killAgent = { killed = ($0, $1) }
         controller.applyFeed([
             AgentSnapshot(
                 id: "agent-worker", name: "worker", status: "working",
                 sessionLocator: locator),
         ])
+        XCTAssertTrue(rendererHadWindowAndGeometry,
+                      "the renderer must receive a window-backed, nonzero host")
 
         controller.dispatch(.closePane(ProjectState.paneID(forAgent: "worker")))
 

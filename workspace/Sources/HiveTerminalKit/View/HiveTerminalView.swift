@@ -87,12 +87,41 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         wireWorkspaceEvents()
     }
 
-    /// Creates the production view and binds Ghostty's renderer to an
-    /// edge-to-edge AppKit host owned by this view.
-    public init(frame frameRect: NSRect, viewerId: String = "viewer-local") throws {
+    private init(frame frameRect: NSRect, viewerId: String, deferredSurface: Bool) {
         self.viewerId = viewerId
         super.init(frame: frameRect)
         wantsLayer = true
+    }
+
+    /// Creates the production view and binds Ghostty's renderer to an
+    /// edge-to-edge AppKit host owned by this view.
+    public convenience init(frame frameRect: NSRect, viewerId: String = "viewer-local") throws {
+        self.init(frame: frameRect, viewerId: viewerId, deferredSurface: true)
+        try initializeProductionSurface()
+    }
+
+    /// Ghostty's macOS renderer needs its NSView to resolve a real display.
+    /// Workspace panes use this factory so the view belongs to the window
+    /// before native surface construction starts.
+    public static func makeAttached(
+        frame frameRect: NSRect,
+        viewerId: String = "viewer-local",
+        parent: NSView
+    ) throws -> HiveTerminalView {
+        let view = HiveTerminalView(
+            frame: frameRect, viewerId: viewerId, deferredSurface: true)
+        parent.addSubview(view)
+        do {
+            try view.initializeProductionSurface()
+            return view
+        } catch {
+            view.removeFromSuperview()
+            throw error
+        }
+    }
+
+    private func initializeProductionSurface() throws {
+        precondition(engineStorage == nil, "production surface initialized twice")
 
         let renderHost = NSView(frame: bounds)
         renderHost.autoresizingMask = [.width, .height]
@@ -688,6 +717,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     private func synchronizeFramebufferSize() {
+        guard engineStorage != nil else { return }
         let backingSize = currentBackingSize
         appliedDrawableSize = backingSize
         let width = max(0, Int(backingSize.width.rounded()))
