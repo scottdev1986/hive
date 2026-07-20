@@ -17,7 +17,10 @@ The exact user-reported scenario from the start of the campaign, deferred at
   which corroborate the capture independently), `provenance.txt`, the probe and
   identity helper, and `evidence-sha256.txt` (verifies `OK` for all seven,
   excluding itself).
-- Two independent runs, distinct broker pids (51305, 52690), identical result.
+- Three independent runs, distinct broker pids (51305, 52690, 81091), identical
+  result. Runs 1–2 predate hector's F6 fix `e80c9e4b` ("prevent app-exit
+  teardown reentry"); run 3 was executed at that commit precisely because the
+  fix touches a teardown path. The discharge holds on both sides of it.
 
 Scenario, per run: fresh `make terminal DEMO_PORT=43122` (real interactive
 `/bin/zsh -l`, Workspace app launched, `HIVE_B22_NO_APP=0`, unlocked Aqua
