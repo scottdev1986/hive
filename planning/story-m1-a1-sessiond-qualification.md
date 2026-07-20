@@ -1,6 +1,6 @@
 # M1-A1 sessiond qualification
 
-Status: the contract-freeze-facing minimum, PTY/reap qualification, production lifecycle wire, and frozen claim/input/resize projections have landed. Frozen create schemas have also landed. Native neutral create, the remaining frozen control plane, attach streaming, visibility renewal, crash/adoption, and bounded replay qualification remain open.
+Status: the contract-freeze-facing minimum, PTY/reap qualification, production lifecycle wire, and frozen claim/input/resize projections have landed. Frozen create schemas have also landed. The frozen native LIST/INSPECT/TERMINATE handlers landed in `719c8e36`, wired against the neutral_host registry with real `waitpid` reap evidence, process-tree targets and live list/inspect projections; that commit deliberately left the legacy create/attach paths in place. Native neutral create, the rest of the frozen control plane (`create`, `attach`, `resize` and `subscribe` have no handler in `native/sessiond/src/neutral_control_plane.zig`), attach streaming, visibility renewal, crash/adoption, and bounded replay qualification remain open.
 
 ## Qualified behavior
 
