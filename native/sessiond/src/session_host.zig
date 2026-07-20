@@ -6081,6 +6081,74 @@ test "CLAIM_RESULT reports unknown without inventing an owner when the arbiter i
     try std.testing.expect(std.mem.indexOf(u8, result, "\"owner\"") == null);
 }
 
+// #40 RED control: after viewer-a is granted a human claim, a second viewer
+// (or the same viewer after a drop without CLAIM_RELEASE) is denied while
+// host `active_claim` is never cleared on stream close. Documents the orphan
+// / permanent-input-death mechanism until onViewerDetached + claimRelease land.
+test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    const first = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-a",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-a",
+    }, .{});
+    defer std.testing.allocator.free(first);
+    const granted = try core.claimInput(first, "viewer-a", 2_000);
+    defer std.testing.allocator.free(granted);
+    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
+    try std.testing.expect(core.active_claim != null);
+
+    // Simulate drop without CLAIM_RELEASE / onViewerDetached (today's host loop).
+    const second = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-b",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-b",
+    }, .{});
+    defer std.testing.allocator.free(second);
+    const denied = try core.claimInput(second, "viewer-b", 3_000);
+    defer std.testing.allocator.free(denied);
+    try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, denied, "input already claimed") != null);
+    // Host still holds the first claim — second reattach cannot recover.
+    try std.testing.expect(core.active_claim != null);
+}
+
 test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
