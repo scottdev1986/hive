@@ -32,6 +32,12 @@ import {
 import type { HiveDatabase } from "./db";
 import type { StopAgentSession } from "./teardown";
 import { readCodexTelemetry } from "./tool-telemetry";
+import {
+  parseProcessTable,
+  runPs,
+  treeRunsCommand,
+} from "./resources";
+import { LAUNCH_FAILURE_PATTERNS, watchForProofOfLife } from "./readiness";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import {
@@ -53,14 +59,10 @@ import {
 // surfaces the agent for an explicit decision.
 export const MAX_AUTO_RESUME_ATTEMPTS = 3;
 
-const RESUME_READY_POLL_MS = 1_000;
-const RESUME_READY_ATTEMPTS = 10;
+// A resume can fail in one way a spawn cannot: the conversation it was told to
+// restore is gone. Everything else a launch can do wrong is already covered.
 const RESUME_FAILURE_PATTERNS = [
-  /^(Error|error):/m,
-  /^\[hive\] process exited with status \d+$/m,
-  /command not found/,
-  /not supported/i,
-  /not found\.?$/m,
+  ...LAUNCH_FAILURE_PATTERNS,
   /No conversation found/i,
 ];
 
@@ -143,6 +145,10 @@ export interface CrashRecoveryDependencies {
     worktreePath: string,
     toolSessionId: string | undefined,
   ) => Promise<string | null>;
+  /** Test seam for the process table the resume watch reads to decide whether a
+   * pane redraw belongs to the relaunched agent or to its wrapper. Defaults to
+   * the real `ps`. */
+  ps?: () => Promise<string>;
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -154,12 +160,6 @@ const LIVE_STATUSES: AgentRecord["status"][] = [
   "awaiting-approval",
   "stuck",
 ];
-
-function tailLines(value: string, count: number): string {
-  const trimmed = value.trimEnd();
-  if (trimmed.length === 0) return "";
-  return trimmed.split(/\r?\n/).slice(-count).join("\n").trim();
-}
 
 function boundedTask(task: string, limit = 500): string {
   return task.length <= limit ? task : `${task.slice(0, limit)}…`;
@@ -608,7 +608,34 @@ export class CrashRecovery {
         ),
         new Uint8Array(),
       );
-      const failure = await this.monitorResume(record);
+      // A freshly resumed TUI sits at its prompt with the conversation
+      // restored: idle is the honest status until an event says otherwise.
+      record = this.deps.db.upsertAgent({
+        ...(this.deps.db.getAgentById(record.id) ?? record),
+        status: "idle",
+        lastEventAt: new Date().toISOString(),
+      });
+
+      // Wake it, and only then watch. This order is the fix, not a detail.
+      //
+      // A resume restores a conversation but issues no instruction, so the TUI
+      // comes back correctly idle at its prompt: it fires no hook, writes no
+      // rollout, and does not redraw. The continuation notice below is the only
+      // thing that gives it something to do. Watching first therefore waited
+      // for activity that nothing had asked for — the agent had to act to be
+      // judged alive, and was given nothing to act on until after it was
+      // judged. Measured on instance run-bc65ab00, that deadlock killed 11
+      // healthy agents in one night, 5 codex and 6 grok, every one of them
+      // sitting at a restored prompt with its work intact.
+      await this.wakeResumedAgent(record);
+
+      // Baselined *after* the wake so only the agent's own response counts:
+      // anything our own injection stirred up must not read as proof of life.
+      const failure = await this.monitorResume(
+        record,
+        argv[0] ?? record.tool,
+        this.deps.db.getAgentById(record.id)?.lastEventAt ?? record.lastEventAt,
+      );
       if (failure !== null) {
         return await this.failResume(
           this.deps.db.getAgentById(record.id) ?? record,
@@ -622,23 +649,6 @@ export class CrashRecovery {
       );
     }
 
-    // A freshly resumed TUI sits at its prompt with the conversation
-    // restored: idle is the honest status until an event says otherwise.
-    record = this.deps.db.upsertAgent({
-      ...(this.deps.db.getAgentById(record.id) ?? record),
-      status: "idle",
-      lastEventAt: new Date().toISOString(),
-    });
-
-    await this.deps.send(
-      "hive-recovery",
-      record.name,
-      "Your previous process crashed and Hive resumed your tool session with " +
-        "its conversation restored. Check hive_inbox for queued messages, " +
-        "re-verify any in-flight edits in your worktree, and continue your task.",
-      { idempotencyKey: `crash-resume-notice:${record.id}:${record.recoveryAttempts}` },
-    ).catch(() => undefined);
-    await this.deps.flushQueued(record.name).catch(() => undefined);
     await this.deps.send(
       "hive-recovery",
       ORCHESTRATOR_NAME,
@@ -679,41 +689,122 @@ export class CrashRecovery {
     return await this.markDead(agent, reason);
   }
 
-  private async monitorResume(record: AgentRecord): Promise<string | null> {
-    const startedAt = new Date().toISOString();
-    let lastPaneTail = "";
-    for (let attempt = 0; attempt < RESUME_READY_ATTEMPTS; attempt += 1) {
-      await this.wait(RESUME_READY_POLL_MS);
-      const current = this.deps.db.getAgentById(record.id);
-      if (current !== null && current.lastEventAt > record.lastEventAt) {
-        // A hook event arrived from the relaunched process: proof of life.
+  /**
+   * Give a resumed agent something to be alive about.
+   *
+   * Called before the liveness watch, deliberately — see the call site. The
+   * notice reaches the TUI as injected keystrokes, so it is what turns a
+   * restored-but-idle prompt into a working agent, which is the only thing the
+   * watch can then observe.
+   *
+   * Failures stay swallowed, as they were when this ran after the watch: a
+   * notice that cannot be delivered is not itself a reason to kill a process we
+   * have not yet examined. The watch is what decides life, and an agent that
+   * never got the notice will fail it on the evidence.
+   */
+  private async wakeResumedAgent(record: AgentRecord): Promise<void> {
+    await this.deps.send(
+      "hive-recovery",
+      record.name,
+      "Your previous process crashed and Hive resumed your tool session with " +
+        "its conversation restored. Check hive_inbox for queued messages, " +
+        "re-verify any in-flight edits in your worktree, and continue your task.",
+      { idempotencyKey: `crash-resume-notice:${record.id}:${record.recoveryAttempts}` },
+    ).catch(() => undefined);
+    await this.deps.flushQueued(record.name).catch(() => undefined);
+  }
+
+  /**
+   * Is the resumed process alive?
+   *
+   * This defers to the same watch the spawn path uses, and the reason is
+   * measured rather than tidy. The hand-rolled loop this replaces accepted only
+   * two positive signals — a hook event, or a fresh codex rollout — and bounded
+   * them with a 10-second stopwatch. On the night of instance run-bc65ab00 that
+   * probe killed 11 of 11 non-claude resumes and passed 3 of 3 claude ones,
+   * because:
+   *
+   *   claude  fires a session-start hook          → passed 3/3
+   *   codex   hook rides hive's MCP; rollout is
+   *           silent until the first tool call    → failed 5/5
+   *   grok    emitted 0 events all night, across
+   *           11 agents, and has no rollout       → failed 6/6
+   *
+   * Grok cannot bump `lastEventAt` at all, so of the two signals the old probe
+   * accepted, grok could produce neither — its resume was not unlucky, it was
+   * impossible. The pane is the only liveness signal grok has, which is exactly
+   * what `watchForProofOfLife` reads, and it corroborates every redraw against
+   * the process tree so a wrapper animating over a dead child still reads dead.
+   *
+   * It also drops the stopwatch. No wall-clock number was ever right: a
+   * high-effort model reasons past any of them, and readiness.ts measured 15s to
+   * first output on gpt-5.6-sol high — so even a woken codex resume would have
+   * died on a 10-second bound. Silence is the only honest deadline.
+   */
+  private async monitorResume(
+    record: AgentRecord,
+    launchedCommand: string,
+    baselineEventAt: string,
+  ): Promise<string | null> {
+    const proof = await watchForProofOfLife(record, baselineEventAt, {
+      hasSession: () => this.sessionPresent(record),
+      capturePane: () => this.captureVisible(record),
+      lastEventAt: () =>
+        this.deps.db.getAgentById(record.id)?.lastEventAt ?? null,
+      codexActivity: () => this.readCodexActivityFor(record),
+      launchedProcessAlive: () =>
+        this.launchedProcessAlive(record, launchedCommand),
+      launchedCommand,
+      failurePatterns: RESUME_FAILURE_PATTERNS,
+      wait: (ms) => this.wait(ms),
+    });
+    return proof.alive ? null : proof.reason;
+  }
+
+  /**
+   * Is the binary we relaunched still running inside that pane?
+   *
+   * Null means we could not tell — no pane, or an unreadable `ps` — and the
+   * watch treats unknown as no evidence rather than as life.
+   */
+  private async launchedProcessAlive(
+    record: AgentRecord,
+    command: string,
+  ): Promise<boolean | null> {
+    try {
+      if (record.sessionLocator?.hostKind === "sessiond") {
+        // The sessiond host exposes no pane process tree here; unknown is the
+        // honest answer, and unknown never counts as life.
         return null;
       }
-      if (await this.hasFreshCodexActivity(record, startedAt)) return null;
-      if (!(await this.sessionPresent(record))) {
-        return "tmux session exited";
-      }
-      try {
-        const pane = await this.captureVisible(record);
-        lastPaneTail = tailLines(pane, 15);
-        const paneTail = tailLines(pane, 5);
-        if (RESUME_FAILURE_PATTERNS.some((pattern) => pattern.test(paneTail))) {
-          return lastPaneTail || "resume process launch error";
-        }
-      } catch {
-        if (!(await this.sessionPresent(record))) {
-          return "tmux session exited";
-        }
-      }
+      const rootPids = await this.sessions.sessionProcessRoots(
+        bindAgentSession(this.sessions, record),
+      );
+      if (rootPids.length === 0) return null;
+      const samples = parseProcessTable(await (this.deps.ps ?? runPs)());
+      if (samples.length === 0) return null;
+      return treeRunsCommand(samples, [...rootPids], command);
+    } catch {
+      return null;
     }
-    // Poll exhaustion with no positive signal is a failed resume, never a
-    // success: an unproven process must not be reported as recovered.
-    const seconds = Math.round(
-      (RESUME_READY_ATTEMPTS * RESUME_READY_POLL_MS) / 1000,
-    );
-    const base = `no proof of life within ${seconds}s ` +
-      "(no hook event and no fresh tool activity)";
-    return lastPaneTail === "" ? base : `${base}; last pane output:\n${lastPaneTail}`;
+  }
+
+  /** The codex rollout mtime, or null when there is none to read. Still a real
+   * signal — it just cannot be the only one, since it stays silent through the
+   * whole reasoning phase. */
+  private async readCodexActivityFor(
+    record: AgentRecord,
+  ): Promise<string | null> {
+    const current = this.deps.db.getAgentById(record.id) ?? record;
+    if (current.tool !== "codex" || current.worktreePath === null) return null;
+    try {
+      return await this.readCodexActivity(
+        current.worktreePath,
+        current.toolSessionId,
+      );
+    } catch {
+      return null;
+    }
   }
 
   private async preserveUnverifiedRecovery(
@@ -743,26 +834,6 @@ export class CrashRecovery {
       },
     ).catch(() => undefined);
     return { agent: agent.name, action: "skipped", reason };
-  }
-
-  /** True when a codex agent's rollout file gained activity after this resume
-   * watch began — an independent fallback when its native SessionStart hook
-   * does not arrive. Read at most once per poll tick, only for codex agents
-   * with a worktree; a read failure is simply "no signal yet". */
-  private async hasFreshCodexActivity(
-    record: AgentRecord,
-    monitorStartedAt: string,
-  ): Promise<boolean> {
-    if (record.tool !== "codex" || record.worktreePath === null) return false;
-    try {
-      const lastActivityAt = await this.readCodexActivity(
-        record.worktreePath,
-        record.toolSessionId,
-      );
-      return lastActivityAt !== null && lastActivityAt > monitorStartedAt;
-    } catch {
-      return false;
-    }
   }
 
   private async markDead(

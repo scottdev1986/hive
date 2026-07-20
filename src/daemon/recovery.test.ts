@@ -552,6 +552,126 @@ describe("crash resume", () => {
     expect(command).not.toContain("--session-id");
   });
 
+  // The two tests below are the regression for the 11 agents instance
+  // run-bc65ab00 killed in one night, every one of them healthy and sitting at
+  // a restored prompt. They fail against the probe that shipped that night.
+
+  test("the resume notice is sent before the liveness watch begins", async () => {
+    // Sequence, not outcome. A resume restores a conversation but issues no
+    // instruction, so the notice is the only thing that gives the agent
+    // something to do — and the watch can only observe an agent that is doing
+    // something. Asserting merely that the resume succeeded would still pass if
+    // someone moved the notice back after the watch, because the harness proves
+    // life on its own; asserting the order is what actually pins the fix.
+    const order: string[] = [];
+    const h = harness({
+      send: async (_from, to) => {
+        order.push(`notice:${to}`);
+      },
+      flushQueued: async () => {
+        order.push("flush");
+      },
+      sleep: async () => {
+        order.push("watch-poll");
+        for (const record of h.db.listAgents()) {
+          h.db.upsertAgent({
+            ...record,
+            lastEventAt: new Date(Date.now() + 60_000).toISOString(),
+          });
+        }
+      },
+    });
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    const noticed = order.indexOf("notice:maya");
+    const watched = order.indexOf("watch-poll");
+    expect(noticed).toBeGreaterThanOrEqual(0);
+    expect(watched).toBeGreaterThanOrEqual(0);
+    expect(noticed).toBeLessThan(watched);
+    // The queued backlog rides in on the same wake, so it must land before the
+    // watch too — a message flushed afterwards cannot contribute to liveness.
+    expect(order.indexOf("flush")).toBeLessThan(watched);
+  });
+
+  test("a resumed agent proves life by redrawing, with no hook event and no rollout", async () => {
+    // Grok emitted zero events across all 11 of its agents on run-bc65ab00, so
+    // `lastEventAt` can never advance for it, and it writes no codex rollout
+    // either. Both signals the old probe accepted are therefore structurally
+    // unavailable: its resume was not unlucky, it was impossible. The pane is
+    // the only liveness signal grok has. Note this test never calls
+    // `signalProofOfLife` — no hook event is ever faked, which is the point.
+    let tick = 0;
+    const h = harness({
+      // A redrawing TUI, and a process tree in which the relaunched `grok` is a
+      // real descendant of the pane — the redraw is credited only because the
+      // agent is the one painting it.
+      ps: async () => "  100     1  1000 -zsh\n  200   100  2000 grok\n",
+      sleep: async () => {
+        tick += 1;
+        h.tmux.panes.set("hive-maya", `esc to interrupt · working ${tick}s`);
+      },
+    });
+    h.tmux.panePids.set("hive-maya", [100]);
+    h.db.insertAgent(agent({
+      tool: "grok",
+      model: "catalog-model",
+      status: "working",
+      toolSessionId: "019f-grok-session",
+      executionIdentity: {
+        tool: "grok",
+        model: "catalog-model",
+        effort: "high",
+        cliVersion: "fixture-version",
+        cliBuildHash: "fixture-build",
+      },
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    expect(h.db.getAgentByName("maya")).toMatchObject({ status: "idle" });
+    expect(h.tmux.killed).not.toContain("hive-maya");
+  });
+
+  test("a pane redrawing with no agent process behind it is still death", async () => {
+    // The negative control for the test above: same redrawing screen, but the
+    // `grok` process is gone from the tree, so the animation belongs to the
+    // wrapper. Without this, "the pane changed" would be enough to resurrect a
+    // corpse, and the fix would have traded 11 false deaths for false life.
+    let tick = 0;
+    const h = harness({
+      ps: async () => "  100     1  1000 -zsh\n",
+      sleep: async () => {
+        tick += 1;
+        h.tmux.panes.set("hive-maya", `wrapper spinner ${tick}`);
+      },
+    });
+    h.tmux.panePids.set("hive-maya", [100]);
+    h.db.insertAgent(agent({
+      tool: "grok",
+      model: "catalog-model",
+      status: "working",
+      toolSessionId: "019f-grok-session",
+      executionIdentity: {
+        tool: "grok",
+        model: "catalog-model",
+        effort: "high",
+        cliVersion: "fixture-version",
+        cliBuildHash: "fixture-build",
+      },
+    }));
+
+    const outcomes = await h.recovery.sweep();
+
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "marked-dead" }]);
+    expect((outcomes[0] as { reason: string }).reason).toContain(
+      "died behind a live wrapper",
+    );
+  });
+
   test("a session id discovered on disk is used and persisted when none was captured", async () => {
     const h = harness({
       resolveClaudeSessionId: async (worktreePath) =>
@@ -753,9 +873,12 @@ describe("crash resume", () => {
   });
 
   test("a resume that never proves life is killed and marked dead", async () => {
-    // The relaunched session stays up and prints nothing suspicious, but no
-    // hook event and no tool activity ever arrive: exhausting the poll budget
-    // is a failed resume, never a silently accepted one.
+    // The relaunched session stays up and prints nothing suspicious, but it
+    // never redraws, fires no hook and touches no tool: sustained silence is a
+    // failed resume, never a silently accepted one. The fail-loud contract is
+    // unchanged by the move to the shared watch — only the wording of the
+    // reason is, because death is now bounded by silence rather than by a
+    // stopwatch.
     const h = harness();
     h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
 
@@ -765,7 +888,7 @@ describe("crash resume", () => {
     const reason =
       (outcomes[0] as { action: "marked-dead"; reason: string }).reason;
     expect(reason).toContain("resume launch failed");
-    expect(reason).toContain("no proof of life");
+    expect(reason).toContain("no sign of life");
     expect(h.tmux.killed).toContain("hive-maya");
     expect(h.db.getAgentByName("maya")).toMatchObject({
       status: "dead",

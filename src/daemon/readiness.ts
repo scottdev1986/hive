@@ -172,6 +172,14 @@ export interface ProofOfLifeDeps<Target = string> {
   readonly pollMs?: number;
   readonly quietLimit?: number;
   readonly heartbeatMin?: number;
+  /**
+   * Pane text that means this launch failed. Defaults to
+   * `LAUNCH_FAILURE_PATTERNS`. The resume path adds its own — a resume can fail
+   * in a way a spawn cannot ("No conversation found"), and without the pattern
+   * that death is still caught, but only by outliving the quiet limit and only
+   * reported as silence. The distinct reason is worth keeping.
+   */
+  readonly failurePatterns?: readonly RegExp[];
 }
 
 export type ProofOfLife =
@@ -227,6 +235,7 @@ export async function watchForProofOfLife<Target = string>(
   const pollMs = deps.pollMs ?? POLL_MS;
   const quietLimit = deps.quietLimit ?? QUIET_LIMIT;
   const heartbeatMin = deps.heartbeatMin ?? HEARTBEAT_MIN;
+  const failurePatterns = deps.failurePatterns ?? LAUNCH_FAILURE_PATTERNS;
 
   // The rollout's value *now*, not the wall clock. Comparing a file's mtime to
   // `Date.now()` was the original mistake: it silently depends on the two clocks
@@ -282,7 +291,7 @@ export async function watchForProofOfLife<Target = string>(
       lastPaneTail = tailLines(pane, 15);
 
       // A launch error is a launch error however lively the screen looks.
-      if (LAUNCH_FAILURE_PATTERNS.some((p) => p.test(tailLines(pane, 5)))) {
+      if (failurePatterns.some((p) => p.test(tailLines(pane, 5)))) {
         return { alive: false, reason: lastPaneTail || "Agent launch error" };
       }
 
