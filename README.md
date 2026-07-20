@@ -158,10 +158,11 @@ Dev processes are selected by executable path and arguments — never by process
 name — so a running installed hive, which has its own Workspace, tmux server
 and provider CLIs, is never a candidate.
 
-Terminal panes in that build stay blank for now: nothing in the shipped stack
-starts the sessiond broker yet. Use `make terminal` for a live, typeable M1
-terminal — it builds the same artifacts and launches a real login shell
-through the broker. Both need an unlocked Aqua GUI session.
+`make run` is the product entrypoint: the daemon owns the sessiond broker and
+agent panes with a sessiond locator render through HiveTerminalView. Use
+`make terminal` for the M1 attach/smoke harness (login shell / B2.2 proof).
+B2.5 records the production vendor matrix (row K) under the make-run stack.
+Both need an unlocked Aqua GUI session.
 
 Issues and focused pull requests are welcome.
 
