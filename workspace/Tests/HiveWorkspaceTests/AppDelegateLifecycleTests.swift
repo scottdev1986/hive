@@ -30,6 +30,26 @@ final class AppDelegateLifecycleTests: XCTestCase {
             "aria")
     }
 
+    func testA4ProofRequiresAnExplicitAgentAndSupportedAction() {
+        XCTAssertNil(SmokeRunner.a4Proof(environment: [:]))
+        XCTAssertNil(SmokeRunner.a4Proof(environment: [
+            "HIVE_B25_A4_AGENT": "aria",
+            "HIVE_B25_A4_ACTION": "quit",
+        ]))
+        XCTAssertNil(SmokeRunner.a4Proof(environment: [
+            "HIVE_B25_A4_AGENT": "",
+            "HIVE_B25_A4_ACTION": "close",
+        ]))
+
+        XCTAssertEqual(
+            SmokeRunner.a4Proof(environment: [
+                "HIVE_B25_A4_AGENT": "aria",
+                "HIVE_B25_A4_ACTION": "close",
+            ]),
+            SmokeRunner.A4Proof(agent: "aria", action: .close)
+        )
+    }
+
     func testTerminationWaitsForVerifiedStopBeforeAllowingQuit() async {
         _ = NSApplication.shared
         let owner = AppDelegate(config: completeConfig())

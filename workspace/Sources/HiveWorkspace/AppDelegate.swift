@@ -173,7 +173,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             }
             let environment = ProcessInfo.processInfo.environment
             if environment["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1"
-                || SmokeRunner.productionPaneAgent(environment: environment) != nil {
+                || SmokeRunner.productionPaneAgent(environment: environment) != nil
+                || SmokeRunner.a4Proof(environment: environment) != nil {
                 let runner = SmokeRunner(controller: controller, config: config)
                 smokeRunner = runner
                 DispatchQueue.main.asyncAfter(deadline: .now() + 3) { runner.run() }

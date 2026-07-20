@@ -25,6 +25,15 @@ final class SmokeRunner {
 
     private static let productionPaneMinimumHighWater: UInt64 = 1_024
 
+    struct A4Proof: Equatable {
+        enum Action: String, Equatable {
+            case close
+        }
+
+        let agent: String
+        let action: Action
+    }
+
     static func sessiondLiveResizeInputAgent(environment: [String: String]) -> String {
         environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"
     }
@@ -33,6 +42,14 @@ final class SmokeRunner {
         guard let agent = environment["HIVE_B25_PRODUCTION_PANE_AGENT"],
               !agent.isEmpty else { return nil }
         return agent
+    }
+
+    static func a4Proof(environment: [String: String]) -> A4Proof? {
+        guard let agent = environment["HIVE_B25_A4_AGENT"], !agent.isEmpty,
+              let rawAction = environment["HIVE_B25_A4_ACTION"],
+              let action = A4Proof.Action(rawValue: rawAction)
+        else { return nil }
+        return A4Proof(agent: agent, action: action)
     }
 
     private let controller: ProjectWindowController
@@ -413,8 +430,106 @@ final class SmokeRunner {
         print(report, terminator: "")
     }
 
+    private func runA4Proof(_ proof: A4Proof) {
+        let paneID = ProjectState.paneID(forAgent: proof.agent)
+        waitForA4Pane(proof, paneID: paneID, deadline: Date().addingTimeInterval(45))
+    }
+
+    private func waitForA4Pane(_ proof: A4Proof, paneID: PaneID, deadline: Date) {
+        guard let pane = controller.state.panes[paneID],
+              let locator = pane.sessionLocator,
+              locator.hostKind == "sessiond",
+              pane.feedStatus != "spawning" else {
+            guard Date() < deadline else {
+                check(false, "A4 pane reached a settled feed state on a sessiond locator")
+                finishA4Proof("A4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Pane(proof, paneID: paneID, deadline: deadline)
+            }
+            return
+        }
+
+        let terminal = controller.sessiondTerminalView(pane: paneID)
+        let ready = "A4 \(proof.action.rawValue.uppercased()) READY: agent=\(proof.agent) "
+            + "instance=\(locator.instanceId) session=\(locator.sessionId) "
+            + "generation=\(locator.generation) feedStatus=\(pane.feedStatus) "
+            + "rendererHighWater=\(terminal?.highWater.description ?? "unavailable")"
+        finishA4Proof(ready)
+        waitForA4Trigger(
+            proof, paneID: paneID, ready: ready,
+            deadline: Date().addingTimeInterval(60))
+    }
+
+    private func waitForA4Trigger(
+        _ proof: A4Proof, paneID: PaneID, ready: String, deadline: Date
+    ) {
+        guard let trigger = ProcessInfo.processInfo.environment["HIVE_B25_A4_TRIGGER"],
+              !trigger.isEmpty else {
+            check(false, "HIVE_B25_A4_TRIGGER names the explicit qualification trigger")
+            finishA4Proof("\(ready)\nA4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+            return
+        }
+        guard FileManager.default.fileExists(atPath: trigger) else {
+            guard Date() < deadline else {
+                check(false, "A4 qualification trigger arrived before timeout")
+                finishA4Proof("\(ready)\nA4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Trigger(
+                    proof, paneID: paneID, ready: ready, deadline: deadline)
+            }
+            return
+        }
+
+        controller.dispatch(.closePane(paneID))
+        waitForA4Close(
+            proof, paneID: paneID, ready: ready,
+            deadline: Date().addingTimeInterval(30))
+    }
+
+    private func waitForA4Close(
+        _ proof: A4Proof, paneID: PaneID, ready: String, deadline: Date
+    ) {
+        guard controller.state.panes[paneID] == nil else {
+            guard Date() < deadline else {
+                check(false, "closed A4 pane disappeared after verified daemon kill")
+                finishA4Proof("\(ready)\nA4 CLOSE PROOF FAIL")
+                exit(1)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Close(
+                    proof, paneID: paneID, ready: ready, deadline: deadline)
+            }
+            return
+        }
+        finishA4Proof("\(ready)\nA4 CLOSE PROOF OK: exact pane removed after daemon kill")
+        exit(failures.isEmpty ? 0 : 1)
+    }
+
+    private func finishA4Proof(_ body: String) {
+        let report = body + (failures.isEmpty
+            ? "\n"
+            : "\n  " + failures.joined(separator: "\n  ") + "\n")
+        if let path = ProcessInfo.processInfo.environment["HIVE_B25_A4_RESULT"] {
+            do {
+                try report.write(toFile: path, atomically: true, encoding: .utf8)
+            } catch {
+                print("A4 PROOF FAIL: could not write result: \(error)")
+                return
+            }
+        }
+        print(report, terminator: "")
+    }
+
     func run() {
         let env = ProcessInfo.processInfo.environment
+        if let proof = Self.a4Proof(environment: env) {
+            runA4Proof(proof)
+            return
+        }
         if let agent = Self.productionPaneAgent(environment: env) {
             runProductionPaneProof(agent: agent)
             return
