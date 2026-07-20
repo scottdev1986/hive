@@ -81,6 +81,25 @@ expected non-nil HiveTerminalView` is the downstream null-surface form). This is
 known locked/agent-shell mode: production surface creation nulls without an unlocked GUI
 session. It is pre-existing on main and **not** attributable to this change.
 
+**Addendum — the cause is attested, and the control is like-for-like.** queen relayed
+horatio's measurement that the machine's login session went locked
+(`CGSSessionScreenIsLocked=1`) at ~06:04 UTC. I could not re-read that flag myself
+(no pyobjc in this shell), so the lock measurement is attributed, not independently
+confirmed. What I *can* measure is timing: EDT is UTC−4, and my runs stamp at
+06:06:56 (focused), 06:10:11 (full, pin) and 06:11:51 (full, main control) UTC — all
+three **after** the lock. Both sides of the control therefore ran under identical lock
+conditions, which is what makes the identical failure set a clean comparison rather
+than a confounded one.
+
+Two consequences worth recording. First, hector's committed PNG was captured before the
+lock; that leg is attested-by-artifact, supported by its SHA-bound blob (§7), and
+re-running his opt-in replay here would fail surface creation or capture the lock screen
+— so the re-run is **environment-blocked**, not a defect. I did not chase it: the opt-in
+test skips by default absent its env vars, and I graded the committed artifact instead.
+Second, all 8 `C11TypographyTests` passed *under the lock*, so his config- and
+face-resolution proofs are robust to it; only the GUI-presenting and capture tests
+(Gate 7, live host attach, window capture) degrade.
+
 The +9 executed delta is exactly hector's 9 new tests. Within the full run all 8
 `C11TypographyTests` **passed**; `testAuthenticClaudeJournalWritesC11WindowPNG` **skipped**
 ("set `HIVE_C11_JOURNAL_PATH` and `HIVE_C11_RENDER_PROOF_PATH` to opt in"), which accounts
