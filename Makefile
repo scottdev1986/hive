@@ -26,6 +26,9 @@ SHELL := /bin/sh
 
 ROOT := $(CURDIR)
 DEV := $(ROOT)/.dev
+# `#` opens a comment in makefile text, so a tmux format like #{pid} cannot be
+# written inline; escaping it reaches the shell as a literal backslash.
+HASH := \#
 DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
 DEV_PROJECT := $(DEV)/project
@@ -328,6 +331,37 @@ test-e2e:
 # Every refusal below is deliberate. An empty path or an empty digest must STOP
 # the target, never let it proceed or quietly exit 0 — an empty `dev` would make
 # the axis-1 prefix `/*`, which matches every absolute path on the machine.
+#
+# NAMING THE DEV INSTANCE IS NOT BEING IT. Argv matching alone cannot tell a
+# process BOUND to this instance from one that merely mentions it — an editor,
+# a grep, a log tail, or the very shell that invoked `make clean DEV=<path>`.
+# That is not hypothetical: the first real-world run of this target killed its
+# own invoking shell (observed; exit 144 and a sweep line naming a pid that was
+# neither orphan — the precise match reason remains unproven).
+#
+# So argv only nominates a CANDIDATE. Killing requires binding evidence that
+# outlives the directory:
+#   - executable under the dev path
+#   - cwd (or an open file) under the dev path, per lsof
+#   - being the tmux server for the dev socket, or one of its clients, which
+#     tmux answers authoritatively by pid — no argv involved
+# Anything else is a mentioner: reported, never signalled.
+#
+# That the evidence outlives deletion is measured, not assumed: a process whose
+# cwd was under a .dev still reported that exact path via lsof AFTER the .dev
+# was rm -rf'd, because the kernel holds the vnode. Without that, requiring
+# binding evidence would have un-fixed the orphan case above, where .dev is
+# gone by definition.
+#
+# The invoking process's whole ancestor chain is excluded too. `is_mine` walks
+# ppid UPWARD from a candidate, so it can recognise self and descendants but an
+# ancestor can never reach self and would otherwise stay eligible.
+#
+# THE ASYMMETRY THAT LICENSES ALL OF THIS: an exclusion that is wrong fails
+# SAFE — the survivor readback finds the process alive and REFUSES the delete,
+# which is visible and recoverable. An inclusion that is wrong fails DANGEROUS:
+# it kills something. So sparing on weak evidence is correct and killing on weak
+# evidence is not, and that is why argv-naming is demoted rather than trusted.
 clean:
 	@set -e; \
 	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P); else dev="$(DEV)"; fi; \
@@ -352,15 +386,56 @@ clean:
 	    [ -n "$$q" ] || return 0; [ "$$q" = "1" ] && return 1; \
 	    k=$$((k + 1)); \
 	  done; return 1; }; \
-	dev_pids() { \
+	ancestors=" "; a=$$self; k=0; \
+	while [ $$k -lt 12 ]; do \
+	  a=$$(ps -p "$$a" -o ppid= 2>/dev/null | tr -d ' '); \
+	  [ -n "$$a" ] || break; [ "$$a" = "0" ] && break; \
+	  ancestors="$$ancestors$$a "; [ "$$a" = "1" ] && break; k=$$((k + 1)); \
+	done; \
+	excluded() { case "$$ancestors" in *" $$1 "*) return 0;; esac; is_mine "$$1"; }; \
+	tmuxpids=" $$( { tmux -L "hive-$$suffix" display -p '$(HASH){pid}' 2>/dev/null; \
+	    tmux -L "hive-$$suffix" list-clients -F '$(HASH){client_pid}' 2>/dev/null; \
+	  } | tr '\n' ' ')"; \
+	: "lsof reports PHYSICAL paths, and a deleted .dev cannot be resolved with\
+	   pwd -P. On macOS /tmp is a symlink to /private/tmp, so the literal path\
+	   never matches what lsof prints and every cwd-bound orphan was misread as\
+	   a mere mentioner. Resolve the deepest ancestor that still exists and\
+	   re-attach the deleted remainder, then match on either spelling"; \
+	devp="$$dev"; d="$$dev"; rest=""; \
+	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
+	  rest="/$$(basename "$$d")$$rest"; d=$$(dirname "$$d"); \
+	done; \
+	[ -d "$$d" ] && devp="$$(cd "$$d" && pwd -P)$$rest"; \
+	is_bound() { \
+	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in "$$dev"/*|"$$devp"/*) return 0;; esac; \
+	  lsof -a -p "$$1" -d cwd -Fn 2>/dev/null \
+	    | grep -q -e "^n$$dev" -e "^n$$devp" && return 0; \
+	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
+	  return 1; }; \
+	candidates() { \
 	  { ps -axo pid=,comm= | while read -r p c; do \
 	      case "$$c" in "$$dev"/*) echo "$$p";; esac; done; \
 	    ps -axo pid=,command= | while read -r p rest; do \
 	      case "$$rest" in *"$$dev"/*) echo "$$p";; esac; done; \
-	    [ -z "$$suffix" ] || ps -axo pid=,command= | while read -r p rest; do \
+	    ps -axo pid=,command= | while read -r p rest; do \
 	      case "$$rest" in *"hive-$$suffix"*) echo "$$p";; esac; done; \
-	  } | sort -u | while read -r p; do is_mine "$$p" || echo "$$p"; done; }; \
-	pids=$$(dev_pids); \
+	    printf '%s\n' $$tmuxpids; \
+	  } | sort -u | while read -r p; do \
+	    [ -n "$$p" ] || continue; excluded "$$p" || echo "$$p"; done; }; \
+	: "these are FILTERS: a final candidate that does not match leaves the loop\
+	   with a non-zero status, which under set -e would abort the whole target.\
+	   'the last item was not selected' is not a failure, so both end with ':'"; \
+	dev_pids() { candidates | while read -r p; do is_bound "$$p" && echo "$$p"; done; :; }; \
+	mentioners() { candidates | while read -r p; do is_bound "$$p" || echo "$$p"; done; :; }; \
+	: "set -e reaches inside these command substitutions, so ANY untested failure\
+	   in the classification helpers (a gone pid, an lsof miss) would abort the\
+	   whole target silently — observed: with a bystander present the recipe\
+	   exited 1 having printed nothing at all. An empty result is a legitimate\
+	   answer here and is handled explicitly below, so the substitutions are\
+	   allowed to fail and the emptiness is what gets acted on"; \
+	pids=$$(dev_pids) || true; \
+	named=$$(mentioners) || true; \
+	[ -z "$$named" ] || echo "found mentioners, not killing:" $$named; \
 	if [ ! -d "$(DEV)" ] && [ -z "$$pids" ]; then exit 0; \
 	fi; \
 	: "reaching here with no directory means the sweep found processes, and an\
