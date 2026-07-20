@@ -65,7 +65,7 @@ if (!Number.isInteger(basePort) || basePort < 43_140 || basePort + 2 > 65_535) {
 }
 for (const path of [
   join(repoRoot, "native/sessiond/zig-out/bin/hive-sessiond"),
-  join(workspaceRoot, ".build/debug/HiveWorkspace"),
+  join(workspaceRoot, ".build/debug/HiveWorkspaceDev"),
 ]) {
   if (!existsSync(path)) throw new Error(`required HEAD-built artifact is missing: ${path}`);
 }

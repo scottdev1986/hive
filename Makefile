@@ -79,7 +79,19 @@ GHOSTTY_ARTIFACT_INFO := $(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework/Info.plist
 GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-demo-$(GHOSTTY_PATCH_SHA).stamp
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
 GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
-WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
+# Deliberately NOT the name SwiftPM emits. A debug build carries its file name
+# into the unified log as the process name, so a worktree build called
+# `HiveWorkspace` is indistinguishable from the user's installed app there —
+# that cost a full false root-cause investigation
+# (docs/incidents/2026-07-20-workspace-death.md). The rule below renames
+# SwiftPM's output, and every path that LAUNCHES a debug build points here, so
+# a running debug instance can no longer wear the installed app's name. Note
+# `swift test` rebuilds the executable target and does re-create a bare
+# `HiveWorkspace` file — inert, since nothing launches it. Release is untouched:
+# src/release/build.ts runs its own `swift build -c release` and lipos into
+# HiveWorkspace.app/Contents/MacOS/HiveWorkspace.
+WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspaceDev
+WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
 SESSIOND_RELEASE_ROOT := $(DEMO_CACHE)/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
 SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
@@ -196,7 +208,9 @@ workspace: $(WORKSPACE_BIN)
 $(WORKSPACE_BIN): $(WORKSPACE_INPUTS) $(GHOSTTYKIT_INFO)
 	@echo "building Workspace Swift executable"
 	@swift build --package-path "$(ROOT)/workspace"
-	@test -x "$@" || { echo "make: Workspace build produced no executable; rerun 'make workspace'" >&2; exit 1; }
+	@test -x "$(WORKSPACE_SPM_BIN)" || { echo "make: Workspace build produced no executable; rerun 'make workspace'" >&2; exit 1; }
+	@/bin/mv -f "$(WORKSPACE_SPM_BIN)" "$@"
+	@test -x "$@" || { echo "make: could not rename the Workspace executable to $@; rerun 'make workspace'" >&2; exit 1; }
 	@touch "$@"
 
 native: sessiond

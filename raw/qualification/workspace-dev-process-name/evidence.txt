@@ -1,0 +1,147 @@
+Distinct process name for Workspace debug builds — verification evidence
+Agent: ivy. Date: 2026-07-20. Host: scottkellar's Mac, console session unlocked.
+
+Fixes the confusion recorded in docs/incidents/2026-07-20-workspace-death.md:
+an agent worktree debug build carried the installed app's process name into the
+unified log, so a test instance's self-termination read as the USER'S Workspace
+dying. Deciding evidence there had to come from tccd binary_path. After this
+change the NAME alone disambiguates.
+
+CHANGE
+  Makefile              WORKSPACE_BIN -> .build/debug/HiveWorkspaceDev; the
+                        `make workspace` rule renames SwiftPM's output so the
+                        ambiguous name does not survive a build.
+  scripts/b22-live-attach-proof.ts   launch path -> HiveWorkspaceDev
+  scripts/b25-a4-proof.ts            required-artifact path -> HiveWorkspaceDev
+  Nothing else. Package.swift, src/release/*, Info.plist, CFBundleExecutable,
+  bundle identifier and signing are untouched.
+
+INSTRUMENT POSITIVE CONTROL
+  /usr/bin/log (absolute path; `log` is a zsh builtin here and fails in a way
+  that reads like "no entries"). Reader proven to see a positive: 666 lines for
+  process == "HiveWorkspace" in the 30m before the test.
+  Baseline: process == "HiveWorkspaceDev" over the preceding 12h -> ZERO lines,
+  so every hit below is attributable to this launch.
+
+BUILD (post-change)
+  $ make workspace   -> Build complete! (35.95s)
+  $ ls workspace/.build/debug/ | grep -i hiveworkspace
+      HiveWorkspaceDev                      <- the only executable
+      (no bare `HiveWorkspace` executable remains)
+
+REAL LAUNCH
+  $ HIVE_HOME=/tmp/hive-ivy-nm \
+      workspace/.build/debug/HiveWorkspaceDev --smoke --project ... --port 43199 ...
+  pid 72565, ran 08:15:22 -> exited. Real NSApplication run (AppKit, TCC,
+  SkyLight, processmanager all present in the log).
+
+DIRECTION 1 — debug build logs the NEW distinct name
+  $ /usr/bin/log show --start '2026-07-20 08:15:20' --end '2026-07-20 08:15:50' \
+      --predicate 'process == "HiveWorkspaceDev"'
+  307 lines. First:
+    08:15:22.023 A  HiveWorkspaceDev[72565:5114e] (libsystem_info.dylib) Retrieve User by ID
+    08:15:22.030 Df HiveWorkspaceDev[72565:5114e] [com.apple.AppKit:AutomaticTermination] No windows open yet
+
+DIRECTION 2 — the installed release app still logs the ORIGINAL name
+  Same ten-minute window, unchanged installed 0.0.37 app, pid 1561
+  (/Users/scottkellar/.local/share/hive/versions/0.0.37/HiveWorkspace.app/Contents/MacOS/HiveWorkspace):
+    08:10:34.963 A  HiveWorkspace[1561:3e08b] (RunningBoardServices) didChangeInheritances
+    08:10:34.983 Df HiveWorkspace[1561:4de0] [com.apple.AppKit:StateRestoration] -[NSPersistentUIManager flushAllChanges]
+  Cross-check over the launch window: the only emitter under "HiveWorkspaceDev"
+  is pid 72565 (the worktree build); the installed app never appears under it.
+
+THE INCIDENT'S OWN DECIDING SURFACE, NOW REDUNDANT
+  tccd AUTHREQ_ATTRIBUTION for msgID=72565.1 — the exact shape that untangled
+  the horatio confusion, with the installed app again the responsible ancestor:
+
+    tccd: [com.apple.TCC:access] AttributionChain:
+      responsible={identifier=dev.hive.workspace, pid=1561,
+        responsible_path=/Users/scottkellar/.local/share/hive/versions/0.0.37/HiveWorkspace.app/Contents/MacOS/HiveWorkspace,
+        binary_path=<same>},
+      requesting={identifier=HiveWorkspace-55554944cf19e7a97dd53d258635452d01946fc3, pid=72565,
+        binary_path=/Users/scottkellar/Projects/hive/.hive/worktrees/ivy/workspace/.build/arm64-apple-macosx/debug/HiveWorkspaceDev}
+
+  Reading binary_path is no longer required to tell them apart: the process
+  names already differ.
+
+RE-VERIFIED AFTER REBASE ONTO main b168589a
+  The rebase pulled in Swift changes (AppDelegate/SmokeRunner/TerminationLog),
+  so the whole chain was re-run, not just re-reasoned:
+    $ make workspace  -> Build complete! (3.30s); HiveWorkspaceDev is still the
+      only executable in .build/debug (no bare `HiveWorkspace` binary).
+    $ relaunch (pid 60993, 09:02:27) -> 108 unified-log lines under
+      process == "HiveWorkspaceDev".
+  Over 08:00-09:05 the "HiveWorkspaceDev" name resolves to exactly the two pids
+  this task launched (72565, 60993) and to nothing else.
+
+PRE-EXISTING RED, NOT CAUSED BY THIS CHANGE
+  `bun test` (TypeScript): 1744 pass / 0 fail, 1755 tests across 137 files.
+  `bun run typecheck` (tsc --noEmit): exit 0.
+  `bun run test:sessiond` (Zig): FAILS at sessiond-real-host-golden —
+    host connection refused: AttachLocatorMismatch -> InvalidRealInspection.
+  Proven pre-existing, not inherited from this branch:
+    - `git diff main...HEAD -- native/` is empty; the code under test is main's.
+    - native/sessiond/test.sh reads no file this branch changed.
+    - Pristine main (8c858f49) extracted to /private/tmp/ivymain and run there
+      fails IDENTICALLY, same test and same source lines, with the trace
+      pointing at /private/tmp/ivymain.
+  One hypothesis was tested and REFUTED rather than assumed: the test's own
+  header blames an inherited ambient HIVE_HOME, but re-running under
+  `env -u HIVE_HOME` reproduces the failure unchanged. The real cause is
+  unidentified and is not this task's to fix.
+
+RELEASE OUTPUT UNCHANGED — by construction, not by assumption
+  git diff --name-only main...HEAD -> Makefile, scripts/b22-live-attach-proof.ts,
+  scripts/b25-a4-proof.ts (plus this evidence file).
+  The release pipeline reads NONE of them:
+    - src/release/build.ts compileWorkspace() runs its own
+      `swift build -c release --arch <arch>` and lipos to
+      HiveWorkspace.app/Contents/MacOS/HiveWorkspace. It never invokes make and
+      never reads .build/debug.
+    - grep for Makefile/make/b22-live-attach-proof/b25-a4-proof across
+      src/release/, src/update/, scripts/signing/: the only hits are the English
+      word "make" in prose and one error-message string telling a human to run
+      `make toolchain`. No release file reads a changed file.
+    - `make build` (the target that drives the release pipeline) does build the
+      .app — but through its recipe's `bun run src/release/build.ts`, which runs
+      its own `swift build -c release`. It does NOT list the `workspace` target
+      as a prerequisite and never reads .build/debug, so the renamed debug
+      binary is not an input to it. (A Makefile prerequisite list is not the
+      build footprint; the recipe is. Checked here, not assumed.)
+    - The rename touches .build/debug/ only; release output lives in
+      .build/release/ and the .app bundle.
+  CFBundleExecutable, CFBundleIdentifier (dev.hive.workspace), the tarball name,
+  the installer layout and the signing/notarization inputs are all byte-identical
+  because no line feeding them changed.
+
+KNOWN RESIDUALS (stated, not fixed — out of scope)
+  1. The ad-hoc signing identifier still reads
+     `HiveWorkspace-<hash>`: the linker signs before the rename. This is NOT a
+     masquerade risk — the installed app's identifier is `dev.hive.workspace`,
+     which was already distinct. Changing it would require renaming the SwiftPM
+     product, which would reach the release build.
+  2. The staged dev app under .dev/ (`make build && make run`) is produced by the
+     release pipeline and still runs as `HiveWorkspace`. Renaming it means
+     changing release code, which hard constraint 1 forbids. This is NOT
+     hypothetical — measured live during this task. Over 08:00-09:05 NINE
+     distinct pids logged under process == "HiveWorkspace"; only pid 1561 was
+     the user's installed app, and pid 66044 resolved to
+       binary_path=/Users/.../hive/.dev/root/versions/0.0.0/HiveWorkspace.app/Contents/MacOS/HiveWorkspace
+     i.e. a dev-staged build still wearing the installed app's name. Closing
+     this one needs a decision about release code and was deliberately not
+     taken here.
+  3. A bare `HiveWorkspace` file can still REAPPEAR in .build/debug. Measured,
+     not assumed: after `swift test` (which builds the executable target as a
+     dependency) .build/debug contains BOTH `HiveWorkspace` and
+     `HiveWorkspaceDev`. A hand-run `swift build --package-path workspace` does
+     the same. So the accurate claim is narrower than "the ambiguous name never
+     exists":
+       - `make workspace` leaves only HiveWorkspaceDev, AND
+       - every path that LAUNCHES a Workspace debug build (make demo, make
+         terminal, b22-live-attach-proof.ts, b25-a4-proof.ts) now launches
+         HiveWorkspaceDev.
+     The stray file is an inert build artifact that no launch path references,
+     and the proof scripts fail closed on the new path, directing the operator
+     to `make workspace`. Someone who deliberately hand-launches the stray
+     binary still gets the ambiguous name. Closing that completely would mean
+     renaming the SwiftPM product, which reaches the release build.

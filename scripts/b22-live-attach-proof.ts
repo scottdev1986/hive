@@ -319,7 +319,9 @@ const renewals = setInterval(() => {
 }, 5_000);
 
 // 4. The real Workspace app.
-const workspaceBinary = join(repoRoot, "workspace/.build/debug/HiveWorkspace");
+// `make workspace` renames SwiftPM's output so a debug build never carries the
+// installed app's process name into the unified log (see the Makefile note).
+const workspaceBinary = join(repoRoot, "workspace/.build/debug/HiveWorkspaceDev");
 const workspaceArgs = [
   "--project", workspaceProject,
   "--port", String(port),
