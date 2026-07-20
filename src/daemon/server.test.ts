@@ -35,7 +35,10 @@ import {
 } from "./mutation-lease";
 import { mintAgentTmuxSessionLocator } from "./session-host/tmux-host";
 import { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
-import type { LandedTerminalHost } from "./session-host/sessiond-host";
+import {
+  SessiondBrokerUnavailableError,
+  type LandedTerminalHost,
+} from "./session-host/sessiond-host";
 
 const home = mkdtempSync(join(tmpdir(), "hive-server-test-"));
 process.env.HIVE_HOME = home;
@@ -730,6 +733,97 @@ test("managed shutdown refuses to exit after an agent teardown probe fails", asy
   } finally {
     tmux.sessions.clear();
     await daemon.stop();
+    db.close();
+  }
+});
+
+test("managed shutdown over a dead sessiond broker exits cleanly and reaps state", async () => {
+  // The live wedge: Ctrl-C after the broker socket was removed. Teardown
+  // refused, stop() threw before clearing its timer, and the daemon went on
+  // ticking and reprinting the same failure with no way left to reach it.
+  const db = new HiveDatabase(join(home, "dead-broker-shutdown.db"));
+  const tmux = new FakeDaemonTmux();
+  const locator = {
+    ...mintAgentTmuxSessionLocator("agent-maya"),
+    hostKind: "sessiond" as const,
+    engineBuildId: "engine-dead-broker",
+  };
+  db.bindTerminalHostSession({
+    locator,
+    visibility: {
+      workspaceSessionId: "workspace-dead-broker",
+      workspacePid: 7501,
+      workspaceStartToken: "7501:100",
+      openTerminalRevision: "1",
+    },
+  });
+  const brokerGone = async (): Promise<never> => {
+    throw new SessiondBrokerUnavailableError(
+      "/tmp/hb22-9fba/runtime/sessiond/broker.sock",
+      new Error("ENOENT"),
+    );
+  };
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    manageLifecycle: true,
+    port: 0,
+    resourceRunners: { panePids: async () => [], orphans: null },
+    terminalHost: {
+      create: brokerGone,
+      claimInput: brokerGone,
+      submitInput: brokerGone,
+      resize: brokerGone,
+      inspect: brokerGone,
+      issueAttach: brokerGone,
+      list: brokerGone,
+      terminate: brokerGone,
+      renewVisibility: brokerGone,
+    },
+  });
+  db.insertAgent(agent({ sessionLocator: locator }));
+  try {
+    daemon.start();
+    await daemon.stop();
+    expect(db.getAgentByName("maya")?.status).toEqual("dead");
+    // Nothing is left ticking against the broker that is not coming back.
+    expect(daemon.server).toBeNull();
+  } finally {
+    tmux.sessions.clear();
+    db.close();
+  }
+});
+
+test("managed shutdown releases the daemon even when it refuses", async () => {
+  // The refusal itself is preserved — it is a report to the caller — but it no
+  // longer leaves the reconciliation timer and the socket alive behind it.
+  const db = new HiveDatabase(join(home, "refused-shutdown-release.db"));
+  const tmux = new FakeDaemonTmux();
+  tmux.sessions.add("hive-maya");
+  tmux.sessions.add(orchestratorTmuxSession());
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    tmux,
+    manageLifecycle: true,
+    port: 0,
+    resourceRunners: {
+      panePids: async () => {
+        throw new Error("tmux pane probe failed");
+      },
+      orphans: null,
+    },
+  });
+  db.insertAgent(agent());
+  try {
+    daemon.start();
+    await expect(daemon.stop()).rejects.toThrow("refused shutdown");
+    expect(daemon.server).toBeNull();
+  } finally {
+    tmux.sessions.clear();
     db.close();
   }
 });

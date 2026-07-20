@@ -2070,14 +2070,25 @@ export class HiveDaemon {
    * timers stop, because teardown needs delivery and quota to still be alive.
    */
   async stop(): Promise<void> {
+    // A refusal is a REPORT to the caller, not a reason to stay half-alive. The
+    // refusal used to be thrown from here, so the reconciliation timer was never
+    // cleared: the daemon kept ticking against whatever made teardown fail and
+    // printed the same failure every 30s forever, with no further Ctrl-C able to
+    // reach it. The daemon's own resources are released either way; the error is
+    // rethrown at the end so a failed teardown is still a failed quit.
+    let refusal: unknown;
     if (this.manageLifecycle) {
-      await this.killAllAgents();
-      const session = orchestratorTmuxSession();
-      const reaped = await this.stopTmuxProcesses(session);
-      if (reaped.survivors.length > 0) {
-        throw new Error(
-          `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,
-        );
+      try {
+        await this.killAllAgents();
+        const session = orchestratorTmuxSession();
+        const reaped = await this.stopTmuxProcesses(session);
+        if (reaped.survivors.length > 0) {
+          throw new Error(
+            `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,
+          );
+        }
+      } catch (error) {
+        refusal = error;
       }
     }
     if (this.reconciliationTimer !== null) {
@@ -2095,6 +2106,7 @@ export class HiveDaemon {
       this.db.close();
     }
     this.ownedMachineMutations?.close();
+    if (refusal !== undefined) throw refusal;
   }
 
   // Crash detection and recovery: any agent whose status claims a process

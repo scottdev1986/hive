@@ -9,6 +9,7 @@ import {
 import { parseProcessTable, runPs } from "./resources";
 import type { AgentRecord } from "../schemas";
 import { TerminationRequestSchema } from "../schemas/session-protocol";
+import { SessiondBrokerUnavailableError } from "./session-host/sessiond-host";
 import {
   mintAgentTmuxSessionLocator,
   TmuxSessionHost,
@@ -371,6 +372,68 @@ describe("reapProcessTree", () => {
       },
       readHostPid: async () => null,
     })).rejects.toThrow("not positively verified");
+  });
+
+  test("an unreachable broker is an already-dead session, but survivors still refuse", async () => {
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-terminal" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000202",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const record = {
+      id: "agent-terminal",
+      name: "terminal",
+      tool: "codex",
+      model: "gpt-5-codex",
+      category: "simple_coding",
+      status: "working",
+      taskDescription: "test",
+      worktreePath: "/tmp/terminal",
+      branch: "hive/terminal-test",
+      tmuxSession: "hive-terminal",
+      sessionLocator,
+      contextPct: null,
+      createdAt: "2026-07-13T00:00:00.000Z",
+      lastEventAt: "2026-07-13T00:00:00.000Z",
+      recoveryAttempts: 0,
+      capabilityEpoch: 0,
+      readOnly: false,
+      writeRevoked: false,
+    } satisfies AgentRecord;
+    const brokerGone = {
+      terminate: async () => {
+        throw new SessiondBrokerUnavailableError(
+          "/tmp/hb22-9fba/runtime/sessiond/broker.sock",
+          new Error("ENOENT"),
+        );
+      },
+    };
+
+    // Nothing of the session's tree is left standing, so refusing would strand
+    // shutdown to save a session that no longer exists.
+    const empty = world([{ pid: 1, ppid: 0, command: "init" }]);
+    await expect(stopSessiondAgentSession(record, {
+      terminalHost: brokerGone,
+      reap: empty.dependencies,
+      readHostPid: async () => null,
+      selfPid: 1,
+    })).resolves.toEqual({ killed: [], survivors: [] });
+
+    // The guarantee the refusal exists for: a captured process that survives
+    // SIGKILL is live work, and an unreachable broker does not excuse it.
+    const wedged = world([
+      { pid: 100, ppid: 1, command: "sessiond host", unkillable: true },
+    ]);
+    await expect(stopSessiondAgentSession(record, {
+      terminalHost: brokerGone,
+      reap: wedged.dependencies,
+      readHostPid: async () => 100,
+      selfPid: 1,
+    })).rejects.toThrow("sessiond broker is unavailable");
   });
 
   test("refuses capture after the root has vanished", async () => {

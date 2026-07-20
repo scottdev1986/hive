@@ -37,6 +37,7 @@ import {
   type HiveTerminalHostAdapter,
 } from "./session-host/hive-terminal-host";
 import { mintSessionRequestId } from "./session-host/locators";
+import { SessiondBrokerUnavailableError } from "./session-host/sessiond-host";
 
 export interface ReapDependencies {
   /** `ps -axo pid=,ppid=,rss=,command=` — the tree, with commands for the report. */
@@ -316,7 +317,18 @@ export async function stopSessiondAgentSession(
 ): Promise<ReapOutcome> {
   const reap = dependencies.reap ?? defaultReapDependencies();
   const selfPid = dependencies.selfPid ?? process.pid;
-  const hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+  let terminalError: unknown;
+  // The host pid comes from the broker too, so an unreachable broker fails here
+  // FIRST — before the terminate below ever runs. There is no pid to capture and
+  // no broker to terminate through, so the failure is carried down to the one
+  // place that decides what an unreachable broker means.
+  let hostPid: number | null = null;
+  try {
+    hostPid = await (dependencies.readHostPid ?? defaultHostPid)(agent);
+  } catch (error) {
+    if (!(error instanceof SessiondBrokerUnavailableError)) throw error;
+    terminalError = error;
+  }
   const captured = await captureProcessTree(
     hostPid === null ? [] : [hostPid],
     reap,
@@ -324,28 +336,30 @@ export async function stopSessiondAgentSession(
   );
   await beforeKill?.();
 
-  let terminalError: unknown;
-  try {
-    const result = await dependencies.terminalHost.terminate(
-      requireSessiondAgentLocator(agent),
-      {
-        mode: "immediate",
-        reason: `stop agent ${agent.id}`,
-        requestId: mintSessionRequestId(),
-      },
-    );
-    if (
-      result.state !== "terminated" ||
-      result.survivors.length !== 0
-    ) {
-      terminalError = new Error(
-        `Sessiond termination was not positively verified for ${agent.name}: ${
-          result.errors.map((error) => error.diagnosticId).join(", ") || result.state
-        }`,
+  if (terminalError === undefined) {
+    try {
+      const result = await dependencies.terminalHost.terminate(
+        requireSessiondAgentLocator(agent),
+        {
+          mode: "immediate",
+          reason: `stop agent ${agent.id}`,
+          requestId: mintSessionRequestId(),
+        },
       );
+      if (
+        result.state !== "terminated" ||
+        result.survivors.length !== 0
+      ) {
+        terminalError = new Error(
+          `Sessiond termination was not positively verified for ${agent.name}: ${
+            result.errors.map((error) => error.diagnosticId).join(", ") ||
+            result.state
+          }`,
+        );
+      }
+    } catch (error) {
+      terminalError = error;
     }
-  } catch (error) {
-    terminalError = error;
   }
 
   let reaped: ReapOutcome;
@@ -359,6 +373,20 @@ export async function stopSessiondAgentSession(
       }`,
       { cause: terminalError },
     );
+  }
+  // An unreachable broker is not a failed teardown. sessiond OWNS the session,
+  // so a broker that cannot be connected to at all is not holding one open, and
+  // refusing shutdown here saves nothing — it only wedges the quit path that
+  // exists to stop orphaning work. That is the distinction: a broker that
+  // ANSWERS and reports the session still standing is a failed teardown and
+  // still refuses; a broker that never answers leaves the captured process tree
+  // as the only measurement of what is live. Survivors are live work, so they
+  // refuse exactly as before.
+  if (
+    terminalError instanceof SessiondBrokerUnavailableError &&
+    reaped.survivors.length === 0
+  ) {
+    return reaped;
   }
   if (terminalError !== undefined) throw terminalError;
   return reaped;
