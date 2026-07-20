@@ -20,6 +20,16 @@ final class AppDelegateLifecycleTests: XCTestCase {
             "aria")
     }
 
+    func testProductionPaneSmokeRequiresAnExplicitAgent() {
+        XCTAssertNil(SmokeRunner.productionPaneAgent(environment: [:]))
+        XCTAssertNil(SmokeRunner.productionPaneAgent(
+            environment: ["HIVE_B25_PRODUCTION_PANE_AGENT": ""]))
+        XCTAssertEqual(
+            SmokeRunner.productionPaneAgent(
+                environment: ["HIVE_B25_PRODUCTION_PANE_AGENT": "aria"]),
+            "aria")
+    }
+
     func testTerminationWaitsForVerifiedStopBeforeAllowingQuit() async {
         _ = NSApplication.shared
         let owner = AppDelegate(config: completeConfig())

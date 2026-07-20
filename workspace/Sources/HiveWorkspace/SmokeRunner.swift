@@ -27,9 +27,16 @@ final class SmokeRunner {
         environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"
     }
 
+    static func productionPaneAgent(environment: [String: String]) -> String? {
+        guard let agent = environment["HIVE_B25_PRODUCTION_PANE_AGENT"],
+              !agent.isEmpty else { return nil }
+        return agent
+    }
+
     private let controller: ProjectWindowController
     private let config: LaunchConfig
     private var failures: [String] = []
+    private var productionPaneSummary: String?
 
     init(controller: ProjectWindowController, config: LaunchConfig) {
         self.controller = controller
@@ -260,8 +267,72 @@ final class SmokeRunner {
         }
     }
 
+    private func runProductionPaneProof(agent: String) {
+        let paneID = ProjectState.paneID(forAgent: agent)
+        let paneArrived = waitUntil(45) {
+            self.controller.state.panes[paneID] != nil
+                && self.controller.sessiondTerminalView(pane: paneID) != nil
+        }
+        check(paneArrived, "production pane \(agent) appeared in the real Workspace")
+        guard let pane = controller.state.panes[paneID],
+              let locator = pane.sessionLocator,
+              let terminal = controller.sessiondTerminalView(pane: paneID) else {
+            finishProductionPaneProof()
+            return
+        }
+
+        check(locator.hostKind == "sessiond",
+              "production feed supplied a sessiond locator")
+        let expectedLocator = SessionLocator(
+            schemaVersion: locator.schemaVersion,
+            instanceId: locator.instanceId,
+            subjectKind: locator.subject.kind,
+            agentId: locator.subject.agentId,
+            generation: locator.generation,
+            sessionId: locator.sessionId,
+            hostKind: locator.hostKind,
+            engineBuildId: locator.engineBuildId)
+        check(waitUntil(30) {
+            terminal.surfaceState == .live && terminal.sessionLocator == expectedLocator
+        }, "HiveTerminalView reached its first correct frame on the exact locator")
+        check(terminal.highWater > 0,
+              "the production vendor TUI presented non-empty ordered output")
+        check(terminal.window === controller.window && terminal.superview != nil,
+              "HiveTerminalView is installed in the real Workspace window")
+        check(terminal.bounds.width > 0 && terminal.bounds.height > 0,
+              "the production pane has committed non-zero geometry")
+        check(!controller.terminalChildRunning(pane: paneID),
+              "the renderer owns no hidden SwiftTerm child PTY")
+
+        productionPaneSummary =
+            "PRODUCTION PANE PROOF: agent=\(agent) session=\(locator.sessionId) "
+                + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
+                + "highWater=\(terminal.highWater) frame=\(terminal.frame)"
+        finishProductionPaneProof()
+    }
+
+    private func finishProductionPaneProof() {
+        let result = failures.isEmpty
+            ? "PRODUCTION PANE PROOF OK"
+            : "PRODUCTION PANE PROOF FAIL:\n  " + failures.joined(separator: "\n  ")
+        let report = [productionPaneSummary, result].compactMap { $0 }.joined(separator: "\n") + "\n"
+        if let path = ProcessInfo.processInfo.environment["HIVE_B25_PRODUCTION_PANE_RESULT"] {
+            do {
+                try report.write(toFile: path, atomically: true, encoding: .utf8)
+            } catch {
+                print("PRODUCTION PANE PROOF FAIL: could not write result: \(error)")
+                return
+            }
+        }
+        print(report, terminator: "")
+    }
+
     func run() {
         let env = ProcessInfo.processInfo.environment
+        if let agent = Self.productionPaneAgent(environment: env) {
+            runProductionPaneProof(agent: agent)
+            return
+        }
         if env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1" {
             runSessiondLiveResizeInputProof(
                 agent: Self.sessiondLiveResizeInputAgent(environment: env))
