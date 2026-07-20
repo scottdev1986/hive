@@ -85,6 +85,63 @@ and required to be no lower than the corresponding entry of its base theme.
 Both pairs pass with no entry reduced. Lowering a single high-contrast entry
 below its base turns the check RED.
 
+### Increased-contrast variants are not reachable in the product yet
+
+The two increased-contrast themes are authored, measured, and selected correctly
+by the resolution above — but nothing currently supplies the live Increase
+Contrast signal, so no user can reach them in this increment. They are shipped
+data and proven resolution, **not** a live feature, and must not be read as one.
+
+This is C1.4's explicit inheritance. C1.4 owns the accessibility-options observer
+and its gate already requires demonstrating the toggle during a live session;
+wiring that signal is what makes these variants reachable. The call site passes
+`false` explicitly rather than defaulting it somewhere it would look wired and be
+inert.
+
+### Method shortfall: lightness is not symmetric across modes
+
+Story line 103 asks for the light and dark modes to be authored together with
+symmetric lightness relationships — Solarized's method — so that switching
+appearance preserves *perceived* contrast rather than producing two unrelated
+designs. Acceptance criterion 4 (story line 272) states it as a requirement, not
+as prose.
+
+That method is **not** honored in this increment, and the passing table above
+must not be read as implying it. Each ANSI slot keeps its hue family across the
+two modes and every entry clears its WCAG floor, but CIELAB lightness was not
+equalised across modes, and the measured ratios are visibly asymmetric:
+
+| Slot | hive-dark | hive-light |
+| --- | --- | --- |
+| 3 yellow | 11.67 | 4.81 |
+| 2 green | 10.37 | 5.04 |
+| 6 cyan | 11.38 | 5.52 |
+| 10 br.green | 12.29 | 6.53 |
+
+Magnitude, measured independently by the C1.2 reviewer: mean |ΔL*| asymmetry
+across the 16 accent slots is **14.2 L\* units** with a maximum of 25.5 (yellow),
+and **0 of 16** slots share a hex value across modes where Solarized's strong
+form is 16/16. A just-noticeable difference is roughly 1 L\* unit, so the accents
+sit about 14× JND apart. The foreground pair is the one place symmetry holds, at
+0.8.
+
+The light theme sits in a systematically lower contrast band. Held to the story's
+**floors**, C1.2 passes. Held to its stated **method**, this is a shortfall —
+carried deliberately and recorded here rather than left for a reader to infer
+from a table where every row says "ok".
+
+Scoped as C1.2b: a CIELAB re-authoring of the light palette. The review
+established one thing this increment did not claim, and it makes C1.2b easier
+than first briefed: mirroring about L\*50 (light L\* = 100 − dark L\*) **raises**
+the light-mode ratios rather than fighting them — yellow wants L\* 18.2 and sits
+at 46.6, so going darker fixes symmetry and lifts 4.81 at the same time. Every
+tight light entry (green 5.04, yellow 4.81, br.black 3.15) moves away from its
+floor under mirroring. The method and the floors are not in tension; the light
+theme is simply the loose half. C1.2b feeds C1.5, where the user judges whether
+perceived symmetry across an appearance switch matters more than the current
+per-entry floors — and whether the target is mirror-ratios or mirror-L\*, which
+are different jobs.
+
 ### Structural rules
 
 Hive authors only ANSI 0–15; 16–255 are left at the engine's standard values
@@ -122,9 +179,33 @@ Also measured at the real engine boundary:
   background reaches that theme's authored value.
 - The push is content-keyed: re-selecting the running theme is a no-op, and a
   genuine change pushes exactly once.
-- A font change alone reaches the engine. Before this increment it could not:
+- A font change alone reaches the push. Before this increment it could not:
   `applyHiveConfiguration` accepted no font and never passed one to the
   generator, so the option C1.1 deferred here had no path to a live surface.
+  **The bound on that claim is stated below** — reaching the push is not the
+  same as the engine consuming the value.
+
+### What is NOT proven about the font
+
+The font check asserts that the push returned true and then reads back
+`background` — a *theme* property. It never reads the font back. So what is
+measured is that the generated contents string differed and the push path
+executed; **engine acceptance of the font value is unproven**.
+
+This is the same distinction this document draws for the theme one paragraph
+above, and it was not applied here. The C1.2 reviewer found it; it is recorded
+rather than quietly narrowed. The accurate claim is: the font now reaches the
+generator and the live push — strictly more than before, when it could not reach
+a live surface at all — and nothing beyond that.
+
+Closing it is scoped follow-up work, and the mechanism is verified present in the
+pinned macOS header: `ghostty_config_diagnostics_count` and
+`ghostty_config_get_diagnostic` (returning a message). The closure must carry its
+own negative control — an invalid `font-family` must produce a diagnostic before
+a zero count means anything, since a channel that always reads zero passes
+forever. Note also that reading `font-family` back through the void\*-generic
+getter is *unverified*: every in-tree caller of that helper reads a numeric or a
+colour, never a string, and `font-family` is a repeatable-string type.
 
 The deleted-call mutation is the one that matters. The operation observer fires
 around the real `ghostty_surface_update_config` call, so it still reports a
