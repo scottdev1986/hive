@@ -1,6 +1,8 @@
 import AppKit
+import CoreImage
 import Darwin
 import HiveGhosttyC
+import IOSurface
 import XCTest
 @testable import HiveTerminalKit
 
@@ -42,8 +44,11 @@ final class C10ThemeTransportTests: XCTestCase {
             engine: surface
         )
         XCTAssertEqual(surface.processOutput(bytes: Data("theme selection".utf8), streamSeq: 0), .success)
+        surface.setOcclusion(true)
+        assertRGB(try renderedBackground(surface, matching: [0x0f, 0x11, 0x17]), [0x0f, 0x11, 0x17])
 
         XCTAssertTrue(surface.applyHiveConfiguration(theme: proofTheme))
+        assertRGB(try renderedBackground(surface, matching: [0x18, 0x20, 0x30]), [0x18, 0x20, 0x30])
         terminal.selectAll(nil)
         drainMain(until: { surface.semanticSnapshot()?.selection != nil })
         drainMain(for: 0.1)
@@ -52,6 +57,33 @@ final class C10ThemeTransportTests: XCTestCase {
         XCTAssertTrue(
             clipboardWrites.isEmpty,
             "the product override after the pushed theme must keep copy-on-select disabled"
+        )
+
+        var unoverriddenWrites: [[GhosttyClipboardContent]] = []
+        let unoverriddenClipboard = GhosttyClipboardContext(
+            read: { _ in nil },
+            write: { _, content in unoverriddenWrites.append(content) }
+        )
+        let unoverridden = try GhosttyBridgeFactory.makeManualSurfaceForConfigurationTesting(
+            contents: HiveTerminalConfiguration.contents(headless: true),
+            clipboardContext: unoverriddenClipboard
+        )
+        defer { unoverridden.free() }
+        let unoverriddenTerminal = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            engine: unoverridden
+        )
+        XCTAssertEqual(
+            unoverridden.processOutput(bytes: Data("theme selection".utf8), streamSeq: 0),
+            .success
+        )
+        try applyWithoutProductOverrides(proofTheme, to: unoverridden)
+        unoverriddenTerminal.selectAll(nil)
+        drainMain(until: { !unoverriddenWrites.isEmpty })
+
+        XCTAssertFalse(
+            unoverriddenWrites.isEmpty,
+            "negative control: the same live theme without the product override must copy on selection"
         )
     }
 
@@ -130,6 +162,59 @@ final class C10ThemeTransportTests: XCTestCase {
         return [color.r, color.g, color.b]
     }
 
+    private func renderedBackground(
+        _ surface: GhosttyManualSurface,
+        matching expected: [UInt8]
+    ) throws -> [UInt8] {
+        let layer = try XCTUnwrap(surface.hostView?.layer)
+        let context = CIContext()
+        let deadline = Date().addingTimeInterval(2)
+        var lastPixel: [UInt8]?
+        repeat {
+            surface.draw()
+            drainMain(for: 0.01)
+            if let ioSurface = layer.contents as? IOSurface {
+                let image = CIImage(ioSurface: ioSurface)
+                if let cgImage = context.createCGImage(image, from: image.extent),
+                   let color = NSBitmapImageRep(cgImage: cgImage).colorAt(x: 3, y: 3),
+                   let converted = color.usingColorSpace(.sRGB)
+                {
+                    let pixel = [converted.redComponent, converted.greenComponent, converted.blueComponent]
+                        .map { UInt8(($0 * 255).rounded()) }
+                    lastPixel = pixel
+                    if zip(pixel, expected).allSatisfy({ abs(Int($0) - Int($1)) <= 2 }) {
+                        return pixel
+                    }
+                }
+            }
+        } while Date() < deadline
+        guard let lastPixel else { throw RenderingError.missingBackgroundPixel }
+        return lastPixel
+    }
+
+    private func assertRGB(
+        _ actual: [UInt8],
+        _ expected: [UInt8],
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        XCTAssertEqual(actual.count, expected.count, file: file, line: line)
+        for (actualChannel, expectedChannel) in zip(actual, expected) {
+            XCTAssertEqual(actualChannel, expectedChannel, accuracy: 2, file: file, line: line)
+        }
+    }
+
+    private func applyWithoutProductOverrides(
+        _ theme: HiveTerminalTheme,
+        to surface: GhosttyManualSurface
+    ) throws {
+        let config = try GhosttyBridgeFactory.makeExplicitConfiguration(
+            contents: theme.configurationLines.joined(separator: "\n") + "\n"
+        )
+        defer { ghostty_config_free(config) }
+        ghostty_surface_update_config(try XCTUnwrap(surface.surfaceHandle), config)
+    }
+
     private func withEnvironment<T>(
         _ values: [String: String],
         body: () throws -> T
@@ -155,5 +240,9 @@ final class C10ThemeTransportTests: XCTestCase {
         while !condition(), Date() < deadline {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
+    }
+
+    private enum RenderingError: Error {
+        case missingBackgroundPixel
     }
 }

@@ -29,9 +29,11 @@ Executed 10 tests, with 0 failures (0 unexpected)
 
 The proofs exercise the real Ghostty C boundary:
 
-1. A full second theme is pushed to the existing surface. The surface handle and owning app object remain identical, while two distinct `surfaceUpdateConfig` begin/end pairs are observed.
-2. The proof theme deliberately requests `copy-on-select = true`. Hive emits that base before its overrides, and selecting real rendered text after the push produces no engine clipboard write. This is a mutation check that the live theme cannot clobber Howard's `copy-on-select = false` policy.
+1. A full second theme is pushed to the existing surface. The surface handle and owning app object remain identical, while two distinct `surfaceUpdateConfig` begin/end pairs are observed. This is lifecycle evidence, not by itself evidence that Ghostty consumed the update.
+2. On one instrumented real surface, the presented IOSurface background changes from `0f1117` to `182030` after the push. The proof theme deliberately requests `copy-on-select = true`, but Hive emits that base before its overrides, so selecting rendered text still produces no engine clipboard write. An otherwise identical live push without the product override is the negative control and does produce an engine clipboard write.
 3. A hostile user-default file sets `background = 010203` and `font-family = Menlo`. The default loader reads it as the positive control, while the Hive-created surface still reads back background `0f1117` from its explicit generated file.
+
+The consumption proof was also run with the production `ghostty_surface_update_config` call deleted. The focused suite exited 1: the IOSurface remained at the original `[15, 17, 22]` pixel instead of the requested `[24, 32, 48]`, producing three channel failures. Restoring the call returned the suite to 3 tests, 0 failures. This mutation demonstrates that the test cannot pass from call-boundary observers alone.
 
 ## Real app-window proof
 
