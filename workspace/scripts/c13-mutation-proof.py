@@ -103,18 +103,13 @@ CASES = [
             "be wrong in dark."
         ),
     ),
-    Case(
-        name="stop-repainting-on-appearance-change",
-        path=BACKGROUND,
-        old="needsDisplay = true",
-        new="needsDisplay = false",
-        tests="C13PaneChromeTests/testPaneBackgroundRepaintsOnAppearanceChange",
-        guards=(
-            "Drops the redraw that a live light/dark switch depends on. "
-            "NSVisualEffectView did this for free; the replacement must do it "
-            "explicitly."
-        ),
-    ),
+    # REMOVED: `stop-repainting-on-appearance-change`. It neutered an explicit
+    # viewDidChangeEffectiveAppearance override in PaneBackgroundView and came
+    # back GREEN — AppKit's own implementation already invalidates the view, so
+    # the override was dead code and the test guarding it was decoration. The
+    # override, the test, and this case were all removed rather than kept.
+    # (PaneFocusRingView carries the same likely-redundant pattern; it is
+    # pre-existing and was left alone.)
 
     # --- the overlay-vs-sublayer hazard demonstration ------------------------
     Case(

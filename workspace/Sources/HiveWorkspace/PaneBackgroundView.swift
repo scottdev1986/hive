@@ -17,15 +17,15 @@ final class PaneBackgroundView: NSView {
 
     override var isOpaque: Bool { true }
 
+    /// The fill is a semantic color, so it re-resolves across light and dark on
+    /// every redraw — that is what replaces the automatic material response
+    /// `NSVisualEffectView` used to provide. No `viewDidChangeEffectiveAppearance`
+    /// override is needed to schedule that redraw: AppKit's own implementation
+    /// already invalidates the view. Mutation case
+    /// `stop-repainting-on-appearance-change` demonstrated an explicit override
+    /// here was dead code — neutering it changed nothing.
     override func draw(_ dirtyRect: NSRect) {
         NSColor.controlBackgroundColor.setFill()
         dirtyRect.fill()
-    }
-
-    /// Semantic colors are resolved at draw time, so a light/dark switch has to
-    /// repaint. Matches `PaneFocusRingView`.
-    override func viewDidChangeEffectiveAppearance() {
-        super.viewDidChangeEffectiveAppearance()
-        needsDisplay = true
     }
 }

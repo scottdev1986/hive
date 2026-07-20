@@ -270,26 +270,15 @@ final class C13PaneChromeTests: XCTestCase {
     /// The same guarantee stated structurally: the fill must come from a
     /// semantic color that re-resolves, which is what makes the test above
     /// pass for the right reason.
-    ///
-    /// The view must be inside a window for this: `needsDisplay` does not latch
-    /// on a windowless view (it reads back `false` however it is set), so
-    /// asserting it offscreen would fail for a reason that has nothing to do
-    /// with the property under test. The window is never ordered front, so this
-    /// still needs no window server.
-    func testPaneBackgroundRepaintsOnAppearanceChange() throws {
-        let window = NSWindow(
-            contentRect: Self.bounds, styleMask: [.titled],
-            backing: .buffered, defer: true)
-        let background = PaneBackgroundView(frame: Self.bounds)
-        try XCTUnwrap(window.contentView).addSubview(background)
-
-        background.needsDisplay = false
-        background.viewDidChangeEffectiveAppearance()
-
-        XCTAssertTrue(
-            background.needsDisplay,
-            "The pane background must mark itself for redraw when the effective appearance changes.")
-    }
+    // NOTE: there is deliberately no test that the background schedules its own
+    // redraw on an appearance change. One was written, and the mutation case
+    // `stop-repainting-on-appearance-change` showed it stayed GREEN when the
+    // override it appeared to guard was neutered: AppKit's own
+    // `viewDidChangeEffectiveAppearance` already invalidates the view, so the
+    // override was dead code. Both the override and the test were removed
+    // rather than shipped as decoration. The property that actually matters —
+    // the fill re-resolving across light and dark — is covered above and is
+    // mutation-proven by `hardcode-the-background-color`.
 
     // MARK: - 4. Focus by attenuation
 
