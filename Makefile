@@ -493,6 +493,13 @@ clean:
 	: "these are FILTERS: a final candidate that does not match leaves the loop\
 	   with a non-zero status, which under set -e would abort the whole target.\
 	   'the last item was not selected' is not a failure, so both end with ':'"; \
+	: "the trailing ':' below does NOT make these safe under errexit and must not\
+	   be trusted as a guard: set -e reaches inside the command substitution and\
+	   aborts at the failing classification, so the ':' never runs. EVERY call\
+	   site therefore needs its own '|| true'. Measured the hard way — the\
+	   readback assignment lacked one, so a run whose last surviving candidate\
+	   was a mentioner aborted with exit 2 and preserved .dev after correctly\
+	   killing the bound process"; \
 	dev_pids() { candidates | while read -r p; do is_bound "$$p" && echo "$$p"; done; :; }; \
 	mentioners() { candidates | while read -r p; do is_bound "$$p" || echo "$$p"; done; :; }; \
 	: "set -e reaches inside these command substitutions, so ANY untested failure\
@@ -514,7 +521,7 @@ clean:
 	  for p in $$pids; do kill "$$p" 2>/dev/null || true; done; \
 	  alive=""; \
 	  i=0; while [ $$i -lt 20 ]; do \
-	    alive=$$(dev_pids); [ -n "$$alive" ] || break; sleep 0.5; i=$$((i + 1)); \
+	    alive=$$(dev_pids) || true; [ -n "$$alive" ] || break; sleep 0.5; i=$$((i + 1)); \
 	  done; \
 	  if [ -n "$$alive" ]; then \
 	    echo "refusing to delete $(DEV): still running:" $$alive >&2; \
