@@ -379,15 +379,20 @@ test-e2e:
 # a spared process may have needed reaping.
 clean:
 	@set -e; \
-	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P); else dev="$(DEV)"; fi; \
+	: "every command substitution below is guarded, because this recipe has been\
+	   bitten TWICE by errexit reaching inside $$(...) and aborting the target\
+	   at a command whose failure is not interesting. Where a value is genuinely\
+	   required, the guard is followed by an explicit emptiness REFUSAL rather\
+	   than a silent default -- tolerate the failure, then refuse on the result"; \
+	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P) || true; else dev="$(DEV)"; fi; \
 	[ -n "$$dev" ] || { echo "refusing: could not determine the dev directory path" >&2; exit 1; }; \
 	case "$$dev" in /*) ;; *) echo "refusing: dev path is not absolute ($$dev)" >&2; exit 1;; esac; \
 	self=$$$$; \
-	suffix=$$(printf '%s' "$$dev/home" | /usr/bin/shasum -a 256 | cut -c1-10); \
+	suffix=$$(printf '%s' "$$dev/home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
 	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
 	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	if [ -f "$(DEV)/home/daemon.pid" ]; then \
-	  pid=$$(cat "$(DEV)/home/daemon.pid"); \
+	  pid=$$(cat "$(DEV)/home/daemon.pid") || true; \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
 	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
 	fi; \
@@ -437,9 +442,9 @@ clean:
 	devl="$(DEV)"; \
 	devp="$$dev"; d="$$dev"; rest=""; \
 	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
-	  rest="/$$(basename "$$d")$$rest"; d=$$(dirname "$$d"); \
+	  rest="/$$(basename "$$d")$$rest" || true; d=$$(dirname "$$d") || true; \
 	done; \
-	[ -d "$$d" ] && devp="$$(cd "$$d" && pwd -P)$$rest"; \
+	if [ -d "$$d" ]; then devp="$$(cd "$$d" && pwd -P)$$rest" || true; fi; \
 	: "EVERY descriptor, not just cwd. An earlier version passed -d cwd here,\
 	   which silently narrowed this to the working directory while the comment\
 	   above promised 'cwd or an open file' — measured: a process holding a\
