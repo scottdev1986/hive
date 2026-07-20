@@ -97,6 +97,16 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             "sessiond focus must target the actual HiveTerminalView, not its dormant SwiftTerm sibling"
         )
 
+        let geometryBeforeResize = terminal.reportedGeometry
+        window.setContentSize(NSSize(
+            width: window.contentLayoutRect.width + 160,
+            height: window.contentLayoutRect.height + 90
+        ))
+        window.layoutIfNeeded()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.2))
+        XCTAssertNotEqual(terminal.reportedGeometry, geometryBeforeResize)
+        XCTAssertTrue(window.firstResponder === terminal)
+
         let keyEvent = try XCTUnwrap(NSEvent.keyEvent(
             with: .keyDown,
             location: .zero,

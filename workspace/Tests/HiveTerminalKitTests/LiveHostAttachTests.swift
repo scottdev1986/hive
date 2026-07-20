@@ -14,6 +14,7 @@ final class LiveHostAttachTests: XCTestCase {
     private final class RecordingTransport: HostTransport {
         let base: HostTransport
         private(set) var sent: [WireFrame] = []
+        private(set) var received: [WireFrame] = []
 
         init(base: HostTransport) {
             self.base = base
@@ -28,7 +29,9 @@ final class LiveHostAttachTests: XCTestCase {
         }
 
         func receive(timeout: TimeInterval?) throws -> WireFrame? {
-            try base.receive(timeout: timeout)
+            let frame = try base.receive(timeout: timeout)
+            if let frame { received.append(frame) }
+            return frame
         }
 
         func close() {
@@ -155,6 +158,64 @@ final class LiveHostAttachTests: XCTestCase {
             with: Data(line.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
         ) as! [String: Any]
         return try AttachGrant.parse(object)
+    }
+
+    private func waitUntil(timeout: TimeInterval, _ condition: () -> Bool) -> Bool {
+        let deadline = Date().addingTimeInterval(timeout)
+        while Date() < deadline {
+            if condition() { return true }
+            if let event = NSApp.nextEvent(
+                matching: .any,
+                until: Date().addingTimeInterval(0.01),
+                inMode: .default,
+                dequeue: true
+            ) {
+                NSApp.sendEvent(event)
+            }
+        }
+        return condition()
+    }
+
+    private func sendInProcessKeys(_ text: String, to window: NSWindow) throws {
+        for character in text {
+            let isReturn = character == "\n"
+            let characters = isReturn ? "\r" : String(character)
+            let event = try XCTUnwrap(NSEvent.keyEvent(
+                with: .keyDown,
+                location: .zero,
+                modifierFlags: [],
+                timestamp: ProcessInfo.processInfo.systemUptime,
+                windowNumber: window.windowNumber,
+                context: nil,
+                characters: characters,
+                charactersIgnoringModifiers: characters,
+                isARepeat: false,
+                keyCode: isReturn ? 36 : 0
+            ))
+            window.sendEvent(event)
+        }
+    }
+
+    private func pumpUntilOutput(
+        _ marker: Data,
+        view: HiveTerminalView,
+        transport: RecordingTransport,
+        binding: SurfaceBinding,
+        timeout: TimeInterval = 10
+    ) throws -> Data {
+        var output = Data()
+        let deadline = Date().addingTimeInterval(timeout)
+        while output.range(of: marker) == nil, Date() < deadline {
+            do {
+                guard let frame = try transport.receive(timeout: 1.0) else { break }
+                if frame.type == .output { output.append(frame.payload) }
+                view.pumpHostFrame(frame, frameBinding: binding)
+                RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+            } catch WireError.receiveTimeout {
+                continue
+            }
+        }
+        return output
     }
 
     /// One flow, §20/§26 end to end: attach + replay + live ordered output +
@@ -442,6 +503,124 @@ final class LiveHostAttachTests: XCTestCase {
         XCTAssertEqual(window["heightPixels"] as? Int, renderedGeometry.heightPx)
         XCTAssertEqual(resizeObject["revision"] as? String, "1")
         XCTAssertEqual(view.resizeFramesSent, 1)
+    }
+
+    /// Regression proof for a user resize killing terminal input. This uses a
+    /// key AppKit window and routes in-process NSEvents through sendEvent; a
+    /// CGEvent post is silently discarded by the XCTest runner.
+    func testLiveShellInputSurvivesWindowResize() throws {
+        let (proof, _) = try loadProof()
+        guard proof.mode == "shell" else {
+            throw XCTSkip("real-shell resize/input proof requires HIVE_B22_REAL_SHELL=1")
+        }
+
+        _ = NSApplication.shared
+        XCTAssertTrue(NSApp.setActivationPolicy(.regular))
+        NSApp.finishLaunching()
+        let view = try HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 613, height: 347),
+            viewerId: "live-resize-input"
+        )
+        defer { view.userClose() }
+        let window = NSWindow(
+            contentRect: view.frame,
+            styleMask: [.titled, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.contentView = view
+        NSApp.activate(ignoringOtherApps: true)
+        window.makeKeyAndOrderFront(nil)
+        defer {
+            window.orderOut(nil)
+            window.contentView = nil
+        }
+        XCTAssertTrue(waitUntil(timeout: 3) { window.isKeyWindow })
+        XCTAssertTrue(window.makeFirstResponder(view))
+
+        let provisionalGeometry = try XCTUnwrap(view.reportedGeometry)
+        let grantLine = try issueGrant(
+            proof,
+            viewerId: "live-resize-input",
+            geometryOverride: provisionalGeometry
+        )
+        XCTAssertEqual(grantLine.status, 0, "resize/input grant refused: \(grantLine.output)")
+        let grant = try parseGrant(grantLine.output)
+        let transport = RecordingTransport(
+            base: try UdsHostTransport.connect(endpoint: grant.endpoint)
+        )
+        defer { transport.close() }
+        let outcome = try view.attach(
+            grant: grant,
+            geometry: provisionalGeometry,
+            afterSeq: 0,
+            transport: transport
+        )
+        guard case .firstCorrectFrame = outcome else {
+            return XCTFail("resize/input attach failed: \(outcome)")
+        }
+        let binding = try XCTUnwrap(view.binding)
+        let pump = Thread {
+            while !transport.isClosed {
+                do {
+                    guard let frame = try transport.receive(timeout: 1.0) else { return }
+                    DispatchQueue.main.async {
+                        view.pumpHostFrame(frame, frameBinding: binding)
+                    }
+                } catch WireError.receiveTimeout {
+                    continue
+                } catch {
+                    return
+                }
+            }
+        }
+        pump.name = "live-resize-input-pump"
+        pump.start()
+        let inputSubmitsBeforeResize = transport.sent.filter { $0.type == .inputSubmit }.count
+        XCTAssertEqual(inputSubmitsBeforeResize, 0)
+
+        let beforeResize = try XCTUnwrap(view.reportedGeometry)
+        let resizeFramesBefore = view.resizeFramesSent
+        window.setContentSize(NSSize(
+            width: window.contentLayoutRect.width + 160,
+            height: window.contentLayoutRect.height + 90
+        ))
+        window.layoutIfNeeded()
+        XCTAssertTrue(waitUntil(timeout: 3) {
+            view.reportedGeometry != beforeResize &&
+                view.resizeFramesSent > resizeFramesBefore
+        })
+        XCTAssertTrue(
+            waitUntil(timeout: 3) { view.surfaceState == .live },
+            "resize during C1 settle stranded the surface: \(view.surfaceState)"
+        )
+        window.makeKeyAndOrderFront(nil)
+        XCTAssertTrue(waitUntil(timeout: 3) { window.isKeyWindow })
+        XCTAssertTrue(window.firstResponder === view, "programmatic resize lost terminal focus")
+
+        let markerText = "HIVE_RESIZE_" + UUID().uuidString.replacingOccurrences(of: "-", with: "")
+        try sendInProcessKeys("echo \(markerText)\n", to: window)
+
+        let marker = Data(markerText.utf8)
+        XCTAssertTrue(waitUntil(timeout: 10) {
+            (view.engine as? GhosttyManualSurface)?.semanticSnapshot()?.text
+                .contains(markerText) == true
+        })
+        let returnedOutput = transport.received
+            .filter { $0.type == .output }
+            .reduce(Data()) { $0 + $1.payload }
+        let sentFrames = transport.sent.map { "\($0.type):\($0.requestId)" }
+        let receivedFrames = transport.received.map { "\($0.type):\($0.requestId)" }
+        XCTAssertGreaterThan(
+            transport.sent.filter { $0.type == .inputSubmit }.count,
+            inputSubmitsBeforeResize,
+            "post-resize NSEvents never produced INPUT_SUBMIT; sent=\(sentFrames) " +
+                "received=\(receivedFrames) state=\(view.inputSubmissionState)"
+        )
+        XCTAssertNotNil(
+            returnedOutput.range(of: marker),
+            "post-resize keystrokes did not reach the PTY/echo"
+        )
     }
 
     /// Reconnect-churn robustness (§18/§26): a pane that repeatedly loses its
