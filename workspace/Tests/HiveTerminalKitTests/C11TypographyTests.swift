@@ -151,6 +151,44 @@ final class C11TypographyTests: XCTestCase {
         )
     }
 
+    func testAuthenticClaudeStatusGlyphRendersThroughSystemFallback() throws {
+        // Exact UTF-8 for U+273B from B2.5's authenticated Claude/sessiond
+        // journal de645b1efe5142b18f7fdf7fc0a43aedab71ac579d4ce0aeffef2cd3965e5675.
+        let fixture = Data([0xE2, 0x9C, 0xBB])
+        XCTAssertEqual(
+            SHA256.hash(data: fixture).map { String(format: "%02x", $0) }.joined(),
+            "864f614027fbe51470df6eb3d3cc781780d5247e2de1009c895bf62cb337a558"
+        )
+
+        let proof = try renderedFallbackFrames(fixture: fixture)
+        XCTAssertEqual(proof.text.unicodeScalars.first?.value, 0x273B)
+        XCTAssertEqual(glyph(for: 0x273B, in: proof.primaryFont), 0)
+        XCTAssertEqual(systemFallbackFamily(for: "\u{273B}", primary: proof.primaryFont), "Menlo")
+        XCTAssertNotEqual(proof.fixture.digest, proof.blank.digest)
+        XCTAssertNotEqual(proof.fixture.digest, proof.replacement.digest)
+    }
+
+    func testSymbolsNerdFallbackRendersItsSyntheticMechanismProbe() throws {
+        // U+F115 is a Nerd Font folder glyph. It is deliberately synthetic:
+        // authentic vendor status glyphs use discovered system fallbacks.
+        let fixture = Data([0xEF, 0x84, 0x95])
+        XCTAssertEqual(
+            SHA256.hash(data: fixture).map { String(format: "%02x", $0) }.joined(),
+            "245fba77c41b263eb6a7cf8e4a5ae92d78a429ac57c3d4e7475524d8ca6f0d3a"
+        )
+        XCTAssertEqual(systemDescriptorCount(family: "Symbols Nerd Font"), 0)
+
+        let proof = try renderedFallbackFrames(fixture: fixture)
+        XCTAssertEqual(proof.text.unicodeScalars.first?.value, 0xF115)
+        XCTAssertEqual(glyph(for: 0xF115, in: proof.primaryFont), 0)
+        XCTAssertEqual(
+            systemFallbackFamily(for: "\u{F115}", primary: proof.primaryFont),
+            ".LastResort"
+        )
+        XCTAssertNotEqual(proof.fixture.digest, proof.blank.digest)
+        XCTAssertNotEqual(proof.fixture.digest, proof.replacement.digest)
+    }
+
     private func primaryFont(_ surface: GhosttyManualSurface) throws -> CTFont {
         let handle = try XCTUnwrap(surface.surfaceHandle)
         let pointer = try XCTUnwrap(ghostty_surface_quicklook_font(handle))
@@ -168,6 +206,22 @@ final class C11TypographyTests: XCTestCase {
             [kCTFontFamilyNameAttribute: family] as CFDictionary
         )
         return (CTFontDescriptorCreateMatchingFontDescriptors(descriptor, nil) as? [CTFontDescriptor])?.count ?? 0
+    }
+
+    private func glyph(for codepoint: UniChar, in font: CTFont) -> CGGlyph {
+        var character = codepoint
+        var glyph: CGGlyph = 0
+        _ = CTFontGetGlyphsForCharacters(font, &character, &glyph, 1)
+        return glyph
+    }
+
+    private func systemFallbackFamily(for text: String, primary: CTFont) -> String {
+        let fallback = CTFontCreateForString(
+            primary,
+            text as CFString,
+            CFRange(location: 0, length: (text as NSString).length)
+        )
+        return CTFontCopyFamilyName(fallback) as String
     }
 
     private func typographyConfiguration(
@@ -248,6 +302,53 @@ final class C11TypographyTests: XCTestCase {
         return RenderedFrame(
             digest: SHA256.hash(data: mask).map { String(format: "%02x", $0) }.joined(),
             pixels: mask
+        )
+    }
+
+    private func renderedFallbackFrames(
+        fixture: Data
+    ) throws -> (
+        fixture: RenderedFrame,
+        replacement: RenderedFrame,
+        blank: RenderedFrame,
+        text: String,
+        primaryFont: CTFont
+    ) {
+        let configuration = HiveTerminalConfiguration.contents(headless: true)
+            .replacingOccurrences(of: "cursor-opacity = 1", with: "cursor-opacity = 0")
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForConfigurationTesting(
+            contents: configuration
+        )
+        defer { surface.free() }
+        let terminal = HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: 800, height: 480),
+            engine: surface
+        )
+        _ = terminal
+        surface.setOcclusion(true)
+        let layer = try XCTUnwrap(surface.hostView?.layer)
+
+        var sequence: UInt64 = 0
+        XCTAssertEqual(surface.processOutput(bytes: fixture, streamSeq: sequence), .success)
+        sequence += UInt64(fixture.count)
+        let text = try XCTUnwrap(surface.semanticSnapshot()).text
+        let fixtureFrame = try renderedFrame(surface: surface, layer: layer)
+
+        let erase = Data("\r ".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: erase, streamSeq: sequence), .success)
+        sequence += UInt64(erase.count)
+        let blankFrame = try renderedFrame(surface: surface, layer: layer)
+
+        let replacement = Data("\r\u{FFFD}".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: replacement, streamSeq: sequence), .success)
+        let replacementFrame = try renderedFrame(surface: surface, layer: layer)
+
+        return (
+            fixtureFrame,
+            replacementFrame,
+            blankFrame,
+            text,
+            try primaryFont(surface)
         )
     }
 

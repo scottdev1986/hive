@@ -61,14 +61,20 @@ The selector is intentionally deferred to C1.2 together with the paired-theme Ap
 
 C1.1 uses only glyphs that the live vendor status/trust UIs actually emitted; no synthetic vendor fixture is admissible. The source is B2.5 row K's authenticated raw byte transcripts and real production-pane captures.
 
+The authenticated Claude/sessiond journal captured before teardown in B2.5 p11 is 8,666 bytes with SHA-256 `c0ff7ee10c6fab47913de59b25f262b68569a517a95b391686241429a19584ad`. Its 16-byte sequence prefix is `000000000000000000000000000021ca`. The consuming test uses the journal's exact three UTF-8 bytes `e2 9c bb` for U+273B (`✻`), independently fixed by slice SHA-256 `864f614027fbe51470df6eb3d3cc781780d5247e2de1009c895bf62cb337a558`. The semantic grid retains U+273B, and the production Ghostty IOSurface draws a glyph distinct from both blank and U+FFFD.
+
+The live bytes exposed a design/evidence mismatch instead of the assumed Nerd-font path. The earlier authenticated diagnostic journal `de645b1efe5142b18f7fdf7fc0a43aedab71ac579d4ce0aeffef2cd3965e5675` contains Claude's U+23FA, U+2722, U+2733, U+273B, and U+2810 status glyphs. Direct Core Text checks against both pinned embedded resources find all five absent from JetBrains Mono and Symbols Nerd Font. For the retained U+273B fixture, the engine's primary face has glyph zero and Core Text resolves the system fallback to Menlo. This row is therefore labelled **system fallback**, never Symbols Nerd Font. The mismatch is retained for the C1.5 design review.
+
+Symbols Nerd Font is proven separately as a **synthetic mechanism proof**, matching its real consumer: user shell content such as icon-bearing prompts. U+F115 is absent from the runtime primary face, no system descriptor named `Symbols Nerd Font` is installed, and Core Text outside Ghostty can resolve only `.LastResort`. The pinned Symbols Nerd resource does contain U+F115 (glyph 2588). Through the production Ghostty surface, the exact UTF-8 probe `ef 84 95` survives in the semantic grid and renders nonblank pixels distinct from U+FFFD. Combined with the pinned source order—embedded Symbols Nerd precedes system discovery—this excludes the primary and system chains and identifies the embedded Symbols Nerd fallback.
+
 | Vendor | Qualification state | C1.1 glyph state |
 | --- | --- | --- |
-| Claude | One real session approved | Awaiting B2.5 transcript and capture |
-| Codex | One attempt subject to its 9.5% weekly-capacity gate | Awaiting the gate outcome |
+| Claude | One real session approved | Authenticated pre-teardown journal captured; real-window PNG still pending after two screenshot failures |
+| Codex | One attempt subject to its 9.5% weekly-capacity gate | Optional corroboration; not a C1.1 blocker |
 | Grok | Measured 0% weekly capacity | `CAPACITY-DEFERRED` until the 2026-07-26 reset; no attempt and no fabricated fixture |
 
 The deferred Grok row is a declared follow-up delta after the reset, not a green row and not a reason to block the independently provable C1.1 font-chain behavior.
 
 ## Test transcript
 
-Before the vendor-glyph proof is added, the focused C1.1 suite exits 0 with 6 tests and 0 failures. The complete Swift suite exits 0 with 473 tests executed, 11 skipped, and 0 failures.
+With both fallback proofs, the focused C1.1 suite exits 0 with 8 tests and 0 failures. The complete-suite count below will be refreshed after the real-window artifact lands and the branch is rebased for review.
