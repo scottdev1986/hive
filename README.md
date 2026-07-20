@@ -145,11 +145,16 @@ make run     # launch the staged dev Workspace against a scratch repo
 rendezvous name derives from `.dev/home`. Pass `PROJECT=/path/to/repo` to open
 a specific git repo instead of the `.dev/project` scratch repo.
 
-`make clean` deletes `.dev/`, but it does not stop dev processes that are
-already running — the dev Workspace app, its tmux server, and provider CLIs
-started under it survive, left bound to the directory that was just removed.
-Quit the dev app before running `make clean`, and check for stragglers with
-`ps -axo pid,args | grep '\.dev/root'`. Issue #44 tracks this.
+`make clean` stops the dev instance and then deletes `.dev/` — in that order,
+and never the second without the first. It signals the dev Workspace app, its
+tmux server, and the provider CLIs started under it, re-reads the process table
+to confirm they are gone, and only then removes the directory. If anything is
+still running it refuses to delete `.dev/` and exits non-zero rather than
+stranding a live process against a directory that no longer exists.
+
+Dev processes are selected by executable path and arguments — never by process
+name — so a running installed hive, which has its own Workspace, tmux server
+and provider CLIs, is never a candidate.
 
 Terminal panes in that build stay blank for now: nothing in the shipped stack
 starts the sessiond broker yet. Use `make terminal` for a live, typeable M1
