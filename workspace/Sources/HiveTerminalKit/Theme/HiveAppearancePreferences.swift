@@ -56,21 +56,45 @@ public final class HiveAppearancePreferences {
         notificationCenter.post(name: Self.didChangeNotification, object: self)
     }
 
-    /// Read live rather than cached: the accessibility setting can change while
-    /// the app runs. Observing that change to drive a re-push is C1.4's work;
-    /// resolving correctly whenever we do push is this increment's.
-    static var systemIncreasedContrast: Bool {
-        NSWorkspace.shared.accessibilityDisplayShouldIncreaseContrast
-    }
-
-    /// The theme a surface should be running, given the appearance it is drawn
-    /// in. `HiveTerminalTheme` stays internal to the kit: callers outside it
-    /// choose a *selection*, never a palette.
-    func resolvedTheme(appearance: HiveTerminalAppearance) -> HiveTerminalTheme {
+    /// The theme a surface should be running, given the appearance state it is
+    /// drawn in. `HiveTerminalTheme` stays internal to the kit: callers outside
+    /// it choose a *selection*, never a palette.
+    func resolvedTheme(for state: HiveTerminalAppearanceState) -> HiveTerminalTheme {
         HiveTerminalTheme.resolve(
             selection: themeSelection,
-            appearance: appearance,
-            increasedContrast: Self.systemIncreasedContrast
+            appearance: state.appearance,
+            increasedContrast: state.increasedContrast
+        )
+    }
+}
+
+/// The appearance state a surface resolves its theme against.
+///
+/// Light/dark comes from the appearance the view is drawn in. Increase Contrast
+/// does NOT: it is an accessibility display option, not an appearance variant.
+/// Measured on macOS 26.3.1 — `NSAppearance(named: .accessibilityHighContrastAqua)`
+/// reports its own name as plain `NSAppearanceNameAqua`, and `bestMatch` maps
+/// every high-contrast name onto its base, so no appearance read can recover it.
+/// The only reader is `NSWorkspace`, which the kit may not reference (Gate 9).
+///
+/// C1.2 therefore ships the increased-contrast variants and the resolution that
+/// selects them, both measured. Supplying the live signal — and re-pushing when
+/// the user toggles it mid-session — is C1.4's increment, which owns the
+/// accessibility-options observer. Until then this stays `false` at the call
+/// site rather than being defaulted somewhere it would look wired and be inert.
+struct HiveTerminalAppearanceState: Equatable {
+    let appearance: HiveTerminalAppearance
+    let increasedContrast: Bool
+
+    init(appearance: HiveTerminalAppearance, increasedContrast: Bool) {
+        self.appearance = appearance
+        self.increasedContrast = increasedContrast
+    }
+
+    init(_ nsAppearance: NSAppearance, increasedContrast: Bool) {
+        self.init(
+            appearance: TerminalColorScheme(appearance: nsAppearance) == .dark ? .dark : .light,
+            increasedContrast: increasedContrast
         )
     }
 }

@@ -153,10 +153,66 @@ final class C12AppearancePreferencesTests: XCTestCase {
         view.applySelectedAppearance()
 
         XCTAssertEqual(
-            engine.hiveConfigurationTheme?.identifier,
-            HiveAppearancePreferences.systemIncreasedContrast
-                ? "hive-dark-high-contrast" : "hive-dark",
+            engine.hiveConfigurationTheme?.identifier, "hive-dark",
             "a pinned dark terminal theme must survive a light appearance"
+        )
+    }
+
+    /// Records why Increase Contrast cannot be recovered from an appearance,
+    /// so a later increment does not re-attempt this and ship a silent no-op.
+    /// Measured on macOS 26.3.1: the high-contrast appearance names collapse to
+    /// their base name, and `bestMatch` maps them onto the base too.
+    func testHighContrastIsNotRecoverableFromAnAppearance() throws {
+        for (highContrast, base) in [
+            (NSAppearance.Name.accessibilityHighContrastAqua, NSAppearance.Name.aqua),
+            (.accessibilityHighContrastDarkAqua, .darkAqua),
+        ] {
+            let appearance = try XCTUnwrap(NSAppearance(named: highContrast))
+            XCTAssertEqual(
+                appearance.name, base,
+                "if this ever reports \(highContrast.rawValue), an appearance read becomes possible"
+            )
+        }
+        // Positive control: light/dark IS recoverable, so the mode half of the
+        // state is a real read rather than a constant.
+        XCTAssertEqual(
+            HiveTerminalAppearanceState(
+                try XCTUnwrap(NSAppearance(named: .darkAqua)), increasedContrast: false
+            ).appearance,
+            .dark
+        )
+        XCTAssertEqual(
+            HiveTerminalAppearanceState(
+                try XCTUnwrap(NSAppearance(named: .aqua)), increasedContrast: false
+            ).appearance,
+            .light
+        )
+    }
+
+    /// The variants and the resolution that selects them are C1.2's; supplying
+    /// the live signal is C1.4's. This proves the resolution half works for
+    /// both values, including Dark Mode with Increase Contrast -- the exact
+    /// combination Apple warns can otherwise reduce contrast.
+    func testIncreasedContrastStateResolvesTheHighContrastVariant() {
+        let preferences = makePreferences()
+
+        XCTAssertEqual(
+            preferences.resolvedTheme(
+                for: HiveTerminalAppearanceState(appearance: .dark, increasedContrast: true)
+            ).identifier,
+            "hive-dark-high-contrast"
+        )
+        XCTAssertEqual(
+            preferences.resolvedTheme(
+                for: HiveTerminalAppearanceState(appearance: .light, increasedContrast: true)
+            ).identifier,
+            "hive-light-high-contrast"
+        )
+        XCTAssertEqual(
+            preferences.resolvedTheme(
+                for: HiveTerminalAppearanceState(appearance: .dark, increasedContrast: false)
+            ).identifier,
+            "hive-dark"
         )
     }
 

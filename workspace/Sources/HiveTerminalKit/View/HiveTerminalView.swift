@@ -337,10 +337,15 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     /// calling this when nothing changed costs nothing.
     @discardableResult
     func applySelectedAppearance() -> Bool {
-        let appearance: HiveTerminalAppearance =
-            TerminalColorScheme(appearance: effectiveAppearance) == .dark ? .dark : .light
-        return engine.applyHiveConfiguration(
-            theme: appearancePreferences.resolvedTheme(appearance: appearance),
+        engine.applyHiveConfiguration(
+            theme: appearancePreferences.resolvedTheme(
+                for: HiveTerminalAppearanceState(
+                    effectiveAppearance,
+                    // C1.4 owns the live Increase Contrast signal and the
+                    // re-push when it changes; see HiveTerminalAppearanceState.
+                    increasedContrast: false
+                )
+            ),
             font: appearancePreferences.font
         )
     }
