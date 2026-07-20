@@ -114,8 +114,9 @@ round-trip claim, it is a separate addendum requiring an echo-capable child.
 Attribution: exactly one input event is driven per transaction, so each
 receipt is attributable to that row's encoder bytes and nothing else. The
 assertion is mutation-verified — asserting stage `queued` instead turns all
-four rows RED against the actual `written-to-terminal`, proving it reads the
-host's real stage rather than a default.
+FIVE live submissions RED (the plain-text control plus rows 3, 5, 6 and 11)
+against the actual `written-to-terminal`, proving it reads the host's real
+stage rather than a default.
 
 Rows with live traversal recorded: 3 (keys), 5 (dead key), 6 (CJK IME),
 11 (no-duplicate-input), plus the plain-text positive control.
@@ -125,8 +126,12 @@ Rows still WITHOUT live traversal, and why: 4 (Kitty), 7 and 7b (paste), 8,
 cannot be injected with `processOutput` on a live attach — the ordered-output
 engine owns the stream sequence and rejects a hand-fed frame as
 `invalidValue`. Setting them faithfully needs the PTY child to emit the mode
-as real output, which is harness work not undertaken here. Row 11 is driven live and is a NON-event assertion: it passes only if no
-second transaction follows a single key press, which is mutation-verified.
+as real output, which is harness work not undertaken here.
+
+Row 11 is driven live and is a NON-event assertion: it passes only if no
+second transaction follows a single key press. That shape is
+mutation-verified by emitting the printable as a key AND as text, which turns
+the row RED and names the extra transaction.
 
 ## What "OPEN for closure" means
 
@@ -135,11 +140,20 @@ marked `RECORDED (encoder)` has real, mutation-verified byte evidence against
 the real vendor encoder, and the matrix LANDS with it. It is NOT sufficient
 for B2.3/A3 STORY closure.
 
-Six of the twelve rows — 3, 4, 5, 6, 7, 11, plus the new 8b/8c — have never
-had their bytes traverse sessiond or a PTY. Story closure requires live-PTY
-traversal for them, on the same footing as rows 9 and the other held live
-rows. They stay OPEN until the held live rows run after the parallel PTY and
-resize fixes land.
+Six of the fifteen rows — 4 (Kitty), 7 and 7b (paste), and 8, 8b and 8c
+(mouse) — have never had their bytes traverse sessiond or a PTY. They hold
+encoder-level evidence only, and story closure requires live-PTY traversal
+for them. All six are blocked by the same harness capability gap: they need
+an application mode set first, which needs a mode-emitting PTY child. They
+stay OPEN until that capability exists.
+
+Row 9 is a SEPARATE hold and not part of that six: it waits on hector's
+resize landing, not on the harness capability.
+
+Rows 3, 5, 6 and 11 were in this list earlier and are no longer: they now
+carry live-PTY traversal verified at the host write boundary. Rows 1, 2, 2b
+and 10 never needed it — their evidence is fake-host, live-pty or source-level
+by nature.
 
 Incremental landing of the encoder evidence is fine. Reading these rows as
 "done" is not.
@@ -258,8 +272,8 @@ rather than returning immediately, so silence is measured rather than assumed.
 
 ## Mutation verification
 
-Green rows prove nothing until the assertions are shown to bite. Two rows
-whose false pass would be most damaging were mutated and reverted:
+Green rows prove nothing until the assertions are shown to bite. Every
+mutation below was applied, observed RED, and reverted:
 
 - Shift override: removing the `.shift` modifier turned the row RED with the
   captured bytes `\e[<0;2;14M` / `\e[<0;2;14m`. This proves the application
@@ -268,6 +282,20 @@ whose false pass would be most damaging were mutated and reverted:
 - Unknown fence: answering the submission with stage `written-to-terminal`
   instead of `unknown` turned the row RED. The fence depends on the unknown
   outcome rather than on the client never submitting twice.
+- Kitty pop: dropping the `CSI < u` step turned the row RED — 7 bytes (kitty)
+  against the expected 10 (legacy). The pop genuinely changes the encoding.
+- Arrow golden: mutating the up-arrow expectation to `\e[Z` turned the row RED
+  against the actual `\e[A`.
+- Mouse format 1005: dropping the DECSET 1005 enable turned the row RED on all
+  three of its assertions independently (length, not-equal-to-default, and
+  valid-UTF-8).
+- Live write boundary: asserting stage `queued` instead of
+  `written-to-terminal` turned all five live submissions RED against the
+  actual value, proving the row reads the host's real stage.
+- Live row 11: emitting the printable as a key AND as text turned the row RED
+  and named the extra transaction. Without this the row would pass against a
+  build that duplicated every keystroke — a "nothing else happened" assertion
+  is exactly the kind that passes by not looking.
 
 ## Evidence bundle
 
@@ -284,16 +312,25 @@ non-empty and distinct), 4 (Kitty pop and stack nesting), 7 and 7b (DEC 2004
 reset and safe paste), 8 (mouse encodings and Shift override), 10
 (client-side unknown semantics).
 
-No defect-independent rows remain open, including the DECSET 1005 and 1015
-mouse coordinate formats added mid-task. Everything still outstanding is held
-on the live-PTY sequencing below.
+No defect-independent encoder rows remain open, including the DECSET 1005 and
+1015 mouse coordinate formats added mid-task.
 
-HELD pending the parallel PTY and resize fixes landing on main: row 9
-end-to-end Retina resize with observed SIGWINCH delivery, and live-PTY byte
-round-trips for every encoder-graded row — 3, 4, 5, 6, 7, 7b, 8, 8b, 8c and
-11. All of those have encoder-level evidence ONLY and have never had their
-bytes traverse sessiond or a PTY.
+LIVE-PTY TRAVERSAL RECORDED (hattie's OPOST fix at `025f75b6` unblocked
+these): rows 3, 5, 6 and 11, plus a plain-text positive control, all verified
+at the host write boundary.
 
-Row 8 and the format rows 8b/8c belong in that list as squarely as the key
-and paste rows: a mouse report that Ghostty encodes correctly still has to
-reach the child process, and nothing here proves it does.
+STILL WITHOUT LIVE TRAVERSAL, blocked on a harness capability rather than on
+any landing: rows 4, 7, 7b, 8, 8b and 8c. Each needs an application mode set
+first, which needs a mode-emitting PTY child; DECSET cannot be injected via
+`processOutput` on a live attach. Row 8 and the format rows 8b/8c belong here
+as squarely as the paste rows — a mouse report that Ghostty encodes correctly
+still has to reach the child process, and nothing here proves it does.
+
+HELD SEPARATELY on hector's resize landing: row 9, framed as SIGWINCH-as-
+signal plus geometry correctness rather than a manufactured resize RED.
+
+Two further pieces of work would strengthen this, neither undertaken here: a
+claim RELEASE (the `claimRelease` frame type exists but nothing sends it, so
+one dropped viewer leaves a session permanently unusable for input), and an
+echo-capable child if story closure ever wants the byte-verbatim round-trip
+claim rather than the write-boundary one.
