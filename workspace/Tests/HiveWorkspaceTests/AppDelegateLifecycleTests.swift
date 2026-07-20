@@ -14,6 +14,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(
             SmokeRunner.sessiondLiveResizeInputAgent(environment: [:]),
             "aria")
+        XCTAssertEqual(
+            SmokeRunner.sessiondLiveResizeInputAgent(
+                environment: ["HIVE_B22_REAL_SHELL": "0"]),
+            "aria")
     }
 
     func testTerminationWaitsForVerifiedStopBeforeAllowingQuit() async {
