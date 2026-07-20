@@ -372,9 +372,12 @@ clean:
 	suffix=$$(printf '%s' "$$home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
 	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
 	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
-	if [ -f "$$home/daemon.pid" ]; then \
-	  pid=$$(cat "$$home/daemon.pid" 2>/dev/null) || true; \
-	  [ -n "$$pid" ] || { echo "refusing: could not read daemon.pid under HIVE_HOME" >&2; exit 1; }; \
+	pidfile=""; \
+	if [ -f "$$home/daemon.pid" ]; then pidfile="$$home/daemon.pid"; \
+	elif [ -f "$$dev/home/daemon.pid" ]; then pidfile="$$dev/home/daemon.pid"; fi; \
+	if [ -n "$$pidfile" ]; then \
+	  pid=$$(cat "$$pidfile" 2>/dev/null) || true; \
+	  [ -n "$$pid" ] || { echo "refusing: could not read daemon.pid ($$pidfile)" >&2; exit 1; }; \
 	  command=$$(ps -p "$$pid" -o comm= 2>/dev/null || true); \
 	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
 	fi; \
