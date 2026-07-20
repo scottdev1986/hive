@@ -50,4 +50,4 @@ viewer_behavior=B24ViewerSemanticsTests
 renderer_gpu_occlusion_sleep=landed Gate7RenderingTests plus the B2.4 live sustained-output run
 vttest_semantic=PASS; pinned live 1049 path recorded after OPOST/ONLCR landing
 vttest_evidence=bootstrap/evidence/m1-b2-b24-viewer/vttest-live.txt
-vttest_visual=BLOCKED_DRAW_PATH_47; captured window is background-only and is not accepted as terminal pixel proof
+vttest_visual=DEFERRED_PENDING_#47; captured window is background-only and is not accepted as terminal pixel proof

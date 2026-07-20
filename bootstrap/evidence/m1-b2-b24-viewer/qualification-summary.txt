@@ -6,5 +6,5 @@ memory_bounds=settled growth <= 128 MiB; peak growth <= 192 MiB during >= 80 MiB
 physical_sleep=REUSE Gate7 independently recorded human row; notification transition is automated here
 gpu_recreation=NO_VIEW_API; renderer-health pending-frame recovery is proven, hardware fault/replacement remains Gate7/B2 orchestration scope
 vttest=PASS semantic live 1049 traversal after OPOST/ONLCR landing; see vttest-live.txt
-vttest_pixels=BLOCKED draw-path #47; background-only capture is explicitly not accepted as rendered terminal proof
+vttest_pixels=DEFERRED_PENDING_#47; background-only capture is explicitly not accepted as rendered terminal proof
 renderer_frame_observer=NON_AUTHORITATIVE; rendered-viewer.png is the B2.4 AppKit UI proof

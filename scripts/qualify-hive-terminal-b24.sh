@@ -256,9 +256,15 @@ record_instruments 'Metal System Trace' metal-system-trace
   printf 'physical_sleep=REUSE Gate7 independently recorded human row; notification transition is automated here\n'
   printf 'gpu_recreation=NO_VIEW_API; renderer-health pending-frame recovery is proven, hardware fault/replacement remains Gate7/B2 orchestration scope\n'
   printf 'vttest=PASS semantic live 1049 traversal after OPOST/ONLCR landing; see vttest-live.txt\n'
-  printf 'vttest_pixels=BLOCKED draw-path #47; background-only capture is explicitly not accepted as rendered terminal proof\n'
+  printf 'vttest_pixels=DEFERRED_PENDING_#47; background-only capture is explicitly not accepted as rendered terminal proof\n'
   printf 'renderer_frame_observer=NON_AUTHORITATIVE; rendered-viewer.png is the B2.4 AppKit UI proof\n'
 } >"$EVIDENCE/qualification-summary.txt"
+
+# Swift diagnostics can preserve source-line indentation on otherwise blank
+# lines. Keep generated text evidence diff-clean without changing its content.
+for evidence_text in "$EVIDENCE"/*.txt; do
+  /usr/bin/sed -i '' -e 's/[[:space:]]*$//' "$evidence_text"
+done
 
 (
   cd "$EVIDENCE"
@@ -273,4 +279,4 @@ record_instruments 'Metal System Trace' metal-system-trace
 )
 
 echo "HiveTerminalView B2.4 automated qualification passed; evidence: $EVIDENCE"
-echo "HOLD: vttest dependency and cross-vendor review remain; do not land."
+echo "HOLD: cross-vendor review and draw-path #47 pixel proof remain; do not land."

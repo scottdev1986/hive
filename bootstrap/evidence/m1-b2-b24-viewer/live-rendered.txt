@@ -1,13 +1,13 @@
-Test Suite 'Selected tests' started at 2026-07-19 21:31:35.142.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:31:35.143.
-Test Suite 'B24ViewerSemanticsTests' started at 2026-07-19 21:31:35.143.
+Test Suite 'Selected tests' started at 2026-07-19 22:22:22.079.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:22:22.080.
+Test Suite 'B24ViewerSemanticsTests' started at 2026-07-19 22:22:22.080.
 Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testLiveRenderedSustainedOutputQualification]' started.
-2026-07-19 21:31:35.271 xctest[36731:41689509] ghostty_surface_update_config live C1 background=0f1117 font-size=13 padding=10x8
-Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testLiveRenderedSustainedOutputQualification]' passed (13.457 seconds).
-Test Suite 'B24ViewerSemanticsTests' passed at 2026-07-19 21:31:48.600.
-	 Executed 1 test, with 0 failures (0 unexpected) in 13.457 (13.457) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:31:48.600.
-	 Executed 1 test, with 0 failures (0 unexpected) in 13.457 (13.457) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 21:31:48.600.
-	 Executed 1 test, with 0 failures (0 unexpected) in 13.457 (13.459) seconds
-B24_LIVE_METRICS baseline_bytes=297993080 settled_bytes=50938768 peak_bytes=332612496 settled_growth_bytes=0 peak_growth_bytes=34619416 scrollback_limit_bytes=50331648 input_bytes=86028153 instrumented=false screenshot=/Users/scottkellar/Projects/hive/.hive/worktrees/howard/bootstrap/evidence/m1-b2-b24-viewer/rendered-viewer.png frame=/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-terminal-b24.Wt5PAH/plain-renderer-frame.png
+2026-07-19 22:22:22.172 xctest[3286:42684728] ghostty_surface_update_config live C1 background=0f1117 font-size=13 padding=10x8
+Test Case '-[HiveTerminalKitTests.B24ViewerSemanticsTests testLiveRenderedSustainedOutputQualification]' passed (13.327 seconds).
+Test Suite 'B24ViewerSemanticsTests' passed at 2026-07-19 22:22:35.406.
+	 Executed 1 test, with 0 failures (0 unexpected) in 13.327 (13.327) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:22:35.407.
+	 Executed 1 test, with 0 failures (0 unexpected) in 13.327 (13.327) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:22:35.407.
+	 Executed 1 test, with 0 failures (0 unexpected) in 13.327 (13.328) seconds
+B24_LIVE_METRICS baseline_bytes=296977248 settled_bytes=50152312 peak_bytes=331596664 settled_growth_bytes=0 peak_growth_bytes=34619416 scrollback_limit_bytes=50331648 input_bytes=86028153 instrumented=false screenshot=/Users/scottkellar/Projects/hive/.hive/worktrees/howard/bootstrap/evidence/m1-b2-b24-viewer/rendered-viewer.png frame=/Users/scottkellar/Projects/hive/.hive/worktrees/howard/bootstrap/evidence/m1-b2-b24-viewer/renderer-frame-observer.png
