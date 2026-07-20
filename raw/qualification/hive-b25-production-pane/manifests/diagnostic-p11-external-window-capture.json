@@ -1,0 +1,44 @@
+{
+  "cell": "diagnostic-p11-external-window-capture",
+  "ok": false,
+  "head": "e84b5262b2c09755e70aa0744619cf8646c0e592",
+  "home": "/tmp/hb25-p11",
+  "port": 43152,
+  "project": "/tmp/hb25-project-3a613c",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "workspacePid": 67596,
+  "workspaceInstanceId": "08b0331b5f",
+  "displayPreflight": {
+    "initialActiveDisplays": 0,
+    "activeDisplays": 1,
+    "wokeDisplay": true
+  },
+  "paneReport": {
+    "ok": true,
+    "sessionId": "ses_019f7e07-3165-7280-8e9d-8d73bb0d9a36",
+    "generation": 1,
+    "hostKind": "sessiond",
+    "engineBuildId": "0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300",
+    "highWater": 8594,
+    "frame": "(0.0, 0.0, 514.0, 743.0)",
+    "windowNumber": 13085,
+    "visible": true
+  },
+  "preKillJournalSnapshot": {
+    "path": "raw/qualification/hive-b25-production-pane/transcripts/claude-ses_019f7e07-3165-7280-8e9d-8d73bb0d9a36.journal.bin",
+    "bytes": 8666,
+    "sha256": "c0ff7ee10c6fab47913de59b25f262b68569a517a95b391686241429a19584ad",
+    "sequencePrefixHex": "000000000000000000000000000021ca",
+    "verified": "byte-exact against journal.bin at pane-ready capture time"
+  },
+  "workspaceWindowPng": null,
+  "failure": "external per-window screencapture refused a visible real Workspace window",
+  "exactHiveKillCompleted": true,
+  "processAudit": "agent dead; exact root session and all captured processes absent",
+  "exactRootSession": "hive-orchestrator-08b0331b5f",
+  "capturedRootProcessCount": 2,
+  "startedAt": "2026-07-20T05:36:59.185Z",
+  "writtenAt": "2026-07-20T05:37:30.816Z"
+}

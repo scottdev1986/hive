@@ -1,0 +1,23 @@
+2026-07-20T05:36:59.541Z HEAD=e84b5262b2c09755e70aa0744619cf8646c0e592
+2026-07-20T05:36:59.541Z home=/tmp/hb25-p11 (42-byte broker path)
+2026-07-20T05:36:59.541Z project=/tmp/hb25-project-3a613c (non-Hive throwaway git repository)
+2026-07-20T05:37:01.224Z GREEN active-display preflight: initial=0 settled=1 woke=true
+2026-07-20T05:37:01.224Z MUTATION VERIFIED: zero active displays breaks the real-Workspace preflight
+2026-07-20T05:37:01.325Z display keep-awake active pid=67536
+2026-07-20T05:37:01.631Z daemon ready pid=67537 port=43152
+2026-07-20T05:37:01.658Z real Workspace launched pid=67596 instanceId=08b0331b5f
+2026-07-20T05:37:02.659Z hive_spawn requested tool=claude name=aria readOnly=true
+2026-07-20T05:37:22.236Z Workspace pane positive control:
+  PRODUCTION PANE PROOF: agent=aria instance=08b0331b5f session=ses_019f7e07-3165-7280-8e9d-8d73bb0d9a36 generation=1 engine=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300 highWater=8594 frame=(0.0, 0.0, 514.0, 743.0) window=13085 visible=true
+  PRODUCTION PANE PROOF OK
+2026-07-20T05:37:22.236Z FAIL: external screencapture could not create image from visible window 13085 after five-second settle
+2026-07-20T05:37:25.442Z cleanup: hive_kill aria completed
+2026-07-20T05:37:25.790Z cleanup: exact root session hive-orchestrator-08b0331b5f and 2 captured process(es) absent
+2026-07-20T05:37:30.793Z daemon required SIGKILL during harness cleanup
+
+DIAGNOSTIC ONLY: the production pane was live, visible, and carrying 8,594
+ordered bytes at its exact locator. The 8,666-byte sessiond journal snapshot
+was copied and hash-verified before the explicit hive_kill. Full-screen capture
+works on this host, but external per-window capture refused the visible window;
+the next pin makes the owning Workspace render its own real content view to PNG
+before it writes the pane report.

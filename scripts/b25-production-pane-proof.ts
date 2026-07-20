@@ -76,6 +76,7 @@ const evidence = process.env.HIVE_B25_EVIDENCE ??
 const outPath = join(evidence, "matrix/production-wiring-pane.txt");
 const manifestPath = join(evidence, "manifests/production-wiring-pane.json");
 const paneResultPath = join(home, "production-pane-result.txt");
+const paneScreenshotPath = join(home, "production-pane-window.png");
 const workspaceStdoutPath = join(home, "workspace.stdout.log");
 const workspaceStderrPath = join(home, "workspace.stderr.log");
 const daemonStdoutPath = join(home, "daemon.stdout.log");
@@ -317,25 +318,19 @@ async function captureVendorArtifacts(
     screenshotDirectory,
     `${requestedTool}-${locator.sessionId}-workspace.png`,
   );
-  let screenshotFailure = "unknown failure";
-  let screenshotCaptured = false;
   const screenshotDeadline = Date.now() + 5_000;
-  while (Date.now() < screenshotDeadline) {
-    const result = Bun.spawnSync(
-      ["/usr/sbin/screencapture", "-x", "-l", String(windowNumber), screenshotPath],
-      { cwd: project, stdout: "pipe", stderr: "pipe" },
-    );
-    if (result.exitCode === 0 && existsSync(screenshotPath)) {
-      screenshotCaptured = true;
-      break;
-    }
-    screenshotFailure = result.stderr.toString().trim() || `exit ${result.exitCode}`;
+  while (!existsSync(paneScreenshotPath) && Date.now() < screenshotDeadline) {
     await Bun.sleep(250);
   }
-  if (!screenshotCaptured) {
-    throw new Error(`Workspace window screenshot failed after settle: ${screenshotFailure}`);
+  if (!existsSync(paneScreenshotPath)) {
+    throw new Error("Workspace did not persist its own window PNG after settle");
   }
-  const screenshot = readFileSync(screenshotPath);
+  const screenshot = readFileSync(paneScreenshotPath);
+  writeFileSync(screenshotPath, screenshot);
+  const preservedScreenshot = readFileSync(screenshotPath);
+  if (!preservedScreenshot.equals(screenshot)) {
+    throw new Error("preserved Workspace screenshot is not byte-exact");
+  }
   const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (screenshot.byteLength <= pngSignature.byteLength ||
       !screenshot.subarray(0, pngSignature.byteLength).equals(pngSignature)) {
@@ -348,6 +343,13 @@ async function captureVendorArtifacts(
     throw new Error("one-byte journal mutation did not change the transcript digest");
   }
   log("MUTATION VERIFIED: one-byte PTY transcript mutation changes its SHA-256");
+  const mutatedScreenshot = Buffer.from(screenshot);
+  mutatedScreenshot[0] = mutatedScreenshot[0]! ^ 0x01;
+  if (!mutatedScreenshot.subarray(0, pngSignature.byteLength).equals(pngSignature)) {
+    log("MUTATION VERIFIED: one-byte PNG signature mutation breaks screenshot validation");
+  } else {
+    throw new Error("one-byte PNG signature mutation did not break validation");
+  }
   capture = {
     journal: {
       path: journalPath,
@@ -521,6 +523,7 @@ async function main(): Promise<void> {
       ...env,
       HIVE_B25_PRODUCTION_PANE_AGENT: agent,
       HIVE_B25_PRODUCTION_PANE_RESULT: paneResultPath,
+      HIVE_B25_PRODUCTION_PANE_SCREENSHOT: paneScreenshotPath,
     },
     stdin: "ignore",
     stdout: Bun.file(workspaceStdoutPath),

@@ -279,6 +279,23 @@ final class SmokeRunner {
                               deadline: Date().addingTimeInterval(45))
     }
 
+    private func captureProductionWindow(_ window: NSWindow, to path: String) -> Bool {
+        guard let contentView = window.contentView else { return false }
+        contentView.layoutSubtreeIfNeeded()
+        guard let representation = contentView.bitmapImageRepForCachingDisplay(
+            in: contentView.bounds) else { return false }
+        contentView.cacheDisplay(in: contentView.bounds, to: representation)
+        guard let png = representation.representation(using: .png, properties: [:]) else {
+            return false
+        }
+        do {
+            try png.write(to: URL(fileURLWithPath: path), options: .atomic)
+            return true
+        } catch {
+            return false
+        }
+    }
+
     /// The production pane depends on feed callbacks dispatched to the main
     /// queue. A synchronous polling loop here starves those callbacks and makes
     /// the proof itself prevent the pane it is waiting for from being admitted.
@@ -355,13 +372,22 @@ final class SmokeRunner {
               "the real Workspace window is visible for evidence capture")
         check(!controller.terminalChildRunning(pane: paneID),
               "the renderer owns no hidden SwiftTerm child PTY")
+        let screenshotPath = ProcessInfo.processInfo.environment[
+            "HIVE_B25_PRODUCTION_PANE_SCREENSHOT"]
+        check(screenshotPath != nil,
+              "the production-pane qualification supplied a screenshot path")
+        if let screenshotPath {
+            check(captureProductionWindow(window, to: screenshotPath),
+                  "the real Workspace wrote its own window PNG")
+        }
 
         productionPaneSummary =
             "PRODUCTION PANE PROOF: agent=\(agent) instance=\(locator.instanceId) "
                 + "session=\(locator.sessionId) "
                 + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
                 + "highWater=\(terminal.highWater) frame=\(terminal.frame) "
-                + "window=\(window.windowNumber) visible=\(window.isVisible)"
+                + "window=\(window.windowNumber) visible=\(window.isVisible) "
+                + "screenshot=\(screenshotPath ?? "missing")"
         finishProductionPaneProof()
     }
 
