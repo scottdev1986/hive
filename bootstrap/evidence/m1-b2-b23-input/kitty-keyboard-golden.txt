@@ -1,27 +1,27 @@
 [1/1] Compiling plugin GenerateManual
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
-[2/14] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.23s)
-Test Suite 'Selected tests' started at 2026-07-19 20:59:52.249.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:59:52.250.
-Test Suite 'KittyKeyboardGoldenTests' started at 2026-07-19 20:59:52.250.
+[2/16] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.10s)
+Test Suite 'Selected tests' started at 2026-07-19 21:16:22.533.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:16:22.533.
+Test Suite 'KittyKeyboardGoldenTests' started at 2026-07-19 21:16:22.533.
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint]' started.
-Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint]' passed (0.083 seconds).
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyAlternateKeyGoldenCarriesExactUnshiftedCodepoint]' passed (0.078 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' started.
-Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' passed (0.014 seconds).
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyDisambiguateShiftEnterMatchesGhosttysOwnFixture]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyPhysicalLeftAndRightShiftProduceDistinctPinnedCodes]' started.
-Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyPhysicalLeftAndRightShiftProduceDistinctPinnedCodes]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyPhysicalLeftAndRightShiftProduceDistinctPinnedCodes]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyShiftEnterPressRepeatReleaseMatchesPinnedGhosttyBytes]' started.
-Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyShiftEnterPressRepeatReleaseMatchesPinnedGhosttyBytes]' passed (0.013 seconds).
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testKittyShiftEnterPressRepeatReleaseMatchesPinnedGhosttyBytes]' passed (0.012 seconds).
 Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' started.
-Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' passed (0.014 seconds).
-Test Suite 'KittyKeyboardGoldenTests' passed at 2026-07-19 20:59:52.387.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 0.137 (0.138) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:59:52.388.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 0.137 (0.138) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 20:59:52.388.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 0.137 (0.139) seconds
+Test Case '-[HiveTerminalKitTests.KittyKeyboardGoldenTests testLegacyShiftEnterEmitsPinnedTableSequenceExactlyOnce]' passed (0.011 seconds).
+Test Suite 'KittyKeyboardGoldenTests' passed at 2026-07-19 21:16:22.658.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.125 (0.125) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:16:22.659.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.125 (0.125) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:16:22.659.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.125 (0.126) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
