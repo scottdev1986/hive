@@ -357,11 +357,26 @@ test-e2e:
 # ppid UPWARD from a candidate, so it can recognise self and descendants but an
 # ancestor can never reach self and would otherwise stay eligible.
 #
-# THE ASYMMETRY THAT LICENSES ALL OF THIS: an exclusion that is wrong fails
-# SAFE — the survivor readback finds the process alive and REFUSES the delete,
-# which is visible and recoverable. An inclusion that is wrong fails DANGEROUS:
-# it kills something. So sparing on weak evidence is correct and killing on weak
-# evidence is not, and that is why argv-naming is demoted rather than trusted.
+# WHY SPARING IS PREFERRED, STATED HONESTLY. An earlier version of this comment
+# claimed a wrong exclusion "fails safe" because the survivor readback would
+# find the process alive and refuse the delete. THAT IS FALSE, and it was
+# disproved by probe rather than argument: the readback calls the same
+# dev_pids, so it applies the same classification. A process wrongly judged a
+# mentioner is invisible to the readback too — it never appears in `alive`,
+# clean exits 0, and .dev is deleted out from under it.
+#
+# So both errors are real harms and the choice between them is a judgement, not
+# a free lunch:
+#   wrong INCLUSION -> a bystander is killed. Immediate, unrecoverable, and it
+#     can reach the user's installed instance or another agent's work.
+#   wrong EXCLUSION -> a genuine dev process is STRANDED against a deleted .dev
+#     and keeps running. Recoverable (it can be killed by hand) but silent
+#     unless something says so.
+# We prefer stranding to killing, because the blast radius of a wrong kill is
+# unbounded while a stranded process is inert and fixable. The `found
+# mentioners, not killing:` line is what keeps the stranding from being silent,
+# and it is therefore load-bearing, not decoration — it is the ONLY signal that
+# a spared process may have needed reaping.
 clean:
 	@set -e; \
 	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P); else dev="$(DEV)"; fi; \
@@ -386,12 +401,24 @@ clean:
 	    [ -n "$$q" ] || return 0; [ "$$q" = "1" ] && return 1; \
 	    k=$$((k + 1)); \
 	  done; return 1; }; \
-	ancestors=" "; a=$$self; k=0; \
-	while [ $$k -lt 12 ]; do \
+	: "the WHOLE chain, terminating on pid 1 / pid 0 / an unresolvable parent —\
+	   not an arbitrary depth. A cap that is silently exceeded leaves real\
+	   ancestors eligible to be killed, which is the defect this exclusion\
+	   exists to prevent. The 4096 bound is a cycle backstop, not a depth\
+	   policy: no process tree reaches it, so hitting it means the walk is not\
+	   terminating and the honest response is to REFUSE rather than proceed\
+	   with an ancestor set known to be incomplete"; \
+	ancestors=" "; a=$$self; k=0; complete=no; \
+	while [ $$k -lt 4096 ]; do \
 	  a=$$(ps -p "$$a" -o ppid= 2>/dev/null | tr -d ' '); \
-	  [ -n "$$a" ] || break; [ "$$a" = "0" ] && break; \
-	  ancestors="$$ancestors$$a "; [ "$$a" = "1" ] && break; k=$$((k + 1)); \
+	  [ -n "$$a" ] || { complete=yes; break; }; \
+	  [ "$$a" = "0" ] && { complete=yes; break; }; \
+	  ancestors="$$ancestors$$a "; \
+	  [ "$$a" = "1" ] && { complete=yes; break; }; \
+	  k=$$((k + 1)); \
 	done; \
+	[ "$$complete" = yes ] || { \
+	  echo "refusing: could not walk the full ancestor chain; some ancestor would be kill-eligible" >&2; exit 1; }; \
 	excluded() { case "$$ancestors" in *" $$1 "*) return 0;; esac; is_mine "$$1"; }; \
 	tmuxpids=" $$( { tmux -L "hive-$$suffix" display -p '$(HASH){pid}' 2>/dev/null; \
 	    tmux -L "hive-$$suffix" list-clients -F '$(HASH){client_pid}' 2>/dev/null; \
@@ -401,22 +428,40 @@ clean:
 	   never matches what lsof prints and every cwd-bound orphan was misread as\
 	   a mere mentioner. Resolve the deepest ancestor that still exists and\
 	   re-attach the deleted remainder, then match on either spelling"; \
+	: "three spellings can all name the same directory and each shows up in a\
+	   different place: devl is exactly what the caller typed and is what argv\
+	   carries; dev is that after pwd -P when it exists; devp resolves the\
+	   deepest surviving ancestor so a DELETED dir still compares against the\
+	   physical path lsof prints. Match all three everywhere or a process is\
+	   missed by whichever spelling the check happens not to hold"; \
+	devl="$(DEV)"; \
 	devp="$$dev"; d="$$dev"; rest=""; \
 	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
 	  rest="/$$(basename "$$d")$$rest"; d=$$(dirname "$$d"); \
 	done; \
 	[ -d "$$d" ] && devp="$$(cd "$$d" && pwd -P)$$rest"; \
+	: "EVERY descriptor, not just cwd. An earlier version passed -d cwd here,\
+	   which silently narrowed this to the working directory while the comment\
+	   above promised 'cwd or an open file' — measured: a process holding a\
+	   dev file on fd 3 was classified a mentioner, spared, and then had .dev\
+	   deleted out from under it. A held fd is binding evidence exactly as a\
+	   cwd is, and lsof keeps reporting both after the file is unlinked"; \
 	is_bound() { \
-	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in "$$dev"/*|"$$devp"/*) return 0;; esac; \
-	  lsof -a -p "$$1" -d cwd -Fn 2>/dev/null \
-	    | grep -q -e "^n$$dev" -e "^n$$devp" && return 0; \
+	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in "$$dev"/*|"$$devp"/*|"$$devl"/*) return 0;; esac; \
+	  lsof -n -P -a -p "$$1" -Fn 2>/dev/null \
+	    | grep -q -e "^n$$dev" -e "^n$$devp" -e "^n$$devl" && return 0; \
 	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
 	  return 1; }; \
+	: "BOTH spellings here too, not just in is_bound. argv carries whatever the\
+	   caller typed — usually the unresolved /tmp/... — while dev has been\
+	   through pwd -P into /private/tmp/... Matching only the resolved form\
+	   meant a process naming the symlinked path was never even NOMINATED, so\
+	   is_bound never ran and no amount of binding evidence could save it"; \
 	candidates() { \
 	  { ps -axo pid=,comm= | while read -r p c; do \
-	      case "$$c" in "$$dev"/*) echo "$$p";; esac; done; \
+	      case "$$c" in "$$dev"/*|"$$devp"/*|"$$devl"/*) echo "$$p";; esac; done; \
 	    ps -axo pid=,command= | while read -r p rest; do \
-	      case "$$rest" in *"$$dev"/*) echo "$$p";; esac; done; \
+	      case "$$rest" in *"$$dev"/*|*"$$devp"/*|*"$$devl"/*) echo "$$p";; esac; done; \
 	    ps -axo pid=,command= | while read -r p rest; do \
 	      case "$$rest" in *"hive-$$suffix"*) echo "$$p";; esac; done; \
 	    printf '%s\n' $$tmuxpids; \
