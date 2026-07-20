@@ -194,6 +194,63 @@ final class AttachInputTests: XCTestCase {
         XCTAssertNil(object["geometry"])
     }
 
+    func testResizeReceiptsAreCorrelatedAndObservable() throws {
+        let host = FakeHost(connectionId: "input-resize-receipts")
+        let engine = FakeManualSurface()
+        let view = try attachView(host: host, engine: engine)
+        let binding = try XCTUnwrap(view.binding)
+        let receipts: [(expected: String, object: [String: Any])] = [
+            (
+                "applied 80x24",
+                [
+                    "schemaVersion": 1,
+                    "resultKind": "resize",
+                    "result": [
+                        "state": "applied",
+                        "readback": ["columns": 80, "rows": 24],
+                    ],
+                ]
+            ),
+            (
+                "stale currentRevision=7",
+                [
+                    "schemaVersion": 1,
+                    "resultKind": "resize",
+                    "result": ["state": "stale", "currentRevision": "7"],
+                ]
+            ),
+            (
+                "unknown host lost resize",
+                [
+                    "schemaVersion": 1,
+                    "resultKind": "resize",
+                    "result": ["state": "unknown", "diagnostic": "host lost resize"],
+                ]
+            ),
+            (
+                "malformed ",
+                ["schemaVersion": 1, "resultKind": "input"]
+            ),
+        ]
+
+        for receipt in receipts {
+            try view.attachClient?.sendResize(geometry)
+            try host.harvestViewerFrames()
+            let resize = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .resize })
+            let payload = try FrameCodec.jsonPayload(receipt.object)
+            view.pumpHostFrame(
+                WireFrame(
+                    type: .applied,
+                    flags: [.response, .final],
+                    requestId: resize.requestId,
+                    payload: payload
+                ),
+                frameBinding: binding
+            )
+            XCTAssertEqual(view.attachClient?.lastResizeResult, receipt.expected)
+        }
+    }
+
     private func attachView(
         host: FakeHost,
         engine: FakeManualSurface,

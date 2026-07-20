@@ -53,6 +53,11 @@ public final class AttachReplayClient {
     private var inputFenced = false
     private var inputSequence: UInt64 = 0
     private var resizeRevision: UInt64 = 0
+    private var pendingResizeRequests: [UInt64: TerminalGeometry] = [:]
+    /// Last host answer to a RESIZE, e.g. "applied 61x39" or
+    /// "stale currentRevision=2" — the host refuses resizes silently on the
+    /// wire, so the outcome must be observable here.
+    public private(set) var lastResizeResult: String?
 
     /// Handshake receive timeout (§09): fail closed rather than HOST_ATTACH blind.
     public var handshakeTimeout: TimeInterval = 5.0
@@ -270,6 +275,7 @@ public final class AttachReplayClient {
             "revision": String(resizeRevision),
             "idempotencyKey": "resize-\(viewerId)-\(binding.generation)-\(resizeRevision)",
         ]
+        pendingResizeRequests[nextRequestId] = geometry
         try sendJSON(.resize, object: object, requestId: nextRequestId)
         nextRequestId += 1
     }
@@ -451,6 +457,32 @@ public final class AttachReplayClient {
             return .continueReplay
 
         case .applied:
+            if let requestedGeometry = pendingResizeRequests[frame.requestId] {
+                pendingResizeRequests.removeValue(forKey: frame.requestId)
+                let object = try FrameCodec.parseJSONObject(frame.payload)
+                let result = (object["resultKind"] as? String == "resize")
+                    ? object["result"] as? [String: Any]
+                    : nil
+                let state = result?["state"] as? String ?? "malformed"
+                switch state {
+                case "applied":
+                    let readback = result?["readback"] as? [String: Any]
+                    lastResizeResult = "applied \(readback?["columns"] ?? "?")x\(readback?["rows"] ?? "?")"
+                case "stale":
+                    lastResizeResult =
+                        "stale currentRevision=\(result?["currentRevision"] as? String ?? "?")"
+                default:
+                    lastResizeResult =
+                        "\(state) \(result?["diagnostic"] as? String ?? "")"
+                }
+                NSLog(
+                    "hive-terminal RESIZE %dx%d result: %@",
+                    requestedGeometry.columns,
+                    requestedGeometry.rows,
+                    lastResizeResult ?? "nil"
+                )
+                return .continueReplay
+            }
             guard let pending = pendingInputRequests[frame.requestId],
                   pending.binding == binding else { return .continueReplay }
             let object = try FrameCodec.parseJSONObject(frame.payload)
