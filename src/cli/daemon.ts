@@ -14,6 +14,7 @@ import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import {
   acquireDaemonLock,
+  cleanupLifecycleFiles,
   macProcessIdentity,
   readConfiguredPort,
   releaseDaemonLock,
@@ -279,13 +280,47 @@ export async function runDaemon(): Promise<void> {
   });
   daemon.start();
   // Daemon must be on a port (and daemon.port written) before HELLO can auth.
+  // That write must not become advertise-then-fail: any broker start failure
+  // tears the daemon down and removes lifecycle files before a non-zero exit.
   for (let i = 0; i < 100 && daemon.listeningPort === null; i += 1) {
     await Bun.sleep(20);
   }
   if (daemon.listeningPort === null) {
+    try {
+      await daemon.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      cleanupLifecycleFiles();
+    } catch {
+      // ignore
+    }
     throw new Error("daemon failed to bind a listening port before sessiond broker start");
   }
-  await sessiondBroker.start();
+  try {
+    await sessiondBroker.start();
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    console.error(`sessiond broker failed to start: ${message}`);
+    try {
+      await sessiondBroker.stop();
+    } catch {
+      // ignore
+    }
+    try {
+      await daemon.stop();
+    } catch {
+      // stop may refuse on unrelated teardown; still drop lifecycle below
+    }
+    try {
+      cleanupLifecycleFiles();
+    } catch {
+      // stop() with manageLifecycle already cleaned; belt-and-braces
+    }
+    // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
+    process.exit(1);
+  }
 
   let stopping = false;
   const stop = async (): Promise<void> => {
