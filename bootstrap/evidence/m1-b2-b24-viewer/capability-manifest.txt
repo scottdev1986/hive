@@ -9,6 +9,8 @@ vttest_version=2.7 (20251205)
 vttest_archive_sha256=cd6886f9aefe6a3f6c566fa61271a55710901a71849c630bf5376aa984bf77cc
 canonical_vttest_pin_record=raw/qualification/ghostty-b1-gate2-replies/vttest-version.txt
 terminal_declaration=xterm-ghostty
+upstream_reverified_at=2026-07-19T21:40:00-04:00
+upstream_reverified_source=https://invisible-island.net/archives/vttest/
 
 APPLICABLE VT/VIEWER GROUPS
 vt100=cursor movement; screen features; wrapping; insert/delete; character sets; double-width/height; keyboard; reports; reset
@@ -41,6 +43,9 @@ sixels=NOT_APPLICABLE_TO_B2.4 (outside the frozen viewer corpus)
 
 OWNERSHIP / EVIDENCE ROUTING
 mouse_exact_bytes=B2.3 mouse-mode matrix owned by harvey; B2.4 consumes its landed transcript
+mouse_exact_bytes_evidence=bootstrap/evidence/m1-b2-b23-input/mouse-format-matrix.txt
+mouse_exact_bytes_source_pin=0777b185 (global-1005-drop hardening)
+mouse_exact_bytes_recording_pin=61817ae9 (rebased transcript)
 viewer_behavior=B24ViewerSemanticsTests
 renderer_gpu_occlusion_sleep=landed Gate7RenderingTests plus the B2.4 live sustained-output run
-vttest_visual=record only after the OPOST/ONLCR PTY fix lands; no pre-fix renderer-boundary fixture is admissible
+vttest_visual=post-OPOST/ONLCR live recording path enabled; final recording pending draw-path #47 proof
