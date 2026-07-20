@@ -191,18 +191,28 @@ destroyed uncommitted work:
 
 ### Suites
 
-`swift test` executes 508 tests with 14 skipped and 9 failures. Those 9 are
-proven pre-existing rather than assumed: the same filters were run against
-unmodified `main` in a separate worktree, and the failing-test **sets** are
-identical. All nine are real-production-surface tests failing with
-`hive_ghostty_surface_new_manual_v1 failed`, the locked-GUI-session signature.
-They are environment-blocked, not regressions.
+Recorded after rebasing onto `ea8bbdfd`.
+
+`swift test` executes 512 tests with 14 skipped and 9 failures. Those 9 are
+proven pre-existing rather than assumed: the full suite was run against
+unmodified `main` in a separate worktree at the same commit, and the
+failing-test **sets** are identical. All nine are real-production-surface tests
+failing with `hive_ghostty_surface_new_manual_v1 failed`, the
+locked-GUI-session signature. They are environment-blocked, not regressions.
 
 Manual-surface creation and IOSurface reads *do* work in this environment — the
 C1.0 transport suite passes 3/3 including its rendered leg — so the config and
 rendered-pixel proofs above are real measurements, not deferred ones.
 
-`bun run typecheck` exits 0.
+`bun test` reports 1,744 passed, 0 failed across 137 files, exit 0.
+`bun run typecheck` exits 0. `swift build` completes clean.
+
+`bun run test` also chains `native/sessiond/test.sh`, whose real-host golden leg
+fails here (`AttachLocatorMismatch`, then `InvalidRealInspection`). It is not
+attributable to this increment: this branch changes **zero** files under
+`native/`, `src/`, `scripts/`, `package.json`, or `Makefile`, so that test
+consumes a tree byte-identical to `main`'s. It is reported upward rather than
+investigated here, and the native suite was not run deliberately (issue #54).
 
 ## Environment-deferred legs
 
