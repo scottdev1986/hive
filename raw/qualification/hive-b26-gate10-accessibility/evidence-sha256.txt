@@ -3,7 +3,7 @@ bb6145fbd3b7c389262c608149925d441d31ed51d0bfc6005854a165eceaad51  ./ax-tree-alte
 bb6145fbd3b7c389262c608149925d441d31ed51d0bfc6005854a165eceaad51  ./ax-tree-input.txt
 9d6d2f757ada7dd7f222e427c436e9bad2490fbb759cc3929c04cb24c4a90130  ./ax-tree-replay.txt
 594610ffe8d99b4b62a865feae000d246564ebcf06f7d7b4366ae063fe43d896  ./ax-tree-resize.txt
-9d6d2f757ada7dd7f222e427c436e9bad2490fbb759cc3929c04cb24c4a90130  ./ax-tree-scroll.txt
+a2f42b729c58a83627cbc601ac270656fd2e4c2fec59822a72e755554f838803  ./ax-tree-scroll.txt
 f27c446ce0a4c37333d204aef07d58fd7b899cb3c4ef1c26a54df9f13144d3e4  ./ax-tree-teardown.txt
 d861c644137cfe141fb1356357e12c1d4b0a145a559a82138112feb57bac548b  ./fixtures/torn-ax-tree-alternate-screen-exit.txt
 ca4c864565cca12b9410004bea4018f2da6d23dddac6cfa3dfe817b2ee1154b8  ./human-checklist.txt
@@ -11,6 +11,6 @@ b9e6260a576d55dcaece07138915891b73cc372eb0c354d342baca2df1f44349  ./human-inspec
 882e9e285bde55cb169c33857ec9c9ce69105cfc59dde1ee53a8926bcaeafc05  ./human-voiceover-transcript.txt
 4a28563597da2f9173190502ef12802d24b441639a740d1009eea54050e92c41  ./inspector-audit-machine.txt
 6d8d3ebce694e3767813226eb3f9fb6f36bc5dc8d055f220f377c558a5850050  ./machine-xctest-transcript.txt
-c23165c58feada6ecba61fa11ff55f411fb23fc8e9089ced81164bd3f4f7f1cd  ./notification-positive-controls.txt
+fe29d80de3d339b792e813bac8002042688b252ad66f5632c1d8bb25fc79f5fe  ./notification-positive-controls.txt
 70313b304be5968dd7e4a1e8a8e75f64907556fd43f78d7825f72e45f21d6c3b  ./port-claim.txt
-00de8b8a24758aa7ec1d0e9cf91c46e2e543d1e19b88ae0809233980ef5b903e  ./provenance.txt
+981424359bce7db2ce4dac44d4cd2f4c7b7bd7f99943f79166508ea53635bd8b  ./provenance.txt

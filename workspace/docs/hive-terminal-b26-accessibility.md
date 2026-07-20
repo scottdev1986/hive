@@ -30,7 +30,8 @@ Directory: `raw/qualification/hive-b26-gate10-accessibility/`
 
 | Artifact | Status |
 |---|---|
-| `ax-tree-{input,alternate-screen,alternate-screen-exit,resize,replay,scroll}.txt` | RECORDED — pre-`.live` / xctest host / no present (see Honest limits) |
+| `ax-tree-{input,alternate-screen,alternate-screen-exit,resize,replay}.txt` | RECORDED — pre-`.live` / xctest host / no present (see Honest limits) |
+| `ax-tree-scroll.txt` | RECORDED — **no-op on this buffer** (byte-identical to replay; `scroll_page_up` produced zero AX change; annotated in-file) |
 | `ax-tree-teardown.txt` | RECORDED — post-`userClose` |
 | `inspector-audit-machine.txt` | RECORDED (consistency cross-check; torn fixture positive control) |
 | `fixtures/torn-ax-tree-alternate-screen-exit.txt` | RECORDED historical tear (audit must RED) |
@@ -47,7 +48,7 @@ Runner: `scripts/qualify-hive-b26-accessibility.sh`
 ## Honest limits
 
 - A clean automated audit / property suite is not DoD-3a alone. Human VoiceOver listening and Inspector GUI audit remain explicit slots (Gate 7 pattern).
-- **Real `NSAccessibility.post` coverage is human-only.** The call site is `HiveTerminalView+Accessibility.swift:357-359` (`TerminalAccessibilityController.post` → `NSAccessibility.post(...)`). Machine tests (`Gate10AccessibilityTests`) observe only the in-process `notificationProbe` installed beside that call. **No machine test covers the real AppKit post.** A green Gate-10 suite is not permission to delete or skip `NSAccessibility.post`; only the PENDING_HUMAN Inspector/VoiceOver slots cover it.
+- **Real `NSAccessibility.post` coverage is human-only.** The call site is the symbol `TerminalAccessibilityController.post` in `HiveTerminalView+Accessibility.swift` (invokes `NSAccessibility.post`); cite the symbol, not a line range — line numbers move under edits. Machine tests (`Gate10AccessibilityTests`) observe only the in-process `notificationProbe` installed beside that call. **No machine test covers the real AppKit post.** A green Gate-10 suite is not permission to delete or skip `NSAccessibility.post`; only the PENDING_HUMAN Inspector/VoiceOver slots cover it.
 - **AX tree dumps are pre-`.live` semantic property dumps**, not live-surface or system-AX captures. The six non-teardown dumps were recorded with `lifecycle=Terminal starting` on an xctest-hosted view whose renderer never presents (same semantics-vs-pixels split as #47). Content strings come from one pinned semantic generation (`geometryRows == childCount`); pixels and system AX hierarchy are not claimed.
 - **Consistency audit is non-vacuous.** `scripts/audit-hive-b26-ax-dumps.py` cross-checks flat props vs children and must RED on `fixtures/torn-ax-tree-alternate-screen-exit.txt` (historical tear: noc=45, childCount=16, last_end=29).
 - Full product DoD still wants live pane VO with sessiond-attached vendor TUIs once human slots fill.
