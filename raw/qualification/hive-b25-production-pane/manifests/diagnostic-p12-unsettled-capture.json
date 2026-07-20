@@ -1,0 +1,62 @@
+{
+  "cell": "diagnostic-p12-unsettled-capture",
+  "ok": false,
+  "head": "8b5a75a482207d2297b8c9fb44e08e7576b28e8d",
+  "home": "/tmp/hb25-p12",
+  "port": 43153,
+  "project": "/tmp/hb25-project-f76735",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "workspacePid": 72279,
+  "workspaceInstanceId": "d4b5c1df3b",
+  "displayPreflight": {
+    "initialActiveDisplays": 0,
+    "activeDisplays": 1,
+    "wokeDisplay": true
+  },
+  "paneReport": {
+    "ok": true,
+    "sessionId": "ses_019f7e0b-c36c-748e-9c2b-4e6f60a11070",
+    "generation": 1,
+    "hostKind": "sessiond",
+    "engineBuildId": "0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300",
+    "highWater": 79,
+    "frame": "(0.0, 0.0, 514.0, 743.0)",
+    "windowNumber": 13091,
+    "visible": true
+  },
+  "preKillJournalSnapshot": {
+    "path": "raw/qualification/hive-b25-production-pane/transcripts/claude-ses_019f7e0b-c36c-748e-9c2b-4e6f60a11070.journal.bin",
+    "bytes": 95,
+    "sha256": "c13d8d3a9f96140071f06eec7607c46afd7da93ea9b136ed800f6152d37b3664",
+    "sequencePrefixHex": "0000000000000000000000000000004f",
+    "semanticAssessment": "initialization only; not vendor-glyph evidence"
+  },
+  "workspaceWindowPng": {
+    "path": "raw/qualification/hive-b25-production-pane/screenshots/claude-ses_019f7e0b-c36c-748e-9c2b-4e6f60a11070-workspace.png",
+    "bytes": 102771,
+    "sha256": "d8dc6609b418ba3d403ca9f077d6522f021588ede877c1ac4c7951aed146b9dc",
+    "dimensions": "2560x1600",
+    "semanticAssessment": "real Workspace positive control; blank panes and spawning headers"
+  },
+  "executionSideEffect": {
+    "observedInDurableDatabase": true,
+    "messageId": "024b5617-3323-4a5c-b73c-43bf4dbf0781",
+    "from": "aria",
+    "to": "queen",
+    "state": "injected",
+    "createdAt": "2026-07-20T05:42:24.896Z",
+    "deliveredAt": "2026-07-20T05:42:25.454Z",
+    "bodyMatchedExactNonce": true,
+    "harnessDetection": false
+  },
+  "liveJournalBytesObservedBeforeCleanup": 30222,
+  "failure": "capture was semantically unsettled and queen push-delivery made hive_inbox the wrong side-effect detector",
+  "exactHiveKillCompleted": true,
+  "processAudit": "agent dead; exact root session and all captured processes absent",
+  "exactRootSession": "hive-orchestrator-d4b5c1df3b",
+  "capturedRootProcessCount": 3,
+  "startedAt": "2026-07-20T05:41:58.391Z",
+  "writtenAt": "2026-07-20T05:44:21.372Z"
+}

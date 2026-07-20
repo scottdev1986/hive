@@ -8,7 +8,7 @@
  *   1. the Workspace reports a first-correct HiveTerminalView frame on the
  *      exact sessiond locator, with no hidden SwiftTerm child PTY; and
  *   2. the real vendor agent executes its one-step task by sending a nonce to
- *      the isolated daemon's queen inbox.
+ *      a fresh durable proof-sink inbox in the isolated daemon.
  *
  * Env:
  *   HIVE_B25_HOME       short fresh home (default /tmp/hb25-pane-<random>)
@@ -85,6 +85,7 @@ const caffeinateStdoutPath = join(home, "caffeinate.stdout.log");
 const caffeinateStderrPath = join(home, "caffeinate.stderr.log");
 const startedAt = new Date().toISOString();
 const marker = `B25_PRODUCTION_PANE_EXECUTED_${crypto.randomUUID()}`;
+const sideEffectRecipient = `b25-proof-${suffix}`;
 const lines: string[] = [];
 let observed: AgentStatus | null = null;
 let sideEffectMessageId: string | null = null;
@@ -253,6 +254,7 @@ function flush(): void {
     agent,
     observed,
     sideEffectMessageId,
+    sideEffectRecipient,
     paneReport,
     capture,
     displayPreflight,
@@ -538,7 +540,8 @@ async function main(): Promise<void> {
 
   const task = [
     "Production-pane qualification; do not edit any file.",
-    `Immediately call hive_send with from=${JSON.stringify(agent)}, to=\"queen\",`,
+    `Immediately call hive_send with from=${JSON.stringify(agent)}, ` +
+      `to=${JSON.stringify(sideEffectRecipient)},`,
     `priority=\"normal\", and body=${JSON.stringify(marker)}.`,
     "After the tool reports the message state, wait for further instructions.",
   ].join(" ");
@@ -574,7 +577,7 @@ async function main(): Promise<void> {
   while (Date.now() < markerDeadline) {
     const result = await client.callTool({
       name: "hive_inbox",
-      arguments: { agent: "queen" },
+      arguments: { agent: sideEffectRecipient },
     });
     const batch = toolValue(result, "messages") as Array<{ id?: string; body?: string }>;
     messages = messages.concat(batch);

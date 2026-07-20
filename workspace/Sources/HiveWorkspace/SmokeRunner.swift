@@ -23,6 +23,8 @@ import WorkspaceCore
 ///                           afterwards (detaching a client never kills agents)
 final class SmokeRunner {
 
+    private static let productionPaneMinimumHighWater: UInt64 = 1_024
+
     static func sessiondLiveResizeInputAgent(environment: [String: String]) -> String {
         environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"
     }
@@ -329,7 +331,7 @@ final class SmokeRunner {
         waitForProductionSurface(
             agent: agent, paneID: paneID, locator: locator,
             expectedLocator: expectedLocator, terminal: terminal, window: window,
-            deadline: Date().addingTimeInterval(30))
+            deadline: Date().addingTimeInterval(60))
     }
 
     private func waitForProductionSurface(
@@ -337,7 +339,15 @@ final class SmokeRunner {
         expectedLocator: SessionLocator, terminal: HiveTerminalView,
         window: NSWindow, deadline: Date
     ) {
-        guard terminal.surfaceState == .live && terminal.sessionLocator == expectedLocator else {
+        let renderEvidence = terminal.renderEvidence
+        let feedStatus = controller.state.panes[paneID]?.feedStatus
+        guard terminal.surfaceState == .live,
+              terminal.sessionLocator == expectedLocator,
+              terminal.highWater >= Self.productionPaneMinimumHighWater,
+              renderEvidence.drawCount > 0,
+              renderEvidence.hasPresentedContents,
+              feedStatus != nil,
+              feedStatus != "spawning" else {
             guard Date() < deadline else {
                 check(false, "HiveTerminalView reached its first correct frame on the exact locator")
                 finishProductionPaneChecks(
@@ -364,6 +374,14 @@ final class SmokeRunner {
     ) {
         check(terminal.highWater > 0,
               "the production vendor TUI presented non-empty ordered output")
+        check(terminal.highWater >= Self.productionPaneMinimumHighWater,
+              "the production vendor TUI settled on substantive ordered output")
+        check(terminal.renderEvidence.drawCount > 0
+                && terminal.renderEvidence.hasPresentedContents,
+              "the production renderer presented nonblank layer content")
+        let feedStatus = controller.state.panes[paneID]?.feedStatus
+        check(feedStatus != nil && feedStatus != "spawning",
+              "the production pane header settled beyond spawning")
         check(terminal.window === controller.window && terminal.superview != nil,
               "HiveTerminalView is installed in the real Workspace window")
         check(terminal.bounds.width > 0 && terminal.bounds.height > 0,
@@ -386,6 +404,9 @@ final class SmokeRunner {
                 + "session=\(locator.sessionId) "
                 + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
                 + "highWater=\(terminal.highWater) frame=\(terminal.frame) "
+                + "drawCount=\(terminal.renderEvidence.drawCount) "
+                + "presented=\(terminal.renderEvidence.hasPresentedContents) "
+                + "feedStatus=\(feedStatus ?? "missing") "
                 + "window=\(window.windowNumber) visible=\(window.isVisible) "
                 + "screenshot=\(screenshotPath ?? "missing")"
         finishProductionPaneProof()
