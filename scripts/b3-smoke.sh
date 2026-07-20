@@ -109,6 +109,10 @@ if [ -f "$RECORD" ]; then
     # The two checks below DO bite, both confirmed by that same mutation.
     # Liveness is read from the process itself, not from a status file.
     hpid=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["processRoot"]["pid"])' "$RECORD" 2>/dev/null)
+    HOSTPID=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["hostPid"])' "$RECORD" 2>/dev/null)
+    # Captured while still live: after teardown the record may be gone, and a
+    # pid read from a post-mortem file cannot be checked against the world.
+    RECORDED_PIDS="$hpid $HOSTPID"
     if kill -0 "$hpid" 2>/dev/null; then
         pass "session child pid $hpid still alive after detach"
     else
@@ -142,12 +146,31 @@ for _ in $(seq 1 20); do
     [ -f "$HOST_DIR/final.json" ] && break
     sleep 1
 done
+# PRIMARY: verify the recorded PIDs are gone by asking the OS, not by reading
+# sessiond's own account of itself. final.json's survivors/waitObserved are an
+# attestation written by the thing being torn down; they are not vacuous (that
+# file is written at the moment it describes, unlike record.json's create-time
+# "state"), but an attestation is weaker than a measurement. The measurement is
+# authoritative here and the attestation corroborates it.
+leaked=""
+for p in $RECORDED_PIDS; do
+    [ -n "$p" ] || continue
+    if kill -0 "$p" 2>/dev/null; then leaked="$leaked $p"; fi
+done
+if [ -z "$leaked" ]; then
+    pass "recorded pids ($RECORDED_PIDS) are gone — verified directly against the OS"
+else
+    fail "process(es)$leaked survived teardown (checked directly, not self-reported)"
+    ps -o pid,stat,command -p ${leaked// /,} > "$ARTIFACTS/survivors.txt" 2>&1
+fi
+
+# CORROBORATION: sessiond's own record must agree with what we just measured.
 if [ -f "$HOST_DIR/final.json" ]; then
     cp "$HOST_DIR/final.json" "$ARTIFACTS/final.json"
     survivors=$(/usr/bin/python3 -c 'import json,sys;print(len(json.load(open(sys.argv[1]))["survivors"]))' "$HOST_DIR/final.json" 2>/dev/null)
     observed=$(/usr/bin/python3 -c 'import json,sys;print(json.load(open(sys.argv[1]))["waitObserved"])' "$HOST_DIR/final.json" 2>/dev/null)
-    [ "$survivors" = "0" ] && pass "teardown left no survivors" \
-                           || fail "teardown left $survivors survivor process(es)"
+    [ "$survivors" = "0" ] && pass "sessiond agrees: survivors 0 (corroborates the direct check)" \
+                           || fail "sessiond reports $survivors survivor(s)"
     [ "$observed" = "True" ] && pass "child exit was actually observed (waitObserved)" \
                              || fail "waitObserved=$observed — exit was inferred, not observed"
 else

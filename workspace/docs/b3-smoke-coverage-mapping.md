@@ -19,6 +19,35 @@ Makefile target, no `package.json` script, and no workflow. Deleting it
 therefore breaks no build — which is exactly why this table, not a red
 pipeline, is the removal gate's evidence.
 
+## Completeness — derived, not asserted
+
+All 81 legacy checks are classified below. That is a DERIVED claim, not an
+assertion: extract every `SMOKE-<n>` from this document with ranges
+(`SMOKE-22..30`) and comma-lists (`SMOKE-09, 18, 19`) expanded, then diff the
+set against 1..81. Re-derive it with:
+
+```
+/usr/bin/python3 - <<'EOF'
+import re
+txt=open('workspace/docs/b3-smoke-coverage-mapping.md').read()
+ids=set()
+for m in re.finditer(r'SMOKE-(\d+)((?:\s*(?:\.\.|,|and|&)\s*\d+)*)', txt):
+    start=int(m.group(1)); ids.add(start); tail=m.group(2) or ''
+    rng=re.match(r'\s*\.\.\s*(\d+)', tail)
+    if rng:
+        for i in range(start,int(rng.group(1))+1): ids.add(i)
+    for n in re.findall(r'(\d+)', tail): ids.add(int(n))
+print(len(ids), sorted(set(range(1,82))-ids))
+EOF
+```
+
+Expected: `81 []`.
+
+An earlier revision of this document claimed all 81 were classified while
+actually classifying 78 — SMOKE-06, 70 and 72 were missing. That claim was
+asserted rather than derived, and cross-vendor review caught it. Hence the
+runnable derivation above: a count nobody can re-run is a claim, not a fact.
+
 ## Verdict key
 
 | Verdict | Meaning |
@@ -35,7 +64,7 @@ pipeline, is the removal gate's evidence.
 | SMOKE-02 | build succeeds | driver runs `swift test`; a build failure fails the stage |
 | SMOKE-11, 13 | terminal buffer eventually shows the session's real output | STAGE 3 render-ready — `semanticSnapshot().text` contains the marker |
 | SMOKE-38 | typed bytes were interpreted by a real shell, not echoed by the renderer (split marker rejoined) | STAGE 3 — same split-marker technique, ported verbatim: types `B3SM''OKE<n>`, asserts the REJOINED `B3SMOKE<n>` |
-| SMOKE-39, 65 | round-trip marker readable from OUTSIDE the app | STAGE 3 reads the terminal's own semantic grid; the driver additionally keeps `journal.bin` and `record.json` as artifacts |
+| SMOKE-39, 65 (marker half only) | the round-trip marker is observable at all | STAGE 3 — `semanticSnapshot().text` contains the rejoined marker. **Only the marker half is replaced.** The other half of SMOKE-39/65 — reading it back from OUTSIDE the app, after the app is gone — is NOT replaced and is tracked as GAP-4. Do not cite this row for independent readback. |
 | SMOKE-71 | input reached `written-to-terminal` | STAGE 4 input-applied — the same receipt, and the write boundary that makes STAGE 3 attributable |
 | SMOKE-12, 56 | attach client liveness / dies on close | STAGE 4 (driver) — holders of the host socket, path read from `record.json`'s own `socketRelativePath` |
 | SMOKE-61, 62 | **detach never kills** | STAGE 3 (driver) — no `final.json` after detach, and the session child PID is still alive |
@@ -57,6 +86,8 @@ which is already tmux-free.
 | SMOKE-40, 67 | SmokeRunner sessiond mode — window becomes key |
 | SMOKE-41, 45, 48, 50, 52, 59, 69 | SmokeRunner sessiond mode — real first responder |
 | SMOKE-44 | SmokeRunner — real click delivery |
+| SMOKE-70 | SmokeRunner sessiond mode — synthesized NSEvent keyDowns are constructible |
+| SMOKE-72 | SmokeRunner sessiond mode — pre-resize command produced new PTY output (intent separately covered by STAGE 3) |
 | SMOKE-73..81 | SmokeRunner sessiond mode — live resize, RESIZE frames, post-resize input |
 | SMOKE-32, 35 | SmokeRunner — terminal child survives PTY resize |
 
@@ -76,6 +107,7 @@ with no PTY involved.
 | Feed contract | SMOKE-03, 04, 10 |
 | Reducer/view agreement | SMOKE-08, 54, 55 |
 | Daemon kill boundary | SMOKE-53 |
+| Private orchestrator boundary | SMOKE-06 |
 
 ## 4. Substrate artifacts — DROPPED
 
@@ -84,7 +116,6 @@ with no PTY involved.
 | SMOKE-01 | "tmux can start" — the new precondition is "the sessiond stack came up", which the driver checks |
 | SMOKE-15, 16 | tmux copy-mode and `pane_in_mode` introspection; copy-mode is a tmux concept with no sessiond equivalent |
 | SMOKE-17 | launch config supplied a tmux session |
-| SMOKE-05 | tmux attach-retry before a session exists — see GAP-2 |
 
 ## 5. GAPS — coverage with no equivalent yet
 
