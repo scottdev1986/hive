@@ -27,6 +27,10 @@ import {
   type LandedTerminalHost,
 } from "./session-host/sessiond-host";
 import {
+  SessiondViewerAgentInput,
+  type SessiondAgentInput,
+} from "./session-host/sessiond-agent-input";
+import {
   WorkspaceVisibilityAuthority,
   WorkspaceVisibilitySnapshotSchema,
   type WorkspaceVisibilityAdmission,
@@ -529,6 +533,9 @@ export interface HiveDaemonOptions {
   /** Root wake transport override for tests; defaults to the lazy Codex
    * root app-server deliverer, inert when no codex root socket exists. */
   rootProtocol?: RootProtocolDeliverer;
+  /** Daemon→idle-sessiond-agent input override for tests; defaults to the
+   * neutral viewer-attach wire over the landed terminal host (#68/#16). */
+  sessiondInput?: SessiondAgentInput;
   /** Context/activity artifact readers, injectable for tests; default to the
    * real transcript and rollout sensors. `liveModel` reads the model an agent is
    * *running* out of its transcript, and returns null when there is nothing to
@@ -734,11 +741,12 @@ export class HiveDaemon {
     this.tmux = options.tmux instanceof TmuxSessionHost
       ? options.tmux
       : new TmuxSessionHost({ adapter: options.tmux });
+    const landedTerminalHost = options.terminalHost ?? new SessiondHost({
+      repoRoot: options.repoRoot,
+      pendingBindings: this.db,
+    });
     this.terminalHost = new HiveTerminalHostAdapter(
-      options.terminalHost ?? new SessiondHost({
-        repoRoot: options.repoRoot,
-        pendingBindings: this.db,
-      }),
+      landedTerminalHost,
       this.db,
       hiveInstanceSuffix(),
     );
@@ -851,6 +859,12 @@ export class HiveDaemon {
         if (pids.length === 0) return "gone";
         return paneProcessState(parseStateTable(await runPsState()), pids);
       },
+      undefined,
+      // #68/#16 interim: daemon→idle-sessiond-agent input over the neutral
+      // viewer wire. The broker RPCs (issueAttach/inspect) are the landed host;
+      // the viewer wire is the interim addition.
+      options.sessiondInput ??
+        new SessiondViewerAgentInput(landedTerminalHost, `hive-daemon:${hiveInstanceSuffix()}`),
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);

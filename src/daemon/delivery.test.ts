@@ -17,6 +17,8 @@ import {
   type TmuxSender,
 } from "./delivery";
 import { HiveDaemon } from "./server";
+import type { SessiondAgentInput } from "./session-host/sessiond-agent-input";
+import type { InputReceipt } from "./session-host/terminal-host-contract";
 import { actingAs } from "./testing";
 import type { Spawner } from "./spawner";
 
@@ -220,6 +222,101 @@ describe("MessageDelivery", () => {
       // durably queued for the boundary that can actually take it.
       expect(await delivery.flushQueued("maya")).toEqual([]);
       expect(await delivery.wakeIdleRecipients()).toEqual([]);
+      expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  const sessiondRecipient = () => ({
+    ...agent("idle"),
+    sessionLocator: {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    },
+  });
+
+  function acceptingReceipt(messageId: string): InputReceipt {
+    return {
+      transactionId: messageId,
+      stage: "written-to-terminal",
+      byteRange: { start: "0", endExclusive: "16" },
+      orderedAt: "16",
+      availableCreditBytes: 4096,
+      consumedByProcess: "not-claimed",
+      completeness: "complete",
+      diagnostic: null,
+    };
+  }
+
+  test("injects an idle sessiond agent over the viewer wire and marks it injected (#68)", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-inject.db"));
+    const injects: Array<{ name: string; text: string; messageId: string }> = [];
+    const sessiondInput: SessiondAgentInput = {
+      async injectIdle(recipient, text, options) {
+        injects.push({ name: recipient.name, text, messageId: options.messageId });
+        return acceptingReceipt(options.messageId);
+      },
+    };
+    const stubSender: SessionSender = { async sendSessionMessage() {} };
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined, sessiondInput,
+    );
+    try {
+      db.insertAgent(sessiondRecipient());
+      const message = await delivery.send("queen", "maya", "Please review this.");
+      // The documented stuck case (queen→agent, no human poll) now reaches the
+      // idle agent: injected, not fabricated applied, not left queued.
+      expect(message.state).toBe("injected");
+      expect(message.deliveredAt).not.toBeNull();
+      expect(injects).toHaveLength(1);
+      expect(injects[0]?.name).toBe("maya");
+      expect(injects[0]?.text).toContain("Please review this.");
+      expect(injects[0]?.messageId).toBe(message.id);
+      expect(db.getUndeliveredMessages("maya")).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a declined sessiond claim leaves the envelope queued, never applied (#68)", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-declined.db"));
+    // The arbiter denies the automation claim (a human owns input): injectIdle
+    // returns null and the message must stay durably queued.
+    const sessiondInput: SessiondAgentInput = { async injectIdle() { return null; } };
+    const stubSender: SessionSender = { async sendSessionMessage() {} };
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined, sessiondInput,
+    );
+    try {
+      db.insertAgent(sessiondRecipient());
+      const message = await delivery.send("queen", "maya", "Human is typing.");
+      expect(message.state).toBe("queued");
+      expect(message.deliveredAt).toBeNull();
+      expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a failed sessiond inject does not throw and leaves the envelope queued (#68)", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-inject-fail.db"));
+    const sessiondInput: SessiondAgentInput = {
+      async injectIdle() { throw new Error("host.sock refused connection"); },
+    };
+    const stubSender: SessionSender = { async sendSessionMessage() {} };
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined, sessiondInput,
+    );
+    try {
+      db.insertAgent(sessiondRecipient());
+      const message = await delivery.send("queen", "maya", "Best effort.");
+      expect(message.state).toBe("queued");
       expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
     } finally {
       db.close();
