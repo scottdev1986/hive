@@ -37,6 +37,7 @@ import {
   cliPath,
   currentLink,
   installRoot,
+  sessiondPath,
   stagingDir,
   stateFile,
   versionDir,
@@ -178,6 +179,12 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
       `Release ${manifest.version} has no CLI build for darwin-${deps.arch}`,
     );
   }
+  const sessiond = selectArtifact(manifest, "sessiond", deps.arch);
+  if (sessiond === null) {
+    throw new UpdateError(
+      `Release ${manifest.version} has no sessiond build for darwin-${deps.arch}`,
+    );
+  }
   const app = selectArtifact(manifest, "workspace", deps.arch);
 
   const version = manifest.version;
@@ -234,6 +241,13 @@ export async function stageRelease(deps: StageDeps): Promise<StageResult> {
     );
   }
 
+  // Sessiond is a native Mach-O the daemon spawns; stage it next to `hive` so
+  // `dirname(process.execPath)/hive-sessiond` resolves in a native install.
+  const sessiondBytes = await fetchArtifact(sessiond);
+  const stagedSessiond = sessiondPath(staging);
+  await writeFile(stagedSessiond, sessiondBytes);
+  await chmod(stagedSessiond, 0o755);
+
   if (app !== null && deps.unpackApp !== undefined) {
     const appBytes = await fetchArtifact(app);
     const tarball = join(staging, app.name);
@@ -277,6 +291,7 @@ async function proveStaged(
   deps: StageDeps,
   manifest: ReleaseManifest,
   cli: ReleaseArtifact,
+  sessiond: ReleaseArtifact,
   root: string,
   signature: string,
 ): Promise<StageOutcome> {
@@ -301,6 +316,22 @@ async function proveStaged(
   if (!reported.includes(version)) {
     throw new UpdateError(
       `Refusing update: the staged binary reported "${reported.trim()}", expected ${version}`,
+    );
+  }
+
+  const stagedSessiond = sessiondPath(versionDir(version, root));
+  let sessiondBytes: Uint8Array;
+  try {
+    sessiondBytes = new Uint8Array(readFileSync(stagedSessiond));
+  } catch {
+    throw new UpdateError(
+      `Refusing update: staged hive ${version} is missing hive-sessiond at ${stagedSessiond}`,
+    );
+  }
+  if (!artifactMatches(sessiond, sessiondBytes)) {
+    throw new UpdateError(
+      `Refusing update: the staged hive-sessiond for ${version} at ${stagedSessiond} ` +
+        "does not match the SHA-256 in the signed manifest",
     );
   }
 
@@ -346,10 +377,16 @@ export async function ensureStaged(deps: StageDeps): Promise<StageOutcome> {
       `Release ${version} has no CLI build for darwin-${deps.arch}`,
     );
   }
+  const sessiond = selectArtifact(manifest, "sessiond", deps.arch);
+  if (sessiond === null) {
+    throw new UpdateError(
+      `Release ${version} has no sessiond build for darwin-${deps.arch}`,
+    );
+  }
 
   if (isStaged(version, root)) {
     try {
-      return await proveStaged(deps, manifest, cli, root, signature);
+      return await proveStaged(deps, manifest, cli, sessiond, root, signature);
     } catch (error) {
       // The staged copy is not what the signed manifest describes. Discarding
       // and refetching is safe *unless* it is the version currently running:

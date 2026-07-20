@@ -19,6 +19,10 @@ import {
   releaseDaemonLock,
 } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
+import {
+  resolveSessiondBinary,
+  SessiondBrokerSupervisor,
+} from "../daemon/sessiond-broker";
 import { HiveSpawner } from "../daemon/spawner-impl";
 import { StatusStore } from "../daemon/status-store";
 import { agentRecordStatusIncarnationGenerationSource } from "../daemon/status-generation";
@@ -60,11 +64,29 @@ import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
+import { getHiveHome } from "../daemon/db";
 
 export async function runDaemon(): Promise<void> {
+  // Lock first: the broker authenticates the single daemon-lock identity, so
+  // spawn under that identity only after the exclusive lock is held.
   await acquireDaemonLock();
   process.once("exit", () => releaseDaemonLock());
   const repoRoot = process.env.HIVE_PROJECT_ROOT ?? process.cwd();
+  const sessiondBinary = resolveSessiondBinary({ repoRoot });
+  if (sessiondBinary === null) {
+    throw new Error(
+      "hive-sessiond binary not found. Stage a release build (make build) or " +
+        "build the ReleaseFast proof binary (make native), or set HIVE_SESSIOND_BIN.",
+    );
+  }
+  const sessiondBroker = new SessiondBrokerSupervisor({
+    binary: sessiondBinary,
+    hiveHome: getHiveHome(),
+    onFatal: (error) => {
+      console.error(`sessiond broker supervision failed fatally: ${error.message}`);
+    },
+  });
+  await sessiondBroker.start();
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
@@ -231,6 +253,7 @@ export async function runDaemon(): Promise<void> {
     graphify,
     port,
     manageLifecycle: true,
+    sessiondBroker,
     quota,
     modelInventory: () =>
       readModelInventory({ readPolicy: () => routingPolicy.read() }),
@@ -259,7 +282,13 @@ export async function runDaemon(): Promise<void> {
       return;
     }
     stopping = true;
-    await daemon.stop();
+    try {
+      await daemon.stop();
+    } finally {
+      // stop() owns the supervisor when wired; belt-and-braces if construction
+      // failed after start or stop threw before the broker field was torn down.
+      await sessiondBroker.stop();
+    }
     quotaDb.close();
     db.close();
     process.exit(0);

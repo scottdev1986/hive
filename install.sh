@@ -77,6 +77,7 @@ fetch_optional hive-release.json.sig 2>/dev/null ||
 signature="$(tr -d '[:space:]' < "$TMP/hive-release.json.sig")"
 [ -n "$signature" ] || die "release manifest signature is empty"
 fetch "hive-darwin-$ARCH"
+fetch "hive-sessiond-darwin-$ARCH"
 fetch HiveWorkspace.tar.gz
 
 # Every artifact's digest must be the one the manifest names. The manifest is
@@ -90,6 +91,7 @@ verify() {
   [ "$want" = "$got" ] || die "$1 sha256 mismatch (expected $want, got $got)"
 }
 verify "hive-darwin-$ARCH"
+verify "hive-sessiond-darwin-$ARCH"
 verify HiveWorkspace.tar.gz
 
 VERSION_DIR="$ROOT/versions/$RESOLVED"
@@ -97,6 +99,8 @@ mkdir -p "$ROOT/versions" "$BIN_DIR"
 STAGING_DIR="$(mktemp -d "$ROOT/versions/.hive-stage.XXXXXX")"
 mv "$TMP/hive-darwin-$ARCH" "$STAGING_DIR/hive"
 chmod 755 "$STAGING_DIR/hive"
+mv "$TMP/hive-sessiond-darwin-$ARCH" "$STAGING_DIR/hive-sessiond"
+chmod 755 "$STAGING_DIR/hive-sessiond"
 tar -xzf "$TMP/HiveWorkspace.tar.gz" -C "$STAGING_DIR"
 
 # Preserve the exact manifest bytes and normalized signature for a future

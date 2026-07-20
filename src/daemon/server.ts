@@ -140,6 +140,7 @@ import {
   readConfiguredPort,
   writeLifecycleFiles,
 } from "./lifecycle";
+import type { SessiondBrokerSupervisor } from "./sessiond-broker";
 import { expectedDaemonHandshake } from "./handshake";
 import { listInstances } from "./instances";
 import { hiveInstanceSuffix } from "./tmux-sessions";
@@ -512,6 +513,12 @@ export interface HiveDaemonOptions {
   port?: number;
   hostname?: string;
   manageLifecycle?: boolean;
+  /**
+   * Production owner of `hive-sessiond serve`. Started by the daemon entry
+   * before listen; torn down after agent kill so terminate still has a broker.
+   * Embedded tests omit this.
+   */
+  sessiondBroker?: SessiondBrokerSupervisor;
   machineMutations?: Pick<MachineMutationCoordinator, "beginOperation">;
   quota?: QuotaService;
   /** Durable provider-reported token accounting. Injectable so collector and
@@ -604,6 +611,7 @@ export class HiveDaemon {
   private readonly port: number;
   private readonly hostname: string;
   private readonly manageLifecycle: boolean;
+  private readonly sessiondBroker: SessiondBrokerSupervisor | null;
   private readonly machineMutations:
     | Pick<MachineMutationCoordinator, "beginOperation">
     | null;
@@ -711,6 +719,7 @@ export class HiveDaemon {
     this.port = options.port ?? readConfiguredPort();
     this.hostname = options.hostname ?? "127.0.0.1";
     this.manageLifecycle = options.manageLifecycle ?? false;
+    this.sessiondBroker = options.sessiondBroker ?? null;
     if (options.machineMutations !== undefined) {
       this.machineMutations = options.machineMutations;
       this.ownedMachineMutations = null;
@@ -2090,6 +2099,12 @@ export class HiveDaemon {
       } catch (error) {
         refusal = error;
       }
+    }
+    // Broker dies after agents: terminate still needs a live socket. Heidi's
+    // teardown already treats an unreachable broker as a dead session rather
+    // than a refusal, so a race here cannot wedge shutdown.
+    if (this.sessiondBroker !== null) {
+      await this.sessiondBroker.stop();
     }
     if (this.reconciliationTimer !== null) {
       clearInterval(this.reconciliationTimer);

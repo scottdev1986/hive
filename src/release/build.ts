@@ -4,11 +4,15 @@
  *
  * `bun run src/release/build.ts --version 0.0.7 --commit abc1234 --out dist`
  *
- * Two CLI binaries (`darwin-arm64`, `darwin-x64`) and one universal Workspace
- * application. The app is universal rather than sliced because one lipo'd
- * bundle runs everywhere, and a 3 MB duplicate is cheaper than a second
- * bundle to sign and notarize. See compileWorkspace for why the slices are
- * built per-arch and joined rather than via one two-`--arch` invocation.
+ * Two CLI binaries (`darwin-arm64`, `darwin-x64`), two `hive-sessiond` broker
+ * binaries (same arches), and one universal Workspace application. Sessiond is
+ * built ReleaseFast so its embedded Ghostty VT engine fingerprint matches the
+ * Workspace release renderer — a Debug sessiond against a ReleaseFast renderer
+ * fails the engine-build fence by design. The app is universal rather than
+ * sliced because one lipo'd bundle runs everywhere, and a 3 MB duplicate is
+ * cheaper than a second bundle to sign and notarize. See compileWorkspace for
+ * why the slices are built per-arch and joined rather than via one two-`--arch`
+ * invocation.
  *
  * The build hash is a content address of the *inputs*: source tree, version,
  * commit, and target triple. It cannot be a hash of the output, because the
@@ -48,6 +52,10 @@ const TARGETS = [
 const WORKSPACE_ASSET = "HiveWorkspace.tar.gz";
 const WORKSPACE_BUNDLE = "HiveWorkspace.app";
 const DEFAULT_ENTITLEMENTS = "scripts/signing/entitlements.plist";
+const SESSIOND_TARGETS = [
+  { arch: "arm64" as const, zigArch: "aarch64", asset: "hive-sessiond-darwin-arm64" },
+  { arch: "x64" as const, zigArch: "x86_64", asset: "hive-sessiond-darwin-x64" },
+];
 
 interface Options {
   version: string;
@@ -58,6 +66,7 @@ interface Options {
   publicKey: string | null;
   securityCritical: boolean;
   skipWorkspace: boolean;
+  skipSessiond: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -77,6 +86,7 @@ function parseArgs(argv: string[]): Options {
     publicKey: get("--public-key"),
     securityCritical: argv.includes("--security-critical"),
     skipWorkspace: argv.includes("--skip-workspace"),
+    skipSessiond: argv.includes("--skip-sessiond"),
   };
 }
 
@@ -237,6 +247,75 @@ async function compileWorkspace(options: Options): Promise<string> {
   return bundle;
 }
 
+interface SessiondBuild {
+  readonly target: (typeof SESSIOND_TARGETS)[number];
+  readonly buildHash: string;
+  readonly outfile: string;
+}
+
+/**
+ * Build one `hive-sessiond` slice with the locked Zig and ReleaseFast, so the
+ * embedded VT engine fingerprint matches the Workspace release GhosttyKit.
+ * Debug vs ReleaseFast is an intentional fence failure — never stage Debug.
+ */
+async function compileSessiond(
+  options: Options,
+  target: (typeof SESSIOND_TARGETS)[number],
+  buildHash: string,
+): Promise<SessiondBuild> {
+  const lockPath = join(options.repoRoot, "native/toolchain-lock.json");
+  const zigVersion = (await Bun.$`/usr/bin/plutil -extract zig.version raw -o - ${lockPath}`.text()).trim();
+  const deploymentTarget = (await Bun.$`/usr/bin/plutil -extract deploymentTarget raw -o - ${lockPath}`.text()).trim();
+  const hostArch = process.arch === "arm64" ? "aarch64" : "x86_64";
+  const nativeCache = process.env.HIVE_NATIVE_CACHE ?? join(options.repoRoot, ".cache/native");
+  const zig = join(
+    nativeCache,
+    "zig/toolchains",
+    `zig-${hostArch}-macos-${zigVersion}`,
+    "zig",
+  );
+  if (!(await Bun.file(zig).exists())) {
+    throw new Error(
+      `pinned Zig missing at ${zig}; run 'make toolchain' before the release build`,
+    );
+  }
+
+  const prefix = join(options.out, `sessiond-${target.arch}`);
+  await rm(prefix, { recursive: true, force: true });
+  await mkdir(prefix, { recursive: true });
+
+  const overlayProc = Bun.spawn(
+    [join(options.repoRoot, "scripts/prepare-zig-xcode-overlay.sh")],
+    { cwd: options.repoRoot, stdout: "pipe", stderr: "inherit" },
+  );
+  const overlay = (await new Response(overlayProc.stdout).text()).trim();
+  if ((await overlayProc.exited) !== 0 || overlay.length === 0) {
+    throw new Error("prepare-zig-xcode-overlay.sh failed");
+  }
+
+  const zigRunnerTools = join(options.repoRoot, "scripts/zig-runner-tools");
+  await sh(
+    [
+      zig, "build", "install",
+      "--prefix", prefix,
+      "--global-cache-dir", join(nativeCache, "zig-global"),
+      `-Dtarget=${target.zigArch}-macos.${deploymentTarget}`,
+      "-Doptimize=ReleaseFast",
+      "--sysroot", overlay,
+    ],
+    join(options.repoRoot, "native/sessiond"),
+    { PATH: `${zigRunnerTools}:${process.env.PATH ?? ""}` },
+  );
+
+  const built = join(prefix, "bin", "hive-sessiond");
+  if (!(await Bun.file(built).exists())) {
+    throw new Error(`sessiond ${target.arch} build produced no binary at ${built}`);
+  }
+  const outfile = join(options.out, target.asset);
+  await copyFile(built, outfile);
+  return { target, buildHash, outfile };
+}
+
 /** Tar the (now signed and stapled) bundle, digest it, and clean up. */
 async function finalizeWorkspace(options: Options, bundle: string): Promise<ReleaseArtifact[]> {
   const tarball = join(options.out, WORKSPACE_ASSET);
@@ -276,11 +355,30 @@ export async function build(options: Options): Promise<ReleaseManifest> {
       ),
     );
   }
+  const sessiondBuilds: SessiondBuild[] = [];
+  if (!options.skipSessiond) {
+    for (const target of SESSIOND_TARGETS) {
+      sessiondBuilds.push(
+        await compileSessiond(
+          options,
+          target,
+          buildHashFor(sourceHash, options, `sessiond-${target.zigArch}-ReleaseFast`),
+        ),
+      );
+    }
+  }
   const appBundle = options.skipWorkspace ? null : await compileWorkspace(options);
 
   // Sign, notarize, and staple in place. A no-op when no Developer ID is set.
+  // Sessiond Mach-Os take the same Developer ID path as the CLI slices.
   if (signing !== null) {
-    await signRelease({ cliSlices: cliBuilds.map((build) => build.outfile), appBundle }, signing);
+    await signRelease({
+      cliSlices: [
+        ...cliBuilds.map((build) => build.outfile),
+        ...sessiondBuilds.map((build) => build.outfile),
+      ],
+      appBundle,
+    }, signing);
   }
 
   // Digest last, so the manifest records the signed and stapled bytes.
@@ -289,6 +387,16 @@ export async function build(options: Options): Promise<ReleaseManifest> {
     artifacts.push({
       name: build.target.asset,
       kind: "cli",
+      platform: "darwin",
+      arch: build.target.arch,
+      buildHash: build.buildHash,
+      ...(await digest(build.outfile)),
+    });
+  }
+  for (const build of sessiondBuilds) {
+    artifacts.push({
+      name: build.target.asset,
+      kind: "sessiond",
       platform: "darwin",
       arch: build.target.arch,
       buildHash: build.buildHash,

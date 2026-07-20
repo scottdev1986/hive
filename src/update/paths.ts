@@ -7,8 +7,8 @@
  * and is never rewritten after install, so activation touches exactly one path.
  *
  *   ~/.local/share/hive/
- *     versions/0.0.6/hive, HiveWorkspace.app
- *     versions/0.0.7/hive, HiveWorkspace.app
+ *     versions/0.0.6/hive, hive-sessiond, HiveWorkspace.app
+ *     versions/0.0.7/hive, hive-sessiond, HiveWorkspace.app
  *     current -> versions/0.0.7        (the only thing activation moves)
  *     state.json                        (active + retained previous)
  *   ~/.local/bin/hive -> ../share/hive/current/hive
@@ -34,6 +34,11 @@ export const stateFile = (root = installRoot()): string => join(root, "state.jso
 
 /** The compiled CLI inside a version directory. */
 export const cliPath = (dir: string): string => join(dir, "hive");
+/**
+ * The sessiond broker binary inside a version directory.
+ * Sits next to `hive` so a release daemon finds it via `dirname(execPath)`.
+ */
+export const sessiondPath = (dir: string): string => join(dir, "hive-sessiond");
 /** The release Workspace application inside a version directory. */
 export const workspaceAppPath = (dir: string): string => join(dir, "HiveWorkspace.app");
 

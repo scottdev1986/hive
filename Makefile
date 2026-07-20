@@ -39,10 +39,12 @@ export HIVE_NATIVE_CACHE := $(NATIVE_CACHE)
 UNAME_M := $(shell uname -m)
 ifeq ($(UNAME_M),arm64)
 CLI_ASSET := hive-darwin-arm64
+SESSIOND_ASSET := hive-sessiond-darwin-arm64
 ZIG_ARCH := aarch64
 ZIG_LOCK_ARCH := arm64
 else ifeq ($(UNAME_M),x86_64)
 CLI_ASSET := hive-darwin-x64
+SESSIOND_ASSET := hive-sessiond-darwin-x64
 ZIG_ARCH := x86_64
 ZIG_LOCK_ARCH := x86_64
 else
@@ -245,6 +247,8 @@ build: toolchain ghosttykit sessiond
 	rm -rf "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"
 	mkdir -p "$(INSTALL_ROOT)/versions/$(DEV_VERSION)" "$(DEV)/bin"
 	install -m 755 "$(DIST)/$(CLI_ASSET)" "$(INSTALL_ROOT)/versions/$(DEV_VERSION)/hive"
+	install -m 755 "$(DIST)/$(SESSIOND_ASSET)" \
+	  "$(INSTALL_ROOT)/versions/$(DEV_VERSION)/hive-sessiond"
 	tar -xzf "$(DIST)/HiveWorkspace.tar.gz" -C "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"
 	ln -shf "versions/$(DEV_VERSION)" "$(INSTALL_ROOT)/current"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
