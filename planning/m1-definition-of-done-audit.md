@@ -18,6 +18,8 @@ M1 is **not** near done. The tracker overstates it in seven places, all optimist
 
 The two known errors (A3 recorded DONE, X1/X2 recorded NOT STARTED) are real. Five more of the same class were found:
 
+> **CORRECTION — 2026-07-20.** Three rows of the table below have since moved and no longer describe the tracker's state. **#34** and **#3** (recorded here as CLOSED/Done) have been **reopened**. **#4** (recorded here as "LANDED, UNEVIDENCED") is now **evidenced**: retroactive acceptance record `8bfa4c50` and the user clause-5 waiver + closure `b168589a`. This corrects the three rows only. §1's verdict is unchanged and is **not** softened by this note — the tracker errors it describes were real when written, and the substantive M1 findings (half of the engineering criteria met, zero of six human gates) still hold. See `planning/2026-07-20-board-planning-repo-reconciliation.md` §2 fix 10.
+
 | Item | Issue state | Board | Actual, per the doc's own acceptance |
 |---|---|---|---|
 | #34 M1-A0 | CLOSED | Done | **OPEN.** `docs/contracts/terminal-host-v1.md:3` says outright "Real-session verification is intentionally incomplete." Freeze-test cases B and C are still `test.failing` in `test/terminal-host-freeze/pending-a1.test.ts`; the struct shapes they require are absent from `native/sessiond/src/pty_host.zig`. DoD 3 (non-Hive consumer demo) has no artifact. `bun test` reports "3 pass" only because Bun scores xfails as expected-failures. |
