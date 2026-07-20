@@ -4,6 +4,7 @@ import {
   existsSync,
   mkdirSync,
   readFileSync,
+  unlinkSync,
   writeFileSync,
 } from "node:fs";
 import { createHash } from "node:crypto";
@@ -121,6 +122,21 @@ function assertPlainProject(project: string): void {
     }
   }
   command(["git", "rev-parse", "--show-toplevel"], project);
+}
+
+function verifyPlainProjectMutation(project: string): void {
+  const mutation = join(project, "package.json");
+  writeFileSync(mutation, "{}\n");
+  let rejected = false;
+  try {
+    assertPlainProject(project);
+  } catch {
+    rejected = true;
+  } finally {
+    unlinkSync(mutation);
+  }
+  if (!rejected) throw new Error("package.json mutation did not break the plain-project check");
+  assertPlainProject(project);
 }
 
 function processStates(): Map<number, string> {
@@ -493,11 +509,12 @@ const nonHiveLines: string[] = [];
 stamp(nonHiveLines, `HEAD=${head}`);
 for (const row of [close]) {
   assertPlainProject(row.project);
+  verifyPlainProjectMutation(row.project);
   stamp(nonHiveLines, `GREEN plain git project=${row.project}`);
   stamp(nonHiveLines, `Workspace session=${row.proof.locator.sessionId} hostKind=${row.proof.locator.hostKind}`);
   stamp(nonHiveLines, "no project package.json, Bun lockfile, .hive directory, or Hive source layout");
 }
-stamp(nonHiveLines, "MUTATION VERIFIED: forbidden-file checks are positive path assertions on the live Workspace project");
+stamp(nonHiveLines, "MUTATION VERIFIED: planted package.json breaks the plain-project check; removal restores it");
 stamp(nonHiveLines, "RESULT: A4 non-Hive project GREEN");
 writeMatrix("a4-non-hive-project.txt", nonHiveLines);
 writeManifest("a4-non-hive-project.json", {
