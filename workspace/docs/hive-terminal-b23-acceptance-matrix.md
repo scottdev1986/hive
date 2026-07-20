@@ -85,7 +85,7 @@ boundary and never renders a pane, and the harness is run with
 | 8c | mouse format 1015 (urxvt) | RECORDED (new, encoder) · OPEN for closure | encoder | `B23MouseFormatMatrixTests.swift` — DECSET 1015 reports `ESC [ 32 ; 125 ; 14 M`: same button (+32 biased) and same cell, in decimal, with no SGR `<` introducer. A cross-format row asserts all three transports agree on the same logical cell. **Live traversal DEFERRED pending a harness capability** (a mode-emitting child plus a claim release), not a matrix failure: this row needs an application mode set first, and DECSET cannot be injected via `processOutput` on a live attach because the ordered-output engine owns the stream sequence. |
 | 9 | Retina resize coordinates | HELD (hector) | mixed | Backing-pixel coords `InputEncodingTests.swift:656`, `:676`; measured cell geometry `Gate7RenderingTests.swift:99`; `RESIZE`/`APPLIED` readback + stale-revision refusal `real-host-golden.zig:945`; independent `TIOCGWINSZ` readback `pending-a1-contract.zig:273`. End-to-end live Retina row `LiveHostAttachTests.swift:344` is skip-gated. HELD: hector (henry's respawn) owns resize; his landing gates this row. |
 | 10 | retry / unknown semantics | RECORDED (new) | live-pty + fake-host | HOST side: `real-host-golden.zig:882` — identical `INPUT_SUBMIT` under a new transport correlation id returns a byte-identical `APPLIED` and the PTY echoes exactly once. CLIENT side (NEW `B23UnknownRetryMatrixTests.swift`): an `unknown` receipt fences input, so no further `INPUT_SUBMIT` is authored. See "Row 10" below for why fencing, not resending, is the correct reading of this clause. |
-| 11 | no-duplicate-input | RECORDED (encoder) · OPEN for closure | encoder | `InputEncodingTests.swift:277`, `:291`, `:311` — a printable is embedded in the key event and never also sent as text; `:516` asserts writes equal the commit list exactly. Live traversal NOT YET DRIVEN — unlike rows 4/7/8, this one needs no application mode and is therefore not blocked by the harness capability gap; it simply has not been added to the live set yet. |
+| 11 | no-duplicate-input | RECORDED (encoder) + LIVE-PTY (write boundary) | encoder + live-pty | `InputEncodingTests.swift:277`, `:291`, `:311` — a printable is embedded in the key event and never also sent as text; `:516` asserts writes equal the commit list exactly. Live traversal RECORDED: one printable key event authors exactly ONE transaction on the live PTY, and the row is checked by what does NOT arrive after the receipt — a settle window asserts no second transaction follows. Mutation-verified by emitting the printable as a key AND as text, which turns the row RED naming the extra transaction. |
 
 ## Live-PTY traversal (partial) — and why it is the substance of closure
 
@@ -117,16 +117,16 @@ assertion is mutation-verified — asserting stage `queued` instead turns all
 four rows RED against the actual `written-to-terminal`, proving it reads the
 host's real stage rather than a default.
 
-Rows with live traversal recorded: 3 (keys), 5 (dead key), 6 (CJK IME), plus
-the plain-text positive control.
+Rows with live traversal recorded: 3 (keys), 5 (dead key), 6 (CJK IME),
+11 (no-duplicate-input), plus the plain-text positive control.
 
 Rows still WITHOUT live traversal, and why: 4 (Kitty), 7 and 7b (paste), 8,
 8b and 8c (mouse) all require an application mode to be set first. DECSET
 cannot be injected with `processOutput` on a live attach — the ordered-output
 engine owns the stream sequence and rejects a hand-fed frame as
 `invalidValue`. Setting them faithfully needs the PTY child to emit the mode
-as real output, which is harness work not undertaken here. Row 11
-(no-duplicate-input) is also not yet driven live.
+as real output, which is harness work not undertaken here. Row 11 is driven live and is a NON-event assertion: it passes only if no
+second transaction follows a single key press, which is mutation-verified.
 
 ## What "OPEN for closure" means
 

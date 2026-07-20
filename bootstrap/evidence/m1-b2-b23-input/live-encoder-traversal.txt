@@ -1,34 +1,31 @@
 B2.3/A3 live-PTY traversal — write-boundary verification
-main: ef25d41d  hattie OPOST fix: 025f75b6
+main: c98973a7  hattie OPOST fix: 025f75b6
 harness: scripts/b22-live-attach-proof.ts HIVE_B22_NO_APP=1 port 43217
+rows: 3 (keys), 5 (dead key), 6 (CJK IME), 11 (no-duplicate-input), + plain control
 
 [1/1] Compiling plugin GenerateManual
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
-[2/17] Write sources
-[3/17] Write swift-version--58304C5D6DBC2206.txt
-[5/7] Compiling HiveTerminalKitTests B23LiveEncoderTraversalTests.swift
-[6/7] Emitting module HiveTerminalKitTests
-[6/8] Write Objects.LinkFileList
-[7/8] Linking HiveWorkspacePackageTests
-Build complete! (3.36s)
-Test Suite 'Selected tests' started at 2026-07-19 21:55:01.537.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:55:01.538.
-Test Suite 'B23LiveEncoderTraversalTests' started at 2026-07-19 21:55:01.538.
+[2/16] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.18s)
+Test Suite 'Selected tests' started at 2026-07-19 22:04:35.148.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:04:35.149.
+Test Suite 'B23LiveEncoderTraversalTests' started at 2026-07-19 22:04:35.149.
 Test Case '-[HiveTerminalKitTests.B23LiveEncoderTraversalTests testEncoderBytesReachTheLivePtyAtTheWriteBoundary]' started.
-2026-07-19 21:55:02.063 xctest[61018:42147361] ghostty_surface_update_config live C1 background=0f1117 font-size=13 padding=10x8
-Test Case '-[HiveTerminalKitTests.B23LiveEncoderTraversalTests testEncoderBytesReachTheLivePtyAtTheWriteBoundary]' passed (0.922 seconds).
-Test Suite 'B23LiveEncoderTraversalTests' passed at 2026-07-19 21:55:02.461.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.922 (0.922) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:55:02.461.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.922 (0.922) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 21:55:02.461.
-	 Executed 1 test, with 0 failures (0 unexpected) in 0.922 (0.923) seconds
+2026-07-19 22:04:35.742 xctest[13294:42342808] ghostty_surface_update_config live C1 background=0f1117 font-size=13 padding=10x8
+Test Case '-[HiveTerminalKitTests.B23LiveEncoderTraversalTests testEncoderBytesReachTheLivePtyAtTheWriteBoundary]' passed (3.046 seconds).
+Test Suite 'B23LiveEncoderTraversalTests' passed at 2026-07-19 22:04:38.196.
+	 Executed 1 test, with 0 failures (0 unexpected) in 3.046 (3.046) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:04:38.196.
+	 Executed 1 test, with 0 failures (0 unexpected) in 3.046 (3.047) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:04:38.196.
+	 Executed 1 test, with 0 failures (0 unexpected) in 3.046 (3.047) seconds
 B23-LIVE-TRAVERSAL-TRANSCRIPT
 row control-plain [matrix positive control]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-0 stage=written-to-terminal
 row key-arrow-up [matrix 3 (keys)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-1 stage=written-to-terminal
 row ime-cjk-commit [matrix 6 (CJK IME)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-2 stage=written-to-terminal
 row dead-key-commit [matrix 5 (dead key)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-3 stage=written-to-terminal
+row printable-key-once [matrix 11 (no-duplicate-input)]: WRITTEN-TO-LIVE-PTY txn=input-b23-live-traversal-1-4 stage=written-to-terminal exactly-one-transaction=CONFIRMED
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0

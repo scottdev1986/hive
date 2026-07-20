@@ -67,6 +67,9 @@ final class B23LiveEncoderTraversalTests: XCTestCase {
         let id: String
         let drive: (HiveTerminalView) -> Void
         let matrixRow: String
+        /// Row 11 only: after the receipt, require that NO second transaction
+        /// follows. A duplicate emission would author one.
+        var requiresExactlyOneTransaction: Bool = false
     }
 
     private var rows: [LiveRow] {
@@ -93,6 +96,17 @@ final class B23LiveEncoderTraversalTests: XCTestCase {
                 id: "dead-key-commit",
                 drive: { $0.insertText("é", replacementRange: Self.noRange, associatedEvent: nil) },
                 matrixRow: "5 (dead key)"
+            ),
+            // Row 11: one text-producing key event must author exactly ONE
+            // transaction. If the printable were emitted once as a key and
+            // again as text, a SECOND transaction would follow — so this row
+            // is checked by what does NOT arrive after the receipt, not only
+            // by the receipt itself. See `settleAndCollectNewTransactions`.
+            LiveRow(
+                id: "printable-key-once",
+                drive: { $0.keyDown(with: Self.printableKeyEvent()) },
+                matrixRow: "11 (no-duplicate-input)",
+                requiresExactlyOneTransaction: true
             ),
         ]
     }
@@ -168,9 +182,28 @@ final class B23LiveEncoderTraversalTests: XCTestCase {
                 "row \(row.id) [matrix \(row.matrixRow)]: host did not report writing "
                     + "these bytes to the terminal"
             )
+            var duplicateNote = ""
+            if row.requiresExactlyOneTransaction {
+                let extra = settleAndCollectNewTransactions(
+                    view: view,
+                    transport: transport,
+                    binding: binding,
+                    seen: seenTransactions
+                )
+                XCTAssertTrue(
+                    extra.isEmpty,
+                    "row \(row.id) [matrix \(row.matrixRow)]: one text-producing key "
+                        + "event authored MORE THAN ONE transaction (\(extra)); the "
+                        + "printable was emitted both as a key and as text."
+                )
+                duplicateNote = extra.isEmpty
+                    ? " exactly-one-transaction=CONFIRMED"
+                    : " DUPLICATE=\(extra)"
+            }
             transcript.append(
                 "row \(row.id) [matrix \(row.matrixRow)]: "
                     + "WRITTEN-TO-LIVE-PTY txn=\(applied.txn) stage=\(applied.stage)"
+                    + duplicateNote
             )
         }
 
@@ -286,6 +319,49 @@ final class B23LiveEncoderTraversalTests: XCTestCase {
             with: Data(line.trimmingCharacters(in: .whitespacesAndNewlines).utf8)
         ) as! [String: Any]
         return try AttachGrant.parse(object)
+    }
+
+    /// Pumps for a settle window and reports any transaction id that appears
+    /// beyond those already seen. Used to prove a NON-event: that no second
+    /// submission followed a single key press.
+    private func settleAndCollectNewTransactions(
+        view: HiveTerminalView,
+        transport: UdsHostTransport,
+        binding: SurfaceBinding,
+        seen: Set<String>
+    ) -> [String] {
+        var extra: [String] = []
+        let deadline = Date().addingTimeInterval(2)
+        while Date() < deadline {
+            if case .applied(let txn, _) = view.inputSubmissionState,
+               !seen.contains(txn), !extra.contains(txn) {
+                extra.append(txn)
+            }
+            do {
+                if let frame = try transport.receive(timeout: 0.25) {
+                    view.pumpHostFrame(frame, frameBinding: binding)
+                }
+            } catch {
+                // keep settling; a receive timeout is expected here
+            }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
+        return extra
+    }
+
+    private static func printableKeyEvent() -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "a",
+            charactersIgnoringModifiers: "a",
+            isARepeat: false,
+            keyCode: 0
+        )!
     }
 
     private static func arrowUpEvent() -> NSEvent {
