@@ -56,6 +56,7 @@ final class SmokeRunner {
                 dequeue: true) {
                 NSApp.sendEvent(event)
             }
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         return condition()
     }
