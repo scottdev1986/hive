@@ -1,0 +1,39 @@
+reusing 31 cases from hollis2's own harness
+
+baseline builds clean -- proceeding
+
+  COMPILES  palette entry dropped below its contrast floor
+  COMPILES  increased-contrast variant made dimmer than its base
+  COMPILES  emitted palette drifts from the measured palette
+  COMPILES  emitted background drifts from the measured background
+  COMPILES  palette generation switched on
+  COMPILES  index 16 authored beyond the ANSI 16
+  COMPILES  cursor color authored as hex instead of symbolically
+  COMPILES  deprecated bold alias emitted
+  COMPILES  a theme names a font family, preempting the embedded face
+  COMPILES  appearance resolution inverted
+  COMPILES  increased-contrast resolution ignored
+  COMPILES  theme emitted AFTER the product overrides (C1.0 central mutation)
+  COMPILES  selected font dropped before reaching the generated file (the C1.1 gap)
+  COMPILES  hex parser made lenient (truncating instead of rejecting)
+  COMPILES  the real ghostty_surface_update_config call deleted (consumption, not call-boundary)
+  COMPILES  the real update_config deleted, every-theme push proof
+  COMPILES  dedup guard removed so every selection re-pushes
+  COMPILES  font dropped at the live push site (the C1.1 gap, at the engine)
+  COMPILES  stored theme selection ignored on read (persistence broken)
+  COMPILES  theme selection never written (persistence broken)
+  COMPILES  change notification posted unconditionally (selector thrashes the engine)
+  COMPILES  unknown stored value no longer falls back
+  COMPILES  running panes stop observing the preference change
+  COMPILES  the appearance state stops reading light/dark from the appearance
+  COMPILES  the view stops passing its own appearance to the resolver
+  COMPILES  the view ignores the selected font when pushing
+  COMPILES  the theme selector writes nothing
+  COMPILES  the font selector writes nothing
+  COMPILES  the page opens on the default instead of the stored selection
+  COMPILES  the appearance section falls through to the Tasks page
+  COMPILES  knownSections goes stale (lists a key the chain no longer resolves)
+
+=== 31 compile (test-proven) | 0 do not compile (compiler-proven) ===
+
+Every mutation compiles: all 30/31 REDs are real test failures.

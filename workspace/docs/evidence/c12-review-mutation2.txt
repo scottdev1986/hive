@@ -1,0 +1,47 @@
+=== baseline: both suites must be GREEN before any mutation ===
+  GREEN (expected)  C12ThemeSystemTests
+  GREEN (expected)  C12LiveReconfigurationTests
+  GREEN (expected)  C12AppearancePreferencesTests
+  GREEN (expected)  C12AppearanceSettingsTests
+
+=== mutations: each must turn its own guard RED ===
+  RED       palette entry dropped below its contrast floor
+  RED       increased-contrast variant made dimmer than its base
+  RED       emitted palette drifts from the measured palette
+  RED       emitted background drifts from the measured background
+  RED       palette generation switched on
+  RED       index 16 authored beyond the ANSI 16
+  RED       cursor color authored as hex instead of symbolically
+  RED       deprecated bold alias emitted
+  RED       a theme names a font family, preempting the embedded face
+  RED       appearance resolution inverted
+  RED       increased-contrast resolution ignored
+  RED       theme emitted AFTER the product overrides (C1.0 central mutation)
+  RED       selected font dropped before reaching the generated file (the C1.1 gap)
+  RED       hex parser made lenient (truncating instead of rejecting)
+  RED       the real ghostty_surface_update_config call deleted (consumption, not call-boundary)
+  RED       the real update_config deleted, every-theme push proof
+  RED       dedup guard removed so every selection re-pushes
+  RED       font dropped at the live push site (the C1.1 gap, at the engine)
+  RED       stored theme selection ignored on read (persistence broken)
+  RED       theme selection never written (persistence broken)
+  RED       change notification posted unconditionally (selector thrashes the engine)
+  RED       unknown stored value no longer falls back
+  RED       running panes stop observing the preference change
+  RED       the appearance state stops reading light/dark from the appearance
+  RED       the view stops passing its own appearance to the resolver
+  RED       the view ignores the selected font when pushing
+  RED       the theme selector writes nothing
+  RED       the font selector writes nothing
+  RED       the page opens on the default instead of the stored selection
+  RED       the appearance section falls through to the Tasks page
+  RED       knownSections goes stale (lists a key the chain no longer resolves)
+
+=== every mutation reverted: both suites GREEN again ===
+  GREEN (expected)  C12ThemeSystemTests
+  GREEN (expected)  C12LiveReconfigurationTests
+  GREEN (expected)  C12AppearancePreferencesTests
+  GREEN (expected)  C12AppearanceSettingsTests
+
+cases: 31   failures: 0
+C1.2 MUTATION PROOF COMPLETE
