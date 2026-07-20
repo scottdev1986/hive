@@ -165,3 +165,62 @@ path.
 
 No command under review was piped through a truncating command; the recorded
 statuses are the real process exit codes.
+
+## Delta re-review: Helga `ec6866fb` — **NO-LAND**
+
+- Pin: `ec6866fbaaf5cb6f82e217356fb2b81d1c5f7da3` on
+  `hive/helga-fix-two-review-blockers-on-the`.
+- Base: `539a7782ecae0ab255502762be38e857bf00edca` is an ancestor and
+  the merge-base. The replay commit carries the reviewed lifecycle onto that
+  base; the follow-up changes only `sessiond-broker.ts` and its unit/live tests.
+
+### B1 delta — PASS
+
+The replay leaves `teardown.ts` and its tests byte-identical to `539a7782`.
+`HiveDaemon.stop()` retains the teardown refusal, stops the broker after
+`killAllAgents()` but outside that refusal catch, cleans the timer/socket/db,
+then rethrows. Heidi's teardown/server matrix passed 92/92; typecheck passed.
+
+### B2 delta — still blocking
+
+The exact normal-load staged probe now behaves correctly:
+
+```text
+orphan pid: 34613 (the only surviving broker)
+daemon exit: 1
+daemon.port advertised: no
+daemon alive after startup: no
+stderr: ... before becoming the live broker: broker.lock held by pid 34613
+```
+
+However, readiness still does not positively measure ownership. When a socket
+predates spawn, `spawnAndWaitReady()` accepts the child merely for remaining
+alive through `OWNERSHIP_SETTLE_MS = 250`. A child delayed by scheduling,
+dynamic loading, or resource pressure can remain alive for that interval before
+reaching the broker lock and losing it.
+
+Mutation proof: in the new orphan unit test, change only the losing child's
+`exitAfterMs` from 40 to 400. The socket still predates spawn and the child still
+exits 1, but `supervisor.start()` resolves after about 259 ms. The test goes RED
+at its intended assertion:
+
+```text
+Expected promise that rejects
+Received promise that resolved
+```
+
+This is the original advertise-then-fail race with a 250 ms timing threshold.
+The mutation was restored and the exact pin returned green. Startup must use
+positive evidence that the owned child holds `broker.lock` (or equivalent
+non-temporal ownership evidence), not elapsed liveness.
+
+### Delta proofs
+
+| Check | Result |
+|---|---|
+| supervisor + Heidi teardown/server suites | 99 pass / 0 fail (7 + 92), exit 0 |
+| real-binary broker live suite | 3 pass / 0 fail, exit 0 |
+| `make build` | exit 0; staged version reports `ec6866fb` |
+| exact staged orphan probe | correct fail-loud result, exit 0 |
+| staged lifecycle proof | PASS; broker 36270 -> 36294; clean teardown |
+| `bun run typecheck` | exit 0 |
