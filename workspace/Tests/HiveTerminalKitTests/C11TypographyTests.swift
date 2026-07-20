@@ -95,33 +95,58 @@ final class C11TypographyTests: XCTestCase {
     func testLigaturesAreDisabledAndCursorShapingBreakRemainsActiveWhenEnabled() throws {
         let disabled = typographyConfiguration(ligatures: false, thickening: false, strength: 255)
         let enabled = typographyConfiguration(ligatures: true, thickening: false, strength: 255)
-        let disabledReading = try renderedDigest(configuration: disabled, bytes: Data("!= != !=\r\n".utf8))
-        let enabledReading = try renderedDigest(configuration: enabled, bytes: Data("!= != !=\r\n".utf8))
-        let disabledCursor = try renderedDigest(configuration: disabled, bytes: Data("!=\u{1b}[2D".utf8))
-        let enabledCursor = try renderedDigest(configuration: enabled, bytes: Data("!=\u{1b}[2D".utf8))
-
+        let reading = try renderedTransition(
+            initialConfiguration: disabled,
+            updatedConfiguration: enabled,
+            bytes: Data("!= != !=\r\n".utf8)
+        )
+        let cursor = try renderedTransition(
+            initialConfiguration: disabled,
+            updatedConfiguration: enabled,
+            bytes: Data("!=\u{1b}[2D".utf8)
+        )
+        let readingControl = try renderedTransition(
+            initialConfiguration: disabled,
+            updatedConfiguration: disabled,
+            bytes: Data("!= != !=\r\n".utf8)
+        )
+        let cursorControl = try renderedTransition(
+            initialConfiguration: disabled,
+            updatedConfiguration: disabled,
+            bytes: Data("!=\u{1b}[2D".utf8)
+        )
+        XCTAssertEqual(
+            readingControl.before.digest,
+            readingControl.after.digest,
+            "positive control: an identical config push must leave reading pixels unchanged"
+        )
         XCTAssertNotEqual(
-            disabledReading.digest,
-            enabledReading.digest,
+            reading.before.digest,
+            reading.after.digest,
             "positive control: enabling calt must change the rendered reading case"
         )
         XCTAssertEqual(
-            disabledCursor.digest,
-            enabledCursor.digest,
-            "the default cursor shaping break must expose the individual bytes even with calt enabled"
+            pixelDelta(cursor.before, cursor.after),
+            pixelDelta(cursorControl.before, cursorControl.after),
+            "with the cursor over the pair, calt must add no raster change beyond the control redraw"
         )
-        for result in [disabledReading, enabledReading, disabledCursor, enabledCursor] {
-            XCTAssertTrue(result.text.contains("!="))
-            XCTAssertFalse(result.text.contains("≠"), "the semantic grid must preserve the original bytes")
+        for text in [reading.text, cursor.text] {
+            XCTAssertTrue(text.contains("!="))
+            XCTAssertFalse(text.contains("≠"), "the semantic grid must preserve the original bytes")
         }
     }
 
     func testThickeningEnabledAtZeroIsDistinctFromDisabled() throws {
         let disabled = typographyConfiguration(ligatures: false, thickening: false, strength: 0)
         let enabled = typographyConfiguration(ligatures: false, thickening: true, strength: 0)
+        let transition = try renderedTransition(
+            initialConfiguration: disabled,
+            updatedConfiguration: enabled,
+            bytes: Data("Hive".utf8)
+        )
         XCTAssertNotEqual(
-            try renderedDigest(configuration: disabled, bytes: Data("Hive".utf8)).digest,
-            try renderedDigest(configuration: enabled, bytes: Data("Hive".utf8)).digest,
+            transition.before.digest,
+            transition.after.digest,
             "strength zero is the lightest thickening, not the disabled state"
         )
     }
@@ -166,8 +191,14 @@ final class C11TypographyTests: XCTestCase {
             .replacingOccurrences(of: "cursor-opacity = 1", with: "cursor-opacity = 0")
     }
 
-    private func renderedDigest(configuration: String, bytes: Data) throws -> (digest: String, text: String) {
-        let surface = try GhosttyBridgeFactory.makeManualSurfaceForConfigurationTesting(contents: configuration)
+    private func renderedTransition(
+        initialConfiguration: String,
+        updatedConfiguration: String,
+        bytes: Data
+    ) throws -> (before: RenderedFrame, after: RenderedFrame, text: String) {
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForConfigurationTesting(
+            contents: initialConfiguration
+        )
         defer { surface.free() }
         let terminal = HiveTerminalView(
             frame: NSRect(x: 0, y: 0, width: 800, height: 480),
@@ -177,19 +208,56 @@ final class C11TypographyTests: XCTestCase {
         surface.setOcclusion(true)
         XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: 0), .success)
         let layer = try XCTUnwrap(surface.hostView?.layer)
-        let deadline = Date().addingTimeInterval(2)
-        repeat {
+        let before = try renderedFrame(surface: surface, layer: layer)
+
+        let handle = try XCTUnwrap(surface.surfaceHandle)
+        let config = try GhosttyBridgeFactory.makeExplicitConfiguration(contents: updatedConfiguration)
+        defer { ghostty_config_free(config) }
+        ghostty_surface_update_config(handle, config)
+        let after = try renderedFrame(surface: surface, layer: layer)
+
+        return (before, after, try XCTUnwrap(surface.semanticSnapshot()).text)
+    }
+
+    private func renderedFrame(
+        surface: GhosttyManualSurface,
+        layer: CALayer
+    ) throws -> RenderedFrame {
+        for _ in 0 ..< 10 {
             surface.draw()
-            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
-        } while layer.contents == nil && Date() < deadline
+            RunLoop.main.run(until: Date().addingTimeInterval(0.02))
+        }
         let ioSurface = try XCTUnwrap(layer.contents as? IOSurface)
         let image = CIImage(ioSurface: ioSurface)
-        let cgImage = try XCTUnwrap(CIContext().createCGImage(image, from: image.extent))
-        let data = try XCTUnwrap(cgImage.dataProvider?.data) as Data
-        return (
-            SHA256.hash(data: data).map { String(format: "%02x", $0) }.joined(),
-            try XCTUnwrap(surface.semanticSnapshot()).text
+        let width = Int(image.extent.width)
+        let height = Int(image.extent.height)
+        var pixels = [UInt8](repeating: 0, count: width * height * 4)
+        let colorSpace = try XCTUnwrap(CGColorSpace(name: CGColorSpace.sRGB))
+        CIContext().render(
+            image,
+            toBitmap: &pixels,
+            rowBytes: width * 4,
+            bounds: image.extent,
+            format: .RGBA8,
+            colorSpace: colorSpace
         )
+        var mask = Data(capacity: width * height)
+        for index in stride(from: 0, to: pixels.count, by: 4) {
+            mask.append(max(pixels[index], pixels[index + 1], pixels[index + 2]) > 64 ? 1 : 0)
+        }
+        return RenderedFrame(
+            digest: SHA256.hash(data: mask).map { String(format: "%02x", $0) }.joined(),
+            pixels: mask
+        )
+    }
+
+    private func pixelDelta(_ lhs: RenderedFrame, _ rhs: RenderedFrame) -> Data {
+        Data(zip(lhs.pixels, rhs.pixels).map { $0 == $1 ? 0 : 1 })
+    }
+
+    private struct RenderedFrame {
+        let digest: String
+        let pixels: Data
     }
 
     private var embeddedVariableTableDigests: [String: String] {
