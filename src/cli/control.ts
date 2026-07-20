@@ -508,6 +508,12 @@ export interface StopHiveDependencies {
   readonly tmux?: StopTmux;
   readonly sessions?: TmuxSessionHost;
   readonly readAgents?: () => readonly AgentRecord[];
+  /** #65 preflight: does this sessiond locator have a terminal-host binding,
+   * i.e. can its teardown be verified at all? Defaults to a readonly read of
+   * the instance database. */
+  readonly readSessiondBinding?: (
+    locator: SessionLocator & { hostKind: "sessiond" },
+  ) => boolean;
   readonly stopSessiond?: (agent: AgentRecord) => Promise<void>;
   readonly readPid?: () => number | null;
   readonly kill?: (pid: number, signal: NodeJS.Signals) => void;
@@ -516,6 +522,20 @@ export interface StopHiveDependencies {
   readonly sleep?: (milliseconds: number) => Promise<void>;
   readonly timeoutMs?: number;
   readonly log?: (message: string) => void;
+}
+
+/** Reads binding presence for the #65 preflight from the instance database.
+ * A database that cannot be read answers "not verifiable" — fail closed. */
+function defaultReadSessiondBinding(
+  locator: SessionLocator & { hostKind: "sessiond" },
+): boolean {
+  if (!existsSync(getDatabasePath())) return false;
+  const db = HiveDatabase.openReadonly();
+  try {
+    return db.getTerminalHostBindingByLocator(locator) !== null;
+  } finally {
+    db.close();
+  }
 }
 
 export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
@@ -564,6 +584,28 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
       throw new Error(
         "the daemon is live but has no recorded pid\n" +
           "Fix: inspect the daemon lifecycle files, then rerun `hive stop`.",
+      );
+    }
+    // #65: verify shutdown eligibility BEFORE the first kill. This command
+    // used to fan out kills over every sessiond agent and only then discover
+    // that a teardown could not be verified — throwing with the agents
+    // already dead, the daemon never signalled, and the GUI reporting "still
+    // running": a live app over a dead fleet, twice on 2026-07-20. An agent
+    // whose sessiond locator has no terminal-host binding can never produce a
+    // verified teardown, so its presence refuses the shutdown while every
+    // agent is still untouched.
+    const readBinding = deps.readSessiondBinding ?? defaultReadSessiondBinding;
+    const unverifiable = sessiondAgents.filter((agent) =>
+      !readBinding(agent.sessionLocator)
+    );
+    if (unverifiable.length > 0) {
+      throw new Error(
+        "Hive refused shutdown before touching any agent: " +
+          unverifiable.map((agent) =>
+            `${agent.name}: sessiond locator has no terminal-host binding in this Hive instance`
+          ).join("; ") +
+          "\nNo agent was killed and the daemon was not signalled. " +
+          "Fix: inspect the named agents (hive status), close them individually, then rerun `hive stop`.",
       );
     }
     const stopSessiond = deps.stopSessiond ?? ((agent: AgentRecord) =>

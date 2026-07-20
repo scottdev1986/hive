@@ -192,6 +192,7 @@ describe("kill origin instrumentation (#64)", () => {
     await stopHive({
       tmux: new FakeStopTmux([]),
       readAgents: () => [sessiondAgent("maya")],
+      readSessiondBinding: () => true,
       readPid: () => 4242,
       kill: () => {},
       liveness: async () => states.shift() ?? "dead",
@@ -224,6 +225,7 @@ describe("hive stop daemon", () => {
     await stopHive({
       tmux,
       readAgents: () => [sessiondAgent("maya")],
+      readSessiondBinding: () => true,
       stopSessiond: async (agent) => {
         order.push(`sessiond:${agent.name}`);
       },
@@ -244,6 +246,40 @@ describe("hive stop daemon", () => {
     ]);
   });
 
+  test("refuses shutdown BEFORE killing anything when eligibility cannot be verified (#65)", async () => {
+    // 2026-07-20, twice: `hive stop` killed every sessiond agent, then threw
+    // "sessiond teardown was not verified" — live app, live daemon, dead
+    // fleet. Eligibility is verified first; an unverifiable agent means no
+    // agent is touched and no signal is sent.
+    const attempts: string[] = [];
+    let signalled = false;
+    const tmux = new FakeStopTmux([agentTmuxSession("maya")]);
+
+    await expect(stopHive({
+      tmux,
+      readAgents: () => [sessiondAgent("maya"), sessiondAgent("sam", 2)],
+      readSessiondBinding: (locator) => locator.generation !== 1,
+      stopSessiond: async (agent) => {
+        attempts.push(agent.name);
+      },
+      readPid: () => 4242,
+      kill: () => {
+        signalled = true;
+      },
+      liveness: async () => "live",
+      cleanup: () => {},
+      sleep: async () => {},
+      timeoutMs: 50,
+      log: () => {},
+    })).rejects.toThrow(
+      /refused shutdown before touching any agent: maya/,
+    );
+
+    expect(attempts).toEqual([]);
+    expect(signalled).toBe(false);
+    expect(tmux.killed).toEqual([]);
+  });
+
   test("attempts every sessiond teardown and refuses daemon shutdown on failure", async () => {
     const attempts: string[] = [];
     let signalled = false;
@@ -251,6 +287,7 @@ describe("hive stop daemon", () => {
     await expect(stopHive({
       tmux: new FakeStopTmux([]),
       readAgents: () => [sessiondAgent("maya"), sessiondAgent("sam", 2)],
+      readSessiondBinding: () => true,
       stopSessiond: async (agent) => {
         attempts.push(agent.name);
         if (agent.name === "maya") throw new Error("tree still present");
