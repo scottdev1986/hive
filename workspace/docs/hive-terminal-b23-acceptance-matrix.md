@@ -11,10 +11,19 @@ acceptance clauses.
 
 ## Authority for the rows
 
-The 11 rows below come from `planning/story-m1-b2-hive-terminal-view.md:162`
+The acceptance CLAUSES below come from
+`planning/story-m1-b2-hive-terminal-view.md:162`
 (the B2.3 acceptance cell) and `planning/backlog-outline.md:37` (the A3
 invariants I3/I4). Detailed clause text is in the same story's "Input and
 resize semantics" and "Scroll, selection, copy, paste, and mouse" sections.
+
+The source enumerates 11 clauses; the table below has 15 entries. The extra
+four are deliberate SPLITS, not additional scope: 2b separates the
+automation-timeout steal from the competing-writer steal, 7b separates
+safe-paste from bracketing, and 8b/8c separate the 1005 and 1015 coordinate
+formats from the mouse mode row. Each split exists because folding it back
+into its parent would let a broken build pass — the reasoning for each is in
+its own section below.
 
 Correction for anyone working from an earlier brief:
 `planning/story-m1-a1-input-wire-options.md` does NOT contain an A3 acceptance
@@ -228,6 +237,12 @@ No defect-independent rows remain open, including the DECSET 1005 and 1015
 mouse coordinate formats added mid-task. Everything still outstanding is held
 on the live-PTY sequencing below.
 
-HELD pending hattie + henry landing on main: row 9 end-to-end Retina resize
-with observed SIGWINCH delivery, and live-PTY byte round-trips for rows 3-7 and
-11, which today have encoder-level evidence only.
+HELD pending the parallel PTY and resize fixes landing on main: row 9
+end-to-end Retina resize with observed SIGWINCH delivery, and live-PTY byte
+round-trips for every encoder-graded row — 3, 4, 5, 6, 7, 7b, 8, 8b, 8c and
+11. All of those have encoder-level evidence ONLY and have never had their
+bytes traverse sessiond or a PTY.
+
+Row 8 and the format rows 8b/8c belong in that list as squarely as the key
+and paste rows: a mouse report that Ghostty encodes correctly still has to
+reach the child process, and nothing here proves it does.

@@ -2,16 +2,16 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/16] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.10s)
-Test Suite 'Selected tests' started at 2026-07-19 21:16:21.434.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:16:21.434.
-Test Suite 'InputEncodingTests' started at 2026-07-19 21:16:21.435.
+Build complete! (0.17s)
+Test Suite 'Selected tests' started at 2026-07-19 21:10:07.597.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:10:07.598.
+Test Suite 'InputEncodingTests' started at 2026-07-19 21:10:07.598.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testAppKitFunctionKeyPrivateUseScalarIsNotInjectedAsText]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testAppKitFunctionKeyPrivateUseScalarIsNotInjectedAsText]' passed (0.054 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testAppKitFunctionKeyPrivateUseScalarIsNotInjectedAsText]' passed (0.045 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testAttributedSubstringReturnsTheEngineSelectionAndActualRange]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testAttributedSubstringReturnsTheEngineSelectionAndActualRange]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testAttributedSubstringReturnsTheEngineSelectionAndActualRange]' passed (0.001 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testCommittedCompositionUsesPinnedAccumulatorChoreographyForCJKEmojiAndRTLText]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testCommittedCompositionUsesPinnedAccumulatorChoreographyForCJKEmojiAndRTLText]' passed (0.002 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testCommittedCompositionUsesPinnedAccumulatorChoreographyForCJKEmojiAndRTLText]' passed (0.003 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testConfigTranslatedModifiersDriveConsumedModsWithoutChangingPhysicalMods]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testConfigTranslatedModifiersDriveConsumedModsWithoutChangingPhysicalMods]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testConsumedModsExcludesControlAndCommand]' started.
@@ -35,7 +35,7 @@ Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectConvertsTheMai
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectFallsBackToViewBoundsWithoutARealSurface]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectFallsBackToViewBoundsWithoutARealSurface]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectQueriesRealSurfaceIMEPointNotJustViewBounds]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectQueriesRealSurfaceIMEPointNotJustViewBounds]' passed (0.018 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectQueriesRealSurfaceIMEPointNotJustViewBounds]' passed (0.019 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectRetainsPreeditOriginWhenCellGeometryIsUnavailable]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectRetainsPreeditOriginWhenCellGeometryIsUnavailable]' passed (0.005 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectShiftsWithWindowScreenOriginProvingScreenCoords]' started.
@@ -43,7 +43,7 @@ Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectShiftsWithWind
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectUsesZeroWidthAndRangeOffsetForDictationInsertion]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstRectUsesZeroWidthAndRangeOffsetForDictationInsertion]' passed (0.004 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstResponderHandoffMirrorsFocusIntoTheSurface]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstResponderHandoffMirrorsFocusIntoTheSurface]' passed (0.022 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testFirstResponderHandoffMirrorsFocusIntoTheSurface]' passed (0.046 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedIgnoresUnmappedKeyCodes]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedIgnoresUnmappedKeyCodes]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testFlagsChangedSendsPressWhenTheCorrectSideModifierBecomesActive]' started.
@@ -69,7 +69,7 @@ Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierMappingUsesSymb
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierTranslationPreservesDeviceDependentEventBitsForDeadKeys]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testModifierTranslationPreservesDeviceDependentEventBitsForDeadKeys]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testMouseButtonCoordinatesDoNotMultiplyByBackingScale]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testMouseButtonCoordinatesDoNotMultiplyByBackingScale]' passed (0.000 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testMouseButtonCoordinatesDoNotMultiplyByBackingScale]' passed (0.001 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testMouseCoordinatesDoNotMultiplyByBackingScale]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testMouseCoordinatesDoNotMultiplyByBackingScale]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testMouseCoordinatesStayInUnscaledViewPointsAndFlipYAxis]' started.
@@ -81,33 +81,33 @@ Test Case '-[HiveTerminalKitTests.InputEncodingTests testPressureAndMouseUpReset
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testPrintableCharacterIsEmbeddedInKeyEventNotSentSeparately]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testPrintableCharacterIsEmbeddedInKeyEventNotSentSeparately]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceAcceptsSearchAndNavigationBindingActions]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceAcceptsSearchAndNavigationBindingActions]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceAcceptsSearchAndNavigationBindingActions]' passed (0.010 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceCommitsCJKDeadKeyEmojiZWJAndRTLBytesExactlyOnce]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceCommitsCJKDeadKeyEmojiZWJAndRTLBytesExactlyOnce]' passed (0.075 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceCommitsCJKDeadKeyEmojiZWJAndRTLBytesExactlyOnce]' passed (0.065 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceEncodesSGRMousePressAndRelease]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceEncodesSGRMousePressAndRelease]' passed (0.009 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceEncodesSGRMousePressAndRelease]' passed (0.011 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceEncodesSGRScrollAtTheLastPointPosition]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceEncodesSGRScrollAtTheLastPointPosition]' passed (0.057 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRealGhosttySurfaceEncodesSGRScrollAtTheLastPointPosition]' passed (0.013 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testRepeatedKeyDownSendsRepeatActionNotPress]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testRepeatedKeyDownSendsRepeatActionNotPress]' passed (0.003 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRepeatedKeyDownSendsRepeatActionNotPress]' passed (0.001 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testRightAndOtherMouseOverridesReachTheExactButtons]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testRightAndOtherMouseOverridesReachTheExactButtons]' passed (0.011 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testRightAndOtherMouseOverridesReachTheExactButtons]' passed (0.001 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesMomentumPhaseInBits1Through3]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesMomentumPhaseInBits1Through3]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesPrecisionBit]' started.
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollModsEncodesPrecisionBit]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollWheelForwardsToEngine]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollWheelForwardsToEngine]' passed (0.002 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testScrollWheelForwardsToEngine]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testSelectedRangeReflectsRealEngineSelectionNotAPlaceholder]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testSelectedRangeReflectsRealEngineSelectionNotAPlaceholder]' passed (0.003 seconds).
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testSelectedRangeReflectsRealEngineSelectionNotAPlaceholder]' passed (0.000 seconds).
 Test Case '-[HiveTerminalKitTests.InputEncodingTests testUnchangedTranslationModifiersReuseTheOriginalNSEventForKoreanIME]' started.
-Test Case '-[HiveTerminalKitTests.InputEncodingTests testUnchangedTranslationModifiersReuseTheOriginalNSEventForKoreanIME]' passed (0.001 seconds).
-Test Suite 'InputEncodingTests' passed at 2026-07-19 21:16:21.731.
-	 Executed 48 tests, with 0 failures (0 unexpected) in 0.294 (0.296) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:16:21.731.
-	 Executed 48 tests, with 0 failures (0 unexpected) in 0.294 (0.297) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 21:16:21.731.
-	 Executed 48 tests, with 0 failures (0 unexpected) in 0.294 (0.297) seconds
+Test Case '-[HiveTerminalKitTests.InputEncodingTests testUnchangedTranslationModifiersReuseTheOriginalNSEventForKoreanIME]' passed (0.000 seconds).
+Test Suite 'InputEncodingTests' passed at 2026-07-19 21:10:07.844.
+	 Executed 48 tests, with 0 failures (0 unexpected) in 0.244 (0.246) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:10:07.844.
+	 Executed 48 tests, with 0 failures (0 unexpected) in 0.244 (0.246) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 21:10:07.844.
+	 Executed 48 tests, with 0 failures (0 unexpected) in 0.244 (0.247) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
