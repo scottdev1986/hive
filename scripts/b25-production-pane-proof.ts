@@ -280,7 +280,11 @@ function locatorFromPaneReport(report: string): SessionLocator {
   };
 }
 
-function captureVendorArtifacts(locator: SessionLocator, report: string): void {
+async function captureVendorArtifacts(
+  locator: SessionLocator,
+  report: string,
+  phase: "pane-ready" | "post-side-effect",
+): Promise<void> {
   const journalSource = join(
     home,
     "runtime/sessiond/hosts",
@@ -313,7 +317,24 @@ function captureVendorArtifacts(locator: SessionLocator, report: string): void {
     screenshotDirectory,
     `${requestedTool}-${locator.sessionId}-workspace.png`,
   );
-  command(["/usr/sbin/screencapture", "-x", "-l", String(windowNumber), screenshotPath], project);
+  let screenshotFailure = "unknown failure";
+  let screenshotCaptured = false;
+  const screenshotDeadline = Date.now() + 5_000;
+  while (Date.now() < screenshotDeadline) {
+    const result = Bun.spawnSync(
+      ["/usr/sbin/screencapture", "-x", "-l", String(windowNumber), screenshotPath],
+      { cwd: project, stdout: "pipe", stderr: "pipe" },
+    );
+    if (result.exitCode === 0 && existsSync(screenshotPath)) {
+      screenshotCaptured = true;
+      break;
+    }
+    screenshotFailure = result.stderr.toString().trim() || `exit ${result.exitCode}`;
+    await Bun.sleep(250);
+  }
+  if (!screenshotCaptured) {
+    throw new Error(`Workspace window screenshot failed after settle: ${screenshotFailure}`);
+  }
   const screenshot = readFileSync(screenshotPath);
   const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
   if (screenshot.byteLength <= pngSignature.byteLength ||
@@ -342,7 +363,7 @@ function captureVendorArtifacts(locator: SessionLocator, report: string): void {
     },
   };
   log(
-    `CAPTURED before hive_kill: requestedVendor=${requestedTool}/` +
+    `CAPTURED before hive_kill phase=${phase}: requestedVendor=${requestedTool}/` +
       `${process.env.HIVE_B25_MODEL ?? "policy-default"} ` +
       `session=${locator.sessionId} journalBytes=${journal.byteLength} window=${windowNumber}`,
   );
@@ -529,18 +550,15 @@ async function main(): Promise<void> {
       ? {}
       : { model: process.env.HIVE_B25_MODEL }),
   };
+  spawned = true;
   const [spawnResult, report] = await Promise.all([
     withTimeout(
       client.callTool({ name: "hive_spawn", arguments: spawnArguments }),
       180_000,
       "hive_spawn",
-    ).then((result) => {
-      toolValue(result, "agent");
-      spawned = true;
-      return result;
-    }),
-    waitForPaneReport().then((value) => {
-      captureVendorArtifacts(locatorFromPaneReport(value), value);
+    ),
+    waitForPaneReport().then(async (value) => {
+      await captureVendorArtifacts(locatorFromPaneReport(value), value, "pane-ready");
       return value;
     }),
   ]);
@@ -601,6 +619,8 @@ async function main(): Promise<void> {
   }
   if (!mutationRejected) throw new Error("session-id mutation did not break the pane proof");
   log("MUTATION VERIFIED: one-session-id mutation breaks the exact-locator row");
+  await captureVendorArtifacts(
+    locatorFromPaneReport(report), report, "post-side-effect");
   if (capture === null) throw new Error("pre-kill vendor capture is missing");
   log(`RESULT: production spawn + real Workspace HiveTerminalView GREEN (${observed.tool}/${observed.model})`);
   ok = true;

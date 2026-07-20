@@ -268,6 +268,12 @@ final class SmokeRunner {
     }
 
     private func runProductionPaneProof(agent: String) {
+        if let window = controller.window {
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
+            NSApp.activate(ignoringOtherApps: true)
+            window.orderFrontRegardless()
+            window.makeKey()
+        }
         let paneID = ProjectState.paneID(forAgent: agent)
         waitForProductionPane(agent: agent, paneID: paneID,
                               deadline: Date().addingTimeInterval(45))
@@ -345,6 +351,8 @@ final class SmokeRunner {
               "HiveTerminalView is installed in the real Workspace window")
         check(terminal.bounds.width > 0 && terminal.bounds.height > 0,
               "the production pane has committed non-zero geometry")
+        check(window.isVisible,
+              "the real Workspace window is visible for evidence capture")
         check(!controller.terminalChildRunning(pane: paneID),
               "the renderer owns no hidden SwiftTerm child PTY")
 
@@ -353,7 +361,7 @@ final class SmokeRunner {
                 + "session=\(locator.sessionId) "
                 + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
                 + "highWater=\(terminal.highWater) frame=\(terminal.frame) "
-                + "window=\(window.windowNumber)"
+                + "window=\(window.windowNumber) visible=\(window.isVisible)"
         finishProductionPaneProof()
     }
 
