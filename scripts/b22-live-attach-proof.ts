@@ -90,15 +90,23 @@ chmodSync(hiveWrapper, 0o755);
 log(`B2.2 live proof home: ${home}`);
 log(`transcript: ${transcriptPath}`);
 
-// 1. Real broker.
+// 1. Real broker. A terminal Ctrl-C signals the whole foreground process
+// group, so the broker used to die FIRST — before the orderly teardown below
+// could terminate the session through it. That is what manufactured the
+// broker-unavailable shutdown in the first place. The broker therefore ignores
+// SIGINT (an ignored disposition survives exec, unlike a handler) and dies on
+// the explicit signal the shutdown path and the exit hook send instead.
 const brokerBinary = join(repoRoot, "native/sessiond/zig-out/bin/hive-sessiond");
-const broker = Bun.spawn([brokerBinary, "serve"], {
-  cwd: repoRoot,
-  env: { ...process.env, HIVE_HOME: home },
-  stdin: "ignore",
-  stdout: "ignore",
-  stderr: "inherit",
-});
+const broker = Bun.spawn(
+  ["/bin/sh", "-c", 'trap "" INT; exec "$0" "$@"', brokerBinary, "serve"],
+  {
+    cwd: repoRoot,
+    env: { ...process.env, HIVE_HOME: home },
+    stdin: "ignore",
+    stdout: "ignore",
+    stderr: "inherit",
+  },
+);
 const brokerSocket = join(home, "runtime/sessiond/broker.sock");
 for (let i = 0; i < 100; i += 1) {
   if (existsSync(brokerSocket)) break;
@@ -113,7 +121,14 @@ log(`broker live (pid ${broker.pid}) at ${brokerSocket}`);
 process.env.HIVE_PORT = String(port);
 const { acquireDaemonLock, releaseDaemonLock } = await import("../src/daemon/lifecycle");
 await acquireDaemonLock();
-process.once("exit", () => releaseDaemonLock());
+// The broker no longer dies with the process group, so every exit path — not
+// just the orderly one below — has to take it down or the run leaks a broker.
+process.once("exit", () => {
+  try {
+    broker.kill();
+  } catch { /* already gone */ }
+  releaseDaemonLock();
+});
 const { startDaemon, HiveDaemon } = await import("../src/daemon/server");
 const { WorkspaceVisibilityAuthority } = await import(
   "../src/daemon/session-host/workspace-visibility"
@@ -291,29 +306,59 @@ if (workspace !== null) log(`workspace app launched (pid ${workspace.pid})`);
 
 let shuttingDown = false;
 const shutdown = async (reason: string) => {
-  if (shuttingDown) return;
+  if (shuttingDown) {
+    // A second Ctrl-C means "stop waiting": force the exit rather than
+    // re-entering the orderly path.
+    log(`forced exit (${reason} during shutdown)`);
+    try {
+      broker.kill("SIGKILL");
+    } catch { /* already gone */ }
+    process.exit(130);
+  }
   shuttingDown = true;
   log(`shutting down (${reason})`);
   clearInterval(renewals);
   try {
     workspace?.kill();
   } catch { /* already gone */ }
+  // ONE teardown path. daemon.stop() closes every live agent — this session
+  // included — through the daemon's own teardown, so terminating here as well
+  // would be the two-racing-teardowns bug docs/daemon/agent-teardown.md exists
+  // to prevent. Since 16908cc1 an unreachable broker is treated as an
+  // already-dead session, so stop() refuses only when teardown ACTIVELY failed:
+  // something it captured is still running.
+  let exitCode = 0;
   try {
-    const { mintSessionRequestId } = await import(
-      "../src/daemon/session-host/locators"
-    );
-    const termination = await adapter.terminate(locator, {
-      mode: "immediate",
-      reason: "b22-live-proof-shutdown",
-      requestId: mintSessionRequestId(),
-    });
-    log(`session terminated: ${JSON.stringify(termination).slice(0, 200)}`);
+    await daemon.stop();
+    log("daemon stopped; session torn down");
   } catch (error) {
-    log(`session terminate failed: ${error}`);
+    // A refusal means real work is still standing. The host pid was recorded at
+    // create time, so killing it needs no broker — but a kill is an act and a
+    // process gone is a state, so the exit code reports what the process table
+    // says rather than what we sent.
+    log(`daemon stop refused (${error}); killing session host directly`);
+    const hostPid = created.inspection.hostPid;
+    try {
+      process.kill(hostPid, "SIGKILL");
+    } catch { /* already gone */ }
+    let alive = true;
+    for (let i = 0; i < 20 && alive; i += 1) {
+      await Bun.sleep(50);
+      try {
+        process.kill(hostPid, 0);
+      } catch {
+        alive = false;
+      }
+    }
+    if (alive) {
+      log(`session host ${hostPid} SURVIVED SIGKILL; exiting non-zero`);
+      exitCode = 1;
+    } else {
+      log(`session host ${hostPid} confirmed gone`);
+    }
   }
-  await daemon.stop();
   broker.kill();
-  process.exit(0);
+  process.exit(exitCode);
 };
 process.on("SIGINT", () => void shutdown("SIGINT"));
 process.on("SIGTERM", () => void shutdown("SIGTERM"));
