@@ -25,6 +25,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  realpathSync,
   writeFileSync,
 } from "node:fs";
 import { join, resolve } from "node:path";
@@ -52,6 +53,21 @@ const agentName = realShell ? "terminal" : "aria";
 const agentId = `agent-${agentName}`;
 
 mkdirSync(home, { recursive: true, mode: 0o700 });
+const canonicalHome = realpathSync(home);
+const longestHostSocketPath = join(
+  canonicalHome,
+  "runtime/sessiond/hosts",
+  "ses_00000000-0000-7000-8000-000000000000",
+  "host.sock",
+);
+const unixSocketPathBytes = Buffer.byteLength(longestHostSocketPath);
+if (unixSocketPathBytes > 103) {
+  console.error(
+    "make terminal: HIVE_B22_HOME resolves to a path too long for sessiond host sockets: " +
+    `${canonicalHome} (${unixSocketPathBytes} bytes; maximum 103). Use a shorter path such as /tmp/hv.`,
+  );
+  process.exit(2);
+}
 const transcriptPath = join(home, "b22-proof-transcript.log");
 const log = (line: string) => {
   const stamped = `${new Date().toISOString()} ${line}`;

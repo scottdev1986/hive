@@ -14,6 +14,43 @@ final class B24ViewerSemanticsTests: XCTestCase {
         )
     }
 
+    private func semanticSnapshot(total: UInt64, offset: UInt64, length: UInt64) -> ManualSurfaceSemanticSnapshot {
+        ManualSurfaceSemanticSnapshot(
+            generation: 1,
+            text: "",
+            textUTF16Length: 0,
+            visibleRows: [],
+            selection: nil,
+            cursor: ManualSurfaceSemanticCursor(
+                utf16Offset: nil,
+                line: nil,
+                column: 0,
+                row: 0,
+                framePixels: .zero,
+                isVisible: false,
+                isPendingWrap: false
+            ),
+            viewport: ManualSurfaceSemanticViewport(
+                total: total,
+                offset: offset,
+                length: length,
+                followsBottom: offset + length >= total
+            ),
+            geometry: ManualSurfaceSemanticGeometry(
+                columns: 0,
+                rows: 0,
+                widthPixels: 0,
+                heightPixels: 0,
+                cellWidthPixels: 0,
+                cellHeightPixels: 0,
+                paddingTopPixels: 0,
+                paddingBottomPixels: 0,
+                paddingRightPixels: 0,
+                paddingLeftPixels: 0
+            )
+        )
+    }
+
     private func drainMain(until predicate: () -> Bool, timeout: TimeInterval = 2) {
         let deadline = Date().addingTimeInterval(timeout)
         while !predicate() && Date() < deadline {
@@ -355,6 +392,40 @@ final class B24ViewerSemanticsTests: XCTestCase {
         )
 
         XCTAssertEqual(terminal.highWater, 8)
+        XCTAssertTrue(terminal.scrollState.hasUnseenOutput)
+        XCTAssertEqual(terminal.newOutputIndicatorForTesting?.title, "New output ↓")
+    }
+
+    func testProductionHostFrameReadsAtomicViewportWhenScrollbarNotificationIsStale() throws {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+        let host = FakeHost(connectionId: "b24-production-snapshot")
+        let locator = makeTestLocator()
+        try host.enqueueWelcome(
+            instanceId: locator.instanceId,
+            connectionId: host.hostTransport.connectionId
+        )
+        host.enqueueOutput(streamSeq: 0, bytes: Data("ready".utf8))
+        XCTAssertEqual(
+            try terminal.attach(
+                grant: host.makeGrant(locator: locator),
+                geometry: makeGeometry(),
+                transport: host.clientTransport
+            ),
+            .firstCorrectFrame(highWater: 5, connectionId: host.clientTransport.connectionId)
+        )
+
+        engine.callbackContext.enqueueActionNotification(.scrollbar(total: 100, offset: 80, len: 20))
+        drainMain(until: { terminal.scrollState.totalRows == 100 })
+        XCTAssertTrue(terminal.scrollState.followsBottom, "positive control: the notification is stale at bottom")
+        engine.fakeSemanticSnapshot = semanticSnapshot(total: 100, offset: 20, length: 20)
+
+        terminal.pumpHostFrame(
+            WireFrame(type: .output, streamSeq: 5, payload: Data("new".utf8)),
+            frameBinding: try XCTUnwrap(terminal.binding)
+        )
+
+        XCTAssertFalse(terminal.scrollState.followsBottom)
         XCTAssertTrue(terminal.scrollState.hasUnseenOutput)
         XCTAssertEqual(terminal.newOutputIndicatorForTesting?.title, "New output ↓")
     }

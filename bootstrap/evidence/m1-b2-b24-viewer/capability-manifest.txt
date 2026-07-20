@@ -50,4 +50,4 @@ viewer_behavior=B24ViewerSemanticsTests
 renderer_gpu_occlusion_sleep=landed Gate7RenderingTests plus the B2.4 live sustained-output run
 vttest_semantic=PASS; pinned live 1049 path recorded after OPOST/ONLCR landing
 vttest_evidence=bootstrap/evidence/m1-b2-b24-viewer/vttest-live.txt
-vttest_visual=DEFERRED_PENDING_#47; captured window is background-only and is not accepted as terminal pixel proof
+vttest_visual=PASS_PRODUCTION_WORKSPACE_AFTER_#47; vttest-production-menu.png and vttest-production-alternate-screen.png are textured 2696x1800 captures; the prior background-only xctest capture remains historical
