@@ -171,7 +171,7 @@ protocol ManualSurfaceEngine: AnyObject {
 }
 
 /// In-process fake for L1/L2 logic tests that do not need the real C boundary.
-final class FakeManualSurface: ManualSurfaceEngine {
+final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapshotProviding {
     let callbackContext: BridgeCallbackContext
     private(set) var throughSeq: UInt64 = 0
     private(set) var appliedRanges: [(streamSeq: UInt64, bytes: Data)] = []
@@ -184,6 +184,7 @@ final class FakeManualSurface: ManualSurfaceEngine {
     private(set) var displayIDCalls: [UInt32] = []
     private(set) var occlusionCalls: [Bool] = []
     var fakeReportedSize: ManualSurfaceSize?
+    var fakeSemanticSnapshot: ManualSurfaceSemanticSnapshot?
     private(set) var drawCount = 0
     private(set) var refreshCount = 0
     private(set) var freed = false
@@ -209,6 +210,8 @@ final class FakeManualSurface: ManualSurfaceEngine {
     init(callbackContext: BridgeCallbackContext = BridgeCallbackContext()) {
         self.callbackContext = callbackContext
     }
+
+    func semanticSnapshot() -> ManualSurfaceSemanticSnapshot? { fakeSemanticSnapshot }
 
     public func processOutput(bytes: Data, streamSeq: UInt64) -> HiveTerminalEngineResult {
         let ownedBytes = Data(bytes)

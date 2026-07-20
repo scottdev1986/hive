@@ -1637,7 +1637,12 @@ pub const ProductionHostLauncher = struct {
             spec_json,
             initial_input,
             adoption_secret,
-        ) catch null;
+        ) catch |err| {
+            std.log.err("production host launch failed: {s}; broker will report verification_unknown", .{
+                @errorName(err),
+            });
+            return null;
+        };
     }
 
     fn launchOne(

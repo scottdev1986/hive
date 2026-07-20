@@ -1,6 +1,8 @@
 #!/bin/bash
 # B2.4 viewer-semantics qualification. Requires an unlocked GUI session.
 # Usage: qualify-hive-terminal-b24.sh [artifact-dir] [evidence-dir]
+# The evidence directory must already contain the two production-Workspace
+# pixel artifacts; this script pins them but does not automate window capture.
 set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
@@ -247,6 +249,17 @@ record_instruments 'Time Profiler' time-profiler
 record_instruments 'Allocations' allocations
 record_instruments 'Metal System Trace' metal-system-trace
 
+if [[ "$(/usr/bin/shasum -a 256 "$EVIDENCE/vttest-production-menu.png" | /usr/bin/cut -d' ' -f1)" != \
+    'f21d6a1b2bfc3bc5abec90b0d0c9394051f2a81b0cf900e59bad007d9391d07f' ]]; then
+  echo "production vttest menu pixel proof is missing or changed" >&2
+  exit 1
+fi
+if [[ "$(/usr/bin/shasum -a 256 "$EVIDENCE/vttest-production-alternate-screen.png" | /usr/bin/cut -d' ' -f1)" != \
+    'b046ac5689bb83bfb19f2a69445ca476f1c828da37b3ffeda7cb6f58d74a1c62' ]]; then
+  echo "production vttest alternate-screen pixel proof is missing or changed" >&2
+  exit 1
+fi
+
 {
   printf 'status=AUTOMATED_PASS\n'
   printf 'unit_corpus=B24 viewer + Gate8 clipboard + Gate9 action policy\n'
@@ -256,8 +269,8 @@ record_instruments 'Metal System Trace' metal-system-trace
   printf 'physical_sleep=REUSE Gate7 independently recorded human row; notification transition is automated here\n'
   printf 'gpu_recreation=NO_VIEW_API; renderer-health pending-frame recovery is proven, hardware fault/replacement remains Gate7/B2 orchestration scope\n'
   printf 'vttest=PASS semantic live 1049 traversal after OPOST/ONLCR landing; see vttest-live.txt\n'
-  printf 'vttest_pixels=DEFERRED_PENDING_#47; background-only capture is explicitly not accepted as rendered terminal proof\n'
-  printf 'renderer_frame_observer=NON_AUTHORITATIVE; rendered-viewer.png is the B2.4 AppKit UI proof\n'
+  printf 'vttest_pixels=PASS_PRODUCTION_WORKSPACE_AFTER_#47; see vttest-production-menu.png and vttest-production-alternate-screen.png; prior DEFERRED_PENDING_#47 capture remains historical\n'
+  printf 'renderer_frame_observer=NON_AUTHORITATIVE; in-process window captures remain background-only; the production Workspace artifacts are the terminal pixel proof\n'
 } >"$EVIDENCE/qualification-summary.txt"
 
 # Swift diagnostics can preserve source-line indentation on otherwise blank
@@ -279,4 +292,4 @@ done
 )
 
 echo "HiveTerminalView B2.4 automated qualification passed; evidence: $EVIDENCE"
-echo "HOLD: cross-vendor review and draw-path #47 pixel proof remain; do not land."
+echo "HOLD: cross-vendor review of the rendered-legs follow-up remains; do not land."
