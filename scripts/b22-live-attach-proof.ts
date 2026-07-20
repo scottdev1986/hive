@@ -291,9 +291,6 @@ const workspaceArgs = [
   "--hive", hiveWrapper,
   "--orchestrator-session", `hive-b22-orch`,
 ];
-if (process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT !== undefined) {
-  workspaceArgs.push("--smoke");
-}
 log(`launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`);
 const workspace = process.env.HIVE_B22_NO_APP === "1" ? null : Bun.spawn(
   [workspaceBinary, ...workspaceArgs],
