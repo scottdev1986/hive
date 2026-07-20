@@ -57,6 +57,11 @@ The two standalone-header sites were both exercised: the syntax-only compile in
 `native/sessiond/test.sh` and the dual-architecture compile in
 `scripts/check-ghostty-abi.sh`.
 
+After rebasing onto current `main`, the expanded Zig build graph also passed:
+53/53 steps and 198/198 tests. `bun run test:sessiond`, the dual-architecture
+ABI/header checks, Swift attach-test compilation, and `bun run typecheck` were
+all rerun on that rebased tree and returned `0`.
+
 The brief's phrase “Swift-side attach assertions now expect CRLF” is not true
 of the tree. The amended evidence says so explicitly. The three CRLF assertions
 are Zig-side: the primary `pty_host` bare-NL test, `session_host` PTY echo, and
