@@ -176,11 +176,11 @@ const upstreamPublicHeaderSha256 = process.env.HIVE_UPSTREAM_PUBLIC_HEADER_SHA25
 const bridgeHeaderSha256 = process.env.HIVE_BRIDGE_HEADER_SHA256;
 const symbolListSha256 = process.env.HIVE_SYMBOL_LIST_SHA256;
 const metalBuild = process.env.HIVE_METAL_BUILD;
-const zigArchiveSha256 = process.env.HIVE_ZIG_ARCHIVE_SHA256;
+const zigVersion = process.env.HIVE_ZIG_VERSION;
 if (!patchSeriesSha256 || !upstreamPublicHeaderSha256 || !bridgeHeaderSha256 || !symbolListSha256) {
   throw new Error("build did not provide source/ABI provenance hashes");
 }
-if (!metalToolchain || !metalBuild || !zigArchiveSha256) {
+if (!metalToolchain || !metalBuild || !zigVersion) {
   throw new Error("build did not provide Zig/Metal provenance");
 }
 
@@ -201,7 +201,7 @@ const artifactManifest = {
   buildEnvironment: {
     metalToolchain,
     metalBuild,
-    zigArchiveSha256,
+    zigVersion,
     networkPolicy: "offline; dependency cache verified before build",
     runnerLink: "Zig bundled Darwin stubs selected by scripts/zig-runner-tools/xcrun",
     sdkOverlay: "locked Xcode SDKs with only macOS libSystem.tbd replaced by Zig's bundled stub",

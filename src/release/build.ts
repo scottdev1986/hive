@@ -266,17 +266,20 @@ async function compileSessiond(
   const lockPath = join(options.repoRoot, "native/toolchain-lock.json");
   const zigVersion = (await Bun.$`/usr/bin/plutil -extract zig.version raw -o - ${lockPath}`.text()).trim();
   const deploymentTarget = (await Bun.$`/usr/bin/plutil -extract deploymentTarget raw -o - ${lockPath}`.text()).trim();
-  const hostArch = process.arch === "arm64" ? "aarch64" : "x86_64";
-  const nativeCache = process.env.HIVE_NATIVE_CACHE ?? join(options.repoRoot, ".cache/native");
-  const zig = join(
-    nativeCache,
-    "zig/toolchains",
-    `zig-${hostArch}-macos-${zigVersion}`,
-    "zig",
-  );
-  if (!(await Bun.file(zig).exists())) {
+  const nativeCache =
+    process.env.HIVE_NATIVE_CACHE ??
+    join(process.env.HOME ?? "", ".cache/hive/native");
+  // System zig from PATH; the lock pins the exact version.
+  const zig = Bun.which("zig");
+  if (!zig) {
     throw new Error(
-      `pinned Zig missing at ${zig}; run 'make toolchain' before the release build`,
+      `zig is not on PATH; install Zig ${zigVersion} (brew install zig@0.15 && brew link --force zig@0.15)`,
+    );
+  }
+  const actualZigVersion = (await Bun.$`${zig} version`.text()).trim();
+  if (actualZigVersion !== zigVersion) {
+    throw new Error(
+      `zig on PATH is ${actualZigVersion}; the toolchain lock requires ${zigVersion}`,
     );
   }
 

@@ -9,7 +9,7 @@
 #   make cleanup                stop the dev instance and delete all dev artifacts
 #
 # `make build && make run` is the developer flow: it builds every artifact the
-# dev release needs (pinned Zig, GhosttyKit, ReleaseFast sessiond, the CLI and
+# dev release needs (system Zig, GhosttyKit, ReleaseFast sessiond, the CLI and
 # the Workspace app) and launches the staged Workspace. The production daemon
 # owns `hive-sessiond serve`; agent panes with a sessiond locator render through
 # HiveTerminalView (B2.2+). `make terminal` remains the M1 attach/smoke harness
@@ -54,7 +54,14 @@ ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
 DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
 DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
 LOCK := $(ROOT)/native/toolchain-lock.json
-NATIVE_CACHE ?= $(ROOT)/.cache/native
+# Shared per-user native cache (#46): the zig caches and the
+# lock-keyed Ghostty artifacts live OUTSIDE the checkout so every worktree
+# shares compiled deps naturally. Correctness comes from content keys, never
+# from the path: artifacts are keyed by ghostty commit + zig version + the lock
+# digest, and the zig caches are content-addressed and lock-protected by zig
+# itself. Only per-checkout build products (sessiond ReleaseFast staging)
+# stay under $(ROOT)/.cache.
+NATIVE_CACHE ?= $(HOME)/.cache/hive/native
 DEMO_CACHE := $(NATIVE_CACHE)/demo
 export HIVE_NATIVE_CACHE := $(NATIVE_CACHE)
 
@@ -63,27 +70,33 @@ ifeq ($(UNAME_M),arm64)
 CLI_ASSET := hive-darwin-arm64
 SESSIOND_ASSET := hive-sessiond-darwin-arm64
 ZIG_ARCH := aarch64
-ZIG_LOCK_ARCH := arm64
 else ifeq ($(UNAME_M),x86_64)
 CLI_ASSET := hive-darwin-x64
 SESSIOND_ASSET := hive-sessiond-darwin-x64
 ZIG_ARCH := x86_64
-ZIG_LOCK_ARCH := x86_64
 else
 $(error unsupported host architecture $(UNAME_M); expected arm64 or x86_64)
 endif
 
 ZIG_VERSION := $(shell /usr/bin/plutil -extract zig.version raw -o - $(LOCK))
-ZIG_SHA := $(shell /usr/bin/plutil -extract zig.$(ZIG_LOCK_ARCH)Sha256 raw -o - $(LOCK))
 BUN_VERSION := $(shell /usr/bin/plutil -extract bun raw -o - $(LOCK))
 MACOS_DEPLOYMENT_TARGET := $(shell /usr/bin/plutil -extract deploymentTarget raw -o - $(LOCK))
 GHOSTTY_COMMIT := $(shell /usr/bin/plutil -extract ghostty.commit raw -o - $(LOCK))
 GHOSTTY_PATCH_SHA := $(shell /usr/bin/plutil -extract ghostty.patchSeriesSha256 raw -o - $(LOCK))
-ZIG := $(NATIVE_CACHE)/zig/toolchains/zig-$(ZIG_ARCH)-macos-$(ZIG_VERSION)/zig
-TOOLCHAIN_STAMP := $(DEMO_CACHE)/toolchain-$(ZIG_VERSION)-$(ZIG_SHA).stamp
-GHOSTTY_ARTIFACT := $(NATIVE_CACHE)/artifacts/ghostty-$(GHOSTTY_COMMIT)-zig-$(ZIG_SHA)
+# The system zig on PATH is THE compiler; the lock pins its exact version and
+# scripts/preflight-native-toolchain.sh enforces it before every native build.
+ZIG := zig
+TOOLCHAIN_STAMP := $(DEMO_CACHE)/toolchain-$(ZIG_VERSION).stamp
+GHOSTTY_ARTIFACT := $(NATIVE_CACHE)/artifacts/ghostty-$(GHOSTTY_COMMIT)-zig-$(ZIG_VERSION)
 GHOSTTY_ARTIFACT_INFO := $(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework/Info.plist
-GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-demo-$(GHOSTTY_PATCH_SHA).stamp
+# The artifact stamp is a CONTENT key, not an mtime: its name digests the
+# whole toolchain lock (which pins ghostty commit/patched tree, the patch
+# series, both headers, the symbol list and zig), so any locked input change
+# renames the stamp and forces a rebuild, while a fresh worktree whose file
+# mtimes are all new still reuses the shared artifact. Vendor-tree drift
+# WITHOUT a lock bump is caught loudly by the always-run vendor-verify below.
+LOCK_SHA := $(shell /usr/bin/shasum -a 256 $(LOCK) | cut -c1-16)
+GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-lock-$(LOCK_SHA).stamp
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
 GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
 # Deliberately NOT the name SwiftPM emits. A debug build carries its file name
@@ -99,7 +112,9 @@ GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
 # HiveWorkspace.app/Contents/MacOS/HiveWorkspace.
 WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspaceDev
 WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
-SESSIOND_RELEASE_ROOT := $(DEMO_CACHE)/sessiond-releasefast
+# Per-checkout: built from THIS worktree's sources, so it must never live in
+# the shared cache where sibling worktrees would clobber each other's build.
+SESSIOND_RELEASE_ROOT := $(ROOT)/.cache/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
 SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
 DEMO_PORT := 43117
@@ -176,8 +191,9 @@ help:
 	@echo "make deepclean             cleanup + delete native toolchain/build caches"
 	@echo "demo/terminal need Bun $(BUN_VERSION), Xcode/Swift + Metal Toolchain, and an unlocked Aqua GUI session"
 
-# Pinned Zig toolchain + Ghostty dependency cache (native/toolchain-lock.json).
-# The brew zig is not used; the preflight enforces the locked 0.15.x.
+# Native prerequisites: system zig (PATH, version pinned by the lock and
+# enforced by the preflight/provision scripts) + the hash-verified Ghostty
+# dependency cache (native/toolchain-lock.json).
 toolchain: $(TOOLCHAIN_STAMP)
 
 $(TOOLCHAIN_STAMP): $(LOCK) \
@@ -187,13 +203,35 @@ $(TOOLCHAIN_STAMP): $(LOCK) \
 		$(ROOT)/vendor/ghostty/build.zig.zon.json
 	@mkdir -p "$(DEMO_CACHE)"
 	@"$(ROOT)/scripts/provision-native-toolchain.sh"
-	@test -x "$(ZIG)" || { echo "make: pinned Zig was not provisioned; rerun 'make toolchain'" >&2; exit 1; }
 	@touch "$@"
 
-# File-backed rules make source and lock changes invalidate every demo artifact.
-ghostty ghosttykit: $(GHOSTTYKIT_INFO)
+# Locked-input changes invalidate the shared artifact through the stamp's
+# lock digest; vendor-verify fails loudly on any vendor-tree drift the lock
+# does not record. It runs on every ghostty/test make, so it must be cheap:
+# the committed vendor/ghostty tree hash IS the lock's patchedTree, and git
+# answers both "clean?" and "which tree?" in milliseconds. The byte-level
+# prover (scripts/vendor-ghostty.sh verify) remains inside the artifact
+# build itself.
+.PHONY: vendor-verify
+vendor-verify:
+	@set -e; \
+	dirty=$$(git -C "$(ROOT)" status --porcelain -- vendor/ghostty); \
+	if [ -n "$$dirty" ]; then \
+	  echo "make: vendor/ghostty has uncommitted changes; commit them, update native/toolchain-lock.json (ghostty.patchedTree), and prove with scripts/vendor-ghostty.sh verify:" >&2; \
+	  printf '%s\n' "$$dirty" | head >&2; exit 1; \
+	fi; \
+	tree=$$(git -C "$(ROOT)" rev-parse HEAD:vendor/ghostty); \
+	locked=$$(/usr/bin/plutil -extract ghostty.patchedTree raw -o - "$(LOCK)"); \
+	if [ "$$tree" != "$$locked" ]; then \
+	  echo "make: vendor/ghostty tree $$tree does not match lock patchedTree $$locked; run scripts/vendor-ghostty.sh verify" >&2; exit 1; \
+	fi
 
-$(GHOSTTY_ARTIFACT_STAMP): $(GHOSTTY_BUILD_INPUTS) | toolchain
+ghostty ghosttykit: vendor-verify $(GHOSTTYKIT_INFO)
+
+# No mtime prerequisites: the stamp name is the content key (see LOCK_SHA
+# above), so a fresh worktree reuses the shared artifact instead of spending
+# 25-40 minutes rebuilding it because its checkout mtimes are new (#46).
+$(GHOSTTY_ARTIFACT_STAMP): | toolchain
 	@echo "building lock-pinned GhosttyKit"
 	@"$(ROOT)/scripts/build-ghosttykit.sh"
 	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make ghostty'" >&2; exit 1; }
@@ -244,6 +282,7 @@ $(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) $(GHOSTTY_ARTIFACT_STAMP) | toolchai
 		cd "$(ROOT)/native/sessiond"; \
 		PATH="$(ROOT)/scripts/zig-runner-tools:$$PATH" "$(ZIG)" build install \
 			--prefix "$(SESSIOND_RELEASE_ROOT)" \
+			--cache-dir "$(NATIVE_CACHE)/zig-local/sessiond" \
 			--global-cache-dir "$(NATIVE_CACHE)/zig-global" \
 			-Dtarget=$(ZIG_ARCH)-macos.$(MACOS_DEPLOYMENT_TARGET) \
 			-Doptimize=ReleaseFast \
@@ -515,9 +554,12 @@ clean:
 
 cleanup: clean
 
-# Also drop the expensive native caches (pinned Zig, Ghostty artifacts) and
+# Also drop the expensive native caches (zig caches, Ghostty artifacts) and
 # intermediate build state. The next make build re-provisions from scratch.
+# $(NATIVE_CACHE) is the per-user cache shared by every worktree; deleting it
+# re-provisions the machine, not just this checkout. $(ROOT)/.cache holds only
+# this checkout's build products (and the legacy pre-#46 repo-local cache).
 deepclean: clean
-	rm -rf "$(ROOT)/.cache/native" "$(GHOSTTYKIT)" \
+	rm -rf "$(NATIVE_CACHE)" "$(ROOT)/.cache" "$(GHOSTTYKIT)" \
 	  "$(ROOT)/workspace/.build" "$(ROOT)/.zig-cache" \
 	  "$(ROOT)/native/sessiond/zig-out" "$(ROOT)/native/sessiond/.zig-cache"

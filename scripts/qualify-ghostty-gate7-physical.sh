@@ -25,7 +25,7 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LOCK="$ROOT/native/toolchain-lock.json"
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 
 lock_value() {
   /usr/bin/plutil -extract "$1" raw -o - "$LOCK"
@@ -39,15 +39,11 @@ if [[ $# -ge 1 ]]; then
   ARTIFACT=$1
 else
   commit=$(lock_value ghostty.commit)
-  case "$(uname -m)" in
-    arm64) zig_sha=$(lock_value zig.arm64Sha256) ;;
-    x86_64) zig_sha=$(lock_value zig.x86_64Sha256) ;;
-  esac
   # Prefer worktree cache; fall back to siblings that share a machine-level cache.
   CANDIDATES=(
-    "$CACHE/artifacts/ghostty-$commit-zig-$zig_sha"
-    "$ROOT/../../.cache/native/artifacts/ghostty-$commit-zig-$zig_sha"
-    "$ROOT/../../../.cache/native/artifacts/ghostty-$commit-zig-$zig_sha"
+    "$CACHE/artifacts/ghostty-$commit-zig-$(lock_value zig.version)"
+    "$ROOT/../../.cache/native/artifacts/ghostty-$commit-zig-$(lock_value zig.version)"
+    "$ROOT/../../../.cache/native/artifacts/ghostty-$commit-zig-$(lock_value zig.version)"
   )
   ARTIFACT="${CANDIDATES[0]}"
   for candidate in "${CANDIDATES[@]}"; do
@@ -89,8 +85,6 @@ validate_artifact_binding() {
     '.source.bridgeHeaderSha256=ghostty.bridgeHeaderSha256' \
     '.source.symbolListSha256=ghostty.symbolListSha256' \
     '.toolchain.zig.version=zig.version' \
-    '.toolchain.zig.arm64Sha256=zig.arm64Sha256' \
-    '.toolchain.zig.x86_64Sha256=zig.x86_64Sha256' \
     '.toolchain.apple.xcode=apple.xcode' \
     '.toolchain.apple.build=apple.build' \
     '.toolchain.apple.swift=apple.swift' \
