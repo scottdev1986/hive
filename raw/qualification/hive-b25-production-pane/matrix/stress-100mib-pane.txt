@@ -1,0 +1,11 @@
+2026-07-20T07:15:59.513Z HEAD=064e7de8d47806ad4ca462e8b4c0d9fc9690d009
+2026-07-20T07:15:59.513Z runID=b25-pane-mrsw4u55 focusedSuite=PaneOrderedOutputStressTests
+2026-07-20T07:15:59.513Z GREEN real ProjectWindowController -> agent PaneView -> HiveTerminalView -> real Ghostty C manual surface
+2026-07-20T07:15:59.513Z GREEN production pump entry=pumpHostFrame; content-sensitive ordered frames=1600; APPLIED receipts=1601
+2026-07-20T07:15:59.513Z GREEN bytes=104857600 duration=21.347s heartbeats=2132 maxHeartbeatGap=0.0326s
+2026-07-20T07:15:59.513Z GREEN contiguous streamHighWater=104857619; post-volume semantic sentinel rendered
+2026-07-20T07:15:59.513Z MUTATION VERIFIED one-byte sequence gap -> REBASE_REQUIRED; highWater remained 19
+2026-07-20T07:15:59.513Z PRIOR ART VERIFIED Gate 5 full-volume byte equality + single-byte content mutation + concurrent serialization sha256=30f40a47494b179311e173351f3c3c0afa9a216bf945e013ecc47dfac0294022
+2026-07-20T07:15:59.513Z NOTE locked XCTest cannot create the physical Metal surface; this row uses the real headless Ghostty C surface inside the real Workspace pane hierarchy. Production physical pane evidence is a separate B2.5 cell.
+2026-07-20T07:15:59.513Z transcript=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/hive-b25-production-pane/matrix/stress-100mib-pane-xctest.txt
+2026-07-20T07:15:59.513Z RESULT: B2.5.3 100 MiB pane ordered-output responsiveness GREEN

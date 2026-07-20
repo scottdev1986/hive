@@ -10,9 +10,11 @@
 #
 # `make build && make run` is the developer flow: it builds every artifact the
 # dev release needs (pinned Zig, GhosttyKit, ReleaseFast sessiond, the CLI and
-# the Workspace app) and launches the staged Workspace. Its terminal panes stay
-# blank for now: nothing in the shipped stack starts the sessiond broker yet, so
-# `make terminal` remains the entrypoint for a live M1 typeable terminal.
+# the Workspace app) and launches the staged Workspace. The production daemon
+# owns `hive-sessiond serve`; agent panes with a sessiond locator render through
+# HiveTerminalView (B2.2+). `make terminal` remains the M1 attach/smoke harness
+# (login shell / B2.2 proof), not the product entrypoint — B2.5 qualifies the
+# production pane path (row K vendor matrix) under make run.
 #
 # Isolation: every rendezvous name (tmux socket/sessions, sessiond broker,
 # daemon port/pid, sqlite db, project registry) derives from HIVE_HOME. make

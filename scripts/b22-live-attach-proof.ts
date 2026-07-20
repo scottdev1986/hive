@@ -25,6 +25,7 @@ import {
   constants,
   existsSync,
   mkdirSync,
+  readFileSync,
   realpathSync,
   writeFileSync,
 } from "node:fs";
@@ -51,6 +52,14 @@ process.env.HIVE_HOME = home;
 const port = Number(process.env.HIVE_B22_PORT ?? "43117");
 const agentName = realShell ? "terminal" : "aria";
 const agentId = `agent-${agentName}`;
+const workspaceProject = process.env.HIVE_B22_WORKSPACE_PROJECT ?? repoRoot;
+const a4Action = process.env.HIVE_B25_A4_ACTION;
+if (a4Action !== undefined && a4Action !== "close") {
+  throw new Error(`HIVE_B25_A4_ACTION must be close (got ${a4Action})`);
+}
+if (!workspaceProject.startsWith("/") || !existsSync(workspaceProject)) {
+  throw new Error(`HIVE_B22_WORKSPACE_PROJECT must name an existing absolute directory`);
+}
 
 mkdirSync(home, { recursive: true, mode: 0o700 });
 const canonicalHome = realpathSync(home);
@@ -105,6 +114,7 @@ chmodSync(hiveWrapper, 0o755);
 
 log(`B2.2 live proof home: ${home}`);
 log(`transcript: ${transcriptPath}`);
+log(`Workspace project: ${workspaceProject}`);
 
 // 1. Real broker. A terminal Ctrl-C signals the whole foreground process
 // group, so the broker used to die FIRST — before the orderly teardown below
@@ -286,8 +296,19 @@ try {
   await daemon.stop();
   process.exit(1);
 }
-log(`session created: hostPid=${created.inspection.hostPid} provider=${created.inspection.providerRoot?.pid}`);
+const createdHostPid = created.inspection.hostPid;
+if (createdHostPid === null) throw new Error("session create returned no live host pid");
+log(`session created: hostPid=${createdHostPid} provider=${created.inspection.providerRoot?.pid}`);
 if (realShell) log(`interactive login shell: ${shellExecutable} -l (cwd ${repoRoot})`);
+await Bun.sleep(250);
+const { captureProcessTree } = await import("../src/daemon/teardown");
+const processTree = (await captureProcessTree([createdHostPid])).filter(
+  (entry) => entry.command !== "sleep 0.25",
+);
+if (processTree.length < 2) {
+  throw new Error(`live session tree did not include a provider: ${JSON.stringify(processTree)}`);
+}
+log(`captured live session tree before action: ${processTree.map((entry) => entry.pid).join(",")}`);
 
 // Sustain the visibility lease from this live publisher process.
 const renewals = setInterval(() => {
@@ -300,7 +321,7 @@ const renewals = setInterval(() => {
 // 4. The real Workspace app.
 const workspaceBinary = join(repoRoot, "workspace/.build/debug/HiveWorkspace");
 const workspaceArgs = [
-  "--project", repoRoot,
+  "--project", workspaceProject,
   "--port", String(port),
   "--instance-id", instanceId,
   "--instance-home", home,
@@ -311,7 +332,7 @@ log(`launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`
 const workspace = process.env.HIVE_B22_NO_APP === "1" ? null : Bun.spawn(
   [workspaceBinary, ...workspaceArgs],
   {
-    cwd: repoRoot,
+    cwd: workspaceProject,
     env: { ...process.env, HIVE_HOME: home },
     stdin: "ignore",
     stdout: Bun.file(join(home, "workspace.stdout.log")),
@@ -353,7 +374,7 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     // process gone is a state, so the exit code reports what the process table
     // says rather than what we sent.
     log(`daemon stop refused (${error}); killing session host directly`);
-    const hostPid = created.inspection.hostPid;
+    const hostPid = createdHostPid;
     try {
       process.kill(hostPid, "SIGKILL");
     } catch { /* already gone */ }
@@ -383,18 +404,39 @@ writeFileSync(join(home, "b22-proof.json"), JSON.stringify({
   port,
   agent: agentName,
   mode: realShell ? "shell" : "ticker",
+  workspaceProject,
+  hostPid: createdHostPid,
+  processTree,
   locator,
 }));
 log("proof descriptor written for opt-in live tests: " + join(home, "b22-proof.json"));
 log(realShell
   ? "terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down"
   : "proof stack is up — Ctrl-C to tear down");
-if (workspace !== null && process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT === "1") {
+if (workspace !== null && (
+  process.env.HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT === "1" || a4Action === "close"
+)) {
   const proofExit = await workspace.exited;
   // A signal-driven shutdown kills the app too; that passive exit must not
   // re-enter shutdown and masquerade as the user's second Ctrl-C.
   if (!shuttingDown) {
     log(`Workspace live-resize proof exited ${proofExit}`);
+    if (a4Action === "close") {
+      const finalPath = join(home, "runtime/sessiond/hosts", locator.sessionId, "final.json");
+      for (let i = 0; i < 100 && !existsSync(finalPath); i += 1) await Bun.sleep(50);
+      if (!existsSync(finalPath)) throw new Error("A4 close produced no final session record");
+      const final = JSON.parse(readFileSync(finalPath, "utf8")) as {
+        state?: string;
+        survivors?: unknown[];
+      };
+      if (proofExit !== 0 || final.state !== "terminated" || final.survivors?.length !== 0) {
+        throw new Error(`A4 close was not verified: exit=${proofExit} final=${JSON.stringify(final)}`);
+      }
+      if (broker.exitCode !== null || daemon.listeningPort === null) {
+        throw new Error("A4 close killed the unrelated daemon/broker control plane");
+      }
+      log("A4 CLOSE VERIFIED: exact session terminated with no survivors; daemon and broker still live");
+    }
     await shutdown("Workspace live-resize proof complete", proofExit);
   }
 }

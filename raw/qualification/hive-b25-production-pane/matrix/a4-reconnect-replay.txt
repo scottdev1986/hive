@@ -1,0 +1,9 @@
+2026-07-20T06:50:20.566Z HEAD=82d63f920d4e33eae79d162643bca4f87c6bdcf8
+2026-07-20T06:50:20.566Z home=/tmp/hb25-r72cf project=/tmp/hb25-replay-72cf port=43142
+2026-07-20T06:50:20.566Z session=ses_019f7e4a-33e9-7418-973d-668c36987cec generation=1
+2026-07-20T06:50:20.566Z pre-action process tree=28120,28125,28128
+2026-07-20T06:50:24.790Z GREEN live sessiond attach -> replay -> contiguous live output -> same-locator reconnect
+2026-07-20T06:50:24.945Z MUTATION VERIFIED wrong-generation attach refused: hive: Hive refused to attach aria: its session generation changed [session-locator-mismatch]
+2026-07-20T06:50:24.945Z journal=/tmp/hb25-r72cf/runtime/sessiond/hosts/ses_019f7e4a-33e9-7418-973d-668c36987cec/journal.bin bytes=582 sha256=cb2e8208fba6210dc9c718de8da4d3eaba54a38c53d1e338bd3c7c95cdf60538
+2026-07-20T06:50:24.945Z xctest=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/hive-b25-production-pane/matrix/a4-reconnect-xctest.txt
+2026-07-20T06:50:27.848Z RESULT: A4 restart/reconnect/replay GREEN

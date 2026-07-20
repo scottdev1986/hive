@@ -45,6 +45,7 @@ import {
   CAPABILITY_PROVIDERS,
   forEachProvider,
   unknownVendor,
+  type AgentRecord,
   type CapabilityProvider,
 } from "../schemas";
 import {
@@ -55,7 +56,10 @@ import {
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
-import { stopAgentSession } from "../daemon/teardown";
+import {
+  stopAgentSession,
+  stopSessiondAgentSession,
+} from "../daemon/teardown";
 import {
   inheritDefaultModelControlSettings,
   inheritOrdinaryWorkspaceSelection,
@@ -64,8 +68,31 @@ import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
+import {
+  type HiveTerminalHostAdapter,
+  requireSessiondAgentLocator,
+} from "../daemon/session-host/hive-terminal-host";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
 import { getHiveHome } from "../daemon/db";
+
+export function stopSpawnSession(
+  agent: AgentRecord,
+  dependencies: Readonly<{
+    sessions: TmuxSessionHost;
+    terminalHost: Pick<HiveTerminalHostAdapter, "inspect" | "terminate">;
+  }>,
+) {
+  if (agent.sessionLocator?.hostKind !== "sessiond") {
+    return stopAgentSession(agent, { sessions: dependencies.sessions });
+  }
+  return stopSessiondAgentSession(agent, {
+    terminalHost: dependencies.terminalHost,
+    readHostPid: async (record) =>
+      (await dependencies.terminalHost.inspect(
+        requireSessiondAgentLocator(record),
+      )).hostPid,
+  });
+}
 
 export async function runDaemon(): Promise<void> {
   // Lock first: the broker authenticates the single daemon-lock identity, so
@@ -221,7 +248,10 @@ export async function runDaemon(): Promise<void> {
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
     tmux: sessions,
-    stopSession: (agent) => stopAgentSession(agent, { sessions }),
+    stopSession: (agent) => stopSpawnSession(agent, {
+      sessions,
+      terminalHost: daemon.sessiondTerminalHost,
+    }),
     // Even when quota-aware routing is disabled, critical read-only restarts
     // require a durable accounting lifecycle.
     quota,

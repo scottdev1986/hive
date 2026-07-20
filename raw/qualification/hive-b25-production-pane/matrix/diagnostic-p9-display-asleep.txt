@@ -1,0 +1,23 @@
+2026-07-20T05:22:48.382Z HEAD=5a8500f3dbf6eb42c7c0e41ee02a9ea75653d001
+2026-07-20T05:22:48.382Z home=/tmp/hb25-p9 (41-byte broker path)
+2026-07-20T05:22:48.382Z project=/tmp/hb25-project-b7eba4 (non-Hive throwaway git repository)
+2026-07-20T05:22:48.690Z daemon ready pid=49181 port=43150
+2026-07-20T05:22:48.715Z real Workspace launched pid=49238 instanceId=f298318af4
+2026-07-20T05:22:49.717Z hive_spawn requested tool=claude name=aria readOnly=true
+2026-07-20T05:23:37.784Z FAIL: PRODUCTION PANE PROOF FAIL:
+  production pane aria appeared in the real Workspace
+2026-07-20T05:23:37.784Z unified-log cause: hive_ghostty_surface_new_manual_v1 failed
+2026-07-20T05:23:37.784Z unified-log detail: CVDisplayLinkCreateWithCGDisplays error -6661 due to invalid display count (0)
+2026-07-20T05:23:40.968Z cleanup: hive_kill aria completed
+2026-07-20T05:23:41.326Z cleanup: exact root session hive-orchestrator-f298318af4 and 3 captured process(es) absent
+2026-07-20T05:23:46.329Z daemon required SIGKILL during harness cleanup
+
+POST-RUN POSITIVE CONTROL:
+  CGGetActiveDisplayList return=0 activeDisplayCount=0
+  system_profiler built-in Color LCD online=yes displayAsleep=yes
+  after `/usr/bin/caffeinate -u -t 1`: return=0 activeDisplayCount=1
+
+The retained 1,223-byte Claude journal is diagnostic vendor output, captured
+from the surviving exact sessiond host directory after hive_kill. It is not the
+required successful pre-kill Row-K capture; the next green run must replace
+that proof with its own journal and Workspace-window PNG before kill.

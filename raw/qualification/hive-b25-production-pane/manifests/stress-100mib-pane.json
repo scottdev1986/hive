@@ -1,0 +1,56 @@
+{
+  "cell": "stress-100mib-pane",
+  "ok": true,
+  "head": "064e7de8d47806ad4ca462e8b4c0d9fc9690d009",
+  "startedAt": "2026-07-20T07:15:59.513Z",
+  "runID": "b25-pane-mrsw4u55",
+  "test": {
+    "filter": "PaneOrderedOutputStressTests",
+    "transcript": "/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/hive-b25-production-pane/matrix/stress-100mib-pane-xctest.txt",
+    "source": "/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/workspace/Tests/HiveWorkspaceTests/PaneOrderedOutputStressTests.swift",
+    "sourceSha256": "487edabde0e17028858256780887e32a528d8751963464cdaeaca211b307e693"
+  },
+  "panePath": [
+    "ProjectWindowController",
+    "PaneView(agent:aria)",
+    "HiveTerminalView",
+    "pumpHostFrame",
+    "AttachReplayClient",
+    "OutputRangeApplicator",
+    "hive_ghostty_surface_process_output_v1"
+  ],
+  "metrics": {
+    "bytes": 104857600,
+    "chunks": 1600,
+    "runID": "b25-pane-mrsw4u55",
+    "durationSeconds": 21.347,
+    "heartbeats": 2132,
+    "maxHeartbeatGapSeconds": 0.0326,
+    "streamHighWater": 104857619,
+    "stressAppliedAcks": 1601,
+    "finalAppliedAcks": 1602,
+    "mutationHighWater": 19
+  },
+  "limits": {
+    "maxHeartbeatGapSeconds": 0.5
+  },
+  "mutation": {
+    "kind": "one-byte stream sequence gap",
+    "expected": "REBASE_REQUIRED with unchanged high-water",
+    "observedHighWater": 19
+  },
+  "priorArt": {
+    "artifact": "/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/raw/qualification/ghostty-b1-gate5-ordered/arm64-stress-xctest.txt",
+    "sha256": "30f40a47494b179311e173351f3c3c0afa9a216bf945e013ecc47dfac0294022",
+    "controls": [
+      "full-volume byte equality across 100 MiB",
+      "single-volume-byte mutation",
+      "forced-overlap concurrent serialization"
+    ]
+  },
+  "environment": {
+    "arch": "arm64",
+    "macOS": "26.3.1",
+    "swift": "Apple Swift version 6.3.3 (swiftlang-6.3.3.1.3 clang-2100.1.1.101)"
+  }
+}

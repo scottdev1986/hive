@@ -1,0 +1,20 @@
+B2.5 production-pane harness cleanup audit
+observedAt=2026-07-20T04:41:53Z
+cleanedAt=2026-07-20T04:43:14Z
+head=5925dec21729923219500df8f3b75a6b9ae653a5
+
+Measured survivors from failed vendor attempts:
+/tmp/hb25-p3 socket=hive-d224bec6ed session=hive-orchestrator-d224bec6ed tmuxPid=94379 claudePid=94381
+/tmp/hb25-p4 socket=hive-8a2f552732 session=hive-orchestrator-8a2f552732 tmuxPid=13889 claudePid=13890
+
+Exact cleanup:
+tmux -L hive-d224bec6ed kill-session -t '=hive-orchestrator-d224bec6ed'
+tmux -L hive-8a2f552732 kill-session -t '=hive-orchestrator-8a2f552732'
+
+Settle-then-assert (2 seconds):
+ABSENT 94379
+ABSENT 94381
+ABSENT 13889
+ABSENT 13890
+no server running on /private/tmp/tmux-501/hive-d224bec6ed
+no server running on /private/tmp/tmux-501/hive-8a2f552732

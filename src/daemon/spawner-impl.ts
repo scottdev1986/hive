@@ -2586,7 +2586,7 @@ export class HiveSpawner implements Spawner {
     try {
       await this.stopVerifiedSession(
         stopping,
-        `Spawn failure for ${record.name}`,
+        `Spawn failure for ${record.name}: ${failureReason}`,
       );
     } catch {
       return this.dependencies.db.getAgentById(record.id) ?? stopping;

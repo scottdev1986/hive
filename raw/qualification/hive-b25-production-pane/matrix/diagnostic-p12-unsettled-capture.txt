@@ -1,0 +1,27 @@
+2026-07-20T05:41:58.738Z HEAD=8b5a75a482207d2297b8c9fb44e08e7576b28e8d
+2026-07-20T05:41:58.738Z home=/tmp/hb25-p12 (42-byte broker path)
+2026-07-20T05:41:58.738Z project=/tmp/hb25-project-f76735 (non-Hive throwaway git repository)
+2026-07-20T05:42:00.399Z GREEN active-display preflight: initial=0 settled=1 woke=true
+2026-07-20T05:42:00.399Z MUTATION VERIFIED: zero active displays breaks the real-Workspace preflight
+2026-07-20T05:42:00.500Z display keep-awake active pid=72212
+2026-07-20T05:42:00.807Z daemon ready pid=72213 port=43153
+2026-07-20T05:42:00.834Z real Workspace launched pid=72279 instanceId=d4b5c1df3b
+2026-07-20T05:42:01.837Z hive_spawn requested tool=claude name=aria readOnly=true
+2026-07-20T05:42:12.184Z CAPTURED before hive_kill phase=pane-ready: session=ses_019f7e0b-c36c-748e-9c2b-4e6f60a11070 journalBytes=95 window=13091
+2026-07-20T05:42:12.575Z Workspace pane positive control:
+  PRODUCTION PANE PROOF: agent=aria instance=d4b5c1df3b session=ses_019f7e0b-c36c-748e-9c2b-4e6f60a11070 generation=1 engine=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300 highWater=79 frame=(0.0, 0.0, 514.0, 743.0) window=13091 visible=true screenshot=/tmp/hb25-p12/production-pane-window.png
+  PRODUCTION PANE PROOF OK
+2026-07-20T05:42:24.896Z durable DB side effect: id=024b5617-3323-4a5c-b73c-43bf4dbf0781 from=aria to=queen state=injected body=exact nonce
+2026-07-20T05:44:12.781Z FAIL: harness did not retrieve the already-push-delivered queen message through hive_inbox
+2026-07-20T05:44:16.018Z cleanup: hive_kill aria completed
+2026-07-20T05:44:16.356Z cleanup: exact root session hive-orchestrator-d4b5c1df3b and 3 captured process(es) absent
+2026-07-20T05:44:21.358Z daemon required SIGKILL during harness cleanup
+
+DIAGNOSTIC ONLY: the in-process capture path produced a real 2560x1600
+Workspace PNG, but it captured at highWater=79 while the headers still read
+`spawning`; its paired journal is only the 95-byte initialization snapshot.
+The vendor later executed the exact hive_send side effect and the live journal
+grew to 30,222 bytes, but queen push-delivery moved the message out of the
+consuming inbox before the harness polled it. The next pin waits for at least
+1 KiB, a presented render layer, and a non-spawning feed header, then uses a
+fresh durable proof-sink recipient whose inbox cannot be push-consumed.

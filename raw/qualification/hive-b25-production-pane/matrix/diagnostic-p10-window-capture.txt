@@ -1,0 +1,23 @@
+2026-07-20T05:31:24.125Z HEAD=d99f1b14e3bb8b8b198293e1d472d7d256f89e35
+2026-07-20T05:31:24.125Z home=/tmp/hb25-p10 (42-byte broker path)
+2026-07-20T05:31:24.125Z project=/tmp/hb25-project-c65e82 (non-Hive throwaway git repository)
+2026-07-20T05:31:25.861Z GREEN active-display preflight: initial=0 settled=1 woke=true
+2026-07-20T05:31:25.861Z MUTATION VERIFIED: zero active displays breaks the real-Workspace preflight
+2026-07-20T05:31:25.963Z display keep-awake active pid=62153
+2026-07-20T05:31:26.267Z daemon ready pid=62154 port=43151
+2026-07-20T05:31:26.296Z real Workspace launched pid=62212 instanceId=c4e03f1816
+2026-07-20T05:31:27.302Z hive_spawn requested tool=claude name=aria readOnly=true
+2026-07-20T05:31:37.657Z Workspace pane positive control:
+  PRODUCTION PANE PROOF: agent=aria instance=c4e03f1816 session=ses_019f7e02-1268-7e46-9ee0-665e17e9f631 generation=1 engine=0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300 highWater=67 frame=(0.0, 0.0, 514.0, 743.0) window=13079
+  PRODUCTION PANE PROOF OK
+2026-07-20T05:31:37.657Z FAIL: screencapture -l 13079 could not create image from window
+2026-07-20T05:31:37.990Z cleanup: exact root session hive-orchestrator-c4e03f1816 and 1 captured process(es) absent
+2026-07-20T05:31:42.993Z daemon required SIGKILL during harness cleanup
+
+DIAGNOSTIC ONLY: the real production pane and first exact-locator frame were
+green. The harness copied and hash-verified the 95-byte journal snapshot before
+cleanup, then learned that the smoke-only Workspace window had not been ordered
+onscreen, so window-ID capture failed. The next pin orders that real window,
+asserts visibility, retries capture for a settled five-second interval, and
+marks spawn requested before racing the pane report so all failures call the
+exact hive_kill path.

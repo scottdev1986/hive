@@ -1,0 +1,24 @@
+{
+  "cell": "production-wiring-pane",
+  "ok": false,
+  "head": "59d79123bb48fc579aaf09cb98a1299fa11723bd",
+  "home": "/tmp/hb25-p15",
+  "port": 43156,
+  "project": "/tmp/hb25-project-32f27c",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "observed": null,
+  "sideEffectMessageId": null,
+  "sideEffectMessageState": null,
+  "paneReport": null,
+  "capture": null,
+  "displayPreflight": {
+    "initialActiveDisplays": 0,
+    "activeDisplays": 0,
+    "wokeDisplay": false,
+    "screenLocked": true
+  },
+  "startedAt": "2026-07-20T06:04:10.716Z",
+  "writtenAt": "2026-07-20T06:04:12.354Z"
+}

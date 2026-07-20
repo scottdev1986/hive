@@ -1,0 +1,58 @@
+{
+  "cell": "diagnostic-p13-proof-sink-and-iosurface",
+  "ok": false,
+  "head": "2d548599235c5cd2cd6cad0a9b4f5739a0337102",
+  "home": "/tmp/hb25-p13",
+  "port": 43154,
+  "project": "/tmp/hb25-project-6985e4",
+  "requestedTool": "claude",
+  "requestedModel": "claude-haiku-4-5-20251001",
+  "agent": "aria",
+  "workspacePid": 79703,
+  "workspaceInstanceId": "c1e2eac368",
+  "displayPreflight": {
+    "initialActiveDisplays": 1,
+    "activeDisplays": 1,
+    "wokeDisplay": false
+  },
+  "paneReport": {
+    "ok": true,
+    "sessionId": "ses_019f7e13-1c82-79a4-9f84-2b109bcb0dc2",
+    "generation": 1,
+    "hostKind": "sessiond",
+    "engineBuildId": "0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300",
+    "highWater": 4839,
+    "drawCount": 1,
+    "hasPresentedContents": true,
+    "feedStatus": "working",
+    "frame": "(0.0, 0.0, 514.0, 743.0)",
+    "windowNumber": 13110,
+    "visible": true
+  },
+  "preKillJournalSnapshot": {
+    "path": "raw/qualification/hive-b25-production-pane/transcripts/claude-ses_019f7e13-1c82-79a4-9f84-2b109bcb0dc2.journal.bin",
+    "bytes": 4963,
+    "sha256": "64056341eacae404ee2db4744617e6a72f4d1d2b91a1fa09557d123ab32c33e4",
+    "sequencePrefixHex": "00000000000000000000000000001353",
+    "semanticAssessment": "substantive Claude TUI output"
+  },
+  "workspaceWindowPng": {
+    "path": "raw/qualification/hive-b25-production-pane/screenshots/claude-ses_019f7e13-1c82-79a4-9f84-2b109bcb0dc2-workspace.png",
+    "bytes": 103457,
+    "sha256": "4f311451563936acb86f400e4bdf4789d8300dfcb06a34f7989813b585f054bc",
+    "semanticAssessment": "real Workspace chrome and working header; AppKit cache omitted IOSurface terminal pixels"
+  },
+  "executionSideEffect": {
+    "requestedRecipient": "b25-proof-6985e4",
+    "recipientExisted": false,
+    "noncePersisted": false,
+    "vendorReportedFailureToQueen": true
+  },
+  "failure": "nonexistent proof sink rejected; AppKit snapshot omitted IOSurface pixels",
+  "exactHiveKillCompleted": true,
+  "processAudit": "agent dead; exact root session and all captured processes absent",
+  "exactRootSession": "hive-orchestrator-c1e2eac368",
+  "capturedRootProcessCount": 3,
+  "startedAt": "2026-07-20T05:50:01.691Z",
+  "writtenAt": "2026-07-20T05:52:25.005Z"
+}

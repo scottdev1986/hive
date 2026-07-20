@@ -23,13 +23,39 @@ import WorkspaceCore
 ///                           afterwards (detaching a client never kills agents)
 final class SmokeRunner {
 
+    private static let productionPaneMinimumHighWater: UInt64 = 1_024
+
+    struct A4Proof: Equatable {
+        enum Action: String, Equatable {
+            case close
+        }
+
+        let agent: String
+        let action: Action
+    }
+
     static func sessiondLiveResizeInputAgent(environment: [String: String]) -> String {
         environment["HIVE_B22_REAL_SHELL"] == "1" ? "terminal" : "aria"
+    }
+
+    static func productionPaneAgent(environment: [String: String]) -> String? {
+        guard let agent = environment["HIVE_B25_PRODUCTION_PANE_AGENT"],
+              !agent.isEmpty else { return nil }
+        return agent
+    }
+
+    static func a4Proof(environment: [String: String]) -> A4Proof? {
+        guard let agent = environment["HIVE_B25_A4_AGENT"], !agent.isEmpty,
+              let rawAction = environment["HIVE_B25_A4_ACTION"],
+              let action = A4Proof.Action(rawValue: rawAction)
+        else { return nil }
+        return A4Proof(agent: agent, action: action)
     }
 
     private let controller: ProjectWindowController
     private let config: LaunchConfig
     private var failures: [String] = []
+    private var productionPaneSummary: String?
 
     init(controller: ProjectWindowController, config: LaunchConfig) {
         self.controller = controller
@@ -260,8 +286,254 @@ final class SmokeRunner {
         }
     }
 
+    private func runProductionPaneProof(agent: String) {
+        if let window = controller.window {
+            NSRunningApplication.current.activate(options: [.activateAllWindows])
+            NSApp.activate(ignoringOtherApps: true)
+            window.center()
+            window.orderFrontRegardless()
+            window.makeKey()
+        }
+        let paneID = ProjectState.paneID(forAgent: agent)
+        waitForProductionPane(agent: agent, paneID: paneID,
+                              deadline: Date().addingTimeInterval(45))
+    }
+
+    /// The production pane depends on feed callbacks dispatched to the main
+    /// queue. A synchronous polling loop here starves those callbacks and makes
+    /// the proof itself prevent the pane it is waiting for from being admitted.
+    private func waitForProductionPane(agent: String, paneID: PaneID, deadline: Date) {
+        guard let window = controller.window,
+              let pane = controller.state.panes[paneID],
+              let locator = pane.sessionLocator,
+              let terminal = controller.sessiondTerminalView(pane: paneID) else {
+            guard Date() < deadline else {
+                check(false, "production pane \(agent) appeared in the real Workspace")
+                finishProductionPaneProof()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForProductionPane(agent: agent, paneID: paneID, deadline: deadline)
+            }
+            return
+        }
+
+        check(locator.hostKind == "sessiond",
+              "production feed supplied a sessiond locator")
+        let expectedLocator = SessionLocator(
+            schemaVersion: locator.schemaVersion,
+            instanceId: locator.instanceId,
+            subjectKind: locator.subject.kind,
+            agentId: locator.subject.agentId,
+            generation: locator.generation,
+            sessionId: locator.sessionId,
+            hostKind: locator.hostKind,
+            engineBuildId: locator.engineBuildId)
+        waitForProductionSurface(
+            agent: agent, paneID: paneID, locator: locator,
+            expectedLocator: expectedLocator, terminal: terminal, window: window,
+            deadline: Date().addingTimeInterval(60))
+    }
+
+    private func waitForProductionSurface(
+        agent: String, paneID: PaneID, locator: AgentSessionLocator,
+        expectedLocator: SessionLocator, terminal: HiveTerminalView,
+        window: NSWindow, deadline: Date
+    ) {
+        let renderEvidence = terminal.renderEvidence
+        let feedStatus = controller.state.panes[paneID]?.feedStatus
+        guard terminal.surfaceState == .live,
+              terminal.sessionLocator == expectedLocator,
+              terminal.highWater >= Self.productionPaneMinimumHighWater,
+              renderEvidence.drawCount > 0,
+              renderEvidence.hasPresentedContents,
+              feedStatus != nil,
+              feedStatus != "spawning" else {
+            guard Date() < deadline else {
+                check(false, "HiveTerminalView reached its first correct frame on the exact locator")
+                finishProductionPaneChecks(
+                    agent: agent, paneID: paneID, locator: locator,
+                    terminal: terminal, window: window)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForProductionSurface(
+                    agent: agent, paneID: paneID, locator: locator,
+                    expectedLocator: expectedLocator, terminal: terminal,
+                    window: window, deadline: deadline)
+            }
+            return
+        }
+        finishProductionPaneChecks(
+            agent: agent, paneID: paneID, locator: locator,
+            terminal: terminal, window: window)
+    }
+
+    private func finishProductionPaneChecks(
+        agent: String, paneID: PaneID, locator: AgentSessionLocator,
+        terminal: HiveTerminalView, window: NSWindow
+    ) {
+        check(terminal.highWater > 0,
+              "the production vendor TUI presented non-empty ordered output")
+        check(terminal.highWater >= Self.productionPaneMinimumHighWater,
+              "the production vendor TUI settled on substantive ordered output")
+        check(terminal.renderEvidence.drawCount > 0
+                && terminal.renderEvidence.hasPresentedContents,
+              "the production renderer presented nonblank layer content")
+        let feedStatus = controller.state.panes[paneID]?.feedStatus
+        check(feedStatus != nil && feedStatus != "spawning",
+              "the production pane header settled beyond spawning")
+        check(terminal.window === controller.window && terminal.superview != nil,
+              "HiveTerminalView is installed in the real Workspace window")
+        check(terminal.bounds.width > 0 && terminal.bounds.height > 0,
+              "the production pane has committed non-zero geometry")
+        check(window.isVisible,
+              "the real Workspace window is visible for evidence capture")
+        check(!controller.terminalChildRunning(pane: paneID),
+              "the renderer owns no hidden SwiftTerm child PTY")
+        let screenFrame = (window.screen ?? NSScreen.main)?.frame ?? .zero
+        let captureFrame = window.frame.intersection(screenFrame)
+        check(!captureFrame.isNull && captureFrame.width > 0 && captureFrame.height > 0,
+              "the visible Workspace window intersects its real screen")
+        let captureX = captureFrame.minX - screenFrame.minX
+        let captureY = screenFrame.maxY - captureFrame.maxY
+
+        productionPaneSummary =
+            "PRODUCTION PANE PROOF: agent=\(agent) instance=\(locator.instanceId) "
+                + "session=\(locator.sessionId) "
+                + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
+                + "highWater=\(terminal.highWater) frame=\(terminal.frame) "
+                + "drawCount=\(terminal.renderEvidence.drawCount) "
+                + "presented=\(terminal.renderEvidence.hasPresentedContents) "
+                + "feedStatus=\(feedStatus ?? "missing") "
+                + "window=\(window.windowNumber) visible=\(window.isVisible) "
+                + "captureRect=\(Int(captureX.rounded())),\(Int(captureY.rounded())),"
+                + "\(Int(captureFrame.width.rounded())),\(Int(captureFrame.height.rounded())) "
+                + "screenSize=\(Int(screenFrame.width.rounded())),"
+                + "\(Int(screenFrame.height.rounded()))"
+        finishProductionPaneProof()
+    }
+
+    private func finishProductionPaneProof() {
+        let result = failures.isEmpty
+            ? "PRODUCTION PANE PROOF OK"
+            : "PRODUCTION PANE PROOF FAIL:\n  " + failures.joined(separator: "\n  ")
+        let report = [productionPaneSummary, result].compactMap { $0 }.joined(separator: "\n") + "\n"
+        if let path = ProcessInfo.processInfo.environment["HIVE_B25_PRODUCTION_PANE_RESULT"] {
+            do {
+                try report.write(toFile: path, atomically: true, encoding: .utf8)
+            } catch {
+                print("PRODUCTION PANE PROOF FAIL: could not write result: \(error)")
+                return
+            }
+        }
+        print(report, terminator: "")
+    }
+
+    private func runA4Proof(_ proof: A4Proof) {
+        let paneID = ProjectState.paneID(forAgent: proof.agent)
+        waitForA4Pane(proof, paneID: paneID, deadline: Date().addingTimeInterval(45))
+    }
+
+    private func waitForA4Pane(_ proof: A4Proof, paneID: PaneID, deadline: Date) {
+        guard let pane = controller.state.panes[paneID],
+              let locator = pane.sessionLocator,
+              locator.hostKind == "sessiond",
+              pane.feedStatus != "spawning" else {
+            guard Date() < deadline else {
+                check(false, "A4 pane reached a settled feed state on a sessiond locator")
+                finishA4Proof("A4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Pane(proof, paneID: paneID, deadline: deadline)
+            }
+            return
+        }
+
+        let terminal = controller.sessiondTerminalView(pane: paneID)
+        let ready = "A4 \(proof.action.rawValue.uppercased()) READY: agent=\(proof.agent) "
+            + "instance=\(locator.instanceId) session=\(locator.sessionId) "
+            + "generation=\(locator.generation) feedStatus=\(pane.feedStatus) "
+            + "rendererHighWater=\(terminal?.highWater.description ?? "unavailable")"
+        finishA4Proof(ready)
+        waitForA4Trigger(
+            proof, paneID: paneID, ready: ready,
+            deadline: Date().addingTimeInterval(60))
+    }
+
+    private func waitForA4Trigger(
+        _ proof: A4Proof, paneID: PaneID, ready: String, deadline: Date
+    ) {
+        guard let trigger = ProcessInfo.processInfo.environment["HIVE_B25_A4_TRIGGER"],
+              !trigger.isEmpty else {
+            check(false, "HIVE_B25_A4_TRIGGER names the explicit qualification trigger")
+            finishA4Proof("\(ready)\nA4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+            return
+        }
+        guard FileManager.default.fileExists(atPath: trigger) else {
+            guard Date() < deadline else {
+                check(false, "A4 qualification trigger arrived before timeout")
+                finishA4Proof("\(ready)\nA4 \(proof.action.rawValue.uppercased()) PROOF FAIL")
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Trigger(
+                    proof, paneID: paneID, ready: ready, deadline: deadline)
+            }
+            return
+        }
+
+        controller.dispatch(.closePane(paneID))
+        waitForA4Close(
+            proof, paneID: paneID, ready: ready,
+            deadline: Date().addingTimeInterval(30))
+    }
+
+    private func waitForA4Close(
+        _ proof: A4Proof, paneID: PaneID, ready: String, deadline: Date
+    ) {
+        guard controller.state.panes[paneID] == nil else {
+            guard Date() < deadline else {
+                check(false, "closed A4 pane disappeared after verified daemon kill")
+                finishA4Proof("\(ready)\nA4 CLOSE PROOF FAIL")
+                exit(1)
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForA4Close(
+                    proof, paneID: paneID, ready: ready, deadline: deadline)
+            }
+            return
+        }
+        finishA4Proof("\(ready)\nA4 CLOSE PROOF OK: exact pane removed after daemon kill")
+        exit(failures.isEmpty ? 0 : 1)
+    }
+
+    private func finishA4Proof(_ body: String) {
+        let report = body + (failures.isEmpty
+            ? "\n"
+            : "\n  " + failures.joined(separator: "\n  ") + "\n")
+        if let path = ProcessInfo.processInfo.environment["HIVE_B25_A4_RESULT"] {
+            do {
+                try report.write(toFile: path, atomically: true, encoding: .utf8)
+            } catch {
+                print("A4 PROOF FAIL: could not write result: \(error)")
+                return
+            }
+        }
+        print(report, terminator: "")
+    }
+
     func run() {
         let env = ProcessInfo.processInfo.environment
+        if let proof = Self.a4Proof(environment: env) {
+            runA4Proof(proof)
+            return
+        }
+        if let agent = Self.productionPaneAgent(environment: env) {
+            runProductionPaneProof(agent: agent)
+            return
+        }
         if env["HIVE_SMOKE_SESSIOND_LIVE_RESIZE_INPUT"] == "1" {
             runSessiondLiveResizeInputProof(
                 agent: Self.sessiondLiveResizeInputAgent(environment: env))
