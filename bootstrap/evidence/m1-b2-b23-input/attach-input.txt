@@ -2,24 +2,30 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/16] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.10s)
-Test Suite 'Selected tests' started at 2026-07-19 21:21:45.021.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 21:21:45.022.
-Test Suite 'AttachInputTests' started at 2026-07-19 21:21:45.022.
+Build complete! (0.09s)
+Test Suite 'Selected tests' started at 2026-07-19 22:24:56.433.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:24:56.434.
+Test Suite 'AttachInputTests' started at 2026-07-19 22:24:56.434.
 Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' started.
-Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' passed (0.129 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' passed (0.138 seconds).
 Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' started.
-Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' passed (0.016 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testResizeReceiptsAreCorrelatedAndObservable]' started.
+2026-07-19 22:24:56.602 xctest[12931:42733273] hive-terminal RESIZE 80x24 result: applied 80x24
+2026-07-19 22:24:56.616 xctest[12931:42733273] hive-terminal RESIZE 80x24 result: stale currentRevision=7
+2026-07-19 22:24:56.631 xctest[12931:42733273] hive-terminal RESIZE 80x24 result: unknown host lost resize
+2026-07-19 22:24:56.646 xctest[12931:42733273] hive-terminal RESIZE 80x24 result: malformed 
+Test Case '-[HiveTerminalKitTests.AttachInputTests testResizeReceiptsAreCorrelatedAndObservable]' passed (0.059 seconds).
 Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' started.
 Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' passed (0.016 seconds).
 Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' started.
 Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' passed (0.099 seconds).
-Test Suite 'AttachInputTests' passed at 2026-07-19 21:21:45.282.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.259 (0.260) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 21:21:45.282.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.259 (0.260) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 21:21:45.282.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.259 (0.260) seconds
+Test Suite 'AttachInputTests' passed at 2026-07-19 22:24:56.761.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.327 (0.327) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:24:56.761.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.327 (0.327) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:24:56.761.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 0.327 (0.328) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
