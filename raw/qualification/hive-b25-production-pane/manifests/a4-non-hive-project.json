@@ -1,0 +1,29 @@
+{
+  "cell": "a4-non-hive-project",
+  "ok": true,
+  "head": "82d63f920d4e33eae79d162643bca4f87c6bdcf8",
+  "startedAt": "2026-07-20T06:50:15.809Z",
+  "projects": [
+    "/tmp/hb25-close-72cf"
+  ],
+  "sessions": [
+    {
+      "schemaVersion": 1,
+      "instanceId": "47eafe42a8",
+      "subject": {
+        "kind": "agent",
+        "agentId": "agent-aria"
+      },
+      "generation": 1,
+      "sessionId": "ses_019f7e4a-545a-7a90-86a6-58cfc8388d05",
+      "hostKind": "sessiond",
+      "engineBuildId": "0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300"
+    }
+  ],
+  "forbiddenProjectEntries": [
+    "package.json",
+    "bun.lock",
+    "bun.lockb",
+    ".hive"
+  ]
+}

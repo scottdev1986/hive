@@ -1,0 +1,6 @@
+2026-07-20T06:50:42.143Z HEAD=82d63f920d4e33eae79d162643bca4f87c6bdcf8
+2026-07-20T06:50:42.161Z GREEN plain git project=/tmp/hb25-close-72cf
+2026-07-20T06:50:42.161Z Workspace session=ses_019f7e4a-545a-7a90-86a6-58cfc8388d05 hostKind=sessiond
+2026-07-20T06:50:42.161Z no project package.json, Bun lockfile, .hive directory, or Hive source layout
+2026-07-20T06:50:42.161Z MUTATION VERIFIED: planted package.json breaks the plain-project check; removal restores it
+2026-07-20T06:50:42.161Z RESULT: A4 non-Hive project GREEN

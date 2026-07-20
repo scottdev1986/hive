@@ -1,0 +1,10 @@
+2026-07-20T06:50:32.206Z HEAD=82d63f920d4e33eae79d162643bca4f87c6bdcf8
+2026-07-20T06:50:32.206Z home=/tmp/hb25-c72cf project=/tmp/hb25-close-72cf port=43143
+2026-07-20T06:50:32.206Z session=ses_019f7e4a-545a-7a90-86a6-58cfc8388d05 generation=1
+2026-07-20T06:50:32.206Z captured-before-close=[{"pid":28451,"command":"/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/native/sessiond/zig-out/bin/hive-sessiond host"},{"pid":28455,"command":"/bin/sh -c (i=0; while true; do printf \"\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  \" \"$(( (i % 6) + 1 ))\" \"$i\"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf \"\\n\"; sleep 0.25; done) & ticker_pid=$!; trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; while IFS= read -r line; do printf \"\\nB2.3 RESPONSE:%s\\n\" \"$line\"; done"},{"pid":28459,"command":"/bin/sh -c (i=0; while true; do printf \"\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  \" \"$(( (i % 6) + 1 ))\" \"$i\"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf \"\\n\"; sleep 0.25; done) & ticker_pid=$!; trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; while IFS= read -r line; do printf \"\\nB2.3 RESPONSE:%s\\n\" \"$line\"; done"}]
+2026-07-20T06:50:32.389Z MUTATION VERIFIED wrong-locator pane target survived: hive: Hive refused to kill aria: its session generation changed [session-locator-mismatch]
+2026-07-20T06:50:37.607Z A4 CLOSE READY: agent=aria instance=47eafe42a8 session=ses_019f7e4a-545a-7a90-86a6-58cfc8388d05 generation=1 feedStatus=working rendererHighWater=unavailable | A4 CLOSE PROOF OK: exact pane removed after daemon kill
+2026-07-20T06:50:37.607Z GREEN captured target process tree absent after real pane close
+2026-07-20T06:50:37.607Z GREEN session final state=terminated survivors=[]
+2026-07-20T06:50:37.607Z GREEN unrelated daemon and broker survived until post-close readback
+2026-07-20T06:50:37.607Z RESULT: A4 exact per-pane close GREEN

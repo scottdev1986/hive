@@ -1,3 +1,12 @@
 checkout=bf73483aee153f66a8c2f06c171cac0d093f57c4
 date=2026-07-20T03:21:51Z
 host=arm64
+a4_pin=82d63f920d4e33eae79d162643bca4f87c6bdcf8
+a4_run_utc=2026-07-20T06:50:15Z
+a4_ports=43142,43143,43144
+a4_homes=/tmp/hb25-r*,/tmp/hb25-c*,/tmp/hb25-q*
+a4_host=arm64 macOS-26.3.1-25D2128
+a4_swift=6.3.3
+a4_bun=1.3.14
+a4_rows=exact-close,composed-quit,non-Hive-project,reconnect-replay
+a4_mutations=wrong-generation-close,wrong-generation-attach,termination-survivor-refusal,planted-package.json

@@ -1,0 +1,53 @@
+Test Suite 'Selected tests' started at 2026-07-20 02:50:18.553.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-20 02:50:18.554.
+Test Suite 'AppDelegateLifecycleTests' started at 2026-07-20 02:50:18.554.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testA4ProofRequiresAnExplicitAgentAndSupportedAction]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testA4ProofRequiresAnExplicitAgentAndSupportedAction]' passed (0.001 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testAgentClosureDismissesItsKillFailureSheet]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testAgentClosureDismissesItsKillFailureSheet]' passed (0.733 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testCellGeometryCommitPropagatesSnappedPaneFrameToTerminal]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testCellGeometryCommitPropagatesSnappedPaneFrameToTerminal]' passed (0.025 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testExhaustedFeedRetriesCloseSurfacesBeforeTermination]' started.
+2026-07-20 02:50:19.322 xctest[28064:44210171] workspace-feed could not be restarted; terminating the workspace
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testExhaustedFeedRetriesCloseSurfacesBeforeTermination]' passed (0.009 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testFeedWireSurfacesMalformedPresentLocatorImmediately]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testFeedWireSurfacesMalformedPresentLocatorImmediately]' passed (0.011 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testLiveResizeSmokeTargetsTheAgentCreatedByEachHarnessMode]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testLiveResizeSmokeTargetsTheAgentCreatedByEachHarnessMode]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testOnlyAnOwnedAppModalSessionIsAborted]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testOnlyAnOwnedAppModalSessionIsAborted]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testPaneCloseCarriesTheExactFeedLocatorToKill]' started.
+2026-07-20 02:50:19.371 xctest[28064:44210171] sessiond terminal surface for pane worker failed: hive_ghostty_surface_new_manual_v1 failed
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testPaneCloseCarriesTheExactFeedLocatorToKill]' passed (0.081 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testPaneTitleTruncatesWithoutDrivingWindowWidth]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testPaneTitleTruncatesWithoutDrivingWindowWidth]' passed (0.005 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testProductionPaneSmokeRequiresAnExplicitAgent]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testProductionPaneSmokeRequiresAnExplicitAgent]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testProjectCloseEndsEverySheetBeforeClosingOtherWindows]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testProjectCloseEndsEverySheetBeforeClosingOtherWindows]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground]' passed (0.003 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminalEnvironmentPreservesPrivateTempDirectoryForCodexSocket]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminalEnvironmentPreservesPrivateTempDirectoryForCodexSocket]' passed (0.000 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminationFailureCancelsQuitAndSurfacesReason]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminationFailureCancelsQuitAndSurfacesReason]' passed (0.002 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminationWaitsForVerifiedStopBeforeAllowingQuit]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTerminationWaitsForVerifiedStopBeforeAllowingQuit]' passed (0.001 seconds).
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTrackedMenuIsCancelledWhenTheInstanceCloses]' started.
+Test Case '-[HiveWorkspaceTests.AppDelegateLifecycleTests testTrackedMenuIsCancelledWhenTheInstanceCloses]' passed (0.001 seconds).
+Test Suite 'AppDelegateLifecycleTests' passed at 2026-07-20 02:50:19.429.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.874 (0.875) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-20 02:50:19.429.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.874 (0.875) seconds
+Test Suite 'Selected tests' passed at 2026-07-20 02:50:19.429.
+	 Executed 16 tests, with 0 failures (0 unexpected) in 0.874 (0.876) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/16] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (1.49s)
