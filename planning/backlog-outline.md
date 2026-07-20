@@ -44,7 +44,7 @@ Parallel tracks (∥ = concurrent):
 
 **Track C — quality bar** ∥ A,B
 - C1 "Beautiful blank terminal" (FULL SPEC in planning/story-m1-c1-beautiful-blank-terminal.md): typography, theme, padding, cursor, scrollback feel; design checklist + user screenshot signoff (the M1 bar is explicitly aesthetic as well as functional). The design layer is the AppKit chrome around and composited with the engine's own surface, plus a Hive-authored engine configuration — the engine exposes no per-key theming API, so the theme system is a generated config file pushed to live surfaces. Exploration runs early; implementation executes after B2.4 (viewer semantics) so the styled surfaces have stopped moving, and may then run parallel with B2.5/B2.6. Aesthetic signoff is the USER's personally (Q5) and closes only after the B2 integrated pane.
-- C2 Packaging: signed, notarized, self-contained universal build; clean-machine install with tmux absent (I9).
+- C2 Packaging (FULL SPEC in planning/story-m1-c2-packaging.md): signed, notarized, self-contained universal build; clean-machine install with tmux absent (I9).
 
 **Cut**
 - STORY-001 + STORY-002 execute as ONE atomic merge train (Removal Gate reached); full matrix re-run on the post-deletion tree → M1 exit proof recorded. Pre-cut drain performed by the OLD/bootstrap build (refuse cut while any legacy session survives; dev DB/runtime state archived + destructively reset — tmux identity rows are not migrated).
