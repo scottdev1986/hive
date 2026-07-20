@@ -43,6 +43,12 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     public private(set) var focusStealAttempts = 0
     var testingAllowFocusSteal = false
     public private(set) var drawScheduledCount = 0
+    /// #47 blank-pane wire boundary: how many INVALIDATE events reached the view.
+    public private(set) var invalidateEventCount = 0
+    /// #47: scheduleDraw entries (host + invalidate coalesced path).
+    public private(set) var scheduleDrawCallCount = 0
+    /// #47: times schedulePendingDrawIfPossible returned without queuing (gate closed).
+    public private(set) var drawGateBlockedCount = 0
     public private(set) var resizeFramesSent = 0
     public private(set) var reportedGeometry: TerminalGeometry?
     public private(set) var appliedContentScale = NSSize(width: 1, height: 1)
@@ -65,6 +71,7 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var closed = false
     private var appliedFramebufferSize: (width: UInt32, height: UInt32)?
     private let resizeQuiescence: TimeInterval = 0.100
+    private var lastDrawGateBlockReason: String?
     // internal (not private): HiveTerminalView+Input.swift (gate 8) reads/writes these.
     var markedText = NSMutableAttributedString()
     var keyTextAccumulator: [String]?
@@ -153,6 +160,17 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private func handleBridgeEvent(_ event: BridgeEvent) {
         switch event.type {
         case .invalidate:
+            invalidateEventCount += 1
+            if invalidateEventCount == 1 || invalidateEventCount == 5 || invalidateEventCount % 50 == 0 {
+                NSLog(
+                    "hive terminal wire: invalidate n=%u pending=%d draws=%u gate=%@ hw=%llu",
+                    invalidateEventCount,
+                    pendingDraw ? 1 : 0,
+                    drawScheduledCount,
+                    canPresentGhosttyFrame ? "open" : drawGateReason(),
+                    highWater
+                )
+            }
             scheduleDraw()
         case .title:
             lastTitle = String(data: event.bytes, encoding: .utf8) ?? ""
@@ -172,18 +190,54 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     }
 
     private func scheduleDraw() {
+        scheduleDrawCallCount += 1
         pendingDraw = true
         schedulePendingDrawIfPossible()
     }
 
     private func schedulePendingDrawIfPossible() {
-        guard pendingDraw, drawWorkItem == nil, canPresentGhosttyFrame else { return }
+        guard pendingDraw else { return }
+        if drawWorkItem != nil { return }
+        guard canPresentGhosttyFrame else {
+            drawGateBlockedCount += 1
+            let reason = drawGateReason()
+            if lastDrawGateBlockReason != reason {
+                lastDrawGateBlockReason = reason
+                NSLog(
+                    "hive terminal wire: draw-gate blocked reason=%@ scheduleDraws=%u invalidates=%u draws=%u",
+                    reason,
+                    scheduleDrawCallCount,
+                    invalidateEventCount,
+                    drawScheduledCount
+                )
+            }
+            return
+        }
         let work = DispatchWorkItem { [weak self] in
             guard let self else { return }
             self.drawWorkItem = nil
-            guard self.pendingDraw, self.canPresentGhosttyFrame else { return }
+            guard self.pendingDraw else { return }
+            guard self.canPresentGhosttyFrame else {
+                self.drawGateBlockedCount += 1
+                NSLog(
+                    "hive terminal wire: draw work dropped at fire reason=%@",
+                    self.drawGateReason()
+                )
+                return
+            }
             self.pendingDraw = false
             self.drawScheduledCount += 1
+            if self.drawScheduledCount == 1 || self.drawScheduledCount == 5 ||
+                self.drawScheduledCount % 50 == 0 {
+                NSLog(
+                    "hive terminal wire: draw n=%u invalidates=%u scheduleDraws=%u hw=%llu layer=%@",
+                    self.drawScheduledCount,
+                    self.invalidateEventCount,
+                    self.scheduleDrawCallCount,
+                    self.highWater,
+                    self.ghosttyRenderingLayer.map { String(describing: type(of: $0)) } ?? "nil"
+                )
+            }
             self.engine.draw()
         }
         drawWorkItem = work
@@ -193,6 +247,18 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
     private var canPresentGhosttyFrame: Bool {
         !closed && rendererHealthy && !renderingSuspended && bounds.width > 0 && bounds.height > 0 &&
             appliedOcclusionVisible != false
+    }
+
+    /// Human-readable why `canPresentGhosttyFrame` is false (blank-pane wire probe).
+    private func drawGateReason() -> String {
+        if closed { return "closed" }
+        if !rendererHealthy { return "renderer-unhealthy" }
+        if renderingSuspended { return "sleep-suspended" }
+        if bounds.width <= 0 || bounds.height <= 0 {
+            return "zero-bounds(\(Int(bounds.width))x\(Int(bounds.height)))"
+        }
+        if appliedOcclusionVisible == false { return "occlusion-hidden" }
+        return "open"
     }
 
     /// AppKit may invoke this for view damage, but Ghostty has exactly one
@@ -312,6 +378,20 @@ public final class HiveTerminalView: NSView, NSTextInputClient {
         setSurfaceState(.live)
         notifyOutputStatusReconnect(reason: "first-correct-frame")
         onFirstCorrectFrame?(highWater)
+        // #47: first-correct-frame must force a draw even if no INVALIDATE
+        // reached the view (or draws were gate-blocked during replay).
+        NSLog(
+            "hive terminal wire: first-correct-frame hw=%llu invalidates=%u scheduleDraws=%u draws=%u gateBlocked=%u gate=%@ bounds=%.0fx%.0f occlusion=%@",
+            highWater,
+            invalidateEventCount,
+            scheduleDrawCallCount,
+            drawScheduledCount,
+            drawGateBlockedCount,
+            canPresentGhosttyFrame ? "open" : drawGateReason(),
+            bounds.width,
+            bounds.height,
+            appliedOcclusionVisible.map { $0 ? "visible" : "hidden" } ?? "nil"
+        )
         scheduleDraw()
     }
 

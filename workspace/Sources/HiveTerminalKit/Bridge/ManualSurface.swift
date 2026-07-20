@@ -366,6 +366,9 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     private var rawSurfaceHandle: ghostty_surface_t?
     private let clipboardContext: GhosttyClipboardContext
     private var hiveConfigurationApplied = false
+    /// #47 wire probe counters (main-thread only via processOutput).
+    private(set) var processOutputSuccessCount: UInt32 = 0
+    private(set) var processOutputSuccessBytes: UInt64 = 0
 
     var throughSeq: UInt64 {
         performOnMainSync { self.rawThroughSeq }
@@ -448,6 +451,30 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
             if mapped == .success {
                 let end = streamSeq + UInt64(ownedBytes.count)
                 if end > self.rawThroughSeq { self.rawThroughSeq = end }
+                // #47 blank-pane wire probe: processOutput success is the
+                // VT-grid side; INVALIDATE→scheduleDraw is the draw side.
+                // Ghostty emits HIVE_GHOSTTY_EVENT_INVALIDATE from
+                // HiveManual.process on success (accepted ranges only).
+                self.processOutputSuccessCount += 1
+                self.processOutputSuccessBytes += UInt64(ownedBytes.count)
+                if self.processOutputSuccessCount == 1 ||
+                    self.processOutputSuccessCount == 5 ||
+                    self.processOutputSuccessCount % 50 == 0 {
+                    NSLog(
+                        "hive terminal wire: processOutput ok n=%u bytes=%llu through=%llu chunk=%zu",
+                        self.processOutputSuccessCount,
+                        self.processOutputSuccessBytes,
+                        self.rawThroughSeq,
+                        ownedBytes.count
+                    )
+                }
+            } else {
+                NSLog(
+                    "hive terminal wire: processOutput result=%d streamSeq=%llu len=%zu",
+                    mapped.rawValue,
+                    streamSeq,
+                    ownedBytes.count
+                )
             }
             return mapped
         }
