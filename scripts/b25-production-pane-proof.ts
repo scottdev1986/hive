@@ -326,16 +326,18 @@ async function main(): Promise<void> {
       ? {}
       : { model: process.env.HIVE_B25_MODEL }),
   };
-  const [spawnResult, report] = await Promise.all([
+  const [, report] = await Promise.all([
     withTimeout(
       client.callTool({ name: "hive_spawn", arguments: spawnArguments }),
       180_000,
       "hive_spawn",
-    ),
+    ).then((result) => {
+      toolValue(result, "agent");
+      spawned = true;
+      return result;
+    }),
     waitForPaneReport(),
   ]);
-  toolValue(spawnResult, "agent");
-  spawned = true;
   paneReport = report.trim();
   for (const line of paneReport.split("\n")) log(`workspace: ${line}`);
 
