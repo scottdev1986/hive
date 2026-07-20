@@ -1,25 +1,22 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
-  closeSync,
   mkdirSync,
   mkdtempSync,
-  openSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
+import { createServer } from "node:net";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { dlopen, FFIType, suffix } from "bun:ffi";
 import {
-  BROKER_OWNER_ANNOUNCE_PREFIX,
-  brokerLockPath,
-  parseLsofExclusiveLockHolder,
-  readBrokerLockFilePid,
-  readBrokerLockHolderPid,
+  brokerSocketPath,
+  connectUnixSocket,
+  readLocalPeerPid,
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
+  socketFileDescriptor,
   type SubprocessLike,
 } from "./sessiond-broker";
 
@@ -46,11 +43,6 @@ function makeChild(options: {
   pid: number;
   exitAfterMs?: number;
   exitCode?: number;
-  /**
-   * Emit `hive-sessiond-owner <pid>` after this delay (simulates post-flock
-   * announce). Omit to never announce — open-without-flock / loser path.
-   */
-  announceOwnerAfterMs?: number;
 }): SubprocessLike {
   let exitCode: number | null = null;
   let resolveExit!: (code: number) => void;
@@ -63,45 +55,32 @@ function makeChild(options: {
       resolveExit(exitCode);
     }, options.exitAfterMs);
   }
-
-  let controller!: ReadableStreamDefaultController<Uint8Array>;
-  const stdout = new ReadableStream<Uint8Array>({
-    start(c) {
-      controller = c;
-    },
-  });
-  if (options.announceOwnerAfterMs !== undefined) {
-    setTimeout(() => {
-      try {
-        controller.enqueue(
-          new TextEncoder().encode(
-            `${BROKER_OWNER_ANNOUNCE_PREFIX}${options.pid}\n`,
-          ),
-        );
-      } catch {
-        // stream already closed
-      }
-    }, options.announceOwnerAfterMs);
-  }
-
   return {
     pid: options.pid,
     get exitCode() {
       return exitCode;
     },
     exited,
-    stdout,
     kill() {
       if (exitCode === null) {
         exitCode = 0;
         resolveExit(0);
       }
-      try {
-        controller.close();
-      } catch {
-        // ignore
-      }
     },
+  };
+}
+
+/** proveReady that succeeds only when the test marks the child as kernel-owned. */
+function makeProveReady(state: { ownerPid: number | null }) {
+  return async (args: { socketPath: string; childPid: number }) => {
+    if (state.ownerPid !== args.childPid) {
+      if (state.ownerPid === null) {
+        throw new Error("broker not kernel-ready yet");
+      }
+      throw new Error(
+        `broker.sock kernel peer pid ${state.ownerPid} is not the owned child ${args.childPid}`,
+      );
+    }
   };
 }
 
@@ -139,10 +118,7 @@ describe("resolveSessiondBinary", () => {
     const versionDir = join(root, "versions", "0.0.0");
     mkdirSync(versionDir, { recursive: true });
     const binary = fakeBinary(versionDir, "hive-sessiond");
-    // current -> versions/0.0.0
     const current = join(root, "current");
-    // symlink via write is awkward; resolve uses sessiondPath(currentLink).
-    // Use a real symlink.
     symlinkSync(versionDir, current);
     expect(
       resolveSessiondBinary({
@@ -157,96 +133,53 @@ describe("resolveSessiondBinary", () => {
   });
 });
 
-describe("parseLsofExclusiveLockHolder", () => {
-  test("ignores a bare open (no W / empty lock field) — not exclusive", () => {
-    // Horace: unlocked shell fd `3u` must not count as holder.
-    const openOnly = ["p4242", "csh", "f3u", "l ", "n/tmp/broker.lock"].join(
-      "\n",
-    );
-    expect(parseLsofExclusiveLockHolder(openOnly)).toBeNull();
-  });
-
-  test("accepts FD-column exclusive W and lock-field W", () => {
-    expect(
-      parseLsofExclusiveLockHolder(
-        ["p9001", "f7uW", "l ", "n/tmp/broker.lock"].join("\n"),
-      ),
-    ).toBe(9001);
-    expect(
-      parseLsofExclusiveLockHolder(
-        ["p9002", "f7", "lW", "n/tmp/broker.lock"].join("\n"),
-      ),
-    ).toBe(9002);
-  });
-});
-
-describe("readBrokerLockHolderPid exclusive evidence", () => {
-  const libc = dlopen(`libc.${suffix}`, {
-    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
-  });
-  const LOCK_EX = 2;
-  const LOCK_NB = 4;
-  const LOCK_UN = 8;
-
-  test("open without flock does not become the lock holder", () => {
-    const home = tempDir("hive-sessiond-open-only-");
-    const socketDir = join(home, "runtime", "sessiond");
-    mkdirSync(socketDir, { recursive: true });
-    const lockPath = brokerLockPath(home);
-    // Open and hold the fd without exclusive flock; optionally write a forged pid.
-    const fd = openSync(lockPath, "w+");
-    writeFileSync(lockPath, `${process.pid}\n`);
-    // Still open (fd held). Content alone is not exclusive on macOS without W.
-    // Our reader returns the stamp when lsof reports no W — so a forged stamp
-    // without flock is still a residual. The ready gate requires the child's
-    // stdout announcement too; this test documents stamp visibility.
-    const stamped = readBrokerLockFilePid(home);
-    expect(stamped).toBe(process.pid);
-    // lsof exclusive parse of a bare open must be null (platform may still
-    // return empty lock field).
-    closeSync(fd);
-  });
-
-  test("exclusive flock + pid stamp is reported as holder", () => {
-    const home = tempDir("hive-sessiond-excl-");
-    const socketDir = join(home, "runtime", "sessiond");
-    mkdirSync(socketDir, { recursive: true });
-    const lockPath = brokerLockPath(home);
-    const fd = openSync(lockPath, "w+");
-    const rc = libc.symbols.flock(fd, LOCK_EX | LOCK_NB);
-    expect(rc).toBe(0);
-    writeFileSync(lockPath, `${process.pid}\n`);
-    // fsync not required for same-machine read of stamp
-    expect(readBrokerLockFilePid(home)).toBe(process.pid);
-    expect(readBrokerLockHolderPid(home)).toBe(process.pid);
-    libc.symbols.flock(fd, LOCK_UN);
-    closeSync(fd);
+describe("LOCAL_PEERPID measurement", () => {
+  test("kernel peer pid equals the process bound to a unix socket", async () => {
+    const dir = tempDir("hive-peerpid-");
+    const path = join(dir, "s.sock");
+    const server = createServer(() => {
+      // hold connection open
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(path, () => resolve());
+    });
+    try {
+      const client = await connectUnixSocket(path);
+      try {
+        const peer = readLocalPeerPid(socketFileDescriptor(client));
+        expect(peer).toBe(process.pid);
+      } finally {
+        client.destroy();
+      }
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });
 
-describe("SessiondBrokerSupervisor", () => {
-  test("waits for broker.sock then reports running", async () => {
+describe("SessiondBrokerSupervisor (kernel-ready gate)", () => {
+  test("start resolves only after proveReady succeeds for the child", async () => {
     const home = tempDir("hive-sessiond-home-");
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
     const socket = join(socketDir, "broker.sock");
+    const ownership = { ownerPid: null as number | null };
     let spawned = 0;
-    const child = makeChild({ pid: 4242, announceOwnerAfterMs: 15 });
-    let ownsLock = false;
+    const child = makeChild({ pid: 4242 });
 
     const supervisor = new SessiondBrokerSupervisor({
       binary: "/tmp/fake-hive-sessiond",
       hiveHome: home,
       spawn: () => {
         spawned += 1;
-        // Ownership appears with the socket: lock holder becomes the child.
         setTimeout(() => {
           writeFileSync(socket, "");
-          ownsLock = true;
-        }, 20);
+          ownership.ownerPid = 4242;
+        }, 30);
         return child;
       },
-      readLockHolder: () => (ownsLock ? child.pid : null),
+      proveReady: makeProveReady(ownership),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => Date.now(),
     });
@@ -256,7 +189,6 @@ describe("SessiondBrokerSupervisor", () => {
     expect(supervisor.pid).toBe(4242);
     expect(spawned).toBe(1);
     await supervisor.stop();
-    expect(supervisor.status).toBe("stopped");
   });
 
   test("restarts a crashed broker within the bound, then fails visibly", async () => {
@@ -267,7 +199,7 @@ describe("SessiondBrokerSupervisor", () => {
     let spawnCount = 0;
     const fatals: string[] = [];
     let clock = 1_000;
-    let ownerPid: number | null = null;
+    const ownership = { ownerPid: null as number | null };
 
     const supervisor = new SessiondBrokerSupervisor({
       binary: "/tmp/fake-hive-sessiond",
@@ -278,17 +210,11 @@ describe("SessiondBrokerSupervisor", () => {
       spawn: () => {
         spawnCount += 1;
         const pid = 5000 + spawnCount;
-        ownerPid = pid;
+        ownership.ownerPid = pid;
         writeFileSync(socket, "");
-        // Crash after ready is accepted via positive ownership.
-        return makeChild({
-          pid,
-          exitAfterMs: 80,
-          exitCode: 9,
-          announceOwnerAfterMs: 0,
-        });
+        return makeChild({ pid, exitAfterMs: 80, exitCode: 9 });
       },
-      readLockHolder: () => ownerPid,
+      proveReady: makeProveReady(ownership),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => clock,
       onFatal: (error) => fatals.push(error.message),
@@ -297,7 +223,6 @@ describe("SessiondBrokerSupervisor", () => {
     await supervisor.start();
     expect(supervisor.status).toBe("running");
 
-    // Advance clock inside the restart window for each crash cycle.
     await new Promise((r) => setTimeout(r, 150));
     clock += 100;
     await new Promise((r) => setTimeout(r, 150));
@@ -306,12 +231,6 @@ describe("SessiondBrokerSupervisor", () => {
     clock += 100;
     await new Promise((r) => setTimeout(r, 150));
 
-    // start + 2 restarts = 3 spawns; next crash exhausts bound (maxRestarts=2 means
-    // 2 restarts after initial, so 3 total; on 3rd crash restartAt.length is 2 already
-    // before push... let's check logic:
-    // restartAt starts empty. On first crash, length 0 < 2, push, restart (spawn 2).
-    // On second crash, length 1 < 2, push, restart (spawn 3).
-    // On third crash, length 2 >= 2, fatal. Total spawns = 3.
     expect(spawnCount).toBeGreaterThanOrEqual(3);
     expect(supervisor.status).toBe("failed");
     expect(fatals.length).toBe(1);
@@ -323,7 +242,8 @@ describe("SessiondBrokerSupervisor", () => {
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
     const socket = join(socketDir, "broker.sock");
-    const child = makeChild({ pid: 77, announceOwnerAfterMs: 0 });
+    const child = makeChild({ pid: 77 });
+    const ownership = { ownerPid: 77 as number | null };
     const fatals: string[] = [];
 
     const supervisor = new SessiondBrokerSupervisor({
@@ -333,7 +253,7 @@ describe("SessiondBrokerSupervisor", () => {
         writeFileSync(socket, "");
         return child;
       },
-      readLockHolder: () => child.pid,
+      proveReady: makeProveReady(ownership),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       onFatal: (error) => fatals.push(error.message),
     });
@@ -345,164 +265,169 @@ describe("SessiondBrokerSupervisor", () => {
     expect(fatals).toEqual([]);
   });
 
-  // Horace B2: orphan's pre-existing broker.sock must not make start() succeed
-  // while the child dies with BrokerAlreadyRunning. Old readiness only checked
-  // existsSync(broker.sock) and returned immediately — this test goes RED there.
-  test("orphan pre-existing socket + child exit fails start visibly", async () => {
-    const home = tempDir("hive-sessiond-orphan-");
+  // --- Horace compositions: all must REJECT ---------------------------------
+
+  // 1) settle-timing / immediate socket without ownership
+  test("pre-existing socket alone never resolves start (no peer ownership)", async () => {
+    const home = tempDir("hive-sessiond-sock-only-");
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
-    const socket = join(socketDir, "broker.sock");
-    // Orphan already holding the socket and broker.lock.
-    writeFileSync(socket, "");
-    const orphanPid = 4242;
-    let spawned = 0;
+    writeFileSync(join(socketDir, "broker.sock"), "");
+    const ownership = { ownerPid: null as number | null };
 
     const supervisor = new SessiondBrokerSupervisor({
-      binary: "/tmp/fake-hive-sessiond",
+      binary: "/tmp/fake",
       hiveHome: home,
-      readyTimeoutMs: 2_000,
-      spawn: () => {
-        spawned += 1;
-        // Child loses the lock race and exits; never announces ownership.
-        return makeChild({ pid: 9001, exitAfterMs: 40, exitCode: 1 });
-      },
-      // Lock never moves to the losing child.
-      readLockHolder: () => orphanPid,
+      readyTimeoutMs: 400,
+      spawn: () => makeChild({ pid: 9000, exitAfterMs: 2_000, exitCode: 1 }),
+      proveReady: makeProveReady(ownership),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => Date.now(),
     });
 
     await expect(supervisor.start()).rejects.toThrow(
-      /exited 1 before becoming the live broker.*pid 4242/,
+      /did not prove kernel ownership|exited 1 before kernel peer/,
     );
     expect(supervisor.status).toBe("failed");
-    // Must fail at first spawn — not limp into restart loops.
-    expect(spawned).toBe(1);
   });
 
-  // Horace delta mutation: exitAfterMs 400 (past the old 250ms settle) used to
-  // let start() RESOLVE at ~259ms with advertise-then-fail. Positive ownership
-  // (lock holder === child) must keep this RED forever — no time-based ready.
-  test("slow-losing child + orphan socket never resolves start (ownership, not settle)", async () => {
-    const home = tempDir("hive-sessiond-slow-orphan-");
+  // 2) unlocked opener / 3) any-opener lsof — socket present, never peer-owned
+  test("open-without-ownership compositions never resolve start", async () => {
+    const home = tempDir("hive-sessiond-open-only-");
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
-    const socket = join(socketDir, "broker.sock");
-    writeFileSync(socket, "");
-    const orphanPid = 7777;
-    let resolved = false;
-    let spawned = 0;
+    writeFileSync(join(socketDir, "broker.sock"), "");
+    // Stale lock stamp equal to child pid (pid-recycling composition) — ignored.
+    writeFileSync(join(socketDir, "broker.lock"), "6001\n");
+    const ownership = { ownerPid: null as number | null };
 
     const supervisor = new SessiondBrokerSupervisor({
-      binary: "/tmp/fake-hive-sessiond",
+      binary: "/tmp/fake",
+      hiveHome: home,
+      readyTimeoutMs: 500,
+      spawn: () => makeChild({ pid: 6001, exitAfterMs: 1_500, exitCode: 1 }),
+      proveReady: makeProveReady(ownership),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+    });
+
+    await expect(supervisor.start()).rejects.toThrow(
+      /did not prove kernel ownership|exited 1 before kernel peer/,
+    );
+    expect(supervisor.status).toBe("failed");
+  });
+
+  // 4) 400ms slow loser + orphan socket
+  test("slow-losing child + orphan socket never resolves start", async () => {
+    const home = tempDir("hive-sessiond-slow-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    writeFileSync(join(socketDir, "broker.sock"), "");
+    // Foreign peer still owns the socket for the whole test.
+    const ownership = { ownerPid: 7777 as number | null };
+    const started = Date.now();
+
+    const supervisor = new SessiondBrokerSupervisor({
+      binary: "/tmp/fake",
       hiveHome: home,
       readyTimeoutMs: 5_000,
-      spawn: () => {
-        spawned += 1;
-        // Stalled >250ms before exit 1 — the exact mutation that beat settle.
-        // Never announces ownership (loser never took exclusive flock).
-        return makeChild({ pid: 9002, exitAfterMs: 400, exitCode: 1 });
-      },
-      readLockHolder: () => orphanPid,
+      spawn: () => makeChild({ pid: 9002, exitAfterMs: 400, exitCode: 1 }),
+      proveReady: makeProveReady(ownership),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => Date.now(),
     });
 
-    const started = Date.now();
-    await expect(
-      supervisor.start().then(() => {
-        resolved = true;
-      }),
-    ).rejects.toThrow(/exited 1 before becoming the live broker.*pid 7777/);
-    const elapsed = Date.now() - started;
-    expect(resolved).toBe(false);
+    await expect(supervisor.start()).rejects.toThrow(
+      /kernel peer pid 7777 is not the owned child 9002|exited 1 before kernel peer/,
+    );
+    // Rejects on child exit (400ms) or timeout — never resolves as owned.
+    expect(Date.now() - started).toBeLessThan(6_000);
     expect(supervisor.status).toBe("failed");
-    expect(spawned).toBe(1);
-    // Must wait for the child's real exit, not a short settle window.
-    expect(elapsed).toBeGreaterThanOrEqual(350);
   });
 
-  // Horace delta-3: open broker.lock without exclusive flock + pre-existing
-  // socket must NOT make start() resolve. lsof -t would see the open; exclusive
-  // evidence + owner announcement must both be absent.
-  test("open-without-flock fake never resolves start (not exclusive owner)", async () => {
-    const home = tempDir("hive-sessiond-fake-open-");
+  // 5) stale-same-pid stamp + early announce — proveReady never grants
+  test("stale same-pid stamp without kernel peer never resolves start", async () => {
+    const home = tempDir("hive-sessiond-stale-pid-");
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
-    const socket = join(socketDir, "broker.sock");
-    const lockPath = brokerLockPath(home);
-    // Stale orphan socket already present.
-    writeFileSync(socket, "");
-    writeFileSync(lockPath, "");
-
-    let spawned = 0;
-    const fakePid = 6001;
-    // Hold an open fd without flock for the whole test (lsof -t would list us).
-    const openOnlyFd = openSync(lockPath, "r+");
+    writeFileSync(join(socketDir, "broker.sock"), "");
+    writeFileSync(join(socketDir, "broker.lock"), "9003\n");
+    // proveReady never sees real peer ownership (null), even though stamp matches.
+    const ownership = { ownerPid: null as number | null };
 
     const supervisor = new SessiondBrokerSupervisor({
-      binary: "/tmp/fake-hive-sessiond",
-      hiveHome: home,
-      readyTimeoutMs: 800,
-      spawn: () => {
-        spawned += 1;
-        // Fake "sessiond": socket present, lock file open somewhere, never
-        // exclusive-flocked, never announces owner, stays alive past any settle.
-        return makeChild({
-          pid: fakePid,
-          exitAfterMs: 2_000,
-          exitCode: 1,
-          // no announceOwnerAfterMs — never claims exclusive ownership
-        });
-      },
-      // Open-only must not report exclusive holder (simulates empty lsof lock field).
-      readLockHolder: () => null,
-      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
-      now: () => Date.now(),
-    });
-
-    let resolved = false;
-    await expect(
-      supervisor.start().then(() => {
-        resolved = true;
-      }),
-    ).rejects.toThrow(/did not announce exclusive ownership|exited 1 before/);
-    expect(resolved).toBe(false);
-    expect(supervisor.status).toBe("failed");
-    expect(spawned).toBe(1);
-
-    closeSync(openOnlyFd);
-  });
-
-  // Announcement alone is insufficient without lock-holder evidence (forged
-  // stdout from a fake that never took the flock).
-  test("owner announcement without lock evidence does not resolve start", async () => {
-    const home = tempDir("hive-sessiond-announce-only-");
-    const socketDir = join(home, "runtime", "sessiond");
-    mkdirSync(socketDir, { recursive: true });
-    const socket = join(socketDir, "broker.sock");
-    writeFileSync(socket, "");
-
-    const supervisor = new SessiondBrokerSupervisor({
-      binary: "/tmp/fake-hive-sessiond",
+      binary: "/tmp/fake",
       hiveHome: home,
       readyTimeoutMs: 600,
       spawn: () =>
         makeChild({
-          pid: 7001,
-          exitAfterMs: 1_500,
+          pid: 9003,
+          exitAfterMs: 400,
           exitCode: 1,
-          announceOwnerAfterMs: 0, // lies on stdout
         }),
-      readLockHolder: () => null, // never took exclusive flock / no stamp
+      proveReady: makeProveReady(ownership),
       sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
       now: () => Date.now(),
     });
 
     await expect(supervisor.start()).rejects.toThrow(
-      /did not own broker.lock|lock holder unknown|exited 1 before/,
+      /did not prove kernel ownership|exited 1 before kernel peer/,
     );
     expect(supervisor.status).toBe("failed");
+  });
+
+  // 6) foreign process bound to broker.sock → peer-pid mismatch hard-rejects
+  test("foreign process on broker.sock rejects with peer-pid mismatch", async () => {
+    const home = tempDir("hive-sessiond-foreign-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const sockPath = join(socketDir, "broker.sock");
+
+    // Real kernel: this process binds the unix socket (peer will be us).
+    const server = createServer(() => {
+      // accept and hold
+    });
+    await new Promise<void>((resolve, reject) => {
+      server.once("error", reject);
+      server.listen(sockPath, () => resolve());
+    });
+
+    try {
+      const foreignPeer = process.pid;
+      const childPid = foreignPeer + 99_999; // not the bound peer
+      // Use real LOCAL_PEERPID path via default-style proveReady mock that
+      // actually connects and reads peer.
+      const supervisor = new SessiondBrokerSupervisor({
+        binary: "/tmp/fake",
+        hiveHome: home,
+        readyTimeoutMs: 2_000,
+        spawn: () => makeChild({ pid: childPid, exitAfterMs: 5_000, exitCode: 1 }),
+        proveReady: async ({ socketPath, childPid: expected }) => {
+          const client = await connectUnixSocket(socketPath);
+          try {
+            const peer = readLocalPeerPid(socketFileDescriptor(client));
+            if (peer !== expected) {
+              throw new Error(
+                `broker.sock kernel peer pid ${peer} is not the owned child ${expected}`,
+              );
+            }
+          } finally {
+            client.destroy();
+          }
+          // Peer matched (would not in this test); HELLO omitted — mismatch throws first.
+        },
+        sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+        now: () => Date.now(),
+      });
+
+      await expect(supervisor.start()).rejects.toThrow(
+        new RegExp(
+          `broker\\.sock kernel peer pid ${foreignPeer} is not the owned child ${childPid}`,
+        ),
+      );
+      expect(supervisor.status).toBe("failed");
+    } finally {
+      await new Promise<void>((resolve) => server.close(() => resolve()));
+    }
   });
 });

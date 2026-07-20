@@ -79,14 +79,17 @@ export async function runDaemon(): Promise<void> {
         "build the ReleaseFast proof binary (make native), or set HIVE_SESSIOND_BIN.",
     );
   }
+  // Construct the supervisor now; start() only after the daemon is listening.
+  // Ready-proof connects to broker.sock, checks LOCAL_PEERPID, and completes
+  // HELLO — which loads daemon.lock + GET /handshake from daemon.port.
   const sessiondBroker = new SessiondBrokerSupervisor({
     binary: sessiondBinary,
     hiveHome: getHiveHome(),
+    repoRoot,
     onFatal: (error) => {
       console.error(`sessiond broker supervision failed fatally: ${error.message}`);
     },
   });
-  await sessiondBroker.start();
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
   const db = new HiveDatabase();
@@ -275,6 +278,14 @@ export async function runDaemon(): Promise<void> {
       : { selectionPreferences: ordinarySelection }),
   });
   daemon.start();
+  // Daemon must be on a port (and daemon.port written) before HELLO can auth.
+  for (let i = 0; i < 100 && daemon.listeningPort === null; i += 1) {
+    await Bun.sleep(20);
+  }
+  if (daemon.listeningPort === null) {
+    throw new Error("daemon failed to bind a listening port before sessiond broker start");
+  }
+  await sessiondBroker.start();
 
   let stopping = false;
   const stop = async (): Promise<void> => {

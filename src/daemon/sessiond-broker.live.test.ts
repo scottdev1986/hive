@@ -2,9 +2,10 @@
  * Live broker lifecycle against a real ReleaseFast hive-sessiond binary.
  * Skips when the binary is absent (no make native / release sessiond yet).
  *
- * The broker authenticates HELLO by reading daemon.lock and fetching
- * GET /handshake from the daemon port — so the test runs a real lock holder
- * plus a minimal HiveDaemon that serves the handshake.
+ * Ready-proof is kernel-bound: LOCAL_PEERPID on broker.sock must equal the
+ * spawned child, and HELLO must complete on that connection. HELLO requires
+ * the daemon to be listening (daemon.lock + GET /handshake), so the daemon
+ * starts before supervisor.start() — same order as production runDaemon.
  */
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync, mkdirSync, rmSync } from "node:fs";
@@ -43,6 +44,14 @@ class UnusedSpawner {
   async spawn(): Promise<never> {
     throw new Error("live broker test does not spawn agents");
   }
+}
+
+async function waitForPort(daemon: HiveDaemon): Promise<void> {
+  for (let i = 0; i < 100; i += 1) {
+    if (daemon.listeningPort !== null) return;
+    await Bun.sleep(20);
+  }
+  throw new Error("daemon did not bind a port");
 }
 
 describeIfBinary("sessiond broker live lifecycle", () => {
@@ -86,21 +95,18 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     if (home !== undefined) rmSync(home, { recursive: true, force: true });
   });
 
-  test("daemon lock holder starts, discovers engine, and tears down the broker", async () => {
+  test("daemon lock holder starts, proves peer ownership + HELLO, tears down", async () => {
     home = shortHome("ok");
     process.env.HIVE_HOME = home;
-    // Ephemeral port — avoid 43117 leaks between runs.
     process.env.HIVE_PORT = "0";
     await acquireDaemonLock();
 
     supervisor = new SessiondBrokerSupervisor({
       binary: binary!,
       hiveHome: home,
+      repoRoot,
       readyTimeoutMs: 15_000,
     });
-    await supervisor.start();
-    expect(supervisor.status).toBe("running");
-    expect(existsSync(brokerSocketPath(home))).toBe(true);
 
     const db = new HiveDatabase(join(home, "hive.db"));
     daemon = startDaemon({
@@ -112,30 +118,27 @@ describeIfBinary("sessiond broker live lifecycle", () => {
       sessiondBroker: supervisor,
       port: 0,
     });
-    for (let i = 0; i < 50; i += 1) {
-      if (daemon.listeningPort !== null) break;
-      await Bun.sleep(20);
-    }
-    expect(daemon.listeningPort).not.toBeNull();
+    await waitForPort(daemon);
+
+    await supervisor.start();
+    expect(supervisor.status).toBe("running");
+    expect(existsSync(brokerSocketPath(home))).toBe(true);
 
     const host = new SessiondHost({ repoRoot, hiveHome: home });
     const engine = await host.discoverEngineBuildId();
     expect(engine.length).toBe(64);
 
-    // stop() tears down the broker after agents (none here).
     await daemon.stop();
     daemon = null;
-    supervisor = null; // owned stop already ran
+    supervisor = null;
   }, 30_000);
 
-  // Horace's staged probe: orphan holds broker.lock; daemon must NOT create
-  // daemon.port and limp brokerless — supervisor.start must fail visibly.
-  test("orphan broker.lock fails startup with lock-holder error (no limp)", async () => {
+  test("orphan broker.lock / foreign socket fails startup (no limp)", async () => {
     home = shortHome("or");
     process.env.HIVE_HOME = home;
     process.env.HIVE_PORT = "0";
 
-    // Orphan: a real hive-sessiond serve that holds broker.lock + broker.sock.
+    // Orphan: a real hive-sessiond serve that holds broker.sock (and lock).
     const orphan = Bun.spawn([binary!, "serve"], {
       env: { ...process.env, HIVE_HOME: home },
       stdin: "ignore",
@@ -159,9 +162,24 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     supervisor = new SessiondBrokerSupervisor({
       binary: binary!,
       hiveHome: home,
+      repoRoot,
       readyTimeoutMs: 5_000,
       maxRestarts: 3,
     });
+
+    // Daemon must listen so HELLO could theoretically run; peer-pid should
+    // reject first because the orphan owns the socket.
+    const db = new HiveDatabase(join(home, "hive.db"));
+    daemon = startDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      repoRoot,
+      spawner: new UnusedSpawner(),
+      manageLifecycle: true,
+      sessiondBroker: supervisor,
+      port: 0,
+    });
+    await waitForPort(daemon);
 
     let startError: unknown;
     try {
@@ -171,19 +189,20 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     }
     expect(startError).toBeInstanceOf(Error);
     const message = (startError as Error).message;
-    expect(message).toMatch(/before becoming the live broker/);
-    // Name the lock holder when lsof can see it (macOS flock).
-    expect(message).toMatch(new RegExp(`pid ${orphanPid}|broker\\.lock`));
+    // Peer is the orphan, not our child — kernel mismatch or child exit
+    // after BrokerAlreadyRunning while orphan holds the bind.
+    expect(message).toMatch(
+      new RegExp(
+        `kernel peer pid ${orphanPid} is not the owned child|exited \\d+ before kernel peer|did not prove kernel ownership`,
+      ),
+    );
     expect(supervisor.status).toBe("failed");
-    // Still exactly one broker — the orphan. We did not adopt or replace it.
-    expect(existsSync(socket)).toBe(true);
     expect(orphan.exitCode).toBeNull();
-
-    // Daemon must not have been started (no port advertisement).
-    expect(daemon).toBeNull();
 
     await supervisor.stop();
     supervisor = null;
+    await daemon.stop();
+    daemon = null;
     try {
       orphan.kill("SIGTERM");
     } catch {
@@ -202,14 +221,12 @@ describeIfBinary("sessiond broker live lifecycle", () => {
     supervisor = new SessiondBrokerSupervisor({
       binary: binary!,
       hiveHome: home,
+      repoRoot,
       maxRestarts: 2,
       restartWindowMs: 60_000,
       readyTimeoutMs: 15_000,
       onFatal: (error) => fatals.push(error.message),
     });
-    await supervisor.start();
-    const firstPid = supervisor.pid;
-    expect(firstPid).not.toBeNull();
 
     const db = new HiveDatabase(join(home, "hive.db"));
     daemon = startDaemon({
@@ -221,10 +238,11 @@ describeIfBinary("sessiond broker live lifecycle", () => {
       sessiondBroker: supervisor,
       port: 0,
     });
-    for (let i = 0; i < 50; i += 1) {
-      if (daemon.listeningPort !== null) break;
-      await Bun.sleep(20);
-    }
+    await waitForPort(daemon);
+
+    await supervisor.start();
+    const firstPid = supervisor.pid;
+    expect(firstPid).not.toBeNull();
 
     process.kill(firstPid!, "SIGKILL");
     const deadline = Date.now() + 15_000;

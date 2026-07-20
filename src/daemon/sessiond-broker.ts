@@ -10,15 +10,35 @@
  * times inside a sliding window, then the supervisor fails visibly. Infinite
  * retry is never acceptable (issue #37).
  *
+ * Ready-proof is kernel-bound on the service resource itself: the supervisor
+ * connects to broker.sock, reads LOCAL_PEERPID (macOS), requires that peer
+ * equals the spawned child pid, and completes HELLO on that same connection.
+ * Self-authored evidence (settle time, lsof openers, lock-file stamps,
+ * stdout announces) is not ready-evidence — broker.lock remains the broker's
+ * internal mutual exclusion only.
+ *
  * Adoption of a broker left running by a previous daemon is deliberately
- * carved out: taking over an existing process without killing live sessions
- * needs broker-PID evidence and peer-identity proof beyond flock, which is a
- * separate design. A restarting daemon always spawns a fresh broker under its
- * current lock; an orphan holding `broker.lock` fails startup visibly.
+ * carved out: a restarting daemon always spawns a fresh broker under its
+ * current lock; a foreign peer on broker.sock fails startup visibly.
  */
-import { accessSync, constants, existsSync, readFileSync } from "node:fs";
+import { accessSync, constants, existsSync } from "node:fs";
+import { connect, type Socket } from "node:net";
 import { dirname, join, resolve } from "node:path";
+import { dlopen, FFIType, suffix } from "bun:ffi";
 import { getHiveHome } from "./db";
+import {
+  expectedDaemonHandshake,
+  type DaemonHandshake,
+} from "./handshake";
+import {
+  SessiondSocketClient,
+} from "./session-host/sessiond-host";
+import {
+  HelloPayloadSchema,
+  SESSION_PROTOCOL_MINOR_RANGE,
+  SESSION_PROTOCOL_VERSION,
+  WelcomePayloadSchema,
+} from "../schemas/session-protocol";
 import {
   currentLink,
   installRoot,
@@ -31,6 +51,10 @@ const DEFAULT_RESTART_WINDOW_MS = 60_000;
 const DEFAULT_READY_TIMEOUT_MS = 10_000;
 const DEFAULT_STOP_TIMEOUT_MS = 5_000;
 const READY_POLL_MS = 50;
+
+/** Darwin sys/un.h — measured: SOL_LOCAL=0, LOCAL_PEERPID=0x002. */
+const SOL_LOCAL = 0;
+const LOCAL_PEERPID = 0x002;
 
 export type SessiondBrokerState = "stopped" | "starting" | "running" | "failed";
 
@@ -87,183 +111,194 @@ export function brokerLockPath(hiveHome = getHiveHome()): string {
   return join(hiveHome, "runtime", "sessiond", "broker.lock");
 }
 
-/** Line the broker prints to stdout only after exclusive flock succeeds. */
-export const BROKER_OWNER_ANNOUNCE_PREFIX = "hive-sessiond-owner ";
+// --- kernel peer-pid (ready evidence) ---------------------------------------
 
-/**
- * Pid stamped into broker.lock after exclusive flock (not mere open).
- * macOS lsof cannot report flock holders (empty lock field even with LOCK_EX),
- * so this content is only meaningful together with the child's ownership
- * announcement — open-without-flock does not write it.
- */
-export function readBrokerLockFilePid(hiveHome: string): number | null {
-  const lockPath = brokerLockPath(hiveHome);
-  if (!existsSync(lockPath)) return null;
-  try {
-    const text = readFileSync(lockPath, "utf8").trim();
-    if (text === "") return null;
-    const pid = Number(text.split(/\s+/)[0]);
-    return Number.isFinite(pid) && pid > 0 ? pid : null;
-  } catch {
-    return null;
+type Libc = {
+  readonly symbols: {
+    readonly getsockopt: (
+      fd: number,
+      level: number,
+      optname: number,
+      optval: Int32Array | Uint32Array,
+      optlen: Uint32Array,
+    ) => number;
+  };
+};
+
+let libcSingleton: Libc | null = null;
+
+function libc(): Libc {
+  if (libcSingleton !== null) return libcSingleton;
+  libcSingleton = dlopen(`libc.${suffix}`, {
+    getsockopt: {
+      args: [
+        FFIType.i32,
+        FFIType.i32,
+        FFIType.i32,
+        FFIType.ptr,
+        FFIType.ptr,
+      ],
+      returns: FFIType.i32,
+    },
+  }) as unknown as Libc;
+  return libcSingleton;
+}
+
+/** Extract the OS fd from a connected node/Bun net.Socket (Bun: _handle.fd). */
+export function socketFileDescriptor(socket: Socket): number {
+  const handle = (socket as unknown as { _handle?: { fd?: number } })._handle;
+  const fd = handle?.fd;
+  if (typeof fd !== "number" || fd < 0) {
+    throw new Error("connected socket has no usable file descriptor for LOCAL_PEERPID");
   }
+  return fd;
 }
 
 /**
- * Parse lsof -F lock-status for an EXCLUSIVE holder only.
- * FD forms like `3uW` / lock field `W`/`w`/`x`/`X` mean exclusive write lock.
- * A bare open (`3u`, empty lock field) is NOT ownership — horace's probe.
- * On current macOS, flock holders often produce an empty lock field; callers
- * must not treat "any open" as exclusive.
+ * Kernel peer pid for a connected AF_UNIX socket (macOS LOCAL_PEERPID).
+ * Measured: against hive-sessiond serve, peer equals the broker process pid.
  */
-export function parseLsofExclusiveLockHolder(lsofFOutput: string): number | null {
-  let currentPid: number | null = null;
-  for (const rawLine of lsofFOutput.split("\n")) {
-    const line = rawLine.replace(/\0/g, "");
-    if (line.startsWith("p")) {
-      const pid = Number(line.slice(1));
-      currentPid = Number.isFinite(pid) && pid > 0 ? pid : null;
-      continue;
-    }
-    if (currentPid === null) continue;
-    // Lock field: lW / lw / lX / lx (full-file or partial exclusive).
-    if (line.startsWith("l")) {
-      const lock = line.slice(1).trim();
-      if (lock !== "" && /[WwXx]/.test(lock)) return currentPid;
-      continue;
-    }
-    // FD field: 3uW / 7uW — W suffix is exclusive lock in lsof's FD column.
-    if (line.startsWith("f")) {
-      const fd = line.slice(1);
-      if (/[WwXx]/.test(fd)) return currentPid;
-    }
+export function readLocalPeerPid(fd: number): number {
+  const peer = new Int32Array(1);
+  const len = new Uint32Array([4]);
+  const rc = libc().symbols.getsockopt(fd, SOL_LOCAL, LOCAL_PEERPID, peer, len);
+  if (rc !== 0) {
+    throw new Error(
+      `LOCAL_PEERPID unavailable (getsockopt returned ${rc})`,
+    );
   }
-  return null;
+  const peerPid = peer[0] ?? 0;
+  const peerLen = len[0] ?? 0;
+  if (peerLen !== 4 || peerPid <= 0) {
+    throw new Error(
+      `LOCAL_PEERPID returned invalid pid ${peerPid} (len=${peerLen})`,
+    );
+  }
+  return peerPid;
 }
 
-/** Best-effort exclusive flock holder via lsof -F (null when not reported). */
-export function readLsofExclusiveLockHolderPid(lockPath: string): number | null {
-  if (!existsSync(lockPath)) return null;
-  try {
-    const result = Bun.spawnSync(["lsof", "-F", "pfnl", lockPath], {
-      stdout: "pipe",
-      stderr: "pipe",
+/** Connect with a hard timeout — a stale broker.sock after SIGKILL can otherwise
+ * hang connect() until the process is killed, blocking crash recovery forever. */
+export function connectUnixSocket(
+  path: string,
+  timeoutMs = 500,
+): Promise<Socket> {
+  return new Promise((resolveSocket, reject) => {
+    const socket = connect(path);
+    const timer = setTimeout(() => {
+      socket.destroy();
+      reject(new Error(`connect ${path} timed out after ${timeoutMs}ms`));
+    }, timeoutMs);
+    timer.unref?.();
+    const onError = (error: Error) => {
+      clearTimeout(timer);
+      socket.destroy();
+      reject(error);
+    };
+    socket.once("error", onError);
+    socket.once("connect", () => {
+      clearTimeout(timer);
+      socket.off("error", onError);
+      resolveSocket(socket);
     });
-    if (result.exitCode !== 0) return null;
-    const text = new TextDecoder().decode(result.stdout);
-    return parseLsofExclusiveLockHolder(text);
-  } catch {
-    return null;
-  }
+  });
+}
+
+export interface ProveBrokerReadyOptions {
+  readonly socketPath: string;
+  readonly expectedChildPid: number;
+  readonly handshake: DaemonHandshake;
 }
 
 /**
- * Who holds exclusive broker.lock ownership evidence for this home.
- *
- * Order (adversarial — each alone is insufficient):
- * 1. lsof exclusive lock-status when the platform reports it (W / lock field)
- * 2. else pid stamped into the lock file AFTER exclusive flock by hive-sessiond
- *
- * Open-without-flock never updates the stamp and never gets a W marker, so it
- * cannot satisfy the ready gate. A supervisor try-lock is intentionally NOT
- * used: it would race the child's own exclusive acquisition.
+ * Kernel-bound ready-proof on the live service resource:
+ *   connect(broker.sock) ∧ LOCAL_PEERPID === child.pid ∧ HELLO/WELCOME on that connection.
+ * A foreign process that bound the socket fails the peer-pid match.
  */
-export function readBrokerLockHolderPid(hiveHome: string): number | null {
-  const lockPath = brokerLockPath(hiveHome);
-  if (!existsSync(lockPath)) return null;
-  const fromLsof = readLsofExclusiveLockHolderPid(lockPath);
-  if (fromLsof !== null) return fromLsof;
-  return readBrokerLockFilePid(hiveHome);
+export async function proveSessiondBrokerReady(
+  options: ProveBrokerReadyOptions,
+): Promise<void> {
+  let socket: Socket;
+  try {
+    socket = await connectUnixSocket(options.socketPath);
+  } catch (error) {
+    throw new Error(
+      `could not connect to ${options.socketPath}: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+      { cause: error },
+    );
+  }
+
+  let peerPid: number;
+  try {
+    peerPid = readLocalPeerPid(socketFileDescriptor(socket));
+  } catch (error) {
+    socket.destroy();
+    throw error;
+  }
+
+  if (peerPid !== options.expectedChildPid) {
+    socket.destroy();
+    throw new Error(
+      `broker.sock kernel peer pid ${peerPid} is not the owned child ` +
+        `${options.expectedChildPid}`,
+    );
+  }
+
+  const client = new SessiondSocketClient(socket);
+  try {
+    const hello = HelloPayloadSchema.parse({
+      schemaVersion: 1,
+      buildId: options.handshake.buildHash,
+      instanceId: options.handshake.instanceId,
+      protocol: {
+        major: SESSION_PROTOCOL_VERSION.major,
+        minMinor: SESSION_PROTOCOL_MINOR_RANGE.min,
+        maxMinor: SESSION_PROTOCOL_MINOR_RANGE.max,
+      },
+      clientRole: "daemon",
+      daemonControl: {
+        productVersion: options.handshake.productVersion,
+        buildHash: options.handshake.buildHash,
+        wireProtocol: options.handshake.wireProtocol,
+        schemaEpoch: options.handshake.schemaEpoch,
+        instanceId: options.handshake.instanceId,
+        hiveUuid: options.handshake.hiveUuid,
+        identityKey: options.handshake.identityKey,
+        repoFamilyKey: options.handshake.repoFamilyKey,
+      },
+    });
+    const welcome = await client.request({
+      requestType: "HELLO",
+      responseType: "WELCOME",
+      payload: hello,
+      responseSchema: WelcomePayloadSchema,
+    });
+    if (
+      welcome.endpointRole !== "broker" ||
+      welcome.instanceId !== options.handshake.instanceId ||
+      welcome.protocol.major !== SESSION_PROTOCOL_VERSION.major ||
+      welcome.protocol.minor < SESSION_PROTOCOL_MINOR_RANGE.min ||
+      welcome.protocol.minor > SESSION_PROTOCOL_MINOR_RANGE.max
+    ) {
+      throw new Error("sessiond broker WELCOME does not match this daemon");
+    }
+  } finally {
+    client.close();
+  }
 }
 
 function startupExitError(
-  hiveHome: string,
   exitCode: number,
-  socketExistedBeforeSpawn: boolean,
-  readLockHolder: (hiveHome: string) => number | null = readBrokerLockHolderPid,
+  expectedChildPid: number,
+  lastReadyError: string | null,
 ): Error {
-  const holder = readLockHolder(hiveHome);
-  // Pre-existing socket or a live lock holder means we never owned the broker
-  // (orphan / BrokerAlreadyRunning). Name the holder when it can be measured.
-  if (socketExistedBeforeSpawn || holder !== null) {
-    if (holder !== null) {
-      return new Error(
-        `hive-sessiond serve exited ${exitCode} before becoming the live broker: ` +
-          `broker.lock held by pid ${holder}`,
-      );
-    }
-    return new Error(
-      `hive-sessiond serve exited ${exitCode} before becoming the live broker ` +
-        `(could not acquire exclusive broker.lock — another process owns the ` +
-        `sessiond broker for this HIVE_HOME)`,
-    );
-  }
+  const detail = lastReadyError !== null ? ` (last ready error: ${lastReadyError})` : "";
   return new Error(
-    `hive-sessiond serve exited ${exitCode} before broker.sock appeared`,
+    `hive-sessiond serve exited ${exitCode} before kernel peer ownership of ` +
+      `broker.sock was proven for child pid ${expectedChildPid}${detail}`,
   );
-}
-
-/**
- * Watch child stdout for `hive-sessiond-owner <pid>` — printed only after the
- * real binary takes exclusive flock. Open-without-flock fakes never emit it.
- */
-export function watchBrokerOwnerAnnouncement(
-  stdout: ReadableStream<Uint8Array> | null | undefined,
-  expectedPid: number,
-): { readonly confirmed: () => boolean; readonly stop: () => void } {
-  let confirmed = false;
-  let stopped = false;
-  if (stdout == null) {
-    return {
-      confirmed: () => false,
-      stop: () => {
-        stopped = true;
-      },
-    };
-  }
-  const decoder = new TextDecoder();
-  let buffer = "";
-  const reader = stdout.getReader();
-  void (async () => {
-    try {
-      while (!stopped && !confirmed) {
-        const { done, value } = await reader.read();
-        if (done) break;
-        if (value === undefined) continue;
-        buffer += decoder.decode(value, { stream: true });
-        let nl: number;
-        while ((nl = buffer.indexOf("\n")) >= 0) {
-          const line = buffer.slice(0, nl).trim();
-          buffer = buffer.slice(nl + 1);
-          if (!line.startsWith(BROKER_OWNER_ANNOUNCE_PREFIX)) continue;
-          const pid = Number(line.slice(BROKER_OWNER_ANNOUNCE_PREFIX.length).trim());
-          if (pid === expectedPid) {
-            confirmed = true;
-            break;
-          }
-        }
-      }
-    } catch {
-      // stream closed on kill
-    } finally {
-      try {
-        reader.releaseLock();
-      } catch {
-        // ignore
-      }
-    }
-  })();
-  return {
-    confirmed: () => confirmed,
-    stop: () => {
-      stopped = true;
-      try {
-        reader.cancel().catch(() => undefined);
-      } catch {
-        // ignore
-      }
-    },
-  };
 }
 
 export interface SessiondBrokerSupervisorOptions {
@@ -273,32 +308,38 @@ export interface SessiondBrokerSupervisorOptions {
   readonly maxRestarts?: number;
   /** Sliding window for counting restarts. Default 60s. */
   readonly restartWindowMs?: number;
-  /** How long to wait for broker.sock after spawn. Default 10s. */
+  /** How long to wait for kernel-ready proof after spawn. Default 10s. */
   readonly readyTimeoutMs?: number;
   /** How long to wait for a graceful SIGTERM before SIGKILL. Default 5s. */
   readonly stopTimeoutMs?: number;
   /** Called once when bounded restart is exhausted (never infinite). */
   readonly onFatal?: (error: Error) => void;
-  /** Test seam: spawn a process. Defaults to Bun.spawn (stdout piped for owner announce). */
+  /** Repo root for expectedDaemonHandshake when using default proveReady. */
+  readonly repoRoot?: string;
+  /** Handshake for HELLO on the peer-proven connection. */
+  readonly handshake?: () => Promise<DaemonHandshake>;
+  /**
+   * Ready-proof seam. Defaults to connect + LOCAL_PEERPID + HELLO.
+   * Injected in unit tests so compositions reject without a real kernel peer.
+   */
+  readonly proveReady?: (args: {
+    socketPath: string;
+    childPid: number;
+  }) => Promise<void>;
+  /** Test seam: spawn a process. Defaults to Bun.spawn. */
   readonly spawn?: (
     command: string[],
     options: {
       cwd?: string;
       env: NodeJS.ProcessEnv;
       stdin: "ignore";
-      stdout: "pipe" | "ignore";
+      stdout: "ignore" | "pipe";
       stderr: "inherit" | "ignore";
     },
   ) => SubprocessLike;
   readonly now?: () => number;
   readonly sleep?: (ms: number) => Promise<void>;
   readonly socketExists?: (path: string) => boolean;
-  /**
-   * Who holds exclusive broker.lock evidence (lsof W / lock-file pid stamp).
-   * Ready also requires the child's stdout ownership announcement — neither
-   * alone is enough; open-without-flock satisfies neither on a real binary.
-   */
-  readonly readLockHolder?: (hiveHome: string) => number | null;
 }
 
 /** Minimal process surface so tests can inject fakes without Bun types. */
@@ -307,8 +348,6 @@ export interface SubprocessLike {
   readonly exitCode: number | null;
   readonly exited: Promise<number>;
   kill: (signal?: number | NodeJS.Signals) => void;
-  /** Piped stdout for `hive-sessiond-owner <pid>` after exclusive flock. */
-  readonly stdout?: ReadableStream<Uint8Array> | null;
 }
 
 export class SessiondBrokerSupervisor {
@@ -323,7 +362,10 @@ export class SessiondBrokerSupervisor {
   private readonly now: () => number;
   private readonly sleep: (ms: number) => Promise<void>;
   private readonly socketExists: (path: string) => boolean;
-  private readonly readLockHolder: (hiveHome: string) => number | null;
+  private readonly proveReady: (args: {
+    socketPath: string;
+    childPid: number;
+  }) => Promise<void>;
 
   private child: SubprocessLike | null = null;
   private state: SessiondBrokerState = "stopped";
@@ -344,7 +386,17 @@ export class SessiondBrokerSupervisor {
     this.now = options.now ?? (() => Date.now());
     this.sleep = options.sleep ?? ((ms) => Bun.sleep(ms));
     this.socketExists = options.socketExists ?? ((path) => existsSync(path));
-    this.readLockHolder = options.readLockHolder ?? readBrokerLockHolderPid;
+
+    const handshake =
+      options.handshake ??
+      (() => expectedDaemonHandshake(options.repoRoot ?? process.cwd()));
+    this.proveReady = options.proveReady ?? (async ({ socketPath, childPid }) => {
+      await proveSessiondBrokerReady({
+        socketPath,
+        expectedChildPid: childPid,
+        handshake: await handshake(),
+      });
+    });
   }
 
   get status(): SessiondBrokerState {
@@ -356,8 +408,10 @@ export class SessiondBrokerSupervisor {
   }
 
   /**
-   * Spawn the broker and wait until the owned child holds broker.lock and
-   * broker.sock is present. Call only while holding the daemon lock for `hiveHome`.
+   * Spawn the broker and wait until kernel peer-pid on broker.sock equals the
+   * child and HELLO succeeds on that connection.
+   * Call only while holding the daemon lock, after the daemon is listening
+   * (HELLO authenticates against daemon.lock + GET /handshake).
    */
   async start(): Promise<void> {
     if (this.state === "running" || this.state === "starting") {
@@ -387,85 +441,46 @@ export class SessiondBrokerSupervisor {
 
   private async spawnAndWaitReady(): Promise<void> {
     const socket = brokerSocketPath(this.hiveHome);
-    // An orphan broker leaves broker.sock in place. Socket presence alone is
-    // not ownership. Positive ownership is the AND of:
-    //   (1) child stdout announced hive-sessiond-owner <child.pid> (only after
-    //       exclusive flock in the real binary — never on open-without-flock)
-    //   (2) lock-holder evidence for child.pid (lsof exclusive W when reported,
-    //       else pid stamp written under exclusive flock)
-    // Elapsed time never resolves ready. Supervisor never try-locks: that races
-    // the child's exclusive acquisition.
-    const socketExistedBeforeSpawn = this.socketExists(socket);
-
     const child = this.spawnImpl([this.binary, "serve"], {
       env: {
         ...process.env,
         HIVE_HOME: this.hiveHome,
       },
       stdin: "ignore",
-      stdout: "pipe",
+      // Owner-announce line (if present) is debug only — not ready-evidence.
+      stdout: "ignore",
       stderr: "inherit",
     });
     this.child = child;
 
-    const announcement = watchBrokerOwnerAnnouncement(child.stdout, child.pid);
-    try {
-      const deadline = this.now() + this.readyTimeoutMs;
-      while (this.now() < deadline) {
-        if (child.exitCode !== null) {
-          throw startupExitError(
-            this.hiveHome,
-            child.exitCode,
-            socketExistedBeforeSpawn,
-            this.readLockHolder,
-          );
-        }
-        if (
-          this.socketExists(socket) &&
-          announcement.confirmed() &&
-          this.readLockHolder(this.hiveHome) === child.pid
-        ) {
-          return;
-        }
-        await this.sleep(READY_POLL_MS);
-      }
+    let lastReadyError: string | null = null;
+    const deadline = this.now() + this.readyTimeoutMs;
+    while (this.now() < deadline) {
       if (child.exitCode !== null) {
-        throw startupExitError(
-          this.hiveHome,
-          child.exitCode,
-          socketExistedBeforeSpawn,
-          this.readLockHolder,
-        );
+        throw startupExitError(child.exitCode, child.pid, lastReadyError);
       }
-      const holder = this.readLockHolder(this.hiveHome);
-      if (!announcement.confirmed()) {
-        throw new Error(
-          `hive-sessiond serve did not announce exclusive ownership within ` +
-            `${this.readyTimeoutMs}ms (spawned child pid ${child.pid}` +
-            (holder !== null && holder !== child.pid
-              ? `; broker.lock evidence held by pid ${holder}`
-              : "") +
-            `)`,
-        );
+      if (this.socketExists(socket)) {
+        try {
+          await this.proveReady({ socketPath: socket, childPid: child.pid });
+          return;
+        } catch (error) {
+          // Peer-mismatch, connect timeout on a stale sock, HELLO not-ready:
+          // all are retryable until the ready deadline. A foreign bind fails
+          // the gate for the full window then throws with lastReadyError;
+          // a just-killed broker's stale sock must not abort crash recovery.
+          lastReadyError = error instanceof Error ? error.message : String(error);
+        }
       }
-      if (holder !== null && holder !== child.pid) {
-        throw new Error(
-          `hive-sessiond serve did not own broker.lock within ${this.readyTimeoutMs}ms: ` +
-            `broker.lock held by pid ${holder} (spawned child pid ${child.pid})`,
-        );
-      }
-      if (!this.socketExists(socket)) {
-        throw new Error(
-          `hive-sessiond serve did not create ${socket} within ${this.readyTimeoutMs}ms`,
-        );
-      }
-      throw new Error(
-        `hive-sessiond serve did not own broker.lock within ${this.readyTimeoutMs}ms ` +
-          `(spawned child pid ${child.pid}; lock holder unknown)`,
-      );
-    } finally {
-      announcement.stop();
+      await this.sleep(READY_POLL_MS);
     }
+    if (child.exitCode !== null) {
+      throw startupExitError(child.exitCode, child.pid, lastReadyError);
+    }
+    throw new Error(
+      `hive-sessiond serve did not prove kernel ownership of ${socket} ` +
+        `for child pid ${child.pid} within ${this.readyTimeoutMs}ms` +
+        (lastReadyError !== null ? ` (last ready error: ${lastReadyError})` : ""),
+    );
   }
 
   private watchExits(): void {
@@ -475,6 +490,22 @@ export class SessiondBrokerSupervisor {
     void child.exited.then((code) => {
       void this.onChildExit(child, code, generation);
     });
+    // Backup poll: an external SIGKILL must restart the broker even if the
+    // platform is slow to settle the Subprocess.exited promise (staged crash
+    // recovery was observed to hang with a dead child and no respawn).
+    void (async () => {
+      while (
+        this.child === child &&
+        generation === this.superviseGeneration &&
+        !this.stopping
+      ) {
+        if (child.exitCode !== null) {
+          void this.onChildExit(child, child.exitCode, generation);
+          return;
+        }
+        await this.sleep(READY_POLL_MS);
+      }
+    })();
   }
 
   private async onChildExit(
