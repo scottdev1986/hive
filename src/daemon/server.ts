@@ -1860,6 +1860,14 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
+    // #66: the deliberate-kill intent is registered BEFORE the first
+    // destructive step. Between the process dying and markAgentDead landing
+    // (measured 2.5-34s), the row reads live-status + session-absent — the
+    // recovery sweep's crash predicate — and a tick in that window used to
+    // resume the corpse. The marker is cleared only after the dead status is
+    // durable; a teardown that fails in between leaves it set, because a
+    // deliberately killed agent must never be resurrected by the sweep.
+    this.recovery.noteDeliberateKill(agent.id);
     const reaped = await this.stopAgentProcesses(agent, () => {
       this.capabilities.revokeSubject(agent.name);
       removeCredential(agent.name);
@@ -1873,6 +1881,7 @@ export class HiveDaemon {
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
+    this.recovery.clearDeliberateKill(agent.id);
     this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
