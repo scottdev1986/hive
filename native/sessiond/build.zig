@@ -1,4 +1,24 @@
 const std = @import("std");
+const builtin = @import("builtin");
+
+// Build-time enforcement of the declared toolchain constraint (the exact pin
+// lives in native/toolchain-lock.json: zig.version = 0.15.2; the floor is
+// this package's minimum_zig_version). The ceiling is real, not preference:
+// the vendored Ghostty tree (vendor/ghostty) does not build on Zig 0.16 —
+// 0.16 removed std.Build APIs it uses (Step.Compile.linkLibrary/linkLibC as
+// methods, Io.Dir.readFileAlloc signature, third-party pkg build scripts).
+// Fail here with instructions instead of surfacing those as inscrutable
+// errors. This must stay `comptime`: a runtime check would never execute on
+// an incompatible zig because build() itself fails semantic analysis first.
+comptime {
+    const v = builtin.zig_version;
+    if (v.major != 0 or v.minor != 15) @compileError(std.fmt.comptimePrint(
+        "hive-sessiond requires Zig 0.15.x (pinned: 0.15.2 in native/toolchain-lock.json); " ++
+            "this is Zig {d}.{d}.{d}. The vendored Ghostty tree does not build on other Zig " ++
+            "versions. Install it with: brew install zig@0.15 && brew link --force zig@0.15",
+        .{ v.major, v.minor, v.patch },
+    ));
+}
 
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});

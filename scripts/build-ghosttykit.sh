@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LOCK="$ROOT/native/toolchain-lock.json"
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 PRODUCTION=0
 
 if [[ "${1:-}" == "--production" ]]; then
@@ -27,17 +27,15 @@ fi
 "$ROOT/scripts/vendor-ghostty.sh" verify
 "$ROOT/scripts/check-ghostty-abi.sh"
 
+# System zig from PATH; the preflight above has already asserted it matches
+# the locked version.
 version=$(lock_value zig.version)
-case "$(uname -m)" in
-  arm64)
-    ZIG="$CACHE/zig/toolchains/zig-aarch64-macos-$version/zig"
-    ZIG_SHA=$(lock_value zig.arm64Sha256)
-    ;;
-  x86_64)
-    ZIG="$CACHE/zig/toolchains/zig-x86_64-macos-$version/zig"
-    ZIG_SHA=$(lock_value zig.x86_64Sha256)
-    ;;
-esac
+ZIG=$(command -v zig)
+ZIG_LIB_DIR=$("$ZIG" env | /usr/bin/sed -n 's/^ *\.lib_dir = "\(.*\)",$/\1/p')
+if [[ -z "$ZIG_LIB_DIR" ]]; then
+  echo "could not read lib_dir from 'zig env'" >&2
+  exit 1
+fi
 commit=$(lock_value ghostty.commit)
 declared_version=$(lock_value ghostty.declaredVersion)
 actual_version=$(/usr/bin/sed -n 's/.*\.version = "\([^"]*\)".*/\1/p' "$ROOT/vendor/ghostty/build.zig.zon" | /usr/bin/head -1)
@@ -67,14 +65,18 @@ METAL_TOOLCHAIN=$(/usr/bin/plutil -extract toolchainIdentifier raw -o - "$compon
 METAL_BUILD=$(/usr/bin/plutil -extract buildVersion raw -o - "$component")
 
 OVERLAY=$("$ROOT/scripts/prepare-zig-xcode-overlay.sh")
-BUNDLED_STUB="${ZIG%/zig}/lib/libc/darwin/libSystem.tbd"
+BUNDLED_STUB="$ZIG_LIB_DIR/libc/darwin/libSystem.tbd"
 MACOS_SDK=$(xcrun --sdk macosx --show-sdk-path)
 XCODE_STUB="$MACOS_SDK/usr/lib/libSystem.tbd"
-WORK="$CACHE/build/ghostty-$commit"
-OUT="$CACHE/artifacts/ghostty-$commit-zig-$ZIG_SHA"
-LOCAL_CACHE="$CACHE/zig-local/ghostty-$commit-zig-$ZIG_SHA"
+# The artifact cache is shared across worktrees (#46): build in unique
+# scratch, publish atomically at the end. Never mutate $FINAL_OUT in place —
+# a sibling worktree may be reading it right now.
+FINAL_OUT="$CACHE/artifacts/ghostty-$commit-zig-$version"
+WORK="$CACHE/build/ghostty-$commit.$$"
+OUT="$FINAL_OUT.build.$$"
+LOCAL_CACHE="$CACHE/zig-local/ghostty-$commit-zig-$version"
 
-find "$WORK" "$OUT" -depth -delete 2>/dev/null || true
+trap '/bin/rm -rf "$WORK" "$OUT"; /bin/rm -f "$component"' EXIT HUP INT TERM
 mkdir -p "$WORK" "$OUT" "$LOCAL_CACHE"
 /usr/bin/rsync -a "$ROOT/vendor/ghostty/" "$WORK/"
 
@@ -203,7 +205,7 @@ export HIVE_BRIDGE_HEADER_SHA256="$BRIDGE_HEADER_SHA"
 export HIVE_SYMBOL_LIST_SHA256="$SYMBOL_SHA"
 export HIVE_METAL_TOOLCHAIN="$METAL_TOOLCHAIN"
 export HIVE_METAL_BUILD="$METAL_BUILD"
-export HIVE_ZIG_ARCHIVE_SHA256="$ZIG_SHA"
+export HIVE_ZIG_VERSION="$version"
 export HIVE_ZIG_BUNDLED_STUB="$BUNDLED_STUB"
 export HIVE_XCODE_LIBSYSTEM_STUB="$XCODE_STUB"
 export HIVE_ZIG_GLOBAL_CACHE="$CACHE/zig-global"
@@ -218,4 +220,22 @@ if [[ $PRODUCTION -eq 1 ]]; then
   "$ROOT/scripts/qualify-ghostty-release-lock.sh" "$OUT"
 fi
 
-echo "Ghostty native artifacts: $OUT"
+# Atomic publish into the shared artifact cache (#46). A same-key artifact
+# that appeared while this build ran was built from the identical locked
+# inputs — keep the incumbent rather than deleting it out from under a
+# concurrent consumer.
+if [[ -f "$FINAL_OUT/artifact-manifest.json" ]]; then
+  /bin/rm -rf "$OUT"
+else
+  /bin/rm -rf "$FINAL_OUT"
+  if ! /bin/mv "$OUT" "$FINAL_OUT" 2>/dev/null; then
+    # Lost a publish race; our rename landed inside the winner's directory.
+    /bin/rm -rf "$FINAL_OUT/${OUT##*/}" "$OUT"
+    if [[ ! -f "$FINAL_OUT/artifact-manifest.json" ]]; then
+      echo "GhosttyKit artifact publish failed: $FINAL_OUT is incomplete" >&2
+      exit 1
+    fi
+  fi
+fi
+
+echo "Ghostty native artifacts: $FINAL_OUT"

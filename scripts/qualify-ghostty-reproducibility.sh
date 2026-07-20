@@ -3,7 +3,7 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LOCK="$ROOT/native/toolchain-lock.json"
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 EVIDENCE=${1:-"$ROOT/raw/qualification/ghostty-reproducibility"}
 RUNS=${2:-3}
 
@@ -17,12 +17,7 @@ lock_value() {
 }
 
 commit=$(lock_value ghostty.commit)
-case "$(uname -m)" in
-  arm64) zig_sha=$(lock_value zig.arm64Sha256) ;;
-  x86_64) zig_sha=$(lock_value zig.x86_64Sha256) ;;
-  *) echo "unsupported reproducibility host: $(uname -m)" >&2; exit 2 ;;
-esac
-ARTIFACT="$CACHE/artifacts/ghostty-$commit-zig-$zig_sha"
+ARTIFACT="$CACHE/artifacts/ghostty-$commit-zig-$(lock_value zig.version)"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-repro.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir -p "$EVIDENCE"

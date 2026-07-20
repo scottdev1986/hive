@@ -5,7 +5,7 @@ set -euo pipefail
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LOCK="$ROOT/native/toolchain-lock.json"
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 
 lock_value() {
   /usr/bin/plutil -extract "$1" raw -o - "$LOCK"
@@ -19,11 +19,7 @@ if [[ $# -eq 1 ]]; then
   ARTIFACT="$1"
 else
   commit=$(lock_value ghostty.commit)
-  case "$(uname -m)" in
-    arm64) zig_sha=$(lock_value zig.arm64Sha256) ;;
-    x86_64) zig_sha=$(lock_value zig.x86_64Sha256) ;;
-  esac
-  ARTIFACT="$CACHE/artifacts/ghostty-$commit-zig-$zig_sha"
+  ARTIFACT="$CACHE/artifacts/ghostty-$commit-zig-$(lock_value zig.version)"
 fi
 
 XCFRAMEWORK="$ARTIFACT/GhosttyKit.xcframework"

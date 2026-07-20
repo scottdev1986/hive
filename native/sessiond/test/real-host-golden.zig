@@ -1,9 +1,11 @@
 //! Real broker → real host → real `/bin/sh` provider golden.
 //!
-//! Agent shells often inherit a live `HIVE_HOME`. This suite *must* override it
-//! to a private temp root before spawning the host role (see `setenv` in
-//! `runGolden`); running under an ambient agent home collides with live daemons
-//! and can surface as `AttachLocatorMismatch` / inspect failures.
+//! This harness overrides `HIVE_HOME` to a private temp root before spawning
+//! the host role (see `setenv` in `runGolden`), so an ambient agent home is
+//! never in play. Expected stderr noise on a PASSING run: the host logs
+//! `host connection refused: AttachLocatorMismatch` once — that is the §06
+//! wrong-generation attach fence being exercised, not a failure. (An earlier
+//! theory blamed inherited HIVE_HOME for golden reds; that was refuted.)
 const std = @import("std");
 const broker = @import("broker");
 const generated = @import("session_protocol_generated");
@@ -289,6 +291,7 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         allocator,
         root,
         &recovered.registry,
+        backend,
         locator,
         wire_locator,
         input_proof_path,
@@ -395,7 +398,16 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         parsed_inspected.value.inputOwner.?.leaseExpiresAt.len == 0 or
         parsed_inspected.value.child == null or
         parsed_inspected.value.child.?.processId != parsed_created.value.inspection.providerRoot.pid)
+    {
+        // stderr only — stdout may be a captured build-step pipe. The raw
+        // payload names the failing condition; without it a red here is one
+        // opaque error for ~14 independent assertions (issue #54 history).
+        std.debug.print(
+            "real-host-golden: inspect content assertion failed; payload: {s}\n",
+            .{inspected},
+        );
         return error.InvalidRealInspection;
+    }
 
     const terminate_payload = try std.json.Stringify.valueAlloc(allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -597,7 +609,15 @@ fn readViewerResponse(
         frame.header.request_id != request_id or
         frame.header.flags != (generated.frame_flag.response | generated.frame_flag.final) or
         !protocol.validateControlPayload(allocator, schema, frame.payload))
+    {
+        // stderr only — names the mismatched frame; without this a refusal is
+        // one opaque error for four independent checks.
+        std.debug.print(
+            "real-host-golden: expected frame type=0x{x} req={d}; got type=0x{x} req={d} flags=0x{x} payload: {s}\n",
+            .{ type_code, request_id, frame.header.type_code, frame.header.request_id, frame.header.flags, frame.payload },
+        );
         return error.InvalidViewerResponse;
+    }
     return frame;
 }
 
@@ -626,6 +646,53 @@ fn readViewerError(
     defer parsed.deinit();
     if (!std.mem.eql(u8, parsed.value.code, expected_code))
         return error.InvalidViewerError;
+}
+
+/// Issues the visibility renewal the production daemon sends on the
+/// Workspace's behalf every `limits.visibility_renewal_ms` (5 s), through the
+/// same broker backend the golden already uses for LIST/INSPECT/TERMINATE.
+/// The host's visibility lease is only `limits.visibility_expiry_ms` (15 s)
+/// and a granted input claim is clamped to it, so a harness that never renews
+/// embeds a wall-clock assumption: under a cold, fully parallel suite the
+/// claim lapsed before the §26 replay-supersede, `onViewerDetached` DROPPED
+/// it instead of orphaning it (expired arbiter lease), and the final INSPECT
+/// reported `inputOwner: null` — the historical `InvalidRealInspection` red
+/// (issue #54's trigger). Renewing at the harness's long-phase boundaries
+/// keeps the assertions about the protocol, not suite scheduling latency.
+fn renewVisibility(
+    allocator: std.mem.Allocator,
+    backend: broker.BrokerBackend,
+    wire_locator: WireLocatorPayload,
+    now_ns: u64,
+) !void {
+    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
+        return error.WorkspaceIdentityUnavailable;
+    var token_storage: [64]u8 = undefined;
+    const token = try workspace.start_token.format(&token_storage);
+    const renew = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
+        .workspaceSessionId = "golden-workspace",
+        .workspacePid = c.getpid(),
+        .workspaceStartToken = token,
+        .openTerminalRevision = "1",
+    }, .{});
+    defer allocator.free(renew);
+    const renewed = switch (backend.call(
+        allocator,
+        requestHeader(generated.frame_type.visibility_renew, renew.len),
+        renew,
+        now_ns,
+    )) {
+        .response => |payload| payload,
+        .no_response, .failure => return error.VisibilityRenewalFailed,
+    };
+    defer allocator.free(renewed);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.renewed_payload,
+        renewed,
+    )) return error.VisibilityRenewalFailed;
 }
 
 fn waitForSingleInputEffect(
@@ -665,6 +732,7 @@ fn driveViewerWire(
     allocator: std.mem.Allocator,
     root: []const u8,
     registry: *broker.Registry,
+    backend: broker.BrokerBackend,
     locator: broker.Locator,
     wire_locator: WireLocatorPayload,
     input_proof_path: []const u8,
@@ -795,6 +863,9 @@ fn driveViewerWire(
         !std.mem.eql(u8, parsed_claim.value.result.claim.kind, "human"))
         return error.InvalidClaimGrant;
     const claim_token = parsed_claim.value.result.claim.token;
+
+    // First long-phase boundary: the wire-drive below is many round trips.
+    try renewVisibility(allocator, backend, wire_locator, 22);
 
     // Positive control for the reverse exact-generation fence: even on this
     // authenticated attached stream with a valid human claim token, a stale
@@ -1142,6 +1213,13 @@ fn driveViewerWire(
     );
     gamma_applied.deinit(allocator);
     try reader.collectOutputUntilContains("OUT:gamma-line");
+
+    // Second long-phase boundary: the replay-supersede below detaches this
+    // viewer, and the control-plane tail (LIST/INSPECT/TERMINATE) follows.
+    // The renewal extends both the visibility lease and the active claim, so
+    // the supersede orphans the claim (inputOwner stays reported) instead of
+    // dropping an expired one.
+    try renewVisibility(allocator, backend, wire_locator, 79);
 
     // §26 retarget + §20 replay determinism: a second grant re-attaches the
     // same exact generation from afterSeq 0, replays the identical retained

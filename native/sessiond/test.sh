@@ -2,21 +2,18 @@
 set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/../.." && pwd)
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 LOCK="$ROOT/native/toolchain-lock.json"
 VERSION=$(/usr/bin/plutil -extract zig.version raw -o - "$LOCK")
 
 "$ROOT/scripts/preflight-native-toolchain.sh"
 
+# System zig from PATH; the preflight above has already asserted it matches
+# the locked version ($VERSION).
+ZIG=zig
 case "$(uname -m)" in
-  arm64)
-    ZIG="$CACHE/zig/toolchains/zig-aarch64-macos-$VERSION/zig"
-    TARGET=aarch64-macos.14.0
-    ;;
-  x86_64)
-    ZIG="$CACHE/zig/toolchains/zig-x86_64-macos-$VERSION/zig"
-    TARGET=x86_64-macos.14.0
-    ;;
+  arm64) TARGET=aarch64-macos.14.0 ;;
+  x86_64) TARGET=x86_64-macos.14.0 ;;
   *)
     echo "unsupported build host architecture: $(uname -m)" >&2
     exit 1
@@ -46,7 +43,11 @@ fi
 # real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
 # inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
 cd "$ROOT/native/sessiond"
-"$ZIG" build --global-cache-dir "$CACHE/zig-global" \
+# Shared per-user zig caches (#46): zig's cache is content-addressed and
+# file-locked, so concurrent worktrees share compiled deps safely and a fresh
+# worktree starts warm instead of recompiling libghostty-vt from scratch.
+"$ZIG" build --cache-dir "$CACHE/zig-local/sessiond" \
+  --global-cache-dir "$CACHE/zig-global" \
   test identity-probe install -Dtarget="$TARGET" --sysroot "$OVERLAY"
 MIN_OS=$(xcrun vtool -show-build zig-out/bin/hive-sessiond |
   /usr/bin/awk '$1 == "minos" { print $2 }')

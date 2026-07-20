@@ -3,7 +3,7 @@ set -eu
 
 ROOT=$(CDPATH= cd -- "$(dirname -- "$0")/.." && pwd)
 LOCK="$ROOT/native/toolchain-lock.json"
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 
 if [ "$#" -gt 1 ] || { [ "$#" -eq 1 ] && [ "$1" != "--production" ]; }; then
   echo "usage: $0 [--production]" >&2
@@ -30,29 +30,12 @@ assert_equal "Xcode build" "$(lock_value apple.build)" "$(xcodebuild -version | 
 assert_equal "Swift version" "$(lock_value apple.swift)" "$(swift --version 2>&1 | /usr/bin/sed -n 's/.*Apple Swift version \([^ ]*\).*/\1/p' | /usr/bin/head -1)"
 assert_equal "Bun version" "$(lock_value bun)" "$(bun --version)"
 
-case "$(uname -m)" in
-  arm64) zig_dir="zig-aarch64-macos-$(lock_value zig.version)" ;;
-  x86_64) zig_dir="zig-x86_64-macos-$(lock_value zig.version)" ;;
-  *) echo "unsupported build host architecture: $(uname -m)" >&2; exit 1 ;;
-esac
-ZIG="$CACHE/zig/toolchains/$zig_dir/zig"
-if [ ! -x "$ZIG" ]; then
-  echo "locked Zig is not provisioned; run scripts/provision-native-toolchain.sh" >&2
+# The build uses the system `zig` on PATH; the lock pins the exact version.
+ZIG=$(command -v zig) || {
+  echo "zig is not on PATH; install Zig $(lock_value zig.version) (brew install zig@0.15 && brew link --force zig@0.15)" >&2
   exit 1
-fi
+}
 assert_equal "Zig version" "$(lock_value zig.version)" "$("$ZIG" version)"
-
-for lock_arch in arm64 x86_64; do
-  url=$(lock_value "zig.${lock_arch}Url")
-  archive="$CACHE/zig/archives/${url##*/}"
-  expected=$(lock_value "zig.${lock_arch}Sha256")
-  if [ ! -f "$archive" ]; then
-    echo "locked Zig $lock_arch archive is absent from the offline cache" >&2
-    exit 1
-  fi
-  actual=$(/usr/bin/shasum -a 256 "$archive" | /usr/bin/awk '{ print $1 }')
-  assert_equal "Zig $lock_arch archive SHA-256" "$expected" "$actual"
-done
 
 for sdk in macosx iphoneos iphonesimulator; do
   if ! xcrun --sdk "$sdk" --show-sdk-path >/dev/null 2>&1; then

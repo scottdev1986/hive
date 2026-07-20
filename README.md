@@ -140,6 +140,21 @@ make build   # pinned Zig, GhosttyKit, sessiond, the CLI and the Workspace app
 make run     # launch the staged dev Workspace against this hive checkout
 ```
 
+The native build uses the system `zig` on PATH, **pinned to Zig 0.15.2** by
+`native/toolchain-lock.json` — a declared constraint, not a preference: the
+vendored Ghostty tree does not build on Zig 0.16, and
+`native/sessiond/build.zig` enforces the 0.15.x requirement at build time
+with an explanatory error. Install it with:
+
+```sh
+brew install zig@0.15 && brew link --force zig@0.15
+```
+
+Zig caches and lock-keyed GhosttyKit artifacts live in a per-user cache
+(`~/.cache/hive/native`, override with `HIVE_NATIVE_CACHE`), so every
+worktree — including fresh agent worktrees — shares compiled native
+dependencies instead of cold-building them.
+
 `make build` stages a consumer-shaped, unsigned release under `.dev/`, and
 `make run` launches it fully isolated from any installed hive — every
 rendezvous name derives from a short per-checkout `HIVE_HOME` under

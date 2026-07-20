@@ -7,7 +7,7 @@ EXPORTS="$ROOT/native/abi/ghostty-bridge.exports"
 TEST_SOURCE="$ROOT/native/tests/abi/header-standalone.c"
 RUNTIME_SOURCE="$ROOT/native/tests/abi/bridge-runtime.c"
 GHOSTTY_INCLUDE="$ROOT/vendor/ghostty/include"
-CACHE=${HIVE_NATIVE_CACHE:-"$ROOT/.cache/native"}
+CACHE=${HIVE_NATIVE_CACHE:-"$HOME/.cache/hive/native"}
 LOCK="$ROOT/native/toolchain-lock.json"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-abi.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
@@ -37,15 +37,14 @@ for arch in arm64 x86_64; do
 done
 
 case "$(uname -m)" in
-  arm64) zig_dir="zig-aarch64-macos-$(lock_value zig.version)" ;;
-  x86_64) zig_dir="zig-x86_64-macos-$(lock_value zig.version)" ;;
+  arm64|x86_64) ;;
   *) echo "unsupported ABI qualification host: $(uname -m)" >&2; exit 1 ;;
 esac
-ZIG="$CACHE/zig/toolchains/$zig_dir/zig"
-if [ ! -x "$ZIG" ]; then
-  echo "locked Zig is unavailable; run scripts/provision-native-toolchain.sh" >&2
+# System zig from PATH, version pinned by the lock (preflight enforces it).
+ZIG=$(command -v zig) || {
+  echo "zig is not on PATH; install Zig $(lock_value zig.version) (brew install zig@0.15 && brew link --force zig@0.15)" >&2
   exit 1
-fi
+}
 for target in aarch64:arm64 x86_64:x86_64; do
   zig_arch=${target%%:*}
   hive_arch=${target#*:}
