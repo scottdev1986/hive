@@ -1,5 +1,5 @@
-0ed12c1ac0f46a453dc92329041eb1197141699769892da18982bc19674f2781  raw/qualification/hive-b25-production-pane/EVIDENCE.md
-7734507bf985b4df3766eb8846e7b7903c00a53e3d32f55c5cfde8adcb46a9bb  raw/qualification/hive-b25-production-pane/provenance.txt
+53fd7d68234fe816930a91057688bd8407c0860bcc1d812c0599a233a705fb81  raw/qualification/hive-b25-production-pane/EVIDENCE.md
+6f1629cf15867e4507180797bce4e5495575c4dcee68a0c25f6aef1a27b5f192  raw/qualification/hive-b25-production-pane/provenance.txt
 62ec72bb036e503518e4ba427bfbe864c3637adfaa3985bc68b00a6ea1646211  raw/qualification/hive-b25-production-pane/matrix/production-wiring.txt
 a6fbeb8350d01f9dfdedbebf540381db5698113df8157dd18fa7854a6ca4d9e0  raw/qualification/hive-b25-production-pane/manifests/production-wiring.json
 810d3c90a89ffe22610be41f2561ab40a927f7e413bc70e5c2527d63a52e016e  raw/qualification/hive-b25-production-pane/matrix/diagnostic-p14-locked-screen-crop.txt
@@ -16,3 +16,6 @@ f34a98483bbe422e40b775eda7b9e1359b0c75882b75d3ee616e8153ddd791f8  raw/qualificat
 286b223324950bb440ab7e7ebe8e66547e515980a2ebdb48bd3f32782a76569a  raw/qualification/hive-b25-production-pane/manifests/a4-quit.json
 2a5d7b1d1578c554a6f5e8c47776991f6879a7e32d4dbf0449981d746ade2027  raw/qualification/hive-b25-production-pane/manifests/a4-non-hive-project.json
 d10bbbebcf9e9d6f3480d96a0d61f4ab7376f6b61956796adf79207968fe48e4  raw/qualification/hive-b25-production-pane/manifests/a4-reconnect-replay.json
+67072f3077deda452dcd50c67559ee6a2d60fd6ade2d646fd3d5e06797945917  raw/qualification/hive-b25-production-pane/matrix/stress-100mib-pane.txt
+4d03442496e596629135479029a80444dc2dba8f4543fb361802bb7ee15464b0  raw/qualification/hive-b25-production-pane/matrix/stress-100mib-pane-xctest.txt
+ed2352c58b29fcef28ffc8a7bf71f0137503e5637a3920501272213572dca38b  raw/qualification/hive-b25-production-pane/manifests/stress-100mib-pane.json
