@@ -53,6 +53,7 @@ import {
   requireSessiondAgentLocator,
   type HiveTerminalHostAdapter,
 } from "./session-host/hive-terminal-host";
+import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -89,6 +90,7 @@ type RecoveryStore = Pick<
   | "listApprovals"
   | "resolveApproval"
   | "getMessage"
+  | "getTerminalHostBindingByLocator"
 >;
 
 type Sleep = (milliseconds: number) => Promise<void>;
@@ -186,6 +188,15 @@ export class CrashRecovery {
   // "no session", both bump recoveryAttempts, and both launch a tmux session
   // for the same conversation.
   private readonly recovering = new Set<string>();
+  // Agents a deliberate kill is tearing down RIGHT NOW (#66). killAgentTeardown
+  // destroys the process before it writes the dead status, so for 2.5-34s
+  // (measured) the row reads live-status + session-absent — bit-for-bit the
+  // crash predicate below. A sweep tick inside that window used to resume the
+  // corpse (david, 2026-07-20, downgraded sessiond → tmux). The marker is set
+  // before the first destructive step and cleared only after the dead status
+  // lands; if the teardown fails in between it stays set, because a
+  // deliberately killed agent must never be resurrected by the sweep.
+  private readonly deliberateKills = new Set<string>();
   private readonly sessions: TmuxSessionHost;
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
@@ -211,6 +222,32 @@ export class CrashRecovery {
     this.readCodexActivity = deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
+  }
+
+  /** A kill teardown is starting for this agent: the sweep must not read the
+   * teardown window as a crash. Called BEFORE the first destructive step. */
+  noteDeliberateKill(agentId: string): void {
+    this.deliberateKills.add(agentId);
+  }
+
+  /** The kill teardown wrote the dead status; the durable row now says what
+   * happened and the marker is no longer needed. */
+  clearDeliberateKill(agentId: string): void {
+    this.deliberateKills.delete(agentId);
+  }
+
+  /** The durable half of the same consult (#66): a sessiond session that was
+   * torn down through the one kill path carries a termination audit on its
+   * terminal-host binding. Recovery reads it before calling a death a crash —
+   * this is what survives a daemon restart mid-teardown. */
+  private deliberateTerminationAudit(
+    agent: AgentRecord,
+  ): HiveTerminalTerminationAudit | null {
+    if (agent.sessionLocator?.hostKind !== "sessiond") return null;
+    const binding = this.deps.db.getTerminalHostBindingByLocator(
+      requireSessiondAgentLocator(agent),
+    );
+    return binding?.terminationAudit ?? null;
   }
 
   private daemonPort(): number {
@@ -288,6 +325,26 @@ export class CrashRecovery {
         continue;
       }
       if (await this.sessionPresent(agent)) {
+        continue;
+      }
+      // #66: a deliberate kill must never be classified as a crash. The
+      // in-memory marker covers the live teardown window; the binding's
+      // termination audit covers a teardown the daemon did not survive.
+      if (this.deliberateKills.has(agent.id)) {
+        outcomes.push({
+          agent: agent.name,
+          action: "skipped",
+          reason: "deliberate kill in progress; teardown owns the outcome",
+        });
+        continue;
+      }
+      const terminationAudit = this.deliberateTerminationAudit(agent);
+      if (terminationAudit !== null) {
+        outcomes.push(await this.markDead(
+          agent,
+          `audited termination (${terminationAudit.reason}); reconciled as a deliberate kill`,
+          { deliberate: true },
+        ));
         continue;
       }
       if (
@@ -839,6 +896,7 @@ export class CrashRecovery {
   private async markDead(
     agent: AgentRecord,
     reason: string,
+    options: { deliberate?: boolean } = {},
   ): Promise<RecoveryOutcome> {
     const now = new Date().toISOString();
     this.deps.db.markAgentDead(
@@ -862,10 +920,15 @@ export class CrashRecovery {
       ? "No worktree was recorded."
       : `Worktree preserved at ${agent.worktreePath}` +
         (agent.branch === null ? "." : ` (branch ${agent.branch}).`);
+    // An audited kill is not a crash and must not be reported as one (#66):
+    // the closure is finished on the killer's behalf and said plainly.
+    const headline = options.deliberate === true
+      ? `${agent.name} was killed deliberately and its record has been reconciled without a resume: ${reason}.`
+      : `${agent.name} died in a crash and could not be resumed: ${reason}.`;
     await this.deps.send(
       "hive-recovery",
       ORCHESTRATOR_NAME,
-      `${agent.name} died in a crash and could not be resumed: ${reason}. ` +
+      `${headline} ` +
         `${worktreeNote}${strandedNote} Respawn with hive_spawn if the work ` +
         `should continue. Stored task: ${boundedTask(agent.taskDescription)}`,
       { idempotencyKey: `crash-dead:${agent.id}:${agent.lastEventAt}` },

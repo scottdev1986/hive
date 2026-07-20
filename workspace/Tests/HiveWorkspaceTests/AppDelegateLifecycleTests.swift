@@ -99,7 +99,10 @@ final class AppDelegateLifecycleTests: XCTestCase {
         XCTAssertEqual(failure, "provider tree survived")
     }
 
-    func testPaneCloseCarriesTheExactFeedLocatorToKill() throws {
+    /// #64: closing a pane (or a window fanning `.closePane` out to every
+    /// pane) must NEVER kill the agent. The pane goes away; the agent keeps
+    /// running headless, and the feed must not rebuild its pane while it does.
+    func testPaneCloseClosesThePaneAndNeverKillsTheAgent() throws {
         _ = NSApplication.shared
         let state = ProjectState(projectID: "project", displayName: "Project")
         let controller = ProjectWindowController(
@@ -115,18 +118,24 @@ final class AppDelegateLifecycleTests: XCTestCase {
             generation: 7,
             sessionId: "ses_0198a8f0-0000-7000-8000-000000000007",
             hostKind: "sessiond", engineBuildId: "engine")
-        var killed: (String, AgentSessionLocator)?
-        controller.killAgent = { killed = ($0, $1) }
-        controller.applyFeed([
-            AgentSnapshot(
-                id: "agent-worker", name: "worker", status: "working",
-                sessionLocator: locator),
-        ])
+        let snapshot = AgentSnapshot(
+            id: "agent-worker", name: "worker", status: "working",
+            sessionLocator: locator)
+        controller.applyFeed([snapshot])
+        let paneID = ProjectState.paneID(forAgent: "worker")
+        XCTAssertNotNil(state.panes[paneID])
 
-        controller.dispatch(.closePane(ProjectState.paneID(forAgent: "worker")))
+        controller.dispatch(.closePane(paneID))
 
-        XCTAssertEqual(killed?.0, "worker")
-        XCTAssertEqual(killed?.1, locator)
+        XCTAssertNil(state.panes[paneID], "the pane closes immediately")
+        XCTAssertEqual(controller.paneViewCount, 0, "the pane view is torn down")
+
+        // The agent is still alive in the next feed snapshot — the close must
+        // not have asked anyone to end it, and its pane must not come back.
+        controller.applyFeed([snapshot])
+        XCTAssertNil(
+            state.panes[paneID],
+            "a user-closed pane is not rebuilt while the agent runs on")
     }
 
     func testFeedWireSurfacesMalformedPresentLocatorImmediately() async throws {
@@ -260,29 +269,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
         }
 
         XCTAssertEqual(abortCount, 1)
-    }
-
-    func testAgentClosureDismissesItsKillFailureSheet() throws {
-        _ = NSApplication.shared
-        let state = ProjectState(projectID: "project", displayName: "Project")
-        let controller = ProjectWindowController(
-            state: state, attentionCenter: AttentionCenter(),
-            projectDirectory: "/tmp", hivePath: "/usr/bin/false", daemonPort: 1,
-            orchestrator: "claude", orchestratorSession: nil,
-            instanceID: "instance", instanceHome: "/tmp")
-        controller.window?.isReleasedWhenClosed = false
-        defer { controller.close() }
-
-        controller.reportKillFailure(agent: "worker", reason: "daemon unavailable")
-        XCTAssertEqual(controller.window?.sheets.count, 1)
-
-        controller.applyFeed([
-            AgentSnapshot(
-                name: "worker", status: "done",
-                closedAt: "2026-07-13T23:00:00.000Z"),
-        ])
-
-        XCTAssertEqual(controller.window?.sheets.count, 0)
     }
 
     func testStatusAndFocusOverlaysAreAboveTheOpaquePaneBackground() throws {

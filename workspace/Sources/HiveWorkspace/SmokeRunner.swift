@@ -504,7 +504,7 @@ final class SmokeRunner {
     ) {
         guard controller.state.panes[paneID] == nil else {
             guard Date() < deadline else {
-                check(false, "closed A4 pane disappeared after verified daemon kill")
+                check(false, "closed A4 pane disappeared")
                 finishA4Proof("\(ready)\nA4 CLOSE PROOF FAIL")
                 exitSmoke(1, proof: "a4-close")
             }
@@ -514,7 +514,7 @@ final class SmokeRunner {
             }
             return
         }
-        finishA4Proof("\(ready)\nA4 CLOSE PROOF OK: exact pane removed after daemon kill")
+        finishA4Proof("\(ready)\nA4 CLOSE PROOF OK: exact pane removed; the agent was not killed (#64)")
         exitSmoke(failures.isEmpty ? 0 : 1, proof: "a4-close")
     }
 
@@ -768,15 +768,12 @@ final class SmokeRunner {
                   "the indicator follows a keyboard focus move")
         }
 
-        // 9. Closing a pane closes the AGENT: the workspace asks the daemon to
-        //    kill it, the attach client dies, and the pane view goes away. The
-        //    kill is recorded rather than sent — a smoke run must not end a real
-        //    agent — so what is asserted here is that the close asks for one.
+        // 9. Closing a pane closes the PANE, never the agent (#64): the attach
+        //    client dies, the pane view goes away, and no kill is issued —
+        //    the agent's session survives its pane.
         if let closeTarget {
             let paneID = ProjectState.paneID(forAgent: closeTarget)
             let countBefore = controller.paneViewCount
-            var killed: [String] = []
-            controller.killAgent = { name, _ in killed.append(name) }
             // Close the pane that currently holds the keyboard: the indicator
             // must not survive on a dead pane, and exactly one live pane may
             // claim focus afterwards.
@@ -784,7 +781,6 @@ final class SmokeRunner {
             check(waitUntil(2) { self.controller.firstResponderPane() == paneID },
                   "focused the pane that is about to close")
             controller.dispatch(.closePane(paneID))
-            check(killed == [closeTarget], "closing a pane asks the daemon to kill its agent")
             check(controller.paneViewCount == countBefore - 1, "closed pane view removed")
             check(controller.state.panes[paneID] == nil, "closed pane left the reducer")
             check(waitUntil(10) { !self.controller.terminalChildRunning(pane: paneID) },

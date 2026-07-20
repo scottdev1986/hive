@@ -218,10 +218,10 @@ public final class ProjectState {
                 userClosed.remove(paneID)
                 continue
             }
-            // The user closed this agent and the daemon is killing it; until the
-            // kill lands, the feed still lists it as live. Building its pane
-            // again here is what made the X look broken — the pane came back a
-            // second after it went away.
+            // The user closed this agent's pane; the agent itself keeps
+            // running (#64: a pane close never kills), so the feed still lists
+            // it as live. Building its pane again here is what made the X look
+            // broken — the pane came back a second after it went away.
             if userClosed.contains(paneID) { continue }
             if var pane = panes[paneID] {
                 changes.append(contentsOf: update(pane: &pane, from: agent, now: now))
@@ -246,9 +246,12 @@ public final class ProjectState {
         return changes
     }
 
-    /// The user closed this agent (the pane X, ⇧⌘W, or the accessibility
-    /// action) and the daemon was asked to kill it. Its pane must not be rebuilt
-    /// from the snapshots that arrive while the kill is in flight.
+    /// The user closed this pane (the pane X, ⇧⌘W, or the accessibility
+    /// action). Closing a pane never touches the agent (#64): it keeps running
+    /// headless, so the feed keeps listing it live — and its pane must not be
+    /// rebuilt from those snapshots while it does. The suppression clears when
+    /// the daemon stops reporting the agent, so a later agent reusing the name
+    /// gets a pane again.
     @discardableResult
     public func markUserClosed(_ paneID: PaneID) -> [StateChange] {
         userClosed.insert(paneID)
@@ -295,12 +298,6 @@ public final class ProjectState {
             terminals: terminals)
         nextVisibilityRevision += 1
         return inventory
-    }
-
-    /// The kill failed, so the agent is still alive and the user must see that:
-    /// drop the suppression and let the next snapshot put its pane back.
-    public func clearUserClosed(_ paneID: PaneID) {
-        userClosed.remove(paneID)
     }
 
     /// The root's status word from one snapshot. A nil snapshot is the daemon

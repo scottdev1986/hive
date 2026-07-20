@@ -1040,11 +1040,13 @@ export class HiveDaemon {
     action: Action,
     subject: string | undefined,
     auditAllow = true,
+    allowReason: string | null = null,
   ): Decision {
     return this.capabilities.authorizeAndAudit(
       capability,
       { route, action, ...(subject === undefined ? {} : { subject }) },
       auditAllow,
+      allowReason,
     );
   }
 
@@ -1858,6 +1860,14 @@ export class HiveDaemon {
       note: string;
     } | null;
   }> {
+    // #66: the deliberate-kill intent is registered BEFORE the first
+    // destructive step. Between the process dying and markAgentDead landing
+    // (measured 2.5-34s), the row reads live-status + session-absent — the
+    // recovery sweep's crash predicate — and a tick in that window used to
+    // resume the corpse. The marker is cleared only after the dead status is
+    // durable; a teardown that fails in between leaves it set, because a
+    // deliberately killed agent must never be resurrected by the sweep.
+    this.recovery.noteDeliberateKill(agent.id);
     const reaped = await this.stopAgentProcesses(agent, () => {
       this.capabilities.revokeSubject(agent.name);
       removeCredential(agent.name);
@@ -1871,6 +1881,7 @@ export class HiveDaemon {
     if (killed === null) {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
+    this.recovery.clearDeliberateKill(agent.id);
     this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
@@ -3205,17 +3216,6 @@ export class HiveDaemon {
     if (name === "") {
       return json({ error: "Invalid kill request: no agent" }, { status: 400 });
     }
-    const decision = this.authorize(
-      authenticated.capability,
-      "/agents/kill",
-      "agent:kill",
-      name,
-    );
-    if (!decision.ok) return this.denied(decision);
-    const agent = this.db.getAgentByName(name);
-    if (agent === null) {
-      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
-    }
     let body: unknown;
     try {
       body = await request.json();
@@ -3228,6 +3228,13 @@ export class HiveDaemon {
     }
     const parsed = z.strictObject({
       sessionLocator: SessionLocatorSchema,
+      // Who asked for this kill: CLI subcommand + argv + parent pid, written
+      // onto the allow-decision audit row (#64). Every kill row used to carry
+      // an empty reason, which is why the 2026-07-20 pane-close kills needed a
+      // full forensic reconstruction. Free-form and truncated rather than
+      // validated: a kill must never be refused because its provenance string
+      // is long.
+      origin: z.string().optional(),
     }).safeParse(body);
     if (!parsed.success) {
       return json({
@@ -3235,6 +3242,19 @@ export class HiveDaemon {
         reason: "invalid-session-locator",
         error: "Kill requires the pane's exact sessionLocator",
       }, { status: 400 });
+    }
+    const decision = this.authorize(
+      authenticated.capability,
+      "/agents/kill",
+      "agent:kill",
+      name,
+      true,
+      parsed.data.origin?.slice(0, 1_024) ?? null,
+    );
+    if (!decision.ok) return this.denied(decision);
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) {
+      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
     }
     if (
       agent.sessionLocator === undefined ||

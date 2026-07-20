@@ -472,6 +472,7 @@ export class CapabilityStore {
     capability: Capability,
     request: AuthorizeRequest,
     auditAllow: boolean,
+    allowReason: string | null = null,
   ): Decision {
     const decision = this.authorize(capability, request);
     const shared = {
@@ -486,7 +487,10 @@ export class CapabilityStore {
     if (!decision.ok) {
       this.audit({ ...shared, decision: "deny", reason: decision.reason });
     } else if (auditAllow) {
-      this.audit({ ...shared, decision: "allow", reason: null });
+      // The caller's origin string (who asked, with what argv) rides the
+      // allow-decision row. It is captured here, at the first step, and audit
+      // rows are insert-only — first writer wins, nothing overwrites it.
+      this.audit({ ...shared, decision: "allow", reason: allowReason });
     }
     return decision;
   }
