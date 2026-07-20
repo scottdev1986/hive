@@ -269,15 +269,26 @@ final class SmokeRunner {
 
     private func runProductionPaneProof(agent: String) {
         let paneID = ProjectState.paneID(forAgent: agent)
-        let paneArrived = waitUntil(45) {
-            self.controller.state.panes[paneID] != nil
-                && self.controller.sessiondTerminalView(pane: paneID) != nil
-        }
-        check(paneArrived, "production pane \(agent) appeared in the real Workspace")
-        guard let pane = controller.state.panes[paneID],
+        waitForProductionPane(agent: agent, paneID: paneID,
+                              deadline: Date().addingTimeInterval(45))
+    }
+
+    /// The production pane depends on feed callbacks dispatched to the main
+    /// queue. A synchronous polling loop here starves those callbacks and makes
+    /// the proof itself prevent the pane it is waiting for from being admitted.
+    private func waitForProductionPane(agent: String, paneID: PaneID, deadline: Date) {
+        guard let window = controller.window,
+              let pane = controller.state.panes[paneID],
               let locator = pane.sessionLocator,
               let terminal = controller.sessiondTerminalView(pane: paneID) else {
-            finishProductionPaneProof()
+            guard Date() < deadline else {
+                check(false, "production pane \(agent) appeared in the real Workspace")
+                finishProductionPaneProof()
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForProductionPane(agent: agent, paneID: paneID, deadline: deadline)
+            }
             return
         }
 
@@ -292,9 +303,42 @@ final class SmokeRunner {
             sessionId: locator.sessionId,
             hostKind: locator.hostKind,
             engineBuildId: locator.engineBuildId)
-        check(waitUntil(30) {
-            terminal.surfaceState == .live && terminal.sessionLocator == expectedLocator
-        }, "HiveTerminalView reached its first correct frame on the exact locator")
+        waitForProductionSurface(
+            agent: agent, paneID: paneID, locator: locator,
+            expectedLocator: expectedLocator, terminal: terminal, window: window,
+            deadline: Date().addingTimeInterval(30))
+    }
+
+    private func waitForProductionSurface(
+        agent: String, paneID: PaneID, locator: AgentSessionLocator,
+        expectedLocator: SessionLocator, terminal: HiveTerminalView,
+        window: NSWindow, deadline: Date
+    ) {
+        guard terminal.surfaceState == .live && terminal.sessionLocator == expectedLocator else {
+            guard Date() < deadline else {
+                check(false, "HiveTerminalView reached its first correct frame on the exact locator")
+                finishProductionPaneChecks(
+                    agent: agent, paneID: paneID, locator: locator,
+                    terminal: terminal, window: window)
+                return
+            }
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.05) { [weak self] in
+                self?.waitForProductionSurface(
+                    agent: agent, paneID: paneID, locator: locator,
+                    expectedLocator: expectedLocator, terminal: terminal,
+                    window: window, deadline: deadline)
+            }
+            return
+        }
+        finishProductionPaneChecks(
+            agent: agent, paneID: paneID, locator: locator,
+            terminal: terminal, window: window)
+    }
+
+    private func finishProductionPaneChecks(
+        agent: String, paneID: PaneID, locator: AgentSessionLocator,
+        terminal: HiveTerminalView, window: NSWindow
+    ) {
         check(terminal.highWater > 0,
               "the production vendor TUI presented non-empty ordered output")
         check(terminal.window === controller.window && terminal.superview != nil,
@@ -305,9 +349,11 @@ final class SmokeRunner {
               "the renderer owns no hidden SwiftTerm child PTY")
 
         productionPaneSummary =
-            "PRODUCTION PANE PROOF: agent=\(agent) session=\(locator.sessionId) "
+            "PRODUCTION PANE PROOF: agent=\(agent) instance=\(locator.instanceId) "
+                + "session=\(locator.sessionId) "
                 + "generation=\(locator.generation) engine=\(locator.engineBuildId ?? "missing") "
-                + "highWater=\(terminal.highWater) frame=\(terminal.frame)"
+                + "highWater=\(terminal.highWater) frame=\(terminal.frame) "
+                + "window=\(window.windowNumber)"
         finishProductionPaneProof()
     }
 

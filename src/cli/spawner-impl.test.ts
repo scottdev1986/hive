@@ -2561,6 +2561,7 @@ describe("HiveSpawner wiring", () => {
       worktreePath,
     });
     expect(store.getAgentById(stuck.id)).toEqual(stuck);
+    expect(stuck.failureReason).toContain("Error: model not supported");
     expect(stuck.failureReason).toContain("verified stop could not prove process exit");
     expect(removals).toEqual(0);
     expect(tmux.killed).toEqual([]);

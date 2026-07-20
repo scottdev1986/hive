@@ -1,0 +1,22 @@
+2026-07-20T04:51:05.776Z HEAD=5925dec21729923219500df8f3b75a6b9ae653a5
+2026-07-20T04:51:05.776Z home=/tmp/hb25-p5 (41-byte broker path)
+2026-07-20T04:51:05.776Z project=/tmp/hb25-project-edbdd6 (non-Hive throwaway git repository)
+2026-07-20T04:51:05.776Z stagedHive=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/.dev/root/versions/0.0.0/hive
+2026-07-20T04:51:05.776Z stagedSessiond=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/.dev/root/versions/0.0.0/hive-sessiond
+2026-07-20T04:51:05.776Z workspace=/Users/scottkellar/Projects/hive/.hive/worktrees/horatio/.dev/root/versions/0.0.0/HiveWorkspace.app/Contents/MacOS/HiveWorkspace
+2026-07-20T04:51:06.082Z daemon ready pid=26135 port=43146
+2026-07-20T04:51:06.117Z real Workspace launched pid=26194 instanceId=94837862a3
+2026-07-20T04:51:07.119Z hive_spawn requested tool=claude name=aria readOnly=true
+2026-07-20T04:51:24.171Z FAIL: Hive agent aria could not verify cleanup after spawn: Spawn failure for aria: Agent 732b1148-e5fa-494e-94e6-8779c4eb3aca never became visible in the Workspace inventory: teardown could not be verified: sessiond locator has no terminal-host binding in this Hive instance
+2026-07-20T04:51:24.506Z cleanup: exact root session hive-orchestrator-94837862a3 and 1 captured process(es) absent
+2026-07-20T04:51:29.507Z daemon required SIGKILL during harness cleanup
+
+Measured correlation from /tmp/hb25-p5/hive.db:
+agentCreatedAt=2026-07-20T04:51:13.642Z
+visibilityAllowAt=2026-07-20T04:51:07.111Z
+visibilityAllowAt=2026-07-20T04:51:08.215Z
+visibilityAllowAt=2026-07-20T04:51:08.220Z
+terminalHostBindings=0
+
+Disposition: RED. The synchronous production-pane smoke wait occupied the
+main queue, starving the feed callback that had to add and publish the pane.

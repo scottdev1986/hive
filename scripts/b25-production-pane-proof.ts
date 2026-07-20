@@ -28,9 +28,11 @@ import {
   realpathSync,
   writeFileSync,
 } from "node:fs";
+import { createHash } from "node:crypto";
 import { join, resolve } from "node:path";
 import { operatorFetch } from "../src/cli/credential";
 import { hiveInstanceSuffix } from "../src/daemon/tmux-sessions";
+import { captureProcessTree, reapCapturedTree } from "../src/daemon/teardown";
 
 type Tool = "claude" | "codex" | "grok";
 type Child = Bun.Subprocess<
@@ -88,8 +90,13 @@ let daemon: Child | null = null;
 let workspace: Child | null = null;
 let client: Client | null = null;
 let boundPort: number | null = null;
+let instanceId: string | null = null;
 let spawned = false;
 let ok = false;
+let capture: {
+  journal: { path: string; bytes: number; sha256: string; sequencePrefixHex: string };
+  screenshot: { path: string; bytes: number; sha256: string; windowNumber: number };
+} | null = null;
 
 function log(line: string): void {
   const stamped = `${new Date().toISOString()} ${line}`;
@@ -164,7 +171,8 @@ function validatePaneReport(report: string, record: AgentStatus): void {
   if (locator.hostKind !== "sessiond") {
     throw new Error(`spawned agent hostKind=${locator.hostKind}, expected sessiond`);
   }
-  const exact = `agent=${record.name} session=${locator.sessionId} generation=${locator.generation} ` +
+  const exact = `agent=${record.name} instance=${locator.instanceId} session=${locator.sessionId} ` +
+    `generation=${locator.generation} ` +
     `engine=${locator.engineBuildId ?? "missing"}`;
   if (!report.includes(exact) || !report.includes("PRODUCTION PANE PROOF OK")) {
     throw new Error(`Workspace proof did not bind the exact daemon locator: ${exact}`);
@@ -188,9 +196,131 @@ function flush(): void {
     observed,
     sideEffectMessageId,
     paneReport,
+    capture,
     startedAt,
     writtenAt: new Date().toISOString(),
   }, null, 2) + "\n");
+}
+
+function sha256(bytes: Uint8Array): string {
+  return createHash("sha256").update(bytes).digest("hex");
+}
+
+function locatorFromPaneReport(report: string): SessionLocator {
+  const match = report.match(
+    /agent=([^ ]+) instance=([^ ]+) session=([^ ]+) generation=(\d+) engine=([^ ]+)/,
+  );
+  if (match === null || match[1] !== agent) {
+    throw new Error("Workspace pane report has no exact agent locator");
+  }
+  return {
+    instanceId: match[2]!,
+    sessionId: match[3]!,
+    generation: Number(match[4]),
+    hostKind: "sessiond",
+    engineBuildId: match[5]!,
+  };
+}
+
+function captureVendorArtifacts(locator: SessionLocator, report: string): void {
+  const journalSource = join(
+    home,
+    "runtime/sessiond/hosts",
+    locator.sessionId,
+    "journal.bin",
+  );
+  const journal = readFileSync(journalSource);
+  if (journal.byteLength <= 16) {
+    throw new Error(`sessiond journal has no PTY payload (${journal.byteLength} bytes)`);
+  }
+  const transcriptDirectory = join(evidence, "transcripts");
+  const screenshotDirectory = join(evidence, "screenshots");
+  mkdirSync(transcriptDirectory, { recursive: true });
+  mkdirSync(screenshotDirectory, { recursive: true });
+  const journalPath = join(
+    transcriptDirectory,
+    `${requestedTool}-${locator.sessionId}.journal.bin`,
+  );
+  writeFileSync(journalPath, journal);
+  const journalDigest = sha256(journal);
+  const preserved = readFileSync(journalPath);
+  if (sha256(preserved) !== journalDigest || !preserved.equals(journal)) {
+    throw new Error("preserved sessiond journal is not byte-exact");
+  }
+
+  const windowMatch = report.match(/ window=(\d+)/);
+  if (windowMatch === null) throw new Error("Workspace pane report has no window number");
+  const windowNumber = Number(windowMatch[1]);
+  const screenshotPath = join(
+    screenshotDirectory,
+    `${requestedTool}-${locator.sessionId}-workspace.png`,
+  );
+  command(["/usr/sbin/screencapture", "-x", "-l", String(windowNumber), screenshotPath], project);
+  const screenshot = readFileSync(screenshotPath);
+  const pngSignature = Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]);
+  if (screenshot.byteLength <= pngSignature.byteLength ||
+      !screenshot.subarray(0, pngSignature.byteLength).equals(pngSignature)) {
+    throw new Error("Workspace screenshot is not a non-empty PNG");
+  }
+
+  const mutated = Buffer.from(journal);
+  mutated[16] = mutated[16]! ^ 0x01;
+  if (sha256(mutated) === journalDigest) {
+    throw new Error("one-byte journal mutation did not change the transcript digest");
+  }
+  log("MUTATION VERIFIED: one-byte PTY transcript mutation changes its SHA-256");
+  capture = {
+    journal: {
+      path: journalPath,
+      bytes: journal.byteLength,
+      sha256: journalDigest,
+      sequencePrefixHex: journal.subarray(0, 16).toString("hex"),
+    },
+    screenshot: {
+      path: screenshotPath,
+      bytes: screenshot.byteLength,
+      sha256: sha256(screenshot),
+      windowNumber,
+    },
+  };
+  log(
+    `CAPTURED before hive_kill: requestedVendor=${requestedTool}/` +
+      `${process.env.HIVE_B25_MODEL ?? "policy-default"} ` +
+      `session=${locator.sessionId} journalBytes=${journal.byteLength} window=${windowNumber}`,
+  );
+}
+
+async function cleanupRootSession(): Promise<void> {
+  if (instanceId === null) return;
+  const socket = `hive-${instanceId}`;
+  const session = `hive-orchestrator-${instanceId}`;
+  const panes = Bun.spawnSync([
+    "tmux", "-L", socket, "list-panes", "-t", `=${session}:`, "-F", "#{pane_pid}",
+  ], { stdout: "pipe", stderr: "pipe" });
+  if (panes.exitCode !== 0) {
+    log(`cleanup: root session ${session} already absent`);
+    return;
+  }
+  const roots = panes.stdout.toString().trim().split("\n")
+    .map(Number).filter((pid) => Number.isInteger(pid) && pid > 1);
+  const tree = await captureProcessTree(roots);
+  const killed = Bun.spawnSync([
+    "tmux", "-L", socket, "kill-session", "-t", `=${session}`,
+  ], { stdout: "pipe", stderr: "pipe" });
+  if (killed.exitCode !== 0) {
+    throw new Error(`could not kill exact root session ${session}: ${killed.stderr.toString().trim()}`);
+  }
+  const reaped = await reapCapturedTree(tree);
+  const stillExists = Bun.spawnSync([
+    "tmux", "-L", socket, "has-session", "-t", `=${session}`,
+  ]).exitCode === 0;
+  if (reaped.survivors.length > 0 || stillExists) {
+    throw new Error(
+      `root cleanup could not verify absence: session=${stillExists} ` +
+        `pids=${reaped.survivors.map((entry) => entry.pid).join(",")}`,
+    );
+  }
+  log(`cleanup: exact root session ${session} and ${reaped.killed.length} captured process(es) absent`);
 }
 
 async function stopChild(child: Child | null, label: string): Promise<void> {
@@ -282,7 +412,7 @@ async function main(): Promise<void> {
   client = new Client({ name: "b25-production-pane-proof", version: "1" });
   await client.connect(transport);
 
-  const instanceId = hiveInstanceSuffix(home);
+  instanceId = hiveInstanceSuffix(home);
   const workspaceProcess = Bun.spawn([
     workspaceBinary,
     "--project", project,
@@ -326,7 +456,7 @@ async function main(): Promise<void> {
       ? {}
       : { model: process.env.HIVE_B25_MODEL }),
   };
-  const [, report] = await Promise.all([
+  const [spawnResult, report] = await Promise.all([
     withTimeout(
       client.callTool({ name: "hive_spawn", arguments: spawnArguments }),
       180_000,
@@ -336,8 +466,12 @@ async function main(): Promise<void> {
       spawned = true;
       return result;
     }),
-    waitForPaneReport(),
+    waitForPaneReport().then((value) => {
+      captureVendorArtifacts(locatorFromPaneReport(value), value);
+      return value;
+    }),
   ]);
+  observed = toolValue(spawnResult, "agent") as AgentStatus;
   paneReport = report.trim();
   for (const line of paneReport.split("\n")) log(`workspace: ${line}`);
 
@@ -371,8 +505,9 @@ async function main(): Promise<void> {
     arguments: { detail: "full" },
   });
   const statuses = toolValue(statusResult, "agents") as AgentStatus[];
-  observed = statuses.find((candidate) => candidate.name === agent) ?? null;
-  if (observed === null) throw new Error(`hive_status has no ${agent} positive control`);
+  const current = statuses.find((candidate) => candidate.name === agent) ?? null;
+  if (current === null) throw new Error(`hive_status has no ${agent} positive control`);
+  observed = current;
   validatePaneReport(report, observed);
   log(
     `GREEN exact production locator: ${observed.sessionLocator!.sessionId} ` +
@@ -393,6 +528,7 @@ async function main(): Promise<void> {
   }
   if (!mutationRejected) throw new Error("session-id mutation did not break the pane proof");
   log("MUTATION VERIFIED: one-session-id mutation breaks the exact-locator row");
+  if (capture === null) throw new Error("pre-kill vendor capture is missing");
   log(`RESULT: production spawn + real Workspace HiveTerminalView GREEN (${observed.tool}/${observed.model})`);
   ok = true;
 }
@@ -419,6 +555,12 @@ try {
     await activeClient.close().catch(() => undefined);
   }
   await stopChild(workspace, "Workspace");
+  try {
+    await cleanupRootSession();
+  } catch (error) {
+    log(`cleanup: root session failed: ${error}`);
+    ok = false;
+  }
   await stopChild(daemon, "daemon");
   flush();
 }
