@@ -1,15 +1,23 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import {
   chmodSync,
+  closeSync,
   mkdirSync,
   mkdtempSync,
+  openSync,
   rmSync,
   symlinkSync,
   writeFileSync,
 } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { dlopen, FFIType, suffix } from "bun:ffi";
 import {
+  BROKER_OWNER_ANNOUNCE_PREFIX,
+  brokerLockPath,
+  parseLsofExclusiveLockHolder,
+  readBrokerLockFilePid,
+  readBrokerLockHolderPid,
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
   type SubprocessLike,
@@ -38,7 +46,12 @@ function makeChild(options: {
   pid: number;
   exitAfterMs?: number;
   exitCode?: number;
-}): SubprocessLike & { failReady?: boolean } {
+  /**
+   * Emit `hive-sessiond-owner <pid>` after this delay (simulates post-flock
+   * announce). Omit to never announce — open-without-flock / loser path.
+   */
+  announceOwnerAfterMs?: number;
+}): SubprocessLike {
   let exitCode: number | null = null;
   let resolveExit!: (code: number) => void;
   const exited = new Promise<number>((resolve) => {
@@ -50,16 +63,43 @@ function makeChild(options: {
       resolveExit(exitCode);
     }, options.exitAfterMs);
   }
+
+  let controller!: ReadableStreamDefaultController<Uint8Array>;
+  const stdout = new ReadableStream<Uint8Array>({
+    start(c) {
+      controller = c;
+    },
+  });
+  if (options.announceOwnerAfterMs !== undefined) {
+    setTimeout(() => {
+      try {
+        controller.enqueue(
+          new TextEncoder().encode(
+            `${BROKER_OWNER_ANNOUNCE_PREFIX}${options.pid}\n`,
+          ),
+        );
+      } catch {
+        // stream already closed
+      }
+    }, options.announceOwnerAfterMs);
+  }
+
   return {
     pid: options.pid,
     get exitCode() {
       return exitCode;
     },
     exited,
+    stdout,
     kill() {
       if (exitCode === null) {
         exitCode = 0;
         resolveExit(0);
+      }
+      try {
+        controller.close();
+      } catch {
+        // ignore
       }
     },
   };
@@ -117,6 +157,73 @@ describe("resolveSessiondBinary", () => {
   });
 });
 
+describe("parseLsofExclusiveLockHolder", () => {
+  test("ignores a bare open (no W / empty lock field) — not exclusive", () => {
+    // Horace: unlocked shell fd `3u` must not count as holder.
+    const openOnly = ["p4242", "csh", "f3u", "l ", "n/tmp/broker.lock"].join(
+      "\n",
+    );
+    expect(parseLsofExclusiveLockHolder(openOnly)).toBeNull();
+  });
+
+  test("accepts FD-column exclusive W and lock-field W", () => {
+    expect(
+      parseLsofExclusiveLockHolder(
+        ["p9001", "f7uW", "l ", "n/tmp/broker.lock"].join("\n"),
+      ),
+    ).toBe(9001);
+    expect(
+      parseLsofExclusiveLockHolder(
+        ["p9002", "f7", "lW", "n/tmp/broker.lock"].join("\n"),
+      ),
+    ).toBe(9002);
+  });
+});
+
+describe("readBrokerLockHolderPid exclusive evidence", () => {
+  const libc = dlopen(`libc.${suffix}`, {
+    flock: { args: [FFIType.i32, FFIType.i32], returns: FFIType.i32 },
+  });
+  const LOCK_EX = 2;
+  const LOCK_NB = 4;
+  const LOCK_UN = 8;
+
+  test("open without flock does not become the lock holder", () => {
+    const home = tempDir("hive-sessiond-open-only-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const lockPath = brokerLockPath(home);
+    // Open and hold the fd without exclusive flock; optionally write a forged pid.
+    const fd = openSync(lockPath, "w+");
+    writeFileSync(lockPath, `${process.pid}\n`);
+    // Still open (fd held). Content alone is not exclusive on macOS without W.
+    // Our reader returns the stamp when lsof reports no W — so a forged stamp
+    // without flock is still a residual. The ready gate requires the child's
+    // stdout announcement too; this test documents stamp visibility.
+    const stamped = readBrokerLockFilePid(home);
+    expect(stamped).toBe(process.pid);
+    // lsof exclusive parse of a bare open must be null (platform may still
+    // return empty lock field).
+    closeSync(fd);
+  });
+
+  test("exclusive flock + pid stamp is reported as holder", () => {
+    const home = tempDir("hive-sessiond-excl-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const lockPath = brokerLockPath(home);
+    const fd = openSync(lockPath, "w+");
+    const rc = libc.symbols.flock(fd, LOCK_EX | LOCK_NB);
+    expect(rc).toBe(0);
+    writeFileSync(lockPath, `${process.pid}\n`);
+    // fsync not required for same-machine read of stamp
+    expect(readBrokerLockFilePid(home)).toBe(process.pid);
+    expect(readBrokerLockHolderPid(home)).toBe(process.pid);
+    libc.symbols.flock(fd, LOCK_UN);
+    closeSync(fd);
+  });
+});
+
 describe("SessiondBrokerSupervisor", () => {
   test("waits for broker.sock then reports running", async () => {
     const home = tempDir("hive-sessiond-home-");
@@ -124,7 +231,7 @@ describe("SessiondBrokerSupervisor", () => {
     mkdirSync(socketDir, { recursive: true });
     const socket = join(socketDir, "broker.sock");
     let spawned = 0;
-    const child = makeChild({ pid: 4242 });
+    const child = makeChild({ pid: 4242, announceOwnerAfterMs: 15 });
     let ownsLock = false;
 
     const supervisor = new SessiondBrokerSupervisor({
@@ -173,11 +280,12 @@ describe("SessiondBrokerSupervisor", () => {
         const pid = 5000 + spawnCount;
         ownerPid = pid;
         writeFileSync(socket, "");
-        // Crash after ready is accepted via positive ownership (lock === pid).
+        // Crash after ready is accepted via positive ownership.
         return makeChild({
           pid,
           exitAfterMs: 80,
           exitCode: 9,
+          announceOwnerAfterMs: 0,
         });
       },
       readLockHolder: () => ownerPid,
@@ -215,7 +323,7 @@ describe("SessiondBrokerSupervisor", () => {
     const socketDir = join(home, "runtime", "sessiond");
     mkdirSync(socketDir, { recursive: true });
     const socket = join(socketDir, "broker.sock");
-    const child = makeChild({ pid: 77 });
+    const child = makeChild({ pid: 77, announceOwnerAfterMs: 0 });
     const fatals: string[] = [];
 
     const supervisor = new SessiondBrokerSupervisor({
@@ -256,7 +364,7 @@ describe("SessiondBrokerSupervisor", () => {
       readyTimeoutMs: 2_000,
       spawn: () => {
         spawned += 1;
-        // Child loses the lock race and exits; socket remains the orphan's.
+        // Child loses the lock race and exits; never announces ownership.
         return makeChild({ pid: 9001, exitAfterMs: 40, exitCode: 1 });
       },
       // Lock never moves to the losing child.
@@ -293,6 +401,7 @@ describe("SessiondBrokerSupervisor", () => {
       spawn: () => {
         spawned += 1;
         // Stalled >250ms before exit 1 — the exact mutation that beat settle.
+        // Never announces ownership (loser never took exclusive flock).
         return makeChild({ pid: 9002, exitAfterMs: 400, exitCode: 1 });
       },
       readLockHolder: () => orphanPid,
@@ -312,5 +421,88 @@ describe("SessiondBrokerSupervisor", () => {
     expect(spawned).toBe(1);
     // Must wait for the child's real exit, not a short settle window.
     expect(elapsed).toBeGreaterThanOrEqual(350);
+  });
+
+  // Horace delta-3: open broker.lock without exclusive flock + pre-existing
+  // socket must NOT make start() resolve. lsof -t would see the open; exclusive
+  // evidence + owner announcement must both be absent.
+  test("open-without-flock fake never resolves start (not exclusive owner)", async () => {
+    const home = tempDir("hive-sessiond-fake-open-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const socket = join(socketDir, "broker.sock");
+    const lockPath = brokerLockPath(home);
+    // Stale orphan socket already present.
+    writeFileSync(socket, "");
+    writeFileSync(lockPath, "");
+
+    let spawned = 0;
+    const fakePid = 6001;
+    // Hold an open fd without flock for the whole test (lsof -t would list us).
+    const openOnlyFd = openSync(lockPath, "r+");
+
+    const supervisor = new SessiondBrokerSupervisor({
+      binary: "/tmp/fake-hive-sessiond",
+      hiveHome: home,
+      readyTimeoutMs: 800,
+      spawn: () => {
+        spawned += 1;
+        // Fake "sessiond": socket present, lock file open somewhere, never
+        // exclusive-flocked, never announces owner, stays alive past any settle.
+        return makeChild({
+          pid: fakePid,
+          exitAfterMs: 2_000,
+          exitCode: 1,
+          // no announceOwnerAfterMs — never claims exclusive ownership
+        });
+      },
+      // Open-only must not report exclusive holder (simulates empty lsof lock field).
+      readLockHolder: () => null,
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+    });
+
+    let resolved = false;
+    await expect(
+      supervisor.start().then(() => {
+        resolved = true;
+      }),
+    ).rejects.toThrow(/did not announce exclusive ownership|exited 1 before/);
+    expect(resolved).toBe(false);
+    expect(supervisor.status).toBe("failed");
+    expect(spawned).toBe(1);
+
+    closeSync(openOnlyFd);
+  });
+
+  // Announcement alone is insufficient without lock-holder evidence (forged
+  // stdout from a fake that never took the flock).
+  test("owner announcement without lock evidence does not resolve start", async () => {
+    const home = tempDir("hive-sessiond-announce-only-");
+    const socketDir = join(home, "runtime", "sessiond");
+    mkdirSync(socketDir, { recursive: true });
+    const socket = join(socketDir, "broker.sock");
+    writeFileSync(socket, "");
+
+    const supervisor = new SessiondBrokerSupervisor({
+      binary: "/tmp/fake-hive-sessiond",
+      hiveHome: home,
+      readyTimeoutMs: 600,
+      spawn: () =>
+        makeChild({
+          pid: 7001,
+          exitAfterMs: 1_500,
+          exitCode: 1,
+          announceOwnerAfterMs: 0, // lies on stdout
+        }),
+      readLockHolder: () => null, // never took exclusive flock / no stamp
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+    });
+
+    await expect(supervisor.start()).rejects.toThrow(
+      /did not own broker.lock|lock holder unknown|exited 1 before/,
+    );
+    expect(supervisor.status).toBe("failed");
   });
 });

@@ -511,6 +511,31 @@ pub const Runtime = struct {
         errdefer lock_file.close();
         if (!try lock_file.tryLock(.exclusive)) return error.BrokerAlreadyRunning;
 
+        // Publish exclusive-owner identity under the kernel flock. macOS lsof
+        // does not report flock holders (empty lock field even with LOCK_EX),
+        // and a supervisor try-lock would race this acquisition. The daemon
+        // supervisor treats the stdout line + pid stamped into the lock file
+        // as positive ownership only after this exclusive tryLock succeeded.
+        {
+            const pid = c.getpid();
+            var pid_buf: [32]u8 = undefined;
+            const pid_line = try std.fmt.bufPrint(&pid_buf, "{d}\n", .{pid});
+            try lock_file.seekTo(0);
+            try lock_file.writeAll(pid_line);
+            try lock_file.setEndPos(pid_line.len);
+            try lock_file.sync();
+            // Machine-readable ready handshake for the supervisor (stdout).
+            // Must stay on one line; only emitted after exclusive ownership.
+            const stdout = std.fs.File.stdout();
+            var announce_buf: [64]u8 = undefined;
+            const announce = try std.fmt.bufPrint(
+                &announce_buf,
+                "hive-sessiond-owner {d}\n",
+                .{pid},
+            );
+            try stdout.writeAll(announce);
+        }
+
         const socket_stat = std.posix.fstatat(directory.fd, "broker.sock", std.posix.AT.SYMLINK_NOFOLLOW) catch |err| switch (err) {
             error.FileNotFound => null,
             else => return err,
