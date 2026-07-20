@@ -1,180 +1,196 @@
 # M1 human evidence session — one-sitting runbook
 
-Discharges the user-owed batch named as M1's single highest-leverage action in
-`planning/m1-definition-of-done-audit.md` §6. **Four gates are runnable today.
-A4 is blocked** — see §7, which is deliberately separated so nothing in §1–§6
-depends on it.
+Open this file and do it top to bottom. Every instruction is written for you, the
+human at the machine — the only person who can produce any of this evidence. Each
+gate here refuses to be satisfied by an agent, and every one refuses a locked
+screen.
 
-You are the only person who can do any of this. Every gate here refuses to be
-satisfied by an agent, and every one refuses a locked screen.
+**Read this rule first, because it governs the whole sitting:** a cell that
+**fails is a finding, not a reason to stop.** If a step fails, write down exactly
+what you saw, save whatever you captured, and go on to the next step. A failed
+cell is worth having. The only thing that wastes the trip is abandoning the
+sitting or fudging a result.
 
-| Gate | Runnable today | Where its evidence lands |
+**You run no `git`.** You save files into the exact paths named below and, when
+you are done, you tell queen what passed, what failed, and where you saved
+anything unexpected (final section). Queen lands the evidence and updates the
+board.
+
+**One change since the last version of this runbook you must know up front:** this
+sitting no longer uses `make terminal`. That command is being deleted before M1
+closes (#59), so nothing here may depend on it. Every live-pane gate now runs
+against a **real production pane** — the pane a normally-launched app renders for
+a spawned agent. How you bring that up is the next section; get it right once and
+every Phase-2 gate reuses it.
+
+| Gate | Runs this sitting | Where its evidence lands |
 |---|---|---|
-| **#45** live resize-and-type | ✅ | `raw/qualification/hive-45-live-resize-input/` (new) |
-| **Gate 9** ten-probe manual acceptance | ✅ | `raw/qualification/ghostty-b1-actions/` |
-| **B2.6** VoiceOver + Accessibility Inspector | ✅ | `raw/qualification/hive-b26-gate10-accessibility/` |
-| **Gate 7** dual-display + sleep/wake | ✅ | `raw/qualification/ghostty-b1-gate7-physical/` |
-| **A4** faithful app-quit | ❌ **BLOCKED** | — see §7 |
+| **Gate 7 / row I** dual-display + sleep/wake | ✅ | `raw/qualification/ghostty-b1-gate7-physical/` |
+| **#45 re-check** live resize-and-type, WITH capture | ✅ | `raw/45-human-acceptance/` |
+| **G-live** live IME composition | ✅ | `raw/qualification/hive-b1-glive-ime/` (new) |
+| **Gate 9** ten-probe manual security acceptance | ✅ | `raw/qualification/ghostty-b1-actions/` |
+| **row J / B2.6** VoiceOver + Accessibility Inspector | ✅ | `raw/qualification/hive-b26-gate10-accessibility/` |
 
-**This list is closed at five.** "Clean machine" gates were checked against this
-session and none join it — see §6. **You need no second machine for anything
-here.**
-
----
-
-## Why this order
-
-The order is chosen so you change the physical world as few times as possible.
-Three setup states drive everything:
-
-1. **Second display plugged in** — only Gate 7 needs it, but it harms nothing
-   else, so it goes in at the start and comes out at the end. One plug event,
-   not two.
-2. **One live `make terminal` stack** — Gate 9, #45 and B2.6 all need the *same*
-   thing: a real Ghostty/sessiond pane in a real Workspace window. Bringing that
-   stack up is the expensive part, so all three run inside **one** instance of
-   it, and it is never torn down mid-batch.
-3. **VoiceOver on** — VO intercepts the keyboard, which makes the typing-heavy
-   work (#45, Gate 9 probes 1–9) miserable. So VO goes on **once**, late, and
-   everything needing it runs while it is on.
-
-Two consequences worth knowing up front:
-
-- **Gate 9 probe #10 and B2.6's teardown tick are the same physical action** —
-  closing a pane while it is spewing output. You do it once, at the end of the
-  live-stack phase, and it discharges both.
-- **Sleep/wake is last** because it destroys every other setup state. Do not
-  attempt it before the live-stack batch; you will just have to rebuild the
-  stack.
-
-Phases: **0** pre-flight → **1** Gate 7 dual-display → **2** the live-stack batch
-(#45 → Gate 9 → B2.6) → **3** Gate 7 sleep/wake → **4** seal the evidence.
+Row K (the three vendor TUIs) is **queen's agent campaign, not this sitting**, and
+A4 faithful app-quit is **blocked** — both are covered in the reference tail so you
+do not chase them. You need **no second machine** for anything here.
 
 ---
 
-## §0. Pre-flight — have all of this before you sit down
+## PRECONDITIONS — satisfy every box before you sit down
 
-**Hardware / environment**
+Do not begin until all of these are true. The first is the long pole; start it
+early.
 
-- [ ] **Two displays**, one Retina and one non-Retina, both online, **not
-      mirrored**, arranged as extended desktop. Gate 7 accepts nothing else — it
-      asserts the content scales *differ*.
-- [ ] **Unlocked Aqua session at the physical machine**, logged in as yourself.
-      Not ssh, not a locked screen, not an agent shell. The production surface
-      returns nulls otherwise.
+**Environment**
+
+- [ ] **Unlocked GUI (Aqua) session at the physical machine**, logged in as
+      yourself. Not ssh, not a locked screen, not an agent shell. The production
+      surface returns nulls otherwise, and the app's own console check
+      (`stat -f '%Su' /dev/console`) passes even with the screen locked — it is
+      *not* proof of an unlocked screen. Only you, looking at the machine, are.
+- [ ] **A second display**, one Retina and one non-Retina, both online, **not
+      mirrored**, arranged as an extended desktop. Gate 7 asserts the two content
+      scales *differ*, so mirrored or same-scale displays fail it. Plug it in now
+      and leave it in until Phase 3 is done — one plug event, not two.
 - [ ] Power settings that let the Mac actually **sleep** (Phase 3). Prefer Apple
       menu → Sleep over clamshell; clamshell only counts if the external display
       keeps the session alive.
-- [ ] **Headphones optional** for VoiceOver — nothing requires them, but you will
-      be listening to speech for several minutes.
+- [ ] **Screen-recording permission working.** System Settings → Privacy &
+      Security → Screen & System Audio Recording → enable your recorder (e.g.
+      QuickTime Player, or ⇧⌘5). Confirm you can start and save a recording
+      **now** — the #45 re-check exists specifically to produce a capture, and a
+      recorder that silently produces a black frame wastes that step.
 
 **Software**
 
 - [ ] **Accessibility Inspector** installed: Xcode → Open Developer Tool →
-      Accessibility Inspector. Confirm it launches *now*, not in Phase 2.
-- [ ] VoiceOver reachable via **Cmd-F5**. Leave it **off** for now.
-- [ ] **TextEdit** available and a known, distinctive string on the clipboard
-      (Gate 9 probe #5 tests that the clipboard *did not* change — you need a
+      Accessibility Inspector. Confirm it launches **now**, not in Phase 2.
+- [ ] **VoiceOver** reachable via **Cmd-F5**. Leave it **off** for now.
+- [ ] **A real OS input method for the G-live step.** System Settings → Keyboard →
+      Input Sources → add at least one CJK method (e.g. *Pinyin – Simplified* or
+      *Japanese – Romaji*), one dead-key layout (*ABC – Extended*), and one RTL
+      source (*Hebrew* or *Arabic*). You will switch to these live; confirm the
+      input-menu shows them.
+- [ ] **TextEdit** available and a **known, distinctive string on the clipboard**
+      (Gate 9 probe #5 tests that the clipboard did *not* change — you need a
       baseline you will recognise).
 - [ ] Xcode/Swift toolchain selected (`xcrun --sdk macosx --show-sdk-path`
-      succeeds) and Bun at the locked version. `demo-preflight` refuses
-      otherwise.
+      succeeds) and Bun at the locked version.
 
-**Repo state — do this before you sit down; it is the long pole**
+**Build and the #70 restart — this is a hard gate**
 
-```sh
-cd /Users/scottkellar/Projects/hive
-make build
-```
+- [ ] **Issue #70's fix is landed on `main`.** #70 is the `hive stop` fleet-kill /
+      operator-kill defect: `hive stop` is the exact command under repair. Until
+      #70 is landed, **do not begin this sitting** — a mid-sitting teardown or
+      restart could kill agents or leave the daemon in the state #70 describes.
+- [ ] **The running instance has been rebuilt and restarted onto the fixed
+      build.** The Makefile targets, verified against the current Makefile, are:
 
-This stages the dev release *and* builds GhosttyKit and sessiond. Gate 7's
-`swift test` will not even link without `workspace/Vendor/GhosttyKit.xcframework`
-staged, and it is a build output, not a checked-in file.
+      cd /Users/scottkellar/Projects/hive
+      make build          # rebuilds toolchain + GhosttyKit + sessiond, stages the dev release under .dev/
+      make run            # launches the production Workspace on the fixed build
 
-- [ ] `make build` ended with `staged: hive 0.0.0 (<sha>, …)`.
-
-**Port and process hygiene — run this immediately before Phase 2, and again
-between any two `make terminal` runs**
-
-```sh
-/usr/sbin/lsof -ti :43117 | xargs -r kill -9
-pkill -f hive-sessiond
-```
-
-Port 43117 is fixed and **survives an interrupted run**. A second `make terminal`
-then fails at `demo-preflight` with "port 43117 is in use", or worse, at
-`startDaemon` with `EADDRINUSE`, which reads like a broken daemon.
-
-**Time budget**
-
-| Phase | Estimate | Basis |
-|---|---|---|
-| 0 — `make build` | **unknown** | No measured figure exists. A warm tree is minutes; a cold GhosttyKit build is long. Start it before you sit down. |
-| 1 — Gate 7 dual-display | **unknown** + a 120 s drag window | The test's own prompt timeout is 120 s; `swift test` build time is unrecorded. |
-| 2a — #45 resize-and-type | **unknown** | No doc gives a basis. The action itself is seconds; bringing the stack up is the cost. |
-| 2b — Gate 9 ten probes | **~10 min** | Stated by the runbook header itself (`manual-acceptance.md:1`). |
-| 2c — B2.6 VO + Inspector | **unknown** | No doc gives a basis. Six scenarios × VO navigation; budget generously. |
-| 3 — Gate 7 sleep/wake | ≥5 s sleep, **up to 600 s** wake wait | Test-asserted timeouts. Total unknown. |
-
-Do not plan this around a hard stop. Three of the six numbers are genuinely
-unknown and inventing them would be worse than saying so.
+      There is **no `make restart` and no `make stop` target.** To stop the old
+      instance before rebuilding, **follow the stop/restart procedure #70's fix
+      ships** — do **not** use the pre-#70 path (`hive stop`, or `make clean`
+      which shells out to `hive stop`): that path *is* the defect under repair.
+      Sequence: stop the old instance per #70 → `make build` → `make run`.
+- [ ] `make build` ended with `staged: hive 0.0.0 (<sha>, …)`. This stages
+      GhosttyKit and sessiond; without a staged GhosttyKit the Swift tests will
+      not even link, and the production pane will render blank.
 
 ---
 
-## §0.5. Five traps that will bite you
+## How you drive the production pane (used by all of Phase 2)
 
-Read these once. Each was measured; each fails in a way that looks like a
-*different* problem.
+Every live-pane gate in Phase 2 runs against the **same** production pane. Bring
+it up once; do not tear it down between steps.
 
-1. **`hive build` and `hive run` do not exist.** They are unknown arguments —
-   both exit non-zero with `error: too many arguments` under a full help dump,
-   and start nothing. `build` and `run` are *Makefile* targets. Use
-   `cd /Users/scottkellar/Projects/hive && make build && make run`. Bare `hive`
-   (no subcommand) launches the *installed release* 0.0.37, not your tree — it
-   ships no sessiond artifact, so its Ghostty pane cannot attach. See
-   `docs/workspace/seeing-a-live-terminal.md`.
+1. `cd /Users/scottkellar/Projects/hive && make run`.
+2. A **HiveWorkspace window opens with one full-window pane** — the orchestrator
+   ("queen") pane, a Claude TUI. This appears with no agent.
+3. **In the queen pane, type a prose request to spawn an agent**, e.g.
+   `spawn an agent named probe to help me run terminal acceptance probes`.
+4. A few seconds later a **second pane appears** for that agent. **That agent
+   pane is the production pane** — a real sessiond-backed session rendered through
+   `HiveTerminalView`. This is the B2 path, and it is exactly the live-GUI cell
+   this sitting exists to record.
 
-2. **`demo-preflight`'s console check does not prove your screen is unlocked.**
-   It runs `stat -f '%Su' /dev/console` and passes whenever you own the console —
-   which stays true with the screen locked. It is *not* a substitute for the
-   unlocked-screen precondition. Only you can satisfy that, by looking at the
-   machine. A green preflight followed by null surfaces means a locked screen.
+**The single most important distinction of the whole sitting:** the **queen pane
+is SwiftTerm**, a different stack that proves nothing for these gates. Only the
+**spawned agent pane** (sessiond / `HiveTerminalView`) counts. Run every Phase-2
+gate against the **agent** pane, never the queen pane.
 
-3. **`log` is a zsh builtin here.** `log show …` does not run the system log tool;
-   it errors in a way that reads as an empty result. Always spell it
-   **`/usr/bin/log`**.
+**The pane runs a vendor CLI, not a raw shell.** This changes how two kinds of
+step work versus the old `make terminal` runbook:
 
-4. **NSLog content is redacted to `<private>`.** Even with `/usr/bin/log` and a
-   correct predicate, the app's own NSLog *text* is unreadable. Do not build any
-   pass/fail judgement on reading app log strings — judge from the screen, the
-   transcript, and the on-disk artifacts.
+- **Byte-injection probes (Gate 9)** are sent **agent-side**: you ask the agent to
+  run each `printf` **writing to its controlling terminal** — `printf '…' > /dev/tty`
+  — so the raw bytes flow through the real production output path into the pane,
+  and you observe the host. (`> /dev/tty` bypasses the CLI's own output capture;
+  a bare `printf` would be re-rendered by the TUI and prove nothing.)
+- **Typing tests (#45, G-live)** type **into the agent's live input line** — the
+  pane's real input path. You are exercising input through
+  `HiveTerminalView` → sessiond → PTY, which is the claim.
 
-5. **Two different terminal stacks, and only one counts here.** The **queen pane
-   is SwiftTerm**. The **Ghostty / `HiveTerminalView`** path is separate and is
-   used *only* when `locator.hostKind == "sessiond"`. Gate 9, #45 and B2.6 are
-   all claims about the **Ghostty/sessiond** stack — a capture of the queen pane
-   proves nothing for them. `make terminal` creates a session with
-   `hostKind: "sessiond"` (`scripts/b22-live-attach-proof.ts:217`), which is why
-   Phase 2 uses `make terminal` and **not** `make run`.
+**What "success" of bring-up looks like:** the agent pane renders live text, a
+cursor, and reflows when you resize the window. **Failure looks like:** a themed
+but permanently **empty** pane (missing/mismatched GhosttyKit — re-run `make
+build`); a **red badge / "renderer disconnected"** (sessiond attach failed);
+`No project is open` (app launched outside the repo — relaunch via `make run`); or
+nulls everywhere (locked/ssh/agent session — you must be at your own unlocked
+console).
 
-**Two open defects that can contaminate a live capture.** If either appears
-during Phase 2, note it in the transcript; if it perturbs what you are trying to
-observe, **stop, tear down, and redo the run** rather than saving a polluted
-artifact:
+**Two open defects that can contaminate a live capture.** If either appears during
+Phase 2, note it in that step's transcript; if it perturbs what you are trying to
+observe, **stop, tear down, restart per #70, and redo the run** rather than saving
+a polluted artifact:
 
-- **#48 — visibility publish HTTP 409 loop.** Occurs "even in healthy runs." It
-  is not a gate failure by itself, but a 409 storm in the middle of a Gate 9 or
-  B2.6 observation makes the artifact unreadable.
-- **#52 — teardown leaves the Workspace GUI running.** Directly relevant to the
-  end of Phase 2: if the pane-close step leaves a GUI window behind, that is #52
-  manifesting, not Gate 9 probe #10 failing. Record which you saw.
+- **#48 — visibility publish HTTP 409 loop.** Occurs even in healthy runs. Not a
+  gate failure by itself, but a 409 storm in the middle of an observation makes
+  the artifact unreadable.
+- **#52 — teardown leaves the Workspace GUI running.** Relevant at the Phase-2
+  teardown: if the pane-close step leaves a GUI window behind, that is **#52**
+  manifesting, not the Gate 9 close-probe failing. Record which you saw.
+
+**Two things that are not commands:** `hive build` and `hive run` **do not exist**
+— they are unknown arguments that exit non-zero under a help dump and start
+nothing. `build` and `run` are *Makefile* targets. And `log` is a zsh builtin
+here: always spell the system log tool **`/usr/bin/log`**. The app's own NSLog
+text is redacted to `<private>` in the unified log, so never build a pass/fail on
+reading app log strings — judge from the **screen**, the **transcript**, and the
+**on-disk artifacts**.
 
 ---
 
-## §1. Phase 1 — Gate 7 §A, dual-display Retina ↔ non-Retina
+## Order — why the steps run in this sequence
 
-No live stack needed. This is a pure XCTest, which is why it goes first: it
-validates your display setup before you invest in bringing the stack up.
+You change the physical world as few times as possible:
+
+- **Second display in** at the start, out at the end of Phase 3. One plug event.
+- **One production stack** (`make run` + one spawned agent pane) hosts all of
+  Phase 2. Bringing it up is the expensive part; it is never torn down mid-batch.
+- **VoiceOver on late.** VO intercepts the keyboard and makes the typing-heavy work
+  (#45, G-live, Gate 9 probes) miserable, so VO goes on **once**, for the B2.6
+  step, and the teardown probe runs while it is on.
+- **Sleep/wake is last** because it destroys every other setup state.
+
+Phases: **1** Gate 7 dual-display → **2** the production-pane batch (#45 → G-live →
+Gate 9 → B2.6 → teardown) → **3** Gate 7 sleep/wake → tell queen.
+
+Do not plan this around a hard stop: build time and several step durations are
+genuinely unmeasured, and inventing numbers would be worse than saying so. Start
+`make build` well ahead and sit without a deadline.
+
+---
+
+## Phase 1 — Gate 7 / row I, dual-display Retina ↔ non-Retina
+
+No live pane needed. This is a pure XCTest, so it goes first and validates your
+display setup before you invest in the stack. This covers the dual-display half of
+#36 **row I** (content scale / display id / drawable size on monitor moves,
+Retina↔non-Retina).
 
 **Step 1.1 — capture the display inventory**
 
@@ -183,11 +199,11 @@ system_profiler SPDisplaysDataType \
   > /Users/scottkellar/Projects/hive/raw/qualification/ghostty-b1-gate7-physical/human-dual-display-inventory.txt
 ```
 
-- **Passes if:** both displays show `Online`, `Mirror: Off`, and their scales
-  differ (Retina ~2.x vs non-Retina 1.x).
-- **Fails if:** one display missing, mirroring on, or both the same scale. Fix
-  the arrangement in System Settings → Displays and re-capture. Do not proceed —
-  the test asserts on this.
+- **Record verbatim — PASS if:** both displays show `Online`, `Mirror: Off`, and
+  their scales differ (Retina ~2.x vs non-Retina 1.x).
+- **FAIL if:** one display missing, mirroring on, or both the same scale.
+- **On FAIL:** fix the arrangement in System Settings → Displays and re-capture;
+  the test asserts on this, so a bad inventory will only fail Step 1.2 too.
 
 **Step 1.2 — run the opt-in physical test (do NOT background it)**
 
@@ -200,176 +216,194 @@ echo "EXIT=${pipestatus[1]}" \
   | tee -a /Users/scottkellar/Projects/hive/raw/qualification/ghostty-b1-gate7-physical/human-dual-display-transcript.txt
 ```
 
-Note `HIVE_GHOSTTY_GATE7_PHYSICAL_SLEEP` is **omitted** — sleep is Phase 3.
+`HIVE_GHOSTTY_GATE7_PHYSICAL_SLEEP` is **omitted** — sleep is Phase 3. The
+two-line form matters: `tee` reports the *pager's* exit status, so a plain pipe
+hides a red suite; `${pipestatus[1]}` (zsh, 1-based) recovers the real one into
+the transcript.
 
-**Why the two-line form:** `tee` reports the *pager's* exit status, so a plain
-pipe silently hides a red suite. `${pipestatus[1]}` (zsh, 1-based) recovers the
-real one and writes it into the transcript, which the checklist requires.
+**Step 1.3 — do the drag.** When the test prints
+`GATE7 PHYSICAL: drag the qualification window to the other-scale display`, drag
+the titled window **fully** onto the other display **within 120 s**.
 
-**Step 1.3 — do the drag**
+- **Record verbatim — PASS if:** the test continues on its own; the transcript ends
+  with `test passed` and `EXIT=0` (display id *and* content scale both changed).
+- **FAIL if:** the 120 s window lapses (times out), or the scale never changes
+  because the window was only partly moved.
+- **On FAIL:** note whether you dragged it *entirely* onto the other screen; a
+  partial move is the usual cause. Record the result either way and continue.
+- **Beware:** the trailing banner can say "0 tests" while XCTest actually ran the
+  case. Judge from the body and `EXIT=`, not the tail line.
 
-When the test prints:
-
-```
-GATE7 PHYSICAL: drag the qualification window to the other-scale display
-```
-
-drag the titled window **fully** onto the other display **within 120 s**.
-
-- **Passes if:** the test continues on its own — display ID *and* content scale
-  both change, 2 s of idle frame silence, drawable size equals
-  `convertToBacking`. Transcript ends with `test passed` and `EXIT=0`.
-- **Fails if:** the 120 s window lapses (test times out), or the scale
-  observation never changes because the window was only partly moved. Drag it
-  *entirely* onto the other screen.
-- **Beware:** `swift test`'s trailing banner can say "0 tests" while XCTest
-  actually ran the case. Judge from the body of the transcript and `EXIT=`, not
-  the tail line.
-
-**Artifact:** `human-dual-display-inventory.txt` and
+**Artifacts:** `human-dual-display-inventory.txt` and
 `human-dual-display-transcript.txt`, both in
-`raw/qualification/ghostty-b1-gate7-physical/`. Each replaces a
-`STATUS=PENDING_HUMAN` placeholder. **`.txt`, never `.log`.**
+`raw/qualification/ghostty-b1-gate7-physical/`, tracked (`.txt`, never `.log`).
+Each replaces a `STATUS=PENDING_HUMAN` placeholder already in that directory.
 
 ---
 
-## §2. Phase 2 — the live-stack batch
+## Phase 2 — the production-pane batch
 
-Everything in this phase runs against **one** `make terminal` instance. Do not
-tear it down between §2a, §2b and §2c.
+Bring up the production pane now, per **"How you drive the production pane"**
+above: `make run`, then spawn one agent from the queen pane. Every step below runs
+against that **agent** pane. Do not tear it down until Step 2e.
 
-**Step 2.0 — bring up the stack**
+### Step 2a — #45 re-check: live resize-and-type, WITH capture
 
-Run the port hygiene from §0 first, then:
+This is the re-check the #45 acceptance record
+(`planning/2026-07-20-45-acceptance-record.md`, §4) mandates: the earlier
+acceptance **waived the byte capture**, and this run produces the recorded
+artifact that was waived — on the **production Workspace pane (B2 path),
+explicitly NOT `make terminal`**. Do this **first**, on a clean pane, before any
+Gate 9 probe has perturbed it.
 
-```sh
-cd /Users/scottkellar/Projects/hive
-make terminal
-```
+Context that dictates the method: the original written repro came back NON-REPRO
+because input was **already dead before the resize** — resize was the observation,
+not the cause. So you must **prove input is alive before you resize.**
 
-- **What you should SEE:** build/preflight output, then
-  `launching a real interactive login shell (keep the Aqua session unlocked)`,
-  then a **HiveWorkspace window with a live terminal pane running your real
-  login shell**, and in the driver terminal:
-  `terminal stack is up — click the terminal pane and type a command; Ctrl-C here tears down`.
-- **This pane is the Ghostty / `HiveTerminalView` stack** (`hostKind: "sessiond"`).
-  That is the stack all three gates in this phase are about.
-- **Failure looks like:** `port 43117 is in use` (run the hygiene commands);
-  `log into an unlocked Aqua session` (you are not the console owner); a pane
-  that is themed but permanently empty (missing/mismatched GhosttyKit — re-run
-  `make build`); a **red badge / "renderer disconnected"** (sessiond attach
-  failed — broker not ready).
-- **Do not** run `make run` at the same time. One stack at a time.
+**Start your screen recording now** (⇧⌘5 → Record, or QuickTime → New Screen
+Recording). Keep it running through all four sub-steps.
 
-Leave the driver terminal alone — **Ctrl-C there tears the whole stack down**,
-and you need it alive for all of Phase 2.
-
----
-
-### §2a. #45 — live resize-and-type (VoiceOver OFF)
-
-Do this **first**, on a clean pane, before any Gate 9 probe has perturbed it.
-
-Acceptance (issue #45): *a human resizes a live pane and types into it,
-confirming input survives the resize.* It "cannot be satisfied by an automated
-run" — that is the whole point of the checkbox.
-
-Context you need: the original written repro came back **NON-REPRO** because
-input was **already dead before the resize** (`waitingForClaim`) — resize was the
-observation, not the cause. Its origin defect **#47 is now CLOSED**, so this is
-unblocked.
-
-**Because of that history, prove input is alive BEFORE you resize.** A run that
-only shows typing working after a resize does not distinguish "input survived"
-from "input was never broken", and a run that shows typing dead after a resize is
-worthless if you never established it was alive first.
-
-1. Click into the pane. Type `echo pre-resize-alive` and press Return.
-   - **See:** `pre-resize-alive` echoed by your real shell. This is the
-     precondition. If it does not echo, input was dead on arrival — that is the
-     #47 class, not #45; record it and stop.
-2. Resize the Workspace window — drag a corner, materially changing both width
+1. Click into the **agent** pane. Type a visible line into its live input — e.g.
+   `hello from the pre-resize input line` — and watch each character appear. **Do
+   not submit it.**
+   - **See:** every character you type appears on the pane's input line. This is
+     the precondition. If characters never appear, input was dead on arrival —
+     record that and stop this step (it is a real finding).
+2. Resize the Workspace window — drag a corner, materially changing **both** width
    and height (a few columns is not a test; make it obvious).
    - **See:** the pane reflows; text rewraps to the new column count.
-3. Without clicking anywhere else, type `echo post-resize-alive` and Return.
-   - **See:** `post-resize-alive` echoed. **This is the pass.**
-4. Resize once more, in the other direction, and type a third line.
+3. Without clicking anywhere else, continue typing more characters onto the same
+   input line.
+   - **See:** the earlier text survived the resize **and** the new characters
+     appear. **This is the pass.**
+4. Resize once more, in the other direction, and type a third fragment.
 
-- **Passes if:** all three echoes appear, with the pane reflowing at each resize.
-- **Fails if:** typing stops being echoed after a resize while it worked before —
-  that is the real defect, and it is the finding worth having.
-- **Beware:** if the pane area ever drops below 40×40 pt the child is never
-  spawned and the pane goes silently blank. Do not shrink that far.
+- **Record verbatim — PASS if:** characters typed before the resize survived it,
+  and characters typed after each resize appeared, with the pane reflowing at each
+  resize.
+- **FAIL if:** typed characters stop appearing after a resize while they appeared
+  before it — that is the real defect, and the finding worth having.
+- **On FAIL:** keep the recording, note the exact window dimensions before/after
+  and which resize broke it, and continue.
+- **Beware:** if the pane area ever drops below 40×40 pt the child is never spawned
+  and the pane goes silently blank. Do not shrink that far.
 
-**Artifact.** No directory exists for this yet; create one following the
-`hive-b22-…` / `hive-b25-…` / `hive-b26-…` family:
+**Artifacts** (create the directory if needed — the earlier `make terminal` runs
+already wrote `run1-*`/`run2-*` here; yours are the production follow-up):
 
 ```sh
-mkdir -p /Users/scottkellar/Projects/hive/raw/qualification/hive-45-live-resize-input
+mkdir -p /Users/scottkellar/Projects/hive/raw/45-human-acceptance
 ```
 
-Write `human-resize-input-transcript.txt` in that directory: an operator
-transcript of what you typed, what echoed, and the before/after window
-dimensions. Include the run's `HIVE_B22_HOME` and the session id from the driver
-output so the run is identifiable. Optionally screen-record; if you do, **cite
-the path, do not commit the media**.
+- `raw/45-human-acceptance/human-production-resize-input.mov` — the screen
+  recording. **Tracked, not gitignored** (this capture is the whole point of the
+  re-check; last time it was waived).
+- `raw/45-human-acceptance/human-production-resize-input.txt` — an operator
+  transcript: what you typed, what appeared, the before/after window dimensions,
+  and the **session id** of the agent pane (visible in the pane header / queen
+  status) so the run is identifiable.
 
-#45's own rule: *an unpointed check is treated as unchecked.* When you tick the
-box on issue #45, paste the repo-relative artifact path and the landing sha —
-not a description of what happened.
+### Step 2b — G-live: live IME composition
 
----
+Source definition (#36, matrix cell **G-live**): real CJK / dead-key / emoji / RTL
+composition exercised through an **actual OS input method** — not a synthetic
+NSEvent standing in for one. This is the live/interactive proof, done on the same
+production agent pane.
 
-### §2b. Gate 9 — the ten-probe manual acceptance (VoiceOver OFF)
+Focus the **agent** pane, then compose one of each through a real input source and
+watch the pane:
 
-Source: `raw/qualification/ghostty-b1-actions/manual-acceptance.md`. Its purpose
-is the *subjective* halves that the automated matrix cannot assert — "Hive's own
-UI responded appropriately."
+1. Switch to your **CJK** input method (input menu / Ctrl-Space). Type a syllable
+   (e.g. pinyin `ni hao`); confirm the **candidate window appears at the cursor**,
+   pick a candidate, and confirm the committed Han characters render in the pane.
+2. Switch to **ABC – Extended**; type a **dead-key** accent (e.g. Option-e then e
+   → `é`); confirm it renders as one composed character.
+3. Open the **emoji picker** (Cmd-Ctrl-Space), insert an emoji; confirm it renders.
+4. Switch to an **RTL** source (Hebrew/Arabic); type a few characters; confirm they
+   render right-to-left in the pane.
 
-**How to inject a probe.** `make terminal` runs your **real login shell** in the
-pane, so the pane *is* the agent side. Type each `printf` directly into the pane
-and observe the **host** (window chrome, notifications, clipboard, browser).
+- **Record verbatim — PASS if:** CJK, dead-key, emoji, and RTL composition each
+  reach the pane and render correctly, with the IME candidate window positioned at
+  the cursor.
+- **FAIL if:** composition never reaches the pane, the candidate window is
+  mispositioned, or characters render as boxes / mojibake attributable to the pane.
+- **On FAIL:** record which of the four failed and how (mispositioned candidate vs
+  wrong glyph vs nothing), and continue.
 
-**Run probes 1–9 now. Probe #10 is deferred to §2d — it destroys the pane.**
+**Artifacts:**
 
-| # | Type into the pane | PASS | FAIL |
+```sh
+mkdir -p /Users/scottkellar/Projects/hive/raw/qualification/hive-b1-glive-ime
+```
+
+- `raw/qualification/hive-b1-glive-ime/human-ime-composition-transcript.txt`
+  (tracked): the input source used for each, exactly what you typed, and exactly
+  what rendered. If you screen-record, cite the path in this file.
+
+### Step 2c — Gate 9: the ten-probe manual security acceptance (probes 1–9)
+
+Source: `raw/qualification/ghostty-b1-actions/manual-acceptance.md` (verified
+path). Its purpose is the **subjective** halves the automated matrix cannot assert
+— "Hive's own UI responded appropriately." Probe **#10 is deferred to Step 2e** —
+it destroys the pane.
+
+**How to inject each probe on the production path.** Ask the agent (the one whose
+pane you are watching) to run each command **writing to its controlling terminal**:
+
+```
+printf '<sequence>' > /dev/tty
+```
+
+The `> /dev/tty` is required — it emits the raw bytes into the pane's PTY through
+the real production output path. You then observe the **host** (window chrome,
+notifications, clipboard, browser). Run probes 1–9 now.
+
+| # | Ask the agent to run | Record verbatim — PASS | FAIL |
 |---|---|---|---|
-| 1 | `printf '\033]0;SPOOFED-TITLE\007'` | Pane/tab **title** changes to SPOOFED-TITLE — Hive-attributed UI only | App/window chrome *beyond* the pane title changes, **or** nothing updates at all (event path dead) |
-| 2 | `printf '\a'` | Hive's own bell/attention indicator for that pane; no system-wide alert | A macOS notification, or nothing if Hive ships a bell indicator |
-| 3 | `printf '\033]9;you have been pwned\007'` | **Nothing.** No notification banner; terminal keeps working | Any banner posted |
-| 4 | `printf '\033]777;notify;t;b\007'` | Same as #3 | Same as #3 |
-| 5 | `printf '\033]52;c;aGVsbG8=\007'` then Cmd-V in TextEdit | Your **baseline clipboard string** pastes — pasteboard unchanged | `hello` pastes — terminal bytes wrote your clipboard |
-| 6 | `printf '\033]52;c;?\007'` | No reply garbage in the stream; nothing arrives at your prompt | A base64 blob appears at the prompt — clipboard exfiltrated |
-| 7 | `printf '\033]8;;https://example.com\007CLICK ME\033]8;;\007'` then **click** and **Cmd-click** the text | No browser opens, ever | A browser opens |
-| 8 | Press **Cmd-N, Cmd-T, Cmd-W** with the pane focused | Hive's own window/tab behaviour, or nothing. The **terminal** does not spawn Ghostty windows/tabs. Keys Hive does not bind reach the terminal as input | A Ghostty-native window/tab/split appears |
-| 9 | `read -s` then type a password and Return | No secure-input flip caused by the **pane**; menu-bar padlock behaviour unchanged; Hive is not the secure-input owner | Secure input engages system-wide from agent output |
+| 1 | `printf '\033]0;SPOOFED-TITLE\007' > /dev/tty` | Pane/tab **title** changes to SPOOFED-TITLE — Hive-attributed UI only | App/window chrome *beyond* the pane title changes, **or** nothing updates at all (event path dead) |
+| 2 | `printf '\a' > /dev/tty` | **No macOS notification banner and no system alert sound** — the bell stays inside Hive as a per-pane effect (at most Hive's own pane attention indicator) | A macOS notification banner appears, **or** the system alert sound plays (the bell escaped to the OS) |
+| 3 | `printf '\033]9;you have been pwned\007' > /dev/tty` | **Nothing** — no notification banner; terminal keeps working | Any banner posted |
+| 4 | `printf '\033]777;notify;t;b\007' > /dev/tty` | Same as #3 | Same as #3 |
+| 5 | `printf '\033]52;c;aGVsbG8=\007' > /dev/tty` then Cmd-V in TextEdit | Your **baseline clipboard string** pastes — pasteboard unchanged | `hello` pastes — terminal bytes wrote your clipboard |
+| 6 | `printf '\033]52;c;?\007' > /dev/tty` | No reply garbage in the stream; nothing arrives back at the agent | A base64 blob appears back at the agent — clipboard exfiltrated |
+| 7 | `printf '\033]8;;https://example.com\007CLICK ME\033]8;;\007' > /dev/tty` then **click** and **Cmd-click** the text | No browser opens, ever | A browser opens |
+| 8 | Press **⌘N, ⌘T, ⌘W** (plain, no Shift) with the pane focused | **No Ghostty-native window/tab/split appears for any of the three.** Hive binds **none** of plain ⌘N/⌘T/⌘W, so each reaches the terminal as input — watch the keystroke land in the pane | A Ghostty-native window/tab/split appears |
+| 9 | `read -s` in the agent's shell, then type a password and Return | No secure-input flip caused by the **pane**; menu-bar padlock unchanged; Hive is not the secure-input owner | Secure input engages system-wide from agent output |
 
-Probe #5 is the one to set up carefully — put a distinctive string on the
+**Bounded pass notes for the four probes whose old wording was open-ended:**
+
+- **#2 (bell).** The old "or nothing if Hive ships a bell indicator" is now bounded
+  on the observable: `RING_BELL` is handled as a **per-pane event** and
+  `DESKTOP_NOTIFICATION` is **denied by policy**, so the pass is the *absence of
+  any OS-level alert* — no banner, no system beep. Any OS-level alert is the fail,
+  whether or not Hive also draws its own indicator.
+- **#8 (⌘N/⌘T/⌘W).** Verified against `MainMenuBuilder.swift`: the **only**
+  pane-close binding is **⇧⌘W** (Close Pane). Plain **⌘N, ⌘T, ⌘W are bound to
+  nothing**, so the bounded pass is "no native window/tab/split appears **and** the
+  key reaches the terminal as input." **Do not press ⇧⌘W during this probe** — that
+  closes the pane by design and is Step 2e's job.
+
+Probe **#5** is the one to set up carefully — a distinctive baseline string on the
 clipboard *before* you run it, or you cannot tell "unchanged" from "changed to
-something similar".
+something similar." **On any FAIL:** record the probe number, the exact command,
+and exactly what you saw, then continue. Note #53 (OSC 52 pasteboard flake) is a
+known flake **in the automated instrument**, not this claim; if probe #5 or #6
+behaves ambiguously, repeat it rather than recording an ambiguous result.
 
-Note #53 (Gate 9 OSC 52 pasteboard flake) is a known flake **in the automated
-instrument**, not in this claim. If probe #5 or #6 behaves ambiguously, repeat it
-rather than recording an ambiguous result.
+**Artifact:** `raw/qualification/ghostty-b1-actions/human-manual-acceptance-transcript.txt`
+(tracked). One line per probe: number, exactly what was run, exactly what you
+observed, PASS/FAIL. Record the agent's session id. There is **no
+`evidence-sha256.txt`** in this directory, so no re-seal here.
 
-**Artifact.** Write `human-manual-acceptance-transcript.txt` into
-`raw/qualification/ghostty-b1-actions/`, matching the `human-*` naming used by
-the Gate 7 and B2.6 evidence dirs. One line per probe: probe number, exactly what
-you typed, exactly what you observed, and PASS/FAIL. Record the run's session id.
-There is **no `evidence-sha256.txt`** in this directory, so no re-seal step —
-unlike Gate 7 and B2.6.
+### Step 2d — row J / B2.6: Accessibility Inspector, then VoiceOver
 
----
+Source: `raw/qualification/hive-b26-gate10-accessibility/human-checklist.txt`. The
+machine slice (`4db42977`) proved the AX tree is structurally sound; it **cannot**
+prove what a screen reader announces. That is #36 **row J**, and it is what you
+supply here.
 
-### §2c. B2.6 — Accessibility Inspector, then VoiceOver
-
-Source: `raw/qualification/hive-b26-gate10-accessibility/human-checklist.txt`.
-The machine slice closed at `4db42977`; it proves the AX tree is structurally
-sound and self-consistent, and **cannot** prove what a screen reader announces.
-That is what you are supplying.
-
-Confirm the machine prereq is green (it should already be — this only re-proves
-the dumps you are comparing against):
+Optional re-confirm of the machine prereq (already green; only re-proves the dumps
+you compare against):
 
 ```sh
 cd /Users/scottkellar/Projects/hive/workspace
@@ -377,87 +411,98 @@ HIVE_B26_AX_EVIDENCE=../raw/qualification/hive-b26-gate10-accessibility \
   swift test --filter Gate10AccessibilityTests
 ```
 
-**Part A — Accessibility Inspector (VoiceOver still OFF).** Inspector does not
-need VO, and doing it first keeps the keyboard yours for a little longer.
+**Part A — Accessibility Inspector (VoiceOver still OFF).** Inspector needs no VO,
+and doing it first keeps the keyboard yours a little longer.
 
 1. Open Accessibility Inspector; target the **terminal content area** of the live
-   pane.
-2. Confirm against the machine dumps (`ax-tree-*.txt` in the evidence dir):
-   - role is `AXTextArea` / `textArea`
-   - one `staticText` child element per visible terminal row
-   - frames non-zero for non-empty rows while the window is on screen
-   - focus follows first responder
-   - `value` / `selectedText` / insertion line match what is on screen
-3. Run **Inspector → Audit** on the terminal element.
+   agent pane.
+2. Run **Inspector → Audit** on the terminal element.
 
-- **Passes if:** role and child row count are consistent with the shape in
-  `ax-tree-input.txt`; no stale or duplicate row elements; the audit reports no
-  broken parent/child for the terminal subtree.
-- **Fails if:** duplicate rows survive a scroll or resize, or the audit names
-  `HiveTerminalView` or a row element in a finding.
+- **Record verbatim — PASS if (bounded against `ax-tree-input.txt`):** role is
+  exactly **`AXTextArea`**; the number of `staticText` **row children equals the
+  pane's visible row count** (the recorded input fixture has `geometryRows=26` and
+  `childCount=26`); children are labelled **`Terminal row 1 … N` in unbroken
+  sequence**; non-empty rows carry their text as `value` and empty rows read
+  `(blank)`; **no duplicate or extra row child** survives a scroll or resize; and
+  the audit reports **no broken parent/child** for the terminal subtree.
+- **FAIL if:** wrong role; child count ≠ visible rows; a gap or duplicate in the
+  `Terminal row N` sequence; or the audit names `HiveTerminalView` or a row element
+  in a finding.
+- **On FAIL:** paste the full text of any finding that names `HiveTerminalView` or
+  a row element, and the audit's pass/fail counts, then continue.
 
-**Artifact:** `human-inspector-audit-transcript.txt`, replacing the
-`PENDING_HUMAN` placeholder. **Include the audit's pass/fail counts** and the
-full text of any finding naming `HiveTerminalView` or a row element.
+**Artifact:** `raw/qualification/hive-b26-gate10-accessibility/human-inspector-audit-transcript.txt`
+(tracked), replacing the `PENDING_HUMAN` placeholder. **Include the audit's
+pass/fail counts.**
 
-**Part B — VoiceOver on (Cmd-F5).** From here the keyboard belongs to VO.
-
-Work through all eight steps, and tick the six scenario boxes in §C of the
-checklist as you cover them:
+**Part B — VoiceOver on (Cmd-F5).** From here the keyboard belongs to VO. Work
+through all eight, ticking the scenario boxes in §C of the checklist as you cover
+them:
 
 1. Focus the live pane. Navigate **by row** (VO-Down/Up) through several rows. → `input`
 2. Locate the **cursor / insertion point** announcement.
-3. Type a short command; confirm committed output is announced or readable. → `input`
+3. Type a short line into the agent input; confirm it is announced or readable. → `input`
 4. **Select** text (Shift-arrows or drag); confirm the selection is spoken.
 5. **Scroll** scrollback; confirm row focus survives without a full-tree wipe. → `scroll`
-6. Trigger an **alternate-screen** app (e.g. `less` on a long file), then exit it. → `alternate screen`
+6. Trigger an **alternate-screen** app (have the agent run `less` on a long file),
+   then exit it. → `alternate screen`
 7. **Resize** the window with VO on; confirm rows are re-announced coherently. → `resize`
-8. Force a **reconnect / mark-lost** path if available; confirm the lifecycle
-   label ("Terminal lost/exited/…") is spoken or inspectable. → `replay / reconnect`
+8. **Force the mark-lost / reconnect path** and confirm the lifecycle label is
+   spoken. → `replay / reconnect`
 
-The sixth scenario, `teardown`, is covered in §2d.
+**Bounded pass for step 8 (the old "if available" is now concrete).** The path
+**is** forcible: **end the pane's underlying session without closing the pane** —
+in the agent pane have the agent `exit` the process running there, or from a
+separate Terminal kill that session's sessiond host pid.
 
-- **Passes if:** rows, cursor, selection, typed input, and lifecycle are all
-  reachable by VO.
-- **Fails if:** any of those is silent or unreachable, or scrolling wipes and
+- **Record verbatim — PASS if:** the pane's lifecycle label transitions to
+  **`Terminal lost: <evidence>`** or **`Terminal exited: <evidence>`** and
+  VoiceOver **speaks it** (VO may first say `Terminal reconnecting`), or it is
+  readable in the Inspector's `lifecycle`/`label` field.
+- **FAIL if:** the session ends but **no** lifecycle label change is spoken or
+  inspectable (silent loss).
+- **If you genuinely cannot end the session without also closing the pane:** record
+  the box as **`waived — not forcible on this build, reason: …`**, never blank. A
+  blank box reads as untested.
+
+- **Record verbatim — Part B PASS if:** rows, cursor, selection, typed input, and
+  lifecycle are all reachable by VO.
+- **FAIL if:** any of those is silent or unreachable, or scrolling wipes and
   rebuilds the whole tree instead of moving focus.
+- **On FAIL:** quote exactly what VO said (or the silence), per step.
 
-**Artifact:** `human-voiceover-transcript.txt` — what you did and what VO
-*said*, step by step. Quote the speech; that is the whole evidentiary value. If
-you screen-and-audio record, **cite the path in the file; do not commit the
-media into the repo.**
+**Artifact:** `raw/qualification/hive-b26-gate10-accessibility/human-voiceover-transcript.txt`
+(tracked), replacing the `PENDING_HUMAN` placeholder — what you did and what VO
+**said**, step by step. Quote the speech; that is the evidentiary value. If you
+screen-and-audio record, cite the path in the file.
 
----
+### Step 2e — combined teardown: Gate 9 probe #10 **and** B2.6 `teardown`
 
-### §2d. The combined teardown — Gate 9 probe #10 **and** B2.6 `teardown`
+One action, two gates. Keep VoiceOver **on** so you can check for zombie AX focus.
 
-One action, two gates. Keep VoiceOver **on** so you can check for zombie AX
-focus.
+1. In the agent pane, have the agent run `yes` so it is spewing output.
+2. **Close the pane** while it is still spewing (the pane's X button, or ⇧⌘W).
 
-1. In the pane, run `yes` so it is spewing output continuously.
-2. **Close the pane** while it is still spewing.
-
-- **Gate 9 #10 passes if:** the pane closes cleanly — no crash, no hang, no
-  orphan window. (That is the delivery-after-free class.)
-- **B2.6 teardown passes if:** VO reports **no hanging AX focus on destroyed
-  rows** — no zombie focused element.
-- **Fails if:** a crash or hang, an orphaned window, or VO still announcing rows
-  that no longer exist.
+- **Record verbatim — Gate 9 #10 PASS if:** the pane closes cleanly — no crash, no
+  hang, no orphan window (the delivery-after-free class).
+- **Record verbatim — B2.6 `teardown` PASS if:** VO reports **no hanging AX focus
+  on destroyed rows** — no zombie focused element.
+- **FAIL if:** a crash or hang, an orphaned window, or VO still announcing rows that
+  no longer exist.
 - **Contamination check:** if the Workspace **GUI window survives** the teardown,
-  that is **#52**, a known separate defect — not a Gate 9 #10 failure. Say so
-  explicitly in both transcripts rather than recording a false FAIL.
+  that is **#52**, a known separate defect — record it as **PASS-with-#52-noted**
+  in both transcripts rather than a false FAIL, and say explicitly which you saw.
 
 Record the result in **both** `human-manual-acceptance-transcript.txt` (as probe
-#10) and `human-voiceover-transcript.txt` (as the `teardown` scenario).
-
-**Then turn VoiceOver off (Cmd-F5), and tear the stack down** with **Ctrl-C in
-the driver terminal**. Re-run the port hygiene from §0 before anything else.
+#10) and `human-voiceover-transcript.txt` (as the `teardown` scenario). Then turn
+**VoiceOver off** (Cmd-F5).
 
 ---
 
-## §3. Phase 3 — Gate 7 §B, sleep / wake
+## Phase 3 — Gate 7 / row I, sleep / wake
 
-Last, because it disrupts everything. Second display still plugged in.
+Last, because it disrupts everything. Second display still plugged in. This
+completes the sleep/wake half of #36 **row I**.
 
 ```sh
 cd /Users/scottkellar/Projects/hive/workspace
@@ -470,275 +515,77 @@ echo "EXIT=${pipestatus[1]}" \
 ```
 
 This run does the **drag again first**, then sleep. Complete the drag when
-prompted, then on:
+prompted, then on `GATE7 PHYSICAL: sleep and wake the Mac now` put the Mac to sleep
+(Apple menu → Sleep; prefer full system sleep), wait **≥5 s**, wake, and unlock if
+prompted.
 
-```
-GATE7 PHYSICAL: sleep and wake the Mac now
-```
+- **Record verbatim — PASS if:** `wakeTransitionCount` advanced, applied occlusion
+  is visible after wake, no crash and no hung draw path, `EXIT=0`.
+- **FAIL if:** the 600 s wake wait lapses (the machine never actually slept — check
+  power settings), or occlusion never re-applies as visible.
+- **On FAIL:** note whether the Mac visibly slept, and record the result.
 
-put the Mac to sleep (Apple menu → Sleep; clamshell only if the external display
-keeps the session alive — **prefer full system sleep**), wait **≥5 s**, wake, and
-unlock if prompted.
+**Artifact:** `raw/qualification/ghostty-b1-gate7-physical/human-sleep-wake-transcript.txt`
+(tracked), replacing its `PENDING_HUMAN` placeholder.
 
-- **Passes if:** `wakeTransitionCount` advanced, applied occlusion is visible
-  after wake, no crash and no hung draw path, `EXIT=0`.
-- **Fails if:** the test's 600 s wake wait lapses (the machine never actually
-  slept — check your power settings), or occlusion never re-applies as visible.
-
-**Artifact:** `human-sleep-wake-transcript.txt` in
-`raw/qualification/ghostty-b1-gate7-physical/`.
-
-**Optional §C — Instruments.** Only if queen asks for it. Time Profiler +
-Allocations + Activity Monitor against the running xctest process during the
-drag, while minimized, and after wake. **Do not use Power Profiler** — it is
-iOS/iPadOS-only and is already recorded as a measured negative control. Export
-run notes as `instruments-human-*.txt` beside the transcripts.
+**Optional Instruments block — only if queen asked for it.** Time Profiler +
+Allocations + Activity Monitor against the running xctest process during the drag,
+while minimized, and after wake. **Do not use Power Profiler** — it is
+iOS/iPadOS-only and is already a recorded negative control. Export as
+`instruments-human-*.txt` beside the transcripts.
 
 You may now unplug the second display.
 
 ---
 
-## §4. Phase 4 — seal the evidence
+## When done — tell queen (you run no `git`)
 
-Two directories carry a `evidence-sha256.txt` and must be re-sealed **after** the
-last human slot is filled. `ghostty-b1-actions/` and the new
-`hive-45-live-resize-input/` do not.
+Send queen one message with:
 
-First confirm nothing still says `PENDING_HUMAN`:
+1. **Which steps passed and which failed** — Gate 7 dual-display, #45 re-check,
+   G-live, Gate 9 probes 1–9, Gate 9 #10, B2.6 Inspector, B2.6 VoiceOver, Gate 7
+   sleep/wake. A failed cell is a finding; report it plainly.
+2. **Where you saved anything unexpected** — any recording paths, any `waived`
+   boxes and their reasons, any #48/#52 contamination you noted.
 
-```sh
-cd /Users/scottkellar/Projects/hive
-grep -rl "PENDING_HUMAN" raw/qualification/ghostty-b1-gate7-physical raw/qualification/hive-b26-gate10-accessibility
-```
+Queen handles the rest: re-sealing the two `evidence-sha256.txt` manifests
+(`ghostty-b1-gate7-physical/` and `hive-b26-gate10-accessibility/`), landing the
+evidence, updating the board, and checking off the #45 and #36 rows — each with a
+repo-relative artifact path, per #45's rule that an unpointed check is treated as
+unchecked. You do not run any git yourself.
 
-Expect **no output** for the slots you filled. Then:
-
-```sh
-(cd /Users/scottkellar/Projects/hive/raw/qualification/ghostty-b1-gate7-physical && \
-  /usr/bin/shasum -a 256 \
-    $(/usr/bin/find . -type f ! -name evidence-sha256.txt ! -name '*.trace' | /usr/bin/sort) \
-    > evidence-sha256.txt)
-
-(cd /Users/scottkellar/Projects/hive/raw/qualification/hive-b26-gate10-accessibility && \
-  /usr/bin/shasum -a 256 \
-    $(/usr/bin/find . -type f ! -name evidence-sha256.txt | /usr/bin/sort) \
-    > evidence-sha256.txt)
-```
-
-Note the two commands differ — Gate 7's excludes `*.trace`, B2.6's does not.
-
-**Format rule, all four gates: `.txt`, never `.log`.** Every checklist states it
-independently.
-
-Then tell queen the human rows are filled for cross-vendor review, and tick the
-two boxes on issue **#45** (its own resize-and-type item and the B2.6 item) —
-each **with a repo-relative artifact path**, per #45's rule that an unpointed
-check is treated as unchecked.
+**File-format rule for everything you saved: `.txt` (never `.log`) for
+transcripts; the `.mov` capture is tracked, not gitignored.**
 
 ---
 
-## §5. Fast reference — every artifact this session produces
+## Reference — what this sitting does NOT close (do not chase these)
 
-| Phase | File | Directory |
-|---|---|---|
-| 1 | `human-dual-display-inventory.txt` | `raw/qualification/ghostty-b1-gate7-physical/` |
-| 1 | `human-dual-display-transcript.txt` | `raw/qualification/ghostty-b1-gate7-physical/` |
-| 2a | `human-resize-input-transcript.txt` | `raw/qualification/hive-45-live-resize-input/` *(create)* |
-| 2b/2d | `human-manual-acceptance-transcript.txt` | `raw/qualification/ghostty-b1-actions/` |
-| 2c | `human-inspector-audit-transcript.txt` | `raw/qualification/hive-b26-gate10-accessibility/` |
-| 2c/2d | `human-voiceover-transcript.txt` | `raw/qualification/hive-b26-gate10-accessibility/` |
-| 3 | `human-sleep-wake-transcript.txt` | `raw/qualification/ghostty-b1-gate7-physical/` |
-| 3 | `instruments-human-*.txt` *(optional)* | `raw/qualification/ghostty-b1-gate7-physical/` |
-| 4 | `evidence-sha256.txt` × 2 *(regenerate)* | gate7-physical, b26-gate10-accessibility |
-
----
-
-## §6. What this session does NOT close
-
-- **C1.5 aesthetic signoff.** Depends on C1.3 and C1.4 (neither started) and
-  closes only after the B2 integrated pane. It is the true last gate of M1 and
-  cannot be pulled forward.
-- **Gate 7's two restored OPEN rows** — Instruments (minimized / after-wake) and
-  **ASan**. Re-qualification did not carry their evidence forward. §3's optional
-  Instruments block covers part of the first; ASan is untouched here.
-- **Gate 4 notarization** — blocked on Apple notary credentials, not on you being
-  at the machine.
-- **B2.5 row K** — the vendor matrix, agent work, blocked on vendor quota.
-
-### The three "clean machine" gates — none of them are yours
-
-Ruled 2026-07-20 (audit §5 Q6, settled from source by `indira`). The phrase
-"clean machine" appears in three places testing three *different* variables, and
-summarising them together made them look like one user-owed hardware gate. They
-are not:
-
-- **STORY-001 DoD 2** — the variable is **one binary's absence** (tmux), against
-  a **dev** build. The doc text explicitly authorises *"a machine (or
-  PATH-sanitized env)"*. **Agent-doable.** Its "reproduced by someone other than
-  the author" clause is a **second-party** requirement, not a hardware one — a
-  different agent satisfies it. *(An earlier draft of this runbook said you had
-  to be that second operator. That was wrong.)*
-- **B2 DoD-7** — the variable is the **reproducer's independence**: *"a different
-  model vendor reproduces the runbook… Code presence and author-only recordings
-  are not evidence."* Not packaging, not tmux. **Agent-doable by a
-  different-vendor agent.**
-- **C2 acceptance** — genuinely **user-only**: quarantine/Gatekeeper evaluation,
-  notarization, code-signature acceptance, **two architectures** (Intel *and*
-  Apple Silicon), network absent, against a **shipped** artifact. PATH sanitising
-  cannot fake a Gatekeeper evaluation or a second architecture. **But it is
-  POST-CUT** — `backlog-outline.md:52` says clean-machine acceptance closes only
-  on the cut tree, so scheduling it now is premature. It is a separate future
-  session, and it will need hardware this one does not.
-
-**Net: bring no second machine to this sitting.**
-
----
-
-## §7. A4 faithful app-quit — **BLOCKED. Do not attempt this session.**
-
-Read this section for the "why"; there is nothing here for you to run today.
-
-### Where A4 stands
-
-Three of A4's four cells are **GREEN**: exact per-pane close, non-Hive project,
-and restart/reconnect/replay. Only the quit cell is open:
-`raw/qualification/hive-b25-production-pane/manifests/a4-quit.json` records
-`"ok": false`, `"status": "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK"`,
-`"requiresUnlockedProductionStack": true`.
-
-The current evidence is *composed* from three separately-measured clauses (a live
-sentinel `hive stop`, the p14 production Workspace/vendor lifecycle, and the
-AppDelegate wait/refusal XCTests). Composition is explicitly **not** the faithful
-run.
-
-### Why the existing harness cannot do it
-
-`scripts/b22-live-attach-proof.ts` — the vehicle behind `make terminal` — hosts
-the daemon **in its own Bun process**. A Workspace child cannot faithfully
-exercise the production, daemon-self-owned quit handshake against that topology.
-Both attempts were measured and both are recorded as **negative evidence**:
-
-- **`NSApp.terminate` alone:** Workspace stayed alive, the harness daemon stayed
-  alive, no `final.json` was written. An external `hive stop` was required.
-- **`performClose` then `NSApp.terminate`:** Workspace exited and the provider
-  processes vanished, **but the sessiond host was left a zombie**, no
-  `final.json`, and the driver-owned daemon/broker survived until a manual
-  SIGINT.
-
-The disposition is unambiguous: *these attempts MUST NOT satisfy the faithful
-app-quit row.*
-
-### Exactly what the missing harness must do
-
-The production topology is already correct — `ensureStarted()`
-(`src/daemon/lifecycle.ts:429-444`) spawns the daemon **detached** and `unref()`s
-it, so under `make run` the daemon genuinely owns itself. What is missing is an
-**observer** harness that never touches the broker. It must:
-
-1. Bring up the production stack (`make build && make run`) with the daemon
-   self-owned, **not** hosted by the driver.
-2. Get a real **sessiond-backed** pane rendering in that Workspace — via a
-   spawned agent, since the observer may not create sessions itself.
-3. Capture the **pre-quit process tree** (sessiond host + provider children) and
-   the locator/session id.
-4. Quit the Workspace through its **own** production quit path.
-5. Assert, after quit: `final.json` exists with `state: "terminated"` and
-   `survivors: []`; every captured pid is gone; and the daemon/broker behave as
-   designed rather than dying with the app.
-
-### Why it does not already exist, and how big a job it is
-
-The blocker is architectural, not laziness. The sessiond broker authenticates
-every `broker.sock` client by **kernel peer identity against `daemon.lock`** —
-pid, start token, and executable — plus a callback to the daemon's `/handshake`.
-A harness running *beside* a real daemon can never pass; its pid is not the
-lock's. That is precisely why the b22 harness had to become the daemon. And the
-failure mode is opaque: HELLO timeouts and auth `WouldBlock`, not a typed
-identity error.
-
-So the harness must be **strictly read-only with respect to the broker** —
-observing via the daemon's HTTP surface, the filesystem (`final.json` under
-`runtime/sessiond/hosts/<sessionId>/`), and `ps`. As a script that is a modest
-job.
-
-**But step 2 is the real cost.** Getting a real sessiond agent pane rendering
-under a normally-launched Workspace *is* B2.5's "Production wiring full (sessiond
-agent + HiveTerminalView under real Workspace)" cell, which is **OPEN** — nobody
-has yet recorded a run where a real spawned vendor agent rendered a live pane in
-a normally launched app.
-
-**Therefore: A4's faithful quit is blocked on B2.5's production-wiring pane, not
-merely on a missing script.** Sizing the script alone understates it. Overall
-effort: **unknown**, and honestly so — B2.5 itself has no effort estimate.
-
-### Does A4's harness discharge other gates too? **No — but a different harness discharges two.**
-
-Worth asking, because "one harness closes three gates" would change whether you
-build before scheduling. Checked against source; the answer is no for A4, and the
-real shared harness is a **different** piece of work.
-
-**A4's harness is disjoint from everything else.** It is a read-only *observer*
-of a production quit: it watches a process tree, reads `final.json`, and touches
-the broker not at all. Nothing else in M1 wants that shape.
-
-**The genuinely shared harness is the mode-emitting PTY child**, and it discharges
-**two** gates, both agent-side:
-
-- **A3 / B2.3 — six rows**: 4 (Kitty), 7 and 7b (paste), 8, 8b and 8c (mouse).
-  All six hold encoder-level evidence only. They need an application mode set
-  first, and `DECSET cannot be injected with processOutput` on a live attach —
-  the ordered-output engine owns the stream sequence and rejects a hand-fed
-  frame as `invalidValue`. The mode must come from the PTY child as *real
-  output*.
-- **B3 GAP-3 — mouse reporting forwarded from a pane.** Its own text:
-  *"Blocked on the same mode-emitting-child harness work."*
-
-**Correction to the framing this section was asked under: A3 row 2b is _not_ in
-that set and does not need this harness.** Row 2b (no automation-TIMEOUT steal)
-is `RECORDED (by construction)` — a source property of `input_arbiter.zig`, which
-invents no timeout, routes lease expiry to `terminate()`, and refuses automation
-from `human_owned`/`human_orphaned`. The matrix argues explicitly that a timing
-test *"would pass identically against an arbiter with no automation path
-whatsoever"* — i.e. it would pass for the wrong reason. So if audit §5 Q7 rules
-the structural argument insufficient, the remedy is a **competing-writer test
-against the Zig arbiter**, not a PTY harness. Different work, different file,
-different skill. Bundling row 2b into the mode-emitting-child job would oversize
-it and still not answer Q7.
-
-**Net for scheduling:** there is no three-gate harness. There is a **two-gate**
-one (A3's six rows + B3 GAP-3) that is pure agent work and does not touch this
-session, and A4's separate observer, which is blocked behind B2.5 regardless. The
-build-first calculus is unchanged for *your* sitting.
-
-### Can A4 be attempted without the harness?
-
-**No — not in a way that counts.** Two independent reasons:
-
-1. The session-creation leg (step 2) does not exist yet regardless of who is
-   driving. A hand-run attempt hits the same wall.
-2. Even granting a pane, the acceptance is **specific manifest fields**, not an
-   impression: `final.json` with `state: "terminated"` and `survivors: []`, plus
-   demonstrated absence of the captured process tree. Hand-assembling that is
-   possible in principle but is exactly the sort of capture that lands in the
-   wrong format and wastes the trip.
-
-There is also a live contamination risk: **#52** (teardown leaves the Workspace
-GUI running) is classified non-blocking *conditionally* — "if this manifests
-during the A4 faithful-quit run it will contaminate that evidence." Any future
-A4 run must record whether #52 appeared.
-
-**Recommendation:** leave A4 out of this sitting entirely. Discharge the four
-runnable gates, and let A4 ride with B2.5's production-wiring pane when that
-lands. The four gates above are worth the session on their own; A4 would only add
-a failed attempt to it.
-
----
+- **Row K — the three vendor TUIs (Claude, Codex, Grok) through the production
+  pane.** Per #36's 2026-07-20 ownership split this is **queen's agent campaign**,
+  scheduled when B2.5's production-wiring pane lands and the Codex quota window
+  opens (2026-07-26). Not a human gate; nothing for you here.
+- **A4 faithful app-quit — BLOCKED.** It needs an observer harness that watches a
+  production quit (`final.json` with `state: "terminated"`, `survivors: []`) while
+  never touching the broker, and it rides on B2.5's production-wiring pane, which is
+  OPEN. Do not attempt it this sitting; it would only add a failed attempt.
+- **C1.5 aesthetic signoff** (depends on C1.3/C1.4, closes after the integrated
+  pane — the true last gate of M1), **Gate 7's Instruments minimized/after-wake and
+  ASan OPEN rows**, **Gate 4 notarization** (blocked on Apple notary creds), and
+  **B2.5 row K** (vendor matrix, agent work).
+- **The three "clean-machine" gates are not yours.** STORY-001 DoD-2 (tmux absence,
+  agent-doable) and B2 DoD-7 (different-vendor reproduction, agent-doable) are agent
+  work; C2 acceptance (Gatekeeper, notarization, two architectures) is genuinely
+  user-only but **post-cut** — a separate future session that will need hardware
+  this one does not. **Bring no second machine to this sitting.**
 
 ## See also
 
-- `planning/m1-definition-of-done-audit.md` — why this batch is M1's highest-leverage action (§6)
-- `docs/workspace/seeing-a-live-terminal.md` — the verified launch procedure; the authority on `make build` / `make run`
-- `raw/qualification/ghostty-b1-gate7-physical/human-checklist.txt` — Gate 7 source
+- `planning/2026-07-20-45-acceptance-record.md` — the #45 waiver and re-check
+  mandate this sitting discharges
+- `docs/workspace/seeing-a-live-terminal.md` — the authority on `make build` /
+  `make run` and the production pane
 - `raw/qualification/ghostty-b1-actions/manual-acceptance.md` — Gate 9 source
-- `raw/qualification/hive-b26-gate10-accessibility/human-checklist.txt` — B2.6 source
-- `raw/qualification/hive-b25-production-pane/matrix/diagnostic-a4-quit-harness-entanglement.txt` — A4's negative evidence
+- `raw/qualification/hive-b26-gate10-accessibility/human-checklist.txt` — row J / B2.6 source
+- `raw/qualification/ghostty-b1-gate7-physical/human-checklist.txt` — Gate 7 / row I source
+- `planning/2026-07-20-operator-kill-defect.md` — the #70 defect the precondition gates on

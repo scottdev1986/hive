@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { KillSessionOptions } from "../adapters/tmux";
 import { killAgentCli, killOrigin, stopAgentSessions, stopHive } from "./control";
+import type { InvokerIdentity } from "./invoker";
 import { writeCredential } from "../daemon/credentials";
 import { agentTmuxSession, orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import type { AgentRecord } from "../schemas";
@@ -172,43 +173,65 @@ describe("kill origin instrumentation (#64)", () => {
     expect(requests[0]!.url).toContain("/agents/maya/kill");
     const body = requests[0]!.body as { sessionLocator: unknown; origin?: string };
     expect(body.sessionLocator).toEqual(maya.sessionLocator);
-    expect(body.origin).toStartWith("hive kill ppid=");
+    expect(body.origin).toStartWith("hive kill pid=");
     expect(body.origin).toContain(`ppid=${process.ppid}`);
     expect(body.origin).toContain("argv=");
   });
 
-  test("hive stop's fan-out kills carry a stop origin, not a kill origin", async () => {
-    const bodies: Array<{ origin?: string }> = [];
-    globalThis.fetch = (async (_input: string | URL | Request, init?: RequestInit) => {
-      bodies.push(JSON.parse(String(init?.body)));
-      return new Response(
-        JSON.stringify({ reaped: { killed: [], survivors: [] } }),
-        { status: 200 },
-      );
-    }) as typeof fetch;
+  test("killOrigin carries the full invoker identity (#70): pid chain, cwd, worktree flag", () => {
+    const origin = killOrigin("stop", {
+      pid: 100,
+      ppid: 200,
+      argv: ["stop"],
+      cwd: "/repo",
+      chain: ["200:zsh", "300:tmux"],
+      agentWorktree: false,
+    });
+    expect(origin).toBe(
+      'hive stop pid=100 ppid=200 argv=["stop"] cwd=/repo agentWorktree=no chain=[200:zsh,300:tmux]',
+    );
+  });
+
+  test("hive stop sends its stop origin in the daemon /stop request", async () => {
+    const bodies: Array<{ origin: string; confirmUnlanded: boolean }> = [];
     const states: Array<"live" | "dead"> = ["live", "dead"];
 
     await Bun.write(join(killHome, "daemon.port"), "4483\n");
     await stopHive({
       tmux: new FakeStopTmux([]),
-      readAgents: () => [sessiondAgent("maya")],
-      readSessiondBinding: () => true,
       readPid: () => 4242,
-      kill: () => {},
       liveness: async () => states.shift() ?? "dead",
       cleanup: () => {},
       sleep: async () => {},
       timeoutMs: 50,
       log: () => {},
+      invoker: nonWorktreeInvoker(),
+      requestStop: async (body) => {
+        bodies.push(body);
+        return { state: "stopping", killed: ["maya"] };
+      },
     });
 
     expect(bodies).toHaveLength(1);
-    expect(bodies[0]!.origin).toStartWith("hive stop ppid=");
+    expect(bodies[0]!.origin).toStartWith("hive stop pid=");
+    expect(bodies[0]!.origin).toContain("chain=[");
+    expect(bodies[0]!.confirmUnlanded).toBe(false);
   });
 });
 
+function nonWorktreeInvoker(): InvokerIdentity {
+  return {
+    pid: 100,
+    ppid: 200,
+    argv: ["stop"],
+    cwd: "/repo",
+    chain: ["200:zsh"],
+    agentWorktree: false,
+  };
+}
+
 describe("hive stop daemon", () => {
-  test("authoritatively stops sessiond before signalling the daemon", async () => {
+  test("delegates the stop to the daemon before sweeping sessions", async () => {
     const order: string[] = [];
     const tmux = new FakeStopTmux([
       agentTmuxSession("maya"),
@@ -224,107 +247,215 @@ describe("hive stop daemon", () => {
 
     await stopHive({
       tmux,
-      readAgents: () => [sessiondAgent("maya")],
-      readSessiondBinding: () => true,
-      stopSessiond: async (agent) => {
-        order.push(`sessiond:${agent.name}`);
-      },
       readPid: () => 4242,
-      kill: () => order.push("SIGTERM"),
       liveness: async () => states.shift() ?? "dead",
       cleanup: () => {},
       sleep: async () => {},
       timeoutMs: 50,
       log: () => {},
+      invoker: nonWorktreeInvoker(),
+      requestStop: async () => {
+        order.push("daemon:/stop");
+        return { state: "stopping", killed: ["maya"] };
+      },
     });
 
     expect(order).toEqual([
-      "sessiond:maya",
-      "SIGTERM",
+      "daemon:/stop",
       `session:${agentTmuxSession("maya")}`,
       `session:${orchestratorTmuxSession()}`,
     ]);
   });
 
-  test("refuses shutdown BEFORE killing anything when eligibility cannot be verified (#65)", async () => {
-    // 2026-07-20, twice: `hive stop` killed every sessiond agent, then threw
-    // "sessiond teardown was not verified" — live app, live daemon, dead
-    // fleet. Eligibility is verified first; an unverifiable agent means no
-    // agent is touched and no signal is sent.
-    const attempts: string[] = [];
-    let signalled = false;
+  test("refuses from inside an agent worktree before contacting anything (#70)", async () => {
+    // Both 2026-07-20 fleet-kill waves came from agent shells. An agent
+    // worktree invocation is refused before liveness, before the daemon,
+    // before any session is touched.
     const tmux = new FakeStopTmux([agentTmuxSession("maya")]);
+    let daemonContacted = false;
+    let livenessRead = false;
 
     await expect(stopHive({
       tmux,
-      readAgents: () => [sessiondAgent("maya"), sessiondAgent("sam", 2)],
-      readSessiondBinding: (locator) => locator.generation !== 1,
-      stopSessiond: async (agent) => {
-        attempts.push(agent.name);
-      },
       readPid: () => 4242,
-      kill: () => {
-        signalled = true;
+      liveness: async () => {
+        livenessRead = true;
+        return "live";
       },
+      cleanup: () => {},
+      log: () => {},
+      invoker: {
+        pid: 100,
+        ppid: 200,
+        argv: [],
+        cwd: "/repo/.hive/worktrees/maya",
+        chain: ["200:bash"],
+        agentWorktree: true,
+      },
+      requestStop: async () => {
+        daemonContacted = true;
+        return { state: "stopping", killed: [] };
+      },
+    })).rejects.toThrow(/agent worktree/);
+
+    expect(daemonContacted).toBe(false);
+    expect(livenessRead).toBe(false);
+    expect(tmux.killed).toEqual([]);
+  });
+
+  test("refuses a defaulted stop transport inside a test runner (#70)", async () => {
+    // The incident shape: a bun test process (NODE_ENV=test is ambient right
+    // now) calling stopHive without injecting requestStop. The lethal default
+    // would resolve the ambient HIVE_HOME's daemon; refuse instead.
+    const tmux = new FakeStopTmux([]);
+
+    await expect(stopHive({
+      tmux,
+      readPid: () => 4242,
       liveness: async () => "live",
+      cleanup: () => {},
+      log: () => {},
+      invoker: nonWorktreeInvoker(),
+    })).rejects.toThrow(/test-runner process/);
+
+    expect(tmux.killed).toEqual([]);
+  });
+
+  test("names the agents and their unlanded state when the daemon refuses", async () => {
+    const calls: Array<{ confirmUnlanded: boolean }> = [];
+    let cleaned = false;
+
+    await expect(stopHive({
+      tmux: new FakeStopTmux([]),
+      readPid: () => 4242,
+      liveness: async () => "live",
+      cleanup: () => {
+        cleaned = true;
+      },
+      log: () => {},
+      invoker: nonWorktreeInvoker(),
+      confirm: async () => null,
+      requestStop: async (body) => {
+        calls.push({ confirmUnlanded: body.confirmUnlanded });
+        return {
+          state: "refused-unlanded",
+          unlanded: [
+            { name: "maya", branch: "hive/maya-x", dirtyFiles: 7, unmergedCommits: 2 },
+          ],
+        };
+      },
+    })).rejects.toThrow(
+      /maya \(branch hive\/maya-x: 2 unmerged commit\(s\), 7 uncommitted file\(s\)\)/,
+    );
+
+    expect(calls).toEqual([{ confirmUnlanded: false }]);
+    expect(cleaned).toBe(false);
+  });
+
+  test("a TTY confirmation retries the stop with explicit confirmation", async () => {
+    const calls: Array<{ confirmUnlanded: boolean }> = [];
+    const states: Array<"live" | "dead"> = ["live", "dead"];
+
+    await stopHive({
+      tmux: new FakeStopTmux([]),
+      readPid: () => 4242,
+      liveness: async () => states.shift() ?? "dead",
       cleanup: () => {},
       sleep: async () => {},
       timeoutMs: 50,
       log: () => {},
-    })).rejects.toThrow(
-      /refused shutdown before touching any agent: maya/,
-    );
+      invoker: nonWorktreeInvoker(),
+      confirm: async () => true,
+      requestStop: async (body) => {
+        calls.push({ confirmUnlanded: body.confirmUnlanded });
+        return body.confirmUnlanded
+          ? { state: "stopping", killed: ["maya"] }
+          : {
+            state: "refused-unlanded",
+            unlanded: [
+              { name: "maya", branch: null, dirtyFiles: 1, unmergedCommits: 0 },
+            ],
+          };
+      },
+    });
 
-    expect(attempts).toEqual([]);
-    expect(signalled).toBe(false);
-    expect(tmux.killed).toEqual([]);
+    expect(calls).toEqual([
+      { confirmUnlanded: false },
+      { confirmUnlanded: true },
+    ]);
   });
 
-  test("attempts every sessiond teardown and refuses daemon shutdown on failure", async () => {
-    const attempts: string[] = [];
-    let signalled = false;
+  test("--force sends explicit confirmation on the first request", async () => {
+    const calls: Array<{ confirmUnlanded: boolean }> = [];
+    const states: Array<"live" | "dead"> = ["live", "dead"];
+
+    await stopHive({
+      tmux: new FakeStopTmux([]),
+      readPid: () => 4242,
+      liveness: async () => states.shift() ?? "dead",
+      cleanup: () => {},
+      sleep: async () => {},
+      timeoutMs: 50,
+      log: () => {},
+      invoker: nonWorktreeInvoker(),
+      force: true,
+      confirm: async () => {
+        throw new Error("--force must never prompt");
+      },
+      requestStop: async (body) => {
+        calls.push({ confirmUnlanded: body.confirmUnlanded });
+        return { state: "stopping", killed: ["maya"] };
+      },
+    });
+
+    expect(calls).toEqual([{ confirmUnlanded: true }]);
+  });
+
+  test("a stop-failed answer is a refusal, not a success", async () => {
+    let cleaned = false;
+    const logs: string[] = [];
 
     await expect(stopHive({
       tmux: new FakeStopTmux([]),
-      readAgents: () => [sessiondAgent("maya"), sessiondAgent("sam", 2)],
-      readSessiondBinding: () => true,
-      stopSessiond: async (agent) => {
-        attempts.push(agent.name);
-        if (agent.name === "maya") throw new Error("tree still present");
-      },
       readPid: () => 4242,
-      kill: () => {
-        signalled = true;
-      },
       liveness: async () => "live",
-      cleanup: () => {},
-      log: () => {},
+      cleanup: () => {
+        cleaned = true;
+      },
+      log: (message) => logs.push(message),
+      invoker: nonWorktreeInvoker(),
+      requestStop: async () => ({
+        state: "stop-failed",
+        failures: ["maya: 2 process(es) survived SIGKILL"],
+      }),
     })).rejects.toThrow(
-      /sessiond teardown was not verified: maya: tree still present/,
+      /agent teardown failed: maya: 2 process\(es\) survived SIGKILL/,
     );
 
-    expect(attempts).toEqual(["maya", "sam"]);
-    expect(signalled).toBe(false);
+    expect(cleaned).toBe(false);
+    expect(logs).toEqual([]);
   });
 
   test("unknown daemon liveness preserves every process and session", async () => {
     const tmux = new FakeStopTmux([agentTmuxSession("maya")]);
-    let signalled = false;
+    let daemonContacted = false;
 
     await expect(stopHive({
       tmux,
       readPid: () => 4242,
-      kill: () => {
-        signalled = true;
-      },
       liveness: async () => "unknown",
       cleanup: () => {},
       sleep: async () => {},
       timeoutMs: 50,
       log: () => {},
+      invoker: nonWorktreeInvoker(),
+      requestStop: async () => {
+        daemonContacted = true;
+        return { state: "stopping", killed: [] };
+      },
     })).rejects.toThrow(/unknown/);
 
-    expect(signalled).toBe(false);
+    expect(daemonContacted).toBe(false);
     expect(tmux.killed).toEqual([]);
   });
 
@@ -371,6 +502,7 @@ describe("hive stop daemon", () => {
         liveness: async () => "dead",
         cleanup: () => {},
         log: () => {},
+        invoker: nonWorktreeInvoker(),
       });
 
       expect(() => process.kill(childPid, 0)).toThrow();
@@ -394,7 +526,6 @@ describe("hive stop daemon", () => {
     await expect(stopHive({
       tmux,
       readPid: () => 4242,
-      kill: () => {},
       liveness: async () => "live",
       cleanup: () => {
         cleaned = true;
@@ -402,6 +533,8 @@ describe("hive stop daemon", () => {
       sleep: async () => {},
       timeoutMs: 50,
       log: (message) => logs.push(message),
+      invoker: nonWorktreeInvoker(),
+      requestStop: async () => ({ state: "stopping", killed: [] }),
     })).rejects.toThrow(/daemon pid 4242 did not stop/);
 
     expect(cleaned).toBe(false);
@@ -417,7 +550,6 @@ describe("hive stop daemon", () => {
     await stopHive({
       tmux,
       readPid: () => 4242,
-      kill: () => {},
       liveness: async () => states.shift() ?? "dead",
       cleanup: (pid) => {
         cleanedPid = pid;
@@ -425,6 +557,8 @@ describe("hive stop daemon", () => {
       sleep: async () => {},
       timeoutMs: 150,
       log: (message) => logs.push(message),
+      invoker: nonWorktreeInvoker(),
+      requestStop: async () => ({ state: "stopping", killed: [] }),
     });
 
     expect(cleanedPid).toBe(4242);

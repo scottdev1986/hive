@@ -54,3 +54,11 @@ Positive controls were observed before the production changes: the focused freez
 ## Remaining A1 qualification
 
 The next increments must finish native neutral create and the frozen terminate/list/inspect control plane, then wire attach streaming and visibility renewal before exercising broker/host crash and adoption matrices and bounded journal/replay behavior.
+
+## RULINGS 2026-07-20
+
+a. **Freeze gating on the open workstreams.** The six open workstreams — native neutral create, the remaining control plane, attach streaming, visibility renewal, crash/adoption matrices, and bounded journal/replay — each require a written pass condition and evidence rows before A0 freeze. A1 must discharge freeze tests E, G (proving the durable monitor), H, and I as named evidence rows.
+
+b. **subscribe ordered-event semantics.** subscribe's ordered-event semantics (A0 semantic 6 / the minimal shape's `subscribe ordered events`) must be specified — they are currently specified nowhere.
+
+c. **A1 wire projection owns all concrete numbers.** The A1 wire projection is the owner of every concrete number (128 KiB decoded cap, 256 KiB frame, journal watermarks); these are tunable without contract revision. The 128 KiB decoded-input cap's upgrade trigger stays "first measured overflow in real M2 vendor traffic → Option 3 chunked".

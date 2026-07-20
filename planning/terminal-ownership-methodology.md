@@ -131,6 +131,21 @@ retrieve.
   content object store with bounded previews and the TokenAttributionProjection.
   *Anchor:* `planning/backlog-outline.md` **M3 → S3.1**.
 
+- **The performance floor is a fixed machine (user-ruled, 2026-07-20).** "We can
+  not engineer something that only top of the line computers can run." The
+  baseline is the **base 14-inch MacBook Pro (2021): M1 Pro, 16 GB unified
+  memory, active cooling** — a minimum spec, not a target. Efficiency, speed, and
+  lightweight are product requirements measured *at this floor*, not on the
+  developer's machine:
+  - Every performance / memory / latency acceptance criterion is measured **on
+    the floor machine, or explicitly modeled against it** — never certified only
+    on faster hardware.
+  - Always-resident components are sized for **16 GB shared with concurrent
+    builds and agent processes**, and **degrade gracefully** under memory
+    contention rather than failing or starving the fleet.
+  - Measurement includes **sustained workload**, not a cold single-shot: the
+    floor must hold while agents run and builds churn.
+
 ### 4b. PROJECT ISOLATION
 
 **Hive is project-specific.** The knowledge base and the monitoring belong to the
