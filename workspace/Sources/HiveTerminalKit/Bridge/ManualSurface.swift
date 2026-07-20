@@ -137,7 +137,7 @@ protocol ManualSurfaceEngine: AnyObject {
     func setContentScale(x: Double, y: Double)
     func setColorScheme(_ scheme: TerminalColorScheme)
     @discardableResult
-    func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool
+    func applyHiveConfiguration(theme: HiveTerminalTheme, font: HiveTerminalFont) -> Bool
     func setDisplayID(_ displayID: UInt32)
     func setOcclusion(_ visible: Bool)
     func reportedSize() -> ManualSurfaceSize?
@@ -174,7 +174,12 @@ protocol ManualSurfaceEngine: AnyObject {
 extension ManualSurfaceEngine {
     @discardableResult
     func applyHiveConfiguration() -> Bool {
-        applyHiveConfiguration(theme: .hiveDark)
+        applyHiveConfiguration(theme: .hiveDark, font: .embedded)
+    }
+
+    @discardableResult
+    func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool {
+        applyHiveConfiguration(theme: theme, font: .embedded)
     }
 }
 
@@ -190,6 +195,7 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     private(set) var colorSchemeCalls: [TerminalColorScheme] = []
     private(set) var hiveConfigurationApplyCount = 0
     private(set) var hiveConfigurationTheme: HiveTerminalTheme?
+    private(set) var hiveConfigurationFont: HiveTerminalFont?
     private(set) var displayIDCalls: [UInt32] = []
     private(set) var occlusionCalls: [Bool] = []
     var fakeReportedSize: ManualSurfaceSize?
@@ -270,9 +276,10 @@ final class FakeManualSurface: ManualSurfaceEngine, ManualSurfaceSemanticSnapsho
     public func setContentScale(x: Double, y: Double) { contentScaleCalls.append((x, y)) }
     public func setColorScheme(_ scheme: TerminalColorScheme) { colorSchemeCalls.append(scheme) }
     @discardableResult
-    public func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool {
-        guard hiveConfigurationTheme != theme else { return false }
+    public func applyHiveConfiguration(theme: HiveTerminalTheme, font: HiveTerminalFont) -> Bool {
+        guard hiveConfigurationTheme != theme || hiveConfigurationFont != font else { return false }
         hiveConfigurationTheme = theme
+        hiveConfigurationFont = font
         hiveConfigurationApplyCount += 1
         return true
     }
@@ -516,10 +523,11 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
     }
 
     @discardableResult
-    public func applyHiveConfiguration(theme: HiveTerminalTheme) -> Bool {
+    public func applyHiveConfiguration(theme: HiveTerminalTheme, font: HiveTerminalFont) -> Bool {
         dispatchPrecondition(condition: .onQueue(.main))
         let contents = HiveTerminalConfiguration.contents(
             theme: theme,
+            font: font,
             headless: hiveConfigurationHeadless
         )
         guard hiveConfigurationContents != contents,
@@ -532,9 +540,10 @@ final class GhosttyManualSurface: ManualSurfaceEngine {
         hiveConfigurationContents = contents
         operationObserver?("surfaceUpdateConfig", .end)
         NSLog(
-            "ghostty_surface_update_config live C1 %@ theme=%@",
-            HiveTerminalConfiguration.liveLogFingerprint,
-            theme.identifier
+            "ghostty_surface_update_config live C1 %@ theme=%@ font=%@",
+            HiveTerminalConfiguration.liveLogFingerprint(theme: theme),
+            theme.identifier,
+            font.rawValue
         )
         return true
     }
