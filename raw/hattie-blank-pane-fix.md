@@ -25,3 +25,17 @@ In `HiveTerminalView.finalizeFirstCorrectFrameWhenConfigurationSettles`:
 
 ## Live proof
 Environment on this machine was contaminated by multiple leaked `hive-sessiond serve` processes during re-proof (broker died mid-create). Code fix + unit compile green. Reviewer should re-run clean `make terminal` with exclusive 43117.
+
+## Second cut — pre-attach C1 theme
+
+Also apply C1 via `prepareThemeBeforeAttach()` before HOST_ATTACH so
+`ghostty_surface_update_config` cannot wipe already-applied journal bytes.
+
+## Live status on hattie machine
+
+Wire attach against hubert-style stack (`LiveHostAttachTests` with
+`HIVE_B22_PROOF_HOME`) reached highWater 694 on FakeManualSurface — journal
+replay works at the wire. App-path `make terminal` still screenshots blank
+after both cut-1 and cut-2 on this machine (stderr: 409 + C1 only). Reviewer
+should re-run exclusive `make terminal` on a clean port; if still blank the
+draw/occlusion/pump path needs another instrumented pass.

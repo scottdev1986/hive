@@ -114,6 +114,10 @@ final class SessiondPaneTerminal {
             guard let geometry = self.view?.reportedGeometry, geometry.isUsable else { return }
             timer.invalidate()
             self.geometryPollTimer = nil
+            // Apply C1 theme BEFORE attach so journal replay paints onto the
+            // themed surface. applyHiveConfiguration after processOutput can
+            // wipe the VT (blank pane while journal is full — hubert finding).
+            self.view?.prepareThemeBeforeAttach()
             self.beginAttach(afterSeq: 0)
         }
         geometryPollTimer = timer
@@ -299,6 +303,7 @@ final class SessiondPaneTerminal {
                 return // gave up — visible failure fired
             }
             if !self.attachInFlight {
+                self.view?.prepareThemeBeforeAttach()
                 self.beginAttach(afterSeq: self.view?.highWater ?? 0)
             }
             // Always reschedule the next tick, independent of the attach
