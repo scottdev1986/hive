@@ -136,6 +136,8 @@ describe("AgentMessageSchema", () => {
     sequence: 0,
     idempotencyKey: null,
     capabilityEpoch: null,
+    deliveryDiagnostic: null,
+    deliveryDiagnosticAt: null,
   } satisfies AgentMessage;
 
   test("parses a valid round-trip", () => {

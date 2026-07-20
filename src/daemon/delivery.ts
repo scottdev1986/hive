@@ -106,14 +106,18 @@ export function queuedDeliveryNote(
     case "spawning":
       return `NOT received yet: ${name} is still spawning; the message is delivered when its session starts.`;
     case "idle":
-      // #67: a sessiond-hosted pane cannot be pushed to at all yet — saying
-      // "the paste was never submitted" about a paste that was never attempted
-      // sent the sender hunting a tmux loss that never happened.
+      // #68: the sessiond viewer wire exists now; the wake loop retries every
+      // maintenance tick. The pre-#68 text ("has no daemon delivery wire yet")
+      // sent the live-proof investigation hunting a wiring gap that did not
+      // exist — say what actually happens and where the cause of a stuck row
+      // is recorded.
       if (recipient.sessionLocator?.hostKind === "sessiond") {
-        return `NOT received: ${name} is idle in a sessiond-hosted terminal, which has no ` +
-          "daemon delivery wire yet (M2 #16). The message stays durably queued and is " +
-          `delivered at the next turn boundary ${name} reaches on its own; an idle agent ` +
-          "reaches none, so treat it as unheard until a turn confirms it.";
+        return `NOT received yet: ${name} is idle in a sessiond-hosted terminal; the daemon ` +
+          "injects queued mail over the viewer wire on its next maintenance tick (the idle " +
+          "wake) and at any turn boundary. If it stays queued, the message row's " +
+          "deliveryDiagnostic records why the last attempt did not deliver " +
+          "(e.g. a human holds the input claim — never stolen). " +
+          "Treat it as unheard until a turn confirms it.";
       }
       return `NOT received: the paste into ${name}'s pane was never submitted (no turn started), ` +
         `so the message stays queued and the daemon retries it on its next maintenance tick ` +
@@ -825,27 +829,36 @@ export class MessageDelivery {
     if (recipient.sessionLocator?.hostKind === "sessiond") {
       requireSessiondAgentLocator(recipient);
       if (this.sessiondInput === undefined) return this.getStoredMessage(message.id);
-      let receipt;
+      // Every non-delivery on this branch records WHY on the message row.
+      // The #68 live proof failed with the only diagnostic on a /dev/null
+      // stderr: ~24 silent retries, three indistinguishable causes. A row
+      // that stays queued must carry its own explanation.
+      let result;
       try {
-        receipt = await this.sessiondInput.injectIdle(
+        result = await this.sessiondInput.injectIdle(
           recipient,
           this.formatAgentMessage(message),
           { messageId: message.id },
         );
       } catch (error) {
+        const detail = error instanceof Error ? error.message : "unknown error";
         console.error(
           `Hive could not inject message ${message.id} into ${message.to}'s sessiond pane ` +
-            `(${error instanceof Error ? error.message : "unknown error"}); leaving it queued.`,
+            `(${detail}); leaving it queued.`,
+        );
+        this.db.recordMessageDeliveryDiagnostic(
+          message.id,
+          `sessiond inject failed: ${detail}`,
+          new Date().toISOString(),
         );
         return this.getStoredMessage(message.id);
       }
-      // A queued/accepted/written receipt means the host took the bytes; a
-      // declined claim (null) or a rejected/unknown receipt means it did not.
-      if (
-        receipt === null ||
-        receipt.stage === "rejected" ||
-        receipt.stage === "unknown"
-      ) {
+      if (result.outcome === "declined") {
+        this.db.recordMessageDeliveryDiagnostic(
+          message.id,
+          `sessiond inject declined: ${result.reason}`,
+          new Date().toISOString(),
+        );
         return this.getStoredMessage(message.id);
       }
       return this.markInjected(message);

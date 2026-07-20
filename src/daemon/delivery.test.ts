@@ -260,7 +260,7 @@ describe("MessageDelivery", () => {
     const sessiondInput: SessiondAgentInput = {
       async injectIdle(recipient, text, options) {
         injects.push({ name: recipient.name, text, messageId: options.messageId });
-        return acceptingReceipt(options.messageId);
+        return { outcome: "injected", receipt: acceptingReceipt(options.messageId) };
       },
     };
     const stubSender: SessionSender = { async sendSessionMessage() {} };
@@ -279,6 +279,8 @@ describe("MessageDelivery", () => {
       expect(injects[0]?.text).toContain("Please review this.");
       expect(injects[0]?.messageId).toBe(message.id);
       expect(db.getUndeliveredMessages("maya")).toHaveLength(0);
+      // A delivered row carries no stale failure diagnostic.
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toBeNull();
     } finally {
       db.close();
     }
@@ -287,8 +289,18 @@ describe("MessageDelivery", () => {
   test("a declined sessiond claim leaves the envelope queued, never applied (#68)", async () => {
     const db = new HiveDatabase(join(home, "sessiond-declined.db"));
     // The arbiter denies the automation claim (a human owns input): injectIdle
-    // returns null and the message must stay durably queued.
-    const sessiondInput: SessiondAgentInput = { async injectIdle() { return null; } };
+    // declines with the arbiter's reason, the message stays durably queued,
+    // and the reason is READABLE ON THE ROW — the #68 live proof died
+    // guessing this exact cause from a /dev/null stderr.
+    const sessiondInput: SessiondAgentInput = {
+      async injectIdle() {
+        return {
+          outcome: "declined",
+          reason: "claim denied: human input claim held (held by human writer " +
+            "workspace-pane, lease expires 2026-07-20T23:26:43.000Z)",
+        };
+      },
+    };
     const stubSender: SessionSender = { async sendSessionMessage() {} };
     const delivery = new MessageDelivery(
       db, stubSender, undefined, undefined, undefined, {}, undefined, undefined, sessiondInput,
@@ -299,6 +311,12 @@ describe("MessageDelivery", () => {
       expect(message.state).toBe("queued");
       expect(message.deliveredAt).toBeNull();
       expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+      const row = db.getMessage(message.id);
+      expect(row?.deliveryDiagnostic).toBe(
+        "sessiond inject declined: claim denied: human input claim held " +
+          "(held by human writer workspace-pane, lease expires 2026-07-20T23:26:43.000Z)",
+      );
+      expect(row?.deliveryDiagnosticAt).not.toBeNull();
     } finally {
       db.close();
     }
@@ -318,6 +336,37 @@ describe("MessageDelivery", () => {
       const message = await delivery.send("queen", "maya", "Best effort.");
       expect(message.state).toBe("queued");
       expect(db.getUndeliveredMessages("maya")).toHaveLength(1);
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toBe(
+        "sessiond inject failed: host.sock refused connection",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a later successful inject clears the recorded failure diagnostic (#68)", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-diagnostic-clear.db"));
+    let failing = true;
+    const sessiondInput: SessiondAgentInput = {
+      async injectIdle(_recipient, _text, options) {
+        if (failing) throw new Error("host.sock refused connection");
+        return { outcome: "injected", receipt: acceptingReceipt(options.messageId) };
+      },
+    };
+    const stubSender: SessionSender = { async sendSessionMessage() {} };
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined, sessiondInput,
+    );
+    try {
+      db.insertAgent(sessiondRecipient());
+      const message = await delivery.send("queen", "maya", "Retry me.");
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toContain("inject failed");
+      failing = false;
+      await delivery.flushQueued("maya");
+      const row = db.getMessage(message.id);
+      expect(row?.state).toBe("injected");
+      expect(row?.deliveryDiagnostic).toBeNull();
+      expect(row?.deliveryDiagnosticAt).toBeNull();
     } finally {
       db.close();
     }

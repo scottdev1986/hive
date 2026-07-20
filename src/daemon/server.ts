@@ -878,7 +878,7 @@ export class HiveDaemon {
       },
       undefined,
       // #68/#16 interim: daemon→idle-sessiond-agent input over the neutral
-      // viewer wire. The broker RPCs (issueAttach/inspect) are the landed host;
+      // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
       // the viewer wire is the interim addition.
       options.sessiondInput ??
         new SessiondViewerAgentInput(landedTerminalHost, `hive-daemon:${hiveInstanceSuffix()}`),

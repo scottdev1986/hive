@@ -465,6 +465,8 @@ describe("crash classification", () => {
       sequence: 1,
       idempotencyKey: null,
       capabilityEpoch: 1,
+      deliveryDiagnostic: null,
+      deliveryDiagnosticAt: null,
     });
     h.db.insertAgent(agent({
       status: "control-paused",
@@ -1043,6 +1045,8 @@ describe("crash resume", () => {
       sequence: 1,
       idempotencyKey: null,
       capabilityEpoch: null,
+      deliveryDiagnostic: null,
+      deliveryDiagnosticAt: null,
     });
 
     await h.recovery.sweep();
@@ -1094,6 +1098,8 @@ describe("dead-path bookkeeping", () => {
       sequence: 1,
       idempotencyKey: null,
       capabilityEpoch: null,
+      deliveryDiagnostic: null,
+      deliveryDiagnosticAt: null,
     });
 
     await h.recovery.sweep();

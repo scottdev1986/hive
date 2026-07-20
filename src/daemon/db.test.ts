@@ -603,6 +603,8 @@ describe("HiveDatabase", () => {
       sequence: 1,
       idempotencyKey: null,
       capabilityEpoch: null,
+      deliveryDiagnostic: null,
+      deliveryDiagnosticAt: null,
     };
     try {
       expect(db.insertMessage(message)).toEqual(message);
@@ -648,6 +650,8 @@ describe("HiveDatabase", () => {
       sequence: 1,
       idempotencyKey: null,
       capabilityEpoch: null,
+      deliveryDiagnostic: null,
+      deliveryDiagnosticAt: null,
       ...overrides,
     });
     try {

@@ -21,20 +21,29 @@ const CLAIM_LEASE_MS = 60_000;
 /**
  * Injects one automated message into an idle sessiond-hosted agent over the
  * §20 neutral-host viewer wire. Returns the frozen receipt on `INPUT_SUBMIT`
- * acceptance, or `null` when the inject was declined (a human owns the input
- * arbiter, or the session is not injectable right now) — the caller then leaves
- * the envelope queued. Never fabricates `applied`.
+ * acceptance, or a decline naming its cause (a human owns the input arbiter,
+ * the session is not injectable right now, the host rejected the receipt) —
+ * the caller then leaves the envelope queued AND records the reason on the
+ * message row. Never fabricates `applied`.
+ *
+ * The decline carries a reason because the #68 live proof failed exactly
+ * here: a bare null left "claim denied" indistinguishable from "wire broken"
+ * with the only diagnostic on a /dev/null stderr.
  */
+export type SessiondInjectResult =
+  | Readonly<{ outcome: "injected"; receipt: InputReceipt }>
+  | Readonly<{ outcome: "declined"; reason: string }>;
+
 export interface SessiondAgentInput {
   injectIdle(
     agent: AgentRecord,
     text: string,
     options: Readonly<{ messageId: string }>,
-  ): Promise<InputReceipt | null>;
+  ): Promise<SessiondInjectResult>;
 }
 
 /** The two broker RPCs this injector needs, already landed and tested. */
-type BrokerFacade = Pick<SessionHost, "issueAttach"> & Pick<TerminalHost, "inspect">;
+type BrokerFacade = Pick<SessionHost, "issueAttach"> & Pick<TerminalHost, "list">;
 
 export class SessiondViewerAgentInput implements SessiondAgentInput {
   constructor(
@@ -49,14 +58,42 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     agent: AgentRecord,
     text: string,
     options: Readonly<{ messageId: string }>,
-  ): Promise<InputReceipt | null> {
+  ): Promise<SessiondInjectResult> {
     const locator = requireSessiondAgentLocator(agent);
+    // TWO SessionRef incarnation semantics meet here, and confusing them is
+    // exactly how the #68 live proof failed silently on every tick:
+    //   - BROKER RPCs (list/inspect) address sessions by the ENGINE-assigned
+    //     incarnation. A locator-generation ref gets NOT_FOUND.
+    //   - VIEWER-WIRE frames (CLAIM_ACQUIRE/INPUT_SUBMIT/CLAIM_RELEASE) map
+    //     generation→incarnation (session_host.zig, and the Swift reference
+    //     client AttachReplayClient sends String(locator.generation)). An
+    //     engine-assigned ref gets GENERATION_MISMATCH.
+    // So: discover lifecycle via the broker's own list, but speak to the
+    // host with the locator-derived ref. Both proven against the real engine
+    // in native/sessiond/test/ts-live-create.ts.
+    const sessions = await this.broker.list();
+    const matches = sessions.filter(
+      (candidate) => candidate.session.key === locator.sessionId,
+    );
+    if (matches.length !== 1) {
+      return {
+        outcome: "declined",
+        reason: matches.length === 0
+          ? `session ${locator.sessionId} not found on the sessiond host`
+          : `session ${locator.sessionId} is ambiguous on the sessiond host`,
+      };
+    }
+    const inspection: SessionInspection = matches[0]!;
+    if (inspection.lifecycle !== "running") {
+      return {
+        outcome: "declined",
+        reason: `session lifecycle is ${inspection.lifecycle}, not running`,
+      };
+    }
     const session = {
       key: locator.sessionId,
       incarnation: String(locator.generation),
     };
-    const inspection: SessionInspection = await this.broker.inspect(session);
-    if (inspection.lifecycle !== "running") return null;
 
     const geometry = geometryFromWindow(inspection.window.value);
     const grant = await this.broker.issueAttach(locator, {
@@ -70,7 +107,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
       const bytes = new TextEncoder().encode(
         BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
       );
-      return await client.injectAutomated({
+      const result = await client.injectAutomated({
         session,
         writer: this.viewerId,
         transactionId: options.messageId,
@@ -78,6 +115,18 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
         bytes,
         leaseMilliseconds: CLAIM_LEASE_MS,
       });
+      if (result.kind === "claim-declined") {
+        return { outcome: "declined", reason: result.detail };
+      }
+      const receipt = result.receipt;
+      if (receipt.stage === "rejected" || receipt.stage === "unknown") {
+        return {
+          outcome: "declined",
+          reason: `input receipt stage ${receipt.stage}` +
+            (receipt.diagnostic === null ? "" : `: ${receipt.diagnostic}`),
+        };
+      }
+      return { outcome: "injected", receipt };
     } finally {
       client.close();
     }

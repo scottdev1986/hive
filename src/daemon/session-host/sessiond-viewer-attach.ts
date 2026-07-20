@@ -153,6 +153,9 @@ export class SessiondViewerAttachClient {
   private maxInputTransactionBytes = TERMINAL_LIMITS.inputTransactionBytes;
   private outputHighWater = 0n;
   private activeClaimToken: string | null = null;
+  /** The engine's own SessionRef for the held claim. Never derived from the
+   * Hive locator: incarnation is engine-assigned, not the generation (#68). */
+  private activeClaimSession: SessionRef | null = null;
 
   private constructor(
     private readonly socket: Socket,
@@ -222,9 +225,12 @@ export class SessiondViewerAttachClient {
 
   /**
    * Acquire an automation claim and submit one input transaction on this
-   * connection. Returns the frozen receipt, or `null` when the arbiter declines
-   * the claim (a human owns or orphaned it) — never steal a held human claim
-   * (I3/I4). The caller marks `injected`, never `applied`.
+   * connection. Returns the frozen receipt, or a claim decline naming the
+   * arbiter's own diagnostic when it refuses (a human owns or orphaned the
+   * claim) — never steal a held human claim (I3/I4). The caller marks
+   * `injected`, never `applied`. The decline detail exists because the #68
+   * live proof died guessing between three silent causes: every refusal on
+   * this wire must carry its reason out.
    */
   async injectAutomated(request: Readonly<{
     session: SessionRef;
@@ -233,7 +239,10 @@ export class SessiondViewerAttachClient {
     idempotencyKey: string;
     bytes: Uint8Array;
     leaseMilliseconds: number;
-  }>): Promise<InputReceipt | null> {
+  }>): Promise<
+    | Readonly<{ kind: "receipt"; receipt: InputReceipt }>
+    | Readonly<{ kind: "claim-declined"; detail: string }>
+  > {
     if (request.bytes.byteLength > this.maxInputTransactionBytes) {
       throw new SessiondWireError(
         "PAYLOAD_TOO_LARGE",
@@ -256,9 +265,17 @@ export class SessiondViewerAttachClient {
     if (claimResult.state !== "granted") {
       // Denied/unknown — a human owns the arbiter or it is unavailable. Leave the
       // envelope queued; the arbiter, not this client, is the never-steal truth.
-      return null;
+      const owner = claimResult.state === "denied" && claimResult.owner !== null
+        ? ` (held by ${claimResult.owner.kind} writer ${claimResult.owner.writer}, ` +
+          `lease expires ${claimResult.owner.leaseExpiresAt})`
+        : "";
+      return {
+        kind: "claim-declined",
+        detail: `claim ${claimResult.state}: ${claimResult.diagnostic}${owner}`,
+      };
     }
     this.activeClaimToken = claimResult.claim.token;
+    this.activeClaimSession = request.session;
 
     const submitPayload = InputSubmitPayloadSchema.parse({
       schemaVersion: 1,
@@ -284,20 +301,20 @@ export class SessiondViewerAttachClient {
     if (applied.resultKind !== "input") {
       throw new SessiondProtocolError("sessiond returned a non-input result for INPUT_SUBMIT");
     }
-    return applied.receipt;
+    return { kind: "receipt", receipt: applied.receipt };
   }
 
   /** Release any held claim (best effort) and close the socket. */
   close(): void {
     if (this.closed) return;
     this.closed = true;
-    if (this.activeClaimToken !== null && this.failure === null) {
+    if (
+      this.activeClaimToken !== null && this.activeClaimSession !== null &&
+      this.failure === null
+    ) {
       const release = {
         schemaVersion: 1,
-        session: {
-          key: this.deps.locator.sessionId,
-          incarnation: String(this.deps.locator.generation),
-        },
+        session: this.activeClaimSession,
         claimToken: this.activeClaimToken,
         kind: "submit",
       };
@@ -309,6 +326,7 @@ export class SessiondViewerAttachClient {
       }
     }
     this.activeClaimToken = null;
+    this.activeClaimSession = null;
     // Graceful half-close flushes the release before FIN; a hard destroy could
     // drop it. The host frees the claim either way (onViewerDetached).
     this.socket.end();

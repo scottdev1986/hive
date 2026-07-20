@@ -25,6 +25,7 @@ import {
 import { WorkspaceVisibilityAuthority } from "../../../src/daemon/session-host/workspace-visibility";
 import { HiveSpawner } from "../../../src/daemon/spawner-impl";
 import { stopSessiondAgentSession } from "../../../src/daemon/teardown";
+import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
 import {
   known,
   unknown,
@@ -495,6 +496,31 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             openTerminalRevision: "2",
             expiresAt: renewed.expiresAt,
           });
+
+          // #68 real-engine inject: the daemon-side injector performs the
+          // actual viewer wire against the real spawned host — grant →
+          // HELLO(viewer) → HOST_ATTACH → CLAIM_ACQUIRE(automation) →
+          // INPUT_SUBMIT — and must come back with a real receipt. This is
+          // the discriminator the 2026-07-20 live proof lacked: green here
+          // means the wire works against the engine, so a live-instance
+          // stall is environmental and now names itself on the message row.
+          const injector = new SessiondViewerAgentInput(
+            host,
+            `hive-daemon:${handshake.instanceId}`,
+          );
+          const injected = await injector.injectIdle(
+            sessiondAgent,
+            "LIVE-PROOF #68: real-engine inject",
+            { messageId: "msg-68-live-proof" },
+          );
+          if (injected.outcome !== "injected") {
+            throw new Error(
+              `real-engine inject declined: ${injected.reason}`,
+            );
+          }
+          expect(["accepted", "queued", "written-to-terminal"])
+            .toContain(injected.receipt.stage);
+          expect(injected.receipt.transactionId).toBe("msg-68-live-proof");
 
           const tmuxAgent = await spawner.spawn({
             task: "Exercise the default tmux backend",

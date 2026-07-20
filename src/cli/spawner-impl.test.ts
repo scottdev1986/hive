@@ -327,6 +327,8 @@ function controlMessage(id: string, epoch = 1): AgentMessage {
     sequence: 1,
     idempotencyKey: null,
     capabilityEpoch: epoch,
+    deliveryDiagnostic: null,
+    deliveryDiagnosticAt: null,
   };
 }
 
@@ -599,6 +601,8 @@ describe("HiveSpawner name pool", () => {
         sequence: 1,
         idempotencyKey: null,
         capabilityEpoch: 1,
+        deliveryDiagnostic: null,
+        deliveryDiagnosticAt: null,
       } satisfies AgentMessage;
       await spawner.restartForControl(controlled, message);
       const command = tmux.sessions[0]?.[2] ?? "";

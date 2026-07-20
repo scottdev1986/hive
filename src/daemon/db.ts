@@ -471,7 +471,9 @@ export class HiveDatabase {
         alertAt TEXT,
         sequence INTEGER NOT NULL DEFAULT 0,
         idempotencyKey TEXT,
-        capabilityEpoch INTEGER
+        capabilityEpoch INTEGER,
+        deliveryDiagnostic TEXT,
+        deliveryDiagnosticAt TEXT
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
@@ -566,6 +568,7 @@ export class HiveDatabase {
     `);
     this.rekeyTerminalHostBindingsOnLocator();
     this.addTerminalHostBindingEvidenceColumns();
+    this.addMessageDeliveryDiagnosticColumns();
     const capabilityColumns = z.array(z.object({ name: z.string() })).parse(
       this.database.query("PRAGMA table_info(capabilities)").all(),
     );
@@ -980,6 +983,24 @@ export class HiveDatabase {
         DROP TABLE terminal_host_bindings_neutral_ref;
       `);
     });
+  }
+
+  private addMessageDeliveryDiagnosticColumns(): void {
+    const columns = new Set(
+      z.array(z.object({ name: z.string() })).parse(
+        this.database.query("PRAGMA table_info(messages)").all(),
+      ).map((column) => column.name),
+    );
+    if (!columns.has("deliveryDiagnostic")) {
+      this.database.exec(
+        "ALTER TABLE messages ADD COLUMN deliveryDiagnostic TEXT",
+      );
+    }
+    if (!columns.has("deliveryDiagnosticAt")) {
+      this.database.exec(
+        "ALTER TABLE messages ADD COLUMN deliveryDiagnosticAt TEXT",
+      );
+    }
   }
 
   private addTerminalHostBindingEvidenceColumns(): void {
@@ -1676,11 +1697,28 @@ export class HiveDatabase {
   // other path already delivered comes back null, exactly like a missing one,
   // so a push path cannot report a fresh delivery for a duplicate.
   markMessageDelivered(id: string, deliveredAt: string): AgentMessage | null {
+    // A delivered message's last failure diagnostic is history, not state.
     const result = this.database.query(`
-      UPDATE messages SET deliveredAt = ?
+      UPDATE messages SET deliveredAt = ?,
+        deliveryDiagnostic = NULL, deliveryDiagnosticAt = NULL
       WHERE id = ? AND deliveredAt IS NULL
     `).run(deliveredAt, id);
     return result.changes === 1 ? this.getMessage(id) : null;
+  }
+
+  /** The durable answer to "why is this message still queued": the last
+   * delivery attempt's failure or decline, readable straight off the row
+   * (#68 — the live proof failed with the only diagnostic on a /dev/null
+   * stderr, leaving three silent causes indistinguishable from disk). */
+  recordMessageDeliveryDiagnostic(
+    id: string,
+    diagnostic: string,
+    at: string,
+  ): void {
+    this.database.query(`
+      UPDATE messages SET deliveryDiagnostic = ?, deliveryDiagnosticAt = ?
+      WHERE id = ?
+    `).run(diagnostic.slice(0, 1_024), at, id);
   }
 
   insertEvent(event: HookEvent): HookEvent {

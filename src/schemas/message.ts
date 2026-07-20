@@ -40,6 +40,11 @@ export const AgentMessageSchema = z.strictObject({
   sequence: z.number().int().nonnegative().default(0),
   idempotencyKey: z.string().min(1).nullable().default(null),
   capabilityEpoch: z.number().int().nonnegative().nullable().default(null),
+  /** Why the last delivery attempt left this message queued (#68 live-proof
+   * gap: the only diagnostic went to a /dev/null stderr). Written on every
+   * failed or declined sessiond inject; cleared when delivery succeeds. */
+  deliveryDiagnostic: z.string().nullable().default(null),
+  deliveryDiagnosticAt: z.iso.datetime().nullable().default(null),
 });
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;

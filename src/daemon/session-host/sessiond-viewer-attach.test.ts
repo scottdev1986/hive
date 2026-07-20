@@ -231,7 +231,7 @@ async function attachTo(options: FakeHostOptions = {}): Promise<{
 
 test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns the receipt", async () => {
   const { host, client } = await attachTo();
-  const receipt = await client.injectAutomated({
+  const result = await client.injectAutomated({
     session: { key: locator.sessionId, incarnation: "1" },
     writer: "hive-daemon:fixture",
     transactionId: "msg-1",
@@ -242,7 +242,8 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   client.close();
   await settle();
 
-  expect(receipt).not.toBeNull();
+  expect(result.kind).toBe("receipt");
+  const receipt = result.kind === "receipt" ? result.receipt : null;
   expect(receipt?.stage).toBe("written-to-terminal");
   expect(receipt?.transactionId).toBe("msg-1");
 
@@ -265,9 +266,9 @@ test("completes HELLO→HOST_ATTACH→CLAIM_ACQUIRE→INPUT_SUBMIT and returns t
   expect(submitBody.claimToken).toBe("claim-token-1");
 });
 
-test("returns null and never submits when the arbiter denies the claim (never-steal)", async () => {
+test("declines with the arbiter's reason and never submits when the claim is denied (never-steal)", async () => {
   const { host, client } = await attachTo({ claim: "denied" });
-  const receipt = await client.injectAutomated({
+  const result = await client.injectAutomated({
     session: { key: locator.sessionId, incarnation: "1" },
     writer: "hive-daemon:fixture",
     transactionId: "msg-1",
@@ -277,7 +278,12 @@ test("returns null and never submits when the arbiter denies the claim (never-st
   });
   client.close();
 
-  expect(receipt).toBeNull();
+  // The decline carries the arbiter's own diagnostic out — the #68 live proof
+  // failed guessing between a denied claim and a broken wire.
+  expect(result).toEqual({
+    kind: "claim-declined",
+    detail: "claim denied: input already claimed",
+  });
   const types = host.received.map((frame) => frame.type);
   expect(types).toContain("CLAIM_ACQUIRE");
   expect(types).not.toContain("INPUT_SUBMIT");
