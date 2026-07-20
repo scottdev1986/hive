@@ -109,13 +109,24 @@ Reproduced twice against real launches: a stub `hive` touched a marker file, so
 `hive stop` demonstrably ran and exited 0, yet the process stayed alive at 0%
 CPU with no reply and no exit. `sample(1)` shows the full stack. Every route
 into that path is inside a main-queue block — `FeedClient.onExit` is itself
-dispatched through `DispatchQueue.main.async` — so the hang is unconditional,
-not a race.
+dispatched through `DispatchQueue.main.async` — so the hang is unconditional
+for a non-`--smoke` instance, not a race. One branch escapes it: a `--smoke`
+instance also owns a feed (`startFeed()` at `AppDelegate.swift:146` runs before
+the smoke branch at `:148`), but its `applicationShouldTerminate` replies
+`.terminateNow` (the guard at `:402`), so a feed-failure quit there **exits
+cleanly, with a full orderly teardown and no hang** — and can never reply
+`NSTerminateLater`.
 
-Both the 02:35 and the ~06:47 processes **exited**, and 02:35 exited through a
-full, orderly AppKit teardown. A feed-failure self-quit cannot produce that. So
-`terminateAfterFeedFailure` is **ruled out** for both events — positively, on
-mechanism, not merely unproven.
+Both the 02:35 and the ~06:47 processes **exited**. The rule-out therefore
+rests on more than "feed-failure always hangs" — it holds per event, on the
+branch each process could occupy. 02:35 exited through a full, orderly AppKit
+teardown **that included the `NSTerminateLater` reply**: a non-smoke
+feed-failure quit hangs before any reply, and a smoke feed-failure quit exits
+but replies `.terminateNow` — neither branch can produce that teardown. The
+~06:47 process was the user's installed app, which never runs `--smoke`, so
+the hang applies unconditionally to it and its exit cannot be a feed-failure
+self-quit. So `terminateAfterFeedFailure` is **ruled out** for both events —
+positively, on mechanism, not merely unproven.
 
 Cmd-Q is unaffected and still quits normally: it enters `terminate:` from the
 event loop, so the main queue is free and the reply lands.
@@ -148,5 +159,10 @@ scoped task and review.
    from outside (a signal, a `pkill`, a crash) rather than quitting itself.
    Pair any query with a negative control — a subsystem that does not exist
    returns a bare header — so an empty result is proven to mean absence.
+   One suppression to know: **a losing writer is silent.** The reason is
+   first-write-wins, so a feed failure arriving while another quit is already
+   pending emits no `feed-failure` line at all. Attribution of the exit stays
+   correct, but an absent `feed-failure` line means "did not decide the quit",
+   not "did not occur".
 3. Give agent worktree debug builds a distinct process or bundle name, so a
    test instance can never be mistaken for the user's Workspace in the log.
