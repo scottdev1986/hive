@@ -2495,13 +2495,26 @@ pub const HostCore = struct {
 
         // Returning human after unclean drop: arbiter is HUMAN_ORPHANED until
         // operatorResume (never-steal still blocks concurrent HUMAN_OWNED).
+        // Automation must not reclaim an orphaned human lease (#40 invariant).
         if (arbiter.currentState() == .human_orphaned) {
-            const resumed = arbiter.operatorResume(viewer_id, claim.token) catch |err| return switch (err) {
-                error.HumanOwned, error.InputBusy, error.NotReady => self.encodeClaimResult(.{ .denied = .{
+            if (!std.mem.eql(u8, request.kind, "human")) {
+                claim.deinit(self.allocator);
+                initialized_fields = 0;
+                return self.encodeClaimResult(.{ .denied = .{
                     .owner = null,
-                    .diagnostic = @errorName(err),
-                } }),
-                else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
+                    .diagnostic = "HumanOrphaned",
+                } });
+            }
+            const resumed = arbiter.operatorResume(viewer_id, claim.token) catch |err| {
+                claim.deinit(self.allocator);
+                initialized_fields = 0;
+                return switch (err) {
+                    error.HumanOwned, error.InputBusy, error.NotReady => self.encodeClaimResult(.{ .denied = .{
+                        .owner = null,
+                        .diagnostic = @errorName(err),
+                    } }),
+                    else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
+                };
             };
             claim.next_sequence = resumed.next_sequence;
             self.active_claim = claim;
@@ -2509,12 +2522,16 @@ pub const HostCore = struct {
             return self.encodeClaimResult(.{ .granted = &self.active_claim.? });
         }
 
-        const granted = arbiter.claimAcquire(viewer_id, claim.token) catch |err| return switch (err) {
-            error.HumanOwned, error.HumanOrphaned, error.InputBusy => self.encodeClaimResult(.{ .denied = .{
-                .owner = null,
-                .diagnostic = @errorName(err),
-            } }),
-            else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
+        const granted = arbiter.claimAcquire(viewer_id, claim.token) catch |err| {
+            claim.deinit(self.allocator);
+            initialized_fields = 0;
+            return switch (err) {
+                error.HumanOwned, error.HumanOrphaned, error.InputBusy => self.encodeClaimResult(.{ .denied = .{
+                    .owner = null,
+                    .diagnostic = @errorName(err),
+                } }),
+                else => self.encodeClaimResult(.{ .unknown = @errorName(err) }),
+            };
         };
         claim.next_sequence = granted.next_sequence;
         self.active_claim = claim;
@@ -6268,6 +6285,25 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     try std.testing.expect(core.active_claim == null);
     try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
 
+    // Never-steal mutation: automation still cannot take an orphaned human lease.
+    const automation = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "automation-contender",
+        .kind = "automation",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-auto",
+    }, .{});
+    defer std.testing.allocator.free(automation);
+    const auto_denied = try core.claimInput(automation, "automation-contender", 3_500);
+    defer std.testing.allocator.free(auto_denied);
+    try std.testing.expect(std.mem.indexOf(u8, auto_denied, "\"state\":\"denied\"") != null or
+        std.mem.indexOf(u8, auto_denied, "\"state\":\"unknown\"") != null);
+    try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
+
     // Returning human (viewer-b as operator resume) is granted a new claim.
     const third = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
         .schemaVersion = @as(u8, 1),
@@ -6285,6 +6321,40 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     defer std.testing.allocator.free(resumed);
     try std.testing.expect(std.mem.indexOf(u8, resumed, "\"state\":\"granted\"") != null);
     try std.testing.expect(core.active_claim != null);
+    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
+
+    // Clean CLAIM_RELEASE → FREE; next human acquires without resume.
+    const token = core.active_claim.?.token;
+    const release_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .claimToken = token,
+        .kind = "cancel",
+    }, .{});
+    defer std.testing.allocator.free(release_payload);
+    const released = try core.releaseInput(release_payload, "viewer-b", 5_000);
+    defer std.testing.allocator.free(released);
+    try std.testing.expect(core.active_claim == null);
+    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
+
+    const fourth = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-c",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-c-clean",
+    }, .{});
+    defer std.testing.allocator.free(fourth);
+    const clean = try core.claimInput(fourth, "viewer-c", 6_000);
+    defer std.testing.allocator.free(clean);
+    try std.testing.expect(std.mem.indexOf(u8, clean, "\"state\":\"granted\"") != null);
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 }
 
