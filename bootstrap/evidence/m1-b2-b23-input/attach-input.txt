@@ -2,24 +2,24 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/14] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.57s)
-Test Suite 'Selected tests' started at 2026-07-19 20:48:56.271.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:48:56.282.
-Test Suite 'AttachInputTests' started at 2026-07-19 20:48:56.282.
+Build complete! (0.11s)
+Test Suite 'Selected tests' started at 2026-07-19 20:53:01.229.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:53:01.229.
+Test Suite 'AttachInputTests' started at 2026-07-19 20:53:01.229.
 Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' started.
-Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' passed (0.546 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' passed (0.153 seconds).
 Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' started.
-Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' passed (0.037 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' passed (0.016 seconds).
 Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' started.
-Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' passed (0.082 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' passed (0.016 seconds).
 Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' started.
-Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' passed (0.193 seconds).
-Test Suite 'AttachInputTests' passed at 2026-07-19 20:48:57.175.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.857 (0.893) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:48:57.175.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.857 (0.893) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 20:48:57.175.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 0.857 (0.904) seconds
+Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' passed (0.146 seconds).
+Test Suite 'AttachInputTests' passed at 2026-07-19 20:53:01.561.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.331 (0.331) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:53:01.561.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.331 (0.331) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 20:53:01.561.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.331 (0.332) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0

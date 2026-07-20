@@ -120,6 +120,50 @@ final class B23KittyStackMatrixTests: XCTestCase {
         )
     }
 
+    /// Query (`CSI ? u`) must report the flags currently on top of the stack.
+    /// Asserted as a round trip against the push depth rather than against a
+    /// pinned string: the reported value must TRACK what was pushed, so a
+    /// terminal that always answers a constant fails.
+    func testQueryReportsFlagsThatTrackThePushedStack() throws {
+        let baseline = try queryReply(afterModeProgram: [])
+        let pushedOne = try queryReply(afterModeProgram: ["\u{1B}[>1u"])
+        let popped = try queryReply(afterModeProgram: ["\u{1B}[>1u", "\u{1B}[<u"])
+
+        XCTAssertFalse(baseline.isEmpty, "CSI ? u must produce a reply")
+        XCTAssertNotEqual(
+            baseline, pushedOne,
+            "the query reply must change after a push; a constant answer "
+                + "cannot distinguish an active stack from an ignored one"
+        )
+        XCTAssertEqual(
+            popped, baseline,
+            "after a matching pop the query must report the baseline flags again"
+        )
+    }
+
+    /// Applies a mode program, then issues `CSI ? u` and returns the reply.
+    private func queryReply(afterModeProgram program: [String]) throws -> String {
+        let surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+        defer { surface.free() }
+
+        var seq: UInt64 = 0
+        for step in program {
+            let bytes = Data(step.utf8)
+            XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: seq), .success)
+            seq += UInt64(bytes.count)
+        }
+
+        let log = WriteLog()
+        surface.callbackContext.onWrite = { log.append($0) }
+        let query = Data("\u{1B}[?u".utf8)
+        XCTAssertEqual(surface.processOutput(bytes: query, streamSeq: seq), .success)
+
+        _ = drain(log, until: 1)
+        drainIdle(0.25)
+        let joined = log.snapshot().reduce(into: Data(), { $0.append($1) })
+        return String(decoding: joined, as: UTF8.self)
+    }
+
     // MARK: - Helpers
 
     private static func makeShiftEnterEvent() -> NSEvent {

@@ -12,12 +12,12 @@ Suites recorded at this pin (all unpiped; REAL_EXIT captured in each file):
 - mouse-mode-matrix.txt      6 tests, 0 failures  (NEW)
 - paste-boundary-matrix.txt  4 tests, 0 failures  (NEW)
 - unknown-retry-matrix.txt   2 tests, 0 failures  (NEW)
-- kitty-stack-matrix.txt     4 tests, 0 failures  (NEW)
+- kitty-stack-matrix.txt     5 tests, 0 failures  (NEW)
 - special-key-matrix.txt     4 tests, 0 failures  (NEW)
 - attach-input.txt           4 tests, 0 failures  (pre-existing, cited by row 1)
 - input-encoding.txt        48 tests, 0 failures  (pre-existing, cited by rows 3,5,6,11)
 - kitty-keyboard-golden.txt  5 tests, 0 failures  (pre-existing, cited by row 4)
-Total: 77 tests, 0 failures.
+Total: 78 tests, 0 failures.
 
 GAPS CLOSED BY THE NEW SUITES
 
@@ -35,8 +35,11 @@ GAPS CLOSED BY THE NEW SUITES
   not a dead clipboard reader.
 - Kitty stack: the pre-existing suite pinned PUSH only, so a terminal that
   latched Kitty mode permanently and ignored every pop passed it. Recorded
-  now: CSI < u restores the legacy golden, and two pushes require two pops
-  (a boolean masquerading as a stack fails).
+  now: CSI < u restores the legacy golden, two pushes require two pops (a
+  boolean masquerading as a stack fails), and CSI ? u reports flags that
+  TRACK the push — asserted as a round trip (baseline differs from pushed,
+  and a matching pop returns to baseline) so a terminal that answers a
+  constant fails.
 - Special keys: the four arrows are pinned to CSI A/B/C/D; every navigation
   and function key encodes a non-empty, mutually distinct sequence. Non-empty
   is precisely the assertion that would have caught this codebase's earlier

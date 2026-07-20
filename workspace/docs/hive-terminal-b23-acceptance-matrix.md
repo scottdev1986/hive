@@ -56,7 +56,7 @@ fake-host, and daemon-side arbiter) are recorded now.
 | 2 | no competing-writer steal | RECORDED | live-pty | `native/sessiond/test/real-host-golden.zig:817` — an `automation` contender against an incumbent human claim is `denied` and the reported owner token is the incumbent's. |
 | 2b | no automation-TIMEOUT steal | RECORDED (by construction) | source | `input_arbiter.zig` invents no timeouts (L9). `onVisibilityLeaseExpired` (L283-293) TERMINATES rather than releasing to automation; `claimAcquire` (L308-314) refuses from `human_owned`/`human_orphaned`. There is no timer that can release a human claim, so this is a structural property, not a timing test. See "Row 2b" below for why it is recorded this way. |
 | 3 | keys | RECORDED (new) | encoder | Ctrl chord `InputEncodingTests.swift:325`; Option mapping `:205`; press/repeat/release `:818-868`. NEW `B23SpecialKeyMatrixTests.swift` pins the four arrows to `CSI A/B/C/D` and asserts every navigation/function key (Home, End, PageUp/Down, forward Delete, F1/F2/F5/F12) encodes a NON-EMPTY and MUTUALLY DISTINCT sequence. See "Row 3" below for why the non-arrow keys are not pinned to byte goldens. |
-| 4 | Kitty progressive modes | RECORDED (new) | encoder | `KittyKeyboardGoldenTests.swift:148` (`CSI > 1 u` -> `\x1b[13;2u`) pins PUSH only — a terminal that latched Kitty mode permanently and ignored every pop passed that suite. NEW `B23KittyStackMatrixTests.swift` adds pop (`CSI < u` restores the legacy golden) and stack nesting (two pushes need two pops). Query (`CSI ? u`) remains unrecorded. |
+| 4 | Kitty progressive modes | RECORDED (new) | encoder | `KittyKeyboardGoldenTests.swift:148` (`CSI > 1 u` -> `\x1b[13;2u`) pins PUSH only — a terminal that latched Kitty mode permanently and ignored every pop passed that suite. NEW `B23KittyStackMatrixTests.swift` adds pop (`CSI < u` restores the legacy golden), stack nesting (two pushes need two pops), and query (`CSI ? u` reports flags that TRACK the push, asserted as a round trip so a terminal answering a constant fails). |
 | 5 | dead key | RECORDED | encoder | `InputEncodingTests.swift:516` — real surface, `´` -> `é` committed byte-exactly once; choreography at `:487`. |
 | 6 | CJK IME | RECORDED | encoder | `InputEncodingTests.swift:516` — multi-stage `日`/`日本` preedit writes nothing, then commits exactly `日本語`. |
 | 7 | bracketed paste | RECORDED (new) | encoder | `Gate8ClipboardTests.swift:43` pins the SET direction. NEW `B23PasteBoundaryMatrixTests.swift` adds the RESET direction (`?2004l` stops bracketing while a safe single-line body still reaches the encoder verbatim) and asserts exactly one marker pair on set. Without the reset row, a build that bracketed unconditionally passed. |
@@ -167,7 +167,7 @@ whose false pass would be most damaging were mutated and reverted:
 
 ## Evidence bundle
 
-`bootstrap/evidence/m1-b2-b23-input/` — 77 tests, 0 failures across eight
+`bootstrap/evidence/m1-b2-b23-input/` — 78 tests, 0 failures across eight
 suites, each recorded unpiped with its own `REAL_EXIT`, plus
 `evidence-sha256.txt` (excludes itself; `.txt` because `*.log` is gitignored
 at `.gitignore:38` and would not survive a fresh checkout). Regenerate with
@@ -180,8 +180,8 @@ non-empty and distinct), 4 (Kitty pop and stack nesting), 7 and 7b (DEC 2004
 reset and safe paste), 8 (mouse encodings and Shift override), 10
 (client-side unknown semantics).
 
-Defect-independent work still open: the Kitty query (`CSI ? u`) reply, which
-needs a surface with terminal replies enabled.
+No defect-independent rows remain open. Everything still outstanding is held
+on the live-PTY sequencing below.
 
 HELD pending hattie + henry landing on main: row 9 end-to-end Retina resize
 with observed SIGWINCH delivery, and live-PTY byte round-trips for rows 3-7 and

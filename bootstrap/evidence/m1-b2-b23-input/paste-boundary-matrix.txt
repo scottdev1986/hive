@@ -2,24 +2,24 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/14] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.10s)
-Test Suite 'Selected tests' started at 2026-07-19 20:48:25.931.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:48:25.931.
-Test Suite 'B23PasteBoundaryMatrixTests' started at 2026-07-19 20:48:25.931.
+Build complete! (0.18s)
+Test Suite 'Selected tests' started at 2026-07-19 20:52:42.969.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:52:42.969.
+Test Suite 'B23PasteBoundaryMatrixTests' started at 2026-07-19 20:52:42.969.
 Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetEmitsSafeBodyWithoutMarkers]' started.
-Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetEmitsSafeBodyWithoutMarkers]' passed (0.327 seconds).
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetEmitsSafeBodyWithoutMarkers]' passed (0.310 seconds).
 Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetWithholdsUnsafeMultilineBody]' started.
-Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetWithholdsUnsafeMultilineBody]' passed (2.547 seconds).
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetWithholdsUnsafeMultilineBody]' passed (2.543 seconds).
 Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteSetWrapsOnlyTheBodyInExactlyOnePair]' started.
-Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteSetWrapsOnlyTheBodyInExactlyOnePair]' passed (0.261 seconds).
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteSetWrapsOnlyTheBodyInExactlyOnePair]' passed (0.265 seconds).
 Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testPositiveControlDefaultStateIsUnbracketedThroughSameReader]' started.
-Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testPositiveControlDefaultStateIsUnbracketedThroughSameReader]' passed (2.564 seconds).
-Test Suite 'B23PasteBoundaryMatrixTests' passed at 2026-07-19 20:48:31.630.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 5.699 (5.699) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:48:31.631.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 5.699 (5.699) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 20:48:31.631.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 5.699 (5.700) seconds
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testPositiveControlDefaultStateIsUnbracketedThroughSameReader]' passed (2.546 seconds).
+Test Suite 'B23PasteBoundaryMatrixTests' passed at 2026-07-19 20:52:48.633.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 5.663 (5.664) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:52:48.633.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 5.663 (5.664) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 20:52:48.633.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 5.663 (5.665) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0

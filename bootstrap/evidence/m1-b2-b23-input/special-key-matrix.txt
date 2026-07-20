@@ -2,24 +2,24 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/14] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (1.22s)
-Test Suite 'Selected tests' started at 2026-07-19 20:48:42.786.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:48:42.787.
-Test Suite 'B23SpecialKeyMatrixTests' started at 2026-07-19 20:48:42.787.
+Build complete! (0.12s)
+Test Suite 'Selected tests' started at 2026-07-19 20:52:53.449.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:52:53.450.
+Test Suite 'B23SpecialKeyMatrixTests' started at 2026-07-19 20:52:53.450.
 Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testArrowKeysEncodePinnedCursorSequences]' started.
-Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testArrowKeysEncodePinnedCursorSequences]' passed (1.824 seconds).
+Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testArrowKeysEncodePinnedCursorSequences]' passed (1.122 seconds).
 Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testNavigationAndFunctionKeysAllEncodeNonEmptySequences]' started.
-Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testNavigationAndFunctionKeysAllEncodeNonEmptySequences]' passed (2.511 seconds).
+Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testNavigationAndFunctionKeysAllEncodeNonEmptySequences]' passed (2.374 seconds).
 Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testPositiveControlPrintableKeyIsObservableThroughSameReader]' started.
-Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testPositiveControlPrintableKeyIsObservableThroughSameReader]' passed (0.290 seconds).
+Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testPositiveControlPrintableKeyIsObservableThroughSameReader]' passed (0.265 seconds).
 Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testSpecialKeysEncodeMutuallyDistinctSequences]' started.
-Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testSpecialKeysEncodeMutuallyDistinctSequences]' passed (3.817 seconds).
-Test Suite 'B23SpecialKeyMatrixTests' passed at 2026-07-19 20:48:51.230.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 8.442 (8.443) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:48:51.230.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 8.442 (8.443) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 20:48:51.230.
-	 Executed 4 tests, with 0 failures (0 unexpected) in 8.442 (8.444) seconds
+Test Case '-[HiveTerminalKitTests.B23SpecialKeyMatrixTests testSpecialKeysEncodeMutuallyDistinctSequences]' passed (3.433 seconds).
+Test Suite 'B23SpecialKeyMatrixTests' passed at 2026-07-19 20:53:00.643.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 7.193 (7.194) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:53:00.643.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 7.193 (7.194) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 20:53:00.643.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 7.193 (7.194) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
