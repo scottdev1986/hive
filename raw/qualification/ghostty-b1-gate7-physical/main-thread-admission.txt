@@ -1,0 +1,1 @@
+{"createOnMain":true,"freeOnMain":true,"layerClass":"IOSurfaceLayer","mainThread":true,"pid":19148,"presentObservedOnMain":true,"scope":"AppKit/Metal main-thread proof deferred from Gate 3 row E","stage":"main-thread-admission"}

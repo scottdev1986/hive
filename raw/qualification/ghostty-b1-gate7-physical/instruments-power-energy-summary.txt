@@ -1,0 +1,51 @@
+template=Activity Monitor
+exit_status=0
+trace=/Users/scottkellar/Projects/hive/.hive/worktrees/hilda/raw/qualification/ghostty-b1-gate7-physical/instruments-power-energy.trace
+captured_at=2026-07-20T00:40:08Z
+trace_bytes=6483968
+trace_kind=package_directory
+trace_listing_sha256=b5dbf316724487766abe88421c925dab908eadd7da439317d0bbfc5f1cedd679
+toc_export=ok
+<?xml version="1.0"?>
+
+<trace-toc>
+    <run number="1">
+        <info>
+            <target>
+                <device platform="macOS" model="MacBook Pro" name="MacBook Pro" os-version="26.3.1 (25D2128)" uuid="FEAE66E1-B0BA-50C3-989F-078B2B7CEA3A"/>
+                <process type="launched" return-exit-status="0" name="GhosttyGate7Probe" pid="24073" termination-reason="exit(0)"/>
+            </target>
+            <summary>
+                <start-date>2026-07-19T20:39:59.351-04:00</start-date>
+                <end-date>2026-07-19T20:40:05.977-04:00</end-date>
+                <duration>6.626495</duration>
+                <end-reason>Target app exited</end-reason>
+                <instruments-version>16.0 (17F113)</instruments-version>
+                <template-name>Activity Monitor</template-name>
+                <recording-mode>Deferred</recording-mode>
+                <time-limit>2 minutes</time-limit>
+            </summary>
+        </info>
+        <processes>
+            <process name="GhosttyGate7Probe" pid="24073" path="/var/folders/4v/r7dmc5gn00l0f70jj65h4w0c0000gn/T//hive-ghostty-gate7.6Kop9E/build-plain/arm64-apple-macosx/debug/GhosttyGate7Probe"/>
+            <process name="kernel" pid="0" path="/System/Library/Kernels/kernel.release.t6041"/>
+        </processes>
+        <data>
+            <table schema="sysmon-system" documentation="A raw system statastics update."/>
+            <table schema="activity-monitor-process-ledger" target-pid="SINGLE" documentation="Tracks the historic updates of process activity at a given point in time."/>
+            <table schema="tick" frequency="10" documentation="Provides modelers with a regular reference time for modeling fixed time-based statistics. The ticks are evenly spaced with a configurable frequency specifying the number of events to generate per second, so a tick schema with a frequency of 10 will generate a row every 100ms."/>
+            <table schema="device-thermal-state-intervals" documentation="Denotes the current thermal state of the device."/>
+            <table schema="dyld-library-load" target-pid="SINGLE"/>
+            <table codes="&quot;0x1f,0x05&quot;" target="SINGLE" schema="kdebug-strings" documentation="Associates numeric arguments with strings in kdebug trace points."/>
+            <table schema="activity-monitor-process-live" target-pid="SINGLE" documentation="Tracks the most accurate totals of process activity at a given interval in time."/>
+            <table codes="&quot;0x07,0x00&quot; &quot;0x1f,0x05&quot;" target="SINGLE" schema="kdebug" documentation="Tracing the kernel and some system frameworks."/>
+            <table codes="&quot;0x2b,0x65&quot;" schema="kdebug" documentation="Tracing the kernel and some system frameworks."/>
+            <table schema="os-signpost" category="InduceCondition" subsystem="&quot;com.apple.ConditionInducer.LowSeverity&quot;" documentation="Holds a signpost event from the OS's Unified Logging and Tracing component."/>
+            <table schema="process-info" documentation="Associates processes with their process names."/>
+            <table schema="thread-info" documentation="Associates threads with their owning process."/>
+            <table schema="sysmon-process" target-pid="SINGLE" documentation="A raw process statistic update message."/>
+            <table schema="activity-monitor-system" target-pid="SINGLE" documentation="Helps determine the how the target device is behaving at the system level."/>
+        </data>
+        <tracks/>
+    </run>
+</trace-toc>--- xctrace stderr ---

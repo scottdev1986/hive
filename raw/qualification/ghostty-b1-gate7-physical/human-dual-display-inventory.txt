@@ -1,0 +1,2 @@
+STATUS=PENDING_HUMAN
+slot=human-dual-display-inventory.txt

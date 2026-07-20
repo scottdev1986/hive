@@ -1,0 +1,85 @@
+Gate 7 physical — HUMAN-REQUIRED checklist
+==========================================
+Pin/runner: scripts/qualify-ghostty-gate7-physical.sh
+Evidence dir: raw/qualification/ghostty-b1-gate7-physical/
+Evidence format: .txt (never .log). Drop each capture into the named slot.
+
+Prereqs
+-------
+[ ] Mac with ONE Retina and ONE non-Retina display both online (not mirrored).
+[ ] Unlocked GUI session; Displays preference shows both as extended desktop.
+[ ] Repo at the Gate 7 pin; GhosttyKit artifact bound (re-run the qualify script
+    first if unsure — it rewrites machine slots and preserves human slots that
+    are already filled).
+[ ] Debug-vs-ReleaseFast: if you also attach a live sessiond terminal, build
+    modes MUST match or the M3 fence fails by design. Pure probe/xctest is fine.
+
+A. Dual-display Retina ↔ non-Retina drag
+---------------------------------------
+1. Capture inventory into slot: human-dual-display-inventory.txt
+     system_profiler SPDisplaysDataType > raw/qualification/ghostty-b1-gate7-physical/human-dual-display-inventory.txt
+   Accept only if BOTH displays are Online, Mirror: Off, and scales differ
+   (Retina contentsScale 2.x vs non-Retina 1.x).
+
+2. From workspace/, run the opt-in XCTest (do NOT background it):
+     cd workspace
+     HIVE_GHOSTTY_GATE7_PHYSICAL=1 \
+     swift test --filter Gate7RenderingTests/testPhysicalMonitorScaleAndSleepWakeQualification
+   (Omit HIVE_GHOSTTY_GATE7_PHYSICAL_SLEEP here; sleep is section B.)
+
+3. When the test prints:
+     GATE7 PHYSICAL: drag the qualification window to the other-scale display
+   drag the titled window fully onto the other display within 120s.
+   Confirm the test continues (display ID + content scale both change; idle
+   frame silence for 2s; drawable size == convertToBacking).
+
+4. Capture the full swift test transcript into:
+     human-dual-display-transcript.txt
+   Replace the PENDING_HUMAN placeholder. Include exit status.
+
+Pass criteria:
+  * transcript ends with test passed
+  * inventory shows two displays with different scale
+  * transcript contains a changed display identity / scale observation
+
+B. Sleep / wake
+---------------
+1. Same machine, still dual-display if available.
+2. Run:
+     cd workspace
+     HIVE_GHOSTTY_GATE7_PHYSICAL=1 \
+     HIVE_GHOSTTY_GATE7_PHYSICAL_SLEEP=1 \
+     swift test --filter Gate7RenderingTests/testPhysicalMonitorScaleAndSleepWakeQualification
+3. Complete the dual-display drag when prompted, then when it prints:
+     GATE7 PHYSICAL: sleep and wake the Mac now
+   put the Mac to sleep (Apple menu → Sleep, or close clamshell only if the
+   external display keeps the session alive — prefer full system sleep), wait
+   ≥5s, wake, unlock if needed. The test waits up to 600s for
+   wakeTransitionCount to increment and occlusion to re-apply as visible.
+4. Capture the full transcript into:
+     human-sleep-wake-transcript.txt
+
+Pass criteria:
+  * wakeTransitionCount advanced (test assertion)
+  * applied occlusion visible after wake
+  * no crash / no hung draw path
+
+C. Optional: attach Instruments during human drag
+-------------------------------------------------
+If queen asks for Instruments on the multi-display path specifically:
+  1. Start Instruments (Time Profiler + Allocations + Power Profiler) against
+     the running xctest/HiveTerminalKitTests process during the drag and sleep.
+  2. Export run notes as additional .txt beside the transcripts (do not use
+     .log). Name them instruments-human-*.txt.
+
+What you do NOT need to invent
+------------------------------
+  * A CAMetalLayer or device-recreation API — see gpu-device-fault-scope.txt.
+  * Concurrent surface creation (global-singleton race; can null).
+  * SIGKILL of a live surface test (leaks GPU resources). Tear down cleanly.
+
+When all human slots no longer say STATUS=PENDING_HUMAN, re-run:
+  (cd raw/qualification/ghostty-b1-gate7-physical && /usr/bin/shasum -a 256 \
+     $(/usr/bin/find . -type f ! -name evidence-sha256.txt ! -name '*.trace' | /usr/bin/sort) \
+     > evidence-sha256.txt)
+and tell queen the human rows are filled for cross-vendor review.

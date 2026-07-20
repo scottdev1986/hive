@@ -15,6 +15,7 @@ let package = Package(
         .library(name: "HiveTerminalKit", targets: ["HiveTerminalKit"]),
         .executable(name: "GhosttyManualIsolationProbe", targets: ["GhosttyManualIsolationProbe"]),
         .executable(name: "GhosttyGate3Probe", targets: ["GhosttyGate3Probe"]),
+        .executable(name: "GhosttyGate7Probe", targets: ["GhosttyGate7Probe"]),
         .executable(name: "GhosttyGate10Probe", targets: ["GhosttyGate10Probe"]),
         .executable(name: "HiveTerminalB20Probe", targets: ["HiveTerminalB20Probe"]),
     ],
@@ -114,6 +115,21 @@ let package = Package(
             name: "GhosttyGate3Probe",
             dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
             path: "Tests/GhosttyGate3Probe"
+        ),
+        .executableTarget(
+            name: "GhosttyGate7Probe",
+            dependencies: ["HiveTerminalKit", "HiveGhosttyC"],
+            path: "Tests/GhosttyGate7Probe",
+            linkerSettings: [
+                .linkedFramework("AppKit"),
+                .linkedFramework("Metal"),
+                .linkedFramework("QuartzCore"),
+                .linkedFramework("CoreGraphics"),
+                .linkedFramework("CoreText"),
+                .linkedFramework("Carbon"),
+                .linkedFramework("IOKit"),
+                .linkedLibrary("c++"),
+            ]
         ),
         .executableTarget(
             name: "GhosttyGate10Probe",

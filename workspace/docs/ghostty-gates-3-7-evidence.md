@@ -1,9 +1,16 @@
 # Ghostty manual surface — Gates 3 and 7 qualification evidence
 
 Status: implementation and automated live-engine corpus green on the authoring
-host; frozen-pin physical review is still required for the two-display,
-real-sleep, GPU-fault, and Instruments rows. This document deliberately does
-not turn a simulated notification or a one-display machine into physical proof.
+host. Automatable physical-slice evidence is attached at
+`raw/qualification/ghostty-b1-gate7-physical/` (runner
+`scripts/qualify-ghostty-gate7-physical.sh`, prose
+`workspace/docs/ghostty-gate7-physical-live-proof.md`): Instruments (Time
+Profiler, Allocations, Activity Monitor energy-adjacent, Leaks), serial rapid
+churn, occlusion window-ordering attempt, AppKit/Metal main-thread admission,
+and GPU-fault honesty scope. Human dual-display Retina/non-Retina drag and
+real sleep/wake remain OPEN (`STATUS=PENDING_HUMAN` slots). This document
+deliberately does not turn a simulated notification or a one-display machine
+into dual-display or sleep proof.
 
 ## Primary-source contract
 
@@ -153,8 +160,31 @@ than being suppressed into a leak pass.
 
 ## Frozen-pin physical review hold
 
-Run the default corpus first. Then, on a Mac with one Retina and one non-Retina
-display, run:
+### Automatable slice — GREEN (attached)
+
+Runner: `scripts/qualify-ghostty-gate7-physical.sh`  
+Evidence: `raw/qualification/ghostty-b1-gate7-physical/`  
+Prose: `workspace/docs/ghostty-gate7-physical-live-proof.md`
+
+| Item | Slot / artifact | Status |
+|---|---|---|
+| Gate7RenderingTests corpus | `corpus-gate7.txt` | GREEN (16 exec, 1 physical skip, 0 fail) |
+| AppKit/Metal main-thread (Gate 3 row E handoff) | `main-thread-admission.txt` | GREEN |
+| Idle / live-resize / serial rapid-churn | protocol + `rapid-churn.txt` | GREEN (20 serial cycles; no SIGKILL) |
+| Occlusion via window ordering | `occlusion-window-ordering.txt` | ATTEMPTED (AppKit bit did not flip on this desktop; controlled-occlusion corpus still covers host gate) |
+| Instruments Time Profiler | `instruments-time-profiler-summary.txt` | GREEN (probe exit 0 under xctrace) |
+| Instruments Allocations | `instruments-allocations-summary.txt` | GREEN |
+| Instruments Energy (Mac) | `instruments-power-energy-summary.txt` | GREEN via **Activity Monitor** — Power Profiler is iOS/iPadOS-only on this Xcode (measured) |
+| Instruments Leaks | `instruments-leaks-summary.txt` | GREEN |
+| GPU/device-fault recovery | `gpu-device-fault-scope.txt` | HOST_CONTRACT GREEN; HARDWARE_FAULT / B2 replacement OPEN (no device-recreation API; IOSurfaceLayer not CAMetalLayer) |
+| Debug↔ReleaseFast fence note | `engine-fence-note.txt` | recorded (sessiond-coupled runs only) |
+
+### Human-required slice — OPEN
+
+Scripted checklist (exact steps + capture slots):
+`raw/qualification/ghostty-b1-gate7-physical/human-checklist.txt`
+
+On a Mac with one Retina and one non-Retina display, run:
 
 ```sh
 cd workspace
@@ -169,16 +199,12 @@ backing pixel size, reported geometry, and two seconds of idle frame silence,
 then waits for a real sleep/wake transition. Default CI skips this test instead
 of manufacturing the missing hardware state.
 
-The frozen-pin reviewer must additionally retain:
+| Human slot | Capture |
+|---|---|
+| `human-dual-display-inventory.txt` | `system_profiler SPDisplaysDataType` with two online non-mirrored displays of different scale |
+| `human-dual-display-transcript.txt` | full opt-in swift test transcript after successful drag |
+| `human-sleep-wake-transcript.txt` | full opt-in transcript with `PHYSICAL_SLEEP=1` after real sleep/wake |
 
-1. the two-display `system_profiler` inventory and the opt-in test transcript;
-2. Instruments Time Profiler/Energy evidence while idle, live resizing,
-   minimized, occluded, and after wake;
-3. Allocations/Address Sanitizer evidence across multi-surface and rapid
-   create/free;
-4. an actual GPU/device fault or supported hardware-disconnect run showing a
-   surface-scoped UNHEALTHY transition, suspended draws, and either HEALTHY
-   recovery or the documented B2 checkpoint/replay replacement path.
-
-Until those artifacts are attached to the frozen commit, the physical F/I
-matrix rows are **not green** and this branch must not land.
+Until the human slots no longer say `STATUS=PENDING_HUMAN`, dual-display and
+real-sleep rows of the physical F/I matrix are **not fully green**. HOLD for
+cross-vendor review — do not land until queen clears.

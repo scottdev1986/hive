@@ -1,0 +1,22 @@
+captured_at=2026-07-20T00:38:35Z
+screen_count_nsscreen_note=see probe bootstrap stage
+Graphics/Displays:
+
+    Apple M4 Max:
+
+      Chipset Model: Apple M4 Max
+      Type: GPU
+      Bus: Built-In
+      Total Number of Cores: 40
+      Vendor: Apple (0x106b)
+      Metal Support: Metal 4
+      Displays:
+        Color LCD:
+          Display Type: Built-in Liquid Retina XDR Display
+          Resolution: 3456 x 2234 Retina
+          Main Display: Yes
+          Mirror: Off
+          Online: Yes
+          Automatically Adjust Brightness: No
+          Connection Type: Internal
+

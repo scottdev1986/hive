@@ -1,0 +1,35 @@
+Gate 7 GPU / device-fault recovery — honesty scope
+==================================================
+
+Pinned engine fact (upstream 73534c4680a809398b396c94ac7f12fcccb7963d):
+  * Ghostty's Metal renderer installs its own IOSurface-backed CALayer on the
+    supplied NSView (src/renderer/Metal.zig). It is NOT a CAMetalLayer host.
+  * The public/bridge surface exposes NO device-recreation API.
+  * Therefore a local "recreate MTLDevice and rebuild the layer" path cannot
+    be invented in HiveTerminalKit without forking Ghostty's renderer.
+
+What IS provable (and is proven in this evidence package):
+  1. Host contract for renderer health (Gate7RenderingTests):
+       - UNHEALTHY suspends frame submission
+       - HEALTHY resynchronizes + refresh and presents at most one pending frame
+       - health actions are surface-scoped (one surface unhealthy does not
+         affect a sibling)
+  2. Host suspension gates: closed / unhealthy / sleep / zero-size / occluded
+     retain at most one pending frame and submit none until recovery.
+  3. Layer type is the real IOSurfaceLayer Ghostty installs (not a fabricated
+     CAMetalLayer).
+
+What is NOT provable without hardware + B2 orchestration:
+  1. An actual GPU/device fault or forced hardware-disconnect event that
+     originates inside Ghostty's Metal stack.
+  2. In-process device recreation at the view layer (API does not exist).
+  3. Full surface replacement: that is the agreed Gate 6/B2 path —
+       close old-surface admission → create fresh same-architecture surface →
+       atomically restore sessiond's last exported checkpoint → replay retained
+       output from checkpoint through_seq → reconcile geometry/config → first
+       fully restored frame. The dying surface has no checkpoint-export API.
+
+STATUS for matrix row "GPU/device-fault recovery":
+  HOST_CONTRACT = GREEN (automated)
+  HARDWARE_FAULT_OR_B2_REPLACEMENT = OPEN (human/hardware + Gate 6 ownership)
+  This file deliberately refuses to mark the hardware row green.

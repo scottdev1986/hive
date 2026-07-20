@@ -1,0 +1,2 @@
+STATUS=PENDING_HUMAN
+slot=human-sleep-wake-transcript.txt

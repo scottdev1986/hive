@@ -1,0 +1,3 @@
+# Binary Instruments captures stay local; text summaries + sha of the trace
+# are committed. Re-generate with scripts/qualify-ghostty-gate7-physical.sh.
+*.trace

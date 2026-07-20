@@ -1,0 +1,4 @@
+rule=Debug-vs-ReleaseFast engine fence
+scope=sessiond host attach paths (M3); pure Gate7 renderer probe does not cross the fence
+requirement=when a later Gate7 run attaches through sessiond, sessiond and renderer build modes must match (both Debug or both ReleaseFast) or the fence fails closed by design
+this_run=probe+xctest only; no sessiond attach
