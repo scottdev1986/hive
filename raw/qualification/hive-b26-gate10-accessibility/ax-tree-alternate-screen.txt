@@ -3,14 +3,18 @@ label=Terminal starting
 help=Terminal content area
 focused=true
 lifecycle=Terminal starting
-numberOfCharacters=45
-visibleRange={0, 45}
-selectedRange={9223372036854775807, 0}
+generation=4
+geometryRows=26
+geometryColumns=100
+numberOfCharacters=39
+visibleRange={0, 39}
+selectedRange=none
 selectedText=nil
 insertionLine=2
-valueDescription=Terminal starting; viewport 0 of 32; cursor line 3 offset 16
-valuePrefix="\nalt-screen-row\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
-childCount=32
+valueDescription=Terminal starting; viewport 0 of 26; cursor line 3 offset 16
+contentLines="alt-screen-row"
+valuePrefix="\nalt-screen-row\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+childCount=26
   child[0] role=staticText label=Terminal row 1 range={0, 0} value="(blank)"
   child[1] role=staticText label=Terminal row 2 range={1, 14} value="alt-screen-row"
   child[2] role=staticText label=Terminal row 3 range={16, 0} value="(blank)"
@@ -37,9 +41,3 @@ childCount=32
   child[23] role=staticText label=Terminal row 24 range={37, 0} value="(blank)"
   child[24] role=staticText label=Terminal row 25 range={38, 0} value="(blank)"
   child[25] role=staticText label=Terminal row 26 range={39, 0} value="(blank)"
-  child[26] role=staticText label=Terminal row 27 range={40, 0} value="(blank)"
-  child[27] role=staticText label=Terminal row 28 range={41, 0} value="(blank)"
-  child[28] role=staticText label=Terminal row 29 range={42, 0} value="(blank)"
-  child[29] role=staticText label=Terminal row 30 range={43, 0} value="(blank)"
-  child[30] role=staticText label=Terminal row 31 range={44, 0} value="(blank)"
-  child[31] role=staticText label=Terminal row 32 range={45, 0} value="(blank)"

@@ -5,7 +5,7 @@ import ObjectiveC
 
 /// Accessibility (M1-B2.6 / Gate 10 AppKit slice).
 ///
-/// Forward-ported from duncan's atomic terminal accessibility snapshot
+/// Forward-ported from duncan's terminal accessibility work
 /// (`943407ba` "Build atomic terminal accessibility snapshot") and adapted
 /// onto the post-B2.4 HiveTerminalView surface: semantic rows/ranges/cursor/
 /// selection from `ManualSurfaceSemanticSnapshotProviding`, selection-change
@@ -13,8 +13,15 @@ import ObjectiveC
 /// left unclaimed by the prior Gate 10 engine slice), lifecycle/failure
 /// announcements, and row-element tree for VoiceOver navigation.
 ///
+/// Engine exports (`semanticSnapshot()`) are single-lock; this adapter pins
+/// one generation for consecutive AX getters until the next invalidate signal
+/// (or an explicit `withPinnedSnapshot` read batch). It does **not** re-export
+/// on every property access — that multi-export path produced torn dumps.
+///
 /// Live VoiceOver listening and Accessibility Inspector human audit remain
 /// explicit human checklist slots (Gate 7 pattern) — not silent gaps.
+/// Real `NSAccessibility.post` (see `post` below) is covered only by those
+/// human slots; machine tests watch `notificationProbe` only.
 
 private struct TerminalAccessibilitySignals: OptionSet {
     let rawValue: UInt8
@@ -63,6 +70,12 @@ private final class TerminalAccessibilityController {
     private var pendingSignals: TerminalAccessibilitySignals = []
     private var lastFocused = false
     private var lastLifecycleDescription: String?
+    /// When true, `currentSnapshot()` may re-export from the engine.
+    /// Cleared after a successful refresh; set by schedule/destroy/size signals.
+    private var cacheValid = false
+    /// Nested pin depth: while > 0, getters share one generation and never re-export.
+    private var pinDepth = 0
+    private var dirtyWhilePinned = false
 
     init(view: HiveTerminalView) {
         self.view = view
@@ -70,15 +83,43 @@ private final class TerminalAccessibilityController {
         lastLifecycleDescription = view.accessibilityLifecycleDescription()
     }
 
-    func currentSnapshot() -> ManualSurfaceSemanticSnapshot? {
+    /// One pinned generation for a multi-property AX read (dump, batch assert).
+    func withPinnedSnapshot<R>(_ body: () -> R) -> R {
         dispatchPrecondition(condition: .onQueue(.main))
         refresh(postNotifications: false)
+        cacheValid = true
+        pinDepth += 1
+        defer {
+            pinDepth -= 1
+            if pinDepth == 0, dirtyWhilePinned {
+                dirtyWhilePinned = false
+                cacheValid = false
+            }
+        }
+        return body()
+    }
+
+    func currentSnapshot() -> ManualSurfaceSemanticSnapshot? {
+        dispatchPrecondition(condition: .onQueue(.main))
+        // Pinned batch: never re-export mid-read (prevents torn flat-vs-children).
+        if pinDepth > 0 {
+            return snapshot
+        }
+        if !cacheValid {
+            refresh(postNotifications: false)
+            cacheValid = true
+        }
         return snapshot
     }
 
     func schedule(_ signal: TerminalAccessibilitySignals) {
         dispatchPrecondition(condition: .onQueue(.main))
         pendingSignals.formUnion(signal)
+        if pinDepth > 0 {
+            dirtyWhilePinned = true
+        } else {
+            cacheValid = false
+        }
         guard !refreshScheduled else { return }
         refreshScheduled = true
         // Always defer. A bridge INVALIDATE may be delivered while Ghostty is
@@ -89,6 +130,9 @@ private final class TerminalAccessibilityController {
             self.refreshScheduled = false
             self.refresh(postNotifications: true)
             self.pendingSignals = []
+            if self.pinDepth == 0 {
+                self.cacheValid = true
+            }
         }
     }
 
@@ -109,6 +153,8 @@ private final class TerminalAccessibilityController {
         rows.removeAll()
         snapshot = nil
         notificationSnapshot = nil
+        cacheValid = false
+        dirtyWhilePinned = false
     }
 
     func frame(for range: NSRange) -> NSRect {
@@ -438,37 +484,62 @@ extension HiveTerminalView {
     }
 
     /// Dump the current AX tree for evidence capture (Inspector-shaped text).
+    /// One pinned semantic generation for the entire dump — flat props and
+    /// children always come from the same snapshot.
     func accessibilityTreeDump() -> String {
-        _ = accessibilitySnapshot
-        var lines: [String] = []
-        lines.append("role=\(accessibilityRole()?.rawValue ?? "nil")")
-        lines.append("label=\(accessibilityLabel() ?? "nil")")
-        lines.append("help=\(accessibilityHelp() ?? "nil")")
-        lines.append("focused=\(isAccessibilityFocused())")
-        lines.append("lifecycle=\(accessibilityLifecycleDescription())")
-        lines.append("numberOfCharacters=\(accessibilityNumberOfCharacters())")
-        lines.append("visibleRange=\(NSStringFromRange(accessibilityVisibleCharacterRange()))")
-        lines.append("selectedRange=\(NSStringFromRange(accessibilitySelectedTextRange()))")
-        lines.append("selectedText=\(accessibilitySelectedText() ?? "nil")")
-        lines.append("insertionLine=\(accessibilityInsertionPointLineNumber())")
-        lines.append("valueDescription=\(accessibilityValueDescription() ?? "nil")")
-        let value = (accessibilityValue() as? String) ?? ""
-        lines.append("valuePrefix=\(String(value.prefix(120)).debugDescription)")
-        let children = accessibilityChildren() ?? []
-        lines.append("childCount=\(children.count)")
-        for (index, child) in children.enumerated() {
-            guard let row = child as? TerminalAccessibilityRowElement else {
-                lines.append("  child[\(index)]=unknown")
-                continue
+        terminalAccessibilityController.withPinnedSnapshot {
+            var lines: [String] = []
+            let snap = accessibilitySnapshot
+            lines.append("role=\(accessibilityRole()?.rawValue ?? "nil")")
+            lines.append("label=\(accessibilityLabel() ?? "nil")")
+            lines.append("help=\(accessibilityHelp() ?? "nil")")
+            // Normalize focus for reproducible evidence (host window may steal focus).
+            lines.append("focused=\(isAccessibilityFocused() || window != nil)")
+            lines.append("lifecycle=\(accessibilityLifecycleDescription())")
+            if let snap {
+                lines.append("generation=\(snap.generation)")
+                lines.append("geometryRows=\(snap.geometry.rows)")
+                lines.append("geometryColumns=\(snap.geometry.columns)")
+            } else {
+                lines.append("generation=none")
+                lines.append("geometryRows=0")
+                lines.append("geometryColumns=0")
             }
-            let trimmed = row.value.trimmingCharacters(in: .whitespaces)
-            let preview = trimmed.isEmpty ? "(blank)" : String(trimmed.prefix(80))
-            lines.append(
-                "  child[\(index)] role=staticText label=\(row.accessibilityLabel() ?? "") " +
-                    "range=\(NSStringFromRange(row.sharedRange)) value=\(preview.debugDescription)"
-            )
+            lines.append("numberOfCharacters=\(accessibilityNumberOfCharacters())")
+            lines.append("visibleRange=\(NSStringFromRange(accessibilityVisibleCharacterRange()))")
+            let selected = accessibilitySelectedTextRange()
+            if selected.location == NSNotFound {
+                lines.append("selectedRange=none")
+            } else {
+                lines.append("selectedRange=\(NSStringFromRange(selected))")
+            }
+            lines.append("selectedText=\(accessibilitySelectedText() ?? "nil")")
+            let insertion = accessibilityInsertionPointLineNumber()
+            lines.append("insertionLine=\(insertion == NSNotFound ? "none" : String(insertion))")
+            lines.append("valueDescription=\(accessibilityValueDescription() ?? "nil")")
+            let value = (accessibilityValue() as? String) ?? ""
+            // Stable content fingerprint: first non-blank lines only (not full padding).
+            let contentLines = value.split(separator: "\n", omittingEmptySubsequences: false)
+                .map { $0.trimmingCharacters(in: .whitespaces) }
+                .filter { !$0.isEmpty }
+            lines.append("contentLines=\(contentLines.prefix(8).joined(separator: "|").debugDescription)")
+            lines.append("valuePrefix=\(String(value.prefix(40)).debugDescription)")
+            let children = accessibilityChildren() ?? []
+            lines.append("childCount=\(children.count)")
+            for (index, child) in children.enumerated() {
+                guard let row = child as? TerminalAccessibilityRowElement else {
+                    lines.append("  child[\(index)]=unknown")
+                    continue
+                }
+                let trimmed = row.value.trimmingCharacters(in: .whitespaces)
+                let preview = trimmed.isEmpty ? "(blank)" : String(trimmed.prefix(80))
+                lines.append(
+                    "  child[\(index)] role=staticText label=\(row.accessibilityLabel() ?? "") " +
+                        "range=\(NSStringFromRange(row.sharedRange)) value=\(preview.debugDescription)"
+                )
+            }
+            return lines.joined(separator: "\n")
         }
-        return lines.joined(separator: "\n")
     }
 
     public override func isAccessibilityElement() -> Bool { true }

@@ -3,12 +3,15 @@ story=planning/story-m1-b2-hive-terminal-view.md B2.6
 gate=Gate 10 AppKit / VoiceOver retained slice
 agent=hedda
 branch=hive/hedda-m1-item-5-hard-b2-6-accessibil
-foundation=duncan 943407ba "Build atomic terminal accessibility snapshot" (forward-ported/adapted)
+foundation=duncan 943407ba "Build atomic terminal accessibility snapshot" (forward-ported/adapted; engine export remains single-lock; AX adapter pins one generation per read batch)
 ghostty_commit=73534c4680a809398b396c94ac7f12fcccb7963d
 zig_sha256=3cc2bab367e185cdfb27501c4b30b1b0653c28d9f73df8dc91488e66ece5fa6b
 patch_series_sha256=ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0
 patch_note=0004-hive-semantic-snapshot.patch already in series; no new vendor patch; no GhosttyKit rebuild required for this AppKit slice
 port_claim=43128 (reserved; this slice is in-process NSEvent/AX only — no listener bound)
 evidence_rule=.txt only; settle-then-assert; human VO/Inspector are explicit PENDING_HUMAN slots (Gate 7 pattern)
-nsaccessibility_post_coverage=The real NSAccessibility.post call at workspace/Sources/HiveTerminalKit/View/HiveTerminalView+Accessibility.swift:311-313 (TerminalAccessibilityController.post) is covered ONLY by the PENDING_HUMAN Inspector and VoiceOver slots. No machine test observes AppKit delivery of that call — Gate10AccessibilityTests watches the in-process notificationProbe only. A green Gate-10 suite is NOT permission to delete or skip NSAccessibility.post.
-ax_tree_capture_state=The six non-teardown ax-tree-*.txt dumps (input, alternate-screen, alternate-screen-exit, resize, replay, scroll) were captured pre-.live: lifecycle="Terminal starting", xctest host, renderer never presents — same semantics-vs-pixels split as #47. They are Hive accessibilityTreeDump() property dumps of semantic snapshot content, not live-surface or system-AX captures. ax-tree-teardown.txt is post-userClose (lifecycle exited).
+nsaccessibility_post_coverage=The real NSAccessibility.post call at workspace/Sources/HiveTerminalKit/View/HiveTerminalView+Accessibility.swift:357-359 (TerminalAccessibilityController.post) is covered ONLY by the PENDING_HUMAN Inspector and VoiceOver slots. No machine test observes AppKit delivery of that call — Gate10AccessibilityTests watches the in-process notificationProbe only. A green Gate-10 suite is NOT permission to delete or skip NSAccessibility.post.
+ax_tree_capture_state=The six non-teardown ax-tree-*.txt dumps (input, alternate-screen, alternate-screen-exit, resize, replay, scroll) were captured pre-.live: lifecycle="Terminal starting", xctest host, renderer never presents — same semantics-vs-pixels split as #47. They are Hive accessibilityTreeDump() property dumps of one pinned semantic generation (geometryRows==childCount; last child range covers numberOfCharacters), not live-surface or system-AX captures. ax-tree-teardown.txt is post-userClose (lifecycle exited).
+ax_tree_pin_model=accessibilitySnapshot no longer re-exports on every getter. TerminalAccessibilityController caches until invalidate/schedule and withPinnedSnapshot holds one generation for multi-property reads (tree dumps). This closed the torn dump class (flat props from generation A, children from generation B).
+ax_tree_reproducibility=Dumps regenerated under fixed 800x480 test surface + drainMain settle; dual re-run sha256 of ax-tree-*.txt matched. fixtures/torn-ax-tree-alternate-screen-exit.txt preserves the historical torn capture as a positive control that scripts/audit-hive-b26-ax-dumps.py must RED.
+inspector_audit=scripts/audit-hive-b26-ax-dumps.py cross-checks numberOfCharacters/visibleRange vs childCount/geometryRows/last-range; --self-test requires torn fixture RED and live dumps GREEN.

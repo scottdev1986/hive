@@ -1,15 +1,15 @@
 inspector-audit-machine.txt
 STATUS=RECORDED
-method=parse ax-tree-*.txt dumps produced by Gate10AccessibilityTests
+method=parse ax-tree-*.txt + consistency cross-check (noc/visibleRange vs childCount/geometryRows/last-range)
 note=This is NOT a substitute for the human Accessibility Inspector audit slot.
 
-file=ax-tree-input.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=32
-file=ax-tree-alternate-screen.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=32
-file=ax-tree-alternate-screen-exit.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
-file=ax-tree-resize.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
-file=ax-tree-replay.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
-file=ax-tree-scroll.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'row_children_present': True} child_lines=16
-file=ax-tree-teardown.txt ok=True checks={'exists': True, 'has_role': True, 'has_lifecycle': True, 'has_children_or_teardown': True, 'teardown_safe': True} child_lines=0
+file=ax-tree-input.txt ok=True numberOfCharacters=39 childCount=26 geometryRows=26 last_end=39 checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'childCount_eq_geometryRows': True, 'last_range_within_text': True, 'children_cover_text': True, 'visibleRange_len_eq_noc': True}
+file=ax-tree-alternate-screen.txt ok=True numberOfCharacters=39 childCount=26 geometryRows=26 last_end=39 checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'childCount_eq_geometryRows': True, 'last_range_within_text': True, 'children_cover_text': True, 'visibleRange_len_eq_noc': True}
+file=ax-tree-alternate-screen-exit.txt ok=True numberOfCharacters=39 childCount=26 geometryRows=26 last_end=39 checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'childCount_eq_geometryRows': True, 'last_range_within_text': True, 'children_cover_text': True, 'visibleRange_len_eq_noc': True}
+file=ax-tree-resize.txt ok=True numberOfCharacters=22 childCount=9 geometryRows=9 last_end=22 checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'childCount_eq_geometryRows': True, 'last_range_within_text': True, 'children_cover_text': True, 'visibleRange_len_eq_noc': True}
+file=ax-tree-replay.txt ok=True numberOfCharacters=33 childCount=9 geometryRows=9 last_end=33 checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'childCount_eq_geometryRows': True, 'last_range_within_text': True, 'children_cover_text': True, 'visibleRange_len_eq_noc': True}
+file=ax-tree-scroll.txt ok=True numberOfCharacters=33 childCount=9 geometryRows=9 last_end=33 checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'childCount_eq_geometryRows': True, 'last_range_within_text': True, 'children_cover_text': True, 'visibleRange_len_eq_noc': True}
+file=ax-tree-teardown.txt ok=True numberOfCharacters=0 childCount=0 geometryRows=0 last_end=None checks={'has_role': True, 'has_lifecycle': True, 'has_numberOfCharacters': True, 'has_childCount': True, 'numeric_fields': True, 'child_lines_match_count': True, 'teardown_empty': True, 'teardown_lifecycle': True}
 
 failures=0
 result=PASS

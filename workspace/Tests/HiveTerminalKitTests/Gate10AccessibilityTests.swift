@@ -4,21 +4,30 @@ import HiveGhosttyC
 @testable import HiveTerminalKit
 
 /// Gate 10 AppKit / B2.6 accessibility surface controls against a REAL manual
-/// surface. Semantic rows/ranges/cursor/selection come from the atomic
-/// snapshot; selection-change AX posting is exercised via the Gate 9 carrier
+/// surface. Semantic rows/ranges/cursor/selection come from a pinned snapshot
+/// generation; selection-change AX posting is exercised via the Gate 9 carrier
 /// + notification probe. Live VoiceOver listening remains a human checklist
 /// slot (see raw/qualification/hive-b26-gate10-accessibility/).
 @MainActor
 final class Gate10AccessibilityTests: XCTestCase {
-    private func makeView() throws -> HiveTerminalView {
+    private func makeView(
+        width: CGFloat = 800,
+        height: CGFloat = 480
+    ) throws -> HiveTerminalView {
         let surface: GhosttyManualSurface
         do {
-            surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting()
+            surface = try GhosttyBridgeFactory.makeManualSurfaceForTesting(
+                widthPx: UInt32(width),
+                heightPx: UInt32(height)
+            )
         } catch {
             XCTFail("real manual surface required for gate 10 live proof, got: \(error)")
             throw error
         }
-        return HiveTerminalView(frame: NSRect(x: 0, y: 0, width: 400, height: 300), engine: surface)
+        return HiveTerminalView(
+            frame: NSRect(x: 0, y: 0, width: width, height: height),
+            engine: surface
+        )
     }
 
     private func surface(of view: HiveTerminalView) -> GhosttyManualSurface {
@@ -34,9 +43,16 @@ final class Gate10AccessibilityTests: XCTestCase {
         return condition()
     }
 
+    /// Drain deferred main-async accessibility refreshes (schedule paths).
+    private func drainMain(iterations: Int = 8) {
+        for _ in 0 ..< iterations {
+            RunLoop.main.run(mode: .default, before: Date().addingTimeInterval(0.01))
+        }
+    }
+
     private func hostInWindow(_ view: HiveTerminalView) -> NSWindow {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 420, height: 320),
+            contentRect: view.frame.insetBy(dx: -10, dy: -10),
             styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
@@ -44,6 +60,76 @@ final class Gate10AccessibilityTests: XCTestCase {
         window.contentView = view
         window.makeKeyAndOrderFront(nil)
         return window
+    }
+
+    /// Flat props vs children must describe one generation (henrietta F1).
+    private func assertDumpInternallyConsistent(
+        _ dump: String,
+        name: String,
+        file: StaticString = #filePath,
+        line: UInt = #line
+    ) {
+        func field(_ key: String) -> String? {
+            dump.split(separator: "\n")
+                .first(where: { $0.hasPrefix(key + "=") })
+                .map { String($0.dropFirst(key.count + 1)) }
+        }
+        guard let nocStr = field("numberOfCharacters"),
+              let noc = Int(nocStr),
+              let childCountStr = field("childCount"),
+              let childCount = Int(childCountStr)
+        else {
+            return XCTFail("\(name): missing numberOfCharacters/childCount", file: file, line: line)
+        }
+        let childRanges = dump.split(separator: "\n").compactMap { line -> NSRange? in
+            guard line.contains("child["), let r = line.range(of: "range={") else { return nil }
+            let rest = line[r.upperBound...]
+            guard let end = rest.firstIndex(of: "}") else { return nil }
+            let parts = rest[..<end].split(separator: ",").map {
+                $0.trimmingCharacters(in: .whitespaces)
+            }
+            guard parts.count == 2, let loc = Int(parts[0]), let len = Int(parts[1]) else { return nil }
+            return NSRange(location: loc, length: len)
+        }
+        XCTAssertEqual(childRanges.count, childCount, "\(name): child lines vs childCount", file: file, line: line)
+        if name != "teardown" {
+            guard let geometryRowsStr = field("geometryRows"),
+                  let geometryRows = Int(geometryRowsStr)
+            else {
+                return XCTFail("\(name): missing geometryRows", file: file, line: line)
+            }
+            XCTAssertEqual(
+                childCount,
+                geometryRows,
+                "\(name): childCount must equal geometryRows (pinned generation)",
+                file: file,
+                line: line
+            )
+            XCTAssertGreaterThan(childCount, 0, "\(name): expected row children", file: file, line: line)
+            if let last = childRanges.last {
+                let lastEnd = NSMaxRange(last)
+                XCTAssertLessThanOrEqual(
+                    lastEnd,
+                    noc,
+                    "\(name): last child range end \(lastEnd) must be ≤ numberOfCharacters \(noc)",
+                    file: file,
+                    line: line
+                )
+                // Non-empty screens: children must cover a non-trivial prefix of the text space.
+                if noc > 0 {
+                    XCTAssertGreaterThan(
+                        lastEnd,
+                        0,
+                        "\(name): children must cover text when numberOfCharacters > 0",
+                        file: file,
+                        line: line
+                    )
+                }
+            }
+        } else {
+            XCTAssertEqual(childCount, 0, "\(name): teardown has no children", file: file, line: line)
+            XCTAssertEqual(noc, 0, "\(name): teardown has empty value", file: file, line: line)
+        }
     }
 
     func testExposedAsTextAreaAccessibilityElement() throws {
@@ -333,11 +419,46 @@ final class Gate10AccessibilityTests: XCTestCase {
         XCTAssertEqual(view.accessibilityChildren()?.count ?? 0, 0)
     }
 
+    /// Pinned generation: multi-property reads share one snapshot (no tear).
+    func testAccessibilityGettersSharePinnedGeneration() throws {
+        let view = try makeView()
+        let surface = surface(of: view)
+        defer { surface.free() }
+        XCTAssertEqual(surface.processOutput(bytes: Data("pin-check\r\n".utf8), streamSeq: 0), .success)
+        XCTAssertTrue(settle { (view.accessibilityValue() as? String)?.contains("pin-check") == true })
+
+        let dump = view.accessibilityTreeDump()
+        assertDumpInternallyConsistent(dump, name: "pin-check")
+        // Force geometry change mid-session then re-pin: still consistent.
+        // Semantic geometry tracks the locked Terminal commit; setSize may change
+        // rows/generation without widthPixels equaling the framebuffer request.
+        let beforeGen = surface.semanticSnapshot()?.generation
+        let beforeRows = surface.semanticSnapshot()?.geometry.rows
+        surface.setSize(widthPx: 640, heightPx: 400)
+        view.accessibilityGeometryDidChange()
+        view.accessibilitySemanticStateDidInvalidate()
+        drainMain()
+        XCTAssertTrue(
+            settle {
+                guard let snap = surface.semanticSnapshot() else { return false }
+                let children = view.accessibilityChildren()?.count ?? 0
+                // Real predicate: pinned children match geometry.rows after resize.
+                _ = beforeGen
+                _ = beforeRows
+                return children > 0 && children == snap.geometry.rows
+            },
+            "post-resize AX children must match geometry.rows"
+        )
+        let afterResize = view.accessibilityTreeDump()
+        assertDumpInternallyConsistent(afterResize, name: "pin-check-resized")
+        XCTAssertTrue(afterResize.contains("geometryRows="), "resized dump must publish geometryRows")
+    }
+
     /// Recorded AX tree dump for Inspector-shaped evidence (input/scroll/alt/
     /// replay/resize/teardown slices). Writes under the evidence dir when
-    /// HIVE_B26_AX_EVIDENCE is set; always asserts tree shape locally.
+    /// HIVE_B26_AX_EVIDENCE is set; always asserts internal consistency.
     func testRecordedAccessibilityTreeDumps() throws {
-        let view = try makeView()
+        let view = try makeView(width: 800, height: 480)
         let surface = surface(of: view)
         defer { surface.free() }
         let window = hostInWindow(view)
@@ -350,52 +471,102 @@ final class Gate10AccessibilityTests: XCTestCase {
             let bytes = Data(text.utf8)
             XCTAssertEqual(surface.processOutput(bytes: bytes, streamSeq: seq), .success)
             seq += UInt64(bytes.count)
+            view.accessibilitySemanticStateDidInvalidate()
+            drainMain()
         }
 
         try feed("ax-input-slice\r\n")
-        _ = settle { (view.accessibilityValue() as? String)?.contains("ax-input-slice") == true }
+        XCTAssertTrue(
+            settle { (view.accessibilityValue() as? String)?.contains("ax-input-slice") == true },
+            "input content must land before dump"
+        )
         dumps.append(("input", view.accessibilityTreeDump()))
 
         // Alternate screen enter/leave via DECSET 1049.
         try feed("\u{1b}[?1049h")
         try feed("alt-screen-row\r\n")
-        _ = settle { (view.accessibilityValue() as? String)?.contains("alt-screen-row") == true }
+        XCTAssertTrue(
+            settle { (view.accessibilityValue() as? String)?.contains("alt-screen-row") == true },
+            "alt-screen content must land before dump"
+        )
         dumps.append(("alternate-screen", view.accessibilityTreeDump()))
+
         try feed("\u{1b}[?1049l")
-        view.accessibilitySemanticStateDidInvalidate()
-        _ = settle { true }
+        // Real settle: primary buffer content returns (not vacuous `true`).
+        XCTAssertTrue(
+            settle {
+                let v = view.accessibilityValue() as? String ?? ""
+                return v.contains("ax-input-slice") && !v.contains("alt-screen-row")
+            },
+            "exiting alt-screen must restore primary buffer content"
+        )
         dumps.append(("alternate-screen-exit", view.accessibilityTreeDump()))
 
-        // Resize (geometry signal).
+        // Resize (geometry signal) — settle on children matching geometry.rows
+        // (not framebuffer widthPx; semantic geometry is the locked Terminal commit).
         surface.setSize(widthPx: 640, heightPx: 400)
         view.accessibilityGeometryDidChange()
-        _ = settle { surface.semanticSnapshot()?.geometry.widthPixels == 640 || true }
+        view.accessibilitySemanticStateDidInvalidate()
+        drainMain()
+        XCTAssertTrue(
+            settle {
+                guard let snap = surface.semanticSnapshot() else { return false }
+                let children = view.accessibilityChildren()?.count ?? 0
+                return children > 0 && children == snap.geometry.rows
+            },
+            "resize must leave childCount == geometry.rows"
+        )
         dumps.append(("resize", view.accessibilityTreeDump()))
 
         // Replay-shaped ordered output after content.
         try feed("replay-tail\r\n")
-        view.accessibilitySemanticStateDidInvalidate()
-        _ = settle { (view.accessibilityValue() as? String)?.contains("replay-tail") == true }
+        XCTAssertTrue(
+            settle { (view.accessibilityValue() as? String)?.contains("replay-tail") == true },
+            "replay-tail must land before dump"
+        )
         dumps.append(("replay", view.accessibilityTreeDump()))
 
-        // Scroll binding if available.
+        // Scroll binding if available — settle on a real child tree after invalidate.
         if let handle = surface.surfaceHandle {
+            let beforeChildren = view.accessibilityChildren()?.count ?? 0
             let action = "scroll_page_up"
             _ = action.withCString { ghostty_surface_binding_action(handle, $0, UInt(action.utf8.count)) }
             view.accessibilitySemanticStateDidInvalidate()
-            _ = settle { true }
+            drainMain()
+            XCTAssertTrue(
+                settle {
+                    let count = view.accessibilityChildren()?.count ?? 0
+                    return count > 0 && count == (surface.semanticSnapshot()?.geometry.rows ?? -1)
+                },
+                "scroll path must leave children matching geometry.rows (was \(beforeChildren))"
+            )
         }
         dumps.append(("scroll", view.accessibilityTreeDump()))
 
         view.userClose()
+        drainMain()
         dumps.append(("teardown", view.accessibilityTreeDump()))
 
         for (name, dump) in dumps {
             XCTAssertTrue(dump.contains("role="), "\(name) dump must include role")
             XCTAssertTrue(dump.contains("lifecycle="), "\(name) dump must include lifecycle")
+            assertDumpInternallyConsistent(dump, name: name)
         }
-        XCTAssertTrue(dumps.first(where: { $0.0 == "input" })?.1.contains("ax-input-slice") == true
-                      || dumps.first(where: { $0.0 == "input" })?.1.contains("childCount=") == true)
+        // Real content predicate — not a vacuous "childCount=" substring match.
+        let inputDump = dumps.first(where: { $0.0 == "input" })?.1 ?? ""
+        XCTAssertTrue(
+            inputDump.contains("ax-input-slice"),
+            "input dump must carry the fed content string, got: \(inputDump.prefix(200))"
+        )
+        let altDump = dumps.first(where: { $0.0 == "alternate-screen" })?.1 ?? ""
+        XCTAssertTrue(altDump.contains("alt-screen-row"), "alt-screen dump must carry alt content")
+        let replayDump = dumps.first(where: { $0.0 == "replay" })?.1 ?? ""
+        XCTAssertTrue(replayDump.contains("replay-tail"), "replay dump must carry replay-tail")
+        let teardownDump = dumps.first(where: { $0.0 == "teardown" })?.1 ?? ""
+        XCTAssertTrue(
+            teardownDump.contains("exited") || teardownDump.contains("lifecycle=Terminal exited"),
+            "teardown dump must show exited lifecycle"
+        )
 
         if let dir = ProcessInfo.processInfo.environment["HIVE_B26_AX_EVIDENCE"], !dir.isEmpty {
             let base = URL(fileURLWithPath: dir, isDirectory: true)

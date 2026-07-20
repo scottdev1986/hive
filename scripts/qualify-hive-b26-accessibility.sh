@@ -54,52 +54,8 @@ echo "qualify-hive-b26: running Gate10AccessibilityTests → $EVIDENCE"
 } >"$EVIDENCE/machine-xctest-transcript.txt"
 rm -f "$EVIDENCE/machine-xctest-transcript.raw.txt"
 
-# Machine inspector-shaped audit from dumps.
-python3 - "$EVIDENCE" <<'PY'
-import sys
-from pathlib import Path
-base = Path(sys.argv[1])
-out = [
-    "inspector-audit-machine.txt",
-    "STATUS=RECORDED",
-    "method=parse ax-tree-*.txt dumps produced by Gate10AccessibilityTests",
-    "note=This is NOT a substitute for the human Accessibility Inspector audit slot.",
-    "",
-]
-required = [
-    "ax-tree-input.txt",
-    "ax-tree-alternate-screen.txt",
-    "ax-tree-alternate-screen-exit.txt",
-    "ax-tree-resize.txt",
-    "ax-tree-replay.txt",
-    "ax-tree-scroll.txt",
-    "ax-tree-teardown.txt",
-]
-failures = 0
-for name in required:
-    path = base / name
-    text = path.read_text() if path.exists() else ""
-    child_lines = [l for l in text.splitlines() if l.strip().startswith("child[")]
-    checks = {
-        "exists": path.exists(),
-        "has_role": "role=" in text,
-        "has_lifecycle": "lifecycle=" in text,
-        "has_children_or_teardown": ("childCount=" in text) or name.endswith("teardown.txt"),
-    }
-    if name != "ax-tree-teardown.txt":
-        checks["row_children_present"] = len(child_lines) > 0
-    else:
-        checks["teardown_safe"] = "lifecycle=" in text
-    ok = all(checks.values())
-    failures += 0 if ok else 1
-    out.append(f"file={name} ok={ok} checks={checks} child_lines={len(child_lines)}")
-out.append("")
-out.append(f"failures={failures}")
-out.append("result=" + ("PASS" if failures == 0 else "FAIL"))
-(base / "inspector-audit-machine.txt").write_text("\n".join(out) + "\n")
-if failures:
-    raise SystemExit("machine inspector audit failed")
-PY
+# Machine inspector-shaped audit + consistency cross-check + torn-fixture positive control.
+python3 "$ROOT/scripts/audit-hive-b26-ax-dumps.py" --self-test "$EVIDENCE"
 
 # Ensure human placeholders exist (do not clobber filled slots).
 if [[ ! -f "$EVIDENCE/human-inspector-audit-transcript.txt" ]]; then

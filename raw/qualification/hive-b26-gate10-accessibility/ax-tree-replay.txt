@@ -3,14 +3,18 @@ label=Terminal starting
 help=Terminal content area
 focused=true
 lifecycle=Terminal starting
-numberOfCharacters=40
-visibleRange={0, 40}
-selectedRange={9223372036854775807, 0}
+generation=7
+geometryRows=9
+geometryColumns=37
+numberOfCharacters=33
+visibleRange={0, 33}
+selectedRange=none
 selectedText=nil
 insertionLine=2
-valueDescription=Terminal starting; viewport 0 of 16; cursor line 3 offset 27
-valuePrefix="ax-input-slice\nreplay-tail\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
-childCount=16
+valueDescription=Terminal starting; viewport 0 of 9; cursor line 3 offset 27
+contentLines="ax-input-slice|replay-tail"
+valuePrefix="ax-input-slice\nreplay-tail\n\n\n\n\n\n\n"
+childCount=9
   child[0] role=staticText label=Terminal row 1 range={0, 14} value="ax-input-slice"
   child[1] role=staticText label=Terminal row 2 range={15, 11} value="replay-tail"
   child[2] role=staticText label=Terminal row 3 range={27, 0} value="(blank)"
@@ -20,10 +24,3 @@ childCount=16
   child[6] role=staticText label=Terminal row 7 range={31, 0} value="(blank)"
   child[7] role=staticText label=Terminal row 8 range={32, 0} value="(blank)"
   child[8] role=staticText label=Terminal row 9 range={33, 0} value="(blank)"
-  child[9] role=staticText label=Terminal row 10 range={34, 0} value="(blank)"
-  child[10] role=staticText label=Terminal row 11 range={35, 0} value="(blank)"
-  child[11] role=staticText label=Terminal row 12 range={36, 0} value="(blank)"
-  child[12] role=staticText label=Terminal row 13 range={37, 0} value="(blank)"
-  child[13] role=staticText label=Terminal row 14 range={38, 0} value="(blank)"
-  child[14] role=staticText label=Terminal row 15 range={39, 0} value="(blank)"
-  child[15] role=staticText label=Terminal row 16 range={40, 0} value="(blank)"
