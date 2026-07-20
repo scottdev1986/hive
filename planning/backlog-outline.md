@@ -38,7 +38,7 @@ Parallel tracks (∥ = concurrent):
 - A4 Close/reconnect semantics live-proof: visibility lease, renderer crash → bounded replay; Workspace quit → verified termination of every provider tree (I2).
 
 **Track B — renderer (Swift)** ∥ A
-- B1 Qualify GhosttyKit build chain + the manual-I/O bridge (FULL SPEC in planning/story-m1-b1-ghosttykit-qualification.md after atlas's B1 pre-review): the seven `hive_ghostty_*_v1` exports are a Hive-owned FORK contract the upstream header never promises — 10 P0 gates (manual-mode isolation, terminal-generated replies incl. the known null-handler snapshot defect, threading/lifetime, ABI/build/ship, ordered output, checkpoint/restore incl. full-app-restart proof, rendering/geometry/GPU, input/IME/mouse goldens, action/security matrix, accessibility+operability) + live-proof matrix A–K (K = all three vendor TUIs as black-box compatibility probes only). B1 ends with a qualified manual engine/view bridge + conformance corpus; it does not absorb M2 provider policy.
+- B1 Qualify GhosttyKit build chain + the manual-I/O bridge (FULL SPEC in planning/story-m1-b1-ghosttykit-qualification.md after atlas's B1 pre-review): the seven `hive_ghostty_*_v1` exports are a Hive-owned FORK contract the upstream header never promises — 10 P0 gates (manual-mode isolation, terminal-generated replies incl. the known null-handler snapshot defect, threading/lifetime, ABI/build/ship, ordered output, checkpoint/restore incl. full-app-restart proof, rendering/geometry/GPU, input/IME/mouse goldens, action/security matrix, accessibility+operability) + live-proof matrix A–K (K = all three vendor TUIs as black-box compatibility probes only). B1 ends with a qualified manual engine/view bridge + conformance corpus; it does not absorb M2 provider policy. **Matrix split (queen's direction, 2026-07-17):** cells J/K/I/G-live were split out of B1 to issue **#36**; B1's live-proof matrix claim therefore covers A–K *minus* J/K/I/G-live. #36 is not duplicate scope.
 - B2 Wire HiveTerminalView into Workspace panes (replaces SwiftTerm attach path); first-responder, selection, accessibility, geometry.
 - B3 New smoke harness driving sessiond+HiveTerminalKit (replaces SmokeRunner/smoke.sh coverage).
 
@@ -48,6 +48,7 @@ Parallel tracks (∥ = concurrent):
 
 **Cut**
 - STORY-001 + STORY-002 execute as ONE atomic merge train (Removal Gate reached); full matrix re-run on the post-deletion tree → M1 exit proof recorded. Pre-cut drain performed by the OLD/bootstrap build (refuse cut while any legacy session survives; dev DB/runtime state archived + destructively reset — tmux identity rows are not migrated).
+- **#59 Remove `make terminal` and all testing-only support code (M1 exit criterion, alongside the cut).** Before M1 closes, the `make terminal` target and every temporary harness or support path that exists only to exercise the terminal during development are deleted. M1 done means Hive works using ONLY the new terminal (sessiond + HiveTerminalKit), with tmux and the temporary harnesses gone — the orchestrator session included, not exempted.
 
 Dependency edges (tightened per atlas R3): A0→A1(min freeze)→A2 → A3; A2+B1→B2; A2+B2→A4 (host-only crash proofs may run earlier); A2+A3+A4+B1+B2→B3; B2→C1 close (design exploration earlier); B1+A2+B2→C2 integrated packaging, clean-machine acceptance closes only on the cut tree; A3+A4+B2+B3+C1+C2 → atomic cut → re-run B3+C2+matrix → M1 exit. Max parallelism: A0/A1 ∥ B1 ∥ C1-exploration; early starts allowed, closes gated.
 
@@ -56,6 +57,8 @@ Dependency edges (tightened per atlas R3): A0→A1(min freeze)→A2 → A3; A2+B
 ## M2 — vendor coding-agent TUIs live, silent Queen belief, proven status
 
 Exit: for each of claude code / codex / grok × {normal, yolo}: agent boots inside the new terminal as Queen with the belief injected silently (never visible in the transcript), performs work, and updates status end-to-end with every current status promise proven live.
+
+> **SUPERSEDED (S2.1 + S2.2) — issue #38, 2026-07-18.** #38 replaces the per-vendor fork below with a single vendor-agnostic spine; the per-vendor split is exactly what the agnostic requirement replaces. Issues #12/#13/#14 are no longer independent stories — they are proof targets under #38's spine (retitled on the board 2026-07-20), and #38 additionally covers two agents this outline never names (Kimi Code, opencode). The `PLAN STATUS: FINALIZED` header above records a drafting state, not immunity from supersession. Read S2.1/S2.2 below as historical detail; #38 is authoritative for the spine.
 
 - **S2.1 Native spawn pipeline** (per-vendor, 3 stories, ∥ after M1-A2): spawn vendor CLI into a sessiond generation with env/cwd/argv contract; no tmux paste-based prompt delivery; argv-size and secret-hygiene rules (0600 files over argv for sensitive payloads).
 - **S2.2 Silent belief injection** (per-vendor, ∥) — atlas finding (sourced, 2026-07-17) is the spec:
