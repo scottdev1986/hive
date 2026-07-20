@@ -2,20 +2,20 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/16] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.11s)
-Test Suite 'Selected tests' started at 2026-07-19 22:29:38.770.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:29:38.770.
-Test Suite 'B23UnknownRetryMatrixTests' started at 2026-07-19 22:29:38.770.
+Build complete! (0.13s)
+Test Suite 'Selected tests' started at 2026-07-19 22:37:31.877.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:37:31.878.
+Test Suite 'B23UnknownRetryMatrixTests' started at 2026-07-19 22:37:31.878.
 Test Case '-[HiveTerminalKitTests.B23UnknownRetryMatrixTests testPositiveControlWrittenReceiptAllowsASecondSubmission]' started.
-Test Case '-[HiveTerminalKitTests.B23UnknownRetryMatrixTests testPositiveControlWrittenReceiptAllowsASecondSubmission]' passed (0.216 seconds).
+Test Case '-[HiveTerminalKitTests.B23UnknownRetryMatrixTests testPositiveControlWrittenReceiptAllowsASecondSubmission]' passed (0.202 seconds).
 Test Case '-[HiveTerminalKitTests.B23UnknownRetryMatrixTests testUnknownResultFencesInputAndMintsNoNewTransaction]' started.
-Test Case '-[HiveTerminalKitTests.B23UnknownRetryMatrixTests testUnknownResultFencesInputAndMintsNoNewTransaction]' passed (0.178 seconds).
-Test Suite 'B23UnknownRetryMatrixTests' passed at 2026-07-19 22:29:39.165.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 0.394 (0.394) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:29:39.165.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 0.394 (0.394) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 22:29:39.165.
-	 Executed 2 tests, with 0 failures (0 unexpected) in 0.394 (0.395) seconds
+Test Case '-[HiveTerminalKitTests.B23UnknownRetryMatrixTests testUnknownResultFencesInputAndMintsNoNewTransaction]' passed (0.159 seconds).
+Test Suite 'B23UnknownRetryMatrixTests' passed at 2026-07-19 22:37:32.239.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.360 (0.361) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:37:32.239.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.360 (0.361) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:37:32.239.
+	 Executed 2 tests, with 0 failures (0 unexpected) in 0.360 (0.361) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0

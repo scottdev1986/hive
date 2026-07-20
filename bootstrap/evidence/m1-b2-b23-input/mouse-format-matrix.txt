@@ -2,26 +2,26 @@
 [2/2] Compiling plugin GenerateDoccReference
 Building for debugging...
 [2/16] Write swift-version--58304C5D6DBC2206.txt
-Build complete! (0.13s)
-Test Suite 'Selected tests' started at 2026-07-19 22:29:50.775.
-Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:29:50.776.
-Test Suite 'B23MouseFormatMatrixTests' started at 2026-07-19 22:29:50.776.
+Build complete! (0.17s)
+Test Suite 'Selected tests' started at 2026-07-19 22:37:44.394.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 22:37:44.395.
+Test Suite 'B23MouseFormatMatrixTests' started at 2026-07-19 22:37:44.395.
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testAllThreeFormatsReportTheSameLogicalCell]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testAllThreeFormatsReportTheSameLogicalCell]' passed (0.870 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testAllThreeFormatsReportTheSameLogicalCell]' passed (0.862 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testDefaultFormatEmitsRawHighByteCoordinate]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testDefaultFormatEmitsRawHighByteCoordinate]' passed (0.271 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testDefaultFormatEmitsRawHighByteCoordinate]' passed (0.262 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testPositiveControlFormatsAreIndistinguishableAtLowColumn]' started.
-Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testPositiveControlFormatsAreIndistinguishableAtLowColumn]' passed (0.523 seconds).
+Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testPositiveControlFormatsAreIndistinguishableAtLowColumn]' passed (0.525 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testUrxvtFormatEncodesTheSameCoordinateInDecimal]' started.
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testUrxvtFormatEncodesTheSameCoordinateInDecimal]' passed (0.266 seconds).
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testUTF8FormatEncodesTheSameCoordinateAsMultibyteUTF8]' started.
 Test Case '-[HiveTerminalKitTests.B23MouseFormatMatrixTests testUTF8FormatEncodesTheSameCoordinateAsMultibyteUTF8]' passed (0.262 seconds).
-Test Suite 'B23MouseFormatMatrixTests' passed at 2026-07-19 22:29:52.969.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 2.192 (2.193) seconds
-Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:29:52.969.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 2.192 (2.193) seconds
-Test Suite 'Selected tests' passed at 2026-07-19 22:29:52.969.
-	 Executed 5 tests, with 0 failures (0 unexpected) in 2.192 (2.194) seconds
+Test Suite 'B23MouseFormatMatrixTests' passed at 2026-07-19 22:37:46.573.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.178 (2.178) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 22:37:46.573.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.178 (2.178) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 22:37:46.573.
+	 Executed 5 tests, with 0 failures (0 unexpected) in 2.178 (2.179) seconds
 ◇ Test run started.
 ↳ Testing Library Version: 1902
 ↳ Target Platform: arm64e-apple-macos14.0
