@@ -1,0 +1,28 @@
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/14] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.10s)
+Test Suite 'Selected tests' started at 2026-07-19 20:41:56.215.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:41:56.216.
+Test Suite 'AttachInputTests' started at 2026-07-19 20:41:56.216.
+Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' started.
+Test Case '-[HiveTerminalKitTests.AttachInputTests testGate8TextWaitsForClaimThenUsesFrozenInputSubmit]' passed (0.144 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' started.
+Test Case '-[HiveTerminalKitTests.AttachInputTests testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames]' passed (0.014 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' started.
+Test Case '-[HiveTerminalKitTests.AttachInputTests testSubsequentResizeUsesFrozenExactSessionPayload]' passed (0.015 seconds).
+Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' started.
+Test Case '-[HiveTerminalKitTests.AttachInputTests testSupersededConnectionClaimCannotReleaseHeldInput]' passed (0.092 seconds).
+Test Suite 'AttachInputTests' passed at 2026-07-19 20:41:56.481.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.265 (0.265) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:41:56.481.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.265 (0.265) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 20:41:56.481.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 0.265 (0.266) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+
+REAL_EXIT=0

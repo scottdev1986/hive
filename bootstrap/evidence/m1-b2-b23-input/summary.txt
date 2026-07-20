@@ -1,0 +1,64 @@
+M1-B2 B2.3/A3 input acceptance matrix evidence
+
+Matrix document: workspace/docs/hive-terminal-b23-acceptance-matrix.md
+Recorded by:     scripts/b23-acceptance-matrix.sh
+
+PARTIAL BUNDLE. This records the defect-independent rows only. Live-PTY rows
+and the Retina resize row are HELD pending two parallel fixes (hattie: PTY
+OPOST staircase; henry: resize kills input). Recording them against the
+current tree would pin known-broken behavior as acceptance.
+
+Suites recorded at this pin (all unpiped; REAL_EXIT captured in each file):
+- mouse-mode-matrix.txt      6 tests, 0 failures  (NEW)
+- paste-boundary-matrix.txt  4 tests, 0 failures  (NEW)
+- unknown-retry-matrix.txt   2 tests, 0 failures  (NEW)
+- attach-input.txt           4 tests, 0 failures  (pre-existing, cited by row 1)
+- input-encoding.txt        48 tests, 0 failures  (pre-existing, cited by rows 3,5,6,11)
+- kitty-keyboard-golden.txt  5 tests, 0 failures  (pre-existing, cited by row 4)
+Total: 69 tests, 0 failures.
+
+GAPS CLOSED BY THE NEW SUITES
+
+- Mouse: before this bundle only any-motion (1003) and SGR (1006) had any
+  test. X10 (9), VT200 (1000), button-event (1002), pixel (1016),
+  alternate-scroll (1007), and Shift-override-while-captured had none.
+  Recorded now: X10 reports a press and never a release; VT200 reports both
+  edges with the button-3 release sentinel; SGR discriminates the release by
+  final byte 'm' instead, preserving the button; Shift+click under an active
+  mouse mode writes zero bytes.
+- Bracketed paste: only DECSET 2004 was tested, so a build that bracketed
+  unconditionally passed. Recorded now: DECRST stops bracketing while a safe
+  single-line body still reaches the encoder verbatim.
+- Safe paste: with 2004 reset, a MULTILINE body is withheld entirely — an
+  embedded newline would submit to the shell unseen. Attribution control: the
+  same body does paste when bracketed, so the withholding is safe-paste and
+  not a dead clipboard reader.
+- Client unknown semantics: an unknown input receipt fences the client, so no
+  further INPUT_SUBMIT is authored. See the matrix doc, "Row 10", for why
+  fencing rather than resending is the correct reading of the clause.
+
+CONTROLS
+
+Each new suite brackets its reader through the same predicate the rows use:
+- mouse: an unmoded gesture is silent AND an enabled mode is loud, so silence
+  is attributable to the mode rather than to a dead callback.
+- paste: set and unset 2004 must return DIFFERENT transcripts through the one
+  reader, so a reader blind to the mode fails.
+- unknown: a healthy receipt must permit a second submission, so the zero in
+  the unknown row cannot come from a reader that never observes one.
+
+Exact-count and wrote-nothing rows settle the run loop AFTER the expected
+writes land, so silence is measured rather than assumed.
+
+MUTATION VERIFICATION (assertions proven to bite, then reverted)
+
+- Shift override: removing the .shift modifier turned the row RED with the
+  captured bytes "\e[<0;2;14M" / "\e[<0;2;14m". The mouse genuinely was
+  captured; Shift is what suppresses the report.
+- Unknown fence: answering with stage "written-to-terminal" instead of
+  "unknown" turned the row RED. The fence depends on the unknown outcome.
+
+Manifest: evidence-sha256.txt, which excludes itself (a file cannot contain
+its own digest) and lists only .txt files. Evidence is deliberately NOT named
+.log, which is gitignored at .gitignore:38 and would leave the manifest
+unverifiable on a fresh checkout.

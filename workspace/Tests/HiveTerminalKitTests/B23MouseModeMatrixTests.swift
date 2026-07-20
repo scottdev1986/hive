@@ -45,11 +45,13 @@ final class B23MouseModeMatrixTests: XCTestCase {
             frame: NSRect(x: 0, y: 0, width: 400, height: 300),
             engine: surface
         )
-        XCTAssertEqual(
-            surface.processOutput(bytes: Data(row.enable.utf8), streamSeq: 0),
-            .success,
-            "row \(row.id): mode prologue was not accepted by the real parser"
-        )
+        if !row.enable.isEmpty {
+            XCTAssertEqual(
+                surface.processOutput(bytes: Data(row.enable.utf8), streamSeq: 0),
+                .success,
+                "row \(row.id): mode prologue was not accepted by the real parser"
+            )
+        }
         var writes: [Data] = []
         surface.callbackContext.onWrite = { writes.append($0) }
 

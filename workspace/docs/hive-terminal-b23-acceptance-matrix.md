@@ -59,7 +59,8 @@ fake-host, and daemon-side arbiter) are recorded now.
 | 4 | Kitty progressive modes | PARTIAL | encoder | `KittyKeyboardGoldenTests.swift:148` (`CSI > 1 u` -> `\x1b[13;2u`), press/repeat/release `:174`, left/right Shift `:196`, alternate-key `:221`. GAP: no pop (`CSI < u`), query (`CSI ? u`), or mode-stack nesting. |
 | 5 | dead key | RECORDED | encoder | `InputEncodingTests.swift:516` — real surface, `´` -> `é` committed byte-exactly once; choreography at `:487`. |
 | 6 | CJK IME | RECORDED | encoder | `InputEncodingTests.swift:516` — multi-stage `日`/`日本` preedit writes nothing, then commits exactly `日本語`. |
-| 7 | bracketed paste | RECORDED (new) | encoder | `Gate8ClipboardTests.swift:43` pins the SET direction. NEW `B23PasteBoundaryMatrixTests.swift` adds the RESET direction (`?2004l` stops bracketing while the body still reaches the encoder) and asserts exactly one marker pair on set. Without the reset row, a build that bracketed unconditionally passed. |
+| 7 | bracketed paste | RECORDED (new) | encoder | `Gate8ClipboardTests.swift:43` pins the SET direction. NEW `B23PasteBoundaryMatrixTests.swift` adds the RESET direction (`?2004l` stops bracketing while a safe single-line body still reaches the encoder verbatim) and asserts exactly one marker pair on set. Without the reset row, a build that bracketed unconditionally passed. |
+| 7b | safe paste while unbracketed | RECORDED (new) | encoder | `B23PasteBoundaryMatrixTests.swift` — with 2004 reset, a MULTILINE body is withheld entirely (zero bytes), because an embedded newline would submit to the shell unseen. This discharges the clause's "with it reset, Ghostty's safe-paste rules apply." See "Row 7b" below. |
 | 8 | mouse modes, local vs captured | RECORDED (new) | encoder | NEW `B23MouseModeMatrixTests.swift` — X10 (9) press-only, VT200 (1000) press+release with button-3 release sentinel, SGR (1006) `M`/`m` edge discrimination, Shift override writes zero bytes while captured. Pre-existing any-motion (1003) + SGR at `InputEncodingTests.swift:747`, `:775`. |
 | 9 | Retina resize coordinates | HELD (henry) | mixed | Backing-pixel coords `InputEncodingTests.swift:656`, `:676`; measured cell geometry `Gate7RenderingTests.swift:99`; `RESIZE`/`APPLIED` readback + stale-revision refusal `real-host-golden.zig:945`; independent `TIOCGWINSZ` readback `pending-a1-contract.zig:273`. End-to-end live Retina row `LiveHostAttachTests.swift:344` is skip-gated. HELD: henry's resize/input fix changes this path. |
 | 10 | retry / unknown semantics | RECORDED (new) | live-pty + fake-host | HOST side: `real-host-golden.zig:882` — identical `INPUT_SUBMIT` under a new transport correlation id returns a byte-identical `APPLIED` and the PTY echoes exactly once. CLIENT side (NEW `B23UnknownRetryMatrixTests.swift`): an `unknown` receipt fences input, so no further `INPUT_SUBMIT` is authored. See "Row 10" below for why fencing, not resending, is the correct reading of this clause. |
@@ -77,6 +78,22 @@ claim" would pass for the wrong reason — it would pass identically against an
 arbiter with no automation path whatsoever. The honest record is the source
 property plus the competing-writer denial in row 2, which does exercise a real
 automation contender and reads back the incumbent's token.
+
+## Row 7b — safe paste was found, not assumed
+
+The reset row was first written with the same multiline body the set row uses
+(`clip\nboard`). It failed: the encoder wrote nothing at all. Rather than
+weaken the assertion to match, the behavior was checked against the clause,
+which says safe-paste rules apply once 2004 is reset. Pasting multiline text
+unbracketed is exactly the unsafe case — the newline would submit the line to
+the shell without the user seeing it — so withholding is correct.
+
+The row was therefore split by paste BODY, not by expectation: a safe
+single-line body must land verbatim, an unsafe multiline body must be
+withheld. Folding the two together would let a build that always withholds,
+or one that always sends, look correct. The withholding row carries its own
+attribution control: the same multiline body IS written when bracketed, so
+the silence is safe-paste rather than a dead clipboard reader.
 
 ## Row 10 — why the client fences instead of resending
 
@@ -116,10 +133,35 @@ single `evaluate(_:)` predicate:
 The zero-write rows additionally settle the run loop for a fixed interval
 rather than returning immediately, so silence is measured rather than assumed.
 
+## Mutation verification
+
+Green rows prove nothing until the assertions are shown to bite. Two rows
+whose false pass would be most damaging were mutated and reverted:
+
+- Shift override: removing the `.shift` modifier turned the row RED with the
+  captured bytes `\e[<0;2;14M` / `\e[<0;2;14m`. This proves the application
+  genuinely HAD captured the mouse and that Shift is what suppresses the
+  report — the row was not passing because capture was inactive.
+- Unknown fence: answering the submission with stage `written-to-terminal`
+  instead of `unknown` turned the row RED. The fence depends on the unknown
+  outcome rather than on the client never submitting twice.
+
+## Evidence bundle
+
+`bootstrap/evidence/m1-b2-b23-input/` — 69 tests, 0 failures across six
+suites, each recorded unpiped with its own `REAL_EXIT`, plus
+`evidence-sha256.txt` (excludes itself; `.txt` because `*.log` is gitignored
+at `.gitignore:38` and would not survive a fresh checkout). Regenerate with
+`scripts/b23-acceptance-matrix.sh`.
+
 ## Remaining work
 
-Defect-independent gaps still to fill: rows 3 (key byte goldens), 4 (Kitty
-pop/query/stack), 7 (DEC 2004 reset), 10 (client-side unknown-retry).
+Closed in this bundle: rows 7 and 7b (DEC 2004 reset and safe paste), 8
+(mouse encodings and Shift override), 10 (client-side unknown semantics).
+
+Defect-independent gaps still open: row 3 (byte goldens for arrows, Home/End,
+PageUp/Down, Delete, Tab, F1-F12) and row 4 (Kitty pop `CSI < u`, query
+`CSI ? u`, and mode-stack nesting).
 
 HELD pending hattie + henry landing on main: row 9 end-to-end Retina resize
 with observed SIGWINCH delivery, and live-PTY byte round-trips for rows 3-7 and

@@ -1,0 +1,28 @@
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/14] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (0.10s)
+Test Suite 'Selected tests' started at 2026-07-19 20:41:49.049.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-19 20:41:49.050.
+Test Suite 'B23PasteBoundaryMatrixTests' started at 2026-07-19 20:41:49.050.
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetEmitsSafeBodyWithoutMarkers]' started.
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetEmitsSafeBodyWithoutMarkers]' passed (0.317 seconds).
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetWithholdsUnsafeMultilineBody]' started.
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteResetWithholdsUnsafeMultilineBody]' passed (2.548 seconds).
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteSetWrapsOnlyTheBodyInExactlyOnePair]' started.
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testBracketedPasteSetWrapsOnlyTheBodyInExactlyOnePair]' passed (0.289 seconds).
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testPositiveControlDefaultStateIsUnbracketedThroughSameReader]' started.
+Test Case '-[HiveTerminalKitTests.B23PasteBoundaryMatrixTests testPositiveControlDefaultStateIsUnbracketedThroughSameReader]' passed (2.535 seconds).
+Test Suite 'B23PasteBoundaryMatrixTests' passed at 2026-07-19 20:41:54.740.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 5.689 (5.690) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-19 20:41:54.740.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 5.689 (5.690) seconds
+Test Suite 'Selected tests' passed at 2026-07-19 20:41:54.740.
+	 Executed 4 tests, with 0 failures (0 unexpected) in 5.689 (5.691) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+
+REAL_EXIT=0

@@ -1,4 +1,5 @@
 import AppKit
+import HiveGhosttyC
 import XCTest
 @testable import HiveTerminalKit
 
@@ -13,13 +14,19 @@ import XCTest
 /// direction had no test, so "bracketed paste works" was only ever half
 /// observed: a build that bracketed unconditionally would have passed.
 final class B23PasteBoundaryMatrixTests: XCTestCase {
-    private static let pasteBody = "clip\nboard"
+    /// Multiline: unsafe to paste unbracketed, because a newline submits.
+    private static let multilineBody = "clip\nboard"
+    /// Single line: safe to paste in either mode.
+    private static let singleLineBody = "clipboard"
 
-    /// The sole reader for both rows and the control.
-    private func pasteWrites(afterMode mode: String) throws -> String {
+    /// The sole reader for every row and control.
+    private func pasteWrites(
+        afterMode mode: String,
+        body: String = B23PasteBoundaryMatrixTests.multilineBody
+    ) throws -> String {
         let clipboard = GhosttyClipboardContext(
             read: { location in
-                location == GHOSTTY_CLIPBOARD_STANDARD ? Self.pasteBody : nil
+                location == GHOSTTY_CLIPBOARD_STANDARD ? body : nil
             },
             write: { _, _ in }
         )
@@ -46,7 +53,7 @@ final class B23PasteBoundaryMatrixTests: XCTestCase {
         terminal.paste(nil)
 
         drainMainRunLoop(until: {
-            writes.reduce(into: Data(), { $0.append($1) }).count >= Self.pasteBody.utf8.count
+            writes.reduce(into: Data(), { $0.append($1) }).count >= body.utf8.count
         })
         // The closing ESC[201~ trails the body, so a reader that stopped as
         // soon as the body arrived could report "no end marker" for a build
@@ -59,7 +66,7 @@ final class B23PasteBoundaryMatrixTests: XCTestCase {
     func testBracketedPasteSetWrapsOnlyTheBodyInExactlyOnePair() throws {
         let actual = try pasteWrites(afterMode: "\u{1B}[?2004h")
 
-        XCTAssertEqual(actual, "\u{1B}[200~\(Self.pasteBody)\u{1B}[201~")
+        XCTAssertEqual(actual, "\u{1B}[200~\(Self.multilineBody)\u{1B}[201~")
         XCTAssertEqual(
             actual.components(separatedBy: "\u{1B}[200~").count - 1, 1,
             "exactly one paste start marker"
@@ -70,10 +77,14 @@ final class B23PasteBoundaryMatrixTests: XCTestCase {
         )
     }
 
-    /// RESET: the markers must be gone. This is the direction that had no
-    /// coverage — an unconditionally bracketing build fails here and only here.
-    func testBracketedPasteResetEmitsBodyWithoutMarkers() throws {
-        let actual = try pasteWrites(afterMode: "\u{1B}[?2004h\u{1B}[?2004l")
+    /// RESET, safe body: the markers must be gone but the text still lands.
+    /// This is the direction that had no coverage — an unconditionally
+    /// bracketing build fails here and only here.
+    func testBracketedPasteResetEmitsSafeBodyWithoutMarkers() throws {
+        let actual = try pasteWrites(
+            afterMode: "\u{1B}[?2004h\u{1B}[?2004l",
+            body: Self.singleLineBody
+        )
 
         XCTAssertFalse(
             actual.contains("\u{1B}[200~"),
@@ -83,9 +94,40 @@ final class B23PasteBoundaryMatrixTests: XCTestCase {
             actual.contains("\u{1B}[201~"),
             "DECRST 2004 must stop bracketing, got \(actual.debugDescription)"
         )
+        XCTAssertEqual(
+            actual, Self.singleLineBody,
+            "a safe single-line paste must reach the encoder verbatim once unbracketed"
+        )
+    }
+
+    /// RESET, unsafe body: the acceptance clause says "with it reset,
+    /// Ghostty's safe-paste rules apply." A multiline paste cannot be sent
+    /// unbracketed, because an embedded newline would submit the line to the
+    /// shell without the user seeing it. Ghostty withholds it.
+    ///
+    /// Recorded as its own row rather than folded into the row above: the two
+    /// differ only by the paste BODY, and conflating them would let a build
+    /// that always withholds — or one that always sends — look correct.
+    func testBracketedPasteResetWithholdsUnsafeMultilineBody() throws {
+        let actual = try pasteWrites(
+            afterMode: "\u{1B}[?2004h\u{1B}[?2004l",
+            body: Self.multilineBody
+        )
+
+        XCTAssertEqual(
+            actual, "",
+            "an unbracketed multiline paste must not reach the terminal unconfirmed, "
+                + "got \(actual.debugDescription)"
+        )
+        // The same body IS sent when bracketed, so the withholding above is
+        // attributable to safe-paste and not to a dead clipboard reader.
+        let bracketed = try pasteWrites(
+            afterMode: "\u{1B}[?2004h",
+            body: Self.multilineBody
+        )
         XCTAssertTrue(
-            actual.contains(Self.pasteBody),
-            "the paste body must still reach the encoder, got \(actual.debugDescription)"
+            bracketed.contains(Self.multilineBody),
+            "the same multiline body must still paste when bracketed"
         )
     }
 
