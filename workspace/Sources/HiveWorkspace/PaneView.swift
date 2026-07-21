@@ -42,6 +42,10 @@ final class PaneView: NSView {
     /// flows again, so a pane never reads frozen while typing still works.
     private var retryableInputRefusal: String?
 
+    /// The renderer is past its escalating retry budget but still reconnecting
+    /// (#90). Transient for the same reason.
+    private var rendererRecovering: String?
+
     /// Last header text the feed wrote, so a cleared retryable refusal restores
     /// it without waiting for the next feed tick.
     private var feedHeaderDescription = ""
@@ -56,9 +60,17 @@ final class PaneView: NSView {
             terminalView.frame = contentView.bounds
             contentView.addSubview(terminalView)
             sessiondTerminal = terminal
-            // §26 bounded recovery: when the renderer gives up reconnecting,
-            // surface a visible failure on the pane instead of a silently
-            // frozen frame (fires on the main thread from the recovery timer).
+            // §26 bounded recovery: surface a visible failure on the pane
+            // instead of a silently frozen frame (fires on the main thread from
+            // the recovery timer). #90 splits it the way #87 split the input
+            // refusals — a renderer that is still reconnecting says so
+            // transiently, and only a loss retrying cannot fix latches.
+            terminal.onDegraded = { [weak self] evidence in
+                self?.showRendererRecovering(evidence)
+            }
+            terminal.onRecovered = { [weak self] in
+                self?.showRendererRecovering(nil)
+            }
             terminal.onFailure = { [weak self] evidence in
                 self?.showTerminalFailure(
                     detail: "renderer disconnected",
@@ -271,7 +283,7 @@ final class PaneView: NSView {
     /// Re-asserts the recorded failure over whatever the feed just wrote.
     private func applyTerminalFailure() {
         guard let terminalFailure else {
-            applyRetryableInputRefusal()
+            applyTransientNotice()
             return
         }
         failureBadge.isHidden = false
@@ -298,9 +310,24 @@ final class PaneView: NSView {
         applyTerminalFailure()
     }
 
-    /// Shows the retryable refusal over the feed text while it holds, and puts
-    /// the feed text back when it clears. Never touches the failure badge.
-    private func applyRetryableInputRefusal() {
+    /// #90: the renderer is past its escalating budget but still reconnecting.
+    /// Transient like a retryable input refusal — nil clears it, and it never
+    /// touches the sticky give-up, which would leave a dead-looking pane that
+    /// is in fact recovering.
+    func showRendererRecovering(_ evidence: String?) {
+        rendererRecovering = evidence
+        applyTerminalFailure()
+    }
+
+    /// Shows whichever transient condition holds over the feed text, and puts
+    /// the feed text back when none does. Never touches the failure badge.
+    /// A renderer that is not painting outranks an input path that is refused.
+    private func applyTransientNotice() {
+        if let rendererRecovering {
+            detailLabel.stringValue = "renderer reconnecting…"
+            detailLabel.toolTip = rendererRecovering
+            return
+        }
         guard let retryableInputRefusal else {
             detailLabel.stringValue = feedHeaderDescription
             detailLabel.toolTip = feedHeaderDescription

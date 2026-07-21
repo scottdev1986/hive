@@ -2,9 +2,11 @@ import XCTest
 @testable import HiveWorkspace
 import WorkspaceCore
 
-/// B2.2 bounded recovery (§26): a sessiond pane whose host keeps refusing must
-/// give up after a bounded number of attempts and surface a visible failure —
-/// never an infinite silent retry loop.
+/// B2.2 bounded recovery (§26) as amended by #90: a sessiond pane whose host
+/// keeps refusing must surface a visible failure after a bounded number of fast
+/// attempts — never an infinite SILENT retry loop — but it must keep retrying
+/// at the capped backoff, because a resting "renderer disconnected" pane for a
+/// condition the host can recover from is the defect, not the safety net.
 final class SessiondPaneReattachTests: XCTestCase {
     private func makeTerminal() -> SessiondPaneTerminal {
         SessiondPaneTerminal(
@@ -23,35 +25,59 @@ final class SessiondPaneReattachTests: XCTestCase {
         )
     }
 
-    /// The retry budget authorizes exactly `maxAttachAttempts` retries, then
-    /// gives up ONCE with a visible failure and stays given up — no infinite
-    /// loop, no repeated failure notifications.
-    func testBoundedReattachGivesUpWithVisibleFailure() {
+    /// #90: exhausting the fast budget degrades the pane VISIBLY and once, and
+    /// recovery keeps going. The old contract stopped here, which is exactly
+    /// the dead pane the user ruled against.
+    func testBudgetExhaustionDegradesVisiblyAndKeepsRetrying() {
         let terminal = makeTerminal()
+        var degraded: [String] = []
         var failures: [String] = []
+        terminal.onDegraded = { degraded.append($0) }
         terminal.onFailure = { failures.append($0) }
 
-        var authorizedRetries = 0
-        // Hard cap so an unbounded (infinite-loop) regression FAILS cleanly here
-        // instead of hanging the suite.
-        let hardCap = terminal.maxAttachAttempts + 1000
-        while terminal.registerFailedAttemptAndShouldRetry("host refused") {
-            authorizedRetries += 1
-            if authorizedRetries >= hardCap {
-                XCTFail("retry budget is unbounded — \(authorizedRetries) retries with no give-up")
-                break
-            }
+        // Well past the budget: every one of these must still be authorized.
+        let attempts = terminal.maxAttachAttempts + 20
+        for attempt in 1...attempts {
+            XCTAssertTrue(
+                terminal.registerFailedAttemptAndShouldRetry("host refused"),
+                "retry \(attempt) was refused; a recoverable loss must never stop retrying")
         }
 
-        XCTAssertEqual(authorizedRetries, terminal.maxAttachAttempts,
-                       "exactly the budgeted number of retries are authorized")
-        XCTAssertTrue(terminal.gaveUp)
+        XCTAssertTrue(terminal.degraded)
         XCTAssertEqual(terminal.lastFailure, "host refused")
-        XCTAssertEqual(failures, ["host refused"], "one terminal failure, surfaced once")
+        XCTAssertEqual(degraded, ["host refused"], "degraded once, surfaced once")
+        XCTAssertFalse(terminal.gaveUp, "a host refusal is recoverable — it must not latch")
+        XCTAssertEqual(failures, [], "the sticky give-up is reserved for unrecoverable losses")
+        // Not an unbounded hot loop: the backoff is capped, so a pane that
+        // never recovers costs one attempt per maxRetryDelay, visibly.
+        XCTAssertEqual(terminal.retryDelay(forAttempt: attempts), terminal.maxRetryDelay)
+    }
 
-        // Idempotent: further attempts stay given up and never re-fire.
-        XCTAssertFalse(terminal.registerFailedAttemptAndShouldRetry("host refused again"))
-        XCTAssertEqual(failures, ["host refused"])
+    /// The other half of #90: recovery must actually re-engage. A live attach
+    /// lifts the degraded state and says so, through the same entry point
+    /// `completeAttach` uses.
+    func testGoingLiveClearsTheDegradedStateAndReportsRecovery() {
+        let terminal = makeTerminal()
+        var degraded: [String] = []
+        var recoveries = 0
+        terminal.onDegraded = { degraded.append($0) }
+        terminal.onRecovered = { recoveries += 1 }
+
+        for _ in 0...terminal.maxAttachAttempts {
+            _ = terminal.registerFailedAttemptAndShouldRetry("host refused")
+        }
+        XCTAssertTrue(terminal.degraded, "positive control: the pane really was degraded")
+
+        terminal.noteLiveAttach()
+
+        XCTAssertFalse(terminal.degraded)
+        XCTAssertNil(terminal.lastFailure)
+        XCTAssertEqual(recoveries, 1, "recovery is reported exactly once")
+        // And the budget starts fresh, so a later transient loss gets the full
+        // fast retry window rather than degrading immediately.
+        XCTAssertTrue(terminal.registerFailedAttemptAndShouldRetry("later loss"))
+        XCTAssertFalse(terminal.degraded)
+        XCTAssertEqual(degraded, ["host refused"])
     }
 
     /// Recovery backoff is EXPONENTIAL (0.5→8s cap) and escalates — the
@@ -74,24 +100,29 @@ final class SessiondPaneReattachTests: XCTestCase {
         }
     }
 
-    /// The recovery timer drives to a visible give-up even when the attach
+    /// The recovery timer reaches a VISIBLE degraded state even when the attach
     /// never progresses (no view/geometry) — the regression guard for a stalled
-    /// attach chain silently stranding the pane instead of failing visibly.
-    func testRecoveryTimerReachesGiveUpWithoutAProgressingAttach() {
+    /// attach chain silently stranding the pane instead of surfacing.
+    func testRecoveryTimerReachesDegradedWithoutAProgressingAttach() {
         let terminal = makeTerminal()
         terminal.recoveryIntervalOverride = 0.01
-        var failures: [String] = []
-        let gaveUp = expectation(description: "recovery gave up")
-        terminal.onFailure = {
-            failures.append($0)
-            gaveUp.fulfill()
+        var reports: [String] = []
+        let surfaced = expectation(description: "recovery degraded")
+        terminal.onDegraded = {
+            reports.append($0)
+            surfaced.fulfill()
         }
         // No view is installed, so every timer-driven attach is a no-op; the
-        // timer must still count down the budget and give up on its own.
+        // timer must still count down the budget and surface on its own.
         terminal.startRecoveryForTesting("host gone")
-        wait(for: [gaveUp], timeout: 5)
-        XCTAssertTrue(terminal.gaveUp)
-        XCTAssertEqual(failures, ["host gone"], "gave up once, visibly")
+        wait(for: [surfaced], timeout: 5)
+        XCTAssertTrue(terminal.degraded)
+        XCTAssertFalse(terminal.gaveUp)
+        XCTAssertEqual(reports, ["host gone"], "degraded once, visibly")
+        // #91: a stalled chain must be distinguishable from one that was really
+        // refused. No grant request ever left, so no refusal was recorded.
+        XCTAssertEqual(terminal.totalAttachRefusals, 0)
+        XCTAssertNil(terminal.lastAttachRefusal)
     }
 
     /// A detached pane never retries and never reports a failure — renderer
@@ -104,6 +135,7 @@ final class SessiondPaneReattachTests: XCTestCase {
 
         XCTAssertFalse(terminal.registerFailedAttemptAndShouldRetry("boom"))
         XCTAssertFalse(terminal.gaveUp)
+        XCTAssertFalse(terminal.degraded)
         XCTAssertEqual(failures, [])
     }
 

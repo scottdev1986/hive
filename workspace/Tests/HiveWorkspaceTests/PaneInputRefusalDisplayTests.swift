@@ -58,6 +58,47 @@ final class PaneInputRefusalDisplayTests: XCTestCase {
             "a feed tick erased an unrecoverable input failure")
     }
 
+    /// #90, same split for the renderer: a pane still reconnecting says so
+    /// transiently and clears when it recovers. Latching here is what put a
+    /// resting "renderer disconnected" on a pane whose host was fine.
+    func testRendererRecoveringShowsWithoutLatchingTheGiveUp() throws {
+        let pane = PaneView(paneID: "worker", title: "aria") { _ in }
+        healthyFeedTick(pane)
+
+        pane.showRendererRecovering("host transport lost")
+
+        XCTAssertNil(
+            pane.terminalFailure,
+            "a reconnecting renderer latched the sticky give-up; the pane will read dead forever")
+        XCTAssertTrue(Self.failureBadge(in: pane)?.isHidden ?? true)
+        XCTAssertTrue(
+            Self.labels(in: pane).contains { $0.stringValue == "renderer reconnecting…" })
+
+        pane.showRendererRecovering(nil)
+        XCTAssertTrue(
+            Self.labels(in: pane).contains { $0.stringValue == "working" },
+            "the recovering notice outlived the recovery")
+    }
+
+    /// A renderer that is not painting outranks an input path that is refused:
+    /// with both transient conditions live the pane must report the renderer,
+    /// and fall back to the input refusal when the renderer recovers.
+    func testRendererNoticeOutranksARetryableInputRefusal() throws {
+        let pane = PaneView(paneID: "worker", title: "aria") { _ in }
+        healthyFeedTick(pane)
+
+        pane.applyInputSubmissionState(
+            .retryableRefusal(code: "CLAIM_DENIED", evidence: "InputBusy"))
+        pane.showRendererRecovering("host transport lost")
+        XCTAssertTrue(
+            Self.labels(in: pane).contains { $0.stringValue == "renderer reconnecting…" })
+
+        pane.showRendererRecovering(nil)
+        XCTAssertTrue(
+            Self.labels(in: pane).contains { $0.stringValue == "input refused — type to retry" },
+            "the still-held input refusal was lost when the renderer recovered")
+    }
+
     private static func labels(in view: NSView) -> [NSTextField] {
         view.subviews.flatMap { labels(in: $0) } + view.subviews.compactMap { $0 as? NSTextField }
     }
