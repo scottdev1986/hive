@@ -7,7 +7,7 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Cell | Status | Artifact |
 |------|--------|----------|
 | Production wiring substrate (daemon-owned broker + visibility + handshake under short home @43140) | GREEN (substrate) | matrix/production-wiring.txt |
-| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `5b448217`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
+| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `42e74c55`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
 | A4 exact per-pane close | GREEN | matrix/a4-exact-close.txt |
 | A4 concurrent quit + process-tree | COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK | matrix/a4-quit.txt; matrix/diagnostic-a4-quit-harness-entanglement.txt |
 | A4 non-Hive project | GREEN | matrix/a4-non-hive-project.txt |
@@ -19,9 +19,20 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Gate-10 Instruments leak/UAF | OPEN (multi-pane waits #40) | — |
 | Gate-10 multi-pane latency | OPEN (waits #40) | — |
 
-### 2026-07-21 production-wiring run
+### 2026-07-21 production-wiring runs
 
-The full production cell is green at `5b448217`: the staged release spawned a
+The full production cell is green at `42e74c55`: the worktree-pinned staged
+release spawned a real Codex agent in a non-Hive repository, Workspace installed
+`HiveTerminalView` on its exact sessiond locator, and the staged CLI both set and
+read back dangerous autonomy before the unattended spawn. The pane presented
+nonblank window contents with no hidden renderer PTY, and the live vendor
+persisted the exact nonce through `hive_send`. Final session
+`ses_019f86ce-458e-7ee1-961b-18a636f66fb1` reached high-water 31,609 with 55
+draws and a 99,295-byte ordered journal. The cell also mutates the display
+preflight, locator, transcript, screenshot, and nonce checks to prove each
+assertion bites.
+
+The earlier full production run at `5b448217` likewise spawned a
 real Codex agent in a non-Hive repository, Workspace installed
 `HiveTerminalView` on its exact sessiond locator, presented nonblank window
 contents with no hidden renderer PTY, and the live vendor persisted the exact
@@ -36,7 +47,10 @@ trust because the spawn override used a logical/dotted project path. Session
 the isolated proof still waited for an MCP approval. The final session
 `ses_019f86bb-f335-7976-9dba-b9531d0f1f5c` uses the canonical inline-table
 trust override and a read-only agent with Hive-owned tool prompts disabled.
-Their screenshots and journals are digest-pinned below.
+Their screenshots and journals are digest-pinned below. The broader defect that
+the readiness gate treats a live vendor parked at an interactive prompt as dead
+is tracked separately as GitHub issue #95; this B2.5 work does not change that
+policy.
 
 ## Row K is owed — no capture exists
 
@@ -54,7 +68,7 @@ DoD-1 (`planning/story-m1-b1-ghosttykit-qualification.md:68`, the A–K matrix g
 vendor TUIs, no carve-out), B2 DoD-6, B2.5, and the Removal Gate itself
 (`planning/story-001-gut-tmux.md:16` — "If ANY matrix cell fails, this story cannot
 execute"). Row K also depends on the production-wiring-full cell above, which is
-itself still OPEN.
+now green.
 
 When the captures are taken, restore the filenames to the Artifact column and
 add their digests to `evidence-sha256.txt`. Until then this section is the
