@@ -220,22 +220,8 @@ if [[ $PRODUCTION -eq 1 ]]; then
   "$ROOT/scripts/qualify-ghostty-release-lock.sh" "$OUT"
 fi
 
-# Atomic publish into the shared artifact cache (#46). A same-key artifact
-# that appeared while this build ran was built from the identical locked
-# inputs — keep the incumbent rather than deleting it out from under a
-# concurrent consumer.
-if [[ -f "$FINAL_OUT/artifact-manifest.json" ]]; then
-  /bin/rm -rf "$OUT"
-else
-  /bin/rm -rf "$FINAL_OUT"
-  if ! /bin/mv "$OUT" "$FINAL_OUT" 2>/dev/null; then
-    # Lost a publish race; our rename landed inside the winner's directory.
-    /bin/rm -rf "$FINAL_OUT/${OUT##*/}" "$OUT"
-    if [[ ! -f "$FINAL_OUT/artifact-manifest.json" ]]; then
-      echo "GhosttyKit artifact publish failed: $FINAL_OUT is incomplete" >&2
-      exit 1
-    fi
-  fi
-fi
+# Atomic publish (#46); the incumbent-vs-fresh decision lives in its own
+# script so it is unit-testable (test/ghostty-artifact-publish.test.ts).
+"$ROOT/scripts/publish-ghostty-artifact.sh" "$OUT" "$FINAL_OUT" "$LOCK"
 
 echo "Ghostty native artifacts: $FINAL_OUT"

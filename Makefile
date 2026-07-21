@@ -237,10 +237,23 @@ vendor-verify:
 
 ghostty ghosttykit: vendor-verify $(GHOSTTYKIT_INFO)
 
+# The artifact key omits every locked input except commit+zig, so a cache
+# poisoned before the publish check existed (stale artifact certified by a
+# current lock stamp — 689bc0a0) would skip rebuilding forever. This always-
+# runs before the stamp rule and drops the stamp when the cached manifest no
+# longer records the lock's source identity, forcing rebuild + republish.
+.PHONY: ghostty-artifact-heal
+ghostty-artifact-heal:
+	@if [ -f "$(GHOSTTY_ARTIFACT)/artifact-manifest.json" ] && \
+	  ! "$(ROOT)/scripts/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)"; then \
+	  echo "make: cached GhosttyKit artifact does not match the toolchain lock; forcing rebuild"; \
+	  /bin/rm -f "$(GHOSTTY_ARTIFACT_STAMP)"; \
+	fi
+
 # No mtime prerequisites: the stamp name is the content key (see LOCK_SHA
 # above), so a fresh worktree reuses the shared artifact instead of spending
 # 25-40 minutes rebuilding it because its checkout mtimes are new (#46).
-$(GHOSTTY_ARTIFACT_STAMP): | toolchain
+$(GHOSTTY_ARTIFACT_STAMP): | toolchain ghostty-artifact-heal
 	@echo "building lock-pinned GhosttyKit"
 	@"$(ROOT)/scripts/build-ghosttykit.sh"
 	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make ghostty'" >&2; exit 1; }
