@@ -632,6 +632,7 @@ async function main(): Promise<void> {
   );
   client = new Client({ name: "b25-production-pane-proof", version: "1" });
   await client.connect(transport);
+  log(command([stagedHive, "autonomy", "dangerous"], project, env));
 
   instanceId = hiveInstanceSuffix(home);
   const workspaceProcess = Bun.spawn([
