@@ -37,8 +37,15 @@ Environment: macOS 26.3.1 (25D2128), arm64; locked Zig 0.15.2.
 | Transactional input wire | A framed byte transaction wrote one line through a real PTY. Retrying the same domain transaction under a different transport request ID returned the identical frozen receipt, and the provider-side file still contained exactly one line after the retry. | Pass |
 | Resize wire | A framed resize applied revision 41 to a real PTY and returned rows 37 and columns 111 from the post-set terminal readback. | Pass |
 | EOF and hangup | Canonical EOF against the real raw-mode provider was rejected because the terminal was not canonical and the provider remained live. A real PTY accepted hangup only after draining, closed its master, and produced direct-child reap evidence. | Pass |
+| E — sustained output, flow control, bounded retention | A real 100 MiB provider wrote through a real PTY with software flow control applied. A real stop byte made the provider quiescent and a real start byte resumed it; every produced byte arrived exactly once and in order across that interruption, matching the source digest. Retention stayed inside the journal ceiling while the whole 100 MiB flowed, the evicted prefix was refused as an explicit gap rather than a silently shortened replay, the refusal boundary was exact, and the retained tail matched the source bytes at their absolute offsets. | Pass |
+
+The sustained-output case is deliberately partial in one place and complete everywhere else. The provider, the pseudo-terminal, the software flow control, the journal, the checkpoint store, eviction and the gap path are all production code. The terminal-sequence engine behind them is a rolling-hash stand-in, because the vendored engine verifies page integrity on every scroll in a debugging build and a real parse of that volume does not finish in a usable time; engine throughput and fidelity are the vendor-integration story's qualification subject, not this one's. Driving the case is what exposed the defect described below, which no shape fixture could have shown.
+
+Qualifying sustained output required one production repair. The engine's semantic fingerprint is a complete checkpoint export of the terminal, and it was being measured again on every write, so each output chunk cost a full serialization of the whole terminal and sustained output made no useful progress. Only the checkpoint verification path ever reads that fingerprint, so it is now measured when it is read. A fingerprint that cannot be measured still refuses to compare equal to any other engine's, so an unverified restore can never be reported as clean.
 
 Positive controls were observed before the production changes: the focused freeze discriminator step reported 0/4 passing, and the live termination test observed a terminated tree whose root wait evidence had been lost. For the transactional input increment, removing the production `INPUT_SUBMIT` dispatch while retaining the real-host control failed at the expected APPLIED response; restoring it made the same control pass. For the frozen create profile, temporarily replacing the requested attributes with the default profile failed the independent live readback assertion; restoring the requested profile made all 173 native tests pass. The strengthened behavioral discriminators and the complete native suite pass after the changes.
+
+The sustained-output case carries its own controls, all observed as failures before the case was accepted. Replacing the software stop byte with an ordinary printable byte left the provider running, so the quiescence assertion failed — the stop is what stops it, not the poll budget. Refusing the retained start instead of the evicted prefix failed, so the gap boundary is exact rather than a blanket refusal. Restoring the per-write fingerprint measurement made the sustained-output regression assertion report seventeen exports where one is required, which is the defect it exists to catch. Reverting each control returned the whole native suite to green.
 
 ## External basis
 
@@ -53,7 +60,7 @@ Positive controls were observed before the production changes: the focused freez
 
 ## Remaining A1 qualification
 
-The next increments must finish native neutral create and the frozen terminate/list/inspect control plane, then wire attach streaming and visibility renewal before exercising broker/host crash and adoption matrices and bounded journal/replay behavior.
+The next increments must finish native neutral create and the rest of the frozen control plane, then wire attach streaming and visibility renewal before exercising broker/host crash and adoption matrices. Of the four freeze cases this story owes as named evidence rows, sustained output and bounded retention now has one; broker restart against a durable parent, resumable attachment across a disconnect, and non-interleaving concurrent human and automation writes do not.
 
 ## RULINGS 2026-07-20
 
