@@ -36,6 +36,7 @@ import {
   WorkspaceVisibilitySnapshotSchema,
   type WorkspaceVisibilityAdmission,
   type WorkspaceVisibilityCandidate,
+  type WorkspaceVisibilitySnapshot,
 } from "./session-host/workspace-visibility";
 import {
   deleteMemoryFact as deleteMemoryFactFile,
@@ -200,6 +201,11 @@ import { MachineMutationCoordinator } from "./mutation-lease";
 export { HIVE_VERSION };
 
 const OPERATOR_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+
+/** How often the daemon re-renews the last accepted Workspace inventory. Must
+ * stay comfortably under sessiond's `visibility_expiry_ms` (15 s) so a missed
+ * tick is survivable; three ticks fit inside one lease. */
+export const WORKSPACE_VISIBILITY_RENEWAL_MS = 5_000;
 
 // Codex app-server hosts drop their pidfiles beside their sockets; the daemon
 // reaps children whose host died without running its own cleanup.
@@ -684,6 +690,7 @@ export class HiveDaemon {
   private readonly landReadiness: ReadLandReadiness;
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
+  private visibilityRenewalTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
   /** Wake-path faults already reported, so a persistent one alerts once. */
   private readonly alertedWakeFaults = new Set<string>();
@@ -1177,6 +1184,17 @@ export class HiveDaemon {
       });
     }, 30_000);
     this.reconciliationTimer.unref?.();
+    // Far tighter than the 30s reconciliation: the lease it defends is 15s.
+    this.visibilityRenewalTimer = setInterval(() => {
+      void this.renewWorkspaceVisibility().catch((error) => {
+        console.error(
+          `Hive workspace visibility renewal failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
+    }, WORKSPACE_VISIBILITY_RENEWAL_MS);
+    this.visibilityRenewalTimer.unref?.();
     void this.runMaintenance().catch((error) => {
       console.error(
         `Hive startup recovery failed: ${
@@ -2394,6 +2412,10 @@ export class HiveDaemon {
       clearInterval(this.reconciliationTimer);
       this.reconciliationTimer = null;
     }
+    if (this.visibilityRenewalTimer !== null) {
+      clearInterval(this.visibilityRenewalTimer);
+      this.visibilityRenewalTimer = null;
+    }
     this.bunServer?.stop(true);
     this.bunServer = null;
     this.codexControl?.close();
@@ -3141,7 +3163,27 @@ export class HiveDaemon {
     if (!body.success) return json({ error: body.error.message }, { status: 400 });
     const result = this.workspaceVisibility.publish(body.data);
     if (result.state !== "accepted") return json(result, { status: 409 });
-    const renewals = await Promise.all(body.data.terminals.map(async (terminal) => {
+    const renewals = await this.renewVisibleTerminals(body.data.terminals);
+    const failures = renewals.filter((renewal) => renewal?.state === "unknown");
+    return json(
+      { ...result, renewals: failures.length === 0
+        ? { state: "complete", renewed: renewals.filter(Boolean).length }
+        : { state: "unknown", failures } },
+      { status: failures.length === 0 ? 200 : 409 },
+    );
+  }
+
+  /** Renews one inventory's leases. `admit` is the only liveness gate: it
+   * returns null unless the recorded Workspace source still verifies by PID and
+   * start token, so an unverified or dead Workspace renews nothing. */
+  private async renewVisibleTerminals(
+    terminals: WorkspaceVisibilitySnapshot["terminals"],
+  ): Promise<Array<
+    | { sessionId: string; state: "renewed" }
+    | { sessionId: string; state: "unknown"; diagnostic: string }
+    | null
+  >> {
+    return await Promise.all(terminals.map(async (terminal) => {
       const binding = this.db.getTerminalHostBindingByLocator(terminal.locator);
       if (binding?.createEvidence === undefined) return null;
       const admission = await this.workspaceVisibility!.admit({
@@ -3163,13 +3205,31 @@ export class HiveDaemon {
         };
       }
     }));
-    const failures = renewals.filter((renewal) => renewal?.state === "unknown");
-    return json(
-      { ...result, renewals: failures.length === 0
-        ? { state: "complete", renewed: renewals.filter(Boolean).length }
-        : { state: "unknown", failures } },
-      { status: failures.length === 0 ? 200 : 409 },
-    );
+  }
+
+  /**
+   * Keeps the last accepted inventory's leases alive while the Workspace that
+   * authored it is still verifiably running.
+   *
+   * sessiond expires a visibility lease `visibility_expiry_ms` (15 s) after the
+   * last renewal and then terminates the host. Renewal used to ride *only* on
+   * the Workspace's own publishes, which made a stalled publisher
+   * indistinguishable from a dead Workspace: on 2026-07-21 one hung publish
+   * froze renewal for every pane and sessiond killed all five vendors
+   * (docs/incidents/2026-07-21-fleet-visibility-expiry.md).
+   *
+   * This does not widen the invariant. It renews only what `admit` still
+   * admits, and `admit` requires a positive PID+start-token match against the
+   * recorded source. A dead Workspace, a replaced one, or a source that cannot
+   * be observed at all admits nothing — so the leases lapse and sessiond kills
+   * exactly as before. Fail-closed is preserved; only "the publisher stalled"
+   * is separated from "the Workspace is gone".
+   */
+  async renewWorkspaceVisibility(): Promise<number> {
+    const snapshot = this.workspaceVisibility?.currentSnapshot() ?? null;
+    if (snapshot === null) return 0;
+    const renewals = await this.renewVisibleTerminals(snapshot.terminals);
+    return renewals.filter((renewal) => renewal?.state === "renewed").length;
   }
 
   private async tokenUsageEndpoint(

@@ -262,6 +262,125 @@ test("only the operator may publish a live advancing Workspace inventory", async
   }
 });
 
+test("a stalled publisher does not expire a live Workspace, but a dead one still expires", async () => {
+  // 2026-07-21: renewal rode only on the Workspace's publishes, so one hung
+  // publish was indistinguishable from a dead Workspace and sessiond killed
+  // all five vendors. The daemon now re-renews the last accepted inventory on
+  // its own clock — but ONLY while the recorded source still verifies.
+  const db = new HiveDatabase(":memory:");
+  const agentId = "agent-stalled";
+  const locator = {
+    ...mintAgentTmuxSessionLocator(agentId),
+    hostKind: "sessiond" as const,
+    engineBuildId: "engine-stalled",
+  };
+  const initialVisibility = {
+    workspaceSessionId: "workspace-stalled",
+    workspacePid: 7501,
+    workspaceStartToken: "7501:100",
+    openTerminalRevision: "1",
+  };
+  db.bindTerminalHostSession({ locator, visibility: initialVisibility });
+  db.completeTerminalHostSession(locator, {
+    expectedExecutable: "/bin/sh",
+    executableVerified: true,
+    verifiedProviderRoot: null,
+    geometry: {
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
+    },
+    visibility: {
+      state: "visible",
+      workspaceSessionId: initialVisibility.workspaceSessionId,
+      openTerminalRevision: "1",
+      expiresAt: "2026-07-18T12:00:15.000Z",
+    },
+  });
+  db.insertAgent(agent({
+    id: agentId,
+    name: "stalled",
+    status: "working",
+    sessionLocator: locator,
+  }));
+  const renewals: unknown[] = [];
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected terminal-host operation");
+  };
+  const terminalHost: LandedTerminalHost = {
+    create: unsupported,
+    claimInput: unsupported,
+    submitInput: unsupported,
+    resize: unsupported,
+    inspect: unsupported,
+    issueAttach: unsupported,
+    list: async () => [],
+    terminate: unsupported,
+    renewVisibility: async (requestedLocator, request) => {
+      renewals.push(request.openTerminalRevision);
+      return {
+        locator: requestedLocator,
+        state: "active",
+        expiresAt: "2026-07-18T12:00:30.000Z",
+        openTerminalRevision: request.openTerminalRevision,
+      };
+    },
+  };
+  // The Workspace process is alive until the test kills it.
+  let workspaceAlive = true;
+  const visibility = new WorkspaceVisibilityAuthority({
+    expectedInstanceId: locator.instanceId,
+    observeProcess: (pid) =>
+      workspaceAlive && pid === 7501 ? { startToken: "7501:100" } : null,
+    discoverEngineBuildId: async () => "engine-stalled",
+  });
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    terminalHost,
+    workspaceVisibility: visibility,
+  });
+  try {
+    const published = await actingAs(daemon, "operator")(
+      "http://hive/workspace-visibility",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          schemaVersion: 1,
+          source: {
+            sessionId: initialVisibility.workspaceSessionId,
+            process: { processId: 7501, startToken: "7501:100" },
+          },
+          inventoryRevision: "2",
+          terminals: [{ agentId, agentName: "stalled", locator, state: "live" }],
+        }),
+      },
+    );
+    expect(published.status).toBe(200);
+    expect(renewals).toEqual(["2"]);
+
+    // The publisher now stalls: no further POST ever arrives. The daemon's own
+    // renewal keeps the verified-live Workspace's lease alive.
+    expect(await daemon.renewWorkspaceVisibility()).toBe(1);
+    expect(await daemon.renewWorkspaceVisibility()).toBe(1);
+    expect(renewals).toEqual(["2", "2", "2"]);
+
+    // Positive control — the gate is still armed. The Workspace dies; nothing
+    // else changes. No renewal is issued, the lease lapses, and sessiond's
+    // VISIBILITY_EXPIRED enforcement kills the host exactly as before.
+    workspaceAlive = false;
+    expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+    expect(renewals).toEqual(["2", "2", "2"]);
+  } finally {
+    db.close();
+  }
+});
+
 test("an accepted full inventory renews each exact completed sessiond binding", async () => {
   const db = new HiveDatabase(":memory:");
   const agentId = "agent-renewed";
