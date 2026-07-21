@@ -76,6 +76,159 @@ fn sha256(bytes: []const u8) [32]u8 {
     return digest;
 }
 
+// Freeze case I: concurrent human and automation writes obey claim fencing
+// and cannot interleave one transaction with another.
+//
+// The host loop is single threaded, so concurrency reaches the arbiter as
+// interleaved calls — which is exactly what this drives, in both directions:
+// a human attempting to write into an automation transaction that has begun
+// but not committed, and automation attempting to begin inside a human's
+// multi-part transaction. Refusal alone is not the claim; the claim is that
+// the bytes the real terminal actually received are each transaction's bytes
+// contiguously, in transaction order, with nothing spliced between them.
+test "concurrent human and automation writes are fenced and never interleave" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const output_name = "fenced-order.bin";
+    {
+        const output = try tmp.dir.createFile(output_name, .{});
+        output.close();
+    }
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const output_path = try tmp.dir.realpath(output_name, &path_buf);
+
+    var host = try pty_host.PtyHost.init(allocator);
+    defer host.deinit();
+    switch (try host.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            "exec /bin/cat > \"$1\"",
+            "hive-fencing-test",
+            output_path,
+        },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+
+    var sink = HostSink{ .host = &host };
+    var arbiter = input_arbiter.InputArbiter.init(
+        allocator,
+        sink.sink(),
+        MaxExpansionEncoder.encoder(),
+        NoopCancelEncoder.encoder(),
+    );
+    defer arbiter.deinit();
+
+    const automation_body = "AUTOMATION-TRANSACTION-BODY";
+    const automation_digest = sha256(automation_body);
+    const human_first = "HUMAN-PART-ONE";
+    const human_second = "HUMAN-PART-TWO";
+
+    // Direction one: a human cannot write into an automation transaction that
+    // has begun and buffered but not yet committed.
+    try arbiter.automationBegin(.{
+        .transaction_id = "txn_fence",
+        .idempotency_key = "idemp_fence",
+        .expected_len = automation_body.len,
+        .expected_digest = automation_digest,
+        .recipient_generation = 1,
+        .capability_epoch = 0,
+        .message_id = "msg_fence",
+        .locator = "ses_fence",
+        .provider_strategy = "paste",
+        .submit = .none,
+    });
+    _ = try arbiter.automationChunk(0, automation_body);
+    try std.testing.expectError(
+        error.InputBusy,
+        arbiter.claimAcquire("viewer-human", "claim-human"),
+    );
+    try std.testing.expectError(error.InputBusy, arbiter.gestureInput("GESTURE"));
+    _ = try arbiter.automationCommit(
+        "txn_fence",
+        "idemp_fence",
+        automation_body.len,
+        automation_digest,
+        1,
+        0,
+        "msg_fence",
+        "ses_fence",
+        .none,
+    );
+
+    // Direction two: automation cannot begin inside a human's multi-part
+    // transaction, and the refusal leaves the human's own ordering untouched.
+    _ = try arbiter.claimAcquire("viewer-human", "claim-human");
+    _ = try arbiter.humanInput(
+        "viewer-human",
+        "claim-human",
+        1,
+        sha256(human_first),
+        human_first,
+    );
+    try std.testing.expectError(error.HumanOwned, arbiter.automationBegin(.{
+        .transaction_id = "txn_intruder",
+        .idempotency_key = "idemp_intruder",
+        .expected_len = automation_body.len,
+        .expected_digest = automation_digest,
+        .recipient_generation = 1,
+        .capability_epoch = 0,
+        .message_id = "msg_intruder",
+        .locator = "ses_fence",
+        .provider_strategy = "paste",
+        .submit = .none,
+    }));
+    _ = try arbiter.humanInput(
+        "viewer-human",
+        "claim-human",
+        2,
+        sha256(human_second),
+        human_second,
+    );
+
+    var drain_attempts: usize = 0;
+    while (host.write_queue.items.len > 0 and drain_attempts < 100_000) : (drain_attempts += 1) {
+        if (try host.writeDrain() == 0) std.Thread.sleep(100 * std.time.ns_per_us);
+    }
+    try std.testing.expectEqual(@as(usize, 0), host.write_queue.items.len);
+
+    // The automation body is encoded; human bytes reach the sink verbatim.
+    var expected: std.ArrayList(u8) = .{};
+    defer expected.deinit(allocator);
+    const framing = framingBytes();
+    try expected.appendSlice(allocator, &framing);
+    for (0..input_arbiter.encoded_expansion_factor) |_|
+        try expected.appendSlice(allocator, automation_body);
+    try expected.appendSlice(allocator, human_first);
+    try expected.appendSlice(allocator, human_second);
+
+    var observed: std.ArrayList(u8) = .{};
+    defer observed.deinit(allocator);
+    for (0..500) |_| {
+        observed.clearRetainingCapacity();
+        const output = try tmp.dir.openFile(output_name, .{});
+        defer output.close();
+        var read_buf: [4096]u8 = undefined;
+        while (true) {
+            const read_len = try output.read(&read_buf);
+            if (read_len == 0) break;
+            try observed.appendSlice(allocator, read_buf[0..read_len]);
+        }
+        if (observed.items.len >= expected.items.len) break;
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    // Exact equality is the non-interleaving assertion: any byte of one
+    // transaction landing inside another, and any lost or duplicated byte,
+    // changes this sequence.
+    try std.testing.expectEqualSlices(u8, expected.items, observed.items);
+}
+
 test "full 1 MiB automation transaction is atomically queued and drained in order" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
 
