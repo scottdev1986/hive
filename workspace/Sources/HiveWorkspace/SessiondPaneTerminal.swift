@@ -23,6 +23,13 @@ final class SessiondPaneTerminal {
     private var detached = false
     private var attachInFlight = false
     private var geometryPollTimer: Timer?
+    /// #81: how long the geometry poll stays quiet before it reports that it is
+    /// still waiting. It keeps polling either way.
+    let geometryWaitSeconds: TimeInterval = 10
+    /// Test seam: shorten the bound so the row runs without the wall-clock.
+    var geometryWaitOverride: TimeInterval?
+    private var geometryWaitStarted: Date?
+    private(set) var waitingForGeometry = false
 
     /// §26 bounded recovery: consecutive failed attach attempts. Reset to 0 on
     /// each first-correct-frame so a later transient loss gets a fresh budget.
@@ -122,8 +129,16 @@ final class SessiondPaneTerminal {
     /// Begins attaching once the surface has measured a usable grid. Geometry
     /// is grant-bound (§19), so the attach waits for the engine's real
     /// font/grid measurement rather than guessing from bounds.
+    ///
+    /// #81: the wait used to be unbounded and silent — a pane whose surface
+    /// never measured a usable grid sat empty forever with no badge, no
+    /// give-up and nothing in workspace.log. It is bounded now, but bounded
+    /// into a VISIBLE wait rather than a failure: geometry becomes usable the
+    /// moment the pane is given room, so latching here would recreate the dead
+    /// pane #90 rules out. Say so once, keep polling, clear on success.
     func startWhenGeometryReady() {
         guard geometryPollTimer == nil, !detached else { return }
+        geometryWaitStarted = Date()
         let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] timer in
             guard let self else {
                 timer.invalidate()
@@ -134,9 +149,13 @@ final class SessiondPaneTerminal {
                 self.geometryPollTimer = nil
                 return
             }
-            guard let geometry = self.view?.reportedGeometry, geometry.isUsable else { return }
+            guard let geometry = self.view?.reportedGeometry, geometry.isUsable else {
+                self.noteGeometryWaitElapsed()
+                return
+            }
             timer.invalidate()
             self.geometryPollTimer = nil
+            self.clearGeometryWait()
             // Apply C1 theme BEFORE attach so journal replay paints onto the
             // themed surface. applyHiveConfiguration after processOutput can
             // wipe the VT (blank pane while journal is full — hubert finding).
@@ -145,6 +164,26 @@ final class SessiondPaneTerminal {
         }
         geometryPollTimer = timer
         RunLoop.main.add(timer, forMode: .common)
+    }
+
+    /// Surfaces the geometry wait once it passes the bound. Idempotent: the
+    /// poll runs 20x a second and the user needs one notice, not a stream.
+    private func noteGeometryWaitElapsed() {
+        guard !waitingForGeometry, let started = geometryWaitStarted else { return }
+        let bound = geometryWaitOverride ?? geometryWaitSeconds
+        guard Date().timeIntervalSince(started) >= bound else { return }
+        waitingForGeometry = true
+        let evidence = "surface has not measured a usable grid after \(bound)s"
+        NSLog("sessiond pane %@ still waiting for geometry: %@", agentName, evidence)
+        onDegraded?(evidence)
+    }
+
+    private func clearGeometryWait() {
+        geometryWaitStarted = nil
+        guard waitingForGeometry else { return }
+        waitingForGeometry = false
+        NSLog("sessiond pane %@ geometry became usable", agentName)
+        onRecovered?()
     }
 
     /// Renderer detach only: the logical pane, the session, and the daemon's

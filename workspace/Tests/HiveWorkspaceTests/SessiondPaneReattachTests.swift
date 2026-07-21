@@ -125,6 +125,51 @@ final class SessiondPaneReattachTests: XCTestCase {
         XCTAssertNil(terminal.lastAttachRefusal)
     }
 
+    /// #81: the geometry poll had no bound, so a pane whose surface never
+    /// measured a usable grid waited forever with nothing on screen, no badge
+    /// and nothing in workspace.log. It must become visible — and keep polling,
+    /// because geometry arrives the moment the pane is given room.
+    func testGeometryWaitBecomesVisibleAndKeepsPolling() {
+        let terminal = makeTerminal()
+        terminal.geometryWaitOverride = 0.05
+        var reports: [String] = []
+        let surfaced = expectation(description: "geometry wait surfaced")
+        // Over-fulfilment fails the test, which is the guard against a notice
+        // that fires once per 0.05s poll tick instead of once per wait.
+        terminal.onDegraded = {
+            reports.append($0)
+            surfaced.fulfill()
+        }
+        // No view is installed, so reportedGeometry never becomes usable.
+        terminal.startWhenGeometryReady()
+        wait(for: [surfaced], timeout: 5)
+        // Keep polling past the notice: a bound that stops the poll would strand
+        // a pane that is about to be given room.
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        terminal.detach()
+
+        XCTAssertTrue(terminal.waitingForGeometry)
+        XCTAssertEqual(reports.count, 1, "reported once, not once per poll tick")
+        XCTAssertFalse(terminal.gaveUp, "a pane with no room yet is not a failed pane")
+        XCTAssertFalse(terminal.degraded, "the geometry wait is not an attach failure")
+    }
+
+    /// Control: before its bound the wait stays quiet, so the row above is
+    /// reading a real bound rather than a notice that fires unconditionally.
+    func testControlGeometryWaitStaysQuietBeforeItsBound() {
+        let terminal = makeTerminal()
+        terminal.geometryWaitOverride = 30
+        var reports: [String] = []
+        terminal.onDegraded = { reports.append($0) }
+
+        terminal.startWhenGeometryReady()
+        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
+        terminal.detach()
+
+        XCTAssertFalse(terminal.waitingForGeometry)
+        XCTAssertEqual(reports, [], "the wait notice fired before its bound")
+    }
+
     /// A detached pane never retries and never reports a failure — renderer
     /// detach is not an attach failure (§26: detach never claims close).
     func testDetachedPaneDoesNotRetryOrFail() {
