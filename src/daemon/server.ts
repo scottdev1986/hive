@@ -4024,7 +4024,7 @@ export class HiveDaemon {
       // orchestrator can see it without knowing to look (2026-07-21 messaging
       // regression: hours of silence that looked exactly like "nothing to say").
       const blocked = this.delivery.blockedDeliveries();
-      let agents = this.db.listAgents().map((agent) => ({
+      let agents = this.db.listAgents().map((agent): AgentRecord => ({
         ...agent,
         ...(this.graphify === undefined ? {} : {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
@@ -4062,15 +4062,17 @@ export class HiveDaemon {
       // ahead of the code answering this call. Status says so unasked — the
       // failure mode is precisely that nobody thinks to ask.
       const build = await this.buildFreshness();
-      let result = (detail === "full"
+      const result = detail === "full"
         ? agents
-        : compactActiveTeam(agents, evidence)) as unknown as Array<
-          Record<string, unknown>
-        >;
+        : compactActiveTeam(agents, evidence);
       if (fields !== undefined) {
-        result = result.map((record) => Object.fromEntries(fields
-          .filter((field) => field in record)
-          .map((field) => [field, record[field]])));
+        return toolResult(
+          result.map((record) => Object.fromEntries(
+            Object.entries(record).filter(([field]) => fields.includes(field)),
+          )),
+          "agents",
+          build.message,
+        );
       }
       return toolResult(
         result,
