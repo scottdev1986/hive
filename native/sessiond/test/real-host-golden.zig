@@ -1181,6 +1181,10 @@ fn driveViewerWire(
             .afterSeq = "0",
         }, .{});
         defer allocator.free(wrong_attach);
+        std.debug.print(
+            "expected negative-control (wrong-generation HOST_ATTACH): next host log is AttachLocatorMismatch\n",
+            .{},
+        );
         try writeViewerRequest(wrong_stream, generated.frame_type.host_attach, 71, 0, wrong_attach);
         try readViewerError(&wrong_reader, 71, "GENERATION_MISMATCH");
         if (wrong_reader.output.items.len != 0) return error.WrongGenerationReceivedOutput;
