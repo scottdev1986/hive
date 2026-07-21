@@ -32,13 +32,16 @@ trap 'rm -rf "$ABI_TMP"' EXIT HUP INT TERM
 HVTCP001_FIXTURE_PATH="$ROOT/native/tests/abi/hvtcp001-header.bin" \
   "$ABI_TMP/checkpoint-envelope"
 # header-standalone needs Ghostty headers (syntax-only ABI check).
-if [ -f "$ROOT/vendor/ghostty/include/ghostty.h" ]; then
-  env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
-    /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories -Wno-padded \
-    -fsyntax-only \
-    -I "$ROOT/native/include" -isystem "$ROOT/vendor/ghostty/include" \
-    "$ROOT/native/tests/abi/header-standalone.c"
+if [ ! -f "$ROOT/vendor/ghostty/include/ghostty.h" ]; then
+  echo "missing required Ghostty header for header-standalone ABI check: $ROOT/vendor/ghostty/include/ghostty.h" >&2
+  exit 1
 fi
+env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
+  /usr/bin/clang -std=c11 -Weverything -Werror -Wno-poison-system-directories -Wno-padded \
+  -fsyntax-only \
+  -I "$ROOT/native/include" -isystem "$ROOT/vendor/ghostty/include" \
+  "$ROOT/native/tests/abi/header-standalone.c"
+echo "header-standalone ABI check passed"
 
 # real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
 # inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
