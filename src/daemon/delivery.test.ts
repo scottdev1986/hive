@@ -2156,3 +2156,43 @@ describe("#68 acceptance failures (2026-07-21): swallowed Enter and silent root 
     expect(note).toContain("Do not re-send");
   });
 });
+
+describe("maintenance tick retries failed root wakes (#68)", () => {
+  test("a root message stuck by a transient wake failure delivers on the next sweep", async () => {
+    const db = new HiveDatabase(join(home, "root-wake-tick-retry.db"));
+    let transportUp = false;
+    const delivered: string[] = [];
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      {
+        isLive: () => true,
+        async deliverMessage(content: string) {
+          if (!transportUp) throw new Error("error connecting to tmux socket");
+          delivered.push(content);
+          return true;
+        },
+      },
+      {},
+    );
+    try {
+      const message = await delivery.send("zoe", "queen", "Task done.");
+      expect(message.state).toBe("queued");
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toContain(
+        "error connecting to tmux socket",
+      );
+
+      // Nothing else sends and queen reaches no boundary; the maintenance
+      // sweep alone must recover once the transport is back.
+      transportUp = true;
+      const woken = await delivery.wakeIdleRecipients();
+      expect(woken.map((row) => row.id)).toEqual([message.id]);
+      expect(db.getMessage(message.id)?.state).toBe("injected");
+      expect(delivered).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});

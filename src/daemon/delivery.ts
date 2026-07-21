@@ -705,6 +705,18 @@ export class MessageDelivery {
       ) continue;
       woken.push(...await this.flushQueued(agent.name));
     }
+    // The root has no agents row, so this sweep used to skip it entirely: a
+    // root wake that failed at send time was retried by NOTHING until the
+    // next send or queen turn boundary happened to come along (2026-07-21 —
+    // zoe's report sat queued behind a transient tmux failure with no
+    // ticker). A failed wake now self-heals on the next maintenance tick.
+    if (
+      orchestratorRecipientNames().some((name) =>
+        this.db.getUndeliveredMessages(name).length > 0
+      )
+    ) {
+      woken.push(...await this.wakeOrchestrator());
+    }
     return woken;
   }
 

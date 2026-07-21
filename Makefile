@@ -164,14 +164,23 @@ SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 	$(GHOSTTY_ENGINE_INPUTS)
 
 # The complete isolation envelope for the dev instance.
+#
+# TMUX_TMPDIR is deliberately NOT overridden here. The daemon is only one of
+# the tmux clients: the orchestrator session is created by the launcher in
+# the USER'S shell (default /tmp/tmux-$UID), and the user attaches with a
+# plain `tmux -L hive-<suffix>`. A daemon-only TMUX_TMPDIR split the daemon
+# from the very server holding queen's session — every root wake failed with
+# "error connecting to .dev/tmux/... (No such file or directory)" while the
+# fleet ran fine (2026-07-21, #68 acceptance). Isolation from the user's own
+# tmux is already carried by the per-instance socket NAME (-L hive-<suffix>),
+# which needs no directory override.
 DEV_ENV := \
 	HIVE_HOME=$(DEV_HOME) \
 	HIVE_INSTALL_ROOT=$(INSTALL_ROOT) \
 	HIVE_BIN_LINK=$(DEV)/bin/hive \
 	HIVE_DISABLE_UPDATES=1 \
 	HIVE_PORT=0 \
-	TMPDIR=$(DEV)/tmp \
-	TMUX_TMPDIR=$(DEV)/tmux
+	TMPDIR=$(DEV)/tmp
 
 .PHONY: help build demo terminal demo-artifacts demo-preflight native sessiond workspace \
 	ghostty ghosttykit run test test-e2e toolchain clean cleanup deepclean
@@ -428,7 +437,9 @@ clean:
 	self=$$$$; \
 	suffix=$$(printf '%s' "$$home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
 	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
+	: "the dev server may live in either socket dir: pre-fix runs used $$dev/tmux, current runs use the user default"; \
 	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
+	tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	pidfile=""; \
 	if [ -f "$$home/daemon.pid" ]; then pidfile="$$home/daemon.pid"; \
 	elif [ -f "$$dev/home/daemon.pid" ]; then pidfile="$$dev/home/daemon.pid"; fi; \

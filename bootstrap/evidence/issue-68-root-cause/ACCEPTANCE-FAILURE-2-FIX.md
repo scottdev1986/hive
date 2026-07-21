@@ -83,6 +83,37 @@ Whatever threw first on 2026-07-21, the next run's stuck row will carry its
 name. If nothing throws next run, the wake will simply work — it does in
 every in-tree and live-socket configuration tested here.
 
+### CONFIRMED LIVE (2026-07-21 ~00:38–00:43Z), and fixed
+
+The diagnostics did their job on the very next run: the stuck rows read
+`root wake failed: tmux load-buffer failed: error connecting to
+<repo>/.dev/tmux/tmux-501/hive-<suffix> (No such file or directory)`.
+
+Root cause: **a tmux socket-path split**. `make run`'s DEV_ENV exported
+`TMUX_TMPDIR=.dev/tmux` to the DAEMON only, while the orchestrator session
+is created by the launcher in the USER's shell (default `/tmp/tmux-$UID`)
+— so every daemon-side root-wake client dialed an empty directory while
+queen's server listened elsewhere. Agent traffic was unaffected because this
+run's agents were sessiond-hosted (the viewer wire — which also confirms the
+`b6c5f2da` inject fix works hands-off in production: queued → injected →
+applied in ~2s with nobody at the keyboard).
+
+Fixes:
+- `Makefile`: `TMUX_TMPDIR` removed from DEV_ENV — the per-instance socket
+  NAME (`-L hive-<suffix>`) already carries the isolation; a directory
+  override only splits the daemon from the launcher-created server. `clean`
+  now tries the kill-server in both socket dirs (pre-fix and current runs).
+- `wakeIdleRecipients` now retries undelivered ROOT messages on the
+  maintenance tick — the root has no agents row, so a wake that failed at
+  send time previously had NO retry ticker at all.
+- Live heal without a restart: the running daemon's baked env was bridged
+  with a socket-file symlink
+  (`.dev/tmux/tmux-501/hive-<suffix> → /private/tmp/tmux-501/hive-<suffix>`;
+  tmux rejects a symlinked socket *directory* but follows a symlinked socket
+  *file*). The stuck row flipped queued → injected at 00:43:23Z on the next
+  trigger. The symlink is superseded by the Makefile fix at the next
+  restart and is removed by any `make clean`.
+
 ## Instrument notes
 
 - macOS `nc -z -U` reports "refused" against working UDS sockets (inherited
