@@ -115,6 +115,13 @@ fn knownType(type_code: u16) bool {
     };
 }
 
+comptime {
+    for (@typeInfo(generated.frame_type).@"struct".decls) |decl| {
+        if (!knownType(@field(generated.frame_type, decl.name)))
+            @compileError("knownType is missing generated frame type " ++ decl.name);
+    }
+}
+
 fn rawByteType(type_code: u16) bool {
     return switch (type_code) {
         generated.frame_type.create_input,
