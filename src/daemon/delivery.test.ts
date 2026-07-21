@@ -286,6 +286,33 @@ describe("MessageDelivery", () => {
     }
   });
 
+  test("a held human-claim preemption remains visible on the delivered row", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-held-preemption.db"));
+    const sessiondInput: SessiondAgentInput = {
+      async injectIdle(_recipient, _text, options) {
+        return {
+          outcome: "injected",
+          receipt: acceptingReceipt(options.messageId),
+          recovery: "held human claim (owner workspace-pane) preempted for delivery; retrying",
+        };
+      },
+    };
+    const delivery = new MessageDelivery(
+      db, { async sendSessionMessage() {} }, undefined, undefined, undefined, {}, undefined, undefined,
+      sessiondInput,
+    );
+    try {
+      db.insertAgent(sessiondRecipient());
+      const message = await delivery.send("queen", "maya", "Fleet delivery must proceed.");
+      expect(message.state).toBe("injected");
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toBe(
+        "sessiond inject recovered: held human claim (owner workspace-pane) preempted for delivery; retrying",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
   test("a declined sessiond claim leaves the envelope queued, never applied (#68)", async () => {
     const db = new HiveDatabase(join(home, "sessiond-declined.db"));
     // The arbiter denies the automation claim (a human owns input): injectIdle

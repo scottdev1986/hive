@@ -68,15 +68,34 @@ import {
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
 
-/** §22 ORPHAN_DISCARDED. `discarded: false` is a refusal with its reason, not
- * a transport failure — the host declines anything but a HUMAN_ORPHANED
- * arbiter, and names whose orphaned claim it destroyed when it does act. */
-export type OrphanDiscardResult = Readonly<{
-  discarded: boolean;
-  priorOwnerViewerId: string | null;
-  priorClaimId: string | null;
-  diagnostic: string;
-}>;
+/** §22 host-authorized resolution modes. A held claim is deliberately an
+ * explicit preemption, never an accidental orphan discard. */
+export type OrphanDiscardMode = "orphaned" | "held";
+
+/** §22 ORPHAN_DISCARDED is a typed host decision, not a boolean whose false
+ * branch can erase the distinction between refusal and preemption. */
+export type OrphanDiscardResult =
+  | Readonly<{
+      state: "discarded";
+      priorOwnerViewerId: string;
+      priorClaimId: string;
+      orphanAgeMilliseconds: string;
+      diagnostic: string;
+    }>
+  | Readonly<{
+      state: "preempted";
+      priorOwnerViewerId: string;
+      priorClaimId: string;
+      orphanAgeMilliseconds: null;
+      diagnostic: string;
+    }>
+  | Readonly<{
+      state: "refused";
+      priorOwnerViewerId: string | null;
+      priorClaimId: string | null;
+      orphanAgeMilliseconds: string | null;
+      diagnostic: string;
+    }>;
 
 export type LandedTerminalHost = Pick<
   TerminalHost,
@@ -733,16 +752,16 @@ export class SessiondHost implements LandedTerminalHost {
   }
 
   /**
-   * §22 INPUT_ORPHAN_DISCARD: ask the host to cancel an abandoned HUMAN_ORPHANED
-   * draft so the arbiter returns to FREE. The host refuses in-band for anything
-   * but an orphan, so this cannot take input from a human who is actually
-   * attached (#40 never-steal). See
+   * §22 INPUT_ORPHAN_DISCARD: ask the host for a typed, authorized resolution
+   * of an orphaned or held human claim. The host alone may preempt a held claim,
+   * and reports that distinct from an orphan discard. See
    * docs/incidents/2026-07-21-messaging-regression.md.
    */
   async discardInputOrphan(
     locator: Parameters<SessionHost["renewVisibility"]>[0],
+    mode: OrphanDiscardMode,
   ): Promise<OrphanDiscardResult> {
-    const payload = OrphanDiscardPayloadSchema.parse({ schemaVersion: 1, locator });
+    const payload = OrphanDiscardPayloadSchema.parse({ schemaVersion: 1, locator, mode });
     const broker = await this.connectBroker();
     try {
       const { schemaVersion: _, ...result } = await broker.request({

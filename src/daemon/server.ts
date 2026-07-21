@@ -875,7 +875,7 @@ export class HiveDaemon {
           // §22 orphan discard lives on the real sessiond client only; an
           // injected test host keeps the pre-fix decline-and-queue behaviour.
           landedTerminalHost instanceof SessiondHost
-            ? (locator) => landedTerminalHost.discardInputOrphan(locator)
+            ? (locator, mode) => landedTerminalHost.discardInputOrphan(locator, mode)
             : undefined,
         ),
     );

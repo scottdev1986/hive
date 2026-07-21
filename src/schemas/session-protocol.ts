@@ -1145,27 +1145,42 @@ export const RenewedPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
   ...VisibilityLeaseSchema.unwrap().shape,
 }).readonly();
-/**
- * §22 INPUT_ORPHAN_DISCARD: authenticated operator discard of a HUMAN_ORPHANED
- * claim, the missing exit from the deadlock in
- * docs/incidents/2026-07-21-messaging-regression.md. It never resumes a draft
- * and never touches a LIVE human claim (#40 never-steal holds); it cancel-
- * encodes an abandoned one so the arbiter returns to FREE and automation can
- * be heard again.
- */
+/** §22 INPUT_ORPHAN_DISCARD: an authenticated delivery-time resolution of a
+ * human input claim. `orphaned` destroys only an abandoned draft; `held` is
+ * the explicitly authorized M1 fleet-unwedging preemption of a live draft. */
 export const OrphanDiscardPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
   locator: SessionLocatorSchema,
+  mode: z.enum(["orphaned", "held"]),
 }).readonly();
-/** §22 ORPHAN_DISCARDED reports the outcome and the orphan's owner of record,
- * so the caller can audit whose unsubmitted draft was destroyed. */
-export const OrphanDiscardedPayloadSchema = z.strictObject({
-  schemaVersion: z.literal(1),
-  discarded: z.boolean(),
-  priorOwnerViewerId: z.string().min(1).nullable(),
-  priorClaimId: z.string().min(1).nullable(),
-  diagnostic: z.string().min(1),
-}).readonly();
+/** §22 ORPHAN_DISCARDED is deliberately a discriminated result: consumers
+ * cannot flatten a destructive preemption into an ordinary orphan discard. */
+export const OrphanDiscardedPayloadSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    state: z.literal("discarded"),
+    priorOwnerViewerId: z.string().min(1),
+    priorClaimId: z.string().min(1),
+    orphanAgeMilliseconds: DecimalUint64Schema,
+    diagnostic: z.string().min(1),
+  }).readonly(),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    state: z.literal("preempted"),
+    priorOwnerViewerId: z.string().min(1),
+    priorClaimId: z.string().min(1),
+    orphanAgeMilliseconds: z.null(),
+    diagnostic: z.string().min(1),
+  }).readonly(),
+  z.strictObject({
+    schemaVersion: z.literal(1),
+    state: z.literal("refused"),
+    priorOwnerViewerId: z.string().min(1).nullable(),
+    priorClaimId: z.string().min(1).nullable(),
+    orphanAgeMilliseconds: DecimalUint64Schema.nullable(),
+    diagnostic: z.string().min(1),
+  }).readonly(),
+]).readonly();
 /** §19/§20 ATTACH_REQUEST combines the exact locator with AttachRequest. */
 export const AttachRequestPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),

@@ -2156,6 +2156,7 @@ const WireVisibilityRenew = struct {
 const WireOrphanDiscard = struct {
     schemaVersion: u8,
     locator: WireLocator,
+    mode: []const u8,
 };
 
 const WireTerminalSessionRef = struct {
@@ -2500,6 +2501,7 @@ const ActiveInputClaim = struct {
     owner_viewer_id: []u8,
     lease_expires_at: []u8,
     expires_mono_ns: u64,
+    lease_duration_ms: u64,
     next_sequence: u64,
 
     fn deinit(self: *ActiveInputClaim, allocator: std.mem.Allocator) void {
@@ -2606,6 +2608,9 @@ pub const HostCore = struct {
     /// holds HUMAN_ORPHANED — never consulted for authorization. Cleared on the
     /// next grant or clean release.
     orphaned_claim: ?ActiveInputClaim = null,
+    /// Monotonic host evidence, set when the viewer disconnects and cleared
+    /// only when the orphan is resolved. Delivery never invents this clock.
+    orphaned_since_mono_ns: ?u64 = null,
     input_replays: std.ArrayList(InputReplay) = .{},
     resize_replays: std.ArrayList(ResizeReplay) = .{},
     termination: ?TerminationBinding = null,
@@ -2744,7 +2749,7 @@ pub const HostCore = struct {
             }
             // Expired host claim with no clean release — drop it so a returning
             // viewer can re-enter through free/orphaned arbiter paths (#40).
-            self.onViewerDetached(claim.owner_viewer_id);
+            self.onViewerDetached(claim.owner_viewer_id, now_ns);
         }
         const binding = self.termination orelse
             return self.encodeClaimResult(.{ .unknown = "input binding unavailable" });
@@ -2773,6 +2778,7 @@ pub const HostCore = struct {
                 now_ns,
                 try std.math.mul(u64, duration_ms, std.time.ns_per_ms),
             ),
+            .lease_duration_ms = duration_ms,
             .next_sequence = 0,
         };
         var initialized_fields: usize = 1;
@@ -2852,7 +2858,7 @@ pub const HostCore = struct {
     /// dropped claim moves to `orphaned_claim` so inspection still reports the
     /// input owner of record while HUMAN_ORPHANED holds; if the arbiter did
     /// not orphan (expired lease → Closed), the claim is dropped for real.
-    pub fn onViewerDetached(self: *HostCore, viewer_id: []const u8) void {
+    pub fn onViewerDetached(self: *HostCore, viewer_id: []const u8, now_ns: u64) void {
         const claim = if (self.active_claim) |*active| active else return;
         if (!std.mem.eql(u8, claim.owner_viewer_id, viewer_id)) return;
         var orphaned = false;
@@ -2865,6 +2871,7 @@ pub const HostCore = struct {
         if (orphaned) {
             if (self.orphaned_claim) |*stale| stale.deinit(self.allocator);
             self.orphaned_claim = self.active_claim;
+            self.orphaned_since_mono_ns = now_ns;
         } else {
             claim.deinit(self.allocator);
         }
@@ -2876,6 +2883,38 @@ pub const HostCore = struct {
     fn clearOrphanedClaim(self: *HostCore) void {
         if (self.orphaned_claim) |*claim| claim.deinit(self.allocator);
         self.orphaned_claim = null;
+        self.orphaned_since_mono_ns = null;
+    }
+
+    const PreparedClaimLeaseRenewal = struct {
+        expires_mono_ns: u64,
+        expires_at: []u8,
+    };
+
+    /// Human input, not visibility, renews a claim. The renewal remains
+    /// bounded by the current visibility lease and the original request.
+    fn prepareHumanClaimRenewal(
+        self: *HostCore,
+        claim: *const ActiveInputClaim,
+        now_ns: u64,
+    ) !?PreparedClaimLeaseRenewal {
+        if (!std.mem.eql(u8, claim.kind, "human") or self.lease.expired(now_ns))
+            return null;
+        const remaining_ms = (self.lease.expires_mono_ns - now_ns) / std.time.ns_per_ms;
+        const duration_ms = @min(claim.lease_duration_ms, remaining_ms);
+        if (duration_ms == 0) return null;
+        const expires_mono_ns = try std.math.add(
+            u64,
+            now_ns,
+            try std.math.mul(u64, duration_ms, std.time.ns_per_ms),
+        );
+        if (expires_mono_ns <= claim.expires_mono_ns) return null;
+        var expiry_storage: [24]u8 = undefined;
+        const expires_at = try broker.wallDeadline(&expiry_storage, duration_ms);
+        return .{
+            .expires_mono_ns = expires_mono_ns,
+            .expires_at = try self.allocator.dupe(u8, expires_at),
+        };
     }
 
     /// Clean CLAIM_RELEASE → FREE + clear host claim (no orphan).
@@ -3106,6 +3145,8 @@ pub const HostCore = struct {
             replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim fenced");
             return self.encodeInputApplied(replay.receipt.?);
         }
+        var renewal = try self.prepareHumanClaimRenewal(claim, now_ns);
+        defer if (renewal) |value| self.allocator.free(value.expires_at);
 
         if (kind == .hangup) {
             const ordered_at = binding.pty.hangup() catch |err| {
@@ -3188,6 +3229,12 @@ pub const HostCore = struct {
                 rejectedInputReceipt(replay.transaction_id, @errorName(err));
             return self.encodeInputApplied(replay.receipt.?);
         };
+        if (renewal) |value| {
+            self.allocator.free(claim.lease_expires_at);
+            claim.lease_expires_at = value.expires_at;
+            claim.expires_mono_ns = value.expires_mono_ns;
+            renewal = null;
+        }
         claim.next_sequence = std.math.add(u64, claim.next_sequence, 1) catch
             return error.InputSequenceOverflow;
         const ordered_at = binding.pty.operationSequence();
@@ -3638,21 +3685,6 @@ pub const HostCore = struct {
         self.registration.record.visibility.state = .visible;
         self.registration.record.visibility.open_terminal_revision = revision;
         self.registration.record.visibility.expires_mono_ns = self.lease.expires_mono_ns;
-        // The grant-time clamp ties claim lifetime to the visibility lease
-        // (claimInput), so a live renewal must extend both. Without this the
-        // claim expires 10–15 s after acquire even while the pane stays
-        // visible, and the next keystroke is rejected "input claim expired".
-        if (self.active_claim) |*claim| {
-            if (claim.expires_mono_ns < self.lease.expires_mono_ns) {
-                claim.expires_mono_ns = self.lease.expires_mono_ns;
-                const claim_remaining_ms = (self.lease.expires_mono_ns - now_ns) / std.time.ns_per_ms;
-                var claim_expiry_storage: [24]u8 = undefined;
-                const claim_expiry = try broker.wallDeadline(&claim_expiry_storage, claim_remaining_ms);
-                const updated_expiry = try self.allocator.dupe(u8, claim_expiry);
-                self.allocator.free(claim.lease_expires_at);
-                claim.lease_expires_at = updated_expiry;
-            }
-        }
         var expiry_storage: [24]u8 = undefined;
         const expires_at = try self.leaseWallDeadline(now_ns, &expiry_storage);
         var revision_storage: [32]u8 = undefined;
@@ -3681,9 +3713,10 @@ pub const HostCore = struct {
 
     fn encodeOrphanDiscarded(
         self: *HostCore,
-        discarded: bool,
+        state: enum { discarded, preempted, refused },
         prior_owner_viewer_id: ?[]const u8,
         prior_claim_id: ?[]const u8,
+        orphan_age_ms: ?u64,
         diagnostic: []const u8,
     ) ![]u8 {
         var arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -3691,13 +3724,17 @@ pub const HostCore = struct {
         const a = arena.allocator();
         var root = std.json.ObjectMap.init(a);
         try root.put("schemaVersion", .{ .integer = 1 });
-        try root.put("discarded", .{ .bool = discarded });
+        try root.put("state", .{ .string = @tagName(state) });
         try root.put("priorOwnerViewerId", if (prior_owner_viewer_id) |value|
             .{ .string = value }
         else
             .null);
         try root.put("priorClaimId", if (prior_claim_id) |value|
             .{ .string = value }
+        else
+            .null);
+        try root.put("orphanAgeMilliseconds", if (orphan_age_ms) |value|
+            .{ .string = try std.fmt.allocPrint(a, "{d}", .{value}) }
         else
             .null);
         try root.put("diagnostic", .{ .string = diagnostic });
@@ -3715,18 +3752,10 @@ pub const HostCore = struct {
         return payload;
     }
 
-    /// §22 INPUT_ORPHAN_DISCARD: the operator exit from HUMAN_ORPHANED.
-    ///
-    /// The arbiter orphans a human claim when its viewer drops uncleanly, and
-    /// #40 never-steal then denies every automation claim forever — with no
-    /// automated way back (2026-07-21 messaging regression). This is that way
-    /// back, and nothing more: it cancel-encodes the abandoned draft through
-    /// `operatorDiscard` and returns the arbiter to FREE. It CANNOT resume a
-    /// draft, and it refuses (never steals) whenever the arbiter is anything
-    /// other than HUMAN_ORPHANED — a live human keeps input, as before. The
-    /// refusal is a normal response carrying its reason, not a wire error, so
-    /// the caller can record WHY on the message row it is trying to deliver.
-    pub fn discardInputOrphan(self: *HostCore, payload: []const u8) ![]u8 {
+    /// §22 INPUT_ORPHAN_DISCARD resolves a human claim on the authenticated
+    /// broker path. `orphaned` can cancel only an abandoned draft; `held` is
+    /// the user-authorized M1 preemption, reported as its own typed result.
+    pub fn discardInputOrphan(self: *HostCore, payload: []const u8, now_ns: u64) ![]u8 {
         if (!protocol.validateControlPayload(
             self.allocator,
             generated.wire_schema.orphan_discard_payload,
@@ -3737,6 +3766,8 @@ pub const HostCore = struct {
         });
         defer parsed.deinit();
         if (parsed.value.schemaVersion != 1) return error.InvalidOrphanDiscard;
+        const mode = std.meta.stringToEnum(enum { orphaned, held }, parsed.value.mode) orelse
+            return error.InvalidOrphanDiscard;
         const locator = try parseLocator(self.allocator, parsed.value.locator);
         defer {
             self.allocator.free(locator.instance_id);
@@ -3751,34 +3782,66 @@ pub const HostCore = struct {
             return error.InvalidOrphanDiscard;
 
         const binding = self.termination orelse
-            return self.encodeOrphanDiscarded(false, null, null, "input arbiter not bound");
+            return self.encodeOrphanDiscarded(.refused, null, null, null, "input arbiter not bound");
         const arbiter = binding.arbiter orelse
-            return self.encodeOrphanDiscarded(false, null, null, "input arbiter not bound");
+            return self.encodeOrphanDiscarded(.refused, null, null, null, "input arbiter not bound");
         const state = arbiter.currentState();
-        if (state != .human_orphaned)
-            return self.encodeOrphanDiscarded(false, null, null, @tagName(state));
-
-        // The orphan's owner of record, retained by onViewerDetached. Read it
-        // before the discard: clearOrphanedClaim frees these strings.
-        const prior_owner: ?[]const u8 = if (self.orphaned_claim) |claim|
-            claim.owner_viewer_id
-        else
-            null;
-        const prior_claim: ?[]const u8 = if (self.orphaned_claim) |claim|
-            claim.token
-        else
-            null;
-        _ = arbiter.operatorDiscard() catch |err| {
-            return self.encodeOrphanDiscarded(false, prior_owner, prior_claim, @errorName(err));
-        };
-        const response = try self.encodeOrphanDiscarded(
-            true,
-            prior_owner,
-            prior_claim,
-            "orphaned human claim discarded",
-        );
-        self.clearOrphanedClaim();
-        return response;
+        switch (mode) {
+            .orphaned => {
+                if (state != .human_orphaned)
+                    return self.encodeOrphanDiscarded(.refused, null, null, null, @tagName(state));
+                const claim = if (self.orphaned_claim) |*value| value else
+                    return self.encodeOrphanDiscarded(.refused, null, null, null, "orphan owner unavailable");
+                const age_ms = if (self.orphaned_since_mono_ns) |since|
+                    (now_ns -| since) / std.time.ns_per_ms
+                else
+                    0;
+                _ = arbiter.operatorDiscard() catch |err| {
+                    return self.encodeOrphanDiscarded(
+                        .refused,
+                        claim.owner_viewer_id,
+                        claim.token,
+                        age_ms,
+                        @errorName(err),
+                    );
+                };
+                const response = try self.encodeOrphanDiscarded(
+                    .discarded,
+                    claim.owner_viewer_id,
+                    claim.token,
+                    age_ms,
+                    "orphaned human claim discarded",
+                );
+                self.clearOrphanedClaim();
+                return response;
+            },
+            .held => {
+                if (state != .human_owned)
+                    return self.encodeOrphanDiscarded(.refused, null, null, null, @tagName(state));
+                const claim = if (self.active_claim) |*value| value else
+                    return self.encodeOrphanDiscarded(.refused, null, null, null, "held owner unavailable");
+                _ = arbiter.operatorPreempt() catch |err| {
+                    return self.encodeOrphanDiscarded(
+                        .refused,
+                        claim.owner_viewer_id,
+                        claim.token,
+                        null,
+                        @errorName(err),
+                    );
+                };
+                const response = try self.encodeOrphanDiscarded(
+                    .preempted,
+                    claim.owner_viewer_id,
+                    claim.token,
+                    null,
+                    "held human claim preempted for delivery",
+                );
+                claim.deinit(self.allocator);
+                self.active_claim = null;
+                self.clearOrphanedClaim();
+                return response;
+            },
+        }
     }
 
     pub fn terminate(self: *HostCore, payload: []const u8) ![]u8 {
@@ -4381,7 +4444,7 @@ fn serveBrokerRequest(
             );
         },
         generated.frame_type.input_orphan_discard => {
-            const response = core.discardInputOrphan(request.payload) catch {
+            const response = core.discardInputOrphan(request.payload, now_ns) catch {
                 try writeHostFailure(allocator, stream, request.header, .malformed_frame);
                 return;
             };
@@ -4687,10 +4750,11 @@ fn detachAttachedViewer(
     allocator: std.mem.Allocator,
     core: *HostCore,
     viewer_slot: *?AttachedViewer,
+    now_ns: u64,
 ) void {
     if (viewer_slot.*) |*viewer| {
         // #40: unclean drop must orphan+clear host claim before free of viewer_id.
-        core.onViewerDetached(viewer.authorization.viewer_id);
+        core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
         viewer.close(allocator);
         viewer_slot.* = null;
     }
@@ -4714,7 +4778,7 @@ fn pumpAttachedViewer(
             viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
         {
             pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch {
-                detachAttachedViewer(allocator, core, viewer_slot);
+                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
                 return;
             };
         }
@@ -4728,7 +4792,7 @@ fn pumpAttachedViewer(
             const ready = std.posix.poll(&fds, 0) catch 0;
             if (ready == 0 or fds[0].revents == 0) return;
             var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch {
-                detachAttachedViewer(allocator, core, viewer_slot);
+                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
                 return;
             };
             defer {
@@ -4745,7 +4809,7 @@ fn pumpAttachedViewer(
                         continue;
                     }
                 }
-                detachAttachedViewer(allocator, core, viewer_slot);
+                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
                 return;
             }
             handleViewerFrame(
@@ -4757,7 +4821,7 @@ fn pumpAttachedViewer(
                 &frame,
                 timer.read(),
             ) catch {
-                detachAttachedViewer(allocator, core, viewer_slot);
+                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
                 return;
             };
         }
@@ -5118,7 +5182,7 @@ fn runHostLoop(
 ) !void {
     var attached: ?AttachedViewer = null;
     defer if (attached) |*viewer| {
-        core.onViewerDetached(viewer.authorization.viewer_id);
+        core.onViewerDetached(viewer.authorization.viewer_id, timer.read());
         viewer.close(core.allocator);
         attached = null;
     };
@@ -5166,7 +5230,7 @@ fn runHostLoop(
                 // generation supersedes the previous viewer connection.
                 if (attached) |*old| {
                     // #40: supersede is an unclean drop for the prior viewer.
-                    core.onViewerDetached(old.authorization.viewer_id);
+                    core.onViewerDetached(old.authorization.viewer_id, timer.read());
                     old.close(core.allocator);
                 }
                 attached = viewer;
@@ -7428,7 +7492,7 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     try std.testing.expect(core.active_claim != null);
 
     // Unclean drop path (#40 fix): onViewerDetached clears host claim + orphans arbiter.
-    core.onViewerDetached("viewer-a");
+    core.onViewerDetached("viewer-a", 3_500);
     try std.testing.expect(core.active_claim == null);
     try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
     // The dropped claim is retained as the input owner of record for
@@ -7515,9 +7579,16 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 }
 
-test "VISIBILITY_RENEW extends the active input claim with the lease" {
+test "VISIBILITY_RENEW cannot extend a claim but live human input can" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
+    _ = switch (try pty.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => |readback| readback,
+        .exec_failed => return error.TestUnexpectedResult,
+    };
     var sink: PtyQueueSink = .{ .pty = &pty };
     var encoder: TestIdentityEncoder = .{};
     var arbiter = input_arbiter.InputArbiter.init(
@@ -7541,8 +7612,7 @@ test "VISIBILITY_RENEW extends the active input claim with the lease" {
     defer core.deinit();
     core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
 
-    // The viewer's 60 s request clamps to the residual visibility lease, so
-    // the claim starts life with the lease's expiry.
+    // A short requested lease stays short even while the pane remains visible.
     const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
         .schemaVersion = @as(u8, 1),
         .session = .{
@@ -7551,20 +7621,17 @@ test "VISIBILITY_RENEW extends the active input claim with the lease" {
         },
         .writer = "viewer-a",
         .kind = "human",
-        .leaseMilliseconds = @as(u64, 60_000),
+        .leaseMilliseconds = @as(u64, 2_000),
         .idempotencyKey = "claim-renewal",
     }, .{});
     defer std.testing.allocator.free(claim_payload);
     const granted = try core.claimInput(claim_payload, "viewer-a", 2_000);
     defer std.testing.allocator.free(granted);
     try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-    // The grant-time clamp floors to whole milliseconds, so the claim starts
-    // at or just under the lease expiry — never beyond it.
-    try std.testing.expect(core.active_claim.?.expires_mono_ns <= core.lease.expires_mono_ns);
+    const initial_claim_expiry = core.active_claim.?.expires_mono_ns;
+    try std.testing.expect(initial_claim_expiry < core.lease.expires_mono_ns);
 
-    // Renewing visibility extends the claim too. Without this the claim dies
-    // 10–15 s after acquire while the pane is still visible, and the next
-    // keystroke is rejected "input claim expired".
+    // Visibility renewal must not renew a human claim by itself.
     const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
         return error.MissingWorkspaceIdentity;
     var token_storage: [64]u8 = undefined;
@@ -7577,13 +7644,32 @@ test "VISIBILITY_RENEW extends the active input claim with the lease" {
         2,
     );
     defer std.testing.allocator.free(renew);
-    const renewed = try core.renewVisibility(renew, 10_000);
+    const renewed = try core.renewVisibility(renew, std.time.ns_per_s);
     defer std.testing.allocator.free(renewed);
     try std.testing.expectEqual(
-        @as(u64, 10_000 + generated.limits.visibility_expiry_ms * std.time.ns_per_ms),
+        @as(u64, std.time.ns_per_s + generated.limits.visibility_expiry_ms * std.time.ns_per_ms),
         core.lease.expires_mono_ns,
     );
-    try std.testing.expectEqual(core.lease.expires_mono_ns, core.active_claim.?.expires_mono_ns);
+    try std.testing.expectEqual(initial_claim_expiry, core.active_claim.?.expires_mono_ns);
+
+    // A live input renews by its own requested two-second lease, not by the
+    // much longer visibility renewal.
+    const input = try a3BytesPayload(
+        std.testing.allocator,
+        registration,
+        core.active_claim.?.token,
+        "claim-renewal-input",
+        "claim-renewal-input",
+        "x",
+    );
+    defer std.testing.allocator.free(input);
+    const applied = try core.submitInput(input, "viewer-a", 1_500 * std.time.ns_per_ms);
+    defer std.testing.allocator.free(applied);
+    try std.testing.expect(std.mem.indexOf(u8, applied, "\"stage\":\"written-to-terminal\"") != null);
+    try std.testing.expectEqual(
+        @as(u64, 3_500) * std.time.ns_per_ms,
+        core.active_claim.?.expires_mono_ns,
+    );
 }
 
 test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {
@@ -7802,12 +7888,14 @@ test "GRANT_REGISTER positive control rejects an expired grant" {
 fn orphanDiscardPayload(
     allocator: std.mem.Allocator,
     registration: HostRegistration,
+    mode: []const u8,
 ) ![]u8 {
     var arena = std.heap.ArenaAllocator.init(allocator);
     defer arena.deinit();
     var root = std.json.ObjectMap.init(arena.allocator());
     try root.put("schemaVersion", .{ .integer = 1 });
     try root.put("locator", try locatorValue(arena.allocator(), registration.record.locator));
+    try root.put("mode", .{ .string = mode });
     return std.json.Stringify.valueAlloc(
         allocator,
         std.json.Value{ .object = root },
@@ -7845,14 +7933,16 @@ test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is hea
     defer core.deinit();
     core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
 
-    const discard_payload = try orphanDiscardPayload(std.testing.allocator, registration);
+    const discard_payload = try orphanDiscardPayload(std.testing.allocator, registration, "orphaned");
     defer std.testing.allocator.free(discard_payload);
+    const preempt_payload = try orphanDiscardPayload(std.testing.allocator, registration, "held");
+    defer std.testing.allocator.free(preempt_payload);
 
     // POSITIVE CONTROL: a FREE arbiter is refused, in-band, naming its state.
-    // Without this the "discarded":true below could be a constant.
-    const free_refusal = try core.discardInputOrphan(discard_payload);
+    // Without this the typed discarded result below could be a constant.
+    const free_refusal = try core.discardInputOrphan(discard_payload, 1_500);
     defer std.testing.allocator.free(free_refusal);
-    try std.testing.expect(std.mem.indexOf(u8, free_refusal, "\"discarded\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, free_refusal, "\"state\":\"refused\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, free_refusal, "free") != null);
 
     const human = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
@@ -7873,14 +7963,27 @@ test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is hea
 
     // NEVER-STEAL CONTROL: a LIVE human claim is refused too. This is the whole
     // #40 invariant; if this ever passes, the discard has become a steal.
-    const live_refusal = try core.discardInputOrphan(discard_payload);
+    const live_refusal = try core.discardInputOrphan(discard_payload, 2_500);
     defer std.testing.allocator.free(live_refusal);
-    try std.testing.expect(std.mem.indexOf(u8, live_refusal, "\"discarded\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, live_refusal, "\"state\":\"refused\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, live_refusal, "human_owned") != null);
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 
+    // M1 authorizes the delivery path to preempt a held human draft. Its
+    // result is distinct from an orphan discard, so callers can show/audit it.
+    const preempted = try core.discardInputOrphan(preempt_payload, 2_750);
+    defer std.testing.allocator.free(preempted);
+    try std.testing.expect(std.mem.indexOf(u8, preempted, "\"state\":\"preempted\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, preempted, "\"priorOwnerViewerId\":\"viewer-a\"") != null);
+    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
+    try std.testing.expect(core.active_claim == null);
+
+    const regranted = try core.claimInput(human, "viewer-a", 2_800);
+    defer std.testing.allocator.free(regranted);
+    try std.testing.expect(std.mem.indexOf(u8, regranted, "\"state\":\"granted\"") != null);
+
     // The arming condition: the viewer dies without releasing.
-    core.onViewerDetached("viewer-a");
+    core.onViewerDetached("viewer-a", 3_000);
     try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
 
     const automation = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
@@ -7901,10 +8004,11 @@ test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is hea
     try std.testing.expect(std.mem.indexOf(u8, deadlocked, "HumanOrphaned") != null);
 
     // The exit: discard reports the orphan's owner of record and frees input.
-    const discarded = try core.discardInputOrphan(discard_payload);
+    const discarded = try core.discardInputOrphan(discard_payload, 123_003_000);
     defer std.testing.allocator.free(discarded);
-    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"discarded\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"state\":\"discarded\"") != null);
     try std.testing.expect(std.mem.indexOf(u8, discarded, "\"priorOwnerViewerId\":\"viewer-a\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"orphanAgeMilliseconds\":\"123\"") != null);
     try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
     try std.testing.expect(core.orphaned_claim == null);
 
@@ -8174,9 +8278,9 @@ test "INPUT_ORPHAN_DISCARD rejects a locator that is not this host's" {
     core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
 
     registration.record.locator.generation = 2;
-    const foreign = try orphanDiscardPayload(std.testing.allocator, registration);
+    const foreign = try orphanDiscardPayload(std.testing.allocator, registration, "orphaned");
     defer std.testing.allocator.free(foreign);
-    try std.testing.expectError(error.InvalidOrphanDiscard, core.discardInputOrphan(foreign));
+    try std.testing.expectError(error.InvalidOrphanDiscard, core.discardInputOrphan(foreign, 1_000));
 }
 
 fn visibilityRenewPayload(

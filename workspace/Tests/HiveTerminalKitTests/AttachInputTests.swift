@@ -310,6 +310,68 @@ final class AttachInputTests: XCTestCase {
         XCTAssertEqual(view.claimPresentation, .free)
     }
 
+    func testCompositionEndReleasesOnlyAfterItsPendingInputIsApplied() throws {
+        let host = FakeHost(connectionId: "input-composition-end")
+        let engine = FakeManualSurface()
+        let view = try attachView(host: host, engine: engine)
+        let binding = try XCTUnwrap(view.binding)
+
+        // A composition begins a claim, then ends before the asynchronous
+        // CLAIM_RESULT arrives. The encoder's committed bytes land behind
+        // unmarkText; release must wait for both that submit and its receipt.
+        view.setMarkedText("preedit", selectedRange: .init(location: 0, length: 0), replacementRange: .init(location: 0, length: 0))
+        view.unmarkText()
+        view.attachClient?.handleEncodedWrite(Data("committed".utf8))
+        drainMainQueue()
+        try host.harvestViewerFrames()
+        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimRelease })
+
+        view.pumpHostFrame(
+            WireFrame(
+                type: .claimResult,
+                flags: [.response, .final],
+                requestId: claim.requestId,
+                payload: try claimGrantedPayload(token: "claim-composition")
+            ),
+            frameBinding: binding
+        )
+        try host.harvestViewerFrames()
+        let input = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .inputSubmit })
+        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimRelease })
+        let inputObject = try FrameCodec.parseJSONObject(input.payload)
+        let transactionId = try XCTUnwrap(inputObject["transactionId"] as? String)
+
+        view.pumpHostFrame(
+            WireFrame(
+                type: .applied,
+                flags: [.response, .final],
+                requestId: input.requestId,
+                payload: try FrameCodec.jsonPayload([
+                    "schemaVersion": 1,
+                    "resultKind": "input",
+                    "receipt": [
+                        "transactionId": transactionId,
+                        "stage": "written-to-terminal",
+                        "byteRange": ["start": "0", "endExclusive": "9"],
+                        "orderedAt": "1",
+                        "availableCreditBytes": FrameCodec.inputTransactionMaxBytes,
+                        "consumedByProcess": "not-claimed",
+                        "completeness": "complete",
+                        "diagnostic": NSNull(),
+                    ],
+                ])
+            ),
+            frameBinding: binding
+        )
+        try host.harvestViewerFrames()
+        let release = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimRelease })
+        let releaseObject = try FrameCodec.parseJSONObject(release.payload)
+        XCTAssertEqual(releaseObject["claimToken"] as? String, "claim-composition")
+        XCTAssertEqual(releaseObject["kind"] as? String, "cancel")
+        XCTAssertEqual(view.claimPresentation, .free)
+    }
+
     func testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames() throws {
         let host = FakeHost(connectionId: "input-oversize")
         let engine = FakeManualSurface()

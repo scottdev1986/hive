@@ -644,6 +644,26 @@ pub const InputArbiter = struct {
             };
         }
 
+        return self.cancelHumanClaim();
+    }
+
+    /// M1 fleet-unwedging escape hatch. Only the host's authenticated control
+    /// path calls this; it deliberately differs from operatorDiscard by
+    /// accepting a currently-held human claim, and is reported as preemption.
+    pub fn operatorPreempt(self: *InputArbiter) Error!ByteRange {
+        try self.requireLive();
+        if (self.state != .human_owned) {
+            return switch (self.state) {
+                .human_orphaned => error.HumanOrphaned,
+                .free => error.NotReady,
+                else => error.InputBusy,
+            };
+        }
+
+        return self.cancelHumanClaim();
+    }
+
+    fn cancelHumanClaim(self: *InputArbiter) Error!ByteRange {
         var encoded: std.ArrayList(u8) = .{};
         defer {
             // M3/N4: zero capacity (not just items.len) before release.

@@ -4285,61 +4285,166 @@
             "engineBuildId"
           ],
           "additionalProperties": false
+        },
+        "mode": {
+          "type": "string",
+          "enum": [
+            "orphaned",
+            "held"
+          ]
         }
       },
       "required": [
         "schemaVersion",
-        "locator"
+        "locator",
+        "mode"
       ],
       "additionalProperties": false
     },
     "orphanDiscardedPayload": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,
-      "type": "object",
-      "properties": {
-        "schemaVersion": {
-          "type": "number",
-          "const": 1
-        },
-        "discarded": {
-          "type": "boolean"
-        },
-        "priorOwnerViewerId": {
-          "anyOf": [
-            {
+      "oneOf": [
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "state": {
+              "type": "string",
+              "const": "discarded"
+            },
+            "priorOwnerViewerId": {
               "type": "string",
               "minLength": 1
             },
-            {
-              "type": "null"
-            }
-          ]
-        },
-        "priorClaimId": {
-          "anyOf": [
-            {
+            "priorClaimId": {
               "type": "string",
               "minLength": 1
             },
-            {
-              "type": "null"
+            "orphanAgeMilliseconds": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
             }
-          ]
+          },
+          "required": [
+            "schemaVersion",
+            "state",
+            "priorOwnerViewerId",
+            "priorClaimId",
+            "orphanAgeMilliseconds",
+            "diagnostic"
+          ],
+          "additionalProperties": false
         },
-        "diagnostic": {
-          "type": "string",
-          "minLength": 1
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "state": {
+              "type": "string",
+              "const": "preempted"
+            },
+            "priorOwnerViewerId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "priorClaimId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "orphanAgeMilliseconds": {
+              "type": "null"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "state",
+            "priorOwnerViewerId",
+            "priorClaimId",
+            "orphanAgeMilliseconds",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "state": {
+              "type": "string",
+              "const": "refused"
+            },
+            "priorOwnerViewerId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "priorClaimId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "orphanAgeMilliseconds": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "state",
+            "priorOwnerViewerId",
+            "priorClaimId",
+            "orphanAgeMilliseconds",
+            "diagnostic"
+          ],
+          "additionalProperties": false
         }
-      },
-      "required": [
-        "schemaVersion",
-        "discarded",
-        "priorOwnerViewerId",
-        "priorClaimId",
-        "diagnostic"
-      ],
-      "additionalProperties": false
+      ]
     },
     "attachRequestPayload": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

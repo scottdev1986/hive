@@ -1044,9 +1044,8 @@ pub const HostControl = struct {
         return self.renew_visibility_fn(self.context, locator, payload);
     }
 
-    /// §22 operator discard of a HUMAN_ORPHANED input claim. The host refuses
-    /// in-band (a normal ORPHAN_DISCARDED with `discarded:false`) for anything
-    /// but an orphan, so #40 never-steal is unchanged.
+    /// §22 host-authorized human-claim resolution. The typed response makes an
+    /// orphan discard, held-claim preemption, and refusal distinct on the wire.
     pub fn discardOrphan(
         self: HostControl,
         locator: Locator,
@@ -3497,19 +3496,23 @@ pub const ProductionBackend = struct {
     /// §22 INPUT_ORPHAN_DISCARD. Adoption-secret authenticated by construction:
     /// only the broker holds a HostControl, and the host refuses every verb
     /// until HOST_ADOPT proved the 32-byte secret. The broker adds nothing to
-    /// the policy — the host alone decides whether the arbiter is orphaned.
+    /// the policy — the host alone decides whether the claim is orphaned or
+    /// needs the explicit held-claim preemption mode.
     fn discardOrphan(
         self: *ProductionBackend,
         allocator: std.mem.Allocator,
         payload: []const u8,
         now_ns: u64,
     ) BackendResult {
-        const Request = struct { schemaVersion: u8, locator: DiskLocator };
+        const Request = struct { schemaVersion: u8, locator: DiskLocator, mode: []const u8 };
         var parsed = std.json.parseFromSlice(Request, allocator, payload, .{
             .ignore_unknown_fields = true,
         }) catch return failure(.malformed_frame);
         defer parsed.deinit();
-        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
+        if (parsed.value.schemaVersion != 1 or
+            (!std.mem.eql(u8, parsed.value.mode, "orphaned") and
+                !std.mem.eql(u8, parsed.value.mode, "held")))
+            return failure(.malformed_frame);
         const locator = locatorFromDisk(parsed.value.locator) catch
             return failure(.malformed_frame);
         const lookup = self.registry.lookup(locator) orelse return failure(.not_found);

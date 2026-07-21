@@ -63,6 +63,7 @@ public final class AttachReplayClient {
     private var claimIdempotencyKey: String?
     private var pendingInputBatches: [PendingInputBatch] = []
     private var pendingInputRequests: [UInt64: PendingInputRequest] = [:]
+    private var releaseAfterPendingInputRequested = false
     private var inputFenced = false
     private var inputSequence: UInt64 = 0
     private var resizeRevision: UInt64 = 0
@@ -250,6 +251,19 @@ public final class AttachReplayClient {
         claimPresentation = .free
     }
 
+    /// End an IME composition without leaving its human claim behind. The
+    /// release waits for both accepted input and an in-flight claim result so a
+    /// late grant cannot become an orphaned host-side claim.
+    public func releaseAfterPendingInput() {
+        releaseAfterPendingInputRequested = true
+        // The encoder callback may be queued just behind the NSTextInputClient
+        // composition-end callback. Let that write enqueue before deciding a
+        // cancellation had no committed input.
+        DispatchQueue.main.async { [weak self] in
+            self?.releaseClaimIfInputQuiescent()
+        }
+    }
+
     public func handleFrame(_ frame: WireFrame, frameBinding: SurfaceBinding) throws -> AttachReplayOutcome {
         guard let binding else { return .rejectedLateFrame }
         if frameBinding != binding { return .rejectedLateFrame }
@@ -389,6 +403,7 @@ public final class AttachReplayClient {
                     code: code,
                     evidence: object["message"] as? String ?? "host refused terminal input"
                 )
+                releaseClaimIfInputQuiescent()
                 return .continueReplay
             }
             if code == "ENGINE_MISMATCH" || code == "PROTOCOL_MISMATCH" {
@@ -497,6 +512,7 @@ public final class AttachReplayClient {
             guard let result = object["result"] as? [String: Any],
                   let claimState = result["state"] as? String else {
                 refuseInput(code: "MALFORMED_CLAIM_RESULT", evidence: "claim result has no state")
+                releaseClaimIfInputQuiescent()
                 return .continueReplay
             }
             if claimState == "granted",
@@ -531,6 +547,7 @@ public final class AttachReplayClient {
                     evidence: diagnostic
                 ))
             }
+            releaseClaimIfInputQuiescent()
             return .continueReplay
 
         case .applied:
@@ -613,6 +630,7 @@ public final class AttachReplayClient {
                 ))
             } else {
                 setInputSubmissionState(.applied(transactionId: transactionId, stage: stage))
+                releaseClaimIfInputQuiescent()
             }
             return .continueReplay
 
@@ -693,6 +711,7 @@ public final class AttachReplayClient {
         claimIdempotencyKey = nil
         pendingInputBatches.removeAll()
         pendingInputRequests.removeAll()
+        releaseAfterPendingInputRequested = false
         pendingResizeRequests.removeAll()
         inputFenced = false
         claimPresentation = .free
@@ -703,6 +722,15 @@ public final class AttachReplayClient {
     private func refuseInput(code: String, evidence: String, fence: Bool = true) {
         if fence { inputFenced = true }
         setInputSubmissionState(.refused(code: code, evidence: evidence))
+    }
+
+    private func releaseClaimIfInputQuiescent() {
+        guard releaseAfterPendingInputRequested,
+              claimRequestId == nil,
+              pendingInputRequests.isEmpty,
+              pendingInputBatches.isEmpty else { return }
+        releaseAfterPendingInputRequested = false
+        releaseClaimBestEffort()
     }
 
     private func setInputSubmissionState(_ newState: InputSubmissionState) {

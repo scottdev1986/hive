@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentRecord } from "../../schemas";
 import { SessiondViewerAgentInput } from "./sessiond-agent-input";
-import type { OrphanDiscardResult } from "./sessiond-host";
+import type { OrphanDiscardMode, OrphanDiscardResult } from "./sessiond-host";
 import type { SessiondViewerAttachClient } from "./sessiond-viewer-attach";
 import type { InputReceipt, SessionInspection } from "./terminal-host-contract";
 
@@ -12,10 +12,8 @@ import type { InputReceipt, SessionInspection } from "./terminal-host-contract";
  * The arbiter orphaned the human claim to protect the unsubmitted draft (#40
  * never-steal), and from that moment every daemon inject was denied
  * HumanOrphaned — with no automated exit and no visible failure. These tests
- * pin the exit: after a bounded grace period the daemon discards the abandoned
- * orphan through the host and retries once, and it does NOT do so before the
- * grace period, does NOT do so when the host refuses, and never touches a LIVE
- * human claim.
+ * pin the exit: the host immediately resolves an orphan, or explicitly
+ * preempts a held claim, then the daemon retries exactly once.
  */
 
 const timestamp = "2026-07-21T12:00:00.000Z";
@@ -101,9 +99,11 @@ function inspection(): SessionInspection {
  * A viewer wire whose arbiter denies automation with the arbiter's own
  * HumanOrphaned diagnostic until the orphan is discarded, then grants.
  */
-class OrphanedArbiterWire {
+class HumanClaimArbiterWire {
   discarded = false;
   readonly attempts: string[] = [];
+
+  constructor(private readonly claimState: "HumanOrphaned" | "HumanOwned" = "HumanOrphaned") {}
 
   client(): SessiondViewerAttachClient {
     return {
@@ -112,7 +112,7 @@ class OrphanedArbiterWire {
         if (this.discarded) return { kind: "receipt" as const, receipt };
         return {
           kind: "claim-declined" as const,
-          detail: "claim denied: HumanOrphaned",
+          detail: `claim denied: ${this.claimState}`,
         };
       },
       close: () => {},
@@ -121,9 +121,8 @@ class OrphanedArbiterWire {
 }
 
 function injector(
-  wire: OrphanedArbiterWire,
-  discard: () => Promise<OrphanDiscardResult>,
-  now: () => number,
+  wire: HumanClaimArbiterWire,
+  discard: (mode: OrphanDiscardMode) => Promise<OrphanDiscardResult>,
 ): SessiondViewerAgentInput {
   const broker = {
     async list() {
@@ -152,108 +151,87 @@ function injector(
     broker as unknown as ConstructorParameters<typeof SessiondViewerAgentInput>[0],
     "hive-daemon:test",
     async () => wire.client(),
-    discard,
-    now,
+    (_, mode) => discard(mode),
   );
 }
 
-const GRACE_MS = 120_000;
-
 describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => {
   test("POSITIVE CONTROL: a free arbiter injects with no discard at all", async () => {
-    const wire = new OrphanedArbiterWire();
+    const wire = new HumanClaimArbiterWire();
     wire.discarded = true; // Nothing is orphaned: the arbiter grants.
     let discards = 0;
     const result = await injector(wire, async () => {
       discards += 1;
       throw new Error("must not be called");
-    }, () => 0).injectIdle(agent(), "hello", { messageId: "message-1" });
+    }).injectIdle(agent(), "hello", { messageId: "message-1" });
 
     expect(result.outcome).toBe("injected");
     expect(discards).toBe(0);
     expect(wire.attempts).toEqual(["message-1"]);
   });
 
-  test("inside the grace period the orphan is left alone and the message stays queued", async () => {
-    const wire = new OrphanedArbiterWire();
-    let discards = 0;
-    let clock = 1_000_000;
-    const input = injector(wire, async () => {
-      discards += 1;
-      return {
-        discarded: true,
-        priorOwnerViewerId: "workspace-pane",
-        priorClaimId: "clm",
-        diagnostic: "orphaned human claim discarded",
-      };
-    }, () => clock);
-
-    const first = await input.injectIdle(agent(), "hello", { messageId: "message-1" });
-    expect(first.outcome).toBe("declined");
-    expect(first.outcome === "declined" && first.reason).toContain("HumanOrphaned");
-    expect(first.outcome === "declined" && first.reason).toContain("grace period");
-    expect(discards).toBe(0);
-
-    // Still inside the window one second before it closes.
-    clock += GRACE_MS - 1_000;
-    const second = await input.injectIdle(agent(), "hello", { messageId: "message-1" });
-    expect(second.outcome).toBe("declined");
-    expect(discards).toBe(0);
-  });
-
-  test("past the grace period the orphan is discarded and the inject retried once", async () => {
-    const wire = new OrphanedArbiterWire();
-    let discards = 0;
-    let clock = 1_000_000;
-    const input = injector(wire, async () => {
-      discards += 1;
+  test("an orphan is discarded on the next delivery attempt and the host age is surfaced", async () => {
+    const wire = new HumanClaimArbiterWire();
+    const modes: OrphanDiscardMode[] = [];
+    const recovered = await injector(wire, async (mode) => {
+      modes.push(mode);
       wire.discarded = true;
       return {
-        discarded: true,
+        state: "discarded",
         priorOwnerViewerId: "workspace-pane",
         priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
+        orphanAgeMilliseconds: "120000",
         diagnostic: "orphaned human claim discarded",
       };
-    }, () => clock);
+    }).injectIdle(agent(), "hi", { messageId: "message-1" });
 
-    // First observation starts the clock; it does not discard.
-    expect((await input.injectIdle(agent(), "hi", { messageId: "message-1" })).outcome)
-      .toBe("declined");
-    expect(discards).toBe(0);
-
-    clock += GRACE_MS;
-    const recovered = await input.injectIdle(agent(), "hi", { messageId: "message-1" });
     expect(recovered.outcome).toBe("injected");
-    expect(discards).toBe(1);
+    expect(modes).toEqual(["orphaned"]);
     expect(recovered.outcome === "injected" && recovered.recovery)
-      .toContain("orphaned draft (owner workspace-pane) discarded after 120s; retrying");
-    // Exactly one retry: the declined first attempt, then the post-discard one.
-    expect(wire.attempts).toEqual(["message-1", "message-1", "message-1"]);
+      .toContain("orphaned draft (owner workspace-pane) discarded after 120000ms; retrying");
+    expect(wire.attempts).toEqual(["message-1", "message-1"]);
   });
 
-  test("a host refusal is recorded, not retried — never-steal stays the host's call", async () => {
-    const wire = new OrphanedArbiterWire();
-    let clock = 1_000_000;
-    const input = injector(wire, async () => ({
-      discarded: false,
+  test("a held claim is host-preempted with a typed visible delivery notice", async () => {
+    const wire = new HumanClaimArbiterWire("HumanOwned");
+    const modes: OrphanDiscardMode[] = [];
+    const recovered = await injector(wire, async (mode) => {
+      modes.push(mode);
+      wire.discarded = true;
+      return {
+        state: "preempted",
+        priorOwnerViewerId: "workspace-pane",
+        priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
+        orphanAgeMilliseconds: null,
+        diagnostic: "held human claim preempted for delivery",
+      };
+    }).injectIdle(agent(), "hi", { messageId: "message-1" });
+
+    expect(recovered.outcome).toBe("injected");
+    expect(modes).toEqual(["held"]);
+    expect(recovered.outcome === "injected" && recovered.recovery)
+      .toContain("held human claim (owner workspace-pane) preempted for delivery; retrying");
+    expect(wire.attempts).toEqual(["message-1", "message-1"]);
+  });
+
+  test("a host refusal is recorded, not retried", async () => {
+    const wire = new HumanClaimArbiterWire();
+    const refused = await injector(wire, async () => ({
+      state: "refused",
       priorOwnerViewerId: null,
       priorClaimId: null,
+      orphanAgeMilliseconds: null,
       diagnostic: "human_owned",
-    }), () => clock);
+    })).injectIdle(agent(), "hi", { messageId: "message-1" });
 
-    await input.injectIdle(agent(), "hi", { messageId: "message-1" });
-    clock += GRACE_MS;
-    const refused = await input.injectIdle(agent(), "hi", { messageId: "message-1" });
     expect(refused.outcome).toBe("declined");
     expect(refused.outcome === "declined" && refused.reason)
-      .toContain("orphan discard refused: human_owned");
-    // The retry never ran: two declined attempts, no third.
-    expect(wire.attempts).toHaveLength(2);
+      .toContain("input-claim resolution refused: human_owned");
+    expect(wire.attempts).toHaveLength(1);
   });
 
   test("an injector with no discard wire keeps the pre-fix decline-and-queue behaviour", async () => {
-    const wire = new OrphanedArbiterWire();
-    let clock = 1_000_000;
+    const wire = new HumanClaimArbiterWire();
     const broker = {
       async list() {
         return [inspection()];
@@ -282,13 +260,10 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
       "hive-daemon:test",
       async () => wire.client(),
       undefined,
-      () => clock,
     );
-    await input.injectIdle(agent(), "hi", { messageId: "message-1" });
-    clock += GRACE_MS;
     const result = await input.injectIdle(agent(), "hi", { messageId: "message-1" });
     expect(result.outcome).toBe("declined");
     expect(result.outcome === "declined" && result.reason)
-      .toContain("orphan discard is not wired on this host");
+      .toContain("input-claim resolution is not wired on this host");
   });
 });

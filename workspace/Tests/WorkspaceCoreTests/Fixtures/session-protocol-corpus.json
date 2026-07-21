@@ -1168,7 +1168,7 @@
       }
     },
     {
-      "name": "INPUT_ORPHAN_DISCARD exact generation",
+      "name": "INPUT_ORPHAN_DISCARD resolves an orphaned exact generation",
       "schema": "orphanDiscardPayload",
       "value": {
         "schemaVersion": 1,
@@ -1183,18 +1183,52 @@
           "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
           "hostKind": "sessiond",
           "engineBuildId": "engine-fixture"
-        }
+        },
+        "mode": "orphaned"
       }
     },
     {
-      "name": "ORPHAN_DISCARDED names the prior owner",
+      "name": "INPUT_ORPHAN_DISCARD authorizes a held-claim preemption",
+      "schema": "orphanDiscardPayload",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "mode": "held"
+      }
+    },
+    {
+      "name": "ORPHAN_DISCARDED names the prior orphan owner and host age",
       "schema": "orphanDiscardedPayload",
       "value": {
         "schemaVersion": 1,
-        "discarded": true,
+        "state": "discarded",
         "priorOwnerViewerId": "viewer-a",
         "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
+        "orphanAgeMilliseconds": "120000",
         "diagnostic": "orphaned human claim discarded"
+      }
+    },
+    {
+      "name": "ORPHAN_DISCARDED types a held human preemption",
+      "schema": "orphanDiscardedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "state": "preempted",
+        "priorOwnerViewerId": "viewer-a",
+        "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
+        "orphanAgeMilliseconds": null,
+        "diagnostic": "held human claim preempted for delivery"
       }
     },
     {
@@ -3089,13 +3123,34 @@
       }
     },
     {
-      "name": "ORPHAN_DISCARDED rejects a missing diagnostic",
+      "name": "INPUT_ORPHAN_DISCARD rejects an untyped resolution mode",
+      "schema": "orphanDiscardPayload",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        },
+        "mode": "live"
+      }
+    },
+    {
+      "name": "ORPHAN_DISCARDED rejects a missing typed state",
       "schema": "orphanDiscardedPayload",
       "value": {
         "schemaVersion": 1,
-        "discarded": false,
         "priorOwnerViewerId": null,
-        "priorClaimId": null
+        "priorClaimId": null,
+        "orphanAgeMilliseconds": null,
+        "diagnostic": "missing state"
       }
     },
     {

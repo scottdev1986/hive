@@ -209,6 +209,11 @@ extension HiveTerminalView {
         defer { keyTextAccumulator = nil }
 
         let markedTextBefore = hasMarkedText()
+        defer {
+            if markedTextBefore, !hasMarkedText() {
+                attachClient?.releaseAfterPendingInput()
+            }
+        }
         let keyboardIDBefore = markedTextBefore ? nil : keyboardLayoutID()
         interpret(translationEvent)
         if !markedTextBefore, keyboardIDBefore != keyboardLayoutID() {
@@ -331,7 +336,7 @@ extension HiveTerminalView {
             return
         }
         let hadMarkedText = hasMarkedText()
-        unmarkText()
+        clearMarkedText()
 
         if var accumulator = keyTextAccumulator {
             accumulator.append(text)
@@ -344,6 +349,9 @@ extension HiveTerminalView {
             _ = committedPreeditTextAction(.press, text: text)
         } else if !text.isEmpty {
             engine.sendText(text)
+        }
+        if hadMarkedText {
+            attachClient?.releaseAfterPendingInput()
         }
     }
 
@@ -376,9 +384,15 @@ extension HiveTerminalView {
         }
     }
     public func unmarkText() {
-        guard markedText.length > 0 else { return }
+        guard clearMarkedText() else { return }
+        attachClient?.releaseAfterPendingInput()
+    }
+    @discardableResult
+    private func clearMarkedText() -> Bool {
+        guard markedText.length > 0 else { return false }
         markedText.mutableString.setString("")
         syncPreedit()
+        return true
     }
     public func validAttributesForMarkedText() -> [NSAttributedString.Key] { [] }
     public func attributedSubstring(forProposedRange range: NSRange, actualRange: NSRangePointer?) -> NSAttributedString? {
