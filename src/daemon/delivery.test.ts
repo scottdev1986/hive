@@ -2000,3 +2000,159 @@ describe("a live idle agent hears", () => {
     }
   });
 });
+
+describe("#68 acceptance failures (2026-07-21): swallowed Enter and silent root wake", () => {
+  test("a swallowed Enter is retried once and the retry's submit counts", async () => {
+    const db = new HiveDatabase(join(home, "enter-retry.db"));
+    const sender = new class extends RecordingTmuxSender {
+      override async sendMessage(
+        session: string,
+        text: string,
+        options: { interrupt?: boolean } = {},
+      ): Promise<void> {
+        await super.sendMessage(session, text, options);
+        // The bare Enter retry submits the composer the first Enter left full.
+        if (text === "") nextTurnStart(db, "maya");
+      }
+    }();
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      undefined,
+      { sleep: async () => {}, submitConfirmMs: 1 },
+    );
+    try {
+      db.insertAgent({ ...agent("idle"), tool: "claude", model: "claude-opus-4-8" });
+      const message = await delivery.send("queen", "maya", "Reply 'ack 68'.");
+      expect(message.state).toBe("injected");
+      // One paste, then one bare-Enter retry, in order.
+      expect(sender.calls.map(([, text]) => text === "" ? "ENTER" : "PASTE"))
+        .toEqual(["PASTE", "ENTER"]);
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toBeNull();
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a paste that never submits queues with its cause on the row, and the next attempt clears the composer", async () => {
+    const db = new HiveDatabase(join(home, "enter-retry-fail.db"));
+    let submitOnPaste = false;
+    const sender = new class extends RecordingTmuxSender {
+      override async sendMessage(
+        session: string,
+        text: string,
+        options: { interrupt?: boolean } = {},
+      ): Promise<void> {
+        await super.sendMessage(session, text, options);
+        if (submitOnPaste && text !== "") nextTurnStart(db, "maya");
+      }
+    }();
+    const delivery = new MessageDelivery(
+      db,
+      sender,
+      undefined,
+      undefined,
+      undefined,
+      { sleep: async () => {}, submitConfirmMs: 1 },
+    );
+    try {
+      db.insertAgent({ ...agent("idle"), tool: "claude", model: "claude-opus-4-8" });
+      const message = await delivery.send("queen", "maya", "Reply 'ack 68'.");
+      expect(message.state).toBe("queued");
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toStartWith(
+        "tmux paste not submitted",
+      );
+      // Paste (no clear: first attempt), then the bare-Enter retry.
+      expect(sender.interrupts).toEqual([false, false]);
+
+      // The wake sweep's next attempt clears the stale composer text before
+      // re-pasting — a second paste on top of the first would submit a
+      // garbled double copy.
+      submitOnPaste = true;
+      await delivery.flushQueued("maya");
+      const row = db.getMessage(message.id);
+      expect(row?.state).toBe("injected");
+      expect(row?.deliveryDiagnostic).toBeNull();
+      expect(sender.interrupts[2]).toBe(true);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("one poisoned root message cannot starve the queue, and every failure lands on its row", async () => {
+    const db = new HiveDatabase(join(home, "root-wake-isolation.db"));
+    const delivered: string[] = [];
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      {
+        isLive: () => true,
+        async deliverMessage(content: string) {
+          if (content.includes("poison")) throw new Error("boom at the head");
+          delivered.push(content);
+          return true;
+        },
+      },
+      {},
+    );
+    try {
+      const poisoned = await delivery.send("maya", "queen", "poison envelope");
+      // The first wake already ran inside send(): poisoned failed, recorded.
+      const second = await delivery.send("maya", "queen", "healthy report");
+      // 2026-07-21: 0 of 4 queued root messages delivered because the wake
+      // loop had no per-message isolation — the head failure starved the
+      // rest, silently. The healthy message must deliver.
+      expect(db.getMessage(second.id)?.state).toBe("injected");
+      expect(delivered).toHaveLength(1);
+      const poisonRow = db.getMessage(poisoned.id);
+      expect(poisonRow?.state).toBe("queued");
+      expect(poisonRow?.deliveryDiagnostic).toBe(
+        "root wake failed: boom at the head",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("an unconfirmed root delivery records its cause on the row", async () => {
+    const db = new HiveDatabase(join(home, "root-wake-unconfirmed.db"));
+    const delivery = new MessageDelivery(
+      db,
+      new RecordingTmuxSender(),
+      undefined,
+      undefined,
+      { isLive: () => true, async deliverMessage() { return false; } },
+      {},
+    );
+    try {
+      const message = await delivery.send("maya", "queen", "Done.");
+      expect(message.state).toBe("queued");
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toBe(
+        "root wake failed: the root protocol did not confirm delivery",
+      );
+    } finally {
+      db.close();
+    }
+  });
+
+  test("hive_send's queued note for the root names the wake and the diagnostic surface", () => {
+    const message = AgentMessageSchema.parse({
+      id: crypto.randomUUID(),
+      from: "james",
+      to: "queen",
+      body: "ack",
+      createdAt: timestamp,
+      deliveredAt: null,
+      state: "queued",
+      sequence: 1,
+    });
+    const note = queuedDeliveryNote(message, null);
+    expect(note).toContain("queen was not woken");
+    expect(note).toContain("deliveryDiagnostic");
+    expect(note).toContain("Do not re-send");
+  });
+});

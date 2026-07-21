@@ -93,7 +93,18 @@ export function queuedDeliveryNote(
   message: AgentMessage,
   recipient: AgentRecord | null,
 ): string | undefined {
-  if (message.state !== "queued" || recipient === null) return undefined;
+  if (message.state !== "queued") return undefined;
+  // Root recipient (queen) has no agent row. A bare "queued" here is what made
+  // james retry his ack on 2026-07-21: say what queued means for the root and
+  // where the wake's failure cause is recorded.
+  if (recipient === null && isOrchestratorName(message.to)) {
+    return "NOT received: queen was not woken. The daemon injects a wake " +
+      "envelope into the root session on every send and on the root's turn " +
+      "boundaries; if this stays queued, the message row's deliveryDiagnostic " +
+      "records why the last wake attempt did not deliver. Do not re-send — " +
+      "the message is durable and retried.";
+  }
+  if (recipient === null) return undefined;
   // A critical control left queued has already raised its own loud alert
   // through the restart-failure path.
   if (message.priority === "critical") return undefined;
@@ -746,7 +757,24 @@ export class MessageDelivery {
       for (const name of orchestratorRecipientNames()) {
         for (const message of this.db.getUndeliveredMessages(name)) {
           if (this.rootComposerActive()) return delivered;
-          const injected = await this.deliverRoot(message);
+          // Per-message isolation: one message whose wake throws must not
+          // starve every message behind it. On 2026-07-21 the root wake
+          // delivered 0 of 4 queued messages with no error anywhere — a
+          // single unisolated failure at the head of this loop reproduces
+          // exactly that, and the caller's catch buries it. The failure is
+          // recorded on the row instead of thrown past the queue.
+          let injected: AgentMessage | null = null;
+          try {
+            injected = await this.deliverRoot(message);
+          } catch (error) {
+            this.db.recordMessageDeliveryDiagnostic(
+              message.id,
+              `root wake failed: ${
+                error instanceof Error ? error.message : "unknown error"
+              }`,
+              new Date().toISOString(),
+            );
+          }
           if (injected !== null) delivered.push(injected);
         }
       }
@@ -763,21 +791,54 @@ export class MessageDelivery {
   private async deliverRoot(
     message: AgentMessage,
   ): Promise<AgentMessage | null> {
-    if (
-      this.rootComposerActive() ||
-      this.rootProtocol?.isLive() !== true
-    ) {
+    // Every non-delivery records WHY on the row. The 2026-07-21 acceptance
+    // run failed with the root wake silently declining or dying on all four
+    // queued messages; between a /dev/null stderr and a blind catch there was
+    // no surface left that could say which gate refused.
+    if (this.rootComposerActive()) {
+      this.db.recordMessageDeliveryDiagnostic(
+        message.id,
+        "root wake skipped: the root composer is leased (a human is typing)",
+        new Date().toISOString(),
+      );
       return null;
     }
-    const confirmed = await this.rootProtocol.deliverMessage(
-      formatOrchestratorWake(createOrchestratorEnvelope(message)),
-      {
-        sender: message.from,
-        message_id: message.id,
-        sequence: String(message.sequence),
-      },
-    ).catch(() => false);
-    if (!confirmed) return null;
+    if (this.rootProtocol?.isLive() !== true) {
+      this.db.recordMessageDeliveryDiagnostic(
+        message.id,
+        "root wake skipped: no live root delivery protocol",
+        new Date().toISOString(),
+      );
+      return null;
+    }
+    let confirmed: boolean;
+    try {
+      confirmed = await this.rootProtocol.deliverMessage(
+        formatOrchestratorWake(createOrchestratorEnvelope(message)),
+        {
+          sender: message.from,
+          message_id: message.id,
+          sequence: String(message.sequence),
+        },
+      );
+    } catch (error) {
+      this.db.recordMessageDeliveryDiagnostic(
+        message.id,
+        `root wake failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+        new Date().toISOString(),
+      );
+      return null;
+    }
+    if (!confirmed) {
+      this.db.recordMessageDeliveryDiagnostic(
+        message.id,
+        "root wake failed: the root protocol did not confirm delivery",
+        new Date().toISOString(),
+      );
+      return null;
+    }
     const now = new Date().toISOString();
     const injected = this.db.markMessageDelivered(message.id, now);
     if (injected === null) {
@@ -865,6 +926,14 @@ export class MessageDelivery {
     }
     const text = this.formatAgentMessage(message);
     const boundaryBefore = this.turnBoundaryAt(message.to);
+    // A previous attempt that pasted without submitting left this message's
+    // text sitting in the recipient's composer (2026-07-21 acceptance
+    // failure). Pasting again on top would submit a garbled double copy the
+    // moment anything presses Enter, so a redelivery after a recorded paste
+    // failure clears the composer first. Safe here: this branch only runs
+    // against an idle recipient, so there is no in-flight turn to cancel.
+    const clearStalePaste = message.deliveryDiagnostic
+      ?.startsWith("tmux paste not submitted") === true;
     // This is what makes priority mean anything. Until now every level did the
     // same thing here — paste and press Enter — so "urgent interrupts at the
     // next safe boundary" was a label on a database row, not a behaviour, and a
@@ -876,13 +945,13 @@ export class MessageDelivery {
     if ("sendSessionMessage" in this.sessions) {
       await this.sessions.sendSessionMessage(recipient, text, {
         messageId: message.id,
-        interrupt: message.priority === "urgent",
+        interrupt: message.priority === "urgent" || clearStalePaste,
       });
     } else {
       // Compatibility for injected legacy senders. The built-in production
       // sender always takes the exact-locator branch above.
       await this.sessions.sendMessage(recipient.tmuxSession, text, {
-        interrupt: message.priority === "urgent",
+        interrupt: message.priority === "urgent" || clearStalePaste,
       });
     }
 
@@ -913,15 +982,31 @@ export class MessageDelivery {
     // seconds for a second turn-start that is never coming, and then call a
     // message queued that is sitting correctly in the composer.
     const live = this.db.getAgentByName(message.to) ?? recipient;
-    if (
-      live.status === "idle" && reportsTurnEvents(live.tool) &&
-      !(await this.turnStarted(message.to, boundaryBefore))
-    ) {
-      console.error(
-        `Hive pasted message ${message.id} into ${message.to}'s pane, but ${message.to} never started a turn. ` +
-          `The agent did not receive it; leaving the message queued rather than reporting it injected.`,
-      );
-      return this.getStoredMessage(message.id);
+    if (live.status === "idle" && reportsTurnEvents(live.tool)) {
+      let submitted = await this.turnStarted(message.to, boundaryBefore);
+      if (!submitted && "sendMessage" in this.sessions) {
+        // 2026-07-21 acceptance failure: the paste reached the pane but only
+        // a HUMAN Enter submitted it — the trailing Enter can be consumed as
+        // an editor newline, or land before the vendor composer is ready. A
+        // bare Enter re-press is free to try: a composer holding our paste
+        // submits it; an empty composer ignores it.
+        await this.sessions.sendMessage(recipient.tmuxSession, "", {})
+          .catch(() => undefined);
+        submitted = await this.turnStarted(message.to, boundaryBefore);
+      }
+      if (!submitted) {
+        console.error(
+          `Hive pasted message ${message.id} into ${message.to}'s pane, but ${message.to} never started a turn. ` +
+            `The agent did not receive it; leaving the message queued rather than reporting it injected.`,
+        );
+        this.db.recordMessageDeliveryDiagnostic(
+          message.id,
+          "tmux paste not submitted: no turn started after paste, Enter, and one Enter retry; " +
+            "the message stays queued and the composer is cleared before the next attempt",
+          new Date().toISOString(),
+        );
+        return this.getStoredMessage(message.id);
+      }
     }
 
     const delivered = this.markInjected(message);
