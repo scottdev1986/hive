@@ -30,6 +30,7 @@ interface B22Proof {
   port: number;
   agent: string;
   workspaceProject: string;
+  brokerPid: number;
   hostPid: number;
   processTree: ProofProcess[];
   locator: ProofLocator;
@@ -39,6 +40,13 @@ interface FinalRecord {
   state?: string;
   survivors?: unknown[];
   errors?: unknown[];
+}
+
+interface RendererReport {
+  phase: "reference" | "replay";
+  pid: number;
+  highWater: number;
+  bytes: number;
 }
 
 type Stack = {
@@ -72,6 +80,7 @@ for (const path of [
 
 mkdirSync(join(evidence, "matrix"), { recursive: true });
 mkdirSync(join(evidence, "manifests"), { recursive: true });
+mkdirSync(join(evidence, "captures"), { recursive: true });
 
 function command(argv: string[], cwd: string): string {
   const result = Bun.spawnSync(argv, { cwd, stdout: "pipe", stderr: "pipe" });
@@ -156,6 +165,11 @@ function liveProcesses(tree: ProofProcess[]): ProofProcess[] {
     const state = states.get(entry.pid);
     return state !== undefined && !state.startsWith("Z");
   });
+}
+
+function processReadback(tree: ProofProcess[]): Array<ProofProcess & { state: string }> {
+  const states = processStates();
+  return tree.map((entry) => ({ ...entry, state: states.get(entry.pid) ?? "absent" }));
 }
 
 function requireWholeTreeAlive(proof: B22Proof): void {
@@ -245,10 +259,14 @@ async function loadProof(stack: Stack): Promise<B22Proof> {
   return JSON.parse(readFileSync(path, "utf8")) as B22Proof;
 }
 
-async function runSwiftTest(filter: string, outputPath: string): Promise<string> {
+async function runSwiftTest(
+  filter: string,
+  outputPath: string,
+  env: Record<string, string | undefined> = process.env,
+): Promise<string> {
   const child = Bun.spawn(["swift", "test", "--filter", filter], {
     cwd: workspaceRoot,
-    env: process.env,
+    env,
     stdin: "ignore",
     stdout: "pipe",
     stderr: "pipe",
@@ -262,6 +280,204 @@ async function runSwiftTest(filter: string, outputPath: string): Promise<string>
   writeFileSync(outputPath, output);
   if (exit !== 0) throw new Error(`${filter} failed (${exit}); see ${outputPath}`);
   return output;
+}
+
+function rendererEnvironment(
+  stack: Stack,
+  phase: "reference" | "replay",
+  output: string,
+  report: string,
+  reference?: string,
+): Record<string, string | undefined> {
+  return {
+    ...process.env,
+    HIVE_B22_PROOF_HOME: stack.home,
+    HIVE_A4_RENDERER_PHASE: phase,
+    HIVE_A4_RENDERER_OUTPUT: output,
+    HIVE_A4_RENDERER_REPORT: report,
+    HIVE_A4_RENDERER_REFERENCE: reference,
+  };
+}
+
+async function rendererKill(): Promise<void> {
+  const lines: string[] = [];
+  const project = makePlainProject("renderer-kill");
+  const stack = startStack("xrenderer", basePort, project);
+  const referencePath = join(stack.home, "renderer-reference.bin");
+  const referenceReportPath = join(stack.home, "renderer-reference.json");
+  const replayPath = join(stack.home, "renderer-replay.bin");
+  const replayReportPath = join(stack.home, "renderer-replay.json");
+  const referenceTestPath = join(evidence, "matrix", "a4-renderer-kill-reference-xctest.txt");
+  const replayTestPath = join(evidence, "matrix", "a4-renderer-kill-replay-xctest.txt");
+  let renderer: Bun.Subprocess | null = null;
+  try {
+    const proof = await loadProof(stack);
+    requireWholeTreeAlive(proof);
+    stamp(lines, `HEAD=${head}`);
+    stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
+    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
+    stamp(lines, `captured-before-renderer-kill=${JSON.stringify(proof.processTree)}`);
+
+    renderer = Bun.spawn([
+      "swift", "test", "--filter", "LiveHostAttachTests.testA4RendererKillReplayProbe",
+    ], {
+      cwd: workspaceRoot,
+      env: rendererEnvironment(stack, "reference", referencePath, referenceReportPath),
+      stdin: "ignore",
+      stdout: Bun.file(referenceTestPath),
+      stderr: Bun.file(referenceTestPath),
+    });
+    await waitForFile(referenceReportPath, "renderer reference report");
+    const referenceReport = JSON.parse(
+      readFileSync(referenceReportPath, "utf8"),
+    ) as RendererReport;
+    if (referenceReport.phase !== "reference" || referenceReport.pid <= 1) {
+      throw new Error(`invalid renderer reference report: ${JSON.stringify(referenceReport)}`);
+    }
+    const rendererTree = [{ pid: referenceReport.pid, command: "A4 Swift renderer probe" }];
+    if (liveProcesses(rendererTree).length !== 1) {
+      throw new Error(`renderer positive control cannot see pid ${referenceReport.pid}`);
+    }
+    process.kill(referenceReport.pid, "SIGKILL");
+    await waitTreeAbsent(rendererTree);
+    const killedExit = await Promise.race([
+      renderer.exited,
+      Bun.sleep(30_000).then(() => null),
+    ]);
+    if (killedExit === null || killedExit === 0) {
+      throw new Error(`renderer test runner did not report killed child: ${killedExit}`);
+    }
+    requireWholeTreeAlive(proof);
+    const afterRendererKill = processReadback(proof.processTree);
+    stamp(lines, `SIGKILL renderer pid=${referenceReport.pid}; runnerExit=${killedExit}`);
+    stamp(lines, `GREEN provider tree remained live after renderer death=${JSON.stringify(afterRendererKill)}`);
+
+    await runSwiftTest(
+      "LiveHostAttachTests.testA4RendererKillReplayProbe",
+      replayTestPath,
+      rendererEnvironment(stack, "replay", replayPath, replayReportPath, referencePath),
+    );
+    const replayReport = JSON.parse(readFileSync(replayReportPath, "utf8")) as RendererReport;
+    const referenceBytes = readFileSync(referencePath);
+    const replayBytes = readFileSync(replayPath);
+    if (!referenceBytes.equals(replayBytes) || referenceBytes.byteLength === 0) {
+      throw new Error("renderer reconnect capture is not byte-identical");
+    }
+    const referenceCapture = join(evidence, "captures", "a4-renderer-before-kill.bin");
+    const replayCapture = join(evidence, "captures", "a4-renderer-after-reconnect.bin");
+    writeFileSync(referenceCapture, referenceBytes);
+    writeFileSync(replayCapture, replayBytes);
+    requireWholeTreeAlive(proof);
+    const journal = journalEvidence(stack, proof);
+    stamp(lines, `GREEN same-generation renderer reconnect highWater=${replayReport.highWater}`);
+    stamp(lines, `GREEN byte-identical replay bytes=${referenceBytes.byteLength} sha256=${digest(referenceBytes)}`);
+    stamp(lines, "BOUND: reference range begins at sequence 0 inside the 67108864-byte journal capacity");
+    const exitCode = await stopStack(stack);
+    if (exitCode !== 0) throw new Error(`renderer stack cleanup exited ${exitCode}`);
+    await waitTreeAbsent(proof.processTree);
+    const final = finalRecord(stack, proof);
+    const postTeardownReadback = processReadback(proof.processTree);
+    stamp(lines, `GREEN post-teardown ps readback=${JSON.stringify(postTeardownReadback)}`);
+    stamp(lines, "RESULT: A4 kill-renderer/live-replay/zero-survivors GREEN");
+    writeMatrix("a4-renderer-kill.txt", lines);
+    writeManifest("a4-renderer-kill.json", {
+      cell: "a4-renderer-kill", ok: true, head, startedAt,
+      home: stack.home, project, port: proof.port, locator: proof.locator,
+      capturedProcessTree: proof.processTree,
+      renderer: { pid: referenceReport.pid, signal: "SIGKILL", runnerExit: killedExit },
+      afterRendererKill, referenceReport, replayReport,
+      boundedWindow: {
+        fromSeq: 0,
+        throughSeq: referenceReport.highWater,
+        capturedBytes: referenceBytes.byteLength,
+        journalCapacityBytes: 64 * 1024 * 1024,
+      },
+      referenceCapture: { path: referenceCapture, sha256: digest(referenceBytes) },
+      replayCapture: { path: replayCapture, sha256: digest(replayBytes) },
+      journal, final, postTeardownReadback,
+    });
+  } catch (error) {
+    if (renderer !== null && renderer.exitCode === null) renderer.kill("SIGKILL");
+    await stopStack(stack).catch(() => undefined);
+    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    writeMatrix(`diagnostic-a4-renderer-kill-${suffix}.txt`, lines);
+    throw error;
+  }
+}
+
+async function brokerKill(): Promise<void> {
+  const lines: string[] = [];
+  const project = makePlainProject("broker-kill");
+  const stack = startStack("ybroker", basePort + 1, project);
+  try {
+    const proof = await loadProof(stack);
+    requireWholeTreeAlive(proof);
+    const brokerTree = [{ pid: proof.brokerPid, command: "hive-sessiond serve" }];
+    if (liveProcesses(brokerTree).length !== 1) {
+      throw new Error(`broker positive control cannot see pid ${proof.brokerPid}`);
+    }
+    stamp(lines, `HEAD=${head}`);
+    stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
+    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
+    stamp(lines, `captured-before-broker-kill=${JSON.stringify(proof.processTree)}`);
+    process.kill(proof.brokerPid, "SIGKILL");
+    await waitTreeAbsent(brokerTree);
+    stamp(lines, `SIGKILL broker pid=${proof.brokerPid}; ps readback=absent`);
+
+    const geometry = JSON.stringify({
+      columns: 80, rows: 24, widthPx: 800, heightPx: 480,
+      cellWidthPx: 10, cellHeightPx: 20,
+    });
+    const loss = runAllowFailure([
+      proof.hiveCli, "workspace-attach", proof.agent,
+      "--port", String(proof.port),
+      "--session-locator", JSON.stringify(proof.locator),
+      "--viewer-id", "a4-broker-kill",
+      "--geometry", geometry,
+    ], project);
+    if (loss.exitCode === 0 || !loss.output.includes("sessiond broker is unavailable")) {
+      throw new Error(`broker loss was not explicit: ${JSON.stringify(loss)}`);
+    }
+    const transcriptPath = join(stack.home, "b22-proof-transcript.log");
+    await waitForText(
+      transcriptPath,
+      "visibility renewal failed: SessiondBrokerUnavailableError",
+      "typed broker-loss renewal readback",
+    );
+    const typedRenewal = readFileSync(transcriptPath, "utf8").split("\n")
+      .find((line) => line.includes("visibility renewal failed: SessiondBrokerUnavailableError"));
+    if (typedRenewal === undefined) throw new Error("typed broker loss line disappeared");
+    stamp(lines, `GREEN typed attach loss: ${loss.output}`);
+    stamp(lines, `GREEN typed renewal loss: ${typedRenewal}`);
+
+    const finalPath = join(
+      stack.home, "runtime/sessiond/hosts", proof.locator.sessionId, "final.json",
+    );
+    await waitForFile(finalPath, "broker-loss visibility-expiry final record");
+    await waitTreeAbsent(proof.processTree);
+    const final = finalRecord(stack, proof);
+    const postExpiryReadback = processReadback(proof.processTree);
+    const exitCode = await stopStack(stack);
+    if (exitCode !== 0) throw new Error(`broker stack cleanup exited ${exitCode}`);
+    stamp(lines, "GREEN no fabricated clean exit: broker loss remained explicit until lease teardown");
+    stamp(lines, `GREEN post-expiry ps readback=${JSON.stringify(postExpiryReadback)}`);
+    stamp(lines, "RESULT: A4 kill-broker/typed-loss/zero-survivors GREEN");
+    writeMatrix("a4-broker-kill.txt", lines);
+    writeManifest("a4-broker-kill.json", {
+      cell: "a4-broker-kill", ok: true, head, startedAt,
+      home: stack.home, project, port: proof.port, locator: proof.locator,
+      broker: { pid: proof.brokerPid, signal: "SIGKILL", postKillState: "absent" },
+      capturedProcessTree: proof.processTree,
+      typedLoss: { attach: loss, visibilityRenewal: typedRenewal },
+      visibilityExpiryBoundMilliseconds: 15_000,
+      final, postExpiryReadback,
+    });
+  } catch (error) {
+    await stopStack(stack).catch(() => undefined);
+    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    writeMatrix(`diagnostic-a4-broker-kill-${suffix}.txt`, lines);
+    throw error;
+  }
 }
 
 function journalEvidence(stack: Stack, proof: B22Proof): {
@@ -511,8 +727,17 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
   }
 }
 
+if (process.env.HIVE_B25_A4_KILL_ONLY === "1") {
+  await rendererKill();
+  await brokerKill();
+  console.log("B2.5 A4 KILL MATRIX LIVE PROOF OK");
+  process.exit(0);
+}
+
 const unitPath = join(evidence, "matrix", "a4-lifecycle-xctest.txt");
 await runSwiftTest("AppDelegateLifecycleTests", unitPath);
+await rendererKill();
+await brokerKill();
 await reconnectReplay();
 const close = await exactClose();
 const quit = await concurrentQuit(unitPath);

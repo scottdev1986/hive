@@ -338,6 +338,68 @@ final class LiveHostAttachTests: XCTestCase {
         )
     }
 
+    /// A4 opt-in process-bound renderer probe. The qualification driver kills
+    /// the reference invocation after this test reports its PID, then launches
+    /// the replay invocation against the same exact generation. Keeping this
+    /// as a separate process makes renderer death real rather than a simulated
+    /// transport close.
+    func testA4RendererKillReplayProbe() throws {
+        let environment = ProcessInfo.processInfo.environment
+        guard let phase = environment["HIVE_A4_RENDERER_PHASE"],
+              let outputPath = environment["HIVE_A4_RENDERER_OUTPUT"],
+              let reportPath = environment["HIVE_A4_RENDERER_REPORT"] else {
+            throw XCTSkip("A4 renderer-kill probe is opt-in")
+        }
+        let (proof, _) = try loadProof()
+        let grantLine = try issueGrant(proof, viewerId: "a4-renderer-\(phase)")
+        XCTAssertEqual(grantLine.status, 0, "renderer grant refused: \(grantLine.output)")
+        let grant = try parseGrant(grantLine.output)
+        let engine = FakeManualSurface()
+        let view = HiveTerminalView(
+            frame: .zero, engine: engine, viewerId: "a4-renderer-\(phase)")
+        let transport = try UdsHostTransport.connect(endpoint: grant.endpoint)
+        let outcome = try view.attach(
+            grant: grant, geometry: geometry, afterSeq: 0, transport: transport)
+        guard case .firstCorrectFrame = outcome else {
+            return XCTFail("renderer attach did not reach first correct frame: \(outcome)")
+        }
+        let applied = engine.appliedRanges.reduce(Data()) { $0 + $1.bytes }
+        XCTAssertFalse(applied.isEmpty, "renderer received no replay bytes")
+
+        let captured: Data
+        switch phase {
+        case "reference":
+            captured = applied
+        case "replay":
+            guard let referencePath = environment["HIVE_A4_RENDERER_REFERENCE"] else {
+                return XCTFail("replay phase has no reference capture")
+            }
+            let reference = try Data(contentsOf: URL(fileURLWithPath: referencePath))
+            XCTAssertGreaterThanOrEqual(applied.count, reference.count)
+            captured = Data(applied.prefix(reference.count))
+            XCTAssertEqual(captured, reference, "reconnected renderer replay changed bytes")
+        default:
+            return XCTFail("unsupported A4 renderer phase: \(phase)")
+        }
+
+        try captured.write(to: URL(fileURLWithPath: outputPath), options: .atomic)
+        let report: [String: Any] = [
+            "phase": phase,
+            "pid": ProcessInfo.processInfo.processIdentifier,
+            "highWater": view.highWater,
+            "bytes": captured.count,
+        ]
+        try JSONSerialization.data(withJSONObject: report, options: [.sortedKeys])
+            .write(to: URL(fileURLWithPath: reportPath), options: .atomic)
+
+        if phase == "reference" {
+            while true {
+                RunLoop.current.run(until: Date().addingTimeInterval(1))
+            }
+        }
+        transport.close()
+    }
+
     /// B2.3 opt-in headless proof through the production Swift attach socket:
     /// a Gate 8 NSTextInputClient commit is held for CLAIM_RESULT, submitted as
     /// INPUT_SUBMIT, written to the live PTY, and returned as ordered OUTPUT.

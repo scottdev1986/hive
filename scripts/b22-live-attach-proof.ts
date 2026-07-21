@@ -426,6 +426,7 @@ writeFileSync(join(home, "b22-proof.json"), JSON.stringify({
   agent: agentName,
   mode: realShell ? "shell" : "ticker",
   workspaceProject,
+  brokerPid: broker.pid,
   hostPid: createdHostPid,
   processTree,
   locator,
