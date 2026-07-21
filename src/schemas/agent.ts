@@ -73,6 +73,12 @@ export function isTerminalAgentStatus(
 
 const RETIRED_VIEWER_FIELD = ["terminal", "Handle"].join("");
 
+export const DeliveryBlockedSchema = z.strictObject({
+  messageId: z.string().min(1),
+  queuedMinutes: z.number().int().nonnegative(),
+  diagnostic: z.string(),
+}).readonly();
+
 const AgentRecordShape = {
   // The AgentUUID: distinct per holder of a name, for the lifetime of the Hive.
   // Two agents that share a name across time never share an id, so history can
@@ -151,6 +157,10 @@ const AgentRecordShape = {
   // artifacts. Present only on hive_status rows when graphify is configured;
   // null means no trustworthy observation, never zero calls.
   graphifyCalls: z.number().int().nonnegative().nullable().optional(),
+  // A hive_status-only projection: the oldest message whose recorded delivery
+  // failure has crossed the stuck threshold. It is optional because healthy
+  // full records remain byte-for-byte agent rows.
+  deliveryBlocked: DeliveryBlockedSchema.optional(),
   createdAt: z.iso.datetime(),
   lastEventAt: z.iso.datetime(),
   capabilityEpoch: z.number().int().nonnegative().default(0),

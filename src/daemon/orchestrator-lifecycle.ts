@@ -43,9 +43,7 @@ export interface ActiveAgentSummary {
   /** Non-null when a message to this agent has been queued past the
    * stuck-delivery threshold with a recorded reason: it is not hearing Hive,
    * and everything else on this row will still look normal. */
-  deliveryBlocked:
-    | Readonly<{ messageId: string; queuedMinutes: number; diagnostic: string }>
-    | null;
+  deliveryBlocked: AgentRecord["deliveryBlocked"] | null;
   lastEventAt: string;
 }
 
@@ -202,9 +200,7 @@ export function compactActiveTeam(
               .graphifyCalls,
         }
         : {}),
-      deliveryBlocked: (agent as AgentRecord & {
-        deliveryBlocked?: ActiveAgentSummary["deliveryBlocked"];
-      }).deliveryBlocked ?? null,
+      deliveryBlocked: agent.deliveryBlocked ?? null,
       lastEventAt: agent.lastEventAt,
       };
     });

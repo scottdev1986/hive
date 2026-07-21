@@ -25,6 +25,7 @@ import { QuotaService } from "./quota";
 import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
+import { fetchAgentStatus } from "../cli/mcp";
 import { actingAs, listAuditEntries, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
@@ -295,6 +296,12 @@ test("an accepted full inventory renews each exact completed sessiond binding", 
       expiresAt: "2026-07-18T12:00:15.000Z",
     },
   });
+  db.insertAgent(agent({
+    id: agentId,
+    name: "renewed",
+    status: "idle",
+    sessionLocator: locator,
+  }));
   const renewals: unknown[] = [];
   const unsupported = async (): Promise<never> => {
     throw new Error("unexpected terminal-host operation");
@@ -329,8 +336,38 @@ test("an accepted full inventory renews each exact completed sessiond binding", 
     spawner: new StubSpawner(),
     terminalHost,
     workspaceVisibility: visibility,
+    tmuxSender: new SilentTmuxSender(db),
+    sessiondInput: {
+      async injectIdle() {
+        return { outcome: "declined", reason: "claim denied: HumanOrphaned" };
+      },
+    },
   });
   try {
+    const stuck = await daemon.delivery.send(
+      "queen",
+      "renewed",
+      "This delivery must not stop visibility renewal.",
+    );
+    expect(stuck.state).toBe("queued");
+    const blockedAt = new Date(Date.now() - 12 * 60_000).toISOString();
+    db.database.query("UPDATE messages SET createdAt = ? WHERE id = ?")
+      .run(blockedAt, stuck.id);
+    expect(await daemon.delivery.alertStuckDeliveries()).toBe(1);
+
+    // Shared producer/consumer wire: this is the real hive_status payload and
+    // the same strict AgentRecordSchema parser workspace-feed calls. The
+    // conditional field that caused the 17:48Z fleet expiry must cross it.
+    const status = await fetchAgentStatus(
+      4483,
+      actingAs(daemon, "operator"),
+    );
+    expect(status.find((record) => record.name === "renewed")?.deliveryBlocked)
+      .toMatchObject({
+        messageId: stuck.id,
+        diagnostic: "sessiond inject declined: claim denied: HumanOrphaned",
+      });
+
     const response = await actingAs(daemon, "operator")(
       "http://hive/workspace-visibility",
       {
