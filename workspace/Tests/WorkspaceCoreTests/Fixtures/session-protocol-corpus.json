@@ -1324,6 +1324,16 @@
       }
     },
     {
+      "name": "typed generation-gone ERROR",
+      "schema": "errorPayload",
+      "value": {
+        "schemaVersion": 1,
+        "code": "GENERATION_GONE",
+        "message": "generation is gone",
+        "diagnosticId": null
+      }
+    },
+    {
       "name": "PING monotonic nanos",
       "schema": "pingPongPayload",
       "value": {
@@ -3201,6 +3211,16 @@
         "message": "failure",
         "diagnosticId": null,
         "retry": true
+      }
+    },
+    {
+      "name": "ERROR rejects an unknown typed code",
+      "schema": "errorPayload",
+      "value": {
+        "schemaVersion": 1,
+        "code": "GENERATION_ABSENT",
+        "message": "failure",
+        "diagnosticId": null
       }
     },
     {

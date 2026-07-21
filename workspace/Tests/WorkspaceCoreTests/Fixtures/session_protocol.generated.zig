@@ -125,6 +125,7 @@ pub const wire_error = enum {
     forbidden,
     instance_mismatch,
     generation_mismatch,
+    generation_gone,
     not_found,
     not_ready,
     already_exists,

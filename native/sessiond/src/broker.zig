@@ -1015,10 +1015,15 @@ pub const HostRenewalResult = union(enum) {
     failure: protocol.Failure,
 };
 
+pub const HostGrantResult = union(enum) {
+    registered,
+    failure: protocol.Failure,
+};
+
 pub const HostControl = struct {
     context: *anyopaque,
     adopt_fn: *const fn (*anyopaque, Locator, [32]u8, u64) ?AdoptionReadback,
-    register_grant_fn: *const fn (*anyopaque, Locator, GrantRegistration) bool,
+    register_grant_fn: *const fn (*anyopaque, Locator, GrantRegistration) HostGrantResult,
     renew_visibility_fn: *const fn (*anyopaque, Locator, []const u8) HostRenewalResult,
     discard_orphan_fn: *const fn (*anyopaque, Locator, []const u8) HostRenewalResult,
     terminate_fn: *const fn (*anyopaque, Locator, TerminationCommand, HostProcessOwnership) TerminationReadback,
@@ -1027,7 +1032,7 @@ pub const HostControl = struct {
         return self.adopt_fn(self.context, locator, secret, now_ns);
     }
 
-    pub fn registerGrant(self: HostControl, locator: Locator, grant: GrantRegistration) bool {
+    pub fn registerGrant(self: HostControl, locator: Locator, grant: GrantRegistration) HostGrantResult {
         return self.register_grant_fn(self.context, locator, grant);
     }
 
@@ -1531,6 +1536,16 @@ pub const WireHostClient = struct {
         };
     }
 
+    fn hostTransportFailure(err: anyerror) protocol.Failure {
+        return .{
+            .code = switch (err) {
+                error.ConnectionRefused, error.FileNotFound => .generation_gone,
+                else => .verification_unknown,
+            },
+            .close_connection = false,
+        };
+    }
+
     fn renewVisibility(
         self: *WireHostClient,
         locator: Locator,
@@ -1740,9 +1755,14 @@ pub const WireHostClient = struct {
         context: *anyopaque,
         locator: Locator,
         grant: GrantRegistration,
-    ) bool {
+    ) HostGrantResult {
         const self: *WireHostClient = @ptrCast(@alignCast(context));
-        return self.registerGrant(locator, grant) catch false;
+        const registered = self.registerGrant(locator, grant) catch |err|
+            return .{ .failure = hostTransportFailure(err) };
+        return if (registered) .registered else .{ .failure = .{
+            .code = .verification_unknown,
+            .close_connection = false,
+        } };
     }
 
     fn renewVisibilityCallback(
@@ -1751,10 +1771,8 @@ pub const WireHostClient = struct {
         payload: []const u8,
     ) HostRenewalResult {
         const self: *WireHostClient = @ptrCast(@alignCast(context));
-        return self.renewVisibility(locator, payload) catch .{ .failure = .{
-            .code = .verification_unknown,
-            .close_connection = false,
-        } };
+        return self.renewVisibility(locator, payload) catch |err|
+            .{ .failure = hostTransportFailure(err) };
     }
 
     fn discardOrphanCallback(
@@ -1763,10 +1781,8 @@ pub const WireHostClient = struct {
         payload: []const u8,
     ) HostRenewalResult {
         const self: *WireHostClient = @ptrCast(@alignCast(context));
-        return self.discardOrphan(locator, payload) catch .{ .failure = .{
-            .code = .verification_unknown,
-            .close_connection = false,
-        } };
+        return self.discardOrphan(locator, payload) catch |err|
+            .{ .failure = hostTransportFailure(err) };
     }
 
     fn terminateCallback(
@@ -2124,17 +2140,21 @@ pub const Registry = struct {
                 return .{ .code = .already_exists, .close_connection = false };
         };
         for (&entry.grants) |*slot| if (slot.* == null or slot.*.?.used or slot.*.?.expires_mono_ns <= now_ns) {
-            if (!entry.host.?.registerGrant(locator, .{
+            const host = entry.host orelse return .{ .code = .generation_gone, .close_connection = false };
+            switch (host.registerGrant(locator, .{
                 .hash = grant_hash,
                 .viewer_id = viewer_id,
                 .operations = operations,
                 .geometry = geometry,
                 .registered_mono_ns = now_ns,
                 .expires_mono_ns = expires_ns,
-            }))
-                return .{ .code = .verification_unknown, .close_connection = false };
-            slot.* = .{ .hash = grant_hash, .expires_mono_ns = expires_ns };
-            return null;
+            })) {
+                .failure => |failure| return failure,
+                .registered => {
+                    slot.* = .{ .hash = grant_hash, .expires_mono_ns = expires_ns };
+                    return null;
+                },
+            }
         };
         return .{ .code = .capacity_exceeded, .close_connection = false };
     }
@@ -3499,7 +3519,7 @@ pub const ProductionBackend = struct {
         };
         if (entry.record.state != .live or now_ns >= entry.record.visibility.expires_mono_ns)
             return failure(.not_ready);
-        const host = entry.host orelse return failure(.verification_unknown);
+        const host = entry.host orelse return failure(.generation_gone);
         return switch (host.discardOrphan(locator, payload)) {
             .failure => |host_failure| .{ .failure = host_failure },
             .response => |response| .{ .response = response },
@@ -3554,7 +3574,7 @@ pub const ProductionBackend = struct {
             .failure => |lookup_failure| return .{ .failure = lookup_failure },
             .entry => |value| value,
         };
-        const host = entry.host orelse return failure(.verification_unknown);
+        const host = entry.host orelse return failure(.generation_gone);
         switch (host.renewVisibility(locator, payload)) {
             .failure => |host_failure| return .{ .failure = host_failure },
             .response => |response| {

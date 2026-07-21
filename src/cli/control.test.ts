@@ -178,6 +178,19 @@ describe("kill origin instrumentation (#64)", () => {
     expect(body.origin).toContain("argv=");
   });
 
+  test("killAgentCli refuses a gone exact generation", async () => {
+    globalThis.fetch = (async (_input: string | URL | Request, _init?: RequestInit) => new Response(JSON.stringify({
+      state: "rejected",
+      reason: "session-generation-gone",
+      error: "Hive refused to kill maya: its session generation is gone",
+    }), { status: 409 })) as typeof fetch;
+
+    const maya = sessiondAgent("maya");
+    await expect(killAgentCli("maya", 4483, maya.sessionLocator)).rejects.toThrow(
+      "Hive refused to kill maya: its session generation is gone [session-generation-gone]",
+    );
+  });
+
   test("killOrigin carries the full invoker identity (#70): pid chain, cwd, worktree flag", () => {
     const origin = killOrigin("stop", {
       pid: 100,

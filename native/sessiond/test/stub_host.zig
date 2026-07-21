@@ -52,13 +52,19 @@ const StubHost = struct {
         return self.readback;
     }
 
-    fn registerGrant(context: *anyopaque, locator: broker.Locator, grant: broker.GrantRegistration) bool {
+    fn registerGrant(
+        context: *anyopaque,
+        locator: broker.Locator,
+        grant: broker.GrantRegistration,
+    ) broker.HostGrantResult {
         const self: *StubHost = @ptrCast(@alignCast(context));
-        if (!self.visible or !sameLocator(locator, self.readback.locator)) return false;
+        if (!self.visible) return .{ .failure = .{ .code = .generation_gone, .close_connection = false } };
+        if (!sameLocator(locator, self.readback.locator))
+            return .{ .failure = .{ .code = .generation_mismatch, .close_connection = false } };
         self.grant_hash = grant.hash;
         self.grant_viewer_id = grant.viewer_id;
         self.grant_expires_ns = grant.expires_mono_ns;
-        return true;
+        return .registered;
     }
 
     fn renewVisibility(
@@ -786,6 +792,27 @@ test "consuming an issued grant frees the mirror slot so reconnect churn never e
     }
 }
 
+test "registry forwards a typed gone-generation refusal from its host" {
+    const now: u64 = 1_000_000;
+    const record = fixtureRecord(now + 30 * std.time.ns_per_s);
+    var host = fixtureHost(record);
+    var registry: broker.Registry = .{};
+    const operations = [_][]const u8{"view"};
+    try std.testing.expect(registry.register(record, host.control()) == null);
+    host.visible = false;
+    try std.testing.expectEqual(
+        broker.protocol.WireError.generation_gone,
+        registry.registerGrant(
+            record.locator,
+            @splat(0x11),
+            "viewer-a",
+            &operations,
+            record.geometry,
+            now,
+        ).?.code,
+    );
+}
+
 test "security corpus rejects replay stale generation and foreign instance" {
     const now: u64 = 1_000_000;
     const record = fixtureRecord(now + 30 * std.time.ns_per_s);
@@ -1010,7 +1037,7 @@ test "legacy host wire cannot fabricate a neutral TERMINATED result" {
     ));
 }
 
-test "wire host control rejects a locator before connecting" {
+test "wire host control rejects a mismatch and names an absent exact generation" {
     var temporary = std.testing.tmpDir(.{});
     defer temporary.cleanup();
     const record = fixtureRecord(30 * std.time.ns_per_s);
@@ -1026,14 +1053,22 @@ test "wire host control rejects a locator before connecting" {
     var wrong = record.locator;
     wrong.generation += 1;
     const operations = [_][]const u8{"view"};
-    try std.testing.expect(!client.control().registerGrant(wrong, .{
+    try std.testing.expectEqual(broker.protocol.WireError.verification_unknown, client.control().registerGrant(wrong, .{
         .hash = @splat(0x11),
         .viewer_id = "viewer",
         .operations = &operations,
         .geometry = record.geometry,
         .registered_mono_ns = 1,
         .expires_mono_ns = 2,
-    }));
+    }).failure.code);
+    try std.testing.expectEqual(broker.protocol.WireError.generation_gone, client.control().registerGrant(record.locator, .{
+        .hash = @splat(0x12),
+        .viewer_id = "viewer",
+        .operations = &operations,
+        .geometry = record.geometry,
+        .registered_mono_ns = 1,
+        .expires_mono_ns = 2,
+    }).failure.code);
     try std.testing.expect(!client.control().terminate(wrong, .{
         .mode = "immediate",
         .reason = "wrong locator",

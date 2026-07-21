@@ -3376,9 +3376,9 @@ export class HiveDaemon {
    * reaping something. So this checks the pane's exact Hive locator, then is a
    * thin authorization shell over killAgentTeardown.
    *
-   * Idempotent, because a UI cannot be. The user can click X on a pane whose
-   * agent died a second ago, or click it twice; an already-dead agent is the
-   * outcome the caller wanted, so it is a 200 and not an error.
+   * Idempotent while a residual process tree might still need reaping. Once
+   * the exact terminal generation is positively absent, a repeat click is a
+   * typed refusal rather than a fabricated successful kill.
    */
   private async killEndpoint(
     pathname: string,
@@ -3440,6 +3440,13 @@ export class HiveDaemon {
         state: "rejected",
         reason: "session-locator-mismatch",
         error: `Hive refused to kill ${name}: its session generation changed`,
+      }, { status: 409 });
+    }
+    if (isTerminalAgentStatus(agent.status) && await this.agentTreeAbsent(agent)) {
+      return json({
+        state: "rejected",
+        reason: "session-generation-gone",
+        error: `Hive refused to kill ${name}: its session generation is gone`,
       }, { status: 409 });
     }
     try {

@@ -55,8 +55,8 @@ describe("terminal foundation WP0 contracts", () => {
   test("Swift and TypeScript agree after every valid, invalid, and reducer prefix", async () => {
     const evidence = await runConformance();
     expect(evidence).toEqual({
-      validCases: 70,
-      invalidCases: 73,
+      validCases: 71,
+      invalidCases: 74,
       validHeaders: 2,
       ignoredHeaders: 2,
       invalidHeaders: 7,

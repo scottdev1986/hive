@@ -450,7 +450,7 @@ test("a shared selection failure is explicit about the already-saved local polic
   }
 });
 
-test("agent kill rejects a stale locator without killing the current generation", async () => {
+test("agent kill rejects a stale or gone locator without killing the current generation", async () => {
   const db = new HiveDatabase(join(home, "locator-fenced-kill.db"));
   const tmux = new FakeDaemonTmux();
   tmux.sessions.add("hive-maya");
@@ -496,6 +496,21 @@ test("agent kill rejects a stale locator without killing the current generation"
     expect(exact.status).toBe(200);
     expect(tmux.killed).toEqual(["hive-maya"]);
     expect(db.getAgentByName("maya")?.status).toBe("dead");
+
+    const gone = await actingAs(daemon, "operator")(
+      "http://hive/agents/maya/kill",
+      {
+        method: "POST",
+        body: JSON.stringify({ sessionLocator: current.sessionLocator }),
+      },
+    );
+    expect(gone.status).toBe(409);
+    expect(await gone.json()).toEqual({
+      state: "rejected",
+      reason: "session-generation-gone",
+      error: "Hive refused to kill maya: its session generation is gone",
+    });
+    expect(tmux.killed).toEqual(["hive-maya"]);
   } finally {
     tmux.sessions.clear();
     await daemon.stop();
