@@ -32,11 +32,17 @@ draws and a 59,670-byte ordered journal. The cell also mutates the display
 preflight, locator, transcript, screenshot, and nonce checks to prove each
 assertion bites.
 
+The final daemon SIGKILL line is the harness's bounded cleanup fallback after
+exact agent/root-session absence was verified; the same teardown-race precedent
+is retained in `matrix/diagnostic-p14-locked-screen-crop.txt`, so it does not
+qualify the pane result.
+
 The previous rebased capture at `0aa486b3` reached high-water 22,670 with 78
 draws and a 60,367-byte ordered journal; its digest-pinned capture remains as a
 control.
 
-The pre-rebase confirmation at `42e74c55` reached high-water 31,609 with 55
+The pre-rebase confirmation at `42e74c55`, session
+`ses_019f86ce-458e-7ee1-961b-18a636f66fb1`, reached high-water 31,609 with 55
 draws and a 99,295-byte ordered journal; its digest-pinned capture remains as a
 control. The earlier full production run at `5b448217` likewise spawned a
 real Codex agent in a non-Hive repository, Workspace installed
