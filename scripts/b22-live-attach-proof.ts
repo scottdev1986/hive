@@ -39,7 +39,7 @@ if (realShell) {
     if (!shellExecutable.startsWith("/")) throw new Error("not absolute");
     accessSync(shellExecutable, constants.X_OK);
   } catch {
-    console.error(`make terminal: SHELL is not an absolute executable: ${shellExecutable}`);
+    console.error(`b22-live-attach-proof: SHELL is not an absolute executable: ${shellExecutable}`);
     process.exit(2);
   }
 }
@@ -72,7 +72,7 @@ const longestHostSocketPath = join(
 const unixSocketPathBytes = Buffer.byteLength(longestHostSocketPath);
 if (unixSocketPathBytes > 103) {
   console.error(
-    "make terminal: HIVE_B22_HOME resolves to a path too long for sessiond host sockets: " +
+    "b22-live-attach-proof: HIVE_B22_HOME resolves to a path too long for sessiond host sockets: " +
     `${canonicalHome} (${unixSocketPathBytes} bytes; maximum 103). Use a shorter path such as /tmp/hv.`,
   );
   process.exit(2);
@@ -319,9 +319,28 @@ const renewals = setInterval(() => {
 }, 5_000);
 
 // 4. The real Workspace app.
-// `make workspace` renames SwiftPM's output so a debug build never carries the
-// installed app's process name into the unified log (see the Makefile note).
+// The Makefile rule for this path renames SwiftPM's output so a debug build
+// never carries the installed app's process name into the unified log (see the
+// Makefile note).
 const workspaceBinary = join(repoRoot, "workspace/.build/debug/HiveWorkspaceDev");
+const launchApp = process.env.HIVE_B22_NO_APP !== "1";
+// The old `make terminal`/`make demo` targets built this binary before running
+// the harness; the make surface is now exactly clean/build/run/test, so the
+// harness builds it itself by naming the FILE (make no-ops when it is current).
+// Only when the app is actually launched: HIVE_B22_NO_APP=1 runs never need it.
+if (launchApp) {
+  const built = Bun.spawnSync(["make", workspaceBinary], {
+    cwd: repoRoot,
+    stdout: "inherit",
+    stderr: "inherit",
+  });
+  if (built.exitCode !== 0) {
+    console.error(
+      `b22-live-attach-proof: could not build ${workspaceBinary} (run 'make build' first)`,
+    );
+    process.exit(2);
+  }
+}
 const workspaceArgs = [
   "--project", workspaceProject,
   "--port", String(port),
@@ -331,7 +350,7 @@ const workspaceArgs = [
   "--orchestrator-session", `hive-b22-orch`,
 ];
 log(`launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`);
-const workspace = process.env.HIVE_B22_NO_APP === "1" ? null : Bun.spawn(
+const workspace = !launchApp ? null : Bun.spawn(
   [workspaceBinary, ...workspaceArgs],
   {
     cwd: workspaceProject,

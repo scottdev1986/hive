@@ -60,9 +60,9 @@ All of these read as "no terminal appeared".
 | Window opens, pane area totally blank, no process | Pane geometry never exceeded 40×40 pt, so the child was never spawned (`TerminalPaneView.swift:244-245`) — silent | Make sure the window is key/active and not zero-sized; resize it |
 | Queen pane fine, agent panes never appear | The workspace-feed subprocess is failing; statuses go stale. After 5 restarts the whole app quits | Check the daemon is up; re-run `make run` |
 | Agent pane blank forever, no error | tmux-backed pane polling `until tmux has-session` in an infinite loop (`ProjectWindowController.swift:351-352`) | Session was never created; check daemon logs |
-| Agent pane themed but empty, no error, no badge | Ghostty/sessiond pane: `ghostty_init` or `makeView()` threw and was swallowed to NSLog (`PaneView.swift:60-63`) | Missing/mismatched `GhosttyKit.xcframework` → `make ghostty` |
+| Agent pane themed but empty, no error, no badge | Ghostty/sessiond pane: `ghostty_init` or `makeView()` threw and was swallowed to NSLog (`PaneView.swift:60-63`) | Missing/mismatched `GhosttyKit.xcframework` → `make build` |
 | Agent pane with a **red badge / "renderer disconnected"** | sessiond attach failed 6 times: grant refused, locator mismatch, or UDS connect failed | Broker not ready; check `hive-sessiond` |
-| App won't build at all | `workspace/Vendor/GhosttyKit.xcframework` absent — it's a `binaryTarget` build output, not checked in | `make ghostty` |
+| App won't build at all | `workspace/Vendor/GhosttyKit.xcframework` absent — it's a `binaryTarget` build output, not checked in | `make build` |
 | Everything "works" but the surface returns nulls | Not an unlocked Aqua GUI session (locked screen, ssh, agent shell) | Run it yourself, at your own console, screen unlocked |
 
 Note the preflight's console check (`stat -f '%Su' /dev/console`) passes whenever

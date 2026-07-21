@@ -3,13 +3,32 @@
 Diagnosis by ilse, 2026-07-20. No code changed. Companion to
 `docs/workspace/seeing-a-live-terminal.md` (isaac, f700c624).
 
+> **Update, marta 2026-07-21 — the commands changed, the diagnosis did not.**
+> A user ruling reduced the make surface to exactly `clean`, `build`, `run`,
+> `test`. `make terminal`, `make demo`, `make demo-artifacts`,
+> `make demo-preflight` and `make workspace` no longer exist. Everywhere this
+> document says `make terminal`, run the harness it wrapped directly:
+>
+> ```sh
+> make build
+> HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 HIVE_B22_PORT=43117 \
+>   bun scripts/b22-live-attach-proof.ts
+> ```
+>
+> Same broker, same session, same real Workspace app — the deleted target set
+> exactly those variables. Drop `HIVE_B22_REAL_SHELL=1` for the watched B2.2
+> ticker (the old `make demo`). The `demo-preflight` checks went with the
+> targets: confirm yourself that port 43117 is free and the Aqua session is
+> unlocked. Line numbers quoted below are the 2026-07-20 Makefile's.
+
 ## Headline
 
-**`make terminal` is the answer, it is current, and nothing is blocking it
+**The B2.2 attach harness — `scripts/b22-live-attach-proof.ts`, then wrapped as
+`make terminal` — is the answer, it is current, and nothing is blocking it
 today.** It launches the real Workspace app with a sessiond-hosted
 HiveTerminalView pane running your interactive login shell. The row-K preflight
-failure that made this look blocked belongs to a *different* script that
-`make terminal` never runs.
+failure that made this look blocked belongs to a *different* script that the
+harness never runs.
 
 ## 1. The preflight that fails, verbatim
 
@@ -134,7 +153,9 @@ but it is why a bare `swift build` output will not satisfy the script.
 
 ```
 cd /Users/scottkellar/Projects/hive
-make terminal
+make build
+HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 HIVE_B22_PORT=43117 \
+  bun scripts/b22-live-attach-proof.ts
 ```
 
 Keep the Aqua session unlocked. Expect: a Workspace window with a terminal pane
@@ -159,23 +180,28 @@ defect (isaac, f700c624).
 
 ## 4. Target inventory — what actually exists
 
-| Target | What the recipe really does |
+Rewritten 2026-07-21 for the four-command surface. The removed targets are
+shown against what replaces them.
+
+| Command | What it really does |
 |---|---|
-| `make terminal` | **Sessiond pane + real login shell + real app. The one you want.** |
-| `make demo` | Same harness, but runs the B2.2 visible ticker instead of your shell — watch-only, not typeable. |
-| `make demo-artifacts` | Builds only GhosttyKit + Workspace + sessiond. No launch. |
-| `make demo-preflight` | Env checks only (Bun/Xcode/port/console user). No launch. |
-| `make build` | Full staged dev release via `src/release/build.ts`, including the Workspace app. |
+| `HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 bun scripts/b22-live-attach-proof.ts` | **Sessiond pane + real login shell + real app. The one you want.** Was `make terminal`. |
+| `HIVE_B22_NO_APP=0 bun scripts/b22-live-attach-proof.ts` | Same harness, but runs the B2.2 visible ticker instead of your shell — watch-only, not typeable. Was `make demo`. |
+| `make build` | Full staged dev release via `src/release/build.ts`, including the Workspace app; also GhosttyKit + sessiond. Absorbs `make demo-artifacts`. |
 | `make run` | Launches the staged dev CLI; SwiftTerm/tmux panes. Not the sessiond path. |
-| `make workspace` | Builds the Swift executable, renames it to `HiveWorkspaceDev`. |
+| `make clean` | Stops the dev instance, then deletes every dev artifact. |
+| `make test` | bun suites + sessiond (Zig) + Workspace (Swift). |
+
+The harness builds `HiveWorkspaceDev` itself (the old `make workspace`). There
+is no preflight target any more: check port 43117 and the Aqua session by hand.
 
 There is no `hive build` and no `hive run`.
 
 ## 5. What clears what
 
 **(a) User, at the console — the only thing needed to SEE the terminal:**
-run `make terminal` on an unlocked screen. Nothing else. No agent work is a
-prerequisite.
+run the attach harness (the Steps block above) on an unlocked screen. Nothing
+else. No agent work is a prerequisite.
 
 **(b) Agent work — needed only to CLOSE row K, not to see the pane:**
 

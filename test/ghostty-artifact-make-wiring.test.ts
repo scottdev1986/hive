@@ -80,8 +80,15 @@ function lockedIdentity(): Record<string, string> {
   );
 }
 
-function planGhosttykit(cache: string): string {
-  const result = Bun.spawnSync(["make", "-n", "ghosttykit", `NATIVE_CACHE=${cache}`], {
+/**
+ * `make build` is the plan under test: the public surface is exactly
+ * clean/build/run/test, so the rebuild-and-restage wiring has to be reachable
+ * from the command the user actually runs — there is no `ghosttykit` target to
+ * aim at any more, and a prerequisite that stops being reachable from `build`
+ * is the same silent staleness this file exists to catch.
+ */
+function planBuild(cache: string): string {
+  const result = Bun.spawnSync(["make", "-n", "build", `NATIVE_CACHE=${cache}`], {
     cwd: root,
     stdout: "pipe",
     stderr: "pipe",
@@ -99,7 +106,7 @@ test("a stale artifact wearing a current lock stamp is rebuilt and restaged", ()
   });
   expect(existsSync(stamp)).toBe(true);
 
-  const plan = planGhosttykit(cache);
+  const plan = planBuild(cache);
   expect(plan).toContain(REBUILD);
   expect(plan).toContain(STAGE);
   // The lying stamp is gone, so a later build cannot trust it either.
@@ -111,7 +118,7 @@ test("an artifact recording the lock's source identity is left alone", () => {
   // test above while forcing a 25-40 minute rebuild on every single make.
   const { cache, stamp } = seedCache(lockedIdentity());
 
-  const plan = planGhosttykit(cache);
+  const plan = planBuild(cache);
   expect(plan).not.toContain(REBUILD);
   expect(plan).not.toContain(STAGE);
   expect(existsSync(stamp)).toBe(true);

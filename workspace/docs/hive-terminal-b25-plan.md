@@ -21,12 +21,12 @@ Ports: **43140+**. Homes: short per-checkout (`/tmp/hive-dev-*` via make, or `/t
 - Spawner: `prepare()` → sessiond locator; `awaitInitialSessiondPolicy` waits for Workspace inventory; `create` through sessiond host.
 - Workspace: `installSessiondTerminal` when `locator.hostKind == "sessiond"`; visibility publish via workspace-feed stdin → `POST /workspace-visibility`.
 - Exact close: pane X → `hive kill --session-locator` → daemon process-tree capture (`stopSessiondAgentSession`).
-- Demo harness remains: `make terminal` / `scripts/b22-live-attach-proof.ts` (manual create + smoke). **B2.5 must not treat that as production.**
+- Demo harness remains: `scripts/b22-live-attach-proof.ts`, run directly (manual create + smoke; the `make terminal` wrapper was deleted 2026-07-21 with the four-command ruling). **B2.5 must not treat that as production.**
 
 ## Gap (why row K is empty)
 
 1. **No recorded production-pane matrix** for real Claude/Codex/Grok under `make run` / bare `hive` (E2E #43 proved broker ownership + panes, not vendor matrix cells).
-2. Makefile still claims “terminal panes stay blank… make terminal is the entrypoint” — stale after broker ownership + sessiond wiring.
+2. ~~Makefile still claims “terminal panes stay blank… make terminal is the entrypoint” — stale after broker ownership + sessiond wiring.~~ Closed 2026-07-21: the Makefile header now names `make run` as the product entrypoint and the harness as a directly-run script.
 3. A4 live rows (exact close isolation, concurrent quit, non-Hive project, reconnect/replay) need evidence packs, not only unit paths.
 4. 100 MiB is proven at **engine** Gate 5; pane-level ordered-output responsiveness is open.
 5. Gate-10 multi-pane latency / multi-viewer blocked on #40.

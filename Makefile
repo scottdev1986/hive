@@ -1,68 +1,43 @@
-# Local dev build of Hive: consumer-shaped, unsigned, fully isolated from any
-# installed hive and its running instances.
+# Local dev build of Hive: consumer-shaped, unsigned, isolated from any
+# installed hive.
 #
-#   make build                  build + stage the standalone dev release under .dev/
-#   make run                    run the staged dev build (defaults to this checkout)
-#   make demo                   build fresh terminal artifacts + launch watched proof
-#   make terminal               build fresh artifacts + launch a real login shell
-#   make test                   bun suites + sessiond (Zig) + Workspace (Swift)
-#   make cleanup                stop the dev instance and delete all dev artifacts
+# The whole command surface (user ruling, 2026-07-21):
 #
-# `make build && make run` is the developer flow: it builds every artifact the
-# dev release needs (system Zig, GhosttyKit, ReleaseFast sessiond, the CLI and
-# the Workspace app) and launches the staged Workspace. The production daemon
-# owns `hive-sessiond serve`; agent panes with a sessiond locator render through
-# HiveTerminalView (B2.2+). `make terminal` remains the M1 attach/smoke harness
-# (login shell / B2.2 proof), not the product entrypoint — B2.5 qualifies the
-# production pane path (row K vendor matrix) under make run.
+#   make clean   stop the dev instance, then delete all dev artifacts
+#   make build   build + stage the standalone dev release under .dev/
+#   make run     run the staged dev build (defaults to this checkout)
+#   make test    bun suites + sessiond (Zig) + Workspace (Swift)
 #
-# Isolation: every rendezvous name (tmux socket/sessions, sessiond broker,
-# daemon port/pid, sqlite db, project registry) derives from HIVE_HOME. make
-# run points HIVE_HOME at a short per-checkout path under /tmp (see DEV_HOME
-# below), not at .dev/home: sessiond places AF_UNIX sockets under
-# $HIVE_HOME/runtime/sessiond/..., and macOS sun_path holds at most 103
-# path chars against the CANONICAL home (sessiond realpaths it, so /tmp
-# counts as /private/tmp). Staged binaries stay under .dev/;
-# HIVE_INSTALL_ROOT points at the staged dev root so the dev CLI launches the
-# dev-built HiveWorkspace.app, never the installed one. Nothing here reads or
-# writes ~/.hive, ~/.local/share/hive, or ~/.local/bin/hive.
+# Everything else here is internal structure, never a command to run by hand:
+# heals and remediation run inside these four. No fifth command. build is
+# complete every time; correctness outranks incrementality.
+#
+# Isolation: every rendezvous name derives from HIVE_HOME (DEV_HOME below).
+# Nothing reads or writes ~/.hive, ~/.local/share/hive, or ~/.local/bin/hive.
 
 SHELL := /bin/sh
-.DEFAULT_GOAL := help
+.DEFAULT_GOAL := build
 
 ROOT := $(CURDIR)
-# `make run` with no argument opens Hive on this checkout; PROJECT=/path wins.
+# Bare `make run` opens Hive on this checkout; PROJECT=/path wins.
 PROJECT ?= $(ROOT)
 DEV := $(ROOT)/.dev
-# `#` opens a comment in makefile text, so a tmux format like #{pid} cannot be
-# written inline; escaping it reaches the shell as a literal backslash.
+# `#` starts a makefile comment, so tmux formats like #{pid} need the escape.
 HASH := \#
 DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
-# Short per-checkout HIVE_HOME: digest of the resolved checkout path keeps
-# worktrees isolated from each other while the path itself stays short enough
-# for sessiond host sockets. Budget the CANONICAL spelling: sessiond
-# realpaths the home, so /tmp/hv-<10 hex> binds as /private/tmp/hv-<10 hex>
-# (26 chars); the per-session suffix /runtime/sessiond/hosts/ses_<uuid>/
-# host.sock adds 74 more, totalling 100 of the 103 sun_path chars. The
-# former /tmp/hive-dev-<10 hex> home canonicalized to 32 chars and
-# overflowed at 106. clean hashes this same literal string for the
-# tmux socket token (axis 3) so it still finds the live server after a move.
+# Short per-checkout home: sessiond's canonical host socket path must fit macOS's
+# 103-char sun_path (this spelling costs 100). Do not lengthen it. clean hashes
+# the same literal string for its tmux socket token.
 ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
 DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
 DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
 LOCK := $(ROOT)/native/toolchain-lock.json
-# Shared per-user native cache (#46): the zig caches and the
-# lock-keyed Ghostty artifacts live OUTSIDE the checkout so every worktree
-# shares compiled deps naturally. Correctness comes from content keys, never
-# from the path: an artifact DIRECTORY is keyed by ghostty commit + zig version
-# and the lock digest names a stamp INSIDE it (so a same-key artifact from
-# other locked inputs is a real possibility the heal below must catch), and the
-# zig caches are content-addressed and lock-protected by zig
-# itself. Only per-checkout build products (sessiond ReleaseFast staging)
-# stay under $(ROOT)/.cache.
+# Shared per-user cache (#46): zig caches and lock-keyed Ghostty artifacts live
+# outside the checkout so worktrees share them. Correctness comes from content
+# keys, never the path.
 NATIVE_CACHE ?= $(HOME)/.cache/hive/native
 DEMO_CACHE := $(NATIVE_CACHE)/demo
 export HIVE_NATIVE_CACHE := $(NATIVE_CACHE)
@@ -81,55 +56,35 @@ $(error unsupported host architecture $(UNAME_M); expected arm64 or x86_64)
 endif
 
 ZIG_VERSION := $(shell /usr/bin/plutil -extract zig.version raw -o - $(LOCK))
-BUN_VERSION := $(shell /usr/bin/plutil -extract bun raw -o - $(LOCK))
 MACOS_DEPLOYMENT_TARGET := $(shell /usr/bin/plutil -extract deploymentTarget raw -o - $(LOCK))
 GHOSTTY_COMMIT := $(shell /usr/bin/plutil -extract ghostty.commit raw -o - $(LOCK))
 GHOSTTY_PATCH_SHA := $(shell /usr/bin/plutil -extract ghostty.patchSeriesSha256 raw -o - $(LOCK))
-# The system zig on PATH is THE compiler; the lock pins its exact version and
-# scripts/preflight-native-toolchain.sh enforces it before every native build.
+# The system zig on PATH is the compiler; the lock pins its exact version.
 ZIG := zig
 TOOLCHAIN_STAMP := $(DEMO_CACHE)/toolchain-$(ZIG_VERSION).stamp
 GHOSTTY_ARTIFACT := $(NATIVE_CACHE)/artifacts/ghostty-$(GHOSTTY_COMMIT)-zig-$(ZIG_VERSION)
 GHOSTTY_ARTIFACT_INFO := $(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework/Info.plist
-# The artifact stamp is a CONTENT key, not an mtime: its name digests the
-# whole toolchain lock (which pins ghostty commit/patched tree, the patch
-# series, both headers, the symbol list and zig), so any locked input change
-# renames the stamp and forces a rebuild, while a fresh worktree whose file
-# mtimes are all new still reuses the shared artifact. Vendor-tree drift
-# WITHOUT a lock bump is caught loudly by the always-run vendor-verify below.
+# Content key, not mtime: the stamp name digests the whole lock, so any locked
+# input change forces a rebuild while a fresh worktree still reuses the artifact.
 LOCK_SHA := $(shell /usr/bin/shasum -a 256 $(LOCK) | cut -c1-16)
 GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-lock-$(LOCK_SHA).stamp
-# The artifact key omits every locked input except commit+zig, so a cache
-# poisoned before the publish check existed (a stale artifact wearing a current
-# lock stamp) would skip rebuilding forever. Drop that stamp while make is
-# still PARSING: a prerequisite's recipe runs too late to affect a target make
-# has already stat'd, so the same check as an order-only prerequisite left the
-# poisoned artifact staged and make exited 0 (see the script's header).
+# The artifact key omits most locked inputs, so a stale artifact can wear a
+# current stamp. This must stay at PARSE time: make stats a target and decides
+# to remake it before any prerequisite's recipe could drop the stamp.
 GHOSTTY_ARTIFACT_HEAL := $(shell "$(ROOT)/scripts/ghostty-artifact-heal.sh" \
   "$(GHOSTTY_ARTIFACT)" "$(LOCK)" "$(GHOSTTY_ARTIFACT_STAMP)")
 $(if $(GHOSTTY_ARTIFACT_HEAL),$(info make: $(GHOSTTY_ARTIFACT_HEAL)))
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
 GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
-# Deliberately NOT the name SwiftPM emits. A debug build carries its file name
-# into the unified log as the process name, so a worktree build called
-# `HiveWorkspace` is indistinguishable from the user's installed app there —
-# that cost a full false root-cause investigation
-# (docs/incidents/2026-07-20-workspace-death.md). The rule below renames
-# SwiftPM's output, and every path that LAUNCHES a debug build points here, so
-# a running debug instance can no longer wear the installed app's name. Note
-# `swift test` rebuilds the executable target and does re-create a bare
-# `HiveWorkspace` file — inert, since nothing launches it. Release is untouched:
-# src/release/build.ts runs its own `swift build -c release` and lipos into
-# HiveWorkspace.app/Contents/MacOS/HiveWorkspace.
+# Deliberately NOT SwiftPM's name: a debug build's file name becomes its process
+# name in the unified log, indistinguishable from the installed app
+# (docs/incidents/2026-07-20-workspace-death.md). The rule below renames it.
 WORKSPACE_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspaceDev
 WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
-# Per-checkout: built from THIS worktree's sources, so it must never live in
-# the shared cache where sibling worktrees would clobber each other's build.
+# Per-checkout: built from THIS worktree's sources, never the shared cache.
 SESSIOND_RELEASE_ROOT := $(ROOT)/.cache/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
 SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
-DEMO_PORT := 43117
-DEMO_TARGET := demo
 
 GHOSTTY_ENGINE_INPUTS := $(shell find \
 	$(ROOT)/vendor/ghostty \
@@ -174,17 +129,9 @@ SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 	$(LOCK) \
 	$(GHOSTTY_ENGINE_INPUTS)
 
-# The complete isolation envelope for the dev instance.
-#
-# TMUX_TMPDIR is deliberately NOT overridden here. The daemon is only one of
-# the tmux clients: the orchestrator session is created by the launcher in
-# the USER'S shell (default /tmp/tmux-$UID), and the user attaches with a
-# plain `tmux -L hive-<suffix>`. A daemon-only TMUX_TMPDIR split the daemon
-# from the very server holding queen's session — every root wake failed with
-# "error connecting to .dev/tmux/... (No such file or directory)" while the
-# fleet ran fine (2026-07-21, #68 acceptance). Isolation from the user's own
-# tmux is already carried by the per-instance socket NAME (-L hive-<suffix>),
-# which needs no directory override.
+# TMUX_TMPDIR is deliberately NOT set: the daemon and the user's launcher must
+# reach the same tmux server, and the per-instance socket name already isolates
+# it. Setting it here broke every root wake (#68).
 DEV_ENV := \
 	HIVE_HOME=$(DEV_HOME) \
 	HIVE_INSTALL_ROOT=$(INSTALL_ROOT) \
@@ -193,27 +140,10 @@ DEV_ENV := \
 	HIVE_PORT=0 \
 	TMPDIR=$(DEV)/tmp
 
-.PHONY: help build demo terminal demo-artifacts demo-preflight native sessiond workspace \
-	ghostty ghosttykit run test test-e2e toolchain clean cleanup deepclean
+# The four public commands, then the internal structure they pull in.
+.PHONY: clean build run test sessiond toolchain
 
-help:
-	@echo "make build                 build + stage the standalone dev release (.dev/)"
-	@echo "make run [PROJECT=/path]   run the dev build (defaults to this hive checkout)"
-	@echo "make demo                  build fresh artifacts + launch watched typeable proof"
-	@echo "make terminal              build fresh artifacts + launch a real typeable login shell (live M1 terminal)"
-	@echo "make demo-artifacts        build only the proof's Ghostty/Swift/sessiond artifacts"
-	@echo "make native                build + stage the ReleaseFast sessiond proof binary"
-	@echo "make ghostty               build + stage the lock-pinned GhosttyKit"
-	@echo "make workspace             build the Workspace Swift executable"
-	@echo "make test                  run all suites (bun, sessiond/Zig, Workspace/Swift)"
-	@echo "make test-e2e              opt-in real-CLI e2e suite (needs tmux on PATH)"
-	@echo "make cleanup               stop the dev instance, then delete all dev artifacts"
-	@echo "make deepclean             cleanup + delete native toolchain/build caches"
-	@echo "demo/terminal need Bun $(BUN_VERSION), Xcode/Swift + Metal Toolchain, and an unlocked Aqua GUI session"
-
-# Native prerequisites: system zig (PATH, version pinned by the lock and
-# enforced by the preflight/provision scripts) + the hash-verified Ghostty
-# dependency cache (native/toolchain-lock.json).
+# System zig (version pinned by the lock) + the hash-verified Ghostty dep cache.
 toolchain: $(TOOLCHAIN_STAMP)
 
 $(TOOLCHAIN_STAMP): $(LOCK) \
@@ -225,13 +155,8 @@ $(TOOLCHAIN_STAMP): $(LOCK) \
 	@"$(ROOT)/scripts/provision-native-toolchain.sh"
 	@touch "$@"
 
-# Locked-input changes invalidate the shared artifact through the stamp's
-# lock digest; vendor-verify fails loudly on any vendor-tree drift the lock
-# does not record. It runs on every ghostty/test make, so it must be cheap:
-# the committed vendor/ghostty tree hash IS the lock's patchedTree, and git
-# answers both "clean?" and "which tree?" in milliseconds. The byte-level
-# prover (scripts/vendor-ghostty.sh verify) remains inside the artifact
-# build itself.
+# Catches vendor-tree drift the lock does not record. Runs on every build and
+# test, so it stays git-cheap; the byte-level prover lives in the artifact build.
 .PHONY: vendor-verify
 vendor-verify:
 	@set -e; \
@@ -246,48 +171,38 @@ vendor-verify:
 	  echo "make: vendor/ghostty tree $$tree does not match lock patchedTree $$locked; run scripts/vendor-ghostty.sh verify" >&2; exit 1; \
 	fi
 
-ghostty ghosttykit: vendor-verify $(GHOSTTYKIT_INFO)
-
-# No mtime prerequisites: the stamp name is the content key (see LOCK_SHA
-# above), so a fresh worktree reuses the shared artifact instead of spending
-# 25-40 minutes rebuilding it because its checkout mtimes are new (#46). The
-# stale-incumbent heal runs at parse time (GHOSTTY_ARTIFACT_HEAL above).
+# No mtime prerequisites on purpose: the stamp name is the content key, so a
+# fresh worktree reuses the artifact instead of a 25-40 minute rebuild (#46).
 $(GHOSTTY_ARTIFACT_STAMP): | toolchain
 	@echo "building lock-pinned GhosttyKit"
 	@"$(ROOT)/scripts/build-ghosttykit.sh"
-	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make ghostty'" >&2; exit 1; }
-	@ls "$(GHOSTTY_ARTIFACT)"/GhosttyKit.xcframework/macos-*/lib*.a >/dev/null 2>&1 || { echo "make: GhosttyKit macOS archive is invalid; rerun 'make ghostty'" >&2; exit 1; }
-	@test -f "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures/$(UNAME_M)/corpus.hvg6" || { echo "make: GhosttyKit checkpoint corpus is missing; rerun 'make ghostty'" >&2; exit 1; }
+	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make build'" >&2; exit 1; }
+	@ls "$(GHOSTTY_ARTIFACT)"/GhosttyKit.xcframework/macos-*/lib*.a >/dev/null 2>&1 || { echo "make: GhosttyKit macOS archive is invalid; rerun 'make build'" >&2; exit 1; }
+	@test -f "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures/$(UNAME_M)/corpus.hvg6" || { echo "make: GhosttyKit checkpoint corpus is missing; rerun 'make build'" >&2; exit 1; }
 	@touch "$@"
 
-# sessiond compiles the engine from vendor/ghostty (native/sessiond/build.zig
-# takes it as a zig dependency) while the Workspace app links THIS staged
-# archive, and the two are compared at runtime by the M3 engine fence. Nothing
-# structural makes them equal: only that vendor-verify proves the tree is the
-# lock's, and this check proves the artifact is the lock's too. Without it a
-# stale artifact stages silently and every pane attach dies as
-# "renderer disconnected" with the status feed still green.
+# sessiond compiles the engine from vendor/ghostty; the app links this staged
+# archive. Nothing structural makes them equal — the lock check is what does, and
+# without it a stale artifact stages silently and every pane attach dies.
 $(GHOSTTYKIT_INFO): $(GHOSTTY_ARTIFACT_STAMP)
-	@"$(ROOT)/scripts/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)" || { echo "make: cached GhosttyKit artifact does not record the toolchain lock's ghostty source identity; refusing to stage it (rerun 'make ghostty')" >&2; exit 1; }
+	@"$(ROOT)/scripts/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)" || { echo "make: cached GhosttyKit artifact does not record the toolchain lock's ghostty source identity; refusing to stage it (rerun 'make build')" >&2; exit 1; }
 	@echo "staging lock-pinned GhosttyKit for SwiftPM"
 	@/bin/rm -rf "$(GHOSTTYKIT)" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
 	@mkdir -p "$(ROOT)/workspace/Vendor"
 	@/usr/bin/ditto "$(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework" "$(GHOSTTYKIT)"
 	@/usr/bin/ditto "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
-	@test -f "$@" || { echo "make: GhosttyKit staging failed; rerun 'make ghostty'" >&2; exit 1; }
+	@test -f "$@" || { echo "make: GhosttyKit staging failed; rerun 'make build'" >&2; exit 1; }
 	@touch "$@"
 
-workspace: $(WORKSPACE_BIN)
-
+# Not reached by the four: release builds its own. This is for the attach/smoke
+# harness (scripts/b22-live-attach-proof.ts), which builds it by absolute path.
 $(WORKSPACE_BIN): $(WORKSPACE_INPUTS) $(GHOSTTYKIT_INFO)
 	@echo "building Workspace Swift executable"
 	@swift build --package-path "$(ROOT)/workspace"
-	@test -x "$(WORKSPACE_SPM_BIN)" || { echo "make: Workspace build produced no executable; rerun 'make workspace'" >&2; exit 1; }
+	@test -x "$(WORKSPACE_SPM_BIN)" || { echo "make: Workspace build produced no executable" >&2; exit 1; }
 	@/bin/mv -f "$(WORKSPACE_SPM_BIN)" "$@"
-	@test -x "$@" || { echo "make: could not rename the Workspace executable to $@; rerun 'make workspace'" >&2; exit 1; }
+	@test -x "$@" || { echo "make: could not rename the Workspace executable to $@" >&2; exit 1; }
 	@touch "$@"
-
-native: sessiond
 
 sessiond: $(SESSIOND_BIN)
 	@if ! /usr/bin/cmp -s "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)"; then \
@@ -295,7 +210,7 @@ sessiond: $(SESSIOND_BIN)
 		/bin/cp "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)"; \
 		/bin/chmod 755 "$(SESSIOND_BIN)"; \
 	fi
-	@/usr/bin/cmp -s "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)" || { echo "make: sessiond is not the ReleaseFast proof build; rerun 'make native'" >&2; exit 1; }
+	@/usr/bin/cmp -s "$(SESSIOND_RELEASE_BIN)" "$(SESSIOND_BIN)" || { echo "make: sessiond is not the ReleaseFast proof build; rerun 'make build'" >&2; exit 1; }
 
 $(SESSIOND_BIN): $(SESSIOND_RELEASE_BIN)
 	@mkdir -p "$(@D)"
@@ -316,35 +231,12 @@ $(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) $(GHOSTTY_ARTIFACT_STAMP) | toolchai
 			-Dtarget=$(ZIG_ARCH)-macos.$(MACOS_DEPLOYMENT_TARGET) \
 			-Doptimize=ReleaseFast \
 			--sysroot "$$overlay"
-	@test -x "$@" || { echo "make: ReleaseFast sessiond build produced no binary; rerun 'make native'" >&2; exit 1; }
+	@test -x "$@" || { echo "make: ReleaseFast sessiond build produced no binary; rerun 'make build'" >&2; exit 1; }
 	@touch "$@"
 
-demo-artifacts: ghosttykit workspace sessiond
-
-demo-preflight:
-	@command -v bun >/dev/null 2>&1 || { echo "make $(DEMO_TARGET): Bun is missing; install Bun $(BUN_VERSION)" >&2; exit 2; }
-	@actual=$$(bun --version); [ "$$actual" = "$(BUN_VERSION)" ] || { echo "make $(DEMO_TARGET): Bun $$actual does not match lock $(BUN_VERSION)" >&2; exit 2; }
-	@command -v swift >/dev/null 2>&1 && xcrun --sdk macosx --show-sdk-path >/dev/null 2>&1 || { echo "make $(DEMO_TARGET): Xcode/Swift is unavailable; select the locked Xcode toolchain first" >&2; exit 2; }
-	@if /usr/sbin/lsof -nP -iTCP:$(DEMO_PORT) -sTCP:LISTEN >/dev/null 2>&1; then \
-		echo "make $(DEMO_TARGET): port $(DEMO_PORT) is in use; stop that listener and rerun 'make $(DEMO_TARGET)'" >&2; exit 2; \
-	fi
-	@console_user=$$(/usr/bin/stat -f '%Su' /dev/console 2>/dev/null || true); \
-	[ "$$console_user" = "$$USER" ] || { echo "make $(DEMO_TARGET): log into an unlocked Aqua session as $$USER, then rerun 'make $(DEMO_TARGET)'" >&2; exit 2; }
-
-demo: DEMO_TARGET := demo
-demo: demo-preflight demo-artifacts
-	@echo "launching watched typeable-terminal proof (keep the Aqua session unlocked)"
-	@unset HIVE_B22_HOME; HIVE_B22_NO_APP=0 HIVE_B22_PORT=$(DEMO_PORT) bun "$(ROOT)/scripts/b22-live-attach-proof.ts"
-
-terminal: DEMO_TARGET := terminal
-terminal: demo-preflight demo-artifacts
-	@echo "launching a real interactive login shell (keep the Aqua session unlocked)"
-	@unset HIVE_B22_HOME; HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 HIVE_B22_PORT=$(DEMO_PORT) bun "$(ROOT)/scripts/b22-live-attach-proof.ts"
-
-# Same pipeline the real installer consumes (src/release/build.ts), unsigned
-# because no Developer ID is in the environment, then staged in the exact
-# versions/<v> + current layout install.sh produces.
-build: toolchain ghosttykit sessiond
+# The real installer's pipeline (src/release/build.ts), unsigned for want of a
+# Developer ID, staged in the exact layout install.sh produces.
+build: toolchain vendor-verify $(GHOSTTYKIT_INFO) sessiond
 	bun install --frozen-lockfile
 	bun run src/release/build.ts --version $(DEV_VERSION) \
 	  --commit $$(git rev-parse --short HEAD) --out "$(DIST)"
@@ -357,14 +249,9 @@ build: toolchain ghosttykit sessiond
 	ln -shf "versions/$(DEV_VERSION)" "$(INSTALL_ROOT)/current"
 	@echo "staged: $$("$(HIVE_BIN)" --version)"
 
-# PROJECT defaults to this checkout, so `make run` opens Hive on Hive. It is
-# derived from $(ROOT) rather than hardcoded so any clone works; the knock-on is
-# that inside an agent worktree it opens THAT worktree, which is correct — the
-# project is the checkout you are standing in, and it keeps a worktree's dev run
-# out of the main checkout's live .hive/worktrees.
-# An explicit PROJECT still wins, and is still refused if it points somewhere
-# else inside this checkout (.dev/, a sibling worktree) — only the root itself
-# is now allowed.
+# PROJECT defaults to this checkout (inside a worktree, that worktree). An
+# explicit PROJECT wins, but anything inside this checkout other than its root
+# is refused.
 run:
 	@set -e; \
 	[ -x "$(HIVE_BIN)" ] || { echo "no dev build staged; run 'make build' first" >&2; exit 2; }; \
@@ -377,77 +264,31 @@ run:
 	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
 	cd "$$proj" && env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify && exec env $(DEV_ENV) "$(HIVE_BIN)"
 
-# The project's own definition of the suites: bun test + sessiond (test.sh
-# compiles the C ABI fixtures and runs the Zig daemon tests), then the Swift
-# Workspace tests. No pipes anywhere: a red suite must exit red.
-test: toolchain ghosttykit
+# No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already
+# inside `bun run test` and self-skips unless HIVE_E2E=1; opting in is
+# `HIVE_E2E=1 bun test src/cli/e2e-real.test.ts`, which is what CI runs.
+test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 	bun install --frozen-lockfile
 	bun run test
 	cd workspace && swift test
 
-# Real CLI against a real daemon and a private tmux server; provider CLIs are
-# stubbed by the suite so nothing bills. Self-isolating (throwaway HIVE_HOME).
-test-e2e:
-	HIVE_E2E=1 bun test src/cli/e2e-real.test.ts
-
-# Stop the dev instance, then delete every dev artifact — and never the second
-# without the first. Deleting .dev/ out from under a live app was the defect
-# (#44): the Workspace is launched through open -n, so it is nobody's child
-# here and no signal ever reached it, and the two targeted kills below are
-# best-effort by nature, so a miss was undetectable.
-#
-# The fix is not a louder kill. Nothing here trusts a kill: the sweep re-reads
-# the process table afterwards, and rm -rf runs only if that readback is
-# empty. A survivor refuses the delete and exits non-zero, because reporting
-# success over a live process is what made this silent for so long.
-#
-# Selection is by PATH and ARGUMENTS, never by process name. The user's
-# installed instance runs its own Workspace, its own tmux server and its own
-# vendor CLI children; matching HiveWorkspace or tmux would kill those.
-# Three axes are needed because dev processes are bound three different ways:
-#
-#   1. executable under .dev/     — the Workspace app, staged dev binaries
-#   2. .dev/ OR HIVE_HOME in args — tmux/vendor children and settings paths;
-#                                   HIVE_HOME is the short /tmp/hv-* path
-#   3. dev tmux socket in args    — hash of the short HIVE_HOME literal (same
-#                                   string make run exports / hiveInstanceSuffix)
-#
-# A clean must also work when .dev/ and/or the short home is ALREADY GONE.
-# The guard is: either directory exists OR the sweep finds processes bound
-# to either.
-#
-# The socket digest hashes the short HIVE_HOME literal — not a path under
-# .dev/. That has no dependency on either directory existing.
-#
-# Every refusal below is deliberate. An empty path or an empty digest must STOP
-# the target. An empty dev would make the axis-1 prefix match every absolute
-# path on the machine.
-#
-# NAMING THE DEV INSTANCE IS NOT BEING IT. Argv only nominates a CANDIDATE.
-# Killing requires binding evidence that outlives the directory:
-#   - executable under the dev path (any of its three spellings)
-#   - cwd or an open file under the dev path OR the short HIVE_HOME path,
-#     per lsof, with literal component-boundary matching
-#   - being the tmux server for the dev socket, or one of its clients
-# Anything else is a mentioner: reported, never signalled.
-#
-# SHORT-HOME SPELLINGS: HIVE_HOME is /tmp/hv-TAG. On macOS /tmp links
-# to /private/tmp, so the same three-spelling discipline applies to home:
-# homel is the literal DEV_HOME string (argv + socket digest), home is that
-# string after emptiness checks, homep is the deepest-surviving-ancestor
-# physical form for lsof. The socket digest always hashes the literal home
-# string, never realpath. Component boundary stops home-sibling matches.
-#
-# The invoking process whole ancestor chain is excluded (full walk to pid 1).
-#
-# Prefer stranding to killing: wrong inclusion is unbounded; wrong exclusion
-# is recoverable. The found-mentioners line is load-bearing.
-#
-# Survivor readback gates BOTH deletions: if anything bound to .dev or the
-# short home is still alive, neither directory is removed.
+# Stop the dev instance, then delete every dev artifact — never the second
+# without the first (#44). Load-bearing invariants, each easy to break silently:
+#   - No kill is trusted: the sweep re-reads the process table and rm -rf runs
+#     only on an empty readback; a survivor refuses and exits non-zero.
+#   - Select by executable path and argv, never by process name — the user's
+#     installed hive runs its own Workspace, tmux server and vendor CLIs.
+#   - Three binding axes: executable under .dev/, .dev/ or HIVE_HOME in argv,
+#     the dev tmux socket (digest of the literal DEV_HOME string).
+#   - Naming is not being: argv only nominates a candidate; exec path, lsof or
+#     tmux membership binds it. Mentioners are reported, never signalled.
+#   - Three spellings each for .dev and the home (literal, physical, deepest
+#     surviving ancestor) so a clean still works once a directory is gone.
+#   - Empty derivations refuse instead of defaulting: an empty dev path would
+#     prefix-match every absolute path on the machine.
+#   - The invoker's whole ancestor chain is excluded, walked to pid 1.
 clean:
 	@set -e; \
-	: "every command substitution below is guarded against errexit aborting the target on a non-interesting failure; required values are refused when empty rather than defaulted"; \
 	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P) || true; else dev="$(DEV)"; fi; \
 	[ -n "$$dev" ] || { echo "refusing: could not determine the dev directory path" >&2; exit 1; }; \
 	case "$$dev" in /*) ;; *) echo "refusing: dev path is not absolute ($$dev)" >&2; exit 1;; esac; \
@@ -457,7 +298,6 @@ clean:
 	self=$$$$; \
 	suffix=$$(printf '%s' "$$home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
 	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
-	: "the dev server may live in either socket dir: pre-fix runs used $$dev/tmux, current runs use the user default"; \
 	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	pidfile=""; \
@@ -470,14 +310,12 @@ clean:
 	  case "$$command" in "$$dev"/*) kill "$$pid" 2>/dev/null || true;; esac; \
 	fi; \
 	is_mine() { q=$$1; k=0; \
-	  : "a pid whose ancestry cannot be resolved has already exited"; \
 	  while [ $$k -lt 8 ]; do \
 	    [ "$$q" = "$$self" ] && return 0; \
 	    q=$$(ps -p "$$q" -o ppid= 2>/dev/null | tr -d ' '); \
 	    [ -n "$$q" ] || return 0; [ "$$q" = "1" ] && return 1; \
 	    k=$$((k + 1)); \
 	  done; return 1; }; \
-	: "full ancestor walk terminates on pid 1, pid 0, or unresolvable parent; 4096 is a cycle backstop that refuses"; \
 	ancestors=" "; a=$$self; k=0; complete=no; \
 	while [ $$k -lt 4096 ]; do \
 	  a=$$(ps -p "$$a" -o ppid= 2>/dev/null | tr -d ' '); \
@@ -493,7 +331,6 @@ clean:
 	tmuxpids=" $$( { tmux -L "hive-$$suffix" display -p '$(HASH){pid}' 2>/dev/null; \
 	    tmux -L "hive-$$suffix" list-clients -F '$(HASH){client_pid}' 2>/dev/null; \
 	  } | tr '\n' ' ')"; \
-	: "three spellings for .dev: literal caller path, pwd-P when present, deepest surviving ancestor for deleted dirs"; \
 	devl="$(DEV)"; \
 	devp="$$dev"; d="$$dev"; rest=""; \
 	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
@@ -509,7 +346,6 @@ clean:
 	  devp="$$base$$rest"; \
 	fi; \
 	[ -n "$$devp" ] || { echo "refusing: could not resolve the physical dev path" >&2; exit 1; }; \
-	: "same three-spelling discipline for short HIVE_HOME under tmp"; \
 	homel="$(DEV_HOME)"; \
 	homep="$$home"; hd="$$home"; hrest=""; \
 	while [ ! -d "$$hd" ] && [ "$$hd" != "/" ] && [ -n "$$hd" ]; do \
@@ -525,7 +361,6 @@ clean:
 	  homep="$$hbase$$hrest"; \
 	fi; \
 	[ -n "$$homep" ] || { echo "refusing: could not resolve the physical dev HIVE_HOME" >&2; exit 1; }; \
-	: "is_bound: executable under any spelling, any open fd under any spelling with literal component boundary, or tmux server or client pid"; \
 	is_bound() { \
 	  case "$$(ps -p "$$1" -o comm= 2>/dev/null)" in \
 	    "$$dev"/*|"$$devp"/*|"$$devl"/*|"$$home"/*|"$$homep"/*|"$$homel"/*) return 0;; esac; \
@@ -542,7 +377,6 @@ clean:
 	        END { exit(found ? 0 : 1) }'; then return 0; fi; \
 	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
 	  return 1; }; \
-	: "nominate on any spelling of dev or home, on the socket token, and on tmux-reported pids; exclude self and ancestors"; \
 	candidates() { \
 	  { ps -axo pid=,comm= | while read -r p c; do \
 	      case "$$c" in \
@@ -557,7 +391,6 @@ clean:
 	    printf '%s\n' $$tmuxpids; \
 	  } | sort -u | while read -r p; do \
 	    [ -n "$$p" ] || continue; excluded "$$p" || echo "$$p"; done; }; \
-	: "filters: empty selection is not a failure; every call site needs its own or-true against errexit"; \
 	dev_pids() { candidates | while read -r p; do is_bound "$$p" && echo "$$p"; done; :; }; \
 	mentioners() { candidates | while read -r p; do is_bound "$$p" || echo "$$p"; done; :; }; \
 	pids=$$(dev_pids) || true; \
@@ -565,7 +398,6 @@ clean:
 	[ -z "$$named" ] || echo "found mentioners, not killing:" $$named; \
 	if [ ! -d "$(DEV)" ] && [ ! -d "$$home" ] && [ -z "$$pids" ]; then exit 0; \
 	fi; \
-	: "empty sweep is trustworthy only because every derivation refused rather than defaulted"; \
 	if [ -n "$$pids" ]; then \
 	  echo "stopping dev processes:" $$pids; \
 	  for p in $$pids; do kill "$$p" 2>/dev/null || true; done; \
@@ -581,16 +413,3 @@ clean:
 	  echo "all dev processes confirmed stopped"; \
 	fi; \
 	rm -rf "$(DEV)" "$$home"
-
-
-cleanup: clean
-
-# Also drop the expensive native caches (zig caches, Ghostty artifacts) and
-# intermediate build state. The next make build re-provisions from scratch.
-# $(NATIVE_CACHE) is the per-user cache shared by every worktree; deleting it
-# re-provisions the machine, not just this checkout. $(ROOT)/.cache holds only
-# this checkout's build products (and the legacy pre-#46 repo-local cache).
-deepclean: clean
-	rm -rf "$(NATIVE_CACHE)" "$(ROOT)/.cache" "$(GHOSTTYKIT)" \
-	  "$(ROOT)/workspace/.build" "$(ROOT)/.zig-cache" \
-	  "$(ROOT)/native/sessiond/zig-out" "$(ROOT)/native/sessiond/.zig-cache"

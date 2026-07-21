@@ -133,12 +133,19 @@ bun test
 bun run typecheck
 ```
 
-To build and run the development program itself:
+To build and run the development program itself. These four commands are the
+whole make surface — there is nothing else to run by hand, and every heal or
+remediation step runs automatically inside them:
 
 ```sh
+make clean   # stop the dev instance, then delete every dev artifact
 make build   # pinned Zig, GhosttyKit, sessiond, the CLI and the Workspace app
 make run     # launch the staged dev Workspace against this hive checkout
+make test    # bun suites + sessiond (Zig) + Workspace (Swift)
 ```
+
+`make build` does a complete build every time: correctness outranks
+incrementality. A bare `make` is `make build`.
 
 The native build uses the system `zig` on PATH, **pinned to Zig 0.15.2** by
 `native/toolchain-lock.json` — a declared constraint, not a preference: the
@@ -176,10 +183,22 @@ name — so a running installed hive, which has its own Workspace, tmux server
 and provider CLIs, is never a candidate.
 
 `make run` is the product entrypoint: the daemon owns the sessiond broker and
-agent panes with a sessiond locator render through HiveTerminalView. Use
-`make terminal` for the M1 attach/smoke harness (login shell / B2.2 proof).
-B2.5 records the production vendor matrix (row K) under the make-run stack.
-Both need an unlocked Aqua GUI session.
+agent panes with a sessiond locator render through HiveTerminalView. B2.5
+records the production vendor matrix (row K) under the make-run stack. It needs
+an unlocked Aqua GUI session.
+
+The M1 attach/smoke harness (login shell / B2.2 proof) is no longer a make
+target. Run its script directly after `make build`; it builds the debug app it
+launches on its own:
+
+```sh
+make build
+HIVE_B22_REAL_SHELL=1 HIVE_B22_NO_APP=0 HIVE_B22_PORT=43117 \
+  bun scripts/b22-live-attach-proof.ts
+```
+
+Drop `HIVE_B22_REAL_SHELL=1` for the watched B2.2 ticker instead of a login
+shell. The harness needs an unlocked Aqua GUI session and a free port 43117.
 
 Issues and focused pull requests are welcome.
 

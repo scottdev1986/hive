@@ -1,6 +1,6 @@
 /**
  * Live broker lifecycle against a real ReleaseFast hive-sessiond binary.
- * Skips when the binary is absent (no make native / release sessiond yet).
+ * Skips when the binary is absent (no make build / release sessiond yet).
  *
  * Ready-proof is kernel-bound: LOCAL_PEERPID on broker.sock must equal the
  * spawned child, and HELLO must complete on that connection. HELLO requires

@@ -103,8 +103,8 @@ export async function runDaemon(): Promise<void> {
   const sessiondBinary = resolveSessiondBinary({ repoRoot });
   if (sessiondBinary === null) {
     throw new Error(
-      "hive-sessiond binary not found. Stage a release build (make build) or " +
-        "build the ReleaseFast proof binary (make native), or set HIVE_SESSIOND_BIN.",
+      "hive-sessiond binary not found. Stage a release build (make build), " +
+        "or set HIVE_SESSIOND_BIN.",
     );
   }
   // Construct the supervisor now; start() only after the daemon is listening.

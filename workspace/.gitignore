@@ -2,6 +2,6 @@
 .swiftpm/
 *.xcodeproj
 # GhosttyKit.xcframework and the checkpoint fixtures are build output produced
-# by scripts/build-ghosttykit.sh and staged by `make ghosttykit` (not checked in).
+# by scripts/build-ghosttykit.sh and staged by `make build` (not checked in).
 Vendor/GhosttyKit.xcframework
 Vendor/checkpoint-fixtures/
