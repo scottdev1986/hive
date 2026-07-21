@@ -1,2 +1,2 @@
-ff72157f9c4a6ccf24a584e87b442a4b3967ae55b59f5e4cc03dae05250916ca  ./corpus-asan.txt
+aecaa2e4f5ffa442087f4df93461f649c830f47239b5c7bede10080b91c9722e  ./corpus-asan.txt
 58049f013d953e7a26de93f6fe2b5fe42494f6b785bb0c1b6ae879e3ccb6825f  ./provenance.txt
