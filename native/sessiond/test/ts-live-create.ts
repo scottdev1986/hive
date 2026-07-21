@@ -211,9 +211,13 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
         });
       },
     });
+    const handshakePort = handshakeServer.port;
+    if (handshakePort === undefined) {
+      throw new Error("handshake server did not bind a port");
+    }
 
     try {
-      writeLifecycleFiles(handshakeServer.port);
+      writeLifecycleFiles(handshakePort);
       lifecycleWritten = true;
       const daemonLock = JSON.parse(
         await readFile(join(home, "daemon.lock"), "utf8"),
@@ -294,7 +298,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           const spawner = new HiveSpawner({
             db,
             repoRoot,
-            port: handshakeServer.port,
+            port: handshakePort,
             config: { codex: { driver: "app-server" } },
             readRoutingPolicy: codexRoutingPolicy,
             discoverCapabilities: async () => ({
@@ -385,9 +389,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           const sessiondBinding = db.getTerminalHostBindingByLocator(
             sessiondLocator,
           );
-          expect(sessiondBinding?.locator).toEqual(sessiondLocator);
-          expect(sessiondBinding?.visibility).toEqual(visibility);
-          expect(sessiondBinding?.createEvidence).toBeDefined();
+          if (!sessiondBinding?.createEvidence) {
+            throw new Error("sessiond spawner omitted terminal binding evidence");
+          }
+          expect(sessiondBinding.locator).toEqual(sessiondLocator);
+          expect(sessiondBinding.visibility).toEqual(visibility);
           expect(db.listTerminalHostBindings(handshake.instanceId)).toEqual([
             sessiondBinding,
           ]);
@@ -429,7 +435,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           expect(macProcessIdentity(spawnedProvider.pid).startToken)
             .toBe(spawnedProvider.startToken);
           expect(sessiondInspection.expectedExecutable)
-            .toBe(sessiondBinding?.createEvidence?.expectedExecutable);
+            .toBe(sessiondBinding.createEvidence.expectedExecutable);
           expect(sessiondInspection.diagnosticIds).toContain(
             "SESSIOND_VIEWER_COUNT_UNAVAILABLE",
           );
@@ -605,7 +611,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           // performs the same teardown the daemon's commit path would — the
           // live proof (real host process absence, termination audit) is
           // unchanged.
-          let stoppedSurvivors: readonly unknown[] | null = null;
+          const stopped = { survivors: null as readonly unknown[] | null };
           const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
           await stopHive({
             tmux: {
@@ -627,13 +633,16 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               agentWorktree: false,
             },
             requestStop: async () => {
-              const stopped = await stopSpawnedSession(sessiondAgent);
-              stoppedSurvivors = stopped.survivors;
-              expect(stoppedSurvivors).toEqual([]);
+              const teardown = await stopSpawnedSession(sessiondAgent);
+              stopped.survivors = teardown.survivors;
+              expect(stopped.survivors).toEqual([]);
               return { state: "stopping", killed: [sessiondAgent.name] };
             },
           });
-          expect(stoppedSurvivors).toEqual([]);
+          if (stopped.survivors === null) {
+            throw new Error("sessiond teardown did not run");
+          }
+          expect(stopped.survivors).toEqual([]);
           expect(db.getTerminalHostBindingByLocator(sessiondLocator)?.terminationAudit)
             .toMatchObject({ reason: `stop agent ${sessiondAgent.id}` });
           await Promise.all([
