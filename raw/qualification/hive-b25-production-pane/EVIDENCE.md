@@ -7,7 +7,7 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Cell | Status | Artifact |
 |------|--------|----------|
 | Production wiring substrate (daemon-owned broker + visibility + handshake under short home @43140) | GREEN (substrate) | matrix/production-wiring.txt |
-| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `0aa486b3`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
+| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `a1f73119`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
 | A4 exact per-pane close | GREEN | matrix/a4-exact-close.txt |
 | A4 concurrent quit + process-tree | COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK | matrix/a4-quit.txt; matrix/diagnostic-a4-quit-harness-entanglement.txt |
 | A4 non-Hive project | GREEN | matrix/a4-non-hive-project.txt |
@@ -21,16 +21,20 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 
 ### 2026-07-21 production-wiring runs
 
-The rebased full production cell is green at `0aa486b3`: the worktree-pinned staged
+The twice-rebased full production cell is green at `a1f73119`: the worktree-pinned staged
 release spawned a real Codex agent in a non-Hive repository, Workspace installed
 `HiveTerminalView` on its exact sessiond locator, and the staged CLI both set and
 read back dangerous autonomy before the unattended spawn. The pane presented
 nonblank window contents with no hidden renderer PTY, and the live vendor
 persisted the exact nonce through `hive_send`. Session
-`ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951` reached high-water 22,670 with 78
-draws and a 60,367-byte ordered journal. The cell also mutates the display
+`ses_019f86dc-7e86-701d-9f9d-2363e5cfdc14` reached high-water 16,714 with 51
+draws and a 59,670-byte ordered journal. The cell also mutates the display
 preflight, locator, transcript, screenshot, and nonce checks to prove each
 assertion bites.
+
+The previous rebased capture at `0aa486b3` reached high-water 22,670 with 78
+draws and a 60,367-byte ordered journal; its digest-pinned capture remains as a
+control.
 
 The pre-rebase confirmation at `42e74c55` reached high-water 31,609 with 55
 draws and a 99,295-byte ordered journal; its digest-pinned capture remains as a

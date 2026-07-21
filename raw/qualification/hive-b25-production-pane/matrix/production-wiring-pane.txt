@@ -1,32 +1,32 @@
-2026-07-21T22:39:50.401Z HEAD=0aa486b39246b6294ff21466059da0fa32d24ddc
-2026-07-21T22:39:50.401Z home=/tmp/hb25-pane-cde262 (50-byte broker path)
-2026-07-21T22:39:50.401Z project=/tmp/hb25-project-cde262 (non-Hive throwaway git repository)
-2026-07-21T22:39:50.401Z stagedHive=/Users/scottkellar/Projects/hive/.hive/worktrees/james/.dev/root/versions/0.0.0/hive
-2026-07-21T22:39:50.401Z stagedSessiond=/Users/scottkellar/Projects/hive/.hive/worktrees/james/.dev/root/versions/0.0.0/hive-sessiond
-2026-07-21T22:39:50.401Z workspace=/Users/scottkellar/Projects/hive/.hive/worktrees/james/.dev/root/versions/0.0.0/HiveWorkspace.app/Contents/MacOS/HiveWorkspace
-2026-07-21T22:39:50.692Z ASSERTION CONTROL (literals, not this session): locked and unreadable both break the preflight
-2026-07-21T22:39:50.692Z MEASURED session lock state: unlocked
-2026-07-21T22:39:50.692Z GREEN active-display preflight: initial=1 settled=1 woke=false
-2026-07-21T22:39:50.692Z MUTATION VERIFIED: zero active displays breaks the real-Workspace preflight
-2026-07-21T22:39:50.794Z display keep-awake active pid=9046
-2026-07-21T22:39:50.996Z daemon ready pid=9071 port=43145
-2026-07-21T22:39:51.101Z autonomy is now dangerous — agents run with permission prompts off; writers also use unrestricted vendor mode (persisted to config; applies to new spawns and crash resumes)
-2026-07-21T22:39:51.183Z GREEN autonomy readback: dangerous — agents run with permission prompts off; writers also use unrestricted vendor mode
-2026-07-21T22:39:51.184Z real Workspace launched pid=9245 instanceId=91ccd1a315
-2026-07-21T22:39:52.184Z hive_spawn requested tool=codex name=aria readOnly=true
-2026-07-21T22:39:56.260Z MUTATION VERIFIED: one-byte PTY transcript mutation changes its SHA-256
-2026-07-21T22:39:56.260Z MUTATION VERIFIED: one-byte PNG signature mutation breaks screenshot validation
-2026-07-21T22:39:56.261Z CAPTURED before hive_kill phase=pane-ready: requestedVendor=codex/policy-default session=ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951 journalBytes=22376 window=2245
-2026-07-21T22:39:56.261Z workspace: PRODUCTION PANE PROOF: agent=aria instance=91ccd1a315 session=ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951 generation=1 engine=9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b highWater=22670 frame=(0.0, 0.0, 514.0, 743.0) drawCount=78 presented=true feedStatus=idle window=2245 visible=true captureRect=224,96,1280,832 screenSize=1728,1117
-2026-07-21T22:39:56.261Z workspace: PRODUCTION PANE PROOF OK
-2026-07-21T22:40:04.060Z GREEN execution side effect persisted messageId=7ff49cc2-e9a2-4f71-b020-e0e2c50e5d86 state=queued
-2026-07-21T22:40:04.061Z MUTATION VERIFIED: exact marker check rejects a one-suffix mutation
-2026-07-21T22:40:04.123Z GREEN exact production locator: ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951 generation=1 hostKind=sessiond
-2026-07-21T22:40:04.123Z MUTATION VERIFIED: one-session-id mutation breaks the exact-locator row
-2026-07-21T22:40:04.353Z MUTATION VERIFIED: one-byte PTY transcript mutation changes its SHA-256
-2026-07-21T22:40:04.353Z MUTATION VERIFIED: one-byte PNG signature mutation breaks screenshot validation
-2026-07-21T22:40:04.354Z CAPTURED before hive_kill phase=post-side-effect: requestedVendor=codex/policy-default session=ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951 journalBytes=60367 window=2245
-2026-07-21T22:40:04.354Z RESULT: production spawn + real Workspace HiveTerminalView GREEN (codex/gpt-5.6-sol)
-2026-07-21T22:40:07.399Z cleanup: hive_kill aria completed
-2026-07-21T22:40:07.714Z cleanup: exact root session hive-orchestrator-91ccd1a315 and 2 captured process(es) absent
-2026-07-21T22:40:12.716Z daemon required SIGKILL during harness cleanup
+2026-07-21T22:47:02.529Z HEAD=a1f73119e955a551497c5bb33916b734bfed3f0f
+2026-07-21T22:47:02.529Z home=/tmp/hb25-pane-423c45 (50-byte broker path)
+2026-07-21T22:47:02.529Z project=/tmp/hb25-project-423c45 (non-Hive throwaway git repository)
+2026-07-21T22:47:02.529Z stagedHive=/Users/scottkellar/Projects/hive/.hive/worktrees/james/.dev/root/versions/0.0.0/hive
+2026-07-21T22:47:02.529Z stagedSessiond=/Users/scottkellar/Projects/hive/.hive/worktrees/james/.dev/root/versions/0.0.0/hive-sessiond
+2026-07-21T22:47:02.529Z workspace=/Users/scottkellar/Projects/hive/.hive/worktrees/james/.dev/root/versions/0.0.0/HiveWorkspace.app/Contents/MacOS/HiveWorkspace
+2026-07-21T22:47:02.821Z ASSERTION CONTROL (literals, not this session): locked and unreadable both break the preflight
+2026-07-21T22:47:02.821Z MEASURED session lock state: unlocked
+2026-07-21T22:47:02.821Z GREEN active-display preflight: initial=1 settled=1 woke=false
+2026-07-21T22:47:02.821Z MUTATION VERIFIED: zero active displays breaks the real-Workspace preflight
+2026-07-21T22:47:02.922Z display keep-awake active pid=80993
+2026-07-21T22:47:03.125Z daemon ready pid=81036 port=43146
+2026-07-21T22:47:03.259Z autonomy is now dangerous — agents run with permission prompts off; writers also use unrestricted vendor mode (persisted to config; applies to new spawns and crash resumes)
+2026-07-21T22:47:03.340Z GREEN autonomy readback: dangerous — agents run with permission prompts off; writers also use unrestricted vendor mode
+2026-07-21T22:47:03.340Z real Workspace launched pid=81239 instanceId=dc6562975b
+2026-07-21T22:47:04.341Z hive_spawn requested tool=codex name=aria readOnly=true
+2026-07-21T22:47:07.495Z MUTATION VERIFIED: one-byte PTY transcript mutation changes its SHA-256
+2026-07-21T22:47:07.495Z MUTATION VERIFIED: one-byte PNG signature mutation breaks screenshot validation
+2026-07-21T22:47:07.496Z CAPTURED before hive_kill phase=pane-ready: requestedVendor=codex/policy-default session=ses_019f86dc-7e86-701d-9f9d-2363e5cfdc14 journalBytes=15310 window=2286
+2026-07-21T22:47:08.172Z workspace: PRODUCTION PANE PROOF: agent=aria instance=dc6562975b session=ses_019f86dc-7e86-701d-9f9d-2363e5cfdc14 generation=1 engine=9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b highWater=16714 frame=(0.0, 0.0, 514.0, 743.0) drawCount=51 presented=true feedStatus=idle window=2286 visible=true captureRect=224,96,1280,832 screenSize=1728,1117
+2026-07-21T22:47:08.172Z workspace: PRODUCTION PANE PROOF OK
+2026-07-21T22:47:16.474Z GREEN execution side effect persisted messageId=89115863-6b1a-4bf4-b360-89bef2708e81 state=queued
+2026-07-21T22:47:16.474Z MUTATION VERIFIED: exact marker check rejects a one-suffix mutation
+2026-07-21T22:47:16.537Z GREEN exact production locator: ses_019f86dc-7e86-701d-9f9d-2363e5cfdc14 generation=1 hostKind=sessiond
+2026-07-21T22:47:16.538Z MUTATION VERIFIED: one-session-id mutation breaks the exact-locator row
+2026-07-21T22:47:16.779Z MUTATION VERIFIED: one-byte PTY transcript mutation changes its SHA-256
+2026-07-21T22:47:16.779Z MUTATION VERIFIED: one-byte PNG signature mutation breaks screenshot validation
+2026-07-21T22:47:16.779Z CAPTURED before hive_kill phase=post-side-effect: requestedVendor=codex/policy-default session=ses_019f86dc-7e86-701d-9f9d-2363e5cfdc14 journalBytes=59670 window=2286
+2026-07-21T22:47:16.779Z RESULT: production spawn + real Workspace HiveTerminalView GREEN (codex/gpt-5.6-sol)
+2026-07-21T22:47:19.477Z cleanup: hive_kill aria completed
+2026-07-21T22:47:19.807Z cleanup: exact root session hive-orchestrator-dc6562975b and 1 captured process(es) absent
+2026-07-21T22:47:24.808Z daemon required SIGKILL during harness cleanup
