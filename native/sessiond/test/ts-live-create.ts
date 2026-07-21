@@ -559,9 +559,14 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             await Bun.sleep(20);
           }
           expect(orphanDecline).toContain("HumanOrphaned");
-          const discarded = await host.discardInputOrphan(sessiondLocator);
+          // The viewer dropped without CLAIM_RELEASE, so the draft is abandoned
+          // rather than held: `orphaned` is the non-destructive resolution.
+          const discarded = await host.discardInputOrphan(sessiondLocator, "orphaned");
+          // The result is a discriminated state, not a boolean: asserting
+          // `discarded` specifically is what keeps a destructive `preempted`
+          // from reading as an ordinary orphan discard.
           expect(discarded).toMatchObject({
-            discarded: true,
+            state: "discarded",
             priorOwnerViewerId: orphanViewerId,
           });
           expect(discarded.priorClaimId).not.toBeNull();
