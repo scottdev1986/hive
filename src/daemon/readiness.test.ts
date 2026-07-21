@@ -119,8 +119,23 @@ describe("proof of life", () => {
     });
   });
 
-  test("a frozen screen with no events and no activity is dead, and says why", async () => {
-    const proof = await watchForProofOfLife("s", BASELINE, deps());
+  test("a live vendor parked at a silent trust prompt survives past the gate", async () => {
+    let polls = 0;
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      capturePane: frozen("Do you trust the contents of this directory?"),
+      launchedProcessAlive: async () => true,
+      wait: async () => {
+        polls += 1;
+      },
+    }));
+    expect(proof.alive).toBe(true);
+    expect(polls).toBeGreaterThanOrEqual(QUIET_LIMIT);
+  });
+
+  test("a frozen screen whose launched process is dead is reaped, and says why", async () => {
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      launchedProcessAlive: async () => false,
+    }));
     expect(proof.alive).toBe(false);
     if (!proof.alive) {
       expect(proof.reason).toContain("no sign of life");
@@ -128,9 +143,10 @@ describe("proof of life", () => {
     }
   });
 
-  test("a hung launch is caught FASTER than the timer it replaces", async () => {
+  test("a dead launch is caught FASTER than the timer it replaces", async () => {
     let polls = 0;
     const proof = await watchForProofOfLife("s", BASELINE, deps({
+      launchedProcessAlive: async () => false,
       wait: async () => {
         polls += 1;
       },
@@ -142,14 +158,15 @@ describe("proof of life", () => {
     expect(QUIET_LIMIT).toBeLessThan(15);
   });
 
-  test("a screen that paints once and then hangs is dead, not alive", async () => {
-    // One repaint is not a pulse. A process that drew itself and froze must not
-    // be mistaken for one that is working.
+  test("a live process is not killed when its screen paints once and then stops", async () => {
+    // A repaint is not a pulse, but a still-running process is. Readiness cannot
+    // distinguish a hung TUI from one waiting at an interactive prompt by its
+    // output, so it must not kill either one for silence alone.
     let painted = 0;
     const proof = await watchForProofOfLife("s", BASELINE, deps({
       capturePane: async () => (painted += 1) <= 2 ? `paint ${painted}` : "paint 2",
     }));
-    expect(proof.alive).toBe(false);
+    expect(proof.alive).toBe(true);
   });
 
   test("an idle agent whose turn ended is alive via its hook event, not its pane", async () => {
@@ -163,7 +180,7 @@ describe("proof of life", () => {
     expect(proof).toEqual({ alive: true, signal: "hook event" });
   });
 
-  test("a rollout write still proves life, and still cannot prove it during reasoning", async () => {
+  test("a rollout write proves life, but stale activity does not rescue a dead process", async () => {
     const proof = await watchForProofOfLife("s", BASELINE, deps({
       codexActivity: async () => new Date(Date.now() + 60_000).toISOString(),
     }));
@@ -171,9 +188,10 @@ describe("proof of life", () => {
 
     // Measured against real Codex: the rollout is written at session start and
     // then goes silent for the entire reasoning phase. A rollout whose mtime
-    // predates the watch is not a signal, and on its own it kills a thinker.
+    // predates the watch is not a signal and cannot rescue a process known dead.
     const stale = await watchForProofOfLife("s", BASELINE, deps({
       codexActivity: async () => "2020-01-01T00:00:00.000Z",
+      launchedProcessAlive: async () => false,
     }));
     expect(stale.alive).toBe(false);
   });

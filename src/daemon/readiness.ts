@@ -50,53 +50,49 @@
  * in one direction or the other:
  *
  *   reasoning     pane redraws ~1/s, agent running         ALIVE  (was killed)
+ *   prompt wait   pane frozen, agent process running       ALIVE  (process signal)
  *   idle at rest  pane frozen, but the turn-end hook fired ALIVE  (event signal)
- *   hung or dead  pane frozen, no hook, no rollout         DEAD   (fail loud)
+ *   dead          pane frozen, no agent process            DEAD   (fail loud)
  *   dead behind   pane redraws ~1/s, no agent process      DEAD   (was "alive")
  *   a live wrapper
  *
  * The middle rows are why a frozen pane can never mean death on its own: a run
- * whose turn simply ended goes pane-static within about three seconds. Death is
- * the *conjunction* — no events, no artifact writes, and no redraw that belongs
- * to the agent.
+ * whose turn simply ended or is waiting for permission can remain pane-static.
+ * Death requires an explicit failure, a vanished session, or failure to prove
+ * that the launched process is still present.
  *
  * The fail-loud contract from the commit that introduced this is preserved
- * exactly, and sharpened: an unproven launch is still killed, its reservation
- * released, its reason recorded. It just gets killed for being dead rather than
- * for being slow. A frozen process is now caught by a positive test — twenty
- * missed heartbeats — instead of by outliving a stopwatch, which means a genuine
- * hang is detected *sooner* than before, not later.
+ * exactly, and sharpened: a dead launch is still killed, its reservation
+ * released, and its reason recorded. It just gets killed for being dead rather
+ * than for being slow or waiting for input.
  */
 
 /** One second, matching the TUI redraw rate we are listening for. */
 export const POLL_MS = 1_000;
 
 /**
- * Consecutive dead-silent polls before we call it dead: twelve.
+ * Consecutive output-silent polls before we fall back to process existence.
  *
  * The number is derived from the signal, not guessed at the model. Measured, the
  * TUI redraws once a second and did so on 24 of 24 consecutive polls through a
  * pure reasoning phase. Twelve is an order of magnitude above that interval: a
- * live agent would have to miss twelve heartbeats in a row, with no hook event
- * and no artifact write either, which not even a badly loaded machine does.
+ * live agent can miss twelve heartbeats while waiting at a static prompt, so
+ * reaching this limit does not itself mean death. It ends the output-observation
+ * window; a positive process check proves the vendor is still here.
  *
  * This is the whole difference from the fifteen seconds it replaces. That number
  * bounded *reasoning time* — a quantity nobody can bound, since a model may
- * legitimately think for minutes. This one bounds *redraw silence*, a quantity
- * we measured at ~1 Hz. Being generous here is nearly free: a live agent never
- * goes quiet, so the only thing a larger number delays is the detection of a
- * genuine hang, and the only thing a smaller one risks is killing the living.
+ * legitimately think for minutes. This one bounds only how long readiness waits
+ * for a faster activity signal before consulting the vendor process itself.
  */
 export const QUIET_LIMIT = 12;
 
 /**
  * Pane changes required before a redrawing screen counts as proof of life.
  *
- * One change is not enough: a TUI paints itself once at startup and a process
- * that painted and then hung would look alive. Three separate changes cannot
- * come from a single repaint — they mean something is still running an event
- * loop. At 1 Hz this costs about three seconds, which is the price of not
- * mistaking a corpse's last twitch for a pulse.
+ * One change is not enough to return early: a TUI paints itself once at startup.
+ * Three separate changes cannot come from a single repaint — they mean something
+ * is still running an event loop. At 1 Hz this costs about three seconds.
  *
  * What three changes cannot tell you is *whose* event loop. See
  * `launchedProcessAlive` — the screen is not the agent.
@@ -215,13 +211,13 @@ export function orphanedPaneReason(command: string, paneTail: string): string {
 }
 
 /**
- * Poll a launched agent until something proves it is alive, or until it has
- * been silent long enough to prove it is not.
+ * Poll a launched agent until activity proves it is alive, or until the quiet
+ * limit makes us consult process existence directly.
  *
  * There is deliberately no wall-clock deadline. No fixed number can be right:
  * reasoning time is unbounded, and a model that thinks for five minutes is not
- * a dead one. The only honest deadline is a *silence* deadline, and silence is
- * something a live process cannot fake.
+ * a dead one. Silence ends the observation window; a positive process check
+ * proves that a quiet vendor is still alive.
  *
  * This returns as soon as it has an answer, so it does not hold `spawn()` open
  * for the length of a turn — a working agent starts redrawing within a second
@@ -326,19 +322,24 @@ export async function watchForProofOfLife<Target = string>(
       if (launched === false) orphanedRedraws += 1;
     }
 
-    // Silence is the agent giving us nothing, which is not the same as a still
-    // screen. A pane animated by a wrapper whose child is gone is *louder* than
-    // silence and just as dead, so it counts here exactly like a frozen pane
-    // does: no event, no artifact write, and no redraw we can attribute to the
-    // agent. The bound is unchanged — this widened what counts as quiet, not how
-    // long quiet is allowed to last.
+    // Silence is no activity evidence, not death evidence. Once the observation
+    // window ends below, a positive launched-process check distinguishes a live
+    // prompt wait from an absent or unmeasurable launch.
     quiet += 1;
     if (quiet >= quietLimit) {
+      // A static pane is normal while a live vendor waits at an interactive
+      // prompt. Silence can end the observation window, but it cannot prove
+      // death when the process hive launched is still present.
+      if (launched === true) {
+        return {
+          alive: true,
+          signal: `${deps.launchedCommand} process running in pane`,
+        };
+      }
       return {
         alive: false,
-        // A frozen pane and a pane animated by a wrapper are both death, and an
-        // operator needs to know which one they are looking at: one says the
-        // process wedged, the other says it was never there.
+        // A frozen pane without a proven launched process and a pane animated by
+        // a wrapper are both death; an operator needs to know which is visible.
         reason: orphanedRedraws > 0
           ? orphanedPaneReason(deps.launchedCommand, lastPaneTail)
           : quietReason(quietLimit * pollMs, lastPaneTail),
