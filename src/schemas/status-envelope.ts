@@ -175,6 +175,22 @@ export const HiveUpdateStatusInputSchema = z.discriminatedUnion("phase", [
 ]);
 export type HiveUpdateStatusInput = z.infer<typeof HiveUpdateStatusInputSchema>;
 
+// What hive_update_status advertises over MCP. The union above stays the
+// validating authority — StatusStore re-parses every report with it — but the
+// MCP SDK can only publish an object schema and silently substituted an EMPTY
+// parameter list for the union, so schema-respecting clients stringified
+// `evidenceRefs` and `blocker`. This flattens only `phase` and `blocker`, the
+// fields the union discriminates, and shares StatusUpdateCommonShape with it.
+export const HiveUpdateStatusAdvertisedSchema = z.strictObject({
+  ...StatusUpdateCommonShape,
+  phase: z.enum(STATUS_PHASES),
+  blocker: z.union([
+    z.string().min(1).max(STATUS_LIMITS.blockerCharactersMax),
+    z.null(),
+  ]),
+});
+export type HiveUpdateStatusAdvertisedInput = z.infer<typeof HiveUpdateStatusAdvertisedSchema>;
+
 export const HiveTerminalObserveInputSchema = z.strictObject({
   sessionId: domainUuidV7Schema("ses"),
   generation: PositiveGenerationSchema,

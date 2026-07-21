@@ -65,7 +65,7 @@ import {
 import {
   HookEventSchema,
   HiveTerminalObserveInputSchema,
-  HiveUpdateStatusInputSchema,
+  HiveUpdateStatusAdvertisedSchema,
   ControlIntentSchema,
   compactMemoryWriteResult,
   HandoffSchema,
@@ -4083,7 +4083,7 @@ export class HiveDaemon {
       title: "Report descriptive agent status",
       description:
         "Append an authenticated, Assignment-bound descriptive status report. Complete is descriptive and never approves work or changes task, gate, review, or landing authority.",
-      inputSchema: HiveUpdateStatusInputSchema,
+      inputSchema: HiveUpdateStatusAdvertisedSchema,
     }, async (input) => {
       this.authorizeTool(
         capability,

@@ -1,5 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { HiveUpdateStatusInputSchema } from "../schemas/status-envelope";
+import {
+  HiveUpdateStatusAdvertisedSchema,
+  HiveUpdateStatusInputSchema,
+} from "../schemas/status-envelope";
 import { HiveDatabase } from "./db";
 import { verifyWorkspaceSnapshot } from "./status-events";
 import {
@@ -102,6 +105,31 @@ describe("StatusStore", () => {
       approval: "approved",
       landState: "landed",
     }).success).toBeFalse();
+
+    // hive_update_status advertises an object over MCP but is validated here by
+    // the union, so the two must keep declaring the same fields.
+    const advertised = Object.keys(HiveUpdateStatusAdvertisedSchema.shape).sort();
+    expect(HiveUpdateStatusInputSchema.options).toHaveLength(6);
+    for (const branch of HiveUpdateStatusInputSchema.options) {
+      expect(Object.keys(branch.shape).sort()).toEqual(advertised);
+    }
+
+    // The advertised schema types blocker as `string | null`; only the union's
+    // phase correlation keeps a blocker exclusive to blocked reports.
+    expect(HiveUpdateStatusInputSchema.safeParse({
+      ...input,
+      blocker: "not a blocked report",
+    }).success).toBeFalse();
+    expect(HiveUpdateStatusInputSchema.safeParse({
+      ...input,
+      phase: "blocked",
+      blocker: null,
+    }).success).toBeFalse();
+    expect(HiveUpdateStatusInputSchema.safeParse({
+      ...input,
+      phase: "blocked",
+      blocker: "waiting on review",
+    }).success).toBeTrue();
   });
 
   test("builds verifiable snapshots and redacted terminal-content audit events", async () => {

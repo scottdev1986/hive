@@ -2,6 +2,7 @@ import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
 import { describe, expect, test } from "bun:test";
 import type { AgentRecord } from "../schemas";
+import { HiveUpdateStatusAdvertisedSchema } from "../schemas/status-envelope";
 import type { CaptureResult, SessionLocator } from "./session-host/contract";
 import { HiveDatabase } from "./db";
 import { HiveDaemon } from "./server";
@@ -83,6 +84,20 @@ async function callTool(
   try {
     await client.connect(transport);
     return await client.callTool({ name, arguments: args });
+  } finally {
+    await client.close().catch(() => undefined);
+  }
+}
+
+async function listTools(daemon: HiveDaemon, token: string) {
+  const client = new Client({ name: "status-test", version: "0.0.0" });
+  const transport = new StreamableHTTPClientTransport(
+    new URL("http://hive/mcp"),
+    { fetch: authorized(daemon, token) },
+  );
+  try {
+    await client.connect(transport);
+    return (await client.listTools()).tools;
   } finally {
     await client.close().catch(() => undefined);
   }
@@ -201,6 +216,92 @@ describe("WP7 MCP status tools", () => {
     });
     state = reduceStatusEvent(state, daemon.status.listEvents().at(-1)!);
     expect(Object.keys(state.entities)).toEqual(["agent:agent-maya"]);
+  });
+
+  // A schema-respecting client can only send a real array or a real null if the
+  // advertised schema says so; an empty `properties` makes it stringify both.
+  test("advertises the real hive_update_status parameters to schema-respecting clients", async () => {
+    const { daemon } = harness();
+    const token = daemon.capabilities.mint("maya", "reader", { epoch: 0 }).token;
+    const tools = await listTools(daemon, token);
+    const schema = tools.find((tool) => tool.name === "hive_update_status")?.inputSchema;
+    const properties = (schema?.properties ?? {}) as Record<string, unknown>;
+
+    expect(Object.keys(properties).sort()).toEqual([
+      "assignmentGeneration",
+      "assignmentId",
+      "blocker",
+      "evidenceRefs",
+      "freshForSeconds",
+      "nextCheckpoint",
+      "phase",
+      "progress",
+      "requestId",
+      "summary",
+    ]);
+    expect(properties.evidenceRefs).toMatchObject({
+      type: "array",
+      items: { type: "string" },
+    });
+    // blocker is `string | null`, so a client must be told null is a legal value.
+    expect(JSON.stringify(properties.blocker)).toContain('"null"');
+    expect(JSON.stringify(properties.phase)).toContain("blocked");
+    expect(schema?.required).toEqual(expect.arrayContaining([
+      "requestId",
+      "assignmentId",
+      "assignmentGeneration",
+      "phase",
+      "summary",
+      "evidenceRefs",
+      "blocker",
+    ]));
+  });
+
+  test("rejects the stringified argument shapes an empty schema produced", async () => {
+    const { daemon } = harness();
+    const token = daemon.capabilities.mint("maya", "reader", { epoch: 0 }).token;
+    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const stringified = await callTool(daemon, token, "hive_update_status", {
+      requestId: REQUEST_ID,
+      assignmentId: assignment.assignmentId,
+      assignmentGeneration: assignment.assignmentGeneration,
+      phase: "complete",
+      summary: "Stringified by a client that was told nothing",
+      blocker: "null",
+      evidenceRefs: "[]",
+      freshForSeconds: 120,
+    });
+    expect(stringified.isError).toBeTrue();
+    expect(daemon.status.listEvents()).toHaveLength(0);
+  });
+
+  // The advertised object schema cannot express the phase/blocker correlation
+  // the validating union does, so the store has to keep rejecting it.
+  test("still rejects a blocked report with no blocker the advertised schema permits", async () => {
+    const { daemon } = harness();
+    const token = daemon.capabilities.mint("maya", "reader", { epoch: 0 }).token;
+    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const args = {
+      requestId: REQUEST_ID,
+      assignmentId: assignment.assignmentId,
+      assignmentGeneration: assignment.assignmentGeneration,
+      summary: "Blocked with nothing blocking",
+      evidenceRefs: [],
+      freshForSeconds: 120,
+    };
+    expect(HiveUpdateStatusAdvertisedSchema.safeParse({
+      ...args,
+      phase: "blocked",
+      blocker: null,
+    }).success).toBeTrue();
+
+    const accepted = await callTool(daemon, token, "hive_update_status", {
+      ...args,
+      phase: "blocked",
+      blocker: null,
+    });
+    expect(accepted.isError).toBeTrue();
+    expect(daemon.status.listEvents()).toHaveLength(0);
   });
 
   test("binds status to the authenticated subject and rejects generation spoofing", async () => {

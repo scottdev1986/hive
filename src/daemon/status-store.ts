@@ -6,7 +6,7 @@ import {
   WorkspaceEventV2Schema,
   WorkspaceSnapshotV2Schema,
   type FlatAssignment,
-  type HiveUpdateStatusInput,
+  type HiveUpdateStatusAdvertisedInput,
   type WorkspaceEventV2,
   type WorkspaceSnapshotV2,
 } from "../schemas/status-envelope";
@@ -174,7 +174,7 @@ export class StatusStore implements WorkspaceStatusEventSource {
       capabilityEpoch: number;
       toolSessionId: string | null;
     }>,
-    rawInput: HiveUpdateStatusInput,
+    rawInput: HiveUpdateStatusAdvertisedInput,
     now: Date,
   ): StatusReportResult {
     const input = HiveUpdateStatusInputSchema.parse(rawInput);
