@@ -46,13 +46,35 @@ Each criterion restates the HARD PRINCIPLES (external research drives; external 
 - Zero-survivors is a **positive `ps` readback**, not absence-of-error.
 - Replay is **byte-identical** against a named reference capture within the stated bounded window.
 
-## Current completion state (per the DoD audit, `planning/m1-definition-of-done-audit.md` §3 B9)
+## Current completion state
 
-- **3 of 4 cells green.** The reconnect-replay, exact-close, and non-Hive-project cells are recorded:
-  - `raw/qualification/hive-b25-production-pane/manifests/a4-reconnect-replay.json`
-  - `raw/qualification/hive-b25-production-pane/manifests/a4-exact-close.json`
-  - `raw/qualification/hive-b25-production-pane/manifests/a4-non-hive-project.json`
-- The **quit cell is not green**: `raw/qualification/hive-b25-production-pane/manifests/a4-quit.json` records `"ok": false`, `"status": "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK"`, `"requiresUnlockedProductionStack": true`.
+Updated 2026-07-21 after the kill-drill matrix ran live. Every cell below ran in
+its own isolated Hive home with its own daemon and broker; none touched the
+production instance.
+
+- **Green cells** — reconnect-replay, exact-close, non-Hive-project (recorded
+  earlier), plus **kill-renderer** and **kill-broker**, newly proven:
+  - `manifests/a4-reconnect-replay.json`, `a4-exact-close.json`, `a4-non-hive-project.json`
+  - `manifests/a4-renderer-kill.json` — criterion 1. The renderer is a separate
+    process, SIGKILLed for real; the provider tree is read back live from `ps`
+    after its death; the same generation reconnects and replays byte-identically
+    against a named, hashed reference capture; the post-teardown `ps` readback
+    shows every captured pid absent.
+  - `manifests/a4-broker-kill.json` — criterion 3. Broker SIGKILLed; attach and
+    visibility renewal both fail with the typed broker-unavailable error; no
+    fabricated clean exit; zero survivors.
+- **Criterion 4 (bounded window) is now pinned and measured.** The upper edge is
+  the spec journal capacity (§18). The lower edge is measured rather than
+  asserted: a replay slice refuses an `afterSeq` below the journal's retained
+  start, so a reconnect served at `afterSeq` 0 proves the retained range still
+  begins at 0. The reference capture the byte-identity is measured against is
+  named and hashed in the manifest.
+- **Criterion 5 (stale locator, I5) is NOT green** —
+  `manifests/a4-stale-locator.json` records `"ok": false`,
+  `"status": "I5-TYPED-STALE-REFUSAL-GAP"`. See Blocker 2.
+- **The quit cell is not green**: `manifests/a4-quit.json` records `"ok": false`,
+  `"status": "COMPOSED-NOW/FAITHFUL-PENDING-UNLOCK"`,
+  `"requiresUnlockedProductionStack": true`.
 - Issue state: **OPEN**.
 
 ## Open blockers (explicitly named)
@@ -60,5 +82,28 @@ Each criterion restates the HARD PRINCIPLES (external research drives; external 
 1. **Quit cell — two blockers, different classes** (audit §3 B9):
    - **Harness entanglement (agent-doable).** The b22 driver hosts the daemon **in-process**, so its app-quit path "cannot measure the daemon-self-owned production shutdown handshake" (`a4-quit.json` → `faithfulPending.reason`; diagnostic `raw/qualification/hive-b25-production-pane/matrix/diagnostic-a4-quit-harness-entanglement.txt`). An out-of-process daemon harness is the prerequisite.
    - **Unlocked GUI session (USER-ONLY).** The faithful quit run requires the unlocked production Workspace stack; an agent shell returns nulls. This is the single highest-leverage human-evidence-session item (audit §6).
-2. **Bounded window and reference capture are unpinned** (criterion 4) — digest #6 AC-THIN.
-3. **Gating.** A4 needs A2 + B2 (Workspace visibility/reconnect/quit proof requires the integrated pane); host-only crash proofs may run earlier. A2 and B2.0–B2.4 are landed.
+2. **Stale locator does not answer as I5 requires** (criterion 5) — measured
+   2026-07-21, not inferred. After the exact generation is terminated and read
+   back absent from `ps`, the identical locator string produces:
+   - **attach** — a refusal, but one that says only that the outcome could not
+     be verified. It fails closed, which is the half that matters most, but it
+     never says the generation is gone. "I could not determine" and "no, that
+     is dead" are different answers, and I5 asks for the second.
+   - **kill** — a **success**, reporting that the agent was killed and nothing
+     was reaped. That is a fabricated result for a generation that no longer
+     exists, and it is precisely the false answer the invariant forbids. The
+     terminated agent row still carries its old locator, so the daemon's
+     locator comparison accepts it as current.
+
+   The same cell attaches with that locator while the session is live, as a
+   positive control, so this is a genuine difference in how the two surfaces
+   answer and not a malformed request. Closing this reaches past the proof
+   harness into daemon kill semantics and into how the session layer distinguishes
+   "this generation is gone" from "I cannot tell", which is a cross-language
+   contract change and wants its own decision.
+
+3. **~~Bounded window and reference capture are unpinned~~ (criterion 4) —
+   RESOLVED 2026-07-21.** The bound is now stated and the reference capture is
+   named and hashed; see the completion state above.
+
+4. **Gating.** A4 needs A2 + B2 (Workspace visibility/reconnect/quit proof requires the integrated pane); host-only crash proofs may run earlier. A2 and B2.0–B2.4 are landed.

@@ -1,0 +1,8 @@
+Test Suite 'Selected tests' started at 2026-07-21 15:47:14.287.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-21 15:47:14.288.
+Test Suite 'LiveHostAttachTests' started at 2026-07-21 15:47:14.288.
+Test Case '-[HiveTerminalKitTests.LiveHostAttachTests testA4RendererKillReplayProbe]' started.
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.

@@ -1,0 +1,21 @@
+Test Suite 'Selected tests' started at 2026-07-21 15:47:17.453.
+Test Suite 'HiveWorkspacePackageTests.xctest' started at 2026-07-21 15:47:17.453.
+Test Suite 'LiveHostAttachTests' started at 2026-07-21 15:47:17.453.
+Test Case '-[HiveTerminalKitTests.LiveHostAttachTests testA4RendererKillReplayProbe]' started.
+Test Case '-[HiveTerminalKitTests.LiveHostAttachTests testA4RendererKillReplayProbe]' passed (0.233 seconds).
+Test Suite 'LiveHostAttachTests' passed at 2026-07-21 15:47:17.687.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.233 (0.233) seconds
+Test Suite 'HiveWorkspacePackageTests.xctest' passed at 2026-07-21 15:47:17.687.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.233 (0.233) seconds
+Test Suite 'Selected tests' passed at 2026-07-21 15:47:17.687.
+	 Executed 1 test, with 0 failures (0 unexpected) in 0.233 (0.234) seconds
+◇ Test run started.
+↳ Testing Library Version: 1902
+↳ Target Platform: arm64e-apple-macos14.0
+✔ Test run with 0 tests in 0 suites passed after 0.001 seconds.
+[0/1] Planning build
+[1/1] Compiling plugin GenerateManual
+[2/2] Compiling plugin GenerateDoccReference
+Building for debugging...
+[2/16] Write swift-version--58304C5D6DBC2206.txt
+Build complete! (1.59s)

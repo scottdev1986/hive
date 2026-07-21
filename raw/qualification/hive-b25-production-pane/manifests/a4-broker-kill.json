@@ -1,0 +1,77 @@
+{
+  "cell": "a4-broker-kill",
+  "ok": true,
+  "head": "1e224584e0df83c667377decdd4b646edea637c2",
+  "startedAt": "2026-07-21T19:47:10.190Z",
+  "home": "/tmp/hb25-ya836",
+  "project": "/tmp/hb25-broker-kill-a836",
+  "port": 43143,
+  "locator": {
+    "schemaVersion": 1,
+    "instanceId": "a99ae32d17",
+    "subject": {
+      "kind": "agent",
+      "agentId": "agent-aria"
+    },
+    "generation": 1,
+    "sessionId": "ses_019f8637-f1d0-78a6-84b3-6dc8706c7c06",
+    "hostKind": "sessiond",
+    "engineBuildId": "9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b"
+  },
+  "broker": {
+    "pid": 54215,
+    "signal": "SIGKILL",
+    "postKillState": "absent"
+  },
+  "capturedProcessTree": [
+    {
+      "pid": 54249,
+      "command": "/Users/scottkellar/Projects/hive/.hive/worktrees/ava/native/sessiond/zig-out/bin/hive-sessiond host"
+    },
+    {
+      "pid": 54256,
+      "command": "/bin/sh -c (i=0; while true; do printf \"\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  \" \"$(( (i % 6) + 1 ))\" \"$i\"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf \"\\n\"; sleep 0.25; done) & ticker_pid=$!; trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; while IFS= read -r line; do printf \"\\nB2.3 RESPONSE:%s\\n\" \"$line\"; done"
+    },
+    {
+      "pid": 54266,
+      "command": "/bin/sh -c (i=0; while true; do printf \"\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  \" \"$(( (i % 6) + 1 ))\" \"$i\"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf \"\\n\"; sleep 0.25; done) & ticker_pid=$!; trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; while IFS= read -r line; do printf \"\\nB2.3 RESPONSE:%s\\n\" \"$line\"; done"
+    }
+  ],
+  "typedLoss": {
+    "attach": {
+      "exitCode": 1,
+      "output": "hive: sessiond broker is unavailable at /tmp/hb25-ya836/runtime/sessiond/broker.sock"
+    },
+    "visibilityRenewal": "2026-07-21T19:47:26.661Z visibility renewal failed: SessiondBrokerUnavailableError: sessiond broker is unavailable at /tmp/hb25-ya836/runtime/sessiond/broker.sock"
+  },
+  "visibilityExpiryBoundMilliseconds": 15000,
+  "final": {
+    "schemaVersion": 1,
+    "state": "terminated",
+    "exitCode": null,
+    "exitSignal": 1,
+    "waitObserved": true,
+    "outputSeq": "1826",
+    "checkpointSeq": "0",
+    "survivors": [],
+    "errors": [],
+    "failureCode": "VISIBILITY_EXPIRED"
+  },
+  "postExpiryReadback": [
+    {
+      "pid": 54249,
+      "command": "/Users/scottkellar/Projects/hive/.hive/worktrees/ava/native/sessiond/zig-out/bin/hive-sessiond host",
+      "state": "absent"
+    },
+    {
+      "pid": 54256,
+      "command": "/bin/sh -c (i=0; while true; do printf \"\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  \" \"$(( (i % 6) + 1 ))\" \"$i\"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf \"\\n\"; sleep 0.25; done) & ticker_pid=$!; trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; while IFS= read -r line; do printf \"\\nB2.3 RESPONSE:%s\\n\" \"$line\"; done",
+      "state": "absent"
+    },
+    {
+      "pid": 54266,
+      "command": "/bin/sh -c (i=0; while true; do printf \"\\033[1;3%dm● B2.2 LIVE %04d\\033[0m  \" \"$(( (i % 6) + 1 ))\" \"$i\"; i=$((i+1)); [ $((i % 4)) -eq 0 ] && printf \"\\n\"; sleep 0.25; done) & ticker_pid=$!; trap 'kill \"$ticker_pid\" 2>/dev/null' EXIT; while IFS= read -r line; do printf \"\\nB2.3 RESPONSE:%s\\n\" \"$line\"; done",
+      "state": "absent"
+    }
+  ]
+}
