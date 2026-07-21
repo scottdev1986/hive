@@ -53,6 +53,7 @@ import {
   requireSessiondAgentLocator,
   type HiveTerminalHostAdapter,
 } from "./session-host/hive-terminal-host";
+import { sessiondVendorProcessIsDead } from "./session-host/contract";
 import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
 
 // Three auto-resumes for one agent means the process is dying on its own,
@@ -275,6 +276,7 @@ export class CrashRecovery {
       const inspection = await this.deps.terminalHost.inspect(
         requireSessiondAgentLocator(agent),
       );
+      if (sessiondVendorProcessIsDead(inspection)) return false;
       switch (inspection.presence) {
         case "present":
           return true;
@@ -292,6 +294,12 @@ export class CrashRecovery {
       throw new Error(`Session presence is unknown for ${agent.name}`);
     }
     return inspection.presence === "present";
+  }
+
+  private runningSessionReason(agent: AgentRecord): string {
+    return agent.sessionLocator?.hostKind === "sessiond"
+      ? "sessiond host reports the session is running"
+      : "tmux session is running";
   }
 
   private async captureVisible(agent: AgentRecord): Promise<string> {
@@ -423,7 +431,7 @@ export class CrashRecovery {
       return {
         agent: name,
         action: "skipped",
-        reason: "tmux session is running",
+        reason: this.runningSessionReason(agent),
       };
     }
     return this.recoverOne(agent, { manual: true });
@@ -459,7 +467,7 @@ export class CrashRecovery {
       return {
         agent: agent.name,
         action: "skipped",
-        reason: "tmux session is running",
+        reason: this.runningSessionReason(agent),
       };
     }
     if (!options.manual && agent.recoveryAttempts >= MAX_AUTO_RESUME_ATTEMPTS) {

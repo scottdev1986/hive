@@ -1399,8 +1399,8 @@ describe("reconciling messages we handed over", () => {
       undefined,
       undefined,
       {},
-      async (session) => {
-        probes.push(session);
+      async (recipient) => {
+        probes.push(recipient.tmuxSession);
         throw new Error("ps unavailable");
       },
     );

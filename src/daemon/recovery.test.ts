@@ -332,6 +332,75 @@ describe("crash classification", () => {
     expect(await h.recovery.sweep()).toEqual([]);
     expect(h.tmux.sessions).toEqual(new Set());
     expect(h.db.getAgentByName("maya")?.status).toEqual("working");
+    expect(await h.recovery.recoverAgent("maya")).toEqual({
+      agent: "maya",
+      action: "skipped",
+      reason: "sessiond host reports the session is running",
+    });
+  });
+
+  test("manual recovery resumes when sessiond proves the vendor process died behind its live host", async () => {
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000102",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const h = harness({
+      terminalHost: {
+        inspect: async () => ({
+          schemaVersion: 1,
+          locator: sessionLocator,
+          presence: "present",
+          complete: false,
+          hostPid: null,
+          hostStartToken: null,
+          providerRoot: null,
+          expectedExecutable: "claude",
+          executableVerified: false,
+          outputSeq: "0",
+          checkpointSeq: "0",
+          checkpointAvailable: false,
+          input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+          viewerCount: 0,
+          geometry: {
+            columns: 80,
+            rows: 24,
+            widthPx: 800,
+            heightPx: 480,
+            cellWidthPx: 10,
+            cellHeightPx: 20,
+          },
+          resources: {},
+          visibility: {
+            state: "attaching",
+            workspaceSessionId: "workspace-fixture",
+            openTerminalRevision: "1",
+            expiresAt: "2026-07-10T09:00:15.000Z",
+          },
+          exit: null,
+          survivors: [],
+          evidenceAt: timestamp,
+          diagnosticIds: ["SESSIOND_EXECUTABLE_EVIDENCE_STALE"],
+        }),
+      },
+    });
+    h.signalProofOfLife();
+    h.db.insertAgent(agent({
+      status: "working",
+      toolSessionId: "sess-dead-mid-turn",
+      sessionLocator,
+    }));
+
+    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
+      agent: "maya",
+      action: "resumed",
+      sessionId: "sess-dead-mid-turn",
+    });
+    expect(h.tmux.created).toHaveLength(1);
   });
 
   test("a deliberate kill in flight is never classified as a crash (#66)", async () => {

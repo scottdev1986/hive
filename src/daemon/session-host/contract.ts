@@ -63,6 +63,17 @@ export type SessionInspection = Readonly<{
   evidenceAt: string; diagnosticIds: readonly string[];
 }>;
 
+/** A sessiond host can outlive the vendor process it launched. A stale
+ * executable identity is therefore death evidence, unlike missing identity
+ * evidence during initial registration. */
+export function sessiondVendorProcessIsDead(
+  inspection: Pick<SessionInspection, "presence" | "diagnosticIds">,
+): boolean {
+  return inspection.presence === "exited" ||
+    inspection.presence === "lost" ||
+    inspection.diagnosticIds.includes("SESSIOND_EXECUTABLE_EVIDENCE_STALE");
+}
+
 export type CreateResult = Readonly<{
   locator: SessionLocator; inspection: SessionInspection; created: true;
 }>;

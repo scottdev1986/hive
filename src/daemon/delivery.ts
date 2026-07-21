@@ -335,8 +335,8 @@ export class MessageDelivery {
      * consulted before any inference from silence. Absent (tests, embedded
      * daemons), triage falls back to the silence cap alone. */
     private readonly processState?: (
-      tmuxSession: string,
-    ) => Promise<PaneProcessState>,
+      agent: AgentRecord,
+    ) => Promise<PaneProcessState | "unknown">,
     private readonly composerActive: (recipient: string) => boolean =
       isComposerLeased,
     /** Daemon→idle-sessiond-agent input over the neutral viewer wire (#16
@@ -1388,7 +1388,7 @@ export class MessageDelivery {
     // make); the silence cap below remains the honest last resort for the one
     // wedge the kernel cannot see, a process alive but internally hung.
     if (agent !== null && this.processState !== undefined) {
-      const state = await this.processState(agent.tmuxSession)
+      const state = await this.processState(agent)
         .catch(() => "running" as const);
       if (state === "stopped") {
         return `${recipient}'s process is stopped (suspended mid-turn, ps state T) — it cannot hear anything`;

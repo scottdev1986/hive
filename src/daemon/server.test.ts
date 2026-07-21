@@ -5347,6 +5347,94 @@ describe("wake-path self-check (2026-07-21 messaging regression, recommendation 
       .filter((body) => body.startsWith("Wake path check failed:"));
   }
 
+  function completeSessiondBinding(
+    db: HiveDatabase,
+    locator: Parameters<HiveDatabase["completeTerminalHostSession"]>[0],
+  ) {
+    const visibility = {
+      workspaceSessionId: `workspace-${locator.sessionId}`,
+      workspacePid: 7401,
+      workspaceStartToken: "7401:100",
+      openTerminalRevision: "1",
+    };
+    db.bindTerminalHostSession({ locator, visibility });
+    db.completeTerminalHostSession(locator, {
+      expectedExecutable: "claude",
+      executableVerified: true,
+      verifiedProviderRoot: {
+        pid: 7402,
+        startToken: "7402:100",
+        processGroupId: 7402,
+      },
+      geometry: {
+        columns: 80,
+        rows: 24,
+        widthPx: 800,
+        heightPx: 480,
+        cellWidthPx: 10,
+        cellHeightPx: 20,
+      },
+      visibility: {
+        state: "visible",
+        workspaceSessionId: visibility.workspaceSessionId,
+        openTerminalRevision: "1",
+        expiresAt: "2026-07-21T20:00:00.000Z",
+      },
+    });
+  }
+
+  function staleVendorInspection(
+    session: Parameters<LandedTerminalHost["inspect"]>[0],
+  ): Awaited<ReturnType<LandedTerminalHost["inspect"]>> {
+    return {
+      session,
+      lifecycle: "running",
+      completeness: "complete",
+      host: null,
+      child: null,
+      jobControl: null,
+      window: {
+        value: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+        revision: "1",
+      },
+      output: { closed: true, retained: { start: "0", endExclusive: "0" } },
+      checkpoints: { retained: 0, newest: null },
+      inputOwner: null,
+      exit: null,
+      reap: {
+        authority: "direct-parent",
+        reaped: false,
+        status: null,
+        completeness: "complete",
+      },
+      descendants: [],
+      survivors: [],
+      evidenceAt: "2026-07-21T19:00:00.000Z",
+      diagnostics: [],
+    };
+  }
+
+  function liveVendorInspection(
+    session: Parameters<LandedTerminalHost["inspect"]>[0],
+  ): Awaited<ReturnType<LandedTerminalHost["inspect"]>> {
+    return {
+      ...staleVendorInspection(session),
+      child: { processId: 7402, startToken: "7402:100" },
+      jobControl: {
+        sessionLeader: true,
+        controllingTerminal: true,
+        standardStreamsShareTerminal: true,
+        childSessionId: 7402,
+        childProcessGroupId: 7402,
+        foregroundProcessGroupId: 7402,
+        terminalIdentity: "pty-fixture",
+        initialProfileAppliedBeforeExec: true,
+        initialWindowAppliedBeforeExec: true,
+        completeness: "complete",
+      },
+    };
+  }
+
   test("a root wake path the daemon cannot see is reported once, and re-arms when it clears", async () => {
     const db = new HiveDatabase(join(home, "wake-path-check.db"));
     const tmux = new FakeDaemonTmux();
@@ -5418,11 +5506,218 @@ describe("wake-path self-check (2026-07-21 messaging regression, recommendation 
           engineBuildId: "engine-fixture",
         },
       }));
+      completeSessiondBinding(
+        db,
+        db.getAgentByName("maya")!.sessionLocator! as Parameters<
+          HiveDatabase["completeTerminalHostSession"]
+        >[0],
+      );
       const faults = await daemon.checkWakePaths();
       expect(faults).toHaveLength(1);
       expect(faults[0]).toContain("the sessiond broker will not list sessions");
       expect(faults[0]).toContain("no message can reach any sessiond agent");
       expect(wakeAlerts(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("waits for completed sessiond registration before treating broker absence as death", async () => {
+    const db = new HiveDatabase(join(home, "wake-path-registration-race.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add(orchestratorTmuxSession());
+    let brokerLists = 0;
+    let brokerRows: Awaited<ReturnType<LandedTerminalHost["list"]>> = [];
+    const unsupported = async (): Promise<never> => {
+      throw new Error("unexpected terminal-host operation");
+    };
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      terminalHost: {
+        create: unsupported,
+        claimInput: unsupported,
+        submitInput: unsupported,
+        resize: unsupported,
+        inspect: unsupported,
+        issueAttach: unsupported,
+        list: async () => {
+          brokerLists += 1;
+          return brokerRows;
+        },
+        terminate: unsupported,
+        renewVisibility: unsupported,
+      },
+    });
+    const locator = {
+      ...mintAgentTmuxSessionLocator("agent-maya", 1),
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    try {
+      db.insertAgent(agent({ status: "spawning", sessionLocator: locator }));
+
+      // The observed liam/john race: the row exists, but sessiond has not
+      // registered a completed create yet. Absence here is unknown, not death.
+      expect(await daemon.checkWakePaths()).toEqual([]);
+      expect(brokerLists).toBe(0);
+      expect(wakeAlerts(db)).toEqual([]);
+
+      completeSessiondBinding(db, locator);
+      const faults = await daemon.checkWakePaths();
+      expect(faults).toEqual([
+        "maya's sessiond session is not listed by the broker",
+      ]);
+      expect(brokerLists).toBe(1);
+      expect(wakeAlerts(db)).toHaveLength(1);
+
+      // The host can survive the vendor it started. A stale executable root
+      // is measured death, and still gets the loud, one-shot wake alert.
+      brokerRows = [staleVendorInspection({
+        key: locator.sessionId,
+        incarnation: "1",
+      })];
+      expect(await daemon.checkWakePaths()).toEqual([
+        "maya's sessiond vendor process is confirmed dead",
+      ]);
+      expect(wakeAlerts(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("hive_status never calls a measurably dead sessiond vendor working", async () => {
+    const db = new HiveDatabase(join(home, "status-dead-vendor.db"));
+    const tmux = new FakeDaemonTmux();
+    let brokerLists = 0;
+    let listedSession: { key: string; incarnation: string } | null = null;
+    const unsupported = async (): Promise<never> => {
+      throw new Error("unexpected terminal-host operation");
+    };
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      terminalHost: {
+        create: unsupported,
+        claimInput: unsupported,
+        submitInput: unsupported,
+        resize: unsupported,
+        inspect: unsupported,
+        issueAttach: unsupported,
+        list: async () => {
+          brokerLists += 1;
+          return listedSession === null ? [] : [staleVendorInspection(listedSession)];
+        },
+        terminate: unsupported,
+        renewVisibility: unsupported,
+      },
+    });
+    const mayaLocator = {
+      ...mintAgentTmuxSessionLocator("agent-maya", 1),
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const noraLocator = {
+      ...mintAgentTmuxSessionLocator("agent-nora", 1),
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    try {
+      listedSession = { key: mayaLocator.sessionId, incarnation: "1" };
+      db.insertAgent(agent({ status: "working", sessionLocator: mayaLocator }));
+      db.insertAgent(agent({
+        id: "agent-nora",
+        name: "nora",
+        tmuxSession: "hive-nora",
+        status: "idle",
+        sessionLocator: noraLocator,
+      }));
+      completeSessiondBinding(db, mayaLocator);
+      completeSessiondBinding(db, noraLocator);
+
+      const status = await fetchAgentStatus(4483, actingAs(daemon, "operator"));
+      expect(status.find((record) => record.name === "maya")).toMatchObject({
+        status: "stuck",
+        failureReason: expect.stringContaining("vendor process as dead"),
+      });
+      // The idle probe is already truthful: it is a last-turn state, not a
+      // fabricated proof that the process is currently working.
+      expect(status.find((record) => record.name === "nora")?.status).toBe("idle");
+      expect(brokerLists).toBe(1);
+
+      listedSession = null;
+      const absent = await fetchAgentStatus(4483, actingAs(daemon, "operator"));
+      expect(absent.find((record) => record.name === "maya")).toMatchObject({
+        status: "stuck",
+        failureReason: expect.stringContaining("vendor session absent"),
+      });
+      expect(brokerLists).toBe(2);
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+    } finally {
+      db.close();
+    }
+  });
+
+  test("stuck-message triage measures a live sessiond vendor before naming death", async () => {
+    const db = new HiveDatabase(join(home, "stuck-live-sessiond-vendor.db"));
+    const tmux = new FakeDaemonTmux();
+    const unsupported = async (): Promise<never> => {
+      throw new Error("unexpected terminal-host operation");
+    };
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      resourceRunners: { panePids: async () => [], orphans: null },
+      terminalHost: {
+        create: unsupported,
+        claimInput: unsupported,
+        submitInput: unsupported,
+        resize: unsupported,
+        inspect: async (session) => liveVendorInspection(session),
+        issueAttach: unsupported,
+        list: unsupported,
+        terminate: unsupported,
+        renewVisibility: unsupported,
+      },
+    });
+    const locator = {
+      ...mintAgentTmuxSessionLocator("agent-maya", 1),
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    try {
+      const now = Date.now();
+      db.insertAgent(agent({
+        status: "working",
+        lastEventAt: new Date(now).toISOString(),
+        sessionLocator: locator,
+      }));
+      completeSessiondBinding(db, locator);
+      db.insertEvent({
+        kind: "turn-start",
+        agentName: "maya",
+        timestamp: new Date(now - 10 * 60_000).toISOString(),
+      });
+      const message = await daemon.delivery.send("sam", "maya", "brief");
+      db.transitionMessage(
+        message.id,
+        "injected",
+        new Date(now - 6 * 60_000).toISOString(),
+      );
+
+      // A sessiond agent has no tmux pane. The old tmux probe reported this
+      // alive provider as gone; the host inspection is the measured surface.
+      expect(await daemon.delivery.reconcileInjected(new Date(now).toISOString()))
+        .toEqual(0);
+      expect(db.getMessage(message.id)?.alertAt).toBeNull();
+      expect(db.listMessages().filter((entry) => entry.from === "hive-control"))
+        .toEqual([]);
     } finally {
       db.close();
     }

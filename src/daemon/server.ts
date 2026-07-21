@@ -22,6 +22,7 @@ import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
 } from "./session-host/hive-terminal-host";
+import { sessiondVendorProcessIsDead } from "./session-host/contract";
 import {
   SessiondHost,
   type LandedTerminalHost,
@@ -858,13 +859,18 @@ export class HiveDaemon {
           tmux: tmuxSender,
         }),
       {},
-      // The stalled-message triage's OS probe: what `ps` says about the
-      // recipient's pane tree. Reads this.panePids/this.tmux lazily — both
-      // are assigned below, and the sweep runs long after construction. A
-      // pane whose pids cannot be listed is judged by whether the session
-      // still exists at all; a session that vanished mid-probe is honestly
-      // "gone".
-      async (tmuxSession) => {
+      // The stalled-message triage's OS probe. Sessiond agents are checked
+      // through the host that owns their vendor process; only measured death
+      // can label them gone. Legacy tmux agents use their pane tree.
+      async (agent) => {
+        if (agent.sessionLocator?.hostKind === "sessiond") {
+          const inspection = await this.terminalHost.inspect(
+            requireSessiondAgentLocator(agent),
+          );
+          if (sessiondVendorProcessIsDead(inspection)) return "gone";
+          return inspection.executableVerified ? "running" : "unknown";
+        }
+        const tmuxSession = agent.tmuxSession;
         let pids: number[];
         try {
           pids = await this.panePids(tmuxSession);
@@ -1324,9 +1330,10 @@ export class HiveDaemon {
             `${rootSession}, so no agent report can reach queen (#68)`,
         );
       }
-      const sessiond = live.filter((agent) =>
-        agent.sessionLocator?.hostKind === "sessiond"
-      );
+      // A locator exists before sessiond finishes registering it. The broker
+      // cannot list that in-flight create yet, so absence is not death until
+      // the binding carries completed create evidence.
+      const sessiond = live.filter((agent) => this.hasCompletedSessiondBinding(agent));
       if (sessiond.length > 0) {
         let listed: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null = null;
         try {
@@ -1345,6 +1352,8 @@ export class HiveDaemon {
           );
           if (match === undefined) {
             faults.push(`${agent.name}'s sessiond session is not listed by the broker`);
+          } else if (sessiondVendorProcessIsDead(match)) {
+            faults.push(`${agent.name}'s sessiond vendor process is confirmed dead`);
           } else if (match.presence !== "present") {
             faults.push(
               `${agent.name}'s sessiond session presence is ${match.presence}, not present`,
@@ -1367,6 +1376,36 @@ export class HiveDaemon {
       if (!faults.includes(fault)) this.alertedWakeFaults.delete(fault);
     }
     return faults;
+  }
+
+  private hasCompletedSessiondBinding(agent: AgentRecord): boolean {
+    return agent.sessionLocator?.hostKind === "sessiond" &&
+      this.db.getTerminalHostBindingByLocator(
+        requireSessiondAgentLocator(agent),
+      )?.createEvidence !== undefined;
+  }
+
+  private statusLiveness(
+    agent: AgentRecord,
+    sessions: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null,
+  ): AgentRecord {
+    if (agent.status !== "working" || !this.hasCompletedSessiondBinding(agent)) {
+      return agent;
+    }
+    if (sessions === null) return agent;
+    const inspection = sessions.find((candidate) =>
+      candidate.locator.sessionId === agent.sessionLocator?.sessionId
+    );
+    if (inspection !== undefined && !sessiondVendorProcessIsDead(inspection)) {
+      return agent;
+    }
+    return {
+      ...agent,
+      status: "stuck",
+      failureReason: inspection === undefined
+        ? "sessiond measured the vendor session absent; run hive_recover to resume it"
+        : "sessiond measured the vendor process as dead; run hive_recover to resume it",
+    };
   }
 
   async runMaintenance(): Promise<void> {
@@ -4031,7 +4070,16 @@ export class HiveDaemon {
       // orchestrator can see it without knowing to look (2026-07-21 messaging
       // regression: hours of silence that looked exactly like "nothing to say").
       const blocked = this.delivery.blockedDeliveries();
-      let agents = this.db.listAgents().map((agent): AgentRecord => ({
+      const storedAgents = this.db.listAgents();
+      let sessions: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null = null;
+      if (storedAgents.some((agent) =>
+        agent.status === "working" && this.hasCompletedSessiondBinding(agent)
+      )) {
+        sessions = await this.terminalHost.list(hiveInstanceSuffix()).catch(() => null);
+      }
+      let agents = storedAgents.map((agent) =>
+        this.statusLiveness(agent, sessions)
+      ).map((agent): AgentRecord => ({
         ...agent,
         ...(this.graphify === undefined ? {} : {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
