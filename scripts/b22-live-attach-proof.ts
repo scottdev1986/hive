@@ -399,20 +399,27 @@ const shutdown = async (reason: string, requestedExitCode = 0) => {
     try {
       process.kill(hostPid, "SIGKILL");
     } catch { /* already gone */ }
-    let alive = true;
-    for (let i = 0; i < 20 && alive; i += 1) {
+    // `kill(pid, 0)` cannot tell a running process from an exited one whose
+    // parent has not called waitpid yet: a zombie keeps its pid entry and
+    // answers signal 0. The broker is this host's parent and is still up here,
+    // so a SIGKILLed host reads back as "alive" for as long as the broker takes
+    // to reap it — which is how a renderer-kill drill produced a SURVIVED
+    // SIGKILL line for a process the process table later showed as gone. Read
+    // the state instead of probing the pid; a zombie has stopped executing.
+    let state = "?";
+    for (let i = 0; i < 40; i += 1) {
       await Bun.sleep(50);
-      try {
-        process.kill(hostPid, 0);
-      } catch {
-        alive = false;
-      }
+      const ps = Bun.spawnSync(["ps", "-o", "stat=", "-p", String(hostPid)]);
+      state = ps.stdout.toString().trim();
+      if (state === "" || state.startsWith("Z")) break;
     }
-    if (alive) {
-      log(`session host ${hostPid} SURVIVED SIGKILL; exiting non-zero`);
-      exitCode = 1;
-    } else {
+    if (state === "") {
       log(`session host ${hostPid} confirmed gone`);
+    } else if (state.startsWith("Z")) {
+      log(`session host ${hostPid} exited; zombie awaiting broker reap (stat=${state})`);
+    } else {
+      log(`session host ${hostPid} SURVIVED SIGKILL (stat=${state}); exiting non-zero`);
+      exitCode = 1;
     }
   }
   broker.kill();
