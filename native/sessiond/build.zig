@@ -147,6 +147,7 @@ pub fn build(b: *std.Build) void {
     // wire schema; the neutral module itself must not depend on either.
     neutral_host_golden_module.addImport("protocol", test_module);
     neutral_host_golden_module.addImport("session_protocol_generated", generated);
+    neutral_host_golden_module.addImport("pty_host", pty_host_module);
     const neutral_host_golden = b.addExecutable(.{
         .name = "sessiond-neutral-host-golden",
         .root_module = neutral_host_golden_module,
@@ -179,6 +180,11 @@ pub fn build(b: *std.Build) void {
         "Run frozen neutral LIST/INSPECT/TERMINATE operation tests",
     );
     neutral_control_plane_step.dependOn(&run_neutral_control_plane_tests.step);
+    // Declared here because the golden module is created before this one: the
+    // golden binds the frozen create handler to the wire schema, which neither
+    // the control plane nor the neutral host may see for itself.
+    neutral_host_golden_module.addImport("neutral_control_plane", neutral_control_plane_module);
+    neutral_host_golden_module.addImport("process_inspector", process_inspector_module);
 
     // A1 contract-freeze-facing real-host discriminators. Keep the named step
     // for focused qualification and include it in the ordinary native suite.

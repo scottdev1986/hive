@@ -1,6 +1,6 @@
 # M1-A1 sessiond qualification
 
-Status: the contract-freeze-facing minimum, PTY/reap qualification, production lifecycle wire, and frozen claim/input/resize projections have landed. Frozen create schemas have also landed. The frozen native LIST/INSPECT/TERMINATE handlers landed in `719c8e36`, wired against the neutral_host registry with real `waitpid` reap evidence, process-tree targets and live list/inspect projections; that commit deliberately left the legacy create/attach paths in place. Native neutral create, the rest of the frozen control plane (`create`, `attach`, `resize` and `subscribe` have no handler in `native/sessiond/src/neutral_control_plane.zig`), attach streaming, visibility renewal, crash/adoption, and bounded replay qualification remain open.
+Status: the contract-freeze-facing minimum, PTY/reap qualification, production lifecycle wire, and frozen claim/input/resize projections have landed. Frozen create schemas have also landed. The frozen native LIST/INSPECT/TERMINATE handlers landed in `719c8e36`, wired against the neutral_host registry with real `waitpid` reap evidence, process-tree targets and live list/inspect projections; that commit deliberately left the legacy create/attach paths in place. Native neutral create has since landed as a frozen handler, launching a real replacement through the existing direct host and replaying the committed document for a repeated idempotency key, with both the request it accepts and the result it returns bound to the frozen wire schemas. Sustained output with bounded retention, broker restart against a durable parent, resumable attachment across a disconnect, and non-interleaving concurrent writes are all qualified live and carry named evidence rows below. The rest of the frozen control plane remains open: `attach`, `resize` and `subscribe` still have no handler in `native/sessiond/src/neutral_control_plane.zig`, and visibility renewal is implemented and tested on the production host but has no neutral projection.
 
 ## Qualified behavior
 
@@ -70,7 +70,7 @@ The sustained-output case carries its own controls, all observed as failures bef
 
 ## Remaining A1 qualification
 
-The next increments must finish native neutral create and the rest of the frozen control plane, then wire attach streaming and visibility renewal before exercising broker/host crash and adoption matrices. All four freeze cases this story owes as named evidence rows now have them: sustained output with bounded retention, broker restart against a durable parent, resumable attachment across a disconnect, and non-interleaving concurrent human and automation writes.
+The next increments must finish the frozen `attach` and `resize` handlers, then `subscribe` against the ordered-event semantics the contract now specifies, and give visibility renewal a neutral projection. All four freeze cases this story owes as named evidence rows now have them: sustained output with bounded retention, broker restart against a durable parent, resumable attachment across a disconnect, and non-interleaving concurrent human and automation writes.
 
 ## RULINGS 2026-07-20
 

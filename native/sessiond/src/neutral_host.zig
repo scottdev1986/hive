@@ -2147,6 +2147,31 @@ pub const CreateResultProof = struct {
     }
 };
 
+/// Create through `host` and return the frozen create-result document for the
+/// outcome the ledger committed.
+///
+/// The record is read here rather than by the caller because a `Record` borrows
+/// registry storage that the next reservation recycles; keeping the borrow
+/// inside this call is what stops a caller from holding it across another
+/// create.
+pub fn createDocument(
+    allocator: std.mem.Allocator,
+    scratch: std.mem.Allocator,
+    registry: *Registry,
+    host: Host,
+    request: CreateRequest,
+) ![]u8 {
+    const created = try host.create(request);
+    const record = registry.get(created.session) orelse return error.SessionNotFound;
+    return createResultDocument(
+        allocator,
+        scratch,
+        created.session,
+        record.createResultJson orelse return error.MissingCreateReplay,
+        created.limits,
+    );
+}
+
 /// Assemble the frozen create-result document for one committed session.
 ///
 /// The outcome is embedded from the COMMITTED LEDGER BYTES, parsed as an opaque

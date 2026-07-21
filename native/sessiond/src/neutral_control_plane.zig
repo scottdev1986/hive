@@ -1198,6 +1198,40 @@ pub const Controller = struct {
     registry: *neutral_host.Registry,
     platform: process_inspector.Platform,
     clock: EvidenceClock,
+    /// Only `create` launches, so a controller assembled purely to inspect,
+    /// list or terminate is not obliged to carry a host it cannot use.
+    host: ?neutral_host.Host = null,
+
+    /// Frozen `create`. The request payload is exactly the neutral create
+    /// request shape, so it parses directly and an unrecognised field is a
+    /// rejection rather than a silently dropped one. The response is the
+    /// document the ledger committed, which is what keeps a first create and
+    /// its replay from differing.
+    pub fn create(self: *Controller, payload: []const u8) ![]u8 {
+        const host = self.host orelse return error.CreateHostUnavailable;
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        var parsed = try std.json.parseFromSlice(
+            neutral_host.CreateRequest,
+            allocator,
+            payload,
+            .{},
+        );
+        defer parsed.deinit();
+        const response = try neutral_host.createDocument(
+            self.allocator,
+            allocator,
+            self.registry,
+            host,
+            parsed.value,
+        );
+        if (response.len > generated.limits.control_json_bytes) {
+            self.allocator.free(response);
+            return error.CreateResponseTooLarge;
+        }
+        return response;
+    }
 
     fn fallbackInspectionValue(
         self: *Controller,
