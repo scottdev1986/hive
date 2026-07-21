@@ -2780,8 +2780,15 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     });
     try std.fs.makeDirAbsolute(root);
     defer std.fs.deleteTreeAbsolute(root) catch {};
+    const consumer_cwd = try std.fs.path.join(allocator, &.{ root, "generic command cwd 工作" });
+    defer allocator.free(consumer_cwd);
     var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
     try root_directory.chmod(0o700);
+    try root_directory.makeDir("generic command cwd 工作");
+    var consumer_directory = try root_directory.openDir("generic command cwd 工作", .{});
+    const cwd_marker = try consumer_directory.createFile("terminal-host-demo.cwd", .{});
+    cwd_marker.close();
+    consumer_directory.close();
     root_directory.close();
 
     var runtime = try Runtime.open(allocator, root);
@@ -2799,9 +2806,9 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
         .key = key,
         .idempotencyKey = "create-idempotency-1",
         .command = .{
-            .executable = "/bin/cat",
-            .arguments = &.{},
-            .workingDirectory = "/tmp",
+            .executable = "/bin/sh",
+            .arguments = &.{ "-c", "test -f terminal-host-demo.cwd && exec /bin/cat" },
+            .workingDirectory = consumer_cwd,
             .completeEnvironment = &.{
                 .{ .name = "PATH", .value = "/usr/bin:/bin" },
                 .{ .name = "TERM", .value = "xterm-256color" },

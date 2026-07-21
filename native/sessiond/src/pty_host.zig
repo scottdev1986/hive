@@ -426,7 +426,11 @@ pub const PtyHost = struct {
                 @ptrCast(std.c.environ);
             _ = c.execve(file, argv_c, env_c);
             // execve failed — write errno to the barrier pipe, then exit.
-            childBarrierFail(exec_pipe[1], .exec_transition, 127);
+            childBarrierFail(
+                exec_pipe[1],
+                if (std.c._errno().* == c.E2BIG) .environment else .exec_transition,
+                127,
+            );
         }
 
         // ── parent ─────────────────────────────────────────────────────────

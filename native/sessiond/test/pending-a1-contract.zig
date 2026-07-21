@@ -11,6 +11,23 @@ const c = @cImport({
     @cInclude("unistd.h");
 });
 
+fn collectUntil(
+    host: *pty_host.PtyHost,
+    output: *std.ArrayList(u8),
+    needle: []const u8,
+) !void {
+    for (0..500) |_| {
+        const chunk = host.readAvailable() catch |err| switch (err) {
+            error.Closed => return error.OutputClosedEarly,
+            else => return err,
+        };
+        try output.appendSlice(std.testing.allocator, chunk.bytes);
+        if (std.mem.indexOf(u8, output.items, needle) != null) return;
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    return error.OutputUnavailable;
+}
+
 test "pending A1/A: replacement starts as foreground session leader on one PTY" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
 
@@ -181,6 +198,33 @@ test "pending A1/B: failed exec reports the real errno and failing layer" {
     }
 }
 
+test "THV1-REAL-B: oversized complete environment reports the environment layer" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    const arg_max = c.sysconf(c._SC_ARG_MAX);
+    try std.testing.expect(arg_max > 0);
+    const environment = try std.testing.allocator.alloc(u8, @as(usize, @intCast(arg_max)) + 4096);
+    defer std.testing.allocator.free(environment);
+    @memset(environment, 'x');
+    @memcpy(environment[0..5], "HUGE=");
+
+    var host = try pty_host.PtyHost.init(std.testing.allocator);
+    defer host.deinit();
+    const outcome = try host.spawn(.{
+        .argv = &[_][]const u8{"/usr/bin/true"},
+        .envp = &[_][]const u8{environment},
+        .geometry = .{ .columns = 80, .rows = 24 },
+    });
+    switch (outcome) {
+        .running => return error.TestUnexpectedResult,
+        .exec_failed => |failure| {
+            try std.testing.expectEqual(pty_host.LaunchFailureLayer.environment, failure.layer);
+            try std.testing.expectEqual(@as(c_int, c.E2BIG), failure.os_code);
+        },
+    }
+    try std.testing.expect(!host.spawned);
+}
+
 test "pending A1/C: spawn accepts an explicit transferable descriptor map" {
     try std.testing.expect(@hasField(pty_host.SpawnSpec, "descriptor_map"));
 }
@@ -309,4 +353,107 @@ test "pending A1/D: resize receipt matches independent TIOCGWINSZ readback" {
         error.StaleResizeRevision,
         host.resize(.{ .columns = 113, .rows = 39 }, 42),
     );
+}
+
+
+test "THV1-REAL-E: XOFF stops and XON resumes real PTY output" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    var host = try pty_host.PtyHost.init(std.testing.allocator);
+    defer host.deinit();
+    const outcome = try host.spawn(.{
+        .argv = &[_][]const u8{"/usr/bin/yes"},
+        .envp = &[_][]const u8{},
+        .terminal_profile = .{ .software_flow_control = true },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    });
+    switch (outcome) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+
+    var observed_output = false;
+    for (0..200) |_| {
+        const chunk = try host.readAvailable();
+        if (chunk.bytes.len > 0) {
+            observed_output = true;
+            break;
+        }
+        std.Thread.sleep(std.time.ns_per_ms);
+    }
+    try std.testing.expect(observed_output);
+    _ = try host.writeAccept(&.{19});
+    try host.writeDrainAll();
+
+    var idle_reads: usize = 0;
+    for (0..2000) |_| {
+        const chunk = try host.readAvailable();
+        if (chunk.bytes.len == 0) {
+            idle_reads += 1;
+            if (idle_reads == 20) break;
+            std.Thread.sleep(std.time.ns_per_ms);
+        } else {
+            idle_reads = 0;
+        }
+    }
+    try std.testing.expectEqual(@as(usize, 20), idle_reads);
+    const stopped_at = host.output_seq;
+    std.Thread.sleep(20 * std.time.ns_per_ms);
+    try std.testing.expectEqual(@as(usize, 0), (try host.readAvailable()).bytes.len);
+    try std.testing.expectEqual(stopped_at, host.output_seq);
+
+    _ = try host.writeAccept(&.{17});
+    try host.writeDrainAll();
+    var resumed = false;
+    for (0..200) |_| {
+        if ((try host.readAvailable()).bytes.len > 0) {
+            resumed = true;
+            break;
+        }
+        std.Thread.sleep(std.time.ns_per_ms);
+    }
+    try std.testing.expect(resumed);
+}
+
+
+test "THV1-REAL-K: canonical EOF raw control-D and hangup remain distinct" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    var canonical = try pty_host.PtyHost.init(std.testing.allocator);
+    defer canonical.deinit();
+    _ = switch (try canonical.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .envp = &[_][]const u8{},
+        .terminal_profile = .{ .input_mode = .canonical, .eof_byte = 4 },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectEqual(@as(u8, 4), try canonical.canonicalEofByte());
+    _ = try canonical.writeAccept(&.{4});
+    try canonical.writeDrainAll();
+    try std.testing.expect((try canonical.waitExit(true)).reaped);
+
+    var literal = try pty_host.PtyHost.init(std.testing.allocator);
+    defer literal.deinit();
+    _ = switch (try literal.spawn(.{
+        .argv = &[_][]const u8{"/bin/cat"},
+        .envp = &[_][]const u8{},
+        .terminal_profile = .{ .input_mode = .literal, .eof_byte = 4 },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    };
+    try std.testing.expectError(error.NotCanonical, literal.canonicalEofByte());
+    _ = try literal.writeAccept("\x04raw-marker\n");
+    try literal.writeDrainAll();
+    var raw_output: std.ArrayList(u8) = .{};
+    defer raw_output.deinit(std.testing.allocator);
+    try collectUntil(&literal, &raw_output, "raw-marker");
+    try std.testing.expect(std.mem.indexOfScalar(u8, raw_output.items, 4) != null);
+    const hangup_order = try literal.hangup();
+    try std.testing.expect(hangup_order > 0);
+    try std.testing.expect((try literal.waitExit(true)).reaped);
 }
