@@ -62,7 +62,11 @@ function seedCache(source: Record<string, string>): { cache: string; stamp: stri
   mkdirSync(join(artifact, "GhosttyKit.xcframework"), { recursive: true });
   writeFileSync(
     join(artifact, "artifact-manifest.json"),
-    JSON.stringify({ schemaVersion: 1, source }, null, 2),
+    JSON.stringify({
+      schemaVersion: 1,
+      source,
+      buildEnvironment: { optimizeMode: "ReleaseFast" },
+    }, null, 2),
   );
   const staged = join(cache, "staged", "GhosttyKit.xcframework");
   mkdirSync(staged, { recursive: true });
