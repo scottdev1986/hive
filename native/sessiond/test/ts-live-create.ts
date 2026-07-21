@@ -26,6 +26,7 @@ import { WorkspaceVisibilityAuthority } from "../../../src/daemon/session-host/w
 import { HiveSpawner } from "../../../src/daemon/spawner-impl";
 import { stopSessiondAgentSession } from "../../../src/daemon/teardown";
 import { SessiondViewerAgentInput } from "../../../src/daemon/session-host/sessiond-agent-input";
+import { SessiondViewerAttachClient } from "../../../src/daemon/session-host/sessiond-viewer-attach";
 import {
   known,
   unknown,
@@ -508,6 +509,63 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             host,
             `hive-daemon:${handshake.instanceId}`,
           );
+
+          // #85 real-engine orphan discard: acquire a human claim on an
+          // attached viewer, then drop the viewer without CLAIM_RELEASE. The
+          // compiled host must accept INPUT_ORPHAN_DISCARD and return the
+          // matching ORPHAN_DISCARDED response through the shared decoder.
+          const orphanViewerId = "sessiond-live-orphan";
+          const orphanGrant = await host.issueAttach(sessiondLocator, {
+            viewerId: orphanViewerId,
+            geometry: sessiondInspection.geometry,
+            operations: ["view", "human-input"],
+          });
+          const orphanViewer = await SessiondViewerAttachClient.attach({
+            locator: sessiondLocator,
+            grant: orphanGrant,
+            geometry: sessiondInspection.geometry,
+            viewerId: orphanViewerId,
+          });
+          await (orphanViewer as unknown as {
+            request(
+              requestType: "CLAIM_ACQUIRE",
+              responseType: "CLAIM_RESULT",
+              flags: number,
+              payload: unknown,
+            ): Promise<unknown>;
+          }).request("CLAIM_ACQUIRE", "CLAIM_RESULT", 0, {
+            schemaVersion: 1,
+            session: {
+              key: sessiondLocator.sessionId,
+              incarnation: String(sessiondLocator.generation),
+            },
+            writer: orphanViewerId,
+            kind: "human",
+            leaseMilliseconds: 60_000,
+            idempotencyKey: "sessiond-live-orphan-claim",
+          });
+          orphanViewer.close();
+
+          let orphanDecline = "";
+          const orphanDeadline = Date.now() + 5_000;
+          while (Date.now() < orphanDeadline) {
+            const declined = await injector.injectIdle(
+              sessiondAgent,
+              "LIVE-PROOF #85: orphan blocks automation",
+              { messageId: "msg-85-orphan-blocked" },
+            );
+            if (declined.outcome === "declined") orphanDecline = declined.reason;
+            if (orphanDecline.includes("HumanOrphaned")) break;
+            await Bun.sleep(20);
+          }
+          expect(orphanDecline).toContain("HumanOrphaned");
+          const discarded = await host.discardInputOrphan(sessiondLocator);
+          expect(discarded).toMatchObject({
+            discarded: true,
+            priorOwnerViewerId: orphanViewerId,
+          });
+          expect(discarded.priorClaimId).not.toBeNull();
+
           const injected = await injector.injectIdle(
             sessiondAgent,
             "LIVE-PROOF #68: real-engine inject",
