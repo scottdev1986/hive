@@ -38,6 +38,12 @@ test("active status reports observed ownership overlap", () => {
   expect(status[1]?.overlaps).toEqual(["maya"]);
 });
 
+test("compact status keeps nullable delivery and graphify fields present", () => {
+  const [status] = compactActiveTeam([agent({ graphifyCalls: null })]);
+  expect(status).toHaveProperty("graphifyCalls", null);
+  expect(status).toHaveProperty("deliveryBlocked", null);
+});
+
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
     id: "agent-maya",
