@@ -924,6 +924,14 @@ pub const HostOperations = struct {
             !std.mem.eql(u8, request.idempotencyKey, operation.idempotencyKey))
             return error.InvalidTerminationRequest;
         const canonical = try canonicalTermination(allocator, request);
+        // A .pending reservation means an earlier attempt reserved this key
+        // and died before committing, so the kill sequence below RE-EXECUTES
+        // against the recorded child identity. That is safe against PID reuse
+        // only because process_inspector re-verifies the recorded start token
+        // before any signal leaves this process (collectTree's root check,
+        // rootEvidence, and revalidate): a reused PID fails the token check,
+        // narrows the verified tree to empty, and is never signaled. The
+        // "pending termination re-execution" test below pins that guard.
         switch (try self.registry.reserveTermination(
             self.session,
             request.idempotencyKey,
@@ -1243,7 +1251,12 @@ pub const Controller = struct {
         defer request.deinit();
         if (request.value.schemaVersion != 1) return error.InvalidInspectRequest;
         const record = self.registry.get(request.value.session) orelse return error.SessionNotFound;
-        return self.callInspect(self.allocator, record, true) catch {
+        return self.callInspect(self.allocator, record, true) catch |err| {
+            // A degraded fallback is evidence that the HOST could not be
+            // reached. Local allocation failure is not host evidence:
+            // propagate it rather than committing a degraded inspection as if
+            // the host were gone.
+            if (err == error.OutOfMemory) return err;
             const fallback = try self.fallbackInspectionValue(
                 allocator,
                 record,
@@ -1334,6 +1347,12 @@ pub const Controller = struct {
         // The host may have committed immediately before its socket vanished.
         // Refresh, then prefer the exact durable replay over reconstruction.
         try self.registry.recover();
+        // A .pending reservation here must NOT re-execute the kill sequence:
+        // the unreachable host may already have signaled the recorded child,
+        // and the recorded PID may since have been reused by an unrelated
+        // process. The controller commits durable evidence instead; the only
+        // re-execution path is the host-side one above, which is guarded by
+        // process_inspector's start-token revalidation before any signal.
         switch (try self.registry.reserveTermination(
             request.session,
             request.idempotencyKey,
@@ -1830,3 +1849,346 @@ test "live neutral session lists inspects and terminates with direct wait replay
         .present, .unobservable => false,
     });
 }
+
+test "pending termination re-execution never signals a start-token-mismatched pid" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/npg-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try neutral_host.Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var create_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("pending-guard-proof", &create_digest, .{});
+    const window: neutral_host.WindowSize = .{
+        .columns = 80,
+        .rows = 24,
+        .widthPixels = 800,
+        .heightPixels = 480,
+    };
+    var real_platform = process_inspector.RealPlatform.init();
+
+    // Session A: the recorded child identity is STALE — the recorded pid now
+    // hosts an unrelated live process whose start token does not match the
+    // record (PID reuse after the original child died mid-termination).
+    const reserved_a = switch (try registry.reserve(
+        "foreign://neutral/pending-guard-a",
+        "create-pending-a",
+        create_digest,
+        window,
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedCreateReplay,
+    };
+    const session_a = reserved_a.session;
+    // A Record borrows registry storage that register recycles, so the
+    // session identity used across that mutation must be copied out first.
+    const session_a_key = try allocator.dupe(u8, session_a.key);
+    defer allocator.free(session_a_key);
+    const session_a_incarnation = try allocator.dupe(u8, session_a.incarnation);
+    defer allocator.free(session_a_incarnation);
+    const stable_a: neutral_host.SessionRef = .{
+        .key = session_a_key,
+        .incarnation = session_a_incarnation,
+    };
+    const root_a = try spawnProofProcessTree();
+    defer cleanupProofProcessTree(root_a);
+    _ = try registry.register(session_a, .{
+        .host = .{ .processId = c.getpid(), .startToken = "host-token" },
+        // Fabricated but syntactically valid: parseStartToken accepts it and
+        // the live process at root_a can never match it.
+        .child = .{ .processId = root_a, .startToken = "1:1" },
+        .childSessionId = root_a,
+        .childProcessGroupId = root_a,
+        .foregroundProcessGroupId = root_a,
+        .terminalIdentity = "pending-guard-without-terminal",
+        .sessionLeader = true,
+        .controllingTerminal = false,
+        .standardStreamsShareTerminal = false,
+        .initialProfileAppliedBeforeExec = false,
+        .initialWindowAppliedBeforeExec = false,
+        .window = window,
+    });
+    const request_a: TerminateRequest = .{
+        .schemaVersion = 1,
+        .session = stable_a,
+        .mode = .immediate,
+        .target = .@"process-tree",
+        .deadline = "2099-01-01T00:00:00.000Z",
+        .idempotencyKey = "terminate-pending-a",
+    };
+    const canonical_a = try canonicalTermination(allocator, request_a);
+    defer allocator.free(canonical_a.bytes);
+    // Simulate the interrupted first attempt: the key is reserved but never
+    // committed, so the retry below takes the .pending branch and re-executes
+    // the full kill sequence against the recorded identity.
+    switch (try registry.reserveTermination(
+        stable_a,
+        request_a.idempotencyKey,
+        canonical_a.digest,
+    )) {
+        .reserved => {},
+        .pending, .replay => return error.UnexpectedTerminationReservation,
+    }
+    var evidence_a: ProofEvidence = .{ .foregroundProcessGroupId = root_a };
+    var operations_a = try HostOperations.init(
+        allocator,
+        &registry,
+        stable_a,
+        real_platform.platform(),
+        evidence_a.provider(),
+        EvidenceClock.system(),
+    );
+    defer operations_a.deinit();
+    const response_a = try operations_a.handler().call(.{
+        .session = stable_a,
+        .operation = .terminate,
+        .idempotencyKey = request_a.idempotencyKey,
+        .payload = canonical_a.bytes,
+    });
+    try testing.expect(response_a.accepted);
+    // The recorded identity is treated as gone (terminated from the ledger's
+    // perspective)...
+    var parsed_a = try std.json.parseFromSlice(
+        WireTerminationPayload,
+        allocator,
+        response_a.payload,
+        .{},
+    );
+    defer parsed_a.deinit();
+    try testing.expectEqual(
+        @as(@FieldType(WireTerminationResult, "state"), .terminated),
+        parsed_a.value.state,
+    );
+    // ...but the token guard is the whole safety story for that re-execution:
+    // the unrelated process now hosting the recorded pid received no signal.
+    try testing.expect(process_inspector.observeProcessPresent(root_a) != null);
+
+    // Positive control: with a matching start token the SAME pending
+    // re-execution does signal the tree — the guard is selective, not a
+    // blanket refusal to terminate on retry.
+    const reserved_b = switch (try registry.reserve(
+        "foreign://neutral/pending-guard-b",
+        "create-pending-b",
+        create_digest,
+        window,
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedCreateReplay,
+    };
+    const session_b = reserved_b.session;
+    const session_b_key = try allocator.dupe(u8, session_b.key);
+    defer allocator.free(session_b_key);
+    const session_b_incarnation = try allocator.dupe(u8, session_b.incarnation);
+    defer allocator.free(session_b_incarnation);
+    const stable_b: neutral_host.SessionRef = .{
+        .key = session_b_key,
+        .incarnation = session_b_incarnation,
+    };
+    const root_b = try spawnProofProcessTree();
+    defer cleanupProofProcessTree(root_b);
+    const identity_b = process_inspector.observeProcessPresent(root_b) orelse
+        return error.ProofChildUnobservable;
+    var token_b_storage: [64]u8 = undefined;
+    const token_b = try identity_b.start_token.format(&token_b_storage);
+    _ = try registry.register(session_b, .{
+        .host = .{ .processId = c.getpid(), .startToken = "host-token" },
+        .child = .{ .processId = root_b, .startToken = token_b },
+        .childSessionId = root_b,
+        .childProcessGroupId = root_b,
+        .foregroundProcessGroupId = root_b,
+        .terminalIdentity = "pending-guard-without-terminal",
+        .sessionLeader = true,
+        .controllingTerminal = false,
+        .standardStreamsShareTerminal = false,
+        .initialProfileAppliedBeforeExec = false,
+        .initialWindowAppliedBeforeExec = false,
+        .window = window,
+    });
+    const request_b: TerminateRequest = .{
+        .schemaVersion = 1,
+        .session = stable_b,
+        .mode = .immediate,
+        .target = .@"process-tree",
+        .deadline = "2099-01-01T00:00:00.000Z",
+        .idempotencyKey = "terminate-pending-b",
+    };
+    const canonical_b = try canonicalTermination(allocator, request_b);
+    defer allocator.free(canonical_b.bytes);
+    switch (try registry.reserveTermination(
+        stable_b,
+        request_b.idempotencyKey,
+        canonical_b.digest,
+    )) {
+        .reserved => {},
+        .pending, .replay => return error.UnexpectedTerminationReservation,
+    }
+    var evidence_b: ProofEvidence = .{ .foregroundProcessGroupId = root_b };
+    var operations_b = try HostOperations.init(
+        allocator,
+        &registry,
+        stable_b,
+        real_platform.platform(),
+        evidence_b.provider(),
+        EvidenceClock.system(),
+    );
+    defer operations_b.deinit();
+    const response_b = try operations_b.handler().call(.{
+        .session = stable_b,
+        .operation = .terminate,
+        .idempotencyKey = request_b.idempotencyKey,
+        .payload = canonical_b.bytes,
+    });
+    try testing.expect(response_b.accepted);
+    try testing.expect(process_inspector.observeProcessPresent(root_b) == null);
+}
+
+test "controller inspect degrades when the host is unreachable but propagates allocation failure" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/noom-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try neutral_host.Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try neutral_host.Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var create_digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("inspect-oom-proof", &create_digest, .{});
+    const reserved = switch (try registry.reserve(
+        "foreign://neutral/inspect-oom",
+        "create-inspect-oom",
+        create_digest,
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedCreateReplay,
+    };
+    const session = reserved.session;
+    // A Record borrows registry storage that register recycles, so the
+    // session identity used across that mutation must be copied out first.
+    const session_key = try allocator.dupe(u8, session.key);
+    defer allocator.free(session_key);
+    const session_incarnation = try allocator.dupe(u8, session.incarnation);
+    defer allocator.free(session_incarnation);
+    const stable_session: neutral_host.SessionRef = .{
+        .key = session_key,
+        .incarnation = session_incarnation,
+    };
+    // A host is registered but no endpoint is listening, so the live host
+    // call fails with genuine host-unavailability evidence.
+    _ = try registry.register(session, .{
+        .host = .{ .processId = 11, .startToken = "host-start" },
+        .child = .{ .processId = 12, .startToken = "child-start" },
+        .childSessionId = 12,
+        .childProcessGroupId = 12,
+        .foregroundProcessGroupId = 12,
+        .terminalIdentity = "/dev/ttys001",
+        .sessionLeader = true,
+        .controllingTerminal = true,
+        .standardStreamsShareTerminal = true,
+        .initialProfileAppliedBeforeExec = true,
+        .initialWindowAppliedBeforeExec = true,
+        .window = reserved.window,
+    });
+    const request_json = try std.json.Stringify.valueAlloc(
+        allocator,
+        InspectRequest{ .schemaVersion = 1, .session = stable_session },
+        .{},
+    );
+    defer allocator.free(request_json);
+    var real_platform = process_inspector.RealPlatform.init();
+
+    // Host unreachable: the controller degrades to durable record evidence
+    // carrying the unavailability diagnostic.
+    var controller: Controller = .{
+        .allocator = allocator,
+        .registry = &registry,
+        .platform = real_platform.platform(),
+        .clock = EvidenceClock.system(),
+    };
+    const degraded = try controller.inspect(request_json);
+    defer allocator.free(degraded);
+    try testing.expect(
+        std.mem.indexOf(u8, degraded, "neutral-host-control-unavailable") != null,
+    );
+
+    // Local allocation failure is not host unavailability: it must surface as
+    // OutOfMemory instead of degrading into the fallback above. The failed
+    // allocation is the session-identity copy the connection attempt makes
+    // (registry.connect allocates from the registry's allocator) before any
+    // socket I/O, while the controller's own allocator — the one the fallback
+    // would use — stays healthy. Before the fix this same call returned the
+    // degraded response.
+    var failing: FailOnceAllocator = .{ .backing = allocator, .countdown = 0 };
+    registry.allocator = failing.allocator();
+    var failing_controller: Controller = .{
+        .allocator = allocator,
+        .registry = &registry,
+        .platform = real_platform.platform(),
+        .clock = EvidenceClock.system(),
+    };
+    try testing.expectError(error.OutOfMemory, failing_controller.inspect(request_json));
+}
+
+/// Fails exactly ONE allocation: the first `succeed` allocations succeed, the
+/// next one returns null, and every allocation after that succeeds again.
+/// std.testing.FailingAllocator fails every allocation from its index onward,
+/// which cannot express "the host call fails but the fallback has memory".
+const FailOnceAllocator = struct {
+    backing: std.mem.Allocator,
+    countdown: usize,
+
+    fn allocator(self: *FailOnceAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(context: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *FailOnceAllocator = @ptrCast(@alignCast(context));
+        if (self.countdown == 0) return null;
+        self.countdown -= 1;
+        return self.backing.rawAlloc(len, alignment, ret_addr);
+    }
+
+    fn resize(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        const self: *FailOnceAllocator = @ptrCast(@alignCast(context));
+        return self.backing.rawResize(memory, alignment, new_len, ret_addr);
+    }
+
+    fn remap(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        const self: *FailOnceAllocator = @ptrCast(@alignCast(context));
+        return self.backing.rawRemap(memory, alignment, new_len, ret_addr);
+    }
+
+    fn free(context: *anyopaque, memory: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const self: *FailOnceAllocator = @ptrCast(@alignCast(context));
+        self.backing.rawFree(memory, alignment, ret_addr);
+    }
+};
+

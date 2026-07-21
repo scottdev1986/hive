@@ -1279,9 +1279,17 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
     record.visibility.open_terminal_revision = 7;
     const renewed = try renewedPayloadForTest(std.testing.allocator, record, 8);
     defer std.testing.allocator.free(renewed);
+    // renewVisibility kernel-verifies workspacePid/workspaceStartToken, so the
+    // fixture must claim the test process's real start token, not a forgery.
+    const workspace_observed = try broker.inspectProcess(c.getpid());
+    var workspace_token_storage: [64]u8 = undefined;
+    const workspace_token = try broker.formatStartToken(
+        workspace_observed.start_token,
+        &workspace_token_storage,
+    );
     var host = fixtureHost(record);
     host.renewal_response = renewed;
-    host.expected_workspace_start_token = "workspace-token";
+    host.expected_workspace_start_token = workspace_token;
     var registry: broker.Registry = .{};
     try std.testing.expect(registry.registerCreatedHost(record, host.control()) == null);
     var launcher: LaunchDouble = .{
@@ -1305,7 +1313,7 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
     const valid = try visibilityRenewalForTest(
         std.testing.allocator,
         record,
-        "workspace-token",
+        workspace_token,
         8,
     );
     defer std.testing.allocator.free(valid);
@@ -1333,7 +1341,7 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
     const stale = try visibilityRenewalForTest(
         std.testing.allocator,
         record,
-        "workspace-token",
+        workspace_token,
         6,
     );
     defer std.testing.allocator.free(stale);
@@ -1371,7 +1379,9 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
         broker.protocol.WireError.unauthenticated,
         unauthenticated.failure.code,
     );
-    try std.testing.expectEqual(@as(usize, 2), host.renewal_calls);
+    // The broker's kernel readback rejects the forged token before the host
+    // is consulted, so the host never sees this renewal.
+    try std.testing.expectEqual(@as(usize, 1), host.renewal_calls);
     try std.testing.expectEqual(@as(u64, 8), entry.record.visibility.open_terminal_revision);
     try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
 
@@ -1384,7 +1394,7 @@ test "production VISIBILITY_RENEW forwards exact bytes and mutates only after ho
         renewed_expiry,
     );
     try std.testing.expectEqual(broker.protocol.WireError.not_found, expired.failure.code);
-    try std.testing.expectEqual(@as(usize, 2), host.renewal_calls);
+    try std.testing.expectEqual(@as(usize, 1), host.renewal_calls);
     try std.testing.expectEqual(renewed_expiry, entry.record.visibility.expires_mono_ns);
 }
 

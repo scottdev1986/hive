@@ -35,7 +35,7 @@ assert_equal() {
 assert_equal schemaVersion 1
 assert_equal ghostty.commit 73534c4680a809398b396c94ac7f12fcccb7963d
 assert_equal ghostty.upstreamTree 0aeaa44eda9efaf41523c3c0d4f6851eb81e536e
-assert_equal ghostty.patchedTree d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb
+assert_equal ghostty.patchedTree 130bc9e74e4aed287d8778914b5ef077fcdf8fc4
 assert_equal ghostty.declaredVersion 1.3.2-dev
 assert_equal zig.version 0.15.2
 assert_equal apple.xcode 26.6

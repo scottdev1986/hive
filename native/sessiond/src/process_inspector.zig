@@ -3,8 +3,10 @@
 //! Snapshot a verified root + descendants (proc_listchildpids / proc_pidinfo)
 //! until two consecutive passes match or a 250 ms deadline expires. Record
 //! PID / start-token / parent / pgid / session / executable. Graceful and
-//! immediate termination signal deepest-first with positive wait/absence
-//! readback. NEVER report terminated without wait/absence evidence.
+//! immediate termination signal deepest-first, re-validating each start token
+//! at signal time (snapshot tokens are up to 250 ms stale; PID reuse in that
+//! window must never be signalled), with positive wait/absence readback.
+//! NEVER report terminated without wait/absence evidence.
 //!
 //! Authority: docs/design/terminal-stack-transition.html §21.
 //! Timeouts from the doc only: 250 ms inspection, TERM-after-2s, KILL-after-2s.
@@ -30,6 +32,11 @@ pub const graceful_term_wait_ns: u64 = 2 * std.time.ns_per_s;
 pub const graceful_kill_wait_ns: u64 = 2 * std.time.ns_per_s;
 /// Immediate-stop settle bound (positive readback window after KILL).
 pub const immediate_kill_wait_ns: u64 = 2 * std.time.ns_per_s;
+/// Pass-count bound for the snapshot loop. If the monotonic clock is stuck
+/// (RealPlatform.monoNow returns 0 forever when Instant.now fails), the 250 ms
+/// deadline can never fire — bound total passes so inspection fails closed
+/// with UNKNOWN instead of looping forever (§18 fail closed).
+pub const snapshot_max_passes: u32 = 250;
 
 pub const StartToken = struct {
     seconds: u64,
@@ -49,7 +56,13 @@ pub const ProcessIdentity = struct {
     start_token: StartToken,
     parent: i32,
     pgid: i32,
+    /// Session id. Meaningful ONLY when session_known is true: getsid()
+    /// failure is "unknown", and unknown must never be stored as a sentinel
+    /// (-1) that session_members kill targeting could mistake for a real id.
     session: i32,
+    /// False when getsid() failed at observation time — `session` is unknown,
+    /// not a real id. Kill targeting requires a known session (§21).
+    session_known: bool,
     executable: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined,
     executable_len: usize = 0,
     /// Depth from the verified root (0 = root). Used for deepest-first order.
@@ -106,7 +119,7 @@ pub const TerminationTarget = union(enum) {
         return switch (self) {
             .process_tree => true,
             .foreground_group => |process_group| process.pgid == process_group,
-            .session_members => |session| process.session == session,
+            .session_members => |session| process.session_known and process.session == session,
         };
     }
 };
@@ -263,14 +276,20 @@ pub fn observeProcess(pid: i32) ObserveResult {
     std.c._errno().* = 0;
     const info_len = c.proc_pidinfo(pid, c.PROC_PIDTBSDINFO, 0, &info, @sizeOf(c.struct_proc_bsdinfo));
     if (info_len != @sizeOf(c.struct_proc_bsdinfo)) {
-        const e: std.posix.E = @enumFromInt(std.c._errno().*);
+        // Compare the raw errno int: @enumFromInt on an errno not declared in
+        // std.posix.E is illegal behavior in ReleaseFast.
+        const raw_errno = std.c._errno().*;
         // ESRCH: no such process.
-        if (e == .SRCH) return .absent;
+        if (raw_errno == @intFromEnum(std.posix.E.SRCH)) return .absent;
         // Cross-uid / CHECK_SAME_USER → EPERM: alive-but-unreadable → UNKNOWN.
         // Any other shortfall is also fail-closed unobservable (§18).
         return .unobservable;
     }
 
+    // getsid() failure returns -1: that is "unknown", never a real session id.
+    // Record it behind session_known so session_members kill targeting can
+    // never match the sentinel (§21 fail closed).
+    const sid = c.getsid(pid);
     var result: ProcessIdentity = .{
         .pid = pid,
         .start_token = .{
@@ -279,7 +298,8 @@ pub fn observeProcess(pid: i32) ObserveResult {
         },
         .parent = @intCast(info.pbi_ppid),
         .pgid = @intCast(info.pbi_pgid),
-        .session = c.getsid(pid),
+        .session = if (sid >= 0) sid else -1,
+        .session_known = sid >= 0,
     };
     const path_len = c.proc_pidpath(pid, &result.executable, result.executable.len);
     if (path_len > 0) {
@@ -300,19 +320,38 @@ pub fn observeProcessPresent(pid: i32) ?ProcessIdentity {
     };
 }
 
+/// Bound on child-pid enumeration growth (entries). A parent with more direct
+/// children than this fails closed (InspectionFailed → incomplete tree walk)
+/// rather than silently truncating the walk.
+pub const max_child_pids: usize = 1 << 20;
+
 fn listChildPids(allocator: std.mem.Allocator, pid: i32) ![]i32 {
     // macOS libproc: proc_listchildpids writes pid_t entries and returns the
     // NUMBER OF PIDS written (measured on Darwin 24 / macOS 14+). Treating the
     // return as a byte count silently drops every tree (divTrunc(1, 4) == 0).
     // The nested-tree unit test is the positive control for that bug.
-    var buf: [4096]c.pid_t = undefined;
-    const got = c.proc_listchildpids(pid, &buf, @sizeOf(@TypeOf(buf)));
-    if (got < 0) return error.InspectionFailed;
-    const n: usize = @intCast(got);
-    if (n > buf.len) return error.InspectionFailed;
-    const out = try allocator.alloc(i32, n);
-    for (buf[0..n], 0..) |child, i| out[i] = @intCast(child);
-    return out;
+    var stack_buf: [4096]c.pid_t = undefined;
+    var buf: []c.pid_t = &stack_buf;
+    var heap_buf: ?[]c.pid_t = null;
+    defer if (heap_buf) |owned| allocator.free(owned);
+    while (true) {
+        const got = c.proc_listchildpids(pid, buf.ptr, @intCast(buf.len * @sizeOf(c.pid_t)));
+        if (got < 0) return error.InspectionFailed;
+        const n: usize = @intCast(got);
+        if (n > buf.len) return error.InspectionFailed;
+        if (n < buf.len) {
+            const out = try allocator.alloc(i32, n);
+            for (buf[0..n], 0..) |child, i| out[i] = @intCast(child);
+            return out;
+        }
+        // An exactly-full buffer is indistinguishable from silent truncation:
+        // grow and re-enumerate so a truncated walk can never miss children
+        // and yield a false .terminated verdict (§21 fail closed).
+        const grown = std.math.mul(usize, buf.len, 2) catch return error.InspectionFailed;
+        if (grown > max_child_pids) return error.InspectionFailed;
+        heap_buf = try allocator.alloc(c.pid_t, grown);
+        buf = heap_buf.?;
+    }
 }
 
 fn identityLess(a: ProcessIdentity, b: ProcessIdentity) bool {
@@ -340,7 +379,8 @@ fn identitiesMatch(a: []const ProcessIdentity, b: []const ProcessIdentity) bool 
     if (a.len != b.len) return false;
     for (a, b) |left, right| {
         if (!left.sameIdentity(right)) return false;
-        if (left.parent != right.parent or left.pgid != right.pgid or left.session != right.session)
+        if (left.parent != right.parent or left.pgid != right.pgid or left.session != right.session or
+            left.session_known != right.session_known)
             return false;
         if (!std.mem.eql(u8, left.executablePath(), right.executablePath())) return false;
     }
@@ -483,8 +523,10 @@ fn snapshotTreeBefore(
     var last_root_missing = false;
     // Previous pass was clean root_missing (for stable-absence detection; N1).
     var prev_clean_absent = false;
+    var passes: u32 = 0;
 
     while (true) {
+        passes += 1;
         const pass = collectTree(platform, allocator, root_pid, expected_root_token) catch return error.InspectionFailed;
         last_incomplete = pass.incomplete;
         last_root_missing = pass.root_missing;
@@ -524,6 +566,9 @@ fn snapshotTreeBefore(
         prev = pass.members;
 
         if (platform.monoNow() >= deadline) break;
+        // Stuck-clock guard: with a broken monotonic clock the deadline above
+        // never fires; fail closed to UNKNOWN after a bounded number of passes.
+        if (passes >= snapshot_max_passes) break;
         // Brief yield so the tree can settle; still bounded by the deadline.
         platform.sleep(5 * std.time.ns_per_ms);
     }
@@ -585,6 +630,25 @@ fn revalidate(platform: Platform, expected: ProcessIdentity) RevalidateOutcome {
             return .{ .fate = .survivor, .reason = "still-alive-after-stop-policy" };
         },
     };
+}
+
+/// Re-validate the start token immediately before signalling (§21 TOCTOU):
+/// the snapshot verified tokens up to 250 ms ago, and a pid that exited and
+/// was reused in that window now belongs to an unrelated same-uid process
+/// that must NOT be signalled. Re-observation failure or a token mismatch
+/// skips the signal — fail safe; the member's fate is still decided by the
+/// post-signal wait/absence readback (never report terminated without it).
+fn signalVerified(platform: Platform, member: ProcessIdentity, sig: i32) bool {
+    switch (platform.observe(member.pid)) {
+        .present => |obs| {
+            // PID reuse: the original identity is gone — never signal the new one.
+            if (!obs.start_token.eql(member.start_token)) return false;
+        },
+        // Absent: nothing to signal (positive absence). Unobservable: cannot
+        // rule out reuse — fail closed rather than signal an unverified pid.
+        .absent, .unobservable => return false,
+    }
+    return platform.kill(member.pid, sig);
 }
 
 /// Signal every known verified member deepest-first (per-pid, NOT process-group
@@ -702,14 +766,14 @@ fn terminateTreeBefore(
             // TERM each verified member deepest-first, wait 2s, then KILL survivors.
             if (!deadlineReached(platform, operation_deadline_ns)) {
                 for (ordered) |m| {
-                    _ = platform.kill(m.pid, c.SIGTERM);
+                    _ = signalVerified(platform, m, c.SIGTERM);
                 }
             }
             sleepBeforeDeadline(platform, graceful_term_wait_ns, operation_deadline_ns);
             if (!deadlineReached(platform, operation_deadline_ns)) {
                 for (ordered) |m| {
                     if (revalidate(platform, m).fate == .survivor) {
-                        _ = platform.kill(m.pid, c.SIGKILL);
+                        _ = signalVerified(platform, m, c.SIGKILL);
                     }
                 }
             }
@@ -718,7 +782,7 @@ fn terminateTreeBefore(
         .immediate => {
             if (!deadlineReached(platform, operation_deadline_ns)) {
                 for (ordered) |m| {
-                    _ = platform.kill(m.pid, c.SIGKILL);
+                    _ = signalVerified(platform, m, c.SIGKILL);
                 }
             }
             sleepBeforeDeadline(platform, immediate_kill_wait_ns, operation_deadline_ns);
@@ -1193,6 +1257,7 @@ test "PID reuse yields unknown not terminated for the new process" {
             .parent = 1,
             .pgid = 4242,
             .session = 4242,
+            .session_known = true,
             .executable_len = 0,
             .depth = 0,
         },
@@ -1272,6 +1337,7 @@ test "B1 positive control: EPERM unobservable is unknown not terminated" {
             .parent = 1,
             .pgid = 7777,
             .session = 7777,
+            .session_known = true,
             .executable_len = 0,
             .depth = 0,
         },
@@ -1346,6 +1412,7 @@ test "termination deadline bounds the settle wait and preserves survivors" {
         .parent = 1,
         .pgid = 8080,
         .session = 8080,
+        .session_known = true,
     } };
     const deadline = 10 * std.time.ns_per_ms;
     var result = try terminateTreeUntil(
@@ -1389,6 +1456,7 @@ test "foreground target signals only matching members inside the verified tree" 
                 .parent = parent,
                 .pgid = pgid,
                 .session = 10,
+                .session_known = true,
                 .executable = @splat(0),
             };
         }
@@ -1571,6 +1639,7 @@ test "N1 positive control: changing-but-complete tree is unknown not terminated"
             .parent = 1,
             .pgid = 5000,
             .session = 5000,
+            .session_known = true,
             .depth = 0,
         },
         .child_a = .{
@@ -1579,6 +1648,7 @@ test "N1 positive control: changing-but-complete tree is unknown not terminated"
             .parent = 5000,
             .pgid = 5000,
             .session = 5000,
+            .session_known = true,
             .depth = 1,
         },
         .child_b = .{
@@ -1587,6 +1657,7 @@ test "N1 positive control: changing-but-complete tree is unknown not terminated"
             .parent = 5000,
             .pgid = 5000,
             .session = 5000,
+            .session_known = true,
             .depth = 1,
         },
     };
@@ -1622,4 +1693,198 @@ test "inspection constants match §21" {
     try testing.expectEqual(@as(u64, 250 * std.time.ns_per_ms), inspection_deadline_ns);
     try testing.expectEqual(@as(u64, 2 * std.time.ns_per_s), graceful_term_wait_ns);
     try testing.expectEqual(@as(u64, 2 * std.time.ns_per_s), graceful_kill_wait_ns);
+}
+
+// TOCTOU POSITIVE CONTROL: a pid reused between snapshot and signal must NOT
+// be signalled. The snapshot's start token is up to 250 ms stale at kill time;
+// unfixed kill loops signal the bare snapshot pid and would deliver SIGKILL to
+// the unrelated same-uid process now holding it (sim.signals would be 1).
+test "signal-time token revalidation skips a reused pid (TOCTOU)" {
+    const ReuseAtSignal = struct {
+        original: ProcessIdentity,
+        observations: u32 = 0,
+        now: u64 = 0,
+        signals: usize = 0,
+
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+        fn monoNow(ctx: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.now += 1; // stay well under the 250 ms inspection deadline
+            return self.now;
+        }
+        fn sleep(_: *anyopaque, _: u64) void {}
+        fn kill(ctx: *anyopaque, _: i32, _: i32) bool {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            self.signals += 1;
+            return true;
+        }
+        fn observe(ctx: *anyopaque, pid: i32) ObserveResult {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (pid != self.original.pid) return .absent;
+            self.observations += 1;
+            var id = self.original;
+            // The first two observations are the two matching snapshot passes;
+            // afterwards the pid has been reused by an unrelated process.
+            if (self.observations > 2) id.start_token.seconds += 1000;
+            return .{ .present = id };
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            return false;
+        }
+        fn listChildren(_: *anyopaque, allocator: std.mem.Allocator, _: i32) ![]i32 {
+            return try allocator.alloc(i32, 0);
+        }
+    };
+
+    var sim = ReuseAtSignal{
+        .original = .{
+            .pid = 6363,
+            .start_token = .{ .seconds = 5, .microseconds = 6 },
+            .parent = 1,
+            .pgid = 6363,
+            .session = 6363,
+            .session_known = true,
+        },
+    };
+
+    var result = try terminateTree(
+        sim.platform(),
+        testing.allocator,
+        6363,
+        sim.original.start_token,
+        .immediate,
+    );
+    defer result.deinit(testing.allocator);
+
+    // THE ASSERTION THAT FAILS AGAINST UNFIXED CODE: the reused pid must never
+    // be signalled.
+    try testing.expectEqual(@as(usize, 0), sim.signals);
+    try testing.expect(result.members.len >= 1);
+    try testing.expectEqual(MemberFate.unknown, result.members[0].fate);
+    try testing.expectEqualStrings("pid-reuse-or-unobservable", result.members[0].reason);
+    try testing.expectEqual(TerminationState.unknown, result.state);
+}
+
+// Stuck-clock positive control: RealPlatform.monoNow returns 0 forever when
+// Instant.now fails, so the 250 ms deadline can never fire. The pass cap must
+// bound the loop and fail closed UNKNOWN — unfixed code hangs here forever.
+test "stuck monotonic clock: snapshot bounded by pass cap, fails closed unknown" {
+    const StuckClock = struct {
+        root: ProcessIdentity,
+        child_a: ProcessIdentity,
+        child_b: ProcessIdentity,
+        lists: u32 = 0,
+
+        fn platform(self: *@This()) Platform {
+            return .{
+                .context = self,
+                .monoNowFn = monoNow,
+                .sleepFn = sleep,
+                .killFn = kill,
+                .observeFn = observe,
+                .waitNoHangFn = waitNoHang,
+                .listChildrenFn = listChildren,
+            };
+        }
+        fn monoNow(_: *anyopaque) u64 {
+            return 0; // broken clock: deadline never fires
+        }
+        fn sleep(_: *anyopaque, _: u64) void {}
+        fn kill(_: *anyopaque, _: i32, _: i32) bool {
+            return true;
+        }
+        fn observe(ctx: *anyopaque, pid: i32) ObserveResult {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (pid == self.root.pid) return .{ .present = self.root };
+            if (pid == self.child_a.pid) return .{ .present = self.child_a };
+            if (pid == self.child_b.pid) return .{ .present = self.child_b };
+            return .absent;
+        }
+        fn waitNoHang(_: *anyopaque, _: i32) bool {
+            return false;
+        }
+        fn listChildren(ctx: *anyopaque, allocator: std.mem.Allocator, pid: i32) ![]i32 {
+            const self: *@This() = @ptrCast(@alignCast(ctx));
+            if (pid != self.root.pid) return try allocator.alloc(i32, 0);
+            // Alternate membership each pass so the tree never stabilizes.
+            self.lists += 1;
+            const out = try allocator.alloc(i32, 1);
+            out[0] = if (self.lists % 2 == 1) self.child_a.pid else self.child_b.pid;
+            return out;
+        }
+    };
+
+    var sim = StuckClock{
+        .root = .{
+            .pid = 6000,
+            .start_token = .{ .seconds = 1, .microseconds = 0 },
+            .parent = 1,
+            .pgid = 6000,
+            .session = 6000,
+            .session_known = true,
+        },
+        .child_a = .{
+            .pid = 6001,
+            .start_token = .{ .seconds = 2, .microseconds = 0 },
+            .parent = 6000,
+            .pgid = 6000,
+            .session = 6000,
+            .session_known = true,
+        },
+        .child_b = .{
+            .pid = 6002,
+            .start_token = .{ .seconds = 3, .microseconds = 0 },
+            .parent = 6000,
+            .pgid = 6000,
+            .session = 6000,
+            .session_known = true,
+        },
+    };
+
+    var snap = try snapshotTree(
+        sim.platform(),
+        testing.allocator,
+        6000,
+        sim.root.start_token,
+    );
+    defer snap.deinit(testing.allocator);
+
+    try testing.expectEqual(SnapshotStatus.unknown, snap.status);
+    try testing.expect(sim.lists <= snapshot_max_passes);
+}
+
+// getsid() failure is UNKNOWN, never a real session id: session_members kill
+// targeting must not match an unknown session — not even against a -1 target.
+test "session target never matches an unknown session id" {
+    const unknown_session: ProcessIdentity = .{
+        .pid = 1234,
+        .start_token = .{ .seconds = 1, .microseconds = 1 },
+        .parent = 1,
+        .pgid = 1234,
+        .session = -1,
+        .session_known = false,
+    };
+    const known_session: ProcessIdentity = .{
+        .pid = 1235,
+        .start_token = .{ .seconds = 1, .microseconds = 2 },
+        .parent = 1,
+        .pgid = 1235,
+        .session = 42,
+        .session_known = true,
+    };
+    const target: TerminationTarget = .{ .session_members = 42 };
+    try testing.expect(!target.includes(unknown_session));
+    try testing.expect(target.includes(known_session));
+    const minus_one: TerminationTarget = .{ .session_members = -1 };
+    try testing.expect(!minus_one.includes(unknown_session));
 }

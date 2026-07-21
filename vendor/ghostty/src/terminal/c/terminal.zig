@@ -421,7 +421,11 @@ pub fn checkpoint_export(
     out_length.* = 0;
     const wrapper = terminal_ orelse return .invalid_value;
     const alloc_fn = alloc_fn_ orelse return .invalid_value;
-    if (!wrapper.checkpoint_valid) return .out_of_memory;
+    // A poisoned checkpoint (an earlier feed could not record its pending
+    // tail) has no exportable state. That is a state error, not an
+    // allocation failure: callers mapping .out_of_memory to retry/abort
+    // policy must not see it here.
+    if (!wrapper.checkpoint_valid) return .no_value;
 
     const alloc = wrapper.terminal.gpa();
     const payload = hive_checkpoint.encode(
@@ -3593,6 +3597,47 @@ test "checkpoint C ABI uses caller allocator and rejects malformed payload" {
         source.?.terminal.getTitle().?,
         restored.?.terminal.getTitle().?,
     );
+}
+
+test "checkpoint export of a poisoned checkpoint reports no value" {
+    // Regression: a poisoned checkpoint (checkpoint_valid == false after
+    // an allocation failure poisoned the pending tail) used to report
+    // .out_of_memory, conflating a state error with an allocation failure.
+    const AllocState = struct {
+        memory: ?[]u8 = null,
+
+        fn alloc(
+            context: ?*anyopaque,
+            length: usize,
+            alignment: usize,
+        ) callconv(lib.calling_conv) ?*anyopaque {
+            _ = alignment;
+            const self: *@This() = @ptrCast(@alignCast(context orelse return null));
+            self.memory = testing.allocator.alloc(u8, length) catch return null;
+            return self.memory.?.ptr;
+        }
+    };
+
+    var t: Terminal = null;
+    try testing.expectEqual(Result.success, new(
+        &lib.alloc.test_allocator,
+        &t,
+        .{ .cols = 20, .rows = 5, .max_scrollback = 0 },
+    ));
+    defer free(t);
+
+    t.?.checkpoint_valid = false;
+    var payload: ?[*]u8 = null;
+    var length: usize = 0;
+    var state: AllocState = .{};
+    try testing.expectEqual(
+        Result.no_value,
+        checkpoint_export(t, &AllocState.alloc, &state, &payload, &length),
+    );
+    try testing.expectEqual(@as(?[*]u8, null), payload);
+    try testing.expectEqual(@as(usize, 0), length);
+    // The state check precedes any allocation.
+    try testing.expectEqual(@as(?[]u8, null), state.memory);
 }
 
 test "resize disables synchronized output" {

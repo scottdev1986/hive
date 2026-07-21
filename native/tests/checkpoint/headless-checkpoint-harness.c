@@ -51,6 +51,18 @@ static int failures = 0;
     }                                                                \
   } while (0)
 
+/* Preconditions that later computations dereference (e.g. truncations'
+ * len1 - 1 and the body mutant's mutant[len1 - 2] below): count the
+ * failure and abort the case instead of cascading into an out-of-bounds
+ * access on a failed prerequisite. */
+#define REQUIRE(cond, name)                                          \
+  do {                                                               \
+    if (!(cond)) {                                                   \
+      CHECK(cond, name);                                             \
+      return 1;                                                      \
+    }                                                                \
+  } while (0)
+
 static void *test_alloc(void *context, size_t length, size_t alignment) {
   void *ptr = NULL;
   (void)context;
@@ -208,7 +220,7 @@ int main(int argc, char **argv) {
   size_t len1 = 0, len2 = 0;
   uint8_t *pay1 = export_or_null(author, &len1);
   uint8_t *pay2 = export_or_null(author, &len2);
-  CHECK(pay1 != NULL && len1 > 116, "first export succeeds and exceeds header");
+  REQUIRE(pay1 != NULL && len1 > 116, "first export succeeds and exceeds header");
   CHECK(pay2 != NULL && len2 == len1 && memcmp(pay1, pay2, len1) == 0,
         "export is deterministic (two exports byte-identical)");
   free(pay2);

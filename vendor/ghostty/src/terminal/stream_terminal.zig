@@ -398,6 +398,13 @@ pub const Handler = struct {
                 const valid = output.pos > prefix_len;
                 try writer.writeAll("\x1b\\");
                 _ = try std.fmt.bufPrint(response[0..prefix_len], prefix_fmt, .{@intFromBool(valid)});
+                // The terminator needs one slot past the payload. Content
+                // writes above are all `try`-checked against the fixed
+                // buffer, so pos can only REACH the end, never pass it —
+                // but if it does reach it there is no room for the NUL.
+                // Fail closed (the vt() catch suppresses the reply) rather
+                // than write one byte past the buffer.
+                if (output.pos >= response.len) return error.NoSpaceLeft;
                 response[output.pos] = 0;
                 self.writePty(response[0..output.pos :0]);
             },

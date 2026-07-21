@@ -189,8 +189,47 @@ const HumanSeqRecord = struct {
     evidence: EvidenceLevel,
 };
 
+/// Durable audit of an orphaned-claim takeover (operatorResume). Authz for who
+/// may resume lives in the composition layer by design; the arbiter's job is
+/// that every takeover is ATTRIBUTABLE after the fact. Owns its strings;
+/// freed only on eviction/deinit like the ledger.
+const TakeoverRecord = struct {
+    previous_owner_viewer_id: ?[]u8,
+    previous_claim_id: ?[]u8,
+    new_owner_viewer_id: []u8,
+    new_claim_id: []u8,
+    /// Claim-local sequence the takeover resumed at.
+    resumed_at_sequence: u64,
+
+    fn deinit(self: *TakeoverRecord, allocator: std.mem.Allocator) void {
+        if (self.previous_owner_viewer_id) |v| allocator.free(v);
+        if (self.previous_claim_id) |v| allocator.free(v);
+        allocator.free(self.new_owner_viewer_id);
+        allocator.free(self.new_claim_id);
+        self.* = undefined;
+    }
+};
+
 /// §18 automated message cap: 1 MiB.
 pub const automated_message_max_bytes: usize = 1024 * 1024;
+/// Human/gesture/release payload cap enforced at the arbiter boundary
+/// (audit hardening): matches the generated input_transaction_bytes limit
+/// (128 KiB) so the bound does not depend on the sink or the caller.
+pub const human_input_max_bytes: usize = 128 * 1024;
+/// Bounded durable-evidence windows (audit: unbounded growth of heap-duped
+/// records is a memory DoS; every begin/commit/cancel scan is O(window)
+/// instead of O(lifetime)). Recent entries are the idempotency/attribution
+/// window; oldest are evicted first. An evicted ledger key simply leaves the
+/// idempotent-replay window — a later replay re-executes as a new transaction
+/// rather than corrupting state.
+pub const ledger_max_entries: usize = 256;
+/// Claim-local human input dedup window. Sequences are monotone within a
+/// claim, so evicting the oldest record only narrows the dedup window: a
+/// replay of an evicted sequence fails Malformed (sequence != next_input_seq)
+/// — it can never re-execute.
+pub const human_records_max: usize = 1024;
+/// Orphan-takeover audit window (operatorResume); oldest evicted first.
+pub const takeover_records_max: usize = 64;
 /// Fixed-cap encode bound: worst-case C0-safe expansion + framing/submit slack (P4 / §22:1338).
 /// Encoders must stay within this; excess fails without realloc. Non-core-dump memory
 /// where available is an open WP4-B item (§22:1338).
@@ -217,6 +256,9 @@ pub const InputArbiter = struct {
     /// Highest sequence the host write queue has accepted.
     last_acked_seq: u64 = 0,
     human_records: std.ArrayList(HumanSeqRecord) = .{},
+    /// Durable takeover audit (orphan → new owner). Bounded by
+    /// takeover_records_max, evict-oldest; survives claim release like the ledger.
+    takeover_records: std.ArrayList(TakeoverRecord) = .{},
 
     // Automation buffer (plaintext; zeroed on commit/cancel/disconnect/exit)
     txn_id: ?[]u8 = null,
@@ -269,6 +311,8 @@ pub const InputArbiter = struct {
         for (self.ledger.items) |*entry| entry.deinit(self.allocator);
         self.ledger.deinit(self.allocator);
         self.human_records.deinit(self.allocator);
+        for (self.takeover_records.items) |*rec| rec.deinit(self.allocator);
+        self.takeover_records.deinit(self.allocator);
         self.* = undefined;
     }
 
@@ -346,6 +390,7 @@ pub const InputArbiter = struct {
                 .free => unreachable,
             };
         }
+        if (encoded.len > human_input_max_bytes) return error.PayloadTooLarge;
         self.state = .human_gesture;
         const range = self.enqueueAndWrite(encoded) catch {
             self.state = .free;
@@ -380,6 +425,7 @@ pub const InputArbiter = struct {
         if (!std.mem.eql(u8, self.owner_viewer_id.?, viewer_id) or
             !std.mem.eql(u8, self.claim_id.?, claim_id))
             return error.HumanOwned;
+        if (encoded.len > human_input_max_bytes) return error.PayloadTooLarge;
 
         // Deduplicate by sequence+digest; return stored original evidence (L1).
         for (self.human_records.items) |rec| {
@@ -399,6 +445,10 @@ pub const InputArbiter = struct {
 
         const range = self.enqueueAndWrite(encoded) catch return error.Internal;
         const evidence: EvidenceLevel = .written;
+        // Bounded dedup window (see human_records_max): evict-oldest. An
+        // evicted sequence replays as Malformed, never as a re-execution.
+        if (self.human_records.items.len >= human_records_max)
+            _ = self.human_records.orderedRemove(0);
         self.human_records.append(self.allocator, .{
             .sequence = sequence,
             .digest = digest,
@@ -433,6 +483,7 @@ pub const InputArbiter = struct {
         if (!std.mem.eql(u8, self.owner_viewer_id.?, viewer_id) or
             !std.mem.eql(u8, self.claim_id.?, claim_id))
             return error.HumanOwned;
+        if (encoded_release.len > human_input_max_bytes) return error.PayloadTooLarge;
 
         // Release only after all prior claim bytes and the encoded submit/cancel
         // bytes are accepted by the ordered write queue.
@@ -513,6 +564,26 @@ pub const InputArbiter = struct {
             return error.Closed;
         }
 
+        // Audit hardening: record the takeover BEFORE touching the claim
+        // fields so the handoff is attributable even on later failure, and
+        // fail closed — no takeover without a durable audit record. The old
+        // identity is duped while still valid; authz stays in the composition
+        // layer by design, attribution lives here.
+        const audit_prev_owner: ?[]u8 = if (self.owner_viewer_id) |old|
+            self.allocator.dupe(u8, old) catch return error.Internal
+        else
+            null;
+        errdefer if (audit_prev_owner) |v| self.allocator.free(v);
+        const audit_prev_claim: ?[]u8 = if (self.claim_id) |old|
+            self.allocator.dupe(u8, old) catch return error.Internal
+        else
+            null;
+        errdefer if (audit_prev_claim) |v| self.allocator.free(v);
+        const audit_new_owner = self.allocator.dupe(u8, viewer_id) catch return error.Internal;
+        errdefer self.allocator.free(audit_new_owner);
+        const audit_new_claim = self.allocator.dupe(u8, new_claim_id) catch return error.Internal;
+        errdefer self.allocator.free(audit_new_claim);
+
         // B2: never leave a field holding a freed pointer. Free + null first,
         // then allocate both new ids, then install — errdefer covers both.
         // Issue a new claim to one viewer at the prior sequence. Do not replay
@@ -535,8 +606,23 @@ pub const InputArbiter = struct {
         const owned_viewer = self.allocator.dupe(u8, viewer_id) catch return error.Internal;
         errdefer self.allocator.free(owned_viewer);
         const owned_claim = self.allocator.dupe(u8, new_claim_id) catch return error.Internal;
-        // Both allocations succeeded; install. No field held a freed pointer
-        // at any failure point above.
+        // Both allocations succeeded; the audit append below can still fail —
+        // errdefer covers the new ids so no field ever holds a freed pointer.
+        errdefer self.allocator.free(owned_claim);
+
+        // Bounded audit window (see takeover_records_max), evict-oldest.
+        if (self.takeover_records.items.len >= takeover_records_max) {
+            var evicted = self.takeover_records.orderedRemove(0);
+            evicted.deinit(self.allocator);
+        }
+        self.takeover_records.append(self.allocator, .{
+            .previous_owner_viewer_id = audit_prev_owner,
+            .previous_claim_id = audit_prev_claim,
+            .new_owner_viewer_id = audit_new_owner,
+            .new_claim_id = audit_new_claim,
+            .resumed_at_sequence = self.next_input_seq,
+        }) catch return error.Internal;
+
         self.owner_viewer_id = owned_viewer;
         self.claim_id = owned_claim;
         self.state = .human_owned;
@@ -643,7 +729,11 @@ pub const InputArbiter = struct {
         try self.requireLive();
         if (self.state != .automation_buffering) return error.NotReady;
         if (offset != self.buffer_len) return error.Malformed;
-        if (self.buffer_len + bytes.len > self.expected_len) return error.PayloadTooLarge;
+        // Subtraction form: buffer_len + bytes.len could wrap on attacker-
+        // influenced bytes.len. Invariants (begin sets expected_len; chunks
+        // never exceed it) keep expected_len >= buffer_len — assert it.
+        std.debug.assert(self.expected_len >= self.buffer_len);
+        if (bytes.len > self.expected_len - self.buffer_len) return error.PayloadTooLarge;
         @memcpy(self.buffer[self.buffer_len..][0..bytes.len], bytes);
         self.buffer_len += bytes.len;
         return .buffered;
@@ -721,12 +811,20 @@ pub const InputArbiter = struct {
         }
         // P4/N4: fixed-cap encode buffer (worst-case expansion). Capacity is set
         // once so the encoder must not force realloc of an un-zeroed old buffer.
+        // Belt-and-suspenders: the encoder is injected code behind a fixed
+        // interface, so a hostile/buggy encoder could still append past the
+        // reservation and force ArrayList growth — the old buffer would then be
+        // freed with partial encoded plaintext in it. Route the call through a
+        // zero-on-free allocator (refuses remap/resize, zeroes every free) so
+        // no realloc path can leave plaintext in freed memory; the encode_cap
+        // check below still fails closed on overshoot.
         const encode_cap = encodedCapacityForBody(self.buffer_len);
         encoded.ensureTotalCapacity(self.allocator, encode_cap) catch {
             self.state = .automation_buffering;
             return error.Internal;
         };
-        self.encoder.encode(self.allocator, self.buffer[0..self.buffer_len], submit, &encoded) catch {
+        var zero_on_free = ZeroOnFreeAllocator{ .parent = self.allocator };
+        self.encoder.encode(zero_on_free.allocator(), self.buffer[0..self.buffer_len], submit, &encoded) catch {
             self.state = .automation_buffering;
             return error.Internal;
         };
@@ -763,6 +861,14 @@ pub const InputArbiter = struct {
             return error.Internal;
         };
         // buildLedgerEntry took ownership of encoded_owned on success.
+        // Bounded ledger (see ledger_max_entries), evict-oldest. The pending-
+        // unwritten entry is always the newest (the automation_committed hold
+        // blocks any other append), so evicting from the front can never touch
+        // in-flight retry state; entry.deinit secureZeroes encoded regardless.
+        if (self.ledger.items.len >= ledger_max_entries) {
+            var evicted = self.ledger.orderedRemove(0);
+            evicted.deinit(self.allocator);
+        }
         self.ledger.append(self.allocator, entry) catch {
             var doomed = entry;
             doomed.deinit(self.allocator);
@@ -970,6 +1076,57 @@ pub const InputArbiter = struct {
                 entry.encoded = null;
             }
         }
+    }
+};
+
+/// N4 hardening allocator for the injected-encoder call: refuses remap/resize
+/// so ArrayList growth always takes the alloc+copy+free fallback, and zeroes
+/// every buffer it frees — a realloc of the encode buffer can then never leave
+/// partial encoded plaintext in freed memory (audit finding: intermediate
+/// encode buffer leak). Legit encoder allocations pass through unchanged.
+const ZeroOnFreeAllocator = struct {
+    parent: std.mem.Allocator,
+
+    fn allocator(self: *ZeroOnFreeAllocator) std.mem.Allocator {
+        return .{
+            .ptr = self,
+            .vtable = &.{
+                .alloc = alloc,
+                .resize = resize,
+                .remap = remap,
+                .free = free,
+            },
+        };
+    }
+
+    fn alloc(ctx: *anyopaque, len: usize, alignment: std.mem.Alignment, ret_addr: usize) ?[*]u8 {
+        const self: *ZeroOnFreeAllocator = @ptrCast(@alignCast(ctx));
+        return self.parent.rawAlloc(len, alignment, ret_addr);
+    }
+
+    fn resize(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) bool {
+        _ = ctx;
+        _ = buf;
+        _ = alignment;
+        _ = new_len;
+        _ = ret_addr;
+        // Force the alloc+copy+free fallback so free() below zeroes the old buffer.
+        return false;
+    }
+
+    fn remap(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, new_len: usize, ret_addr: usize) ?[*]u8 {
+        _ = ctx;
+        _ = buf;
+        _ = alignment;
+        _ = new_len;
+        _ = ret_addr;
+        return null;
+    }
+
+    fn free(ctx: *anyopaque, buf: []u8, alignment: std.mem.Alignment, ret_addr: usize) void {
+        const self: *ZeroOnFreeAllocator = @ptrCast(@alignCast(ctx));
+        if (buf.len > 0) std.crypto.secureZero(u8, buf);
+        self.parent.rawFree(buf, alignment, ret_addr);
     }
 };
 
@@ -1941,8 +2098,11 @@ test "N2: cancel of committed-not-written releases hold to FREE" {
 
 // B2 POSITIVE CONTROL: allocator failure during operatorResume must not leave
 // freed pointers in claim fields (double-free at deinit / UAF on next use).
-// Against unfixed code (free without null, late errdefer) this double-frees.
-test "B2 positive control: operatorResume dupe failure leaves no freed pointers" {
+// Allocation order inside operatorResume: audit dupes (1-4, before the olds
+// are freed), then the new id dupes (5-6), then the audit append (7).
+// Failing 1-4 must leave the VALID old ids installed (nothing freed yet);
+// failing 5-7 must leave both fields null (never a dangling pointer).
+test "B2 positive control: operatorResume alloc failure leaves no freed pointers" {
     const FailNth = struct {
         parent: std.mem.Allocator,
         n: usize,
@@ -1979,15 +2139,14 @@ test "B2 positive control: operatorResume dupe failure leaves no freed pointers"
         }
     };
 
-    // Fail the first dupe in operatorResume (viewer_id) after free+null of olds.
-    {
+    for ([_]usize{ 1, 2, 3, 4, 5, 6, 7 }) |n| {
         var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
         defer {
             const leak = gpa_state.deinit();
-            std.testing.expect(leak == .ok) catch @panic("B2: leak/double-free detected (viewer dupe fail)");
+            std.testing.expect(leak == .ok) catch @panic("B2: leak/double-free detected");
         }
         const gpa = gpa_state.allocator();
-        var fail = FailNth{ .parent = gpa, .n = 1 };
+        var fail = FailNth{ .parent = gpa, .n = n };
         // Pre-allocate claim with parent so only resume dupes use FailNth.
         var sink = MockSink{ .allocator = gpa };
         defer sink.deinit();
@@ -2000,38 +2159,264 @@ test "B2 positive control: operatorResume dupe failure leaves no freed pointers"
         arb.allocator = fail.allocator();
         const err = arb.operatorResume("viewer-new", "clm_new", "human");
         try std.testing.expectError(error.Internal, err);
-        // Fields must be null — not dangling freed pointers.
-        try std.testing.expect(arb.owner_viewer_id == null);
-        try std.testing.expect(arb.claim_id == null);
+        if (n <= 4) {
+            // Audit dupe failed before the olds were freed: fields still hold
+            // the valid old ids — never a dangling pointer.
+            try std.testing.expectEqualStrings("viewer-old", arb.owner_viewer_id.?);
+            try std.testing.expectEqualStrings("clm_old", arb.claim_id.?);
+        } else {
+            // New id dupe / audit append failed after free+null: both null.
+            try std.testing.expect(arb.owner_viewer_id == null);
+            try std.testing.expect(arb.claim_id == null);
+        }
         // Restore parent for safe deinit of remaining arbiter state.
         arb.allocator = gpa;
     }
+}
 
-    // Fail the second dupe (claim_id) after viewer dupe succeeded.
-    {
-        var gpa_state: std.heap.GeneralPurposeAllocator(.{}) = .{};
-        defer {
-            const leak = gpa_state.deinit();
-            std.testing.expect(leak == .ok) catch @panic("B2: leak/double-free detected (claim dupe fail)");
-        }
-        const gpa = gpa_state.allocator();
-        var sink = MockSink{ .allocator = gpa };
-        defer sink.deinit();
-        var arb = InputArbiter.init(gpa, sink.sink(), IdentityEncoder.encoder(), StaticCancel.encoder());
-        defer arb.deinit();
+// ── Audit-fix regression tests (bounded windows, caps, takeover audit) ──────
 
-        _ = try arb.claimAcquire("viewer-old", "clm_old");
-        try arb.viewerDisconnect();
-        // n=1 fails first alloc under FailNth; but claimAcquire already done.
-        // operatorResume: free olds (no alloc), dupe viewer (count=1 fail if n=1).
-        // For second-dupe failure: n=2.
-        var fail = FailNth{ .parent = gpa, .n = 2 };
-        arb.allocator = fail.allocator();
-        const err = arb.operatorResume("viewer-new", "clm_new", "human");
-        try std.testing.expectError(error.Internal, err);
-        // Viewer may have been allocated then freed by errdefer; both null.
-        try std.testing.expect(arb.owner_viewer_id == null);
-        try std.testing.expect(arb.claim_id == null);
-        arb.allocator = gpa;
+test "audit: ledger is bounded (evict-oldest); recent keys keep idempotent replay" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const body = "b";
+    const dig = sha256(body);
+    var key_buf: [32]u8 = undefined;
+    var txn_buf: [32]u8 = undefined;
+    var i: usize = 0;
+    while (i < ledger_max_entries + 1) : (i += 1) {
+        const key = std.fmt.bufPrint(&key_buf, "idemp_{d}", .{i}) catch unreachable;
+        const txn = std.fmt.bufPrint(&txn_buf, "txn_{d}", .{i}) catch unreachable;
+        try arb.automationBegin(.{
+            .transaction_id = txn,
+            .idempotency_key = key,
+            .expected_len = body.len,
+            .expected_digest = dig,
+            .recipient_generation = 1,
+            .capability_epoch = 1,
+            .message_id = "msg",
+            .locator = "ses",
+            .provider_strategy = "p",
+            .submit = .none,
+        });
+        _ = try arb.automationChunk(0, body);
+        _ = try arb.automationCommit(txn, key, body.len, dig, 1, 1, "msg", "ses", .none);
     }
+    // Capped: one entry evicted for the (max+1)-th append.
+    try std.testing.expectEqual(ledger_max_entries, arb.ledger.items.len);
+    // Oldest key left the idempotency window; newest retained.
+    try std.testing.expect(arb.findLedger("idemp_0") == null);
+    try std.testing.expect(arb.findLedger("idemp_256") != null);
+    // Idempotent replay of a recent key returns the stored result — no 2nd write.
+    const writes_before = sink.writes.items.len;
+    const replay = try arb.automationCommit("txn_256", "idemp_256", body.len, dig, 1, 1, "msg", "ses", .none);
+    try std.testing.expectEqual(EvidenceLevel.written, replay.evidence);
+    try std.testing.expect(replay.byte_range != null);
+    try std.testing.expectEqual(writes_before, sink.writes.items.len);
+}
+
+test "audit: operatorResume records previous owner for attribution" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    _ = try arb.claimAcquire("v1", "clm_1");
+    _ = try arb.humanInput("v1", "clm_1", 1, sha256("x"), "x");
+    try arb.viewerDisconnect();
+    const r = try arb.operatorResume("v2", "clm_2", "human");
+    try std.testing.expectEqual(@as(u64, 2), r.next_sequence);
+    // Takeover is attributable: previous owner/claim recorded durably.
+    try std.testing.expectEqual(@as(usize, 1), arb.takeover_records.items.len);
+    const rec = arb.takeover_records.items[0];
+    try std.testing.expectEqualStrings("v1", rec.previous_owner_viewer_id.?);
+    try std.testing.expectEqualStrings("clm_1", rec.previous_claim_id.?);
+    try std.testing.expectEqualStrings("v2", rec.new_owner_viewer_id);
+    try std.testing.expectEqualStrings("clm_2", rec.new_claim_id);
+    try std.testing.expectEqual(@as(u64, 2), rec.resumed_at_sequence);
+
+    // A second takeover chains the audit (previous owner is now v2).
+    try arb.viewerDisconnect();
+    _ = try arb.operatorResume("v3", "clm_3", "human");
+    try std.testing.expectEqual(@as(usize, 2), arb.takeover_records.items.len);
+    try std.testing.expectEqualStrings("v2", arb.takeover_records.items[1].previous_owner_viewer_id.?);
+
+    // Audit survives claim release — durable like the ledger.
+    _ = try arb.claimRelease("v3", "clm_3", .cancel, "");
+    try std.testing.expectEqual(@as(usize, 2), arb.takeover_records.items.len);
+}
+
+test "audit: takeover_records bounded (evict-oldest)" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    var vbuf: [32]u8 = undefined;
+    var cbuf: [32]u8 = undefined;
+    var i: usize = 0;
+    while (i < takeover_records_max + 1) : (i += 1) {
+        _ = try arb.claimAcquire("v_old", "clm_old");
+        try arb.viewerDisconnect();
+        const v = std.fmt.bufPrint(&vbuf, "v_new_{d}", .{i}) catch unreachable;
+        const c = std.fmt.bufPrint(&cbuf, "clm_new_{d}", .{i}) catch unreachable;
+        _ = try arb.operatorResume(v, c, "human");
+        _ = try arb.claimRelease(v, c, .cancel, "");
+    }
+    try std.testing.expectEqual(takeover_records_max, arb.takeover_records.items.len);
+    // Oldest evicted: first retained record is the second takeover.
+    try std.testing.expectEqualStrings("v_new_1", arb.takeover_records.items[0].new_owner_viewer_id);
+}
+
+test "audit: human_records bounded; recent sequences still dedupe" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    _ = try arb.claimAcquire("v1", "clm_1");
+    const payload = "a";
+    const dig = sha256(payload);
+    var seq: u64 = 1;
+    while (seq <= human_records_max + 1) : (seq += 1) {
+        _ = try arb.humanInput("v1", "clm_1", seq, dig, payload);
+    }
+    try std.testing.expectEqual(human_records_max, arb.human_records.items.len);
+    // Oldest record evicted.
+    try std.testing.expectEqual(@as(u64, 2), arb.human_records.items[0].sequence);
+    // Replay of a recent sequence still dedupes — no re-execution.
+    const writes_before = sink.writes.items.len;
+    const dup = try arb.humanInput("v1", "clm_1", human_records_max + 1, dig, payload);
+    try std.testing.expect(dup.duplicate);
+    try std.testing.expectEqual(writes_before, sink.writes.items.len);
+    // Replay of an evicted sequence fails closed (Malformed), never re-executes.
+    try std.testing.expectError(error.Malformed, arb.humanInput("v1", "clm_1", 1, dig, payload));
+}
+
+test "automationChunk rejects overshoot without overflow (subtraction form)" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    try arb.automationBegin(.{
+        .transaction_id = "t",
+        .idempotency_key = "k",
+        .expected_len = 4,
+        .expected_digest = sha256("abcd"),
+        .recipient_generation = 1,
+        .capability_epoch = 0,
+        .message_id = "m",
+        .locator = "l",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, "ab");
+    _ = try arb.automationChunk(2, "cd");
+    // buffer_len == expected_len: any further byte must fail PayloadTooLarge.
+    try std.testing.expectError(error.PayloadTooLarge, arb.automationChunk(4, "e"));
+    try std.testing.expectEqual(@as(usize, 4), arb.buffer_len);
+}
+
+const GreedyEncoder = struct {
+    fn encoder() Encoder {
+        return .{ .context = undefined, .encodeFn = encode };
+    }
+    fn encode(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        body: []const u8,
+        submit: SubmitAction,
+        out: *std.ArrayList(u8),
+    ) anyerror!void {
+        _ = context;
+        _ = submit;
+        try out.appendSlice(allocator, body);
+        // Deliberately overshoot the fixed pre-reserved capacity, forcing
+        // ArrayList growth (realloc) — positive control that the N4 encode
+        // path fails closed and leaks nothing when an encoder misbehaves.
+        const pad = try allocator.alloc(u8, out.capacity + 1);
+        defer allocator.free(pad);
+        @memset(pad, 'x');
+        try out.appendSlice(allocator, pad);
+    }
+};
+
+test "N4: encoder overshoot fails closed at the fixed cap; no leak on realloc" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = InputArbiter.init(
+        std.testing.allocator,
+        sink.sink(),
+        GreedyEncoder.encoder(),
+        StaticCancel.encoder(),
+    );
+    defer arb.deinit();
+
+    const body = "cap-me";
+    const dig = sha256(body);
+    try arb.automationBegin(.{
+        .transaction_id = "txn_g",
+        .idempotency_key = "idemp_g",
+        .expected_len = body.len,
+        .expected_digest = dig,
+        .recipient_generation = 1,
+        .capability_epoch = 1,
+        .message_id = "msg_g",
+        .locator = "ses_g",
+        .provider_strategy = "p",
+        .submit = .none,
+    });
+    _ = try arb.automationChunk(0, body);
+    try std.testing.expectError(error.PayloadTooLarge, arb.automationCommit(
+        "txn_g",
+        "idemp_g",
+        body.len,
+        dig,
+        1,
+        1,
+        "msg_g",
+        "ses_g",
+        .none,
+    ));
+    // Fail-closed back to buffering; cancel then cleans up plaintext. Any leak
+    // of the grown encode buffer trips std.testing.allocator at deinit.
+    try std.testing.expectEqual(State.automation_buffering, arb.currentState());
+    _ = try arb.automationCancel("idemp_g");
+    try std.testing.expectEqual(State.free, arb.currentState());
+    try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+}
+
+test "audit: arbiter boundary caps human/gesture/release payloads" {
+    var sink = MockSink{ .allocator = std.testing.allocator };
+    defer sink.deinit();
+    var arb = makeArbiter(&sink);
+    defer arb.deinit();
+
+    const big = try std.testing.allocator.alloc(u8, human_input_max_bytes + 1);
+    defer std.testing.allocator.free(big);
+    @memset(big, 'k');
+
+    // Gesture: rejected before any state transition or sink write.
+    try std.testing.expectError(error.PayloadTooLarge, arb.gestureInput(big));
+    try std.testing.expectEqual(State.free, arb.currentState());
+    try std.testing.expectEqual(@as(usize, 0), sink.writes.items.len);
+
+    // Human input: rejected, claim and sequence untouched.
+    _ = try arb.claimAcquire("v1", "clm_1");
+    try std.testing.expectError(error.PayloadTooLarge, arb.humanInput("v1", "clm_1", 1, sha256(big), big));
+    try std.testing.expectEqual(State.human_owned, arb.currentState());
+    try std.testing.expectEqual(@as(u64, 1), arb.next_input_seq);
+
+    // Release bytes: rejected, claim still owned.
+    try std.testing.expectError(error.PayloadTooLarge, arb.claimRelease("v1", "clm_1", .submit, big));
+    try std.testing.expectEqual(State.human_owned, arb.currentState());
+
+    // At-cap payload still accepted (boundary is off-by-one safe).
+    const ok = big[0..human_input_max_bytes];
+    _ = try arb.humanInput("v1", "clm_1", 1, sha256(ok), ok);
+    try std.testing.expectEqual(@as(u64, 2), arb.next_input_seq);
 }

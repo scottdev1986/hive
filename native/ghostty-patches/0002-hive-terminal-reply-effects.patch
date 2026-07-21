@@ -230,7 +230,7 @@ index f683855..8cbd512 100644
          defer {
              CoreSurface.hive_manual_backend = null;
 diff --git a/src/terminal/stream_terminal.zig b/src/terminal/stream_terminal.zig
-index 91cfb21..8e3eb99 100644
+index 91cfb21..33be164 100644
 --- a/src/terminal/stream_terminal.zig
 +++ b/src/terminal/stream_terminal.zig
 @@ -4,6 +4,7 @@ const testing = std.testing;
@@ -283,7 +283,7 @@ index 91cfb21..8e3eb99 100644
  
              // Have no terminal-modifying effect
              .show_desktop_notification,
-@@ -319,6 +322,90 @@ pub const Handler = struct {
+@@ -319,6 +322,97 @@ pub const Handler = struct {
          func(self, data);
      }
  
@@ -363,6 +363,13 @@ index 91cfb21..8e3eb99 100644
 +                const valid = output.pos > prefix_len;
 +                try writer.writeAll("\x1b\\");
 +                _ = try std.fmt.bufPrint(response[0..prefix_len], prefix_fmt, .{@intFromBool(valid)});
++                // The terminator needs one slot past the payload. Content
++                // writes above are all `try`-checked against the fixed
++                // buffer, so pos can only REACH the end, never pass it —
++                // but if it does reach it there is no room for the NUL.
++                // Fail closed (the vt() catch suppresses the reply) rather
++                // than write one byte past the buffer.
++                if (output.pos >= response.len) return error.NoSpaceLeft;
 +                response[output.pos] = 0;
 +                self.writePty(response[0..output.pos :0]);
 +            },

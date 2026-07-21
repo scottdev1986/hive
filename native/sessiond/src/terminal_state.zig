@@ -829,7 +829,8 @@ pub const TerminalState = struct {
     }
 
     /// Disk-style write of newest checkpoint to `dir` as checkpoint-0.bin (and
-    /// previous as checkpoint-1.bin). Atomic: write .tmp, fsync, rename.
+    /// previous as checkpoint-1.bin). Atomic: unique randomized .tmp, fsync,
+    /// rename.
     pub fn persistCheckpoints(self: *const TerminalState, dir: std.fs.Dir) Error!void {
         if (self.checkpoints.newest()) |cp| {
             try writeAtomic(dir, "checkpoint-0.bin", cp.file);
@@ -872,11 +873,29 @@ pub const TerminalState = struct {
 };
 
 fn writeAtomic(dir: std.fs.Dir, name: []const u8, bytes: []const u8) Error!void {
-    // Stack temp name — names are short (checkpoint-0.bin / journal.bin).
-    var tmp_buf: [64]u8 = undefined;
-    const tmp_name = std.fmt.bufPrint(&tmp_buf, "{s}.tmp", .{name}) catch
-        return error.Internal;
+    // journal.bin carries raw PTY output (potential secrets). Fail closed
+    // unless the target directory is owned by this uid and not group/other-
+    // writable: in a shared dir a hostile writer could pre-plant or race the
+    // temp path. Same uid+mode doctrine as broker.openOwnedDirectory (F2/§23).
+    const stat = std.posix.fstat(dir.fd) catch return error.IoFailed;
+    if (stat.uid != std.posix.getuid() or stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR or
+        stat.mode & 0o022 != 0) return error.IoFailed;
 
+    // Unique randomized temp name per call (was the fixed "{name}.tmp"): a
+    // same-dir writer cannot predict and pre-plant the temp path to win the
+    // rename race. O_NOFOLLOW + 0600 below are retained regardless.
+    var tmp_buf: [64]u8 = undefined;
+    const tmp_name = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>16}.tmp", .{
+        name,
+        std.crypto.random.int(u64),
+    }) catch return error.Internal;
+
+    try writeAtomicTmp(dir, name, tmp_name, bytes);
+}
+
+/// Core of writeAtomic with an explicit temp name, so tests can exercise
+/// O_NOFOLLOW against a pre-planted symlink at a known temp path.
+fn writeAtomicTmp(dir: std.fs.Dir, name: []const u8, tmp_name: []const u8, bytes: []const u8) Error!void {
     const fd = std.posix.openat(dir.fd, tmp_name, .{
         .ACCMODE = .WRONLY,
         .CREAT = true,
@@ -1580,10 +1599,6 @@ test "persistCheckpoints atomic write + re-parse envelope" {
 }
 
 test "persistJournal does not follow a symlink at the temporary path" {
-    var s = try makeState();
-    defer s.deinit();
-    try s.ts.feedOutput("secret");
-
     var tmp = std.testing.tmpDir(.{});
     defer tmp.cleanup();
 
@@ -1594,10 +1609,78 @@ test "persistJournal does not follow a symlink at the temporary path" {
     }
     try tmp.dir.symLink("sentinel", "journal.bin.tmp", .{});
 
-    try testing.expectError(error.IoFailed, s.ts.persistJournal(tmp.dir));
+    // Positive control: the same core write with no symlink at the temp path
+    // succeeds, so the rejection below is the O_NOFOLLOW check, not a dead path.
+    try writeAtomicTmp(tmp.dir, "control.bin", "control.bin.tmp", "ok");
+
+    try testing.expectError(error.IoFailed, writeAtomicTmp(tmp.dir, "journal.bin", "journal.bin.tmp", "secret"));
     const contents = try tmp.dir.readFileAlloc(testing.allocator, "sentinel", 32);
     defer testing.allocator.free(contents);
     try testing.expectEqualStrings("unchanged", contents);
+}
+
+test "writeAtomic fails closed on a group/other-writable target directory" {
+    var s = try makeState();
+    defer s.deinit();
+    try s.ts.feedOutput("secret");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    try tmp.dir.makeDir("shared");
+    var shared = try tmp.dir.openDir("shared", .{});
+    defer shared.close();
+    try shared.chmod(0o777);
+
+    // Shared-dir doctrine: refuse even though the dir is owned by this uid —
+    // group/other write bits let a hostile writer race the temp path.
+    try testing.expectError(error.IoFailed, s.ts.persistJournal(shared));
+
+    // Positive control: tightening to owner-only unblocks the same persist.
+    try shared.chmod(0o700);
+    try s.ts.persistJournal(shared);
+    const journal_stat = try std.posix.fstatat(shared.fd, "journal.bin", std.posix.AT.SYMLINK_NOFOLLOW);
+    try testing.expectEqual(@as(std.c.mode_t, 0o600), journal_stat.mode & 0o777);
+}
+
+test "persistJournal uses unique randomized temp names (legacy fixed name inert)" {
+    var s = try makeState();
+    defer s.deinit();
+    try s.ts.feedOutput("secret");
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+
+    // Pre-plant the legacy predictable temp name: a same-dir writer's file must
+    // neither be consumed, truncated, nor block the persist.
+    {
+        var planted = try tmp.dir.createFile("journal.bin.tmp", .{ .mode = 0o600 });
+        defer planted.close();
+        try planted.writeAll("planted");
+    }
+
+    // Two persists back-to-back: randomized names cannot collide with the
+    // planted file or with each other.
+    try s.ts.persistJournal(tmp.dir);
+    try s.ts.persistJournal(tmp.dir);
+
+    const planted = try tmp.dir.readFileAlloc(testing.allocator, "journal.bin.tmp", 32);
+    defer testing.allocator.free(planted);
+    try testing.expectEqualStrings("planted", planted);
+
+    const journal = try tmp.dir.readFileAlloc(testing.allocator, "journal.bin", 64 * 1024);
+    defer testing.allocator.free(journal);
+    try testing.expectEqualStrings("secret", journal[16..]);
+
+    // No randomized temp file survives the rename.
+    var listing = try tmp.dir.openDir(".", .{ .iterate = true });
+    defer listing.close();
+    var it = listing.iterate();
+    while (try it.next()) |entry| {
+        if (std.mem.endsWith(u8, entry.name, ".tmp")) {
+            try testing.expectEqualStrings("journal.bin.tmp", entry.name);
+        }
+    }
 }
 
 test "restore refuses when reconnect_available is false (no mostly-restored)" {

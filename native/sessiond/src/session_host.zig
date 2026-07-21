@@ -347,7 +347,17 @@ pub const RealVtEngine = struct {
         }
         // Fresh verification engines retain effects for TG2 comparison. The
         // live engine delivers them directly to the bounded PTY queue instead
-        // of retaining a second, session-lifetime copy.
+        // of retaining a second, session-lifetime copy. Retention stays under
+        // the §18 journal ceiling; a null-sink engine that would grow past it
+        // fails closed rather than pinning unbounded client-driven bytes.
+        const retained = std.math.add(usize, self.effects.items.len, bytes.len) catch {
+            self.effect_failed = true;
+            return;
+        };
+        if (retained > terminal_state.journal_max_bytes) {
+            self.effect_failed = true;
+            return;
+        }
         self.effects.appendSlice(self.allocator, bytes) catch {
             self.effect_failed = true;
         };
@@ -583,6 +593,9 @@ pub const RealInputEncoder = struct {
             out.capacity,
             &written,
         ) != ghostty_c.GHOSTTY_SUCCESS) return error.EncodeFailed;
+        // `written` arrives across the FFI boundary; never trust it past the
+        // buffer that was handed over. Fail closed before slicing.
+        if (written > out.capacity) return error.EncodeFailed;
         out.items = out.allocatedSlice()[0..written];
         switch (submit) {
             .none => {},
@@ -627,6 +640,9 @@ pub const RealInputEncoder = struct {
             allocation.len - old_len,
             &written,
         ) != ghostty_c.GHOSTTY_SUCCESS) return error.EncodeFailed;
+        // Same FFI distrust as encodeCb: clamp the reported byte count to the
+        // remaining capacity before extending the slice.
+        if (written > allocation.len - old_len) return error.EncodeFailed;
         out.items = allocation[0 .. old_len + written];
     }
 };
@@ -1386,6 +1402,31 @@ fn closeHostInheritedDescriptors(descriptor_limit: c_int) void {
     while (fd < descriptor_limit) : (fd += 1) _ = c.close(fd);
 }
 
+/// The host child must never inherit the broker's dynamic-linker knobs: any
+/// DYLD_* variable in the broker's environment would inject libraries into
+/// the privileged host process at exec. Everything else passes through
+/// unchanged so launch behavior matches the pre-scrub baseline. The result
+/// borrows the live environ entries; only the array itself is owned.
+fn scrubbedHostEnvironment(allocator: std.mem.Allocator) ![]?[*:0]const u8 {
+    var kept: usize = 0;
+    var index: usize = 0;
+    while (std.c.environ[index]) |entry| : (index += 1) {
+        if (!std.mem.startsWith(u8, std.mem.span(entry), "DYLD_")) kept += 1;
+    }
+    const scrubbed = try allocator.alloc(?[*:0]const u8, kept + 1);
+    errdefer allocator.free(scrubbed);
+    var out: usize = 0;
+    index = 0;
+    while (std.c.environ[index]) |entry| : (index += 1) {
+        const text = std.mem.span(entry);
+        if (std.mem.startsWith(u8, text, "DYLD_")) continue;
+        scrubbed[out] = entry;
+        out += 1;
+    }
+    scrubbed[out] = null;
+    return scrubbed;
+}
+
 fn spawnHostProcess(allocator: std.mem.Allocator, executable: []const u8) !SpawnedHost {
     if (!std.fs.path.isAbsolute(executable)) return error.InvalidHostExecutable;
     const executable_z = try allocator.dupeZ(u8, executable);
@@ -1394,6 +1435,8 @@ fn spawnHostProcess(allocator: std.mem.Allocator, executable: []const u8) !Spawn
     defer allocator.free(role_z);
     const descriptor_limit = c.getdtablesize();
     if (descriptor_limit <= inherited_control_fd) return error.InvalidDescriptorLimit;
+    const environment = try scrubbedHostEnvironment(allocator);
+    defer allocator.free(environment);
 
     var sockets: [2]c_int = .{ -1, -1 };
     if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
@@ -1419,7 +1462,7 @@ fn spawnHostProcess(allocator: std.mem.Allocator, executable: []const u8) !Spawn
         // listener or lock descriptors would prevent clean crash recovery.
         closeHostInheritedDescriptors(descriptor_limit);
         const argv = [_:null]?[*:0]const u8{ executable_z.ptr, role_z.ptr };
-        _ = c.execve(executable_z.ptr, @ptrCast(&argv), @ptrCast(std.c.environ));
+        _ = c.execve(executable_z.ptr, @ptrCast(&argv), @ptrCast(environment.ptr));
         c._exit(127);
     }
 
@@ -1478,6 +1521,65 @@ fn setControlTimeoutMs(fd: std.posix.fd_t, timeout_ms: u64) !void {
 
 fn setControlTimeout(fd: std.posix.fd_t) !void {
     return setControlTimeoutMs(fd, generated.limits.control_rpc_timeout_ms);
+}
+
+/// Absolute monotonic bound on one accepted connection's cumulative service
+/// time. SO_RCVTIMEO bounds each individual syscall, but a peer dribbling one
+/// byte per syscall window would otherwise hold the single-threaded host loop
+/// — and starve the broker's VISIBILITY_RENEW until the §21 lease self-
+/// terminates the session. The budget is the same lease-bound window the
+/// accept path grants a single syscall; exhausting it drops the connection
+/// (fail closed) so the loop always regains control within a bounded time.
+const ConnectionDeadline = struct {
+    timer: *std.time.Timer,
+    start_ns: u64,
+    budget_ns: u64,
+
+    fn init(timer: *std.time.Timer, lease: VisibilityLease, now_ns: u64) !ConnectionDeadline {
+        const timeout_ms = try leaseBoundControlTimeoutMs(lease, now_ns);
+        return .{
+            .timer = timer,
+            .start_ns = timer.read(),
+            .budget_ns = try std.math.mul(u64, timeout_ms, std.time.ns_per_ms),
+        };
+    }
+
+    fn elapsedNs(self: *const ConnectionDeadline) u64 {
+        const now = self.timer.read();
+        if (now <= self.start_ns) return 0;
+        return now - self.start_ns;
+    }
+
+    fn remainingMs(self: *const ConnectionDeadline) !u64 {
+        const elapsed = self.elapsedNs();
+        if (elapsed >= self.budget_ns) return error.ConnectionDeadlineExceeded;
+        return std.math.divCeil(u64, self.budget_ns - elapsed, std.time.ns_per_ms) catch
+            return error.ConnectionDeadlineExceeded;
+    }
+
+    /// Re-arms the per-syscall socket timeout at the remaining budget so the
+    /// next blocking read/write cannot outlive the absolute deadline.
+    fn rearm(self: *const ConnectionDeadline, handle: std.posix.fd_t) !void {
+        try setControlTimeoutMs(handle, try self.remainingMs());
+    }
+
+    fn check(self: *const ConnectionDeadline) !void {
+        _ = try self.remainingMs();
+    }
+};
+
+/// One bounded frame read: the socket timeout is re-armed at the deadline's
+/// remaining budget before the blocking read, and the deadline is verified
+/// after it, so no sequence of dribbled syscalls outlives the budget.
+fn readConnectionFrame(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    deadline: *const ConnectionDeadline,
+) !protocol.Frame {
+    try deadline.rearm(stream.handle);
+    const frame = try readRequiredFrame(allocator, stream);
+    try deadline.check();
+    return frame;
 }
 
 /// Applies the lease-bound control timeout to one accepted host connection.
@@ -1617,11 +1719,17 @@ pub const HostRuntime = struct {
         });
         errdefer allocator.free(socket_path);
         const address = try std.net.Address.initUnix(socket_path);
-        var server = try address.listen(.{});
+        // host.sock's 0600 mode is fixed atomically at bind() through a
+        // saved/restored umask: 0177 masks exactly group/other (and the
+        // owner-execute bit) off the 0777 bind base. A post-bind path chmod
+        // both follows symlinks and leaves the socket briefly permissive, so
+        // no path-based chmod remains — socketEvidenceAt below is the fstat
+        // proof of the mode the socket was born with.
+        const saved_umask = c.umask(0o177);
+        const listen_result = address.listen(.{});
+        _ = c.umask(saved_umask);
+        var server = try listen_result;
         errdefer server.deinit();
-        const path_z = try allocator.dupeZ(u8, socket_path);
-        defer allocator.free(path_z);
-        if (c.chmod(path_z.ptr, 0o600) != 0) return error.SocketModeFailed;
         const evidence = try socketEvidenceAt(directory, "host.sock");
         const flags = c.fcntl(server.stream.handle, c.F_GETFL);
         if (flags < 0 or c.fcntl(server.stream.handle, c.F_SETFL, flags | c.O_NONBLOCK) < 0)
@@ -1694,6 +1802,10 @@ const LaunchClient = struct {
     parsed: ParsedRegistration,
     wire: broker.WireHostClient,
     host_pid: i32,
+    /// Retained so finalize can prove THIS broker owns the freshly admitted
+    /// host (the host fails closed for privileged RPCs until HOST_ADOPT).
+    /// Zeroed on every teardown path.
+    adoption_secret: [32]u8,
     pending_id: ?broker.PendingRegistration,
     pending_stream: ?std.net.Stream,
     pending_header: protocol.Header,
@@ -1707,6 +1819,7 @@ const LaunchClient = struct {
         // The host's independent visibility lease owns broker-crash cleanup.
         self.wire.deinit();
         self.parsed.deinit(self.allocator);
+        std.crypto.secureZero(u8, &self.adoption_secret);
         self.* = undefined;
     }
 
@@ -1872,6 +1985,7 @@ pub const ProductionHostLauncher = struct {
             .parsed = pending.parsed,
             .wire = wire,
             .host_pid = child.pid,
+            .adoption_secret = adoption_secret,
             .pending_id = pending_id,
             .pending_stream = child.stream,
             .pending_header = pending.request_header,
@@ -1924,6 +2038,24 @@ pub const ProductionHostLauncher = struct {
                     return false;
                 };
                 stream.close();
+                // Admission is final, so the host now serves host.sock — but
+                // it fails closed for terminate/grant_register/
+                // visibility_renew until HOST_ADOPT proves the 32-byte secret.
+                // Adopt immediately so the legit fresh-launch flow keeps
+                // working; a host that refuses adoption is not the host this
+                // broker launched and must not stay registered. The readback
+                // is discarded, so its now_ns input is irrelevant (0).
+                if (client.control().adopt(
+                    client.parsed.registration.record.locator,
+                    client.adoption_secret,
+                    0,
+                ) == null) {
+                    killAndWait(client.host_pid);
+                    _ = self.clients.orderedRemove(index);
+                    client.deinit();
+                    self.allocator.destroy(client);
+                    return false;
+                }
                 return true;
             },
             .rejected => |code| {
@@ -2358,6 +2490,14 @@ const ActiveInputClaim = struct {
 };
 
 const InputOperationKind = enum { bytes, canonical_eof, hangup };
+
+/// Replay ledgers are bounded FIFOs, sized like the file's other
+/// generated-limits-style caps: past the cap the oldest entry evicts before
+/// the new one reserves, so unique client-chosen idempotency keys can never
+/// grow the host without limit. Eviction only forfeits dedup of ancient keys
+/// — a replayed recent key still hits, a re-submitted ancient key simply
+/// re-derives its outcome under a fresh ledger entry.
+const max_replay_entries: usize = 256;
 
 const InputReplay = struct {
     idempotency_key: []u8,
@@ -2824,6 +2964,10 @@ pub const HostCore = struct {
         initialized_fields = 2;
         replay.transaction_id = try self.allocator.dupe(u8, request.transactionId);
         initialized_fields = 3;
+        while (self.input_replays.items.len >= max_replay_entries) {
+            var evicted = self.input_replays.orderedRemove(0);
+            evicted.deinit(self.allocator);
+        }
         try self.input_replays.append(self.allocator, replay);
         initialized_fields = 0;
         return &self.input_replays.items[self.input_replays.items.len - 1];
@@ -3113,6 +3257,10 @@ pub const HostCore = struct {
             .window = request.window,
         };
         errdefer self.allocator.free(replay.idempotency_key);
+        while (self.resize_replays.items.len >= max_replay_entries) {
+            var evicted = self.resize_replays.orderedRemove(0);
+            evicted.deinit(self.allocator);
+        }
         try self.resize_replays.append(self.allocator, replay);
         return &self.resize_replays.items[self.resize_replays.items.len - 1];
     }
@@ -3862,6 +4010,7 @@ fn acceptHostHello(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     core: *HostCore,
+    deadline: *const ConnectionDeadline,
     now_ns: u64,
     expected_role: ExpectedPeerRole,
 ) !?AcceptedHello {
@@ -3870,7 +4019,7 @@ fn acceptHostHello(
         peer.gid != @as(u32, @intCast(c.getgid())))
         return error.UnauthenticatedPeer;
 
-    var hello_frame = try readRequiredFrame(allocator, stream);
+    var hello_frame = try readConnectionFrame(allocator, stream, deadline);
     defer {
         std.crypto.secureZero(u8, hello_frame.payload);
         hello_frame.deinit(allocator);
@@ -3969,9 +4118,10 @@ fn authorizeViewerAfterHello(
     stream: std.net.Stream,
     core: *HostCore,
     hello: *const AcceptedHello,
+    deadline: *const ConnectionDeadline,
     now_ns: u64,
 ) !AuthorizedViewer {
-    var request = try readRequiredFrame(allocator, stream);
+    var request = try readConnectionFrame(allocator, stream, deadline);
     defer {
         std.crypto.secureZero(u8, request.payload);
         request.deinit(allocator);
@@ -4006,10 +4156,12 @@ pub fn authorizeViewerConnection(
     core: *HostCore,
     now_ns: u64,
 ) !ViewerAuthorization {
-    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .viewer)) orelse
+    var timer = try std.time.Timer.start();
+    const deadline = try ConnectionDeadline.init(&timer, core.lease, now_ns);
+    var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .viewer)) orelse
         return error.ViewerHandshakeRefused;
     defer hello.deinit();
-    const authorized = try authorizeViewerAfterHello(allocator, stream, core, &hello, now_ns);
+    const authorized = try authorizeViewerAfterHello(allocator, stream, core, &hello, &deadline, now_ns);
     return authorized.authorization;
 }
 
@@ -4018,12 +4170,23 @@ fn serveBrokerRequest(
     stream: std.net.Stream,
     core: *HostCore,
     hello_build_id: []const u8,
+    deadline: *const ConnectionDeadline,
     now_ns: u64,
 ) !void {
-    var request = try readRequiredFrame(allocator, stream);
+    var request = try readConnectionFrame(allocator, stream, deadline);
     defer request.deinit(allocator);
     if (request.header.flags != 0) {
         try writeHostFailure(allocator, stream, request.header, .malformed_frame);
+        return;
+    }
+    // Same-uid + instanceId + buildId prove only that the peer is A local
+    // process running the same executable; the 32-byte adoption secret is the
+    // proof it is THE broker that owns this host. HOST_ADOPT is therefore the
+    // only pre-adoption verb: terminate, grant_register, visibility_renew and
+    // any future privileged RPC fail closed until adoption has set
+    // core.adopted (write-once for the host's lifetime).
+    if (request.header.type_code != generated.frame_type.host_adopt and !core.adopted) {
+        try writeHostFailure(allocator, stream, request.header, .unauthenticated);
         return;
     }
     switch (request.header.type_code) {
@@ -4125,9 +4288,11 @@ pub fn serveHostConnection(
     core: *HostCore,
     now_ns: u64,
 ) !void {
-    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .broker)) orelse return;
+    var timer = try std.time.Timer.start();
+    const deadline = try ConnectionDeadline.init(&timer, core.lease, now_ns);
+    var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .broker)) orelse return;
     defer hello.deinit();
-    return serveBrokerRequest(allocator, stream, core, hello.build_id, now_ns);
+    return serveBrokerRequest(allocator, stream, core, hello.build_id, &deadline, now_ns);
 }
 
 fn viewerFailureCode(err: anyerror) protocol.WireError {
@@ -4342,11 +4507,12 @@ fn serveSessionConnection(
     timer: *std.time.Timer,
 ) !?AttachedViewer {
     const now_ns = timer.read();
-    var hello = (try acceptHostHello(allocator, stream, core, now_ns, .either)) orelse return null;
+    const deadline = try ConnectionDeadline.init(timer, core.lease, now_ns);
+    var hello = (try acceptHostHello(allocator, stream, core, &deadline, now_ns, .either)) orelse return null;
     defer hello.deinit();
     switch (hello.role) {
         .broker => {
-            try serveBrokerRequest(allocator, stream, core, hello.build_id, now_ns);
+            try serveBrokerRequest(allocator, stream, core, hello.build_id, &deadline, now_ns);
             return null;
         },
         .viewer => {
@@ -4355,6 +4521,7 @@ fn serveSessionConnection(
                 stream,
                 core,
                 &hello,
+                &deadline,
                 now_ns,
             );
             errdefer authorized.authorization.deinit(core.allocator);
@@ -4399,6 +4566,12 @@ fn pumpAttachedViewer(
     timer: *std.time.Timer,
 ) void {
     if (viewer_slot.*) |*viewer| {
+        // One absolute budget per pump call: poll() proves only that SOME
+        // byte is readable, so a dribbling attached viewer would otherwise
+        // stall the single-threaded loop inside the blocking frame read.
+        // Budget exhaustion detaches the viewer (fail closed); an expired
+        // lease simply skips the pump — the loop top owns lease teardown.
+        const deadline = ConnectionDeadline.init(timer, core.lease, timer.read()) catch return;
         if (state.outputSeq() > viewer.sent_seq and
             viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
         {
@@ -4416,7 +4589,7 @@ fn pumpAttachedViewer(
             }};
             const ready = std.posix.poll(&fds, 0) catch 0;
             if (ready == 0 or fds[0].revents == 0) return;
-            var frame = readRequiredFrame(allocator, viewer.stream) catch {
+            var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch {
                 detachAttachedViewer(allocator, core, viewer_slot);
                 return;
             };
@@ -5936,6 +6109,7 @@ test "admitted HOST_REGISTER write failure reaps and removes the launch client" 
         .parsed = parsed,
         .wire = wire,
         .host_pid = @intCast(pid),
+        .adoption_secret = @splat(0),
         .pending_id = 1,
         .pending_stream = sockets[0],
         .pending_header = .{
@@ -6250,6 +6424,310 @@ test "host.sock positive control returns typed error for wrong adoption secret" 
         response.payload,
     ));
     try std.testing.expect(std.mem.indexOf(u8, response.payload, "UNAUTHENTICATED") != null);
+}
+
+/// Runs one full broker-role adoption handshake over its own connection so
+/// later RPC connections meet the privileged-RPC adoption precondition.
+fn adoptForTest(core: *HostCore, registration: HostRegistration, secret: [32]u8) !void {
+    var sockets = try socketPair();
+    defer sockets[0].close();
+    defer sockets[1].close();
+    var server: HostConnectionThread = .{
+        .stream = sockets[1],
+        .core = core,
+        .now_ns = 2_000,
+    };
+    const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
+    errdefer thread.join();
+    errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+    try writeTestBrokerHello(sockets[0], registration);
+    try readTestWelcome(sockets[0]);
+    const challenge = try adoptionChallenge(std.testing.allocator, registration.record.locator, secret);
+    defer std.testing.allocator.free(challenge);
+    try writeTestAdopt(sockets[0], challenge);
+    var response = try readRequiredFrame(std.testing.allocator, sockets[0]);
+    defer response.deinit(std.testing.allocator);
+    thread.join();
+    try std.testing.expect(server.failure == null);
+    try std.testing.expect(core.adopted);
+}
+
+/// Serves one broker-role request on a fresh connection and returns the raw
+/// response frame; the caller owns (and must deinit) the frame.
+fn serveOneBrokerRequest(
+    core: *HostCore,
+    registration: HostRegistration,
+    type_code: u16,
+    payload: []const u8,
+) !protocol.Frame {
+    var sockets = try socketPair();
+    defer sockets[0].close();
+    defer sockets[1].close();
+    var server: HostConnectionThread = .{
+        .stream = sockets[1],
+        .core = core,
+        .now_ns = 2_000,
+    };
+    const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
+    errdefer thread.join();
+    errdefer _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
+    try writeTestBrokerHello(sockets[0], registration);
+    try readTestWelcome(sockets[0]);
+    try writeTestHostRequest(sockets[0], type_code, payload);
+    const response = try readRequiredFrame(std.testing.allocator, sockets[0]);
+    thread.join();
+    try std.testing.expect(server.failure == null);
+    return response;
+}
+
+fn expectUnauthenticatedRefusal(response: *const protocol.Frame) !void {
+    try std.testing.expectEqual(generated.frame_type.@"error", response.header.type_code);
+    try std.testing.expectEqual(
+        generated.frame_flag.response |
+            generated.frame_flag.final |
+            generated.frame_flag.error_flag,
+        response.header.flags,
+    );
+    try std.testing.expect(protocol.validateControlPayload(
+        std.testing.allocator,
+        generated.wire_schema.error_payload,
+        response.payload,
+    ));
+    try std.testing.expect(std.mem.indexOf(u8, response.payload, "UNAUTHENTICATED") != null);
+}
+
+test "host.sock fails closed for privileged broker RPCs before adoption" {
+    const secret: [32]u8 = @splat(0x52);
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.heap.c_allocator,
+        registration,
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+
+    // GRANT_REGISTER pre-adoption: typed refusal, nothing stored.
+    const grant_payload = try grantRegistrationPayload(
+        std.testing.allocator,
+        @splat(0x92),
+        generated.limits.attach_grant_timeout_ms,
+    );
+    defer std.testing.allocator.free(grant_payload);
+    var grant_response = try serveOneBrokerRequest(
+        &core,
+        registration,
+        generated.frame_type.grant_register,
+        grant_payload,
+    );
+    defer grant_response.deinit(std.testing.allocator);
+    try expectUnauthenticatedRefusal(&grant_response);
+    try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
+
+    // VISIBILITY_RENEW pre-adoption: typed refusal, lease untouched.
+    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
+        return error.MissingWorkspaceIdentity;
+    var token_storage: [64]u8 = undefined;
+    const token = try workspace.start_token.format(&token_storage);
+    const renew_payload = try visibilityRenewPayload(
+        std.testing.allocator,
+        registration,
+        c.getpid(),
+        token,
+        2,
+    );
+    defer std.testing.allocator.free(renew_payload);
+    var renew_response = try serveOneBrokerRequest(
+        &core,
+        registration,
+        generated.frame_type.visibility_renew,
+        renew_payload,
+    );
+    defer renew_response.deinit(std.testing.allocator);
+    try expectUnauthenticatedRefusal(&renew_response);
+    try std.testing.expectEqual(@as(u64, 1), core.lease.open_terminal_revision);
+
+    // TERMINATE pre-adoption: typed refusal, host still live.
+    const terminate_payload = try terminationPayload(std.testing.allocator, registration, "immediate");
+    defer std.testing.allocator.free(terminate_payload);
+    var terminate_response = try serveOneBrokerRequest(
+        &core,
+        registration,
+        generated.frame_type.terminate,
+        terminate_payload,
+    );
+    defer terminate_response.deinit(std.testing.allocator);
+    try expectUnauthenticatedRefusal(&terminate_response);
+    try std.testing.expect(!core.terminated);
+
+    // Positive control: after a real adoption handshake the same RPC serves.
+    try adoptForTest(&core, registration, secret);
+    var granted_response = try serveOneBrokerRequest(
+        &core,
+        registration,
+        generated.frame_type.grant_register,
+        grant_payload,
+    );
+    defer granted_response.deinit(std.testing.allocator);
+    try std.testing.expectEqual(generated.frame_type.grant_register, granted_response.header.type_code);
+    try std.testing.expectEqual(@as(usize, 1), core.grants.items.len);
+}
+
+test "connection deadline fails closed once the absolute budget is spent" {
+    var timer = try std.time.Timer.start();
+    const lease = try VisibilityLease.initial("ws-fixture", 1, 0);
+    var deadline = try ConnectionDeadline.init(&timer, lease, 1);
+    // Shrink the 10 s budget so the test does not wait on wall time.
+    deadline.budget_ns = 50 * std.time.ns_per_ms;
+    try deadline.check();
+    std.Thread.sleep(80 * std.time.ns_per_ms);
+    try std.testing.expectError(error.ConnectionDeadlineExceeded, deadline.check());
+}
+
+test "slow-dribble connection is dropped at the absolute service deadline" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const secret: [32]u8 = @splat(0x5e);
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.heap.c_allocator,
+        registration,
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    // A ~250 ms residual lease shrinks the absolute budget; without the
+    // deadline this partial HELLO would stall the loop for the full per-syscall
+    // control_rpc_timeout_ms (and re-arm forever if dribbled).
+    core.lease.expires_mono_ns = 1_000 + 250 * std.time.ns_per_ms;
+    var sockets = try socketPair();
+    defer sockets[0].close();
+    defer sockets[1].close();
+    var server: HostConnectionThread = .{
+        .stream = sockets[1],
+        .core = &core,
+        .now_ns = 2_000,
+    };
+    const thread = try std.Thread.spawn(.{}, HostConnectionThread.run, .{&server});
+    var timer = try std.time.Timer.start();
+    // Dribble: fewer bytes than one frame header, then silence.
+    const partial = [_]u8{0} ** 8;
+    try sockets[0].writeAll(&partial);
+    thread.join();
+    const elapsed = timer.read();
+    try std.testing.expect(server.failure != null);
+    try std.testing.expect(elapsed < generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms);
+    // The loop-side proof that renewal cannot be starved: the connection was
+    // dropped within roughly the lease-bound budget, not the 10 s default.
+    try std.testing.expect(elapsed < 5 * std.time.ns_per_s);
+    try std.testing.expect(!core.adopted);
+}
+
+fn inputSubmitPayload(allocator: std.mem.Allocator, key: []const u8) ![]u8 {
+    const registration = fixtureRegistration();
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .claimToken = "claim-token",
+        .transactionId = key,
+        .idempotencyKey = key,
+        .operation = .{ .kind = "hangup" },
+    }, .{});
+}
+
+test "replay ledgers evict the oldest entry beyond the retention cap" {
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+
+    var key_storage: [32]u8 = undefined;
+    var index: usize = 0;
+    while (index < max_replay_entries + 4) : (index += 1) {
+        const key = try std.fmt.bufPrint(&key_storage, "input-key-{d}", .{index});
+        const payload = try inputSubmitPayload(std.testing.allocator, key);
+        defer std.testing.allocator.free(payload);
+        // No termination binding: the receipt is "binding unavailable", but the
+        // replay entry is still reserved — exactly the client-driven growth the
+        // cap exists to bound.
+        const applied = try core.submitInput(payload, "viewer-a", 2_000);
+        defer core.allocator.free(applied);
+        try std.testing.expect(core.input_replays.items.len <= max_replay_entries);
+    }
+    try std.testing.expectEqual(max_replay_entries, core.input_replays.items.len);
+    // FIFO: the four oldest keys evicted, the window retains the newest.
+    try std.testing.expectEqualStrings("input-key-4", core.input_replays.items[0].idempotency_key);
+    var recent_storage: [32]u8 = undefined;
+    const recent_key = try std.fmt.bufPrint(&recent_storage, "input-key-{d}", .{max_replay_entries + 3});
+    // Recent-key idempotency still works: a replay hits the ledger (no append).
+    const replay_payload = try inputSubmitPayload(std.testing.allocator, recent_key);
+    defer std.testing.allocator.free(replay_payload);
+    const replayed = try core.submitInput(replay_payload, "viewer-a", 2_000);
+    defer core.allocator.free(replayed);
+    try std.testing.expectEqual(max_replay_entries, core.input_replays.items.len);
+
+    // The resize ledger shares the cap.
+    index = 0;
+    while (index < max_replay_entries + 2) : (index += 1) {
+        const key = try std.fmt.bufPrint(&key_storage, "resize-key-{d}", .{index});
+        _ = try core.reserveResizeReplay(.{
+            .schemaVersion = 1,
+            .session = .{
+                .key = registration.record.locator.session_id,
+                .incarnation = "1",
+            },
+            .window = .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+            .revision = "1",
+            .idempotencyKey = key,
+        }, 1);
+        try std.testing.expect(core.resize_replays.items.len <= max_replay_entries);
+    }
+    try std.testing.expectEqual(max_replay_entries, core.resize_replays.items.len);
+    try std.testing.expectEqualStrings("resize-key-2", core.resize_replays.items[0].idempotency_key);
+}
+
+test "host child environment strips DYLD_ but keeps the rest" {
+    if (c.setenv("DYLD_HIVE_SCRUB_TEST", "1", 1) != 0) return error.SetEnvironmentFailed;
+    defer _ = c.unsetenv("DYLD_HIVE_SCRUB_TEST");
+    if (c.setenv("HIVE_SCRUB_KEEP_TEST", "1", 1) != 0) return error.SetEnvironmentFailed;
+    defer _ = c.unsetenv("HIVE_SCRUB_KEEP_TEST");
+    const scrubbed = try scrubbedHostEnvironment(std.testing.allocator);
+    defer std.testing.allocator.free(scrubbed);
+    try std.testing.expect(scrubbed.len > 0);
+    try std.testing.expect(scrubbed[scrubbed.len - 1] == null);
+    var kept = false;
+    for (scrubbed) |entry| {
+        const text = std.mem.span(entry orelse break);
+        try std.testing.expect(!std.mem.startsWith(u8, text, "DYLD_"));
+        if (std.mem.startsWith(u8, text, "HIVE_SCRUB_KEEP_TEST=")) kept = true;
+    }
+    try std.testing.expect(kept);
+}
+
+test "null-sink VT effects retention fails closed at the journal ceiling" {
+    const audit = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    defer audit.engine().deinit();
+    // Simulate a verification engine that already retains the §18 journal
+    // ceiling: one more PTY-effect byte must fail closed, not grow the
+    // session-lifetime copy without bound.
+    try audit.effects.ensureTotalCapacity(std.testing.allocator, terminal_state.journal_max_bytes);
+    audit.effects.items.len = terminal_state.journal_max_bytes;
+    const reply = "x";
+    RealVtEngine.writePtyCallback(audit.terminal, audit, reply.ptr, reply.len);
+    try std.testing.expect(audit.effect_failed);
+    try std.testing.expectEqual(terminal_state.journal_max_bytes, audit.effects.items.len);
 }
 
 fn grantRegistrationPayload(
@@ -6812,6 +7290,9 @@ test "host.sock GRANT_REGISTER stores only the one-use hash" {
         1_000,
     );
     defer core.deinit();
+    // Privileged broker RPCs fail closed until adoption (the broker opens one
+    // connection per RPC, so adoption runs on its own connection first).
+    try adoptForTest(&core, registration, secret);
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
@@ -6920,6 +7401,8 @@ test "host.sock VISIBILITY_RENEW verifies workspace identity and extends exact l
         2,
     );
     defer std.testing.allocator.free(payload);
+    // Privileged broker RPCs fail closed until adoption.
+    try adoptForTest(&core, registration, secret);
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
@@ -7118,6 +7601,8 @@ test "host.sock TERMINATE returns process evidence, writes final, and spares sen
     try bindTestProvider(std.heap.c_allocator, &core, &pty, temporary.dir);
     const payload = try terminationPayload(std.testing.allocator, core.registration, "immediate");
     defer std.testing.allocator.free(payload);
+    // Privileged broker RPCs fail closed until adoption.
+    try adoptForTest(&core, core.registration, secret);
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();

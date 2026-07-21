@@ -480,11 +480,20 @@ pub const Parser = struct {
             new: *?Capture,
             alloc: Allocator,
         ) error{OutOfMemory}!void {
+            // The fallible part must complete BEFORE anything is assigned
+            // to new.*. Result-location semantics construct the payload in
+            // place, so a `try` inside the literal leaves new.* non-null
+            // but half-formed on failure — and the caller's fixed-buffer
+            // fallback asserts capture == null. Replay of a restored
+            // stream runs after a point of no return
+            // (hive_checkpoint.restoreStream), so this allocation failure
+            // must stay survivable.
+            const backing = try std.Io.Writer.Allocating.initCapacity(
+                alloc,
+                2048,
+            );
             new.* = .{
-                .backing = .{ .allocating = try std.Io.Writer.Allocating.initCapacity(
-                    alloc,
-                    2048,
-                ) },
+                .backing = .{ .allocating = backing },
                 .writer = &new.*.?.backing.allocating.writer,
             };
         }

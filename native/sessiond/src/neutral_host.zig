@@ -4,7 +4,9 @@ const process_inspector = @import("process_inspector");
 
 const c = @cImport({
     @cInclude("signal.h");
+    @cInclude("sys/socket.h");
     @cInclude("sys/stat.h");
+    @cInclude("sys/time.h");
     @cInclude("sys/wait.h");
     @cInclude("unistd.h");
 });
@@ -1609,6 +1611,33 @@ fn readExact(file: std.fs.File, bytes: []u8) !void {
     if (try file.readAll(bytes) != bytes.len) return error.TruncatedOperationFrame;
 }
 
+/// Transport bound applied to every accepted control connection, in the same
+/// idiom as session_host.zig's lease-bound SO_RCVTIMEO/SO_SNDTIMEO. The host
+/// serve loop is single-threaded and the pre-authentication read below is
+/// blocking, so a same-uid peer that connects and stalls (or drips a partial
+/// frame) must not freeze every later operation: a read or write that
+/// outlasts the bound fails WouldBlock, the caller drops that connection, and
+/// the host keeps serving. Fail-closed: if the bound itself cannot be
+/// installed the connection is refused rather than served without one.
+pub const connection_io_timeout_ms: u64 = 10 * std.time.ms_per_s;
+
+fn setConnectionTimeoutMs(fd: std.posix.fd_t, timeout_ms: u64) !void {
+    if (timeout_ms == 0) return error.InvalidConnectionTimeout;
+    const timeout: c.struct_timeval = .{
+        .tv_sec = @intCast(timeout_ms / std.time.ms_per_s),
+        .tv_usec = @intCast(
+            (timeout_ms % std.time.ms_per_s) * std.time.us_per_ms,
+        ),
+    };
+    if (c.setsockopt(fd, c.SOL_SOCKET, c.SO_RCVTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0 or
+        c.setsockopt(fd, c.SOL_SOCKET, c.SO_SNDTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0)
+        return error.ConnectionTimeoutUnavailable;
+}
+
+fn setConnectionTimeout(fd: std.posix.fd_t) !void {
+    return setConnectionTimeoutMs(fd, connection_io_timeout_ms);
+}
+
 fn putU32(output: *[4]u8, value: usize) !void {
     if (value > std.math.maxInt(u32)) return error.OperationFrameTooLarge;
     std.mem.writeInt(u32, output, @intCast(value), .big);
@@ -1674,11 +1703,17 @@ pub const Client = struct {
         idempotency_key: []const u8,
         payload: []const u8,
     ) !ClientResponse {
-        if (self.session.key.len > operation_payload_max_bytes or
-            self.session.incarnation.len > operation_payload_max_bytes or
-            idempotency_key.len > operation_payload_max_bytes or
-            payload.len > operation_payload_max_bytes)
-            return error.OperationFrameTooLarge;
+        // The server rejects a request whose fields SUM to more than
+        // operation_payload_max_bytes (see serveAccepted), so the client must
+        // apply the same aggregate rule: a request the server will reject must
+        // fail here, before the bytes are written to a socket the server has
+        // already abandoned.
+        const total = std.math.add(
+            usize,
+            try std.math.add(usize, self.session.key.len, self.session.incarnation.len),
+            try std.math.add(usize, idempotency_key.len, payload.len),
+        ) catch return error.OperationFrameTooLarge;
+        if (total > operation_payload_max_bytes) return error.OperationFrameTooLarge;
         const before = try socketEvidenceAt(self.directory);
         const stream = try std.net.connectUnixSocket(self.socketPath);
         defer stream.close();
@@ -1743,7 +1778,18 @@ pub const HostEndpoint = struct {
         const socket_path = try runtime.sessionPath(allocator, session, socket_relative_path);
         errdefer allocator.free(socket_path);
         const address = try std.net.Address.initUnix(socket_path);
-        var server = try address.listen(.{});
+        // Bind under a restrictive umask so the socket node is never group- or
+        // world-accessible, not even in the window between bind and the chmod
+        // below. The chmod and the socketEvidenceAt readback stay: they are
+        // the durable mode evidence (0o600) every later open is checked
+        // against. umask is process-wide, so save and restore it around the
+        // listen rather than leaving the host's umask tightened.
+        const previous_umask = c.umask(0o077);
+        var server = address.listen(.{}) catch |err| {
+            _ = c.umask(previous_umask);
+            return err;
+        };
+        _ = c.umask(previous_umask);
         errdefer server.deinit();
         const socket_path_z = try allocator.dupeZ(u8, socket_path);
         defer allocator.free(socket_path_z);
@@ -1778,11 +1824,17 @@ pub const HostEndpoint = struct {
             return error.SocketSubstitution;
         const connection = try self.server.accept();
         defer connection.stream.close();
+        // Install the transport bound before any byte is read: the header
+        // read below is pre-authentication, so an unbounded block here would
+        // let any same-uid peer freeze the single-threaded host.
+        try setConnectionTimeout(connection.stream.handle);
         try self.serveAccepted(connection.stream, handler);
     }
 
     /// Returns one ready connection without changing serveOne's blocking
-    /// contract. The caller owns the stream and its transport timeouts.
+    /// contract. The returned stream already carries the endpoint's
+    /// fail-closed recv/send bound (connection_io_timeout_ms); the caller
+    /// owns the stream and may tighten, but never loosen, that deadline.
     pub fn acceptIfReady(self: *HostEndpoint) !?std.net.Stream {
         if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
             return error.SocketSubstitution;
@@ -1796,6 +1848,7 @@ pub const HostEndpoint = struct {
             return error.HostEndpointUnavailable;
         const connection = try self.server.accept();
         errdefer connection.stream.close();
+        try setConnectionTimeout(connection.stream.handle);
         if (!std.meta.eql(self.socketEvidence, try socketEvidenceAt(self.directory)))
             return error.SocketSubstitution;
         return connection.stream;
@@ -1857,148 +1910,6 @@ pub const HostEndpoint = struct {
         try file.writeAll(response.payload);
     }
 };
-
-const LiveProofHandler = struct {
-    pty: *pty_host.PtyHost,
-    registry: *Registry,
-    session: SessionRef,
-    terminated: bool = false,
-
-    fn operation(context: *anyopaque, request: OperationRequest) !OperationResponse {
-        const self: *LiveProofHandler = @ptrCast(@alignCast(context));
-        return switch (request.operation) {
-            .inspect => .{ .payload = "live" },
-            .submitInput => blk: {
-                _ = try self.pty.writeAccept(request.payload);
-                try self.pty.writeDrainAll();
-                break :blk .{ .payload = "submitted" };
-            },
-            .attach => blk: {
-                var attempts: usize = 0;
-                while (attempts < 200) : (attempts += 1) {
-                    const output = try self.pty.readAvailable();
-                    if (output.bytes.len == 0) {
-                        std.Thread.sleep(std.time.ns_per_ms);
-                        continue;
-                    }
-                    _ = try self.registry.update(self.session, .{
-                        .eventSequenceHighWater = 2,
-                        .output = .{
-                            .retainedStart = 0,
-                            .retainedEndExclusive = output.through_seq,
-                            .closed = false,
-                        },
-                        .checkpoints = .{
-                            .retained = 1,
-                            .newestThroughEventSequence = 1,
-                            .newestThroughOutputOffset = output.through_seq,
-                        },
-                    });
-                    break :blk .{ .payload = output.bytes };
-                }
-                return error.OutputUnavailable;
-            },
-            .resize => .{ .accepted = false, .payload = "not implemented by lifecycle proof" },
-            .pollExit => .{ .payload = "running" },
-            .reap => .{ .accepted = false, .payload = "process still running" },
-            .terminate => blk: {
-                var request_digest: [32]u8 = undefined;
-                std.crypto.hash.sha2.Sha256.hash(request.payload, &request_digest, .{});
-                switch (try self.registry.reserveTermination(
-                    self.session,
-                    request.idempotencyKey,
-                    request_digest,
-                )) {
-                    .reserved => {},
-                    .pending => return error.TerminationPending,
-                    .replay => |result| break :blk .{ .payload = result },
-                }
-                if ((self.registry.get(self.session) orelse return error.SessionNotFound)
-                    .terminationResultJson != null)
-                    return error.PrematureTerminationResult;
-                if (self.pty.pgid <= 0 or c.kill(-self.pty.pgid, c.SIGKILL) != 0)
-                    return error.TerminateFailed;
-                self.pty.closeMaster();
-                const evidence = try self.pty.waitExit(true);
-                if (!evidence.reaped or evidence.state != .exited)
-                    return error.ReapFailed;
-                const status: ExitStatus = .{
-                    .code = if (evidence.exit_code) |code| @intCast(code) else null,
-                    .signal = evidence.term_signal,
-                    .observedAt = "2026-07-18T00:00:00.000Z",
-                };
-                _ = try self.registry.update(self.session, .{
-                    .lifecycle = .reaped,
-                    .exit = status,
-                    .reap = .{
-                        .authority = .@"direct-parent",
-                        .reaped = true,
-                        .status = status,
-                        .completeness = .complete,
-                    },
-                    .output = .{
-                        .retainedStart = 0,
-                        .retainedEndExclusive = self.pty.output_seq,
-                        .closed = true,
-                    },
-                });
-                const result = try self.registry.commitTermination(
-                    self.session,
-                    request.idempotencyKey,
-                    request_digest,
-                    "terminated-and-reaped",
-                );
-                self.terminated = true;
-                break :blk .{ .payload = result };
-            },
-        };
-    }
-
-    fn handler(self: *LiveProofHandler) OperationHandler {
-        return .{ .context = self, .callFn = operation };
-    }
-};
-
-fn runLiveProofHost(root: []const u8, request: CreateRequest, ready_fd: std.posix.fd_t) !void {
-    const allocator = std.heap.page_allocator;
-    var runtime = try Runtime.open(allocator, root);
-    defer runtime.deinit();
-    var registry = try Registry.open(allocator, &runtime);
-    defer registry.deinit();
-
-    var pty = try pty_host.PtyHost.init(allocator);
-    defer pty.deinit();
-    var direct = DirectHost.init(allocator, &registry, &pty);
-    defer direct.deinit();
-
-    // The create path under proof: one frozen request in, one committed
-    // CreateResult out, with the terminal opened and owned by this host.
-    const created = try direct.host().create(request);
-    const running = switch (created.outcome) {
-        .running => |value| value,
-        else => return error.LiveProofCreateFailed,
-    };
-    if (!running.jobControl.sessionLeader or
-        !running.jobControl.controllingTerminal or
-        running.jobControl.completeness != .complete or
-        !std.mem.startsWith(u8, running.jobControl.terminalIdentity, "/dev/"))
-        return error.JobControlEvidenceUnavailable;
-    if (direct.spawns != 1) return error.UnexpectedSpawnCount;
-    const session = created.session;
-
-    var endpoint = try HostEndpoint.open(allocator, &runtime, session);
-    defer endpoint.deinit();
-
-    const ready: std.fs.File = .{ .handle = ready_fd };
-    try ready.writeAll(session.incarnation);
-    ready.close();
-    var handler: LiveProofHandler = .{
-        .pty = &pty,
-        .registry = &registry,
-        .session = session,
-    };
-    while (!handler.terminated) try endpoint.serveOne(handler.handler());
-}
 
 fn proveSocketPathPreflight(allocator: std.mem.Allocator) !void {
     var base_storage: [64]u8 = undefined;
@@ -2306,6 +2217,237 @@ test "stored create outcome owns strings beyond registry source lifetime" {
     }
 }
 
+const TestTimeoutHandler = struct {
+    called: bool = false,
+    payload: []const u8,
+
+    fn operation(context: *anyopaque, _: OperationRequest) !OperationResponse {
+        const self: *TestTimeoutHandler = @ptrCast(@alignCast(context));
+        self.called = true;
+        return .{ .payload = self.payload };
+    }
+
+    fn handler(self: *TestTimeoutHandler) OperationHandler {
+        return .{ .context = self, .callFn = operation };
+    }
+};
+
+test "stalled accepted connection is cut by the transport deadline and later calls proceed" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/nht-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("timeout-proof", &digest, .{});
+    const reserved = switch (try registry.reserve(
+        "foreign://opaque/timeout-proof",
+        "timeout-create-1",
+        digest,
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedReplay,
+    };
+    const session = reserved.session;
+    // A Record borrows registry storage that the register below recycles, so
+    // the session identity used across that mutation must be copied out first.
+    var stable_session = try OwnedSessionRef.init(allocator, session);
+    defer stable_session.deinit();
+    _ = try registry.register(session, .{
+        .host = .{ .processId = 11, .startToken = "host-start" },
+        .child = .{ .processId = 12, .startToken = "child-start" },
+        .childSessionId = 12,
+        .childProcessGroupId = 12,
+        .foregroundProcessGroupId = 12,
+        .terminalIdentity = "/dev/ttys001",
+        .sessionLeader = true,
+        .controllingTerminal = true,
+        .standardStreamsShareTerminal = true,
+        .initialProfileAppliedBeforeExec = true,
+        .initialWindowAppliedBeforeExec = true,
+        .window = reserved.window,
+    });
+    var endpoint = try HostEndpoint.open(allocator, &runtime, stable_session.value);
+    defer endpoint.deinit();
+
+    // A peer that connects and stalls pre-authentication must not freeze the
+    // single-threaded host: the accepted connection carries the fail-closed
+    // recv/send bound from the moment accept returns.
+    const stalled = try std.net.connectUnixSocket(endpoint.socketPath);
+    defer stalled.close();
+    var accepted: ?std.net.Stream = null;
+    var attempts: usize = 0;
+    while (accepted == null and attempts < 100) : (attempts += 1) {
+        accepted = try endpoint.acceptIfReady();
+        if (accepted == null) std.Thread.sleep(std.time.ns_per_ms);
+    }
+    const server = accepted orelse return error.NeutralEndpointNotReady;
+    defer server.close();
+    var rcv: c.struct_timeval = undefined;
+    var rcv_len: c.socklen_t = @sizeOf(c.struct_timeval);
+    if (c.getsockopt(server.handle, c.SOL_SOCKET, c.SO_RCVTIMEO, &rcv, &rcv_len) != 0)
+        return error.TimeoutEvidenceMissing;
+    try testing.expectEqual(
+        @as(@TypeOf(rcv.tv_sec), @intCast(connection_io_timeout_ms / std.time.ms_per_s)),
+        rcv.tv_sec,
+    );
+    try testing.expectEqual(@as(@TypeOf(rcv.tv_usec), 0), rcv.tv_usec);
+
+    // With the bound shortened so the test does not wait out the production
+    // value, the stalled peer's silence fails the header read with WouldBlock
+    // and the operation handler is never reached.
+    try setConnectionTimeoutMs(server.handle, 50);
+    var never: TestTimeoutHandler = .{ .payload = "unexpected" };
+    try testing.expectError(
+        error.WouldBlock,
+        endpoint.serveAccepted(server, never.handler()),
+    );
+    try testing.expect(!never.called);
+
+    // Positive control: cutting the stalled connection must not take the
+    // endpoint with it — the next well-formed client is served normally.
+    var stub: TestTimeoutHandler = .{ .payload = "live" };
+    const serve_thread = try std.Thread.spawn(.{}, struct {
+        fn serve(ep: *HostEndpoint, operation_handler: OperationHandler) void {
+            ep.serveOne(operation_handler) catch {};
+        }
+    }.serve, .{ &endpoint, stub.handler() });
+    var client = try registry.connect(stable_session.value);
+    defer client.deinit();
+    var response = try client.call(allocator, .inspect, "", "");
+    defer response.deinit();
+    try testing.expect(response.accepted);
+    try testing.expectEqualStrings("live", response.payload);
+    serve_thread.join();
+    try testing.expect(stub.called);
+}
+
+test "bound control socket keeps its 0o600 mode evidence under a permissive umask" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/nhm-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("mode-proof", &digest, .{});
+    const reserved = switch (try registry.reserve(
+        "foreign://opaque/mode-proof",
+        "mode-create-1",
+        digest,
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedReplay,
+    };
+
+    // Even with a fully permissive process umask the socket node must come
+    // into existence without group/other bits, and the recorded evidence
+    // every later open is checked against must agree.
+    const previous_umask = c.umask(0o000);
+    defer _ = c.umask(previous_umask);
+    var endpoint = try HostEndpoint.open(allocator, &runtime, reserved.session);
+    defer endpoint.deinit();
+    try testing.expectEqual(@as(u16, 0o600), endpoint.socketEvidence.mode);
+}
+
+test "client refuses an aggregate frame the server would reject" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const testing = std.testing;
+    const allocator = testing.allocator;
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(&root_storage, "/tmp/nha-{x}", .{
+        std.crypto.random.int(u64),
+    });
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var root_directory = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try root_directory.chmod(0o700);
+    root_directory.close();
+
+    var runtime = try Runtime.open(allocator, root);
+    defer runtime.deinit();
+    var registry = try Registry.open(allocator, &runtime);
+    defer registry.deinit();
+    var digest: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash("aggregate-proof", &digest, .{});
+    const reserved = switch (try registry.reserve(
+        "foreign://opaque/aggregate-proof",
+        "aggregate-create-1",
+        digest,
+        .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+    )) {
+        .reserved => |record| record,
+        .existing => return error.UnexpectedReplay,
+    };
+    // A Record borrows registry storage that register recycles, so the
+    // session identity used across that mutation must be copied out first.
+    var stable_session = try OwnedSessionRef.init(allocator, reserved.session);
+    defer stable_session.deinit();
+    _ = try registry.register(reserved.session, .{
+        .host = .{ .processId = 11, .startToken = "host-start" },
+        .child = .{ .processId = 12, .startToken = "child-start" },
+        .childSessionId = 12,
+        .childProcessGroupId = 12,
+        .foregroundProcessGroupId = 12,
+        .terminalIdentity = "/dev/ttys001",
+        .sessionLeader = true,
+        .controllingTerminal = true,
+        .standardStreamsShareTerminal = true,
+        .initialProfileAppliedBeforeExec = true,
+        .initialWindowAppliedBeforeExec = true,
+        .window = reserved.window,
+    });
+    var client = try registry.connect(stable_session.value);
+    defer client.deinit();
+
+    // Every field is individually under operation_payload_max_bytes but their
+    // SUM — the rule serveAccepted enforces — is over: the client must refuse
+    // before writing to a socket the server would abandon mid-frame.
+    const payload = try allocator.alloc(u8, operation_payload_max_bytes - 64);
+    defer allocator.free(payload);
+    @memset(payload, 'x');
+    const long_key = try allocator.alloc(u8, 256);
+    defer allocator.free(long_key);
+    @memset(long_key, 'k');
+    try testing.expectError(
+        error.OperationFrameTooLarge,
+        client.call(allocator, .inspect, long_key, payload),
+    );
+
+    // Positive control: a frame under the aggregate bound passes the size
+    // gate and fails later on missing socket evidence (no endpoint is
+    // listening), proving the rejection above was the aggregate rule.
+    try testing.expectError(
+        error.FileNotFound,
+        client.call(allocator, .inspect, "", ""),
+    );
+}
+
 /// Real committed create results — one running, one descriptor-map refusal —
 /// assembled as frozen create-result documents.
 ///
@@ -2480,6 +2622,154 @@ fn proveBoundedRecovery(allocator: std.mem.Allocator) !void {
 }
 
 pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
+    // Security gate: the live proof handler below terminates a real child and
+    // writes proof-run evidence — including a FROZEN observedAt timestamp —
+    // into the durable ledger. That ledger-write power must stay unreachable
+    // from production code paths, so the handler and its host role are
+    // declared INSIDE this proof entry point rather than at module scope:
+    // nothing outside `proveLiveLifecycle` (whose only caller is the golden
+    // proof runner, test/neutral-host-golden.zig) can name or serve them.
+    const LiveProofHost = struct {
+        pty: *pty_host.PtyHost,
+        registry: *Registry,
+        session: SessionRef,
+        terminated: bool = false,
+
+        fn operation(context: *anyopaque, request: OperationRequest) !OperationResponse {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return switch (request.operation) {
+                .inspect => .{ .payload = "live" },
+                .submitInput => blk: {
+                    _ = try self.pty.writeAccept(request.payload);
+                    try self.pty.writeDrainAll();
+                    break :blk .{ .payload = "submitted" };
+                },
+                .attach => blk: {
+                    var attempts: usize = 0;
+                    while (attempts < 200) : (attempts += 1) {
+                        const output = try self.pty.readAvailable();
+                        if (output.bytes.len == 0) {
+                            std.Thread.sleep(std.time.ns_per_ms);
+                            continue;
+                        }
+                        _ = try self.registry.update(self.session, .{
+                            .eventSequenceHighWater = 2,
+                            .output = .{
+                                .retainedStart = 0,
+                                .retainedEndExclusive = output.through_seq,
+                                .closed = false,
+                            },
+                            .checkpoints = .{
+                                .retained = 1,
+                                .newestThroughEventSequence = 1,
+                                .newestThroughOutputOffset = output.through_seq,
+                            },
+                        });
+                        break :blk .{ .payload = output.bytes };
+                    }
+                    return error.OutputUnavailable;
+                },
+                .resize => .{ .accepted = false, .payload = "not implemented by lifecycle proof" },
+                .pollExit => .{ .payload = "running" },
+                .reap => .{ .accepted = false, .payload = "process still running" },
+                .terminate => blk: {
+                    var request_digest: [32]u8 = undefined;
+                    std.crypto.hash.sha2.Sha256.hash(request.payload, &request_digest, .{});
+                    switch (try self.registry.reserveTermination(
+                        self.session,
+                        request.idempotencyKey,
+                        request_digest,
+                    )) {
+                        .reserved => {},
+                        .pending => return error.TerminationPending,
+                        .replay => |result| break :blk .{ .payload = result },
+                    }
+                    if ((self.registry.get(self.session) orelse return error.SessionNotFound)
+                        .terminationResultJson != null)
+                        return error.PrematureTerminationResult;
+                    if (self.pty.pgid <= 0 or c.kill(-self.pty.pgid, c.SIGKILL) != 0)
+                        return error.TerminateFailed;
+                    self.pty.closeMaster();
+                    const evidence = try self.pty.waitExit(true);
+                    if (!evidence.reaped or evidence.state != .exited)
+                        return error.ReapFailed;
+                    const status: ExitStatus = .{
+                        .code = if (evidence.exit_code) |code| @intCast(code) else null,
+                        .signal = evidence.term_signal,
+                        .observedAt = "2026-07-18T00:00:00.000Z",
+                    };
+                    _ = try self.registry.update(self.session, .{
+                        .lifecycle = .reaped,
+                        .exit = status,
+                        .reap = .{
+                            .authority = .@"direct-parent",
+                            .reaped = true,
+                            .status = status,
+                            .completeness = .complete,
+                        },
+                        .output = .{
+                            .retainedStart = 0,
+                            .retainedEndExclusive = self.pty.output_seq,
+                            .closed = true,
+                        },
+                    });
+                    const result = try self.registry.commitTermination(
+                        self.session,
+                        request.idempotencyKey,
+                        request_digest,
+                        "terminated-and-reaped",
+                    );
+                    self.terminated = true;
+                    break :blk .{ .payload = result };
+                },
+            };
+        }
+
+        fn handler(self: *@This()) OperationHandler {
+            return .{ .context = self, .callFn = operation };
+        }
+
+        fn run(root: []const u8, request: CreateRequest, ready_fd: std.posix.fd_t) !void {
+            const run_allocator = std.heap.page_allocator;
+            var runtime = try Runtime.open(run_allocator, root);
+            defer runtime.deinit();
+            var registry = try Registry.open(run_allocator, &runtime);
+            defer registry.deinit();
+
+            var pty = try pty_host.PtyHost.init(run_allocator);
+            defer pty.deinit();
+            var direct = DirectHost.init(run_allocator, &registry, &pty);
+            defer direct.deinit();
+
+            // The create path under proof: one frozen request in, one committed
+            // CreateResult out, with the terminal opened and owned by this host.
+            const created = try direct.host().create(request);
+            const running = switch (created.outcome) {
+                .running => |value| value,
+                else => return error.LiveProofCreateFailed,
+            };
+            if (!running.jobControl.sessionLeader or
+                !running.jobControl.controllingTerminal or
+                running.jobControl.completeness != .complete or
+                !std.mem.startsWith(u8, running.jobControl.terminalIdentity, "/dev/"))
+                return error.JobControlEvidenceUnavailable;
+            if (direct.spawns != 1) return error.UnexpectedSpawnCount;
+            const session = created.session;
+
+            var endpoint = try HostEndpoint.open(run_allocator, &runtime, session);
+            defer endpoint.deinit();
+
+            const ready: std.fs.File = .{ .handle = ready_fd };
+            try ready.writeAll(session.incarnation);
+            ready.close();
+            var proof_host: @This() = .{
+                .pty = &pty,
+                .registry = &registry,
+                .session = session,
+            };
+            while (!proof_host.terminated) try endpoint.serveOne(proof_host.handler());
+        }
+    };
     try proveSocketPathPreflight(allocator);
     try proveCreateFailureAdmission(allocator);
     try proveDirectCreateIdempotency(allocator);
@@ -2540,7 +2830,7 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
     const host_pid = try std.posix.fork();
     if (host_pid == 0) {
         std.posix.close(ready_pipe[0]);
-        runLiveProofHost(root, request, ready_pipe[1]) catch |err| {
+        LiveProofHost.run(root, request, ready_pipe[1]) catch |err| {
             std.debug.print("neutral live proof host failed: {s}\n", .{@errorName(err)});
             std.posix.exit(125);
         };

@@ -1,5 +1,5 @@
 diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
-index 8cbd5128..f258bb38 100644
+index 8cbd512..f258bb3 100644
 --- a/src/apprt/embedded.zig
 +++ b/src/apprt/embedded.zig
 @@ -1227,34 +1227,33 @@ const HiveManual = struct {
@@ -52,10 +52,10 @@ index 8cbd5128..f258bb38 100644
          self.surface.core_surface.io.renderer_wakeup.notify() catch {};
          self.emit(.title, self.surface.core_surface.io.terminal.getTitle() orelse "");
 diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
-index c520d4cd..ecb0a642 100644
+index c2f96ee..543a9d4 100644
 --- a/src/terminal/c/terminal.zig
 +++ b/src/terminal/c/terminal.zig
-@@ -460,34 +460,32 @@ pub fn checkpoint_import(
+@@ -464,34 +464,32 @@ pub fn checkpoint_import(
      var snapshot_owned = true;
      defer if (snapshot_owned) snapshot.deinit(alloc);
  
@@ -103,3 +103,32 @@ index c520d4cd..ecb0a642 100644
      return .success;
  }
  
+diff --git a/src/terminal/osc.zig b/src/terminal/osc.zig
+index 26ce126..67eb3db 100644
+--- a/src/terminal/osc.zig
++++ b/src/terminal/osc.zig
+@@ -480,11 +480,20 @@ pub const Parser = struct {
+             new: *?Capture,
+             alloc: Allocator,
+         ) error{OutOfMemory}!void {
++            // The fallible part must complete BEFORE anything is assigned
++            // to new.*. Result-location semantics construct the payload in
++            // place, so a `try` inside the literal leaves new.* non-null
++            // but half-formed on failure — and the caller's fixed-buffer
++            // fallback asserts capture == null. Replay of a restored
++            // stream runs after a point of no return
++            // (hive_checkpoint.restoreStream), so this allocation failure
++            // must stay survivable.
++            const backing = try std.Io.Writer.Allocating.initCapacity(
++                alloc,
++                2048,
++            );
+             new.* = .{
+-                .backing = .{ .allocating = try std.Io.Writer.Allocating.initCapacity(
+-                    alloc,
+-                    2048,
+-                ) },
++                .backing = .{ .allocating = backing },
+                 .writer = &new.*.?.backing.allocating.writer,
+             };
+         }

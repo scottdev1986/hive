@@ -29,6 +29,13 @@ const c = @cImport({
 /// fail at this bound rather than hanging the daemon spawn path forever.
 pub const exec_barrier_timeout_ms: c_int = 5_000;
 
+/// Bound on the reap wait after SIGKILL (R5-class, matching §21's 2 s KILL
+/// settle bound). A child wedged in uninterruptible I/O fails at this bound
+/// instead of hanging the spawn/deinit path on a blocking waitpid forever.
+pub const force_kill_reap_timeout_ms: u32 = 2_000;
+/// Poll slice for the bounded reap wait.
+pub const force_kill_reap_poll_ms: u32 = 10;
+
 // openpty lives in libSystem on macOS; the util.h header is absent from the
 // Zig Xcode overlay, so declare it explicitly (same ABI as util.h).
 extern "c" fn openpty(
@@ -232,12 +239,7 @@ pub const PtyHost = struct {
 
     pub fn deinit(self: *PtyHost) void {
         self.closeMaster();
-        if (self.pid > 0) {
-            _ = c.kill(self.pid, c.SIGKILL);
-            var st: c_int = 0;
-            _ = c.waitpid(self.pid, &st, 0);
-            self.pid = -1;
-        }
+        self.forceKillChild();
         self.write_queue.deinit(self.allocator);
         if (self.read_buf.len > 0) self.allocator.free(self.read_buf);
         self.* = undefined;
@@ -436,22 +438,22 @@ pub const PtyHost = struct {
         // CLOEXEC on master so later execs in the host don't leak it.
         const flags = c.fcntl(master, c.F_GETFD);
         if (flags < 0) {
-            self.forceKillChildWithPid(@intCast(pid));
+            _ = self.forceKillChildWithPid(@intCast(pid), null);
             return error.SpawnFailed;
         }
         if (c.fcntl(master, c.F_SETFD, flags | c.FD_CLOEXEC) < 0) {
-            self.forceKillChildWithPid(@intCast(pid));
+            _ = self.forceKillChildWithPid(@intCast(pid), null);
             return error.SpawnFailed;
         }
         // L2: O_NONBLOCK is required for readAvailable's would-block contract
         // (same hard-fail pattern as R4 CLOEXEC).
         const fl = c.fcntl(master, c.F_GETFL);
         if (fl < 0) {
-            self.forceKillChildWithPid(@intCast(pid));
+            _ = self.forceKillChildWithPid(@intCast(pid), null);
             return error.SpawnFailed;
         }
         if (c.fcntl(master, c.F_SETFL, fl | c.O_NONBLOCK) < 0) {
-            self.forceKillChildWithPid(@intCast(pid));
+            _ = self.forceKillChildWithPid(@intCast(pid), null);
             return error.SpawnFailed;
         }
 
@@ -678,6 +680,10 @@ pub const PtyHost = struct {
         const n = posix.read(self.master_fd, self.read_buf) catch |err| switch (err) {
             error.WouldBlock => return .{ .through_seq = self.output_seq, .bytes = &[_]u8{} },
             error.BrokenPipe, error.ConnectionResetByPeer => return error.Closed,
+            // Darwin hangup: a master read after the last slave close returns
+            // EIO (xnu pts master). That is peer-gone, not an I/O fault —
+            // report the dead session cleanly as Closed.
+            error.InputOutput => return error.Closed,
             else => return error.IoFailed,
         };
         if (n == 0) {
@@ -730,8 +736,9 @@ pub const PtyHost = struct {
             .reaped = false,
         };
         if (rc < 0) {
-            const e: std.posix.E = @enumFromInt(std.c._errno().*);
-            if (e == .CHILD) {
+            // Raw-int compare: @enumFromInt on an errno not declared in
+            // std.posix.E is illegal behavior in ReleaseFast.
+            if (std.c._errno().* == @intFromEnum(std.posix.E.CHILD)) {
                 // Already reaped elsewhere or no longer our child: authority lost.
                 return .{
                     .authority = .unavailable,
@@ -773,17 +780,66 @@ pub const PtyHost = struct {
 
     fn forceKillChild(self: *PtyHost) void {
         if (self.pid > 0) {
-            self.forceKillChildWithPid(self.pid);
+            // The start token exists only after post-exec identity observation;
+            // earlier spawn-failure paths have no token to verify against (the
+            // just-forked child is still ours and unreaped, so its pid cannot
+            // have been reused).
+            const token: ?process_inspector.StartToken = if (self.start_token.seconds != 0 or
+                self.start_token.microseconds != 0) self.start_token else null;
+            _ = self.forceKillChildWithPid(self.pid, token);
             self.pid = -1;
         }
     }
 
-    fn forceKillChildWithPid(_: *PtyHost, child_pid: i32) void {
-        if (child_pid > 0) {
-            _ = c.kill(child_pid, c.SIGKILL);
-            var st: c_int = 0;
-            _ = c.waitpid(child_pid, &st, 0);
+    /// SIGKILL our own child, then reap with a bounded wait.
+    ///
+    /// When a start token is on record, re-observe and verify it first (§21
+    /// TOCTOU): if the recorded identity is gone — reaped by a sibling
+    /// authority and the pid since reused — the pid now belongs to an
+    /// unrelated process and must NOT be signalled. Unobservable fails closed
+    /// (skip) because reuse cannot be ruled out.
+    ///
+    /// Returns true when the child was reaped or positively absent; false when
+    /// the signal was skipped or the reap deadline expired — the caller must
+    /// forget the pid rather than hang on a child wedged in uninterruptible
+    /// I/O.
+    fn forceKillChildWithPid(
+        _: *PtyHost,
+        child_pid: i32,
+        expected_token: ?process_inspector.StartToken,
+    ) bool {
+        if (child_pid <= 0) return true;
+        if (expected_token) |token| {
+            switch (process_inspector.observeProcess(child_pid)) {
+                .present => |obs| {
+                    // PID reuse: the recorded identity is gone — not our child.
+                    if (!obs.start_token.eql(token)) return false;
+                },
+                // Positive absence: already gone.
+                .absent => return true,
+                // Cannot rule out reuse — fail closed, do not signal.
+                .unobservable => return false,
+            }
         }
+        _ = c.kill(child_pid, c.SIGKILL);
+        // Bounded reap: a blocking waitpid hangs forever on a child wedged in
+        // uninterruptible I/O and would stall the spawn/deinit path (R5-class).
+        var st: c_int = 0;
+        var waited_ms: u32 = 0;
+        while (waited_ms < force_kill_reap_timeout_ms) {
+            const rc = c.waitpid(child_pid, &st, c.WNOHANG);
+            if (rc == child_pid) return true; // positive wait evidence
+            if (rc < 0) {
+                // ECHILD: a sibling authority already reaped it — child is gone.
+                // (Raw-int compare: @enumFromInt on an errno not declared in
+                // std.posix.E is illegal behavior in ReleaseFast.)
+                if (std.c._errno().* == @intFromEnum(std.posix.E.CHILD)) return true;
+                return false;
+            }
+            std.Thread.sleep(force_kill_reap_poll_ms * std.time.ns_per_ms);
+            waited_ms += force_kill_reap_poll_ms;
+        }
+        return false;
     }
 };
 
@@ -1629,4 +1685,90 @@ test "successful spawn still has post-exec identity evidence" {
     try testing.expect(rb.start_token.seconds != 0 or rb.start_token.microseconds != 0);
     try testing.expect(rb.executable_len > 0);
     _ = host.waitExit(true) catch {};
+}
+
+// PID-reuse guard positive control: the force-kill path must NOT signal a pid
+// whose recorded start token no longer matches (reaped by a sibling authority
+// and the pid since reused). Unfixed code SIGKILLs the bare pid — this test
+// FAILS if the real child is killed after its recorded token is replaced.
+// (forceKillChild is exercised directly: deinit's closeMaster would SIGHUP the
+// session on its own and drown the signal this test isolates.)
+test "forceKillChild skips SIGKILL when the recorded start token no longer matches" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sleep", "30" },
+        .geometry = defaultGeometry(),
+    }));
+    const child_pid = host.pid;
+    const real_token = host.start_token;
+    // Simulate a reused pid: the recorded token no longer matches the process.
+    host.start_token = .{
+        .seconds = real_token.seconds +% 1000,
+        .microseconds = real_token.microseconds,
+    };
+    host.forceKillChild();
+
+    // The child must NOT have been signalled — still alive with its real token.
+    switch (process_inspector.observeProcess(child_pid)) {
+        .present => |id| try testing.expect(id.start_token.eql(real_token)),
+        .absent, .unobservable => return error.TestUnexpectedResult,
+    }
+    // Restore ownership so the deferred deinit reaps the real child.
+    host.pid = child_pid;
+    host.start_token = real_token;
+}
+
+// Matching-token path: deinit SIGKILLs our own child and the bounded reap
+// produces positive absence evidence (the reap bound must not break the
+// ordinary force-kill path).
+test "deinit with matching start token SIGKILLs and reaps the child" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sleep", "30" },
+        .geometry = defaultGeometry(),
+    }));
+    const child_pid = host.pid;
+    host.deinit();
+
+    try testing.expectEqual(
+        process_inspector.ObserveResult.absent,
+        process_inspector.observeProcess(child_pid),
+    );
+}
+
+// Darwin hangup: after the child exits (last slave close), a master read
+// returns EIO — must surface as Closed, not IoFailed, so dead sessions are
+// reported cleanly.
+test "readAvailable reports Closed (not IoFailed) after child hangup" {
+    if (builtin.os.tag != .macos) return error.SkipZigTest;
+
+    var host = try PtyHost.init(testing.allocator);
+    defer host.deinit();
+    _ = try expectRunning(try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "exit 0" },
+        .geometry = defaultGeometry(),
+    }));
+    // Reap the child so the slave side is fully closed.
+    const evidence = try host.waitExit(true);
+    try testing.expect(evidence.reaped);
+
+    var closed = false;
+    var attempts: usize = 0;
+    while (attempts < 200) : (attempts += 1) {
+        _ = host.readAvailable() catch |err| switch (err) {
+            error.Closed => {
+                closed = true;
+                break;
+            },
+            // THE ASSERTION THAT FAILS AGAINST UNFIXED CODE: EIO → IoFailed.
+            else => return err,
+        };
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    try testing.expect(closed);
 }

@@ -75,6 +75,18 @@ fn taggedUuidV7(output: []u8, prefix: []const u8) ![]const u8 {
     });
 }
 
+/// Broken-wall-clock fallback for rollbackAdmission's idempotency key.
+/// Uniqueness comes from CSPRNG bytes rather than the untrusted clock, so two
+/// rollbacks can never share a key and have the second terminate deduped away
+/// (which would leave a rejected host running). Fits the 40-byte request-id
+/// storage: 4-byte prefix plus 32 lowercase hex chars.
+fn fallbackRequestId(output: []u8) []const u8 {
+    var random: [16]u8 = undefined;
+    std.crypto.random.bytes(&random);
+    const hex = std.fmt.bytesToHex(random, .lower);
+    return std.fmt.bufPrint(output, "req_{s}", .{hex}) catch unreachable;
+}
+
 pub fn inspectProcess(pid: i32) !ObservedProcess {
     if (pid <= 0) return error.InvalidPid;
     var info: c.struct_proc_bsdinfo = std.mem.zeroes(c.struct_proc_bsdinfo);
@@ -355,6 +367,70 @@ fn setTransportReadTimeout(socket: std.posix.fd_t) !void {
     if (c.setsockopt(socket, c.SOL_SOCKET, c.SO_RCVTIMEO, &timeout, @sizeOf(c.struct_timeval)) != 0)
         return error.SocketTimeoutFailed;
 }
+
+/// SO_RCVTIMEO bounds only a single read() syscall, so a peer dribbling one
+/// byte per sub-timeout interval would pin the serialized accept loop
+/// indefinitely (pre-auth, before verifyDaemonPeer) while never tripping any
+/// per-syscall timeout. Every frame read therefore runs under one absolute
+/// monotonic deadline — a total assembly budget shared across all read()
+/// syscalls of that frame — so dribbling cannot exceed it. The budget is the
+/// standard control-RPC bound; a loopback frame assembles in microseconds, so
+/// only a stalling peer ever approaches it. The test-build budget keeps the
+/// dribble regression test fast without weakening production.
+const frame_read_budget_ns: u64 = if (builtin.is_test)
+    500 * std.time.ns_per_ms
+else
+    generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms;
+
+/// readNoEof-compatible reader that enforces frame_read_budget_ns as one
+/// absolute monotonic deadline across the whole frame assembly. Each read()
+/// is preceded by a poll bounded by the REMAINING budget, so a dribbling peer
+/// is cut at the deadline instead of at a per-syscall timeout it keeps
+/// resetting; expiry, EOF, and transport errors all fail closed identically.
+const FrameDeadlineReader = struct {
+    file: std.fs.File,
+    timer: *std.time.Timer,
+    deadline_ns: u64,
+
+    fn init(handle: std.posix.fd_t, timer: *std.time.Timer) ?FrameDeadlineReader {
+        const deadline_ns = std.math.add(u64, timer.read(), frame_read_budget_ns) catch
+            return null;
+        return .{
+            .file = .{ .handle = handle },
+            .timer = timer,
+            .deadline_ns = deadline_ns,
+        };
+    }
+
+    pub fn readNoEof(self: *FrameDeadlineReader, buffer: []u8) !void {
+        var filled: usize = 0;
+        while (filled < buffer.len) {
+            const now_ns = self.timer.read();
+            if (now_ns >= self.deadline_ns) return error.ConnectionDeadlineExceeded;
+            const remaining_ms = std.math.divCeil(
+                u64,
+                self.deadline_ns - now_ns,
+                std.time.ns_per_ms,
+            ) catch return error.ConnectionDeadlineExceeded;
+            var poll_fds = [_]std.posix.pollfd{.{
+                .fd = self.file.handle,
+                .events = std.posix.POLL.IN,
+                .revents = 0,
+            }};
+            _ = try std.posix.poll(&poll_fds, std.math.cast(i32, remaining_ms) orelse
+                std.math.maxInt(i32));
+            if (poll_fds[0].revents & std.posix.POLL.IN == 0) {
+                // Pure timeout means the budget expired; HUP/ERR without
+                // readable bytes is EOF-equivalent. Both fail closed.
+                if (self.timer.read() >= self.deadline_ns) return error.ConnectionDeadlineExceeded;
+                return error.EndOfStream;
+            }
+            const count = try self.file.read(buffer[filled..]);
+            if (count == 0) return error.EndOfStream;
+            filled += count;
+        }
+    }
+};
 
 pub fn loadDaemonHandshake(
     allocator: std.mem.Allocator,
@@ -1026,7 +1102,11 @@ fn locatorJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.json.Va
     try value.put("schemaVersion", .{ .integer = 1 });
     try value.put("instanceId", .{ .string = locator.instance_id });
     try value.put("subject", .{ .object = subject });
-    try value.put("generation", .{ .integer = @intCast(locator.generation) });
+    // locatorFromDisk accepts any u64 generation, but the wire integer is
+    // i64: an out-of-range generation must fail closed instead of panicking
+    // (safe builds) or invoking UB (ReleaseFast) on @intCast.
+    try value.put("generation", .{ .integer = std.math.cast(i64, locator.generation) orelse
+        return error.InvalidLocator });
     try value.put("sessionId", .{ .string = locator.session_id });
     try value.put("hostKind", .{ .string = @tagName(locator.host_kind) });
     try value.put("engineBuildId", if (locator.engine_build_id) |build|
@@ -1296,7 +1376,8 @@ pub const WireHostClient = struct {
         if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
-        const secret_hex = std.fmt.bytesToHex(secret, .lower);
+        var secret_hex = std.fmt.bytesToHex(secret, .lower);
+        defer std.crypto.secureZero(u8, &secret_hex);
         const payload = try std.json.Stringify.valueAlloc(payload_arena.allocator(), .{
             .schemaVersion = @as(u8, 1),
             .adoptionSecretHex = &secret_hex,
@@ -1817,6 +1898,9 @@ pub const Inspection = struct {
 pub const ListResult = struct {
     entries: []Inspection,
     complete: bool,
+    /// True when a quarantine could not be recorded (all slots full): the
+    /// flood can no longer silently mask later suspicious directories.
+    operator_attention: bool = false,
 };
 
 pub const LookupResult = union(enum) {
@@ -1828,6 +1912,11 @@ pub const Registry = struct {
     entries: [generated.limits.live_sessions_per_hive_home]?Entry = @splat(null),
     directory_quarantines: [generated.limits.live_sessions_per_hive_home]?DirectoryQuarantine = @splat(null),
     enumeration_complete: bool = true,
+    /// Counts quarantines that found no free slot and could not be recorded.
+    /// A flood must never silently mask a later genuinely-suspicious record:
+    /// enumeration stays fail-closed and list() raises operator attention
+    /// until the broker restarts (the same lifecycle as enumeration_complete).
+    dropped_quarantines: usize = 0,
 
     pub fn hasCapacity(self: *const Registry) bool {
         for (&self.entries) |slot| if (slot == null) return true;
@@ -2022,7 +2111,7 @@ pub const Registry = struct {
     fn rollbackAdmission(self: *Registry, locator: Locator) void {
         var request_id_storage: [40]u8 = undefined;
         const request_id = taggedUuidV7(&request_id_storage, "req_") catch
-            "req_018f1e90-7b5a-7cc0-8000-000000000000";
+            fallbackRequestId(&request_id_storage);
         if (self.terminate(locator, .{
             .mode = "immediate",
             .reason = "host registration acceptance failed",
@@ -2086,8 +2175,10 @@ pub const Registry = struct {
             var unknown = record;
             unknown.state = .unknown;
             slot.* = .{ .record = unknown, .host = null, .quarantined = true };
-            break;
+            return failure;
         };
+        // No free slot: the drop is recorded, never silent.
+        self.dropped_quarantines +|= 1;
         return failure;
     }
 
@@ -2152,7 +2243,11 @@ pub const Registry = struct {
             complete = false;
             count += 1;
         };
-        return .{ .entries = output[0..count], .complete = complete };
+        return .{
+            .entries = output[0..count],
+            .complete = complete and self.dropped_quarantines == 0,
+            .operator_attention = self.dropped_quarantines != 0,
+        };
     }
 
     fn quarantineDirectory(self: *Registry, session_id: []const u8, verify_after_ns: u64) void {
@@ -2165,6 +2260,8 @@ pub const Registry = struct {
             slot.* = .{ .session_id = session_id, .verify_after_ns = verify_after_ns };
             return;
         }
+        // No free slot: the drop is recorded, never silent.
+        self.dropped_quarantines +|= 1;
     }
 };
 
@@ -2319,7 +2416,8 @@ pub const RecoveredRegistry = struct {
         if (!std.mem.eql(u8, record.locator.session_id, session_id)) return error.InvalidHostRecord;
         if (record.state != .live) return error.InvalidHostRecord;
         const expected_socket = try socketEvidence(directory);
-        const secret = try readAdoptionSecret(directory);
+        var secret = try readAdoptionSecret(directory);
+        defer std.crypto.secureZero(u8, &secret);
         const channel = connector.connect(directory, record, expected_socket) orelse {
             _ = self.registry.quarantine(
                 record,
@@ -2463,7 +2561,8 @@ pub fn launchHost(
         else => return err,
     };
     defer host_directory.close();
-    const adoption_secret = try createAdoptionSecret(host_directory);
+    var adoption_secret = try createAdoptionSecret(host_directory);
+    defer std.crypto.secureZero(u8, &adoption_secret);
     const executable = try std.fs.selfExePathAlloc(allocator);
     defer allocator.free(executable);
     const readback = launcher.launch(
@@ -2822,8 +2921,6 @@ pub fn serveAuthenticatedFrames(
     selected_minor: u8,
     backend: BrokerBackend,
 ) !void {
-    const file: std.fs.File = .{ .handle = stream.handle };
-    const reader = file.deprecatedReader();
     var liveness: protocol.Liveness = .{ .last_activity_ns = timer.read() };
     var outstanding_ping: ?u64 = null;
     var next_ping_request_id: u64 = 1;
@@ -2856,9 +2953,13 @@ pub fn serveAuthenticatedFrames(
         }
         if (poll_fds[0].revents & std.posix.POLL.IN == 0) return;
 
+        // One absolute monotonic budget per frame assembly (see
+        // FrameDeadlineReader): a dribbling peer is cut at the deadline
+        // instead of pinning the loop with sub-timeout read() syscalls.
+        var frame_reader = FrameDeadlineReader.init(stream.handle, timer) orelse return;
         const read = protocol.readFrameForRange(
             allocator,
-            reader,
+            &frame_reader,
             selected_minor,
             selected_minor,
         ) catch return;
@@ -2918,9 +3019,14 @@ fn serveDaemonConnection(
     backend: BrokerBackend,
 ) !void {
     try setTransportReadTimeout(stream.handle);
-    const file: std.fs.File = .{ .handle = stream.handle };
-    const reader = file.deprecatedReader();
-    const first = try protocol.readFrame(allocator, reader);
+    // The pre-auth HELLO read is the broker's only unauthenticated blocking
+    // read; it runs under one absolute monotonic deadline (see
+    // FrameDeadlineReader) so a dribbling peer cannot pin the serialized
+    // accept loop past the budget. Deadline expiry surfaces as a bare
+    // malformed-frame close, same as any other unreadable first frame.
+    var frame_reader = FrameDeadlineReader.init(stream.handle, timer) orelse
+        return error.ConnectionDeadlineExceeded;
+    const first = try protocol.readFrame(allocator, &frame_reader);
     const hello_frame = switch (first) {
         .frame => |frame| frame,
         .failure => |failure| {
@@ -3164,9 +3270,12 @@ pub const ProductionBackend = struct {
             return failure(.malformed_frame);
 
         var token_bytes: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &token_bytes);
         std.crypto.random.bytes(&token_bytes);
-        const token_hex = std.fmt.bytesToHex(token_bytes, .lower);
+        var token_hex = std.fmt.bytesToHex(token_bytes, .lower);
+        defer std.crypto.secureZero(u8, &token_hex);
         var token_hash: [32]u8 = undefined;
+        defer std.crypto.secureZero(u8, &token_hash);
         std.crypto.hash.sha2.Sha256.hash(&token_hex, &token_hash, .{});
 
         if (self.registry.registerGrant(
@@ -3305,6 +3414,15 @@ pub const ProductionBackend = struct {
             parsed.value.workspacePid <= 0 or
             parsed.value.workspaceStartToken.len == 0)
             return failure(.malformed_frame);
+        // The workspace identity claim is daemon-supplied, so like every
+        // other process identity in this file it must survive kernel readback
+        // (proc_pidinfo pid + start token) before it may extend a host's
+        // visibility lease; a dead, reused, or forged workspace fails closed.
+        if (observeExactProcess(
+            parsed.value.workspacePid,
+            parsed.value.workspaceStartToken,
+            .non_parent,
+        ) != .present) return failure(.unauthenticated);
         const locator = locatorFromDisk(parsed.value.locator) catch
             return failure(.malformed_frame);
         const revision = std.fmt.parseInt(
@@ -4467,4 +4585,287 @@ test "Runtime.open writes no bytes to ambient stdout (issue #54 runner-IPC deadl
     // announce site, which would make a silent stdout vacuous).
     try std.testing.expect(open_error == null);
     try std.testing.expectEqualStrings("+", captured[0..total]);
+}
+
+test "frame deadline cuts a dribbling peer at the absolute budget" {
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    // Writes after the broker's bare close must surface EPIPE, not SIGPIPE.
+    const no_sigpipe: c_int = 1;
+    if (c.setsockopt(client.handle, c.SOL_SOCKET, c.SO_NOSIGPIPE, &no_sigpipe, @sizeOf(c_int)) != 0)
+        return error.NoSigpipeFailed;
+    var server: std.net.Stream = .{ .handle = sockets[1] };
+    var server_open = true;
+    defer if (server_open) server.close();
+
+    // One byte per 100ms would satisfy the 5s per-syscall SO_RCVTIMEO
+    // indefinitely; only the absolute monotonic deadline can cut it.
+    const Dribbler = struct {
+        stream: std.net.Stream,
+        // Read only after joining the thread; the join is the synchronization.
+        written: usize = 0,
+
+        fn run(self: *@This()) void {
+            while (true) {
+                std.Thread.sleep(100 * std.time.ns_per_ms);
+                const byte = [_]u8{0};
+                _ = self.stream.write(&byte) catch break;
+                self.written += 1;
+            }
+        }
+    };
+    var dribbler: Dribbler = .{ .stream = client };
+    const thread = try std.Thread.spawn(.{}, Dribbler.run, .{&dribbler});
+
+    var timer = try std.time.Timer.start();
+    var reader: FrameDeadlineReader = .{
+        .file = .{ .handle = server.handle },
+        .timer = &timer,
+        .deadline_ns = timer.read() + 200 * std.time.ns_per_ms,
+    };
+    const result = try protocol.readFrame(std.testing.allocator, &reader);
+    server.close();
+    server_open = false;
+    thread.join();
+
+    switch (result) {
+        .failure => |failure| {
+            try std.testing.expect(failure.close_connection);
+            try std.testing.expectEqual(@as(u64, 0), failure.request_id);
+        },
+        else => return error.ExpectedDeadlineCut,
+    }
+    // The cut lands near the 200ms deadline, long before a 32-byte header
+    // could assemble at one byte per 100ms (~3.2s).
+    try std.testing.expect(dribbler.written < generated.frame_header_bytes);
+}
+
+test "frame deadline admits a promptly-written frame" {
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    var server: std.net.Stream = .{ .handle = sockets[1] };
+    defer server.close();
+
+    // Positive control: a frame that arrives whole is unaffected by the
+    // deadline machinery.
+    const payload = "{\"schemaVersion\":1}";
+    try protocol.writeFrame(client, .{
+        .minor = generated.protocol_max_minor,
+        .type_code = generated.frame_type.hello,
+        .flags = 0,
+        .payload_length = @intCast(payload.len),
+        .request_id = 1,
+        .stream_seq = 0,
+    }, payload);
+    var timer = try std.time.Timer.start();
+    var reader = FrameDeadlineReader.init(server.handle, &timer) orelse
+        return error.DeadlineOverflow;
+    const result = try protocol.readFrame(std.testing.allocator, &reader);
+    switch (result) {
+        .frame => |frame| {
+            defer frame.deinit(std.testing.allocator);
+            try std.testing.expectEqual(generated.frame_type.hello, frame.header.type_code);
+            try std.testing.expectEqualStrings(payload, frame.payload);
+        },
+        else => return error.ExpectedFrame,
+    }
+}
+
+test "pre-auth dribbling HELLO is cut at the connection deadline" {
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const home = try tmp.dir.realpathAlloc(std.testing.allocator, ".");
+    defer std.testing.allocator.free(home);
+
+    var sockets: [2]c_int = undefined;
+    if (c.socketpair(c.AF_UNIX, c.SOCK_STREAM, 0, &sockets) != 0)
+        return error.SocketPairFailed;
+    var client: std.net.Stream = .{ .handle = sockets[0] };
+    defer client.close();
+    const no_sigpipe: c_int = 1;
+    if (c.setsockopt(client.handle, c.SOL_SOCKET, c.SO_NOSIGPIPE, &no_sigpipe, @sizeOf(c_int)) != 0)
+        return error.NoSigpipeFailed;
+    var runtime: Runtime = undefined;
+    runtime.canonical_home = home;
+    var observed: ObservedPeer = undefined;
+    var timer = try std.time.Timer.start();
+    var harness: DaemonWireHarness = .{
+        .runtime = &runtime,
+        .stream = .{ .handle = sockets[1] },
+        .observed = &observed,
+        .timer = &timer,
+    };
+    const broker_thread = try std.Thread.spawn(.{}, DaemonWireHarness.run, .{&harness});
+
+    // Dribble one byte per 100ms: every read() syscall returns well inside
+    // the 5s SO_RCVTIMEO, so only the absolute connection deadline (500ms in
+    // test builds) can cut it. The loop ends on EPIPE from the bare close.
+    var drip_timer = try std.time.Timer.start();
+    while (true) {
+        std.Thread.sleep(100 * std.time.ns_per_ms);
+        const byte = [_]u8{0};
+        _ = client.write(&byte) catch break;
+    }
+    const elapsed_ns = drip_timer.read();
+    broker_thread.join();
+
+    try std.testing.expectEqual(@as(?anyerror, null), harness.failure);
+    // Assembling a 32-byte header at one byte per 100ms would take ~3.2s;
+    // the deadline cut must land far earlier.
+    try std.testing.expect(elapsed_ns < 3 * std.time.ns_per_s);
+    // No response bytes: a deadline cut is a bare close, like any unreadable
+    // first frame.
+    var trailing: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try client.read(&trailing));
+}
+
+test "visibility renewal kernel-verifies the claimed workspace identity" {
+    var registry: Registry = .{};
+    var backend = ProductionBackend.init(
+        std.testing.allocator,
+        undefined,
+        &registry,
+        undefined,
+        undefined,
+    );
+    const self_pid = c.getpid();
+    const observed = try inspectProcess(self_pid);
+    var token_storage: [64]u8 = undefined;
+    const token = try formatStartToken(observed.start_token, &token_storage);
+    const renewalPayload = struct {
+        fn build(allocator: std.mem.Allocator, pid: i32, start_token: []const u8) ![]u8 {
+            return std.fmt.allocPrint(allocator, "{{\"schemaVersion\":1,\"locator\":{{\"schemaVersion\":1,\"instanceId\":\"inst\",\"subject\":{{\"kind\":\"root\"}},\"sessionId\":\"ses_renewal_kernel_check\",\"generation\":1,\"hostKind\":\"sessiond\",\"engineBuildId\":null}},\"workspaceSessionId\":\"ws\",\"workspacePid\":{d},\"workspaceStartToken\":\"{s}\",\"openTerminalRevision\":\"1\"}}", .{ pid, start_token });
+        }
+    }.build;
+
+    // Positive control: a kernel-verified workspace identity passes the
+    // readback and only fails later, on the unknown host.
+    const good = try renewalPayload(std.testing.allocator, self_pid, token);
+    defer std.testing.allocator.free(good);
+    switch (backend.renewVisibility(std.testing.allocator, good, 0)) {
+        .failure => |failure| try std.testing.expectEqual(protocol.WireError.not_found, failure.code),
+        else => return error.ExpectedFailure,
+    }
+
+    // A forged start token for a live pid fails closed at the kernel check.
+    const forged = try renewalPayload(std.testing.allocator, self_pid, "0:0");
+    defer std.testing.allocator.free(forged);
+    switch (backend.renewVisibility(std.testing.allocator, forged, 0)) {
+        .failure => |failure| try std.testing.expectEqual(protocol.WireError.unauthenticated, failure.code),
+        else => return error.ExpectedFailure,
+    }
+
+    // A pid that cannot exist fails closed too (absent, never trusted).
+    const dead = try renewalPayload(std.testing.allocator, std.math.maxInt(i32), "0:0");
+    defer std.testing.allocator.free(dead);
+    switch (backend.renewVisibility(std.testing.allocator, dead, 0)) {
+        .failure => |failure| try std.testing.expectEqual(protocol.WireError.unauthenticated, failure.code),
+        else => return error.ExpectedFailure,
+    }
+}
+
+test "locator JSON fails closed on a generation beyond the wire integer range" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const out_of_range: Locator = .{
+        .instance_id = "inst",
+        .session_id = "ses_generation_range",
+        .generation = std.math.maxInt(u64),
+    };
+    try std.testing.expectError(
+        error.InvalidLocator,
+        locatorJsonValue(arena.allocator(), out_of_range),
+    );
+
+    // Positive control: an in-range generation still serializes.
+    const in_range: Locator = .{
+        .instance_id = "inst",
+        .session_id = "ses_generation_range",
+        .generation = 7,
+    };
+    const value = try locatorJsonValue(arena.allocator(), in_range);
+    try std.testing.expectEqual(@as(i64, 7), value.object.get("generation").?.integer);
+}
+
+test "quarantine overflow stays fail-closed and flags operator attention" {
+    var registry: Registry = .{};
+    var id_storage: [generated.limits.live_sessions_per_hive_home + 1][40]u8 = undefined;
+    var ids: [generated.limits.live_sessions_per_hive_home + 1][]const u8 = undefined;
+    for (0..ids.len) |index|
+        ids[index] = std.fmt.bufPrint(&id_storage[index], "ses_overflow_{d}", .{index}) catch unreachable;
+
+    // Filling every directory-quarantine slot drops nothing yet.
+    for (ids[0..generated.limits.live_sessions_per_hive_home]) |session_id|
+        registry.quarantineDirectory(session_id, 0);
+    try std.testing.expectEqual(@as(usize, 0), registry.dropped_quarantines);
+    var output: [generated.limits.live_sessions_per_hive_home + 1]Inspection = undefined;
+    const full = registry.list("instance-none", &output);
+    try std.testing.expect(!full.operator_attention);
+
+    // The next suspicious directory has nowhere to go: the drop must be
+    // recorded and surfaced, never silently masked.
+    registry.quarantineDirectory(ids[generated.limits.live_sessions_per_hive_home], 0);
+    try std.testing.expectEqual(@as(usize, 1), registry.dropped_quarantines);
+    const overflowed = registry.list("instance-none", &output);
+    try std.testing.expect(!overflowed.complete);
+    try std.testing.expect(overflowed.operator_attention);
+    try std.testing.expectEqual(generated.limits.live_sessions_per_hive_home, overflowed.entries.len);
+
+    // The host-record quarantine table overflows the same way.
+    const record: HostRecord = .{
+        .locator = .{
+            .instance_id = "inst",
+            .session_id = "ses_record_overflow",
+            .generation = 1,
+        },
+        .host_pid = 1,
+        .host_start_token = "0:0",
+        .process_root = .{ .pid = 1, .start_token = "0:0", .process_group_id = 1 },
+        .expected_executable = "",
+        .executable_build_hash = "",
+        .engine_build_id = "",
+        .protocol_major = 1,
+        .protocol_minor = 0,
+        .geometry = .{
+            .columns = 80,
+            .rows = 24,
+            .width_px = 0,
+            .height_px = 0,
+            .cell_width_px = 0,
+            .cell_height_px = 0,
+        },
+        .state = .live,
+        .visibility = .{
+            .state = .visible,
+            .workspace_session_id = "ws",
+            .open_terminal_revision = 1,
+            .expires_mono_ns = 1,
+        },
+        .output_seq = 0,
+        .checkpoint_seq = 0,
+    };
+    var packed_registry: Registry = .{};
+    for (0..generated.limits.live_sessions_per_hive_home) |_|
+        _ = packed_registry.quarantine(record, .{ .code = .unauthenticated, .close_connection = true });
+    try std.testing.expectEqual(@as(usize, 0), packed_registry.dropped_quarantines);
+    _ = packed_registry.quarantine(record, .{ .code = .unauthenticated, .close_connection = true });
+    try std.testing.expectEqual(@as(usize, 1), packed_registry.dropped_quarantines);
+}
+
+test "rollback idempotency fallback stays unique under a broken clock" {
+    var first_storage: [40]u8 = undefined;
+    var second_storage: [40]u8 = undefined;
+    const first = fallbackRequestId(&first_storage);
+    const second = fallbackRequestId(&second_storage);
+    try std.testing.expect(std.mem.startsWith(u8, first, "req_"));
+    try std.testing.expectEqual(@as(usize, 36), first.len);
+    // Two rollbacks must never share a key: the second terminate would be
+    // deduped away and leave a rejected host running.
+    try std.testing.expect(!std.mem.eql(u8, first, second));
 }

@@ -498,6 +498,16 @@ pub const OutputRangeLedger = struct {
     through_seq: u64 = 0,
     ranges: std.ArrayList(Range) = .empty,
 
+    /// Bounded replay-dedup window. Accepted chunks are monotone in
+    /// stream_seq (commit only follows a classify .accept, which requires
+    /// stream_seq == through_seq), so evicting the oldest range only
+    /// narrows the dedup window: a replay of an evicted range classifies
+    /// .invalid (rejected) instead of .duplicate — it can never be
+    /// re-accepted, so eviction fails closed. Unbounded growth would be a
+    /// memory DoS: every accepted chunk would otherwise pin a 48-byte
+    /// Range for the lifetime of the surface.
+    pub const max_ranges: usize = 1024;
+
     const Range = struct {
         start: u64,
         end: u64,
@@ -548,6 +558,10 @@ pub const OutputRangeLedger = struct {
         const end = stream_seq + @as(u64, @intCast(bytes.len));
         var digest: [32]u8 = undefined;
         std.crypto.hash.sha2.Sha256.hash(bytes, &digest, .{});
+        // Bounded dedup window (see max_ranges): evict-oldest. An evicted
+        // range replays as .invalid, never as a re-accept.
+        if (self.ranges.items.len >= max_ranges)
+            _ = self.ranges.orderedRemove(0);
         try self.ranges.append(alloc, .{
             .start = stream_seq,
             .end = end,
@@ -587,8 +601,21 @@ pub fn feed(
 /// NEVER be moved afterwards (use-after-move: the capture would dangle and
 /// a later OSC continuation writes through the stale pointer). A pristine
 /// stream has no captures engaged, which is why the single init move below
-/// is sound. Infallible: initAlloc cannot fail and replay returns no
-/// errors, so callers may sequence this after a point of no return.
+/// is sound.
+///
+/// Infallible, so callers may sequence this after a point of no return.
+/// initAlloc cannot fail. Replay CAN engage allocating parser state (the
+/// OSC 52/66 capture writer, the APC glyph/kitty parsers, the DCS xtgettcap
+/// buffer), but every one of those allocation sites already degrades
+/// instead of propagating: the OSC capture allocates all-or-nothing and on
+/// failure falls back to its fixed buffer, overflowing into the invalid
+/// state (osc.zig Capture.allocating/captureTrailing/next), the APC and
+/// DCS handlers catch and ignore (apc.zig feed/end, dcs.zig hook/put), and
+/// terminal actions route through vtFallible, which logs and continues
+/// (stream_terminal.zig vt). Allocation failure during replay therefore
+/// cannot panic; the positive-control test below ("restored replay
+/// survives allocation failure") pins that contract under a failing
+/// allocator.
 pub fn restoreStream(
     out: *Stream,
     t: *Terminal,
@@ -1620,6 +1647,12 @@ fn readGlyphs(r: *Reader, alloc: Allocator, t: *Terminal) Error!void {
         const points = try alloc.alloc(GlyphOutline.Point, point_count);
         errdefer alloc.free(points);
         @memcpy(std.mem.sliceAsBytes(points), point_bytes);
+        // Ownership: register takes ownership of contours/points ONLY on
+        // success. Its OutOfNamespace return precedes any storage, and its
+        // only fallible allocation (entries.getOrPut) precedes inserting
+        // the entry; once the entry is stored the function cannot fail
+        // (Glossary.zig register). The errdefers above therefore free
+        // exactly the failures and never double-free a stored entry.
         t.glyph_glossary.register(alloc, cp, .{
             .glyph = .{ .glyf = .{ .contours = contours, .points = points } },
             .design = design,
@@ -2485,6 +2518,98 @@ test "manual output ledger enforces ordering duplicates and conflicts" {
     ledger.reset(99);
     try std.testing.expectEqual(.invalid, ledger.classify("old", 0));
     try std.testing.expectEqual(.accept, ledger.classify("new", 99));
+}
+
+test "manual output ledger bounds the replay dedup window" {
+    // Positive control for OutputRangeLedger.max_ranges: unbounded growth
+    // was a memory DoS (48 bytes per accepted chunk, pruned only on
+    // restore). The window is capped with evict-oldest; an evicted range
+    // must replay as .invalid (fail-closed), never as a re-accept.
+    const alloc = std.testing.allocator;
+    var ledger: OutputRangeLedger = .{};
+    defer ledger.deinit(alloc);
+
+    // Single-byte chunks: chunk i occupies exactly [i, i + 1).
+    var seq: u64 = 0;
+    while (seq < OutputRangeLedger.max_ranges + 1) : (seq += 1) {
+        try std.testing.expectEqual(.accept, ledger.classify("x", seq));
+        try ledger.commit(alloc, "x", seq);
+    }
+    try std.testing.expectEqual(OutputRangeLedger.max_ranges, ledger.ranges.items.len);
+
+    // The evicted oldest chunk no longer dedupes; the newest still does.
+    try std.testing.expectEqual(.invalid, ledger.classify("x", 0));
+    try std.testing.expectEqual(.duplicate, ledger.classify("x", seq - 1));
+}
+
+test "glyph decode rejects out-of-namespace codepoint freeing exactly once" {
+    // Positive control for the readGlyphs ownership contract: register
+    // fails OutOfNamespace for a non-private-use codepoint BEFORE taking
+    // ownership of contours/points, so the errdefers free them exactly
+    // once — testing.allocator reports any double free or leak here.
+    const alloc = std.testing.allocator;
+    var w: Writer = .{ .alloc = alloc };
+    defer w.deinit();
+    try w.plain(@as(u32, 1)); // glyph count
+    try w.plain(@as(u21, 'A')); // not private use: OutOfNamespace
+    try w.plain(std.mem.zeroes(@TypeOf(@as(GlyphEntry, undefined).design)));
+    try w.plain(@as(@TypeOf(@as(GlyphEntry, undefined).width), .narrow));
+    try w.plain(@as(@TypeOf(@as(GlyphEntry, undefined).constraint), .{}));
+    try w.plain(@as(u32, 1)); // contour count
+    const contour: u16 = 0;
+    try w.write(std.mem.asBytes(&contour));
+    try w.plain(@as(u32, 1)); // point count
+    const glyph_point = std.mem.zeroes(GlyphOutline.Point);
+    try w.write(std.mem.asBytes(&glyph_point));
+
+    var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5 });
+    defer t.deinit(alloc);
+    var r: Reader = .{ .bytes = w.bytes.items };
+    try std.testing.expectError(error.InvalidCheckpoint, readGlyphs(&r, alloc, &t));
+    try std.testing.expect(!t.glyph_glossary.contains('A'));
+}
+
+test "restored replay survives allocation failure" {
+    // Positive control for restoreStream's point-of-no-return contract:
+    // callers replay AFTER the old terminal/stream are destroyed, so the
+    // replay must never panic. Replaying a pending tail engages allocating
+    // parser state (the OSC 52 capture writer, the APC glyph parser); run
+    // the replay with an allocator failing at each index in turn and pin
+    // that every allocation site degrades instead of panicking.
+    const alloc = std.testing.allocator;
+    const cases = [_][]const u8{
+        "before\x1b]52;c;", // partial OSC 52: allocating capture
+        "before\x1b_25a1;r;cp=e0a0;AAAA", // partial glyph APC
+    };
+    for (cases) |bytes| {
+        var t: Terminal = try .init(alloc, .{ .cols = 20, .rows = 5, .max_scrollback = 1 << 20 });
+        defer t.deinit(alloc);
+        var stream = t.vtStream();
+        defer stream.deinit();
+        var pending: std.ArrayList(u8) = .empty;
+        defer pending.deinit(alloc);
+        var valid = true;
+        feed(&stream, &pending, alloc, &valid, bytes);
+        try std.testing.expect(valid);
+        try std.testing.expect(pending.items.len > 0);
+
+        const payload = try encode(alloc, &t, &stream, pending.items);
+        defer alloc.free(payload);
+
+        var fail_index: usize = 0;
+        while (fail_index < 16) : (fail_index += 1) {
+            var failing = std.testing.FailingAllocator.init(alloc, .{ .fail_index = fail_index });
+            var snapshot = try decode(alloc, payload);
+            // The replay allocates through the terminal's gpa; decode used
+            // the real allocator, so only replay-time allocations fail.
+            snapshot.terminal.screens.active.alloc = failing.allocator();
+            var restored: Stream = undefined;
+            restoreStream(&restored, &snapshot.terminal, snapshot.handler, snapshot.pending, .readonly);
+            snapshot.terminal.screens.active.alloc = alloc;
+            restored.deinit();
+            snapshot.deinit(alloc);
+        }
+    }
 }
 
 test "manual bridge forwards encoded key text IME and mouse bytes in order" {
