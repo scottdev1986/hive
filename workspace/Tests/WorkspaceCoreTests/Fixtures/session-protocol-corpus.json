@@ -1709,6 +1709,42 @@
       }
     },
     {
+      "name": "frozen neutral resize request",
+      "schema": "terminalHostResizeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1776,
+          "heightPixels": 999
+        },
+        "revision": "41",
+        "idempotencyKey": "resize-fixture-key"
+      }
+    },
+    {
+      "name": "frozen neutral resize receipt reports the post-set readback",
+      "schema": "terminalHostResizeReceipt",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "revision": "41",
+        "orderedAt": "7",
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1776,
+          "heightPixels": 999
+        }
+      }
+    },
+    {
       "name": "frozen neutral termination request",
       "schema": "terminalHostTerminationRequest",
       "value": {
@@ -3596,6 +3632,43 @@
         "survivors": [],
         "evidenceAt": "2026-07-16T12:00:00.000Z",
         "diagnostics": []
+      }
+    },
+    {
+      "name": "frozen resize request rejects a non-monotonic revision encoding",
+      "schema": "terminalHostResizeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1776,
+          "heightPixels": 999
+        },
+        "revision": "041",
+        "idempotencyKey": "resize-fixture-key"
+      }
+    },
+    {
+      "name": "frozen resize receipt cannot claim the application handled it",
+      "schema": "terminalHostResizeReceipt",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "revision": "41",
+        "orderedAt": "7",
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1776,
+          "heightPixels": 999
+        },
+        "applicationNotified": true
       }
     },
     {

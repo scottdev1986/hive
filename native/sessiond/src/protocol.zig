@@ -582,8 +582,9 @@ fn validateString(string: []const u8, schema: std.json.ObjectMap) bool {
     if (schema.get("minLength")) |minimum| if (codepoints < (numberAsUsize(minimum) orelse return false)) return false;
     if (schema.get("maxLength")) |maximum| if (codepoints > (numberAsUsize(maximum) orelse return false)) return false;
     // date-time is the only format whose check is a strict subset of its Zod patterns;
-    // only it may skip an unknown pattern. hive-uint64-decimal is weaker than its patterns
-    // (parseInt accepts "0"/"007"), so an unknown uint64 pattern must never skip.
+    // only it may skip an unknown pattern. The hive-uint64-decimal FORMAT check is
+    // weaker than its patterns (parseInt accepts "0"/"007"), so an unknown uint64
+    // pattern must never skip; the known pattern below rejects the leading zero.
     var date_time_format = false;
     if (schema.get("format")) |format_value| switch (format_value) {
         .string => |format| {
@@ -697,8 +698,13 @@ fn matchesKnownPattern(string: []const u8, pattern: []const u8) ?bool {
     if (std.mem.indexOf(u8, pattern, "[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-8]") != null)
         return standardUuid(string);
     if (std.mem.eql(u8, pattern, "^\\/.*")) return std.mem.startsWith(u8, string, "/");
-    // Non-negative decimal uint64 (allows 0). From DecimalUint64Schema.
-    if (std.mem.startsWith(u8, pattern, "^(?:0|[1-9]")) return std.fmt.parseInt(u64, string, 10) catch null != null;
+    // Non-negative decimal uint64 (allows 0). From DecimalUint64Schema. The
+    // pattern permits "0" and no other leading zero; parseInt alone accepts
+    // "007", which is how this validator and the schema silently disagreed.
+    if (std.mem.startsWith(u8, pattern, "^(?:0|[1-9]")) {
+        if (string.len > 1 and string[0] == '0') return false;
+        return std.fmt.parseInt(u64, string, 10) catch null != null;
+    }
     // Positive decimal uint64 (rejects 0 / leading zeros). From PositiveDecimalUint64Schema (status spine).
     if (std.mem.eql(u8, pattern, "^(?:[1-9][0-9]{0,19})$")) {
         if (string.len == 0 or string[0] == '0') return false;

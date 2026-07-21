@@ -342,6 +342,18 @@ const fixtureTerminalHostExit = {
   signal: 9,
   observedAt: FIXTURE_TIME,
 };
+const fixtureTerminalHostResizeRequest = {
+  session: fixtureTerminalHostSession,
+  window: { columns: 111, rows: 37, widthPixels: 1_776, heightPixels: 999 },
+  revision: "41",
+  idempotencyKey: "resize-fixture-key",
+};
+const fixtureTerminalHostResizeReceipt = {
+  session: fixtureTerminalHostSession,
+  revision: "41",
+  orderedAt: "7",
+  window: fixtureTerminalHostResizeRequest.window,
+};
 const fixtureTerminalHostTerminationRequest = {
   session: fixtureTerminalHostSession,
   mode: "immediate",
@@ -689,6 +701,16 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureTerminalHostInspection,
   },
   {
+    name: "frozen neutral resize request",
+    schema: "terminalHostResizeRequest",
+    value: fixtureTerminalHostResizeRequest,
+  },
+  {
+    name: "frozen neutral resize receipt reports the post-set readback",
+    schema: "terminalHostResizeReceipt",
+    value: fixtureTerminalHostResizeReceipt,
+  },
+  {
     name: "frozen neutral termination request",
     schema: "terminalHostTerminationRequest",
     value: fixtureTerminalHostTerminationRequest,
@@ -856,6 +878,16 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen inspection requires reap evidence",
     schema: "terminalHostSessionInspection",
     value: { ...fixtureTerminalHostInspection, reap: undefined },
+  },
+  {
+    name: "frozen resize request rejects a non-monotonic revision encoding",
+    schema: "terminalHostResizeRequest",
+    value: { ...fixtureTerminalHostResizeRequest, revision: "041" },
+  },
+  {
+    name: "frozen resize receipt cannot claim the application handled it",
+    schema: "terminalHostResizeReceipt",
+    value: { ...fixtureTerminalHostResizeReceipt, applicationNotified: true },
   },
   {
     name: "frozen termination request requires target",

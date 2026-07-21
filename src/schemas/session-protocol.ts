@@ -750,6 +750,27 @@ export const TerminalHostTerminationResultSchema = z.strictObject({
   completeness: TerminalHostCompletenessSchema,
   diagnostics: z.array(z.string()).readonly(),
 }).readonly();
+/** §5 ordered resize, neutral projection. The revision is monotonic and the
+ * idempotency key makes a repeat of the same transaction replay its receipt
+ * rather than mutate a second time. */
+export const TerminalHostResizeRequestSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  window: TerminalHostWindowSizeSchema,
+  revision: DecimalUint64Schema,
+  idempotencyKey: z.string().min(1),
+}).readonly();
+/** §5 applied receipt. `window` is what the terminal reported AFTER the set,
+ * not what was asked for, and `orderedAt` is the receipt's position in the
+ * session mutation order it shares with input. There is deliberately no field
+ * claiming the foreground application handled its resize notification: the
+ * host cannot observe that, so the projection must not be able to say it. */
+export const TerminalHostResizeReceiptSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  revision: DecimalUint64Schema,
+  orderedAt: DecimalUint64Schema,
+  window: TerminalHostWindowSizeSchema,
+}).readonly();
+
 const EncodedInputBytesSchema = z.string()
   .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
   .regex(new RegExp(BASE64_BYTES_PATTERN));
@@ -1248,6 +1269,8 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostSessionInspection: TerminalHostSessionInspectionSchema,
   terminalHostTerminationRequest: TerminalHostTerminationRequestSchema,
   terminalHostTerminationResult: TerminalHostTerminationResultSchema,
+  terminalHostResizeRequest: TerminalHostResizeRequestSchema,
+  terminalHostResizeReceipt: TerminalHostResizeReceiptSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
