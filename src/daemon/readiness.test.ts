@@ -132,6 +132,17 @@ describe("proof of life", () => {
     expect(polls).toBeGreaterThanOrEqual(QUIET_LIMIT);
   });
 
+  test("a transient unknown sample does not erase prior proof of a live process", async () => {
+    let samples = 0;
+    const proof = await watchForProofOfLife("s", BASELINE, deps({
+      capturePane: frozen("Do you trust the contents of this directory?"),
+      launchedProcessAlive: async () =>
+        (samples += 1) === QUIET_LIMIT ? null : true,
+    }));
+    expect(proof.alive).toBe(true);
+    expect(samples).toBe(QUIET_LIMIT);
+  });
+
   test("a frozen screen whose launched process is dead is reaped, and says why", async () => {
     const proof = await watchForProofOfLife("s", BASELINE, deps({
       launchedProcessAlive: async () => false,

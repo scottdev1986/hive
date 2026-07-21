@@ -901,14 +901,15 @@ export class CrashRecovery {
     command: string,
   ): Promise<boolean | null> {
     try {
-      if (record.sessionLocator?.hostKind === "sessiond") {
-        // The sessiond host exposes no pane process tree here; unknown is the
-        // honest answer, and unknown never counts as life.
-        return null;
-      }
-      const rootPids = await this.sessions.sessionProcessRoots(
-        bindAgentSession(this.sessions, record),
-      );
+      const rootPids = record.sessionLocator?.hostKind === "sessiond"
+        ? [
+          (await this.deps.terminalHost?.inspect(
+            requireSessiondAgentLocator(record),
+          ))?.providerRoot?.pid,
+        ].filter((pid): pid is number => pid !== undefined && pid !== null)
+        : await this.sessions.sessionProcessRoots(
+          bindAgentSession(this.sessions, record),
+        );
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(await (this.deps.ps ?? runPs)());
       if (samples.length === 0) return null;

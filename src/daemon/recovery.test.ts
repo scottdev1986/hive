@@ -18,12 +18,63 @@ import {
   CrashRecovery,
   MAX_AUTO_RESUME_ATTEMPTS,
   type CrashRecoveryDependencies,
+  type RecoveryOutcome,
 } from "./recovery";
 import { verifiedAgentStop } from "./teardown";
 import { authorizeForQuotaTest } from "./authorized-launch.test-support";
 import type { SessionInspection } from "./session-host/contract";
 
 const timestamp = "2026-07-10T09:00:00.000Z";
+
+const resumedSessiondLocator = {
+  schemaVersion: 1 as const,
+  instanceId: "hive-fixture",
+  subject: { kind: "agent" as const, agentId: "agent-maya" },
+  generation: 2,
+  sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000103",
+  hostKind: "sessiond" as const,
+  engineBuildId: "engine-fixture",
+};
+
+function resumedSessiondInspection(
+  providerRoot: SessionInspection["providerRoot"],
+): SessionInspection {
+  return {
+    schemaVersion: 1,
+    locator: resumedSessiondLocator,
+    presence: "present",
+    complete: false,
+    hostPid: 4_000,
+    hostStartToken: "4000:123456",
+    providerRoot,
+    expectedExecutable: "claude",
+    executableVerified: providerRoot !== null,
+    outputSeq: "0",
+    checkpointSeq: "0",
+    checkpointAvailable: false,
+    input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+    viewerCount: 0,
+    geometry: {
+      columns: 80,
+      rows: 24,
+      widthPx: 800,
+      heightPx: 480,
+      cellWidthPx: 10,
+      cellHeightPx: 20,
+    },
+    resources: {},
+    visibility: {
+      state: "attaching",
+      workspaceSessionId: "workspace-fixture",
+      openTerminalRevision: "1",
+      expiresAt: "2026-07-10T09:00:15.000Z",
+    },
+    exit: null,
+    survivors: [],
+    evidenceAt: timestamp,
+    diagnosticIds: [],
+  };
+}
 
 function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   return {
@@ -696,6 +747,72 @@ describe("crash classification", () => {
 });
 
 describe("crash resume", () => {
+  test("a live but silent resumed sessiond vendor passes the resume watch", async () => {
+    const h = harness({
+      terminalHost: {
+        inspect: async () =>
+          resumedSessiondInspection({
+            pid: 200,
+            startToken: "200:123456",
+            processGroupId: 200,
+          }),
+      },
+      ps: async () => "  200     1  2000 claude\n",
+    });
+    const record = agent({
+      status: "idle",
+      toolSessionId: "sess-1",
+      sessionLocator: resumedSessiondLocator,
+    });
+    h.db.insertAgent(record);
+
+    const failure = await (h.recovery as unknown as {
+      monitorResume(
+        record: AgentRecord,
+        launchedCommand: string,
+        baselineEventAt: string,
+      ): Promise<string | null>;
+    }).monitorResume(record, "claude", timestamp);
+
+    expect(failure).toBeNull();
+    expect(h.db.getAgentByName("maya")?.status).toBe("idle");
+  });
+
+  test("a genuinely dead resumed sessiond vendor is still reaped", async () => {
+    const h = harness({
+      terminalHost: {
+        inspect: async () =>
+          resumedSessiondInspection({
+            pid: 200,
+            startToken: "200:123456",
+            processGroupId: 200,
+          }),
+      },
+      ps: async () => "  100     1  2000 -zsh\n",
+    });
+    const record = agent({
+      status: "idle",
+      toolSessionId: "sess-1",
+      sessionLocator: resumedSessiondLocator,
+    });
+    h.db.insertAgent(record);
+
+    const recovery = h.recovery as unknown as {
+      monitorResume(
+        record: AgentRecord,
+        launchedCommand: string,
+        baselineEventAt: string,
+      ): Promise<string | null>;
+      failResume(record: AgentRecord, failure: string): Promise<RecoveryOutcome>;
+    };
+    const failure = await recovery.monitorResume(record, "claude", timestamp);
+
+    expect(failure).toContain("no sign of life");
+    const outcome = await recovery.failResume(record, failure!);
+    expect(outcome).toMatchObject({ agent: "maya", action: "marked-dead" });
+    expect(h.db.getAgentByName("maya")?.status).toBe("dead");
+  });
+
   test("a claude agent with a recorded session id is relaunched with --resume in the same worktree", async () => {
     const h = harness();
     h.signalProofOfLife();

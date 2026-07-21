@@ -243,6 +243,9 @@ export async function watchForProofOfLife<Target = string>(
   let heartbeats = 0;
   let quiet = 0;
   let lastPaneTail = "";
+  // A transiently unreadable process tree must not erase the last conclusive
+  // observation. A later explicit false still replaces an earlier true.
+  let lastKnownLaunchedProcessAlive: boolean | null = null;
   // Redraws we watched happen and refused to credit, because the agent that was
   // supposed to be drawing them was not running. Counted only so the death can
   // be reported as the thing it actually was: not a silent pane, a busy one with
@@ -280,6 +283,7 @@ export async function watchForProofOfLife<Target = string>(
     // Whose event loop is drawing this screen? Asked once per poll, because a
     // redraw is only evidence about the agent if the agent is the one redrawing.
     const launched = await deps.launchedProcessAlive().catch(() => null);
+    if (launched !== null) lastKnownLaunchedProcessAlive = launched;
 
     let paneChanged = false;
     try {
@@ -323,14 +327,15 @@ export async function watchForProofOfLife<Target = string>(
     }
 
     // Silence is no activity evidence, not death evidence. Once the observation
-    // window ends below, a positive launched-process check distinguishes a live
-    // prompt wait from an absent or unmeasurable launch.
+    // window ends below, the last conclusive launched-process check distinguishes
+    // a live prompt wait from an absent or never-measurable launch.
     quiet += 1;
     if (quiet >= quietLimit) {
       // A static pane is normal while a live vendor waits at an interactive
       // prompt. Silence can end the observation window, but it cannot prove
-      // death when the process hive launched is still present.
-      if (launched === true) {
+      // death when the process hive launched was proven present and the final
+      // sample was only transiently unreadable.
+      if (lastKnownLaunchedProcessAlive === true) {
         return {
           alive: true,
           signal: `${deps.launchedCommand} process running in pane`,
