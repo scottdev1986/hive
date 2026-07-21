@@ -60,13 +60,21 @@ Byte input, canonical end-of-file input, and terminal hangup are distinct operat
 
 Inspection reports lifecycle, host and child identities, session/process-group/foreground-group and terminal evidence, geometry plus revision, retained output and checkpoint ranges, current input owner, exit/reap authority, descendants, survivors, evidence time, diagnostics, and completeness. Transport failure maps to `unknown`, never absent or exited. Listing returns the same inspection shape without product-specific filtering.
 
+### 11. Ordered event subscription
+
+Subscription carries the session's ordered facts; attachment carries its bytes. Both name positions in one session order, so an event and the output around it are comparable without a second clock. A subscription is fenced by the session reference, and an incarnation that has ended never delivers a successor's events.
+
+A subscription is a resumable cursor, not a boolean. It negotiates capabilities, begins at a caller-supplied event position or at the current end, and delivers every retained event from there in host order exactly once; resume after disconnect happens at an event boundary, never inside one. Retained events are bounded by negotiated limits and released by acknowledgement on the same terms as output. A cursor outside retention returns an explicit gap with the missing event range and a fresh-inspection requirement; silent loss is forbidden. Subscribers are independent: one slow or disconnected subscriber never reorders, drops, or delays another's events, and never stalls the session.
+
+Events carry the facts inspection reports, ordered rather than sampled: lifecycle transitions, launch evidence, applied resize revisions, input-ownership changes, retention gaps, output closure, exit, and reap. Output closure, exit, and reap remain separately ordered here exactly as in section 4. A subscription ends on caller cancellation, on the end of its incarnation after that incarnation's final facts are delivered, or on a typed failure; no ending fabricates an event, and a broken subscription is never evidence that the session itself changed.
+
 ## Minimal operation set
 
 - `create(key, idempotency, command, terminalProfile, initialWindow)` returns an incarnation, launch evidence, and limits.
 - `claimInput`, `releaseInput`, and `submitInput` provide fenced, leased, transactional input.
 - `resize` provides an ordered revision and applied readback.
 - `attach` and `acknowledgeOutput` provide negotiated cursor replay and backpressure.
-- `inspect`, `list`, and `subscribe` provide honest snapshots and ordered facts.
+- `inspect` and `list` provide honest snapshots; `subscribe` provides the resumable, acknowledged cursor over ordered facts.
 - `terminate` provides targeted, idempotent termination with survivor evidence.
 
 This operation set is semantic. Implementations may combine transport messages or use different internal process/terminal primitives while preserving every observable guarantee.

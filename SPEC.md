@@ -47,7 +47,7 @@ Two standing rules govern every milestone:
 
 M1 is done when Hive runs on the new terminal alone: `sessiond` plus `HiveTerminalKit`, with tmux and every temporary harness gone — **the orchestrator session included, not exempted.**
 
-The foundation M1 is qualifying is recorded in [ADR 0001 — macOS native terminal foundation](docs/adr/0001-native-terminal-foundation.md) (Decision, Consequences) and frozen behind the neutral [terminal host contract v1](docs/contracts/terminal-host-v1.md) (Required behavior §§1–10, Freeze qualification A–K). The control-side interface is `SessionHost`, which contains no tmux and no renderer vocabulary; all Hive policy lives above that seam and syscalls are implementation options, never API vocabulary.
+The foundation M1 is qualifying is recorded in [ADR 0001 — macOS native terminal foundation](docs/adr/0001-native-terminal-foundation.md) (Decision, Consequences) and frozen behind the neutral [terminal host contract v1](docs/contracts/terminal-host-v1.md) (Required behavior §§1–11, Freeze qualification A–K). The control-side interface is `SessionHost`, which contains no tmux and no renderer vocabulary; all Hive policy lives above that seam and syscalls are implementation options, never API vocabulary.
 
 **Exit criteria.** All of the following, none softened:
 
