@@ -2882,6 +2882,79 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
+  test("hive_kill and hive_mark_dead clean never-bound sessiond generations", async () => {
+    const db = new HiveDatabase(join(home, "never-bound-sessiond-cleanup.db"));
+    const tmux = new FakeDaemonTmux();
+    const terminalCalls: string[] = [];
+    const unsupported = async (): Promise<never> => {
+      terminalCalls.push("called");
+      throw new Error("never-bound generation reached terminal host");
+    };
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      tmuxSender: new SilentTmuxSender(db),
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+      resourceRunners: { panePids: async () => [], orphans: null },
+      terminalHost: {
+        create: unsupported,
+        claimInput: unsupported,
+        submitInput: unsupported,
+        resize: unsupported,
+        inspect: unsupported,
+        list: async () => [],
+        terminate: unsupported,
+        renewVisibility: unsupported,
+        issueAttach: unsupported,
+      },
+    });
+    const neverBound = (id: string, name: string) => agent({
+      id,
+      name,
+      tmuxSession: `hive-${name}`,
+      worktreePath: null,
+      branch: null,
+      sessionLocator: {
+        ...mintAgentTmuxSessionLocator(id, 1),
+        hostKind: "sessiond" as const,
+        engineBuildId: "engine-never-bound",
+      },
+    });
+    db.insertAgent(neverBound("agent-kill", "kill"));
+    db.insertAgent(neverBound("agent-mark", "mark"));
+    const transport = new StreamableHTTPClientTransport(
+      new URL("http://hive/mcp"),
+      { fetch: actingAs(daemon, "operator") },
+    );
+    const client = new Client({ name: "never-bound-cleanup", version: "1.0.0" });
+    try {
+      await client.connect(transport);
+
+      const killed = textValue(await client.callTool({
+        name: "hive_kill",
+        arguments: { name: "kill" },
+      })) as { agent: AgentRecord };
+      expect(killed.agent.status).toBe("dead");
+
+      const marked = textValue(await client.callTool({
+        name: "hive_mark_dead",
+        arguments: { agent: "mark" },
+      })) as AgentRecord;
+      expect(marked.status).toBe("dead");
+
+      expect(db.getAgentByName("kill")?.status).toBe("dead");
+      expect(db.getAgentByName("mark")?.status).toBe("dead");
+      expect(terminalCalls).toEqual([]);
+      expect(tmux.killed).toEqual([]);
+    } finally {
+      await client.close();
+      await daemon.stop();
+      db.close();
+    }
+  });
+
   test("the dead-agent kill path reaps residual owned processes only", async () => {
     const owned = Bun.spawn(["sleep", "60"], {
       stdout: "ignore",

@@ -2033,6 +2033,18 @@ export class HiveDaemon {
     }
   }
 
+  /** A sessiond host binding is written before the host is created. Its absence
+   * therefore proves this generation never acquired a process tree; unlike an
+   * unreachable bound host, it is safe to clean the failed spawn row. */
+  private hasNeverBoundSessiondGeneration(agent: AgentRecord): boolean {
+    const locator = agent.sessionLocator;
+    if (locator === undefined || locator.hostKind !== "sessiond") return false;
+    return this.db.getTerminalHostBindingByLocator({
+      ...locator,
+      hostKind: "sessiond",
+    }) === null;
+  }
+
   private async killAgentTeardown(
     agent: AgentRecord,
     options: {
@@ -2067,22 +2079,27 @@ export class HiveDaemon {
     // deliberately killed agent must never be resurrected by the sweep.
     this.recovery.noteDeliberateKill(agent.id);
     let reaped: ReapOutcome;
-    try {
-      reaped = await this.stopAgentProcesses(agent, () => {
-        this.capabilities.revokeSubject(agent.name);
-        removeCredential(agent.name);
-      });
-    } catch (error) {
-      // #70 (lucas, 2026-07-20): a teardown that throws AFTER the processes
-      // are gone used to leave the row `working` forever — an audited-allow
-      // kill whose victim hive_status still reported as alive. If the tree is
-      // provably absent the agent IS dead; record that and finish the
-      // teardown. A tree whose absence cannot be proved keeps the failure:
-      // unreachable is not dead.
-      if (!(await this.agentTreeAbsent(agent))) throw error;
+    const revoke = () => {
       this.capabilities.revokeSubject(agent.name);
       removeCredential(agent.name);
+    };
+    if (this.hasNeverBoundSessiondGeneration(agent)) {
+      revoke();
       reaped = { killed: [], survivors: [] };
+    } else {
+      try {
+        reaped = await this.stopAgentProcesses(agent, revoke);
+      } catch (error) {
+        // #70 (lucas, 2026-07-20): a teardown that throws AFTER the processes
+        // are gone used to leave the row `working` forever — an audited-allow
+        // kill whose victim hive_status still reported as alive. If the tree is
+        // provably absent the agent IS dead; record that and finish the
+        // teardown. A tree whose absence cannot be proved keeps the failure:
+        // unreachable is not dead.
+        if (!(await this.agentTreeAbsent(agent))) throw error;
+        revoke();
+        reaped = { killed: [], survivors: [] };
+      }
     }
     const timestamp = options.at ?? new Date().toISOString();
     const killed = this.db.markAgentDead(
@@ -4325,6 +4342,9 @@ export class HiveDaemon {
       const agent = this.db.getAgentByName(agentName);
       if (agent === null) {
         throw new Error(`Hive agent not found: ${agentName}`);
+      }
+      if (this.hasNeverBoundSessiondGeneration(agent)) {
+        return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
       }
       const presence = (await this.tmux.inspect(
         bindAgentSession(this.tmux, agent),
