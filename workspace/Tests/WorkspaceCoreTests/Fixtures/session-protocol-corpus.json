@@ -4050,6 +4050,29 @@
       }
     },
     {
+      "name": "frozen active lease cannot expire at the instant it was issued",
+      "schema": "terminalHostVisibilityRenewalResult",
+      "value": {
+        "state": "active",
+        "renewed": true,
+        "lease": {
+          "session": {
+            "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "incarnation": "3"
+          },
+          "sourceSession": "workspace-session-7",
+          "sourceProcess": {
+            "processId": 5150,
+            "startToken": "5150:998877"
+          },
+          "inventoryRevision": "19",
+          "state": "active",
+          "issuedAt": "2026-07-16T12:00:00.000Z",
+          "expiresAt": "2026-07-16T12:00:00.000Z"
+        }
+      }
+    },
+    {
       "name": "frozen termination request requires target",
       "schema": "terminalHostTerminationRequest",
       "value": {

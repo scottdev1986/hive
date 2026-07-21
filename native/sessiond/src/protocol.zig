@@ -508,6 +508,16 @@ fn validateSchema(value: std.json.Value, schema: std.json.Value) bool {
                 if ((numberAsF64(minimum) orelse return false) > (numberAsF64(maximum) orelse return false))
                     return false;
             };
+            // A visibility lease is active only BETWEEN its timestamps, so the
+            // deadline must follow the issue instant strictly. Both stamps are
+            // UTC with fixed millisecond precision and no offset (validated as
+            // format date-time), so byte order IS chronological order here.
+            if (object.get("x-hive-ordered-lease-window")) |ordered| if (ordered == .bool and ordered.bool) {
+                const issued = value_object.get("issuedAt") orelse return false;
+                const expires = value_object.get("expiresAt") orelse return false;
+                if (issued != .string or expires != .string) return false;
+                if (std.mem.order(u8, issued.string, expires.string) != .lt) return false;
+            };
             if (object.get("x-hive-max-active-cells")) |maximum| {
                 const columns = numberAsUsize(value_object.get("columns") orelse return false) orelse return false;
                 const rows = numberAsUsize(value_object.get("rows") orelse return false) orelse return false;

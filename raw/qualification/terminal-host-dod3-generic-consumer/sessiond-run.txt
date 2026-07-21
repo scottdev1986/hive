@@ -1,0 +1,27 @@
+# Fresh capture for the DoD-3 generic-consumer proof. See provenance.txt.
+# command: bun run test:sessiond
+# verified against main b1b5e6183db45fd49582421c913619fd2fb42c46 plus this commit's tree
+# note: the two AttachLocatorMismatch/ConnectionRefused lines are the LABELLED
+#       negative control test.sh prints on every green run, not failures.
+---
+$ native/sessiond/test.sh
+native toolchain lock validated
+Ghostty dependency cache verified: 36 packages
+native preflight passed: TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.883 ZIG=/opt/homebrew/bin/zig
+header-standalone ABI check passed
+expected negative-control (wrong-generation HOST_ATTACH): next host log is AttachLocatorMismatch
+error: host connection refused: AttachLocatorMismatch
+error: host adoption wire failure: ConnectionRefused
+bun test v1.3.14 (d1632b29)
+
+ 1 pass
+ 0 fail
+ 2 expect() calls
+Ran 1 test across 1 file. [41.00ms]
+bun test v1.3.14 (d1632b29)
+
+ 1 pass
+ 0 fail
+ 56 expect() calls
+Ran 1 test across 1 file. [22.17s]
+SESSIOND_EXIT=0

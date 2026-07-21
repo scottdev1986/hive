@@ -1,6 +1,8 @@
 # Terminal host contract v1.0.0
 
-Status: **shape frozen**. This is the project-neutral target boundary for terminal-session adapters. The neutral qualification fixture passes A–K. Real-session verification is intentionally incomplete until the pending-A1 discriminators pass and a neutral adapter exists.
+Status: **shape frozen**. This is the project-neutral target boundary for terminal-session adapters. The neutral qualification fixture passes A–K and T.
+
+Real-session verification has two halves and exactly one is done. The real-host discriminators are DONE: the three rows that were pending A1 (B, C, D) now pass, and the named real discriminators THV1-REAL-B/D/E/F/K live in `native/sessiond/test/pending-a1-contract.zig`, which runs green inside the ordinary native suite. A project-neutral real-sessiond adapter is PENDING — none is verified present on main, and this status becomes **frozen** only once one exists and this boundary is implemented over the qualified host (A2; see Deferred boundary work). The half-open state is deliberate: the previous closure of this contract was reversed precisely because a status claimed more than its evidence.
 
 The host accepts an opaque session key, a command, a terminal profile, and an initial window. It owns terminal I/O and reports evidence. Product identity, agent identity, provider choice, authorization, repository/worktree concepts, and product lifecycle policy are exclusively adapter concerns above this boundary. A consumer whose creation authority depends on a live external representation adopts the separately versioned [terminal-host visibility extension](terminal-host-visibility-v1.md); UI policy still terminates in its adapter.
 

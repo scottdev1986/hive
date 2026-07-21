@@ -1078,6 +1078,17 @@ const invalidCases: readonly WireCorpusCase[] = [
     },
   },
   {
+    name: "frozen active lease cannot expire at the instant it was issued",
+    schema: "terminalHostVisibilityRenewalResult",
+    value: {
+      ...fixtureTerminalHostVisibilityRenewalResult,
+      lease: {
+        ...fixtureTerminalHostVisibilityRenewalResult.lease,
+        expiresAt: fixtureTerminalHostVisibilityRenewalResult.lease.issuedAt,
+      },
+    },
+  },
+  {
     name: "frozen termination request requires target",
     schema: "terminalHostTerminationRequest",
     value: { ...fixtureTerminalHostTerminationRequest, target: undefined },

@@ -923,7 +923,15 @@ export const TerminalHostVisibilityLeaseSchema = z.strictObject({
   state: z.literal("active"),
   issuedAt: Rfc3339UtcMillisecondsSchema,
   expiresAt: Rfc3339UtcMillisecondsSchema,
-}).readonly();
+}).refine(
+  ({ issuedAt, expiresAt }) => issuedAt < expiresAt,
+  "an active lease must expire strictly after it was issued",
+  // A lease is active only BETWEEN its timestamps, so an `active` document whose
+  // deadline does not follow its issue instant describes a window it could never
+  // have been active in. Both stamps are UTC with fixed millisecond precision and
+  // no offset, so byte order is chronological order and the native validator can
+  // enforce this with the same comparison.
+).meta({ "x-hive-ordered-lease-window": true }).readonly();
 /** Visibility extension §3 renewal request. It names the exact session
  * reference and repeats the COMPLETE visibility request — renewal re-proves
  * current representation rather than trusting the lease it already holds. */

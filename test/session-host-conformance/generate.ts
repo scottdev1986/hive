@@ -292,6 +292,14 @@ func validates(_ value: Any, against schema: [String: Any]) -> Bool {
            let minimum = (object["minMinor"] as? NSNumber)?.intValue,
            let maximum = (object["maxMinor"] as? NSNumber)?.intValue,
            minimum > maximum { return false }
+        // A lease is active only BETWEEN its timestamps. Both stamps are UTC with
+        // fixed millisecond precision and no offset, so string order is
+        // chronological order and the deadline must follow the issue instant.
+        if schema["x-hive-ordered-lease-window"] as? Bool == true {
+            guard let issued = object["issuedAt"] as? String,
+                  let expires = object["expiresAt"] as? String,
+                  issued < expires else { return false }
+        }
         if let names = schema["x-hive-exactly-one-of"] as? [String] {
             let present = names.filter { name in
                 guard let item = object[name] else { return false }

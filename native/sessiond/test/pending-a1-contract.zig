@@ -492,11 +492,14 @@ test "THV1-REAL-E: XOFF stops and XON resumes real PTY output" {
 
 // Qualification row F on a real terminal: normal AND signaled exit must retain
 // every tail byte, and output closure must order separately from exit and from
-// the authoritative reap. The reap is taken FIRST here on purpose — that is the
-// order that loses the tail if the host frees the master before draining it, so
-// a green result is evidence the tail survives its own reap rather than
-// evidence the test drained early.
-test "THV1-REAL-F: exit and reap precede a complete PTY tail drain" {
+// the authoritative reap — three orderings, not one event.
+//
+// Closure is observed FIRST, and that order is deliberate rather than
+// convenient: draining is also what lets a child finish writing, so reaping
+// before reading would deadlock on any tail larger than the terminal buffer
+// instead of qualifying anything. The row is therefore "closure, then exit and
+// reap, with the tail complete", NOT "reap before drain".
+test "THV1-REAL-F: a complete PTY tail drain precedes separately ordered exit and reap" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
 
     for ([_]struct { script: []const u8, tail: []const u8, signal: ?i32 }{

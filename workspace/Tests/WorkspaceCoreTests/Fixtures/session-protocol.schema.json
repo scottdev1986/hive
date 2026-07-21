@@ -8057,7 +8057,8 @@
                 "issuedAt",
                 "expiresAt"
               ],
-              "additionalProperties": false
+              "additionalProperties": false,
+              "x-hive-ordered-lease-window": true
             }
           },
           "required": [

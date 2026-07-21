@@ -1,0 +1,54 @@
+qualification=M1-A0 DoD-3 non-Hive consumer demo through the frozen terminal-host boundary
+requirement=planning/2026-07-20-approval-package-digest.md:120 "Non-Hive consumer demo (generic command, non-agent, non-Hive repo cwd) runs through the frozen boundary - project-agnostic proof."
+tracker=GitHub issue #34 (M1-A0 terminal-host contract audit & freeze)
+code_site=native/sessiond/src/neutral_host.zig, fn proveLiveLifecycle (the generic-consumer create; search "generic command cwd" rather than a line number - the file moves)
+runner=native/sessiond/test/neutral-host-golden.zig main -> neutral_host.proveLiveLifecycle, executed by `zig build test` inside native/sessiond/test.sh
+reproduce=bun run test:sessiond
+capture=sessiond-run.txt (fresh run, exit code echoed on the last line)
+code_verified_against_main=b1b5e6183db45fd49582421c913619fd2fb42c46 (plus this commit's own tree; see sessiond-run.txt header)
+
+WHAT THIS CERTIFIES
+The frozen boundary launches a session for a consumer that is not Hive and not an
+agent, and honours a working directory that is not a repository:
+
+- generic command, non-agent: executable /bin/sh with arguments
+  ["-c", "test -f terminal-host-demo.cwd && exec /bin/cat"]. No agent, provider,
+  or Hive identity appears anywhere in the create request.
+- non-Hive-repo cwd: a freshly created /tmp/nhl-<random>/"generic command cwd 工作"
+  directory - outside any git repository, and containing both a space and
+  non-ASCII characters, which is qualification row B's "Unicode/spaces and a
+  generic non-repository working directory succeed".
+- cwd actually honoured, not merely accepted: the child's own first act is
+  `test -f terminal-host-demo.cwd`, a marker the harness created ONLY inside that
+  directory. If the boundary ignored workingDirectory the test resolves the
+  marker nowhere else and the child exits non-zero instead of reaching /bin/cat,
+  so a passing run cannot be explained by a cwd that was silently dropped.
+- opaque, project-agnostic key: "tenant://foreign-project/../../opaque session ✓"
+  - deliberately not a Hive-shaped identifier, and carrying traversal-looking and
+  non-ASCII text the boundary must treat as opaque rather than interpret.
+- complete environment: only PATH and TERM are supplied; nothing ambient is
+  inherited, so the demo does not depend on the Hive shell that launched it.
+
+WHAT THIS DOES NOT CERTIFY
+- It is not a standalone third-party consumer PROGRAM. The stricter reading of
+  DoD-3 - shipping a separate non-Hive binary built against the boundary - was
+  considered and ruled out of M1 scope by queen on 2026-07-21; this artifact
+  records the in-tree generic-consumer proof instead. The fork was deliberate.
+- It says nothing about the A2 project-neutral real-sessiond adapter, which
+  remains PENDING (see docs/contracts/terminal-host-v1.md status).
+- The Zig proof prints nothing on success, so the capture's evidence is its
+  echoed exit code under `set -eu`, not per-assertion output. The assertions
+  named above live in the cited code, and each fails the run if violated.
+
+LINEAGE
+The generic-consumer create was authored as WIP on branch
+hive/sarah-complete-github-issue-34-m1-a0 and salvaged on
+refs/hive-preserved/hive/zoe-complete-github-issue-34-m1-a0 (commit
+"real A0 freeze discriminators for B/D/E/F/K and a generic-consumer live proof").
+Those two refs are byte-identical - same tree, same patch-id 0f92e7c3 - so there
+was nothing to reconcile between them. The work reached main as a forward-port,
+not a merge, so no ancestry edge connects those refs to the landed code; this
+paragraph is that missing edge. Do not merge either ref: both are far behind main
+(two-dot main..sarah is -43,612 lines) and merging would revert landed work.
+maya forward-ported only the two remaining discriminators (THV1-REAL-D and
+THV1-REAL-F) from them in commit 68a7695e.
