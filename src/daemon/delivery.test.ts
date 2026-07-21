@@ -2196,3 +2196,160 @@ describe("maintenance tick retries failed root wakes (#68)", () => {
     }
   });
 });
+
+describe("loud failure on stuck deliveries (2026-07-21 messaging regression)", () => {
+  const stuckAgent = (): AgentRecord => ({
+    ...agent("idle"),
+    sessionLocator: {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000901",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    },
+  });
+
+  /** An injector that always declines the way an orphaned human claim does. */
+  const orphanDeclining: SessiondAgentInput = {
+    async injectIdle() {
+      return { outcome: "declined", reason: "claim denied: HumanOrphaned" };
+    },
+  };
+
+  const stubSender: SessionSender = { async sendSessionMessage() {} };
+
+  function receipt(messageId: string): InputReceipt {
+    return {
+      transactionId: messageId,
+      stage: "written-to-terminal",
+      byteRange: { start: "0", endExclusive: "16" },
+      orderedAt: "16",
+      availableCreditBytes: 4096,
+      consumedByProcess: "not-claimed",
+      completeness: "complete",
+      diagnostic: null,
+    };
+  }
+
+  function alerts(db: HiveDatabase): AgentMessage[] {
+    return db.listMessages().filter((message) =>
+      message.from === "hive-control" && message.body.startsWith("Delivery blocked:")
+    );
+  }
+
+  test("a message queued past the threshold behind a diagnostic alerts queen exactly once", async () => {
+    const db = new HiveDatabase(join(home, "stuck-delivery-alert.db"));
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined,
+      orphanDeclining,
+    );
+    try {
+      db.insertAgent(stuckAgent());
+      const message = await delivery.send("queen", "maya", "Are you there?");
+      expect(message.state).toBe("queued");
+      expect(db.getMessage(message.id)?.deliveryDiagnostic).toBe(
+        "sessiond inject declined: claim denied: HumanOrphaned",
+      );
+
+      // POSITIVE CONTROL for the clock, not the wiring: the same row, read
+      // one minute after it was queued, is NOT yet stuck. Without this a
+      // reader that alerted on every queued row would look identical below.
+      const tooEarly = new Date(Date.parse(message.createdAt) + 60_000)
+        .toISOString();
+      expect(await delivery.alertStuckDeliveries(tooEarly)).toBe(0);
+      expect(alerts(db)).toHaveLength(0);
+
+      const later = new Date(Date.parse(message.createdAt) + 37 * 60_000)
+        .toISOString();
+      expect(await delivery.alertStuckDeliveries(later)).toBe(1);
+      const fired = alerts(db);
+      expect(fired).toHaveLength(1);
+      expect(fired[0]?.to).toBe("queen");
+      expect(fired[0]?.body).toContain(message.id);
+      expect(fired[0]?.body).toContain("maya");
+      expect(fired[0]?.body).toContain("queued 37m");
+      expect(fired[0]?.body).toContain("HumanOrphaned");
+
+      // One alert per message, not one per tick.
+      const evenLater = new Date(Date.parse(message.createdAt) + 60 * 60_000)
+        .toISOString();
+      expect(await delivery.alertStuckDeliveries(evenLater)).toBe(0);
+      expect(alerts(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a delivered message never alerts, however old", async () => {
+    const db = new HiveDatabase(join(home, "stuck-delivery-negative.db"));
+    const delivering: SessiondAgentInput = {
+      async injectIdle(_recipient, _text, options) {
+        return { outcome: "injected", receipt: receipt(options.messageId) };
+      },
+    };
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined,
+      delivering,
+    );
+    try {
+      db.insertAgent(stuckAgent());
+      const message = await delivery.send("queen", "maya", "Landed fine.");
+      expect(message.state).toBe("injected");
+      const later = new Date(Date.parse(message.createdAt) + 60 * 60_000)
+        .toISOString();
+      expect(await delivery.alertStuckDeliveries(later)).toBe(0);
+      expect(alerts(db)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a dead recipient's stranded mail is not reported as a live deafness", async () => {
+    const db = new HiveDatabase(join(home, "stuck-delivery-dead.db"));
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined,
+      orphanDeclining,
+    );
+    try {
+      db.insertAgent(stuckAgent());
+      const message = await delivery.send("queen", "maya", "Still there?");
+      db.markAgentDead("agent-maya", new Date().toISOString());
+      const later = new Date(Date.parse(message.createdAt) + 37 * 60_000)
+        .toISOString();
+      expect(await delivery.alertStuckDeliveries(later)).toBe(0);
+      expect(alerts(db)).toHaveLength(0);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("hive_status surfaces the blocked recipient and its diagnostic", async () => {
+    const db = new HiveDatabase(join(home, "stuck-delivery-status.db"));
+    const delivery = new MessageDelivery(
+      db, stubSender, undefined, undefined, undefined, {}, undefined, undefined,
+      orphanDeclining,
+    );
+    try {
+      db.insertAgent(stuckAgent());
+      const message = await delivery.send("queen", "maya", "Report please.");
+      // POSITIVE CONTROL: before the threshold the same reader reports nothing,
+      // so a non-empty map below is the age test firing, not a constant.
+      const tooEarly = new Date(Date.parse(message.createdAt) + 60_000)
+        .toISOString();
+      expect(delivery.blockedDeliveries(tooEarly).size).toBe(0);
+
+      const later = new Date(Date.parse(message.createdAt) + 12 * 60_000)
+        .toISOString();
+      const blocked = delivery.blockedDeliveries(later);
+      expect(blocked.get("maya")).toEqual({
+        messageId: message.id,
+        queuedMinutes: 12,
+        diagnostic: "sessiond inject declined: claim denied: HumanOrphaned",
+      });
+    } finally {
+      db.close();
+    }
+  });
+});

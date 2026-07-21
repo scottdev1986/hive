@@ -605,6 +605,7 @@ describe("HiveDatabase", () => {
       capabilityEpoch: null,
       deliveryDiagnostic: null,
       deliveryDiagnosticAt: null,
+      deliveryAlertAt: null,
     };
     try {
       expect(db.insertMessage(message)).toEqual(message);
@@ -652,6 +653,7 @@ describe("HiveDatabase", () => {
       capabilityEpoch: null,
       deliveryDiagnostic: null,
       deliveryDiagnosticAt: null,
+      deliveryAlertAt: null,
       ...overrides,
     });
     try {

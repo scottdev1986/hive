@@ -1020,6 +1020,7 @@ pub const HostControl = struct {
     adopt_fn: *const fn (*anyopaque, Locator, [32]u8, u64) ?AdoptionReadback,
     register_grant_fn: *const fn (*anyopaque, Locator, GrantRegistration) bool,
     renew_visibility_fn: *const fn (*anyopaque, Locator, []const u8) HostRenewalResult,
+    discard_orphan_fn: *const fn (*anyopaque, Locator, []const u8) HostRenewalResult,
     terminate_fn: *const fn (*anyopaque, Locator, TerminationCommand, HostProcessOwnership) TerminationReadback,
 
     pub fn adopt(self: HostControl, locator: Locator, secret: [32]u8, now_ns: u64) ?AdoptionReadback {
@@ -1036,6 +1037,17 @@ pub const HostControl = struct {
         payload: []const u8,
     ) HostRenewalResult {
         return self.renew_visibility_fn(self.context, locator, payload);
+    }
+
+    /// §22 operator discard of a HUMAN_ORPHANED input claim. The host refuses
+    /// in-band (a normal ORPHAN_DISCARDED with `discarded:false`) for anything
+    /// but an orphan, so #40 never-steal is unchanged.
+    pub fn discardOrphan(
+        self: HostControl,
+        locator: Locator,
+        payload: []const u8,
+    ) HostRenewalResult {
+        return self.discard_orphan_fn(self.context, locator, payload);
     }
 
     pub fn terminate(self: HostControl, locator: Locator, command: TerminationCommand) TerminationReadback {
@@ -1246,6 +1258,7 @@ pub const WireHostClient = struct {
             .adopt_fn = adoptCallback,
             .register_grant_fn = registerGrantCallback,
             .renew_visibility_fn = renewVisibilityCallback,
+            .discard_orphan_fn = discardOrphanCallback,
             .terminate_fn = terminateCallback,
         };
     }
@@ -1569,6 +1582,57 @@ pub const WireHostClient = struct {
         return .{ .response = frame.payload };
     }
 
+    fn discardOrphan(
+        self: *WireHostClient,
+        locator: Locator,
+        payload: []const u8,
+    ) !HostRenewalResult {
+        if (!sameLocator(locator, self.expected_record.locator) or
+            !protocol.validateControlPayload(
+                self.allocator,
+                generated.wire_schema.orphan_discard_payload,
+                payload,
+            )) return error.InvalidHostRequest;
+        const stream = try self.connect();
+        defer stream.close();
+        try protocol.writeFrame(stream, .{
+            .minor = generated.protocol_minor,
+            .type_code = generated.frame_type.input_orphan_discard,
+            .flags = 0,
+            .payload_length = @intCast(payload.len),
+            .request_id = 4,
+            .stream_seq = 0,
+        }, payload);
+        const file: std.fs.File = .{ .handle = stream.handle };
+        const read = try protocol.readFrame(self.allocator, file.deprecatedReader());
+        const frame = switch (read) {
+            .frame => |frame| frame,
+            else => return error.InvalidHostResponse,
+        };
+        if (frame.header.request_id != 4 or
+            frame.header.flags & (generated.frame_flag.response | generated.frame_flag.final) !=
+                (generated.frame_flag.response | generated.frame_flag.final))
+        {
+            frame.deinit(self.allocator);
+            return error.InvalidHostResponseCorrelation;
+        }
+        if (frame.header.type_code == generated.frame_type.@"error") {
+            defer frame.deinit(self.allocator);
+            return .{ .failure = try self.renewalFailure(frame.payload) };
+        }
+        if (frame.header.type_code != generated.frame_type.orphan_discarded or
+            !protocol.validateControlPayload(
+                self.allocator,
+                generated.wire_schema.orphan_discarded_payload,
+                frame.payload,
+            ))
+        {
+            frame.deinit(self.allocator);
+            return error.InvalidHostResponsePayload;
+        }
+        return .{ .response = frame.payload };
+    }
+
     fn terminate(
         self: *WireHostClient,
         locator: Locator,
@@ -1688,6 +1752,18 @@ pub const WireHostClient = struct {
     ) HostRenewalResult {
         const self: *WireHostClient = @ptrCast(@alignCast(context));
         return self.renewVisibility(locator, payload) catch .{ .failure = .{
+            .code = .verification_unknown,
+            .close_connection = false,
+        } };
+    }
+
+    fn discardOrphanCallback(
+        context: *anyopaque,
+        locator: Locator,
+        payload: []const u8,
+    ) HostRenewalResult {
+        const self: *WireHostClient = @ptrCast(@alignCast(context));
+        return self.discardOrphan(locator, payload) catch .{ .failure = .{
             .code = .verification_unknown,
             .close_connection = false,
         } };
@@ -2682,6 +2758,7 @@ pub fn requestSchema(type_code: u16) ?[]const u8 {
         generated.frame_type.inspect => generated.wire_schema.inspect_payload,
         generated.frame_type.terminate => generated.wire_schema.terminate_payload,
         generated.frame_type.visibility_renew => generated.wire_schema.visibility_renew_payload,
+        generated.frame_type.input_orphan_discard => generated.wire_schema.orphan_discard_payload,
         generated.frame_type.attach_request => generated.wire_schema.attach_request_payload,
         else => null,
     };
@@ -2694,6 +2771,7 @@ pub fn responseSchema(type_code: u16) ?[]const u8 {
         generated.frame_type.inspected => generated.wire_schema.inspected_payload,
         generated.frame_type.terminated => generated.wire_schema.terminated_payload,
         generated.frame_type.renewed => generated.wire_schema.renewed_payload,
+        generated.frame_type.orphan_discarded => generated.wire_schema.orphan_discarded_payload,
         generated.frame_type.attach_grant => generated.wire_schema.attach_grant_payload,
         else => null,
     };
@@ -2706,6 +2784,7 @@ fn expectedResponseType(type_code: u16) ?u16 {
         generated.frame_type.inspect => generated.frame_type.inspected,
         generated.frame_type.terminate => generated.frame_type.terminated,
         generated.frame_type.visibility_renew => generated.frame_type.renewed,
+        generated.frame_type.input_orphan_discard => generated.frame_type.orphan_discarded,
         generated.frame_type.attach_request => generated.frame_type.attach_grant,
         else => null,
     };
@@ -3239,6 +3318,8 @@ pub const ProductionBackend = struct {
             return self.terminate(allocator, payload);
         if (header.type_code == generated.frame_type.visibility_renew)
             return self.renewVisibility(allocator, payload, now_ns);
+        if (header.type_code == generated.frame_type.input_orphan_discard)
+            return self.discardOrphan(allocator, payload, now_ns);
         if (header.type_code == generated.frame_type.attach_request)
             return self.issueAttach(allocator, payload, now_ns);
         return failure(.not_found);
@@ -3391,6 +3472,38 @@ pub const ProductionBackend = struct {
         var controller = self.control_plane.controller(allocator);
         const response = controller.terminate(payload) catch |err| return controlPlaneFailure(err);
         return .{ .response = response };
+    }
+
+    /// §22 INPUT_ORPHAN_DISCARD. Adoption-secret authenticated by construction:
+    /// only the broker holds a HostControl, and the host refuses every verb
+    /// until HOST_ADOPT proved the 32-byte secret. The broker adds nothing to
+    /// the policy — the host alone decides whether the arbiter is orphaned.
+    fn discardOrphan(
+        self: *ProductionBackend,
+        allocator: std.mem.Allocator,
+        payload: []const u8,
+        now_ns: u64,
+    ) BackendResult {
+        const Request = struct { schemaVersion: u8, locator: DiskLocator };
+        var parsed = std.json.parseFromSlice(Request, allocator, payload, .{
+            .ignore_unknown_fields = true,
+        }) catch return failure(.malformed_frame);
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1) return failure(.malformed_frame);
+        const locator = locatorFromDisk(parsed.value.locator) catch
+            return failure(.malformed_frame);
+        const lookup = self.registry.lookup(locator) orelse return failure(.not_found);
+        const entry = switch (lookup) {
+            .failure => |lookup_failure| return .{ .failure = lookup_failure },
+            .entry => |value| value,
+        };
+        if (entry.record.state != .live or now_ns >= entry.record.visibility.expires_mono_ns)
+            return failure(.not_ready);
+        const host = entry.host orelse return failure(.verification_unknown);
+        return switch (host.discardOrphan(locator, payload)) {
+            .failure => |host_failure| .{ .failure = host_failure },
+            .response => |response| .{ .response = response },
+        };
     }
 
     fn renewVisibility(

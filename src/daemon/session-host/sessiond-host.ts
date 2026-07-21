@@ -56,6 +56,8 @@ import {
   TERMINAL_LIMITS,
   TerminatePayloadSchema,
   TerminatedPayloadSchema,
+  OrphanDiscardPayloadSchema,
+  OrphanDiscardedPayloadSchema,
   RenewedPayloadSchema,
   VisibilityRenewPayloadSchema,
   WelcomePayloadSchema,
@@ -65,6 +67,16 @@ import {
 
 const textEncoder = new TextEncoder();
 const textDecoder = new TextDecoder("utf-8", { fatal: true });
+
+/** §22 ORPHAN_DISCARDED. `discarded: false` is a refusal with its reason, not
+ * a transport failure — the host declines anything but a HUMAN_ORPHANED
+ * arbiter, and names whose orphaned claim it destroyed when it does act. */
+export type OrphanDiscardResult = Readonly<{
+  discarded: boolean;
+  priorOwnerViewerId: string | null;
+  priorClaimId: string | null;
+  diagnostic: string;
+}>;
 
 export type LandedTerminalHost = Pick<
   TerminalHost,
@@ -715,6 +727,31 @@ export class SessiondHost implements LandedTerminalHost {
         responseSchema: RenewedPayloadSchema,
       });
       return lease;
+    } finally {
+      broker.close();
+    }
+  }
+
+  /**
+   * §22 INPUT_ORPHAN_DISCARD: ask the host to cancel an abandoned HUMAN_ORPHANED
+   * draft so the arbiter returns to FREE. The host refuses in-band for anything
+   * but an orphan, so this cannot take input from a human who is actually
+   * attached (#40 never-steal). See
+   * docs/incidents/2026-07-21-messaging-regression.md.
+   */
+  async discardInputOrphan(
+    locator: Parameters<SessionHost["renewVisibility"]>[0],
+  ): Promise<OrphanDiscardResult> {
+    const payload = OrphanDiscardPayloadSchema.parse({ schemaVersion: 1, locator });
+    const broker = await this.connectBroker();
+    try {
+      const { schemaVersion: _, ...result } = await broker.request({
+        requestType: "INPUT_ORPHAN_DISCARD",
+        responseType: "ORPHAN_DISCARDED",
+        payload,
+        responseSchema: OrphanDiscardedPayloadSchema,
+      });
+      return result;
     } finally {
       broker.close();
     }

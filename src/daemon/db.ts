@@ -473,7 +473,8 @@ export class HiveDatabase {
         idempotencyKey TEXT,
         capabilityEpoch INTEGER,
         deliveryDiagnostic TEXT,
-        deliveryDiagnosticAt TEXT
+        deliveryDiagnosticAt TEXT,
+        deliveryAlertAt TEXT
       );
       CREATE INDEX IF NOT EXISTS messages_recipient_delivery
         ON messages("to", deliveredAt, createdAt);
@@ -999,6 +1000,11 @@ export class HiveDatabase {
     if (!columns.has("deliveryDiagnosticAt")) {
       this.database.exec(
         "ALTER TABLE messages ADD COLUMN deliveryDiagnosticAt TEXT",
+      );
+    }
+    if (!columns.has("deliveryAlertAt")) {
+      this.database.exec(
+        "ALTER TABLE messages ADD COLUMN deliveryAlertAt TEXT",
       );
     }
   }
@@ -1627,6 +1633,31 @@ export class HiveDatabase {
       WHERE id = ?
     `).run(capabilityEpoch, id);
     return this.getMessage(id);
+  }
+
+  markMessageDeliveryAlerted(
+    id: string,
+    timestamp: string,
+  ): AgentMessage | null {
+    this.database.query(`
+      UPDATE messages SET deliveryAlertAt = COALESCE(deliveryAlertAt, ?)
+      WHERE id = ?
+    `).run(timestamp, id);
+    return this.getMessage(id);
+  }
+
+  /** Messages that have been queued past `cutoff` and carry a recorded reason
+   * for not arriving. This is the whole population the stuck-delivery alert
+   * and the `deliveryBlocked` status flag read: a delivery that silently never
+   * lands is exactly a row that stays here. */
+  listBlockedDeliveries(cutoff: string): AgentMessage[] {
+    return this.database.query(`
+      SELECT * FROM messages
+      WHERE deliveredAt IS NULL AND state = 'queued'
+        AND deliveryDiagnostic IS NOT NULL
+        AND createdAt <= ?
+      ORDER BY createdAt, sequence, rowid
+    `).all(cutoff).map((row) => AgentMessageSchema.parse(row));
   }
 
   listExpiredUnacknowledged(now: string): AgentMessage[] {

@@ -45,6 +45,10 @@ export const AgentMessageSchema = z.strictObject({
    * failed or declined sessiond inject; cleared when delivery succeeds. */
   deliveryDiagnostic: z.string().nullable().default(null),
   deliveryDiagnosticAt: z.iso.datetime().nullable().default(null),
+  /** When the stuck-delivery alert fired for this message. Separate from
+   * `alertAt` (the urgent/critical acknowledgement-deadline alert) so neither
+   * alert can silence the other. */
+  deliveryAlertAt: z.iso.datetime().nullable().default(null),
 });
 
 export type AgentMessage = z.infer<typeof AgentMessageSchema>;

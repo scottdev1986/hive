@@ -32,6 +32,8 @@ enum SessionProtocolGenerated {
         "TERMINATED": 0x0115,
         "VISIBILITY_RENEW": 0x0116,
         "RENEWED": 0x0117,
+        "INPUT_ORPHAN_DISCARD": 0x0118,
+        "ORPHAN_DISCARDED": 0x0119,
         "ATTACH_REQUEST": 0x0200,
         "ATTACH_GRANT": 0x0201,
         "HOST_ATTACH": 0x0202,

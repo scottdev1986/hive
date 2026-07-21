@@ -1527,6 +1527,7 @@ describe("HiveDaemon HTTP server", () => {
         capabilityEpoch: 1,
         deliveryDiagnostic: null,
         deliveryDiagnosticAt: null,
+        deliveryAlertAt: null,
       });
       expect(await daemon.delivery.recoverCriticalControls()).toEqual(1);
       expect(spawner.restarts).toHaveLength(0);
@@ -1604,6 +1605,7 @@ describe("HiveDaemon HTTP server", () => {
         capabilityEpoch: 1,
         deliveryDiagnostic: null,
         deliveryDiagnosticAt: null,
+        deliveryAlertAt: null,
       });
 
       expect(await daemon.delivery.recoverCriticalControls()).toEqual(1);
@@ -1673,6 +1675,7 @@ describe("HiveDaemon HTTP server", () => {
         capabilityEpoch: 1,
         deliveryDiagnostic: null,
         deliveryDiagnosticAt: null,
+        deliveryAlertAt: null,
       });
       const acknowledged = await daemon.acknowledgeControlMessage(
         "maya",

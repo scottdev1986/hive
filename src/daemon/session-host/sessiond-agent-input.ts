@@ -2,6 +2,7 @@ import type { AgentRecord } from "../../schemas";
 import type { TerminalGeometry } from "../../schemas/session-protocol";
 import { requireSessiondAgentLocator } from "./hive-terminal-host";
 import type { SessionHost } from "./contract";
+import type { OrphanDiscardResult } from "./sessiond-host";
 import type { SessionInspection, WindowSize, InputReceipt } from "./terminal-host-contract";
 import type { TerminalHost } from "./terminal-host-contract";
 import {
@@ -19,6 +20,20 @@ const SUBMIT = "\r";
 const CLAIM_LEASE_MS = 60_000;
 
 /**
+ * How long an orphaned human claim is left alone before automation may discard
+ * it. The arbiter only reaches HUMAN_ORPHANED when a viewer dropped without
+ * releasing, so this window is the returning viewer's chance to re-attach and
+ * resume its own draft; past it, the alternative is a permanently deaf agent
+ * (docs/incidents/2026-07-21-messaging-regression.md). The clock starts when
+ * THIS daemon first observed the orphan, so a daemon restart only ever waits
+ * longer — never discards sooner than it can justify.
+ */
+const ORPHAN_GRACE_MS = 120_000;
+
+/** The arbiter's own name for "a human's abandoned draft owns input". */
+const HUMAN_ORPHANED = "HumanOrphaned";
+
+/**
  * Injects one automated message into an idle sessiond-hosted agent over the
  * §20 neutral-host viewer wire. Returns the frozen receipt on `INPUT_SUBMIT`
  * acceptance, or a decline naming its cause (a human owns the input arbiter,
@@ -31,7 +46,7 @@ const CLAIM_LEASE_MS = 60_000;
  * with the only diagnostic on a /dev/null stderr.
  */
 export type SessiondInjectResult =
-  | Readonly<{ outcome: "injected"; receipt: InputReceipt }>
+  | Readonly<{ outcome: "injected"; receipt: InputReceipt; recovery?: string }>
   | Readonly<{ outcome: "declined"; reason: string }>;
 
 export interface SessiondAgentInput {
@@ -42,16 +57,34 @@ export interface SessiondAgentInput {
   ): Promise<SessiondInjectResult>;
 }
 
-/** The two broker RPCs this injector needs, already landed and tested. */
+/** The broker RPCs this injector needs. */
 type BrokerFacade = Pick<SessionHost, "issueAttach"> & Pick<TerminalHost, "list">;
 
+/** §22 orphan discard, absent on hosts that predate it — an injector built
+ * without it keeps the pre-fix behaviour: decline and stay queued. */
+type OrphanDiscarder = (
+  locator: ReturnType<typeof requireSessiondAgentLocator>,
+) => Promise<OrphanDiscardResult>;
+
 export class SessiondViewerAgentInput implements SessiondAgentInput {
+  /** When THIS daemon first saw each session's arbiter orphaned. The host does
+   * not date its orphans, so the grace period is measured from first
+   * observation; a restart resets it, which only ever delays a discard. */
+  private readonly orphanFirstSeen = new Map<string, number>();
+
   constructor(
     private readonly broker: BrokerFacade,
     private readonly viewerId: string,
     private readonly attach: (
       deps: ViewerAttachDependencies,
     ) => Promise<SessiondViewerAttachClient> = SessiondViewerAttachClient.attach,
+    private readonly discardOrphan: OrphanDiscarder = async () => ({
+      discarded: false,
+      priorOwnerViewerId: null,
+      priorClaimId: null,
+      diagnostic: "orphan discard is not wired on this host",
+    }),
+    private readonly now: () => number = Date.now,
   ) {}
 
   async injectIdle(
@@ -90,6 +123,79 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
         reason: `session lifecycle is ${inspection.lifecycle}, not running`,
       };
     }
+    const first = await this.submitOnce(locator, inspection, text, options);
+    if (first.outcome !== "declined" || !first.reason.includes(HUMAN_ORPHANED)) {
+      if (first.outcome !== "declined") this.orphanFirstSeen.delete(locator.sessionId);
+      return first;
+    }
+    return this.recoverFromOrphan(locator, inspection, text, options, first.reason);
+  }
+
+  /**
+   * The HUMAN_ORPHANED exit path. A human typed into this pane and their viewer
+   * then died without releasing; #40 never-steal correctly refuses to take
+   * input from a human — but nothing ever cleared the claim, so every daemon
+   * inject was denied forever and silently
+   * (docs/incidents/2026-07-21-messaging-regression.md).
+   *
+   * Bounded recovery: wait out ORPHAN_GRACE_MS from the first observation, then
+   * ask the host to discard the abandoned draft and retry the inject exactly
+   * once. The host is the one that decides — it refuses unless its arbiter is
+   * still HUMAN_ORPHANED — so a human who came back and resumed keeps input.
+   */
+  private async recoverFromOrphan(
+    locator: ReturnType<typeof requireSessiondAgentLocator>,
+    inspection: SessionInspection,
+    text: string,
+    options: Readonly<{ messageId: string }>,
+    declineReason: string,
+  ): Promise<SessiondInjectResult> {
+    const now = this.now();
+    const firstSeen = this.orphanFirstSeen.get(locator.sessionId) ?? now;
+    this.orphanFirstSeen.set(locator.sessionId, firstSeen);
+    const ageMs = now - firstSeen;
+    if (ageMs < ORPHAN_GRACE_MS) {
+      return {
+        outcome: "declined",
+        reason: `${declineReason}; orphan grace period (${
+          Math.round(ageMs / 1000)
+        }s of ${ORPHAN_GRACE_MS / 1000}s elapsed) before discard`,
+      };
+    }
+    let discard;
+    try {
+      discard = await this.discardOrphan(locator);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown error";
+      return {
+        outcome: "declined",
+        reason: `${declineReason}; orphan discard failed: ${detail}`,
+      };
+    }
+    if (!discard.discarded) {
+      return {
+        outcome: "declined",
+        reason: `${declineReason}; orphan discard refused: ${discard.diagnostic}`,
+      };
+    }
+    const owner = discard.priorOwnerViewerId ?? "unknown viewer";
+    const recovery =
+      `orphaned draft (owner ${owner}) discarded after ${Math.round(ageMs / 1000)}s; retrying`;
+    this.orphanFirstSeen.delete(locator.sessionId);
+    const retried = await this.submitOnce(locator, inspection, text, options);
+    if (retried.outcome === "declined") {
+      return { outcome: "declined", reason: `${recovery}; retry declined: ${retried.reason}` };
+    }
+    return { ...retried, recovery };
+  }
+
+  /** One attach → claim → submit → close cycle. */
+  private async submitOnce(
+    locator: ReturnType<typeof requireSessiondAgentLocator>,
+    inspection: SessionInspection,
+    text: string,
+    options: Readonly<{ messageId: string }>,
+  ): Promise<SessiondInjectResult> {
     const session = {
       key: locator.sessionId,
       incarnation: String(locator.generation),

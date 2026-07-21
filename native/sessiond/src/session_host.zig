@@ -2134,6 +2134,11 @@ const WireVisibilityRenew = struct {
     openTerminalRevision: []const u8,
 };
 
+const WireOrphanDiscard = struct {
+    schemaVersion: u8,
+    locator: WireLocator,
+};
+
 const WireTerminalSessionRef = struct {
     key: []const u8,
     incarnation: []const u8,
@@ -3655,6 +3660,108 @@ pub const HostCore = struct {
         return response;
     }
 
+    fn encodeOrphanDiscarded(
+        self: *HostCore,
+        discarded: bool,
+        prior_owner_viewer_id: ?[]const u8,
+        prior_claim_id: ?[]const u8,
+        diagnostic: []const u8,
+    ) ![]u8 {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const a = arena.allocator();
+        var root = std.json.ObjectMap.init(a);
+        try root.put("schemaVersion", .{ .integer = 1 });
+        try root.put("discarded", .{ .bool = discarded });
+        try root.put("priorOwnerViewerId", if (prior_owner_viewer_id) |value|
+            .{ .string = value }
+        else
+            .null);
+        try root.put("priorClaimId", if (prior_claim_id) |value|
+            .{ .string = value }
+        else
+            .null);
+        try root.put("diagnostic", .{ .string = diagnostic });
+        const payload = try std.json.Stringify.valueAlloc(
+            self.allocator,
+            std.json.Value{ .object = root },
+            .{},
+        );
+        errdefer self.allocator.free(payload);
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.orphan_discarded_payload,
+            payload,
+        )) return error.InvalidOrphanDiscardResponse;
+        return payload;
+    }
+
+    /// §22 INPUT_ORPHAN_DISCARD: the operator exit from HUMAN_ORPHANED.
+    ///
+    /// The arbiter orphans a human claim when its viewer drops uncleanly, and
+    /// #40 never-steal then denies every automation claim forever — with no
+    /// automated way back (2026-07-21 messaging regression). This is that way
+    /// back, and nothing more: it cancel-encodes the abandoned draft through
+    /// `operatorDiscard` and returns the arbiter to FREE. It CANNOT resume a
+    /// draft, and it refuses (never steals) whenever the arbiter is anything
+    /// other than HUMAN_ORPHANED — a live human keeps input, as before. The
+    /// refusal is a normal response carrying its reason, not a wire error, so
+    /// the caller can record WHY on the message row it is trying to deliver.
+    pub fn discardInputOrphan(self: *HostCore, payload: []const u8) ![]u8 {
+        if (!protocol.validateControlPayload(
+            self.allocator,
+            generated.wire_schema.orphan_discard_payload,
+            payload,
+        )) return error.InvalidOrphanDiscard;
+        var parsed = try std.json.parseFromSlice(WireOrphanDiscard, self.allocator, payload, .{
+            .ignore_unknown_fields = true,
+        });
+        defer parsed.deinit();
+        if (parsed.value.schemaVersion != 1) return error.InvalidOrphanDiscard;
+        const locator = try parseLocator(self.allocator, parsed.value.locator);
+        defer {
+            self.allocator.free(locator.instance_id);
+            self.allocator.free(locator.session_id);
+            switch (locator.subject) {
+                .root => {},
+                .agent => |agent_id| self.allocator.free(agent_id),
+            }
+            if (locator.engine_build_id) |engine| self.allocator.free(engine);
+        }
+        if (!sameLocator(locator, self.registration.record.locator))
+            return error.InvalidOrphanDiscard;
+
+        const binding = self.termination orelse
+            return self.encodeOrphanDiscarded(false, null, null, "input arbiter not bound");
+        const arbiter = binding.arbiter orelse
+            return self.encodeOrphanDiscarded(false, null, null, "input arbiter not bound");
+        const state = arbiter.currentState();
+        if (state != .human_orphaned)
+            return self.encodeOrphanDiscarded(false, null, null, @tagName(state));
+
+        // The orphan's owner of record, retained by onViewerDetached. Read it
+        // before the discard: clearOrphanedClaim frees these strings.
+        const prior_owner: ?[]const u8 = if (self.orphaned_claim) |claim|
+            claim.owner_viewer_id
+        else
+            null;
+        const prior_claim: ?[]const u8 = if (self.orphaned_claim) |claim|
+            claim.token
+        else
+            null;
+        _ = arbiter.operatorDiscard() catch |err| {
+            return self.encodeOrphanDiscarded(false, prior_owner, prior_claim, @errorName(err));
+        };
+        const response = try self.encodeOrphanDiscarded(
+            true,
+            prior_owner,
+            prior_claim,
+            "orphaned human claim discarded",
+        );
+        self.clearOrphanedClaim();
+        return response;
+    }
+
     pub fn terminate(self: *HostCore, payload: []const u8) ![]u8 {
         if (!protocol.validateControlPayload(
             self.allocator,
@@ -4251,6 +4358,18 @@ fn serveBrokerRequest(
             try protocol.writeFrame(
                 stream,
                 responseHeader(request.header, generated.frame_type.renewed, response.len),
+                response,
+            );
+        },
+        generated.frame_type.input_orphan_discard => {
+            const response = core.discardInputOrphan(request.payload) catch {
+                try writeHostFailure(allocator, stream, request.header, .malformed_frame);
+                return;
+            };
+            defer core.allocator.free(response);
+            try protocol.writeFrame(
+                stream,
+                responseHeader(request.header, generated.frame_type.orphan_discarded, response.len),
                 response,
             );
         },

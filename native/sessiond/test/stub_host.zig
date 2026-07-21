@@ -22,6 +22,9 @@ const StubHost = struct {
     renewal_failure: ?broker.protocol.Failure = null,
     expected_workspace_start_token: ?[]const u8 = null,
     renewal_calls: usize = 0,
+    orphan_discard_response: []const u8 = "",
+    orphan_discard_failure: ?broker.protocol.Failure = null,
+    orphan_discard_calls: usize = 0,
     terminated: bool = false,
     termination: broker.TerminationReadback = .{
         .pty_closed = true,
@@ -36,6 +39,7 @@ const StubHost = struct {
             .adopt_fn = adopt,
             .register_grant_fn = registerGrant,
             .renew_visibility_fn = renewVisibility,
+            .discard_orphan_fn = discardOrphan,
             .terminate_fn = terminate,
         };
     }
@@ -80,6 +84,21 @@ const StubHost = struct {
         }
         if (self.renewal_failure) |failure| return .{ .failure = failure };
         const response = std.testing.allocator.dupe(u8, self.renewal_response) catch
+            return .{ .failure = .{ .code = .resource_exhausted, .close_connection = false } };
+        return .{ .response = response };
+    }
+
+    fn discardOrphan(
+        context: *anyopaque,
+        locator: broker.Locator,
+        payload: []const u8,
+    ) broker.HostRenewalResult {
+        const self: *StubHost = @ptrCast(@alignCast(context));
+        if (!self.visible or !sameLocator(locator, self.readback.locator) or payload.len == 0)
+            return .{ .failure = .{ .code = .not_found, .close_connection = false } };
+        self.orphan_discard_calls += 1;
+        if (self.orphan_discard_failure) |failure| return .{ .failure = failure };
+        const response = std.testing.allocator.dupe(u8, self.orphan_discard_response) catch
             return .{ .failure = .{ .code = .resource_exhausted, .close_connection = false } };
         return .{ .response = response };
     }

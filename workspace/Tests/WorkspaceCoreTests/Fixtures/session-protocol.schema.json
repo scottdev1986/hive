@@ -4189,6 +4189,157 @@
       ],
       "additionalProperties": false
     },
+    "orphanDiscardPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "locator": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "schemaVersion": {
+              "type": "number",
+              "const": 1
+            },
+            "instanceId": {
+              "type": "string",
+              "minLength": 1
+            },
+            "subject": {
+              "readOnly": true,
+              "oneOf": [
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "root"
+                    }
+                  },
+                  "required": [
+                    "kind"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "object",
+                  "properties": {
+                    "kind": {
+                      "type": "string",
+                      "const": "agent"
+                    },
+                    "agentId": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "kind",
+                    "agentId"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            },
+            "generation": {
+              "type": "integer",
+              "minimum": 1,
+              "maximum": 9007199254740991
+            },
+            "sessionId": {
+              "type": "string",
+              "pattern": "^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$"
+            },
+            "hostKind": {
+              "type": "string",
+              "enum": [
+                "tmux",
+                "sessiond"
+              ]
+            },
+            "engineBuildId": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "schemaVersion",
+            "instanceId",
+            "subject",
+            "generation",
+            "sessionId",
+            "hostKind",
+            "engineBuildId"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "locator"
+      ],
+      "additionalProperties": false
+    },
+    "orphanDiscardedPayload": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "schemaVersion": {
+          "type": "number",
+          "const": 1
+        },
+        "discarded": {
+          "type": "boolean"
+        },
+        "priorOwnerViewerId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "priorClaimId": {
+          "anyOf": [
+            {
+              "type": "string",
+              "minLength": 1
+            },
+            {
+              "type": "null"
+            }
+          ]
+        },
+        "diagnostic": {
+          "type": "string",
+          "minLength": 1
+        }
+      },
+      "required": [
+        "schemaVersion",
+        "discarded",
+        "priorOwnerViewerId",
+        "priorClaimId",
+        "diagnostic"
+      ],
+      "additionalProperties": false
+    },
     "attachRequestPayload": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,
@@ -10638,6 +10789,8 @@
         "TERMINATED": 277,
         "VISIBILITY_RENEW": 278,
         "RENEWED": 279,
+        "INPUT_ORPHAN_DISCARD": 280,
+        "ORPHAN_DISCARDED": 281,
         "ATTACH_REQUEST": 512,
         "ATTACH_GRANT": 513,
         "HOST_ATTACH": 514,
@@ -10722,6 +10875,14 @@
           ],
           "direction": "daemon-broker-host-bidirectional",
           "purpose": "visibility-lease-renewal"
+        },
+        {
+          "names": [
+            "INPUT_ORPHAN_DISCARD",
+            "ORPHAN_DISCARDED"
+          ],
+          "direction": "daemon-broker-host-bidirectional",
+          "purpose": "operator-orphaned-claim-discard"
         },
         {
           "names": [

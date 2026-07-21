@@ -124,6 +124,8 @@ export const FRAME_TYPES = {
   TERMINATED: 0x0115,
   VISIBILITY_RENEW: 0x0116,
   RENEWED: 0x0117,
+  INPUT_ORPHAN_DISCARD: 0x0118,
+  ORPHAN_DISCARDED: 0x0119,
   ATTACH_REQUEST: 0x0200,
   ATTACH_GRANT: 0x0201,
   HOST_ATTACH: 0x0202,
@@ -160,6 +162,7 @@ export const FRAME_TYPE_GROUPS = [
   { names: ["INSPECT", "INSPECTED"], direction: "client-endpoint-bidirectional", purpose: "exact-locator-inspection" },
   { names: ["TERMINATE", "TERMINATED"], direction: "daemon-broker-host-bidirectional", purpose: "termination-positive-readback" },
   { names: ["VISIBILITY_RENEW", "RENEWED"], direction: "daemon-broker-host-bidirectional", purpose: "visibility-lease-renewal" },
+  { names: ["INPUT_ORPHAN_DISCARD", "ORPHAN_DISCARDED"], direction: "daemon-broker-host-bidirectional", purpose: "operator-orphaned-claim-discard" },
   { names: ["ATTACH_REQUEST", "ATTACH_GRANT", "HOST_ATTACH"], direction: "workspace-broker-host-bidirectional", purpose: "one-use-viewer-attach" },
   { names: ["SNAPSHOT_BEGIN", "SNAPSHOT_BYTES"], direction: "host-to-viewer", purpose: "checkpoint-stream" },
   { names: ["OUTPUT", "APPLIED"], direction: "host-viewer-bidirectional", purpose: "ordered-output-and-high-water" },
@@ -1141,6 +1144,27 @@ export const RenewedPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
   ...VisibilityLeaseSchema.unwrap().shape,
 }).readonly();
+/**
+ * §22 INPUT_ORPHAN_DISCARD: authenticated operator discard of a HUMAN_ORPHANED
+ * claim, the missing exit from the deadlock in
+ * docs/incidents/2026-07-21-messaging-regression.md. It never resumes a draft
+ * and never touches a LIVE human claim (#40 never-steal holds); it cancel-
+ * encodes an abandoned one so the arbiter returns to FREE and automation can
+ * be heard again.
+ */
+export const OrphanDiscardPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  locator: SessionLocatorSchema,
+}).readonly();
+/** §22 ORPHAN_DISCARDED reports the outcome and the orphan's owner of record,
+ * so the caller can audit whose unsubmitted draft was destroyed. */
+export const OrphanDiscardedPayloadSchema = z.strictObject({
+  schemaVersion: z.literal(1),
+  discarded: z.boolean(),
+  priorOwnerViewerId: z.string().min(1).nullable(),
+  priorClaimId: z.string().min(1).nullable(),
+  diagnostic: z.string().min(1),
+}).readonly();
 /** §19/§20 ATTACH_REQUEST combines the exact locator with AttachRequest. */
 export const AttachRequestPayloadSchema = z.strictObject({
   schemaVersion: z.literal(1),
@@ -1192,6 +1216,8 @@ export const SESSION_WIRE_SCHEMAS = {
   terminatedPayload: TerminatedPayloadSchema,
   visibilityRenewPayload: VisibilityRenewPayloadSchema,
   renewedPayload: RenewedPayloadSchema,
+  orphanDiscardPayload: OrphanDiscardPayloadSchema,
+  orphanDiscardedPayload: OrphanDiscardedPayloadSchema,
   attachRequestPayload: AttachRequestPayloadSchema,
   attachGrantPayload: AttachGrantPayloadSchema,
   hostAttachPayload: HostAttachPayloadSchema,

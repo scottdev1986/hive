@@ -1168,6 +1168,36 @@
       }
     },
     {
+      "name": "INPUT_ORPHAN_DISCARD exact generation",
+      "schema": "orphanDiscardPayload",
+      "value": {
+        "schemaVersion": 1,
+        "locator": {
+          "schemaVersion": 1,
+          "instanceId": "hive-fixture",
+          "subject": {
+            "kind": "agent",
+            "agentId": "agent-fixture"
+          },
+          "generation": 3,
+          "sessionId": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "hostKind": "sessiond",
+          "engineBuildId": "engine-fixture"
+        }
+      }
+    },
+    {
+      "name": "ORPHAN_DISCARDED names the prior owner",
+      "schema": "orphanDiscardedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "discarded": true,
+        "priorOwnerViewerId": "viewer-a",
+        "priorClaimId": "clm_018f1e90-7b5a-7cc0-8000-000000000001",
+        "diagnostic": "orphaned human claim discarded"
+      }
+    },
+    {
       "name": "ATTACH_REQUEST exact generation",
       "schema": "attachRequestPayload",
       "value": {
@@ -3039,6 +3069,23 @@
         "state": "active",
         "expiresAt": "2026-07-16T12:00:15.000Z",
         "openTerminalRevision": "7"
+      }
+    },
+    {
+      "name": "INPUT_ORPHAN_DISCARD rejects missing locator",
+      "schema": "orphanDiscardPayload",
+      "value": {
+        "schemaVersion": 1
+      }
+    },
+    {
+      "name": "ORPHAN_DISCARDED rejects a missing diagnostic",
+      "schema": "orphanDiscardedPayload",
+      "value": {
+        "schemaVersion": 1,
+        "discarded": false,
+        "priorOwnerViewerId": null,
+        "priorClaimId": null
       }
     },
     {

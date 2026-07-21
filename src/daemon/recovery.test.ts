@@ -467,6 +467,7 @@ describe("crash classification", () => {
       capabilityEpoch: 1,
       deliveryDiagnostic: null,
       deliveryDiagnosticAt: null,
+      deliveryAlertAt: null,
     });
     h.db.insertAgent(agent({
       status: "control-paused",
@@ -1047,6 +1048,7 @@ describe("crash resume", () => {
       capabilityEpoch: null,
       deliveryDiagnostic: null,
       deliveryDiagnosticAt: null,
+      deliveryAlertAt: null,
     });
 
     await h.recovery.sweep();
@@ -1100,6 +1102,7 @@ describe("dead-path bookkeeping", () => {
       capabilityEpoch: null,
       deliveryDiagnostic: null,
       deliveryDiagnosticAt: null,
+      deliveryAlertAt: null,
     });
 
     await h.recovery.sweep();

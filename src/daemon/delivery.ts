@@ -221,6 +221,17 @@ const SUBMIT_CONFIRM_MS = 5_000;
 const SUBMIT_POLL_MS = 100;
 
 /**
+ * How long a message may sit queued behind a recorded delivery failure before
+ * the orchestrator is told. The 2026-07-21 messaging regression stayed silent
+ * for hours because every non-delivery only ever reached a /dev/null stderr:
+ * the row carried its diagnostic and nobody read it. Five minutes is long
+ * enough that ordinary turn-boundary waiting never trips it and short enough
+ * that a wedged recipient is a visible event rather than an archaeology
+ * exercise.
+ */
+const STUCK_DELIVERY_MS = 5 * 60_000;
+
+/**
  * Does this vendor tell Hive when its turns begin and end?
  *
  * Every redelivery trigger Hive has hangs off that hook stream: flushQueued
@@ -934,7 +945,19 @@ export class MessageDelivery {
         );
         return this.getStoredMessage(message.id);
       }
-      return this.markInjected(message);
+      const injected = this.markInjected(message);
+      // A recovery destroyed somebody's unsubmitted draft to get this message
+      // through. markInjected clears the row's failure diagnostic, so the audit
+      // is written after it — a delivered row carrying its recovery note, which
+      // the stuck-delivery reader ignores (it only reads undelivered rows).
+      if (result.recovery !== undefined) {
+        this.db.recordMessageDeliveryDiagnostic(
+          message.id,
+          `sessiond inject recovered: ${result.recovery}`,
+          new Date().toISOString(),
+        );
+      }
+      return injected;
     }
     const text = this.formatAgentMessage(message);
     const boundaryBefore = this.turnBoundaryAt(message.to);
@@ -1405,6 +1428,70 @@ export class MessageDelivery {
       count += 1;
     }
     return count;
+  }
+
+  /**
+   * One `hive-control → queen` alert per message that has been queued past
+   * STUCK_DELIVERY_MS behind a recorded diagnostic while its recipient is
+   * still live. This is the loud-failure backstop for silent non-delivery of
+   * ANY cause: the cause is whatever the row's diagnostic says, and the alert
+   * fires without anybody having to suspect there is something to look for.
+   * Idempotent on `deliveryAlertAt` — one alert per message, not one per tick.
+   */
+  async alertStuckDeliveries(now = new Date().toISOString()): Promise<number> {
+    const cutoff = new Date(Date.parse(now) - STUCK_DELIVERY_MS).toISOString();
+    let count = 0;
+    for (const message of this.db.listBlockedDeliveries(cutoff)) {
+      // A dead recipient's undelivered mail is a spawn/kill outcome, already
+      // reported through those paths; only a LIVE agent that cannot hear is
+      // news.
+      const recipient = this.db.getAgentByName(message.to);
+      if (recipient === null) continue;
+      if (["dead", "done", "failed"].includes(recipient.status)) continue;
+      if (
+        this.db.markMessageDeliveryAlerted(message.id, now)?.deliveryAlertAt !==
+          now
+      ) continue;
+      const ageMinutes = Math.round(
+        (Date.parse(now) - Date.parse(message.createdAt)) / 60_000,
+      );
+      await this.send(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `Delivery blocked: message ${message.id} from ${message.from} to ${message.to} ` +
+          `has been queued ${ageMinutes}m and is not arriving. ` +
+          `Last attempt: ${message.deliveryDiagnostic}. ` +
+          `${message.to} is live (status=${recipient.status}) and has NOT seen this message.`,
+        { idempotencyKey: `delivery-blocked:${message.id}` },
+      );
+      count += 1;
+    }
+    return count;
+  }
+
+  /**
+   * Per-recipient view of the same population the alert reads, for
+   * `hive_status`. Reports the oldest blocked message per agent.
+   */
+  blockedDeliveries(
+    now = new Date().toISOString(),
+  ): Map<string, Readonly<{ messageId: string; queuedMinutes: number; diagnostic: string }>> {
+    const cutoff = new Date(Date.parse(now) - STUCK_DELIVERY_MS).toISOString();
+    const blocked = new Map<
+      string,
+      Readonly<{ messageId: string; queuedMinutes: number; diagnostic: string }>
+    >();
+    for (const message of this.db.listBlockedDeliveries(cutoff)) {
+      if (blocked.has(message.to)) continue; // listBlockedDeliveries is oldest-first.
+      blocked.set(message.to, {
+        messageId: message.id,
+        queuedMinutes: Math.round(
+          (Date.parse(now) - Date.parse(message.createdAt)) / 60_000,
+        ),
+        diagnostic: message.deliveryDiagnostic ?? "unknown",
+      });
+    }
+    return blocked;
   }
 
   async recoverCriticalControls(): Promise<number> {

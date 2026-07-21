@@ -881,7 +881,16 @@ export class HiveDaemon {
       // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
       // the viewer wire is the interim addition.
       options.sessiondInput ??
-        new SessiondViewerAgentInput(landedTerminalHost, `hive-daemon:${hiveInstanceSuffix()}`),
+        new SessiondViewerAgentInput(
+          landedTerminalHost,
+          `hive-daemon:${hiveInstanceSuffix()}`,
+          undefined,
+          // §22 orphan discard lives on the real sessiond client only; an
+          // injected test host keeps the pre-fix decline-and-queue behaviour.
+          landedTerminalHost instanceof SessiondHost
+            ? (locator) => landedTerminalHost.discardInputOrphan(locator)
+            : undefined,
+        ),
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -1156,6 +1165,13 @@ export class HiveDaemon {
       void this.delivery.alertExpiredControls().catch((error) => {
         console.error(
           `Hive control deadline check failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
+      void this.delivery.alertStuckDeliveries().catch((error) => {
+        console.error(
+          `Hive stuck-delivery check failed: ${
             error instanceof Error ? error.message : "unknown error"
           }`,
         );
@@ -3913,12 +3929,18 @@ export class HiveDaemon {
       // graphifyCalls says whether the graph tools are earning their context
       // cost (integration doc, layer 3). Null is unknown — no observation —
       // never zero; only rendered at all when this daemon runs graphify.
-      let agents = this.db.listAgents().map((agent) => (
-        this.graphify === undefined ? agent : {
-          ...agent,
+      // A recipient whose mail is not arriving reads as an ordinary idle agent
+      // in every other field here. deliveryBlocked is the one place the
+      // orchestrator can see it without knowing to look (2026-07-21 messaging
+      // regression: hours of silence that looked exactly like "nothing to say").
+      const blocked = this.delivery.blockedDeliveries();
+      let agents = this.db.listAgents().map((agent) => ({
+        ...agent,
+        ...(this.graphify === undefined ? {} : {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
-        }
-      ));
+        }),
+        deliveryBlocked: blocked.get(agent.name) ?? null,
+      }));
       if (history !== true) {
         agents = agents.filter((agent) =>
           !["dead", "done", "failed"].includes(agent.status)
