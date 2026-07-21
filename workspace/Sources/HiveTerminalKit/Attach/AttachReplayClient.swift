@@ -217,7 +217,21 @@ public final class AttachReplayClient {
     /// Clean CLAIM_RELEASE (cancel) before closing the viewer transport (#40).
     /// Best-effort: transport may already be half-dead; host also clears on drop.
     public func releaseClaimBestEffort() {
-        guard let token = activeClaimToken, let binding, transport != nil else { return }
+        guard let token = activeClaimToken, let binding, transport != nil else {
+            // A skip with a claim still held leaves the host holding a human
+            // claim nobody will ever release, and every daemon inject is denied
+            // HumanOrphaned from then on — the 2026-07-21 messaging regression.
+            // Today no path reaches here holding one; if one ever does, it says
+            // so instead of returning in silence.
+            if let stranded = activeClaimToken {
+                NSLog(
+                    "hive claim: release SKIPPED with claim held token=%@ viewer=%@; host claim will orphan",
+                    stranded,
+                    viewerId
+                )
+            }
+            return
+        }
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "session": sessionReference(binding.locator),

@@ -7471,6 +7471,165 @@ test "GRANT_REGISTER positive control rejects an expired grant" {
     try std.testing.expectEqual(@as(usize, 0), core.grants.items.len);
 }
 
+fn orphanDiscardPayload(
+    allocator: std.mem.Allocator,
+    registration: HostRegistration,
+) ![]u8 {
+    var arena = std.heap.ArenaAllocator.init(allocator);
+    defer arena.deinit();
+    var root = std.json.ObjectMap.init(arena.allocator());
+    try root.put("schemaVersion", .{ .integer = 1 });
+    try root.put("locator", try locatorValue(arena.allocator(), registration.record.locator));
+    return std.json.Stringify.valueAlloc(
+        allocator,
+        std.json.Value{ .object = root },
+        .{},
+    );
+}
+
+// §22 / 2026-07-21 messaging regression. A human claim orphaned by an unclean
+// viewer drop denied every automation claim forever, and operatorDiscard had no
+// caller. INPUT_ORPHAN_DISCARD is that caller. This walks the whole deadlock:
+// claim -> unclean drop -> automation DENIED -> discard -> automation GRANTED.
+test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is heard again" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    const discard_payload = try orphanDiscardPayload(std.testing.allocator, registration);
+    defer std.testing.allocator.free(discard_payload);
+
+    // POSITIVE CONTROL: a FREE arbiter is refused, in-band, naming its state.
+    // Without this the "discarded":true below could be a constant.
+    const free_refusal = try core.discardInputOrphan(discard_payload);
+    defer std.testing.allocator.free(free_refusal);
+    try std.testing.expect(std.mem.indexOf(u8, free_refusal, "\"discarded\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, free_refusal, "free") != null);
+
+    const human = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-a",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-a",
+    }, .{});
+    defer std.testing.allocator.free(human);
+    const granted = try core.claimInput(human, "viewer-a", 2_000);
+    defer std.testing.allocator.free(granted);
+    try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
+
+    // NEVER-STEAL CONTROL: a LIVE human claim is refused too. This is the whole
+    // #40 invariant; if this ever passes, the discard has become a steal.
+    const live_refusal = try core.discardInputOrphan(discard_payload);
+    defer std.testing.allocator.free(live_refusal);
+    try std.testing.expect(std.mem.indexOf(u8, live_refusal, "\"discarded\":false") != null);
+    try std.testing.expect(std.mem.indexOf(u8, live_refusal, "human_owned") != null);
+    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
+
+    // The arming condition: the viewer dies without releasing.
+    core.onViewerDetached("viewer-a");
+    try std.testing.expectEqual(input_arbiter.State.human_orphaned, arbiter.currentState());
+
+    const automation = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "hive-daemon",
+        .kind = "automation",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-auto-1",
+    }, .{});
+    defer std.testing.allocator.free(automation);
+    const deadlocked = try core.claimInput(automation, "hive-daemon", 3_000);
+    defer std.testing.allocator.free(deadlocked);
+    try std.testing.expect(std.mem.indexOf(u8, deadlocked, "\"state\":\"denied\"") != null);
+    try std.testing.expect(std.mem.indexOf(u8, deadlocked, "HumanOrphaned") != null);
+
+    // The exit: discard reports the orphan's owner of record and frees input.
+    const discarded = try core.discardInputOrphan(discard_payload);
+    defer std.testing.allocator.free(discarded);
+    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"discarded\":true") != null);
+    try std.testing.expect(std.mem.indexOf(u8, discarded, "\"priorOwnerViewerId\":\"viewer-a\"") != null);
+    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
+    try std.testing.expect(core.orphaned_claim == null);
+
+    // Retry: the same automation claim the deadlock denied is now granted.
+    const retry = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "hive-daemon",
+        .kind = "automation",
+        .leaseMilliseconds = @as(u64, 60_000),
+        .idempotencyKey = "claim-auto-2",
+    }, .{});
+    defer std.testing.allocator.free(retry);
+    const retried = try core.claimInput(retry, "hive-daemon", 4_000);
+    defer std.testing.allocator.free(retried);
+    try std.testing.expect(std.mem.indexOf(u8, retried, "\"state\":\"granted\"") != null);
+}
+
+test "INPUT_ORPHAN_DISCARD rejects a locator that is not this host's" {
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    registration.record.locator.generation = 2;
+    const foreign = try orphanDiscardPayload(std.testing.allocator, registration);
+    defer std.testing.allocator.free(foreign);
+    try std.testing.expectError(error.InvalidOrphanDiscard, core.discardInputOrphan(foreign));
+}
+
 fn visibilityRenewPayload(
     allocator: std.mem.Allocator,
     registration: HostRegistration,

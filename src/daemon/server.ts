@@ -681,6 +681,8 @@ export class HiveDaemon {
   private bunServer: Server<undefined> | null = null;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private maintenanceRunning = false;
+  /** Wake-path faults already reported, so a persistent one alerts once. */
+  private readonly alertedWakeFaults = new Set<string>();
   private maintenanceHealth:
     | { status: "unknown" }
     | { status: "ok" }
@@ -1176,11 +1178,25 @@ export class HiveDaemon {
           }`,
         );
       });
+      void this.checkWakePaths().catch((error) => {
+        console.error(
+          `Hive wake-path self-check failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
     }, 30_000);
     this.reconciliationTimer.unref?.();
     void this.runMaintenance().catch((error) => {
       console.error(
         `Hive startup recovery failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
+    void this.checkWakePaths().catch((error) => {
+      console.error(
+        `Hive wake-path self-check failed: ${
           error instanceof Error ? error.message : "unknown error"
         }`,
       );
@@ -1279,6 +1295,80 @@ export class HiveDaemon {
    * that could be deleted without turning anything red. It is inside maintenance
    * now, and a test drives maintenance.
    */
+  /**
+   * Self-check of the two wake paths, on daemon start and on every tick.
+   *
+   * Both have failed silently in the field: #68 split the daemon from the
+   * launcher's tmux server so every root wake dialled a socket nobody was
+   * listening on, and the 2026-07-21 messaging regression left agent sessions
+   * unreachable with the only diagnostic on a /dev/null stderr. A wake path
+   * that is broken says so BEFORE somebody sends a message into it.
+   *
+   * Faults alert once through the same hive-control → queen wire as the
+   * stuck-delivery check, and re-arm when the fault clears, so a persistent
+   * fault is one message rather than one every thirty seconds.
+   */
+  async checkWakePaths(): Promise<readonly string[]> {
+    const faults: string[] = [];
+    const live = this.db.listAgents().filter((agent) =>
+      !["dead", "done", "failed"].includes(agent.status)
+    );
+    // No team, no wake to protect — and nobody to tell.
+    if (live.length > 0) {
+      const rootSession = orchestratorTmuxSession();
+      const root = await this.tmux.inspectLegacyTmuxSession(rootSession)
+        .catch(() => ({ presence: "unknown" as const }));
+      if (root.presence !== "present") {
+        faults.push(
+          `the root wake path is ${root.presence}: this daemon cannot see tmux session ` +
+            `${rootSession}, so no agent report can reach queen (#68)`,
+        );
+      }
+      const sessiond = live.filter((agent) =>
+        agent.sessionLocator?.hostKind === "sessiond"
+      );
+      if (sessiond.length > 0) {
+        let listed: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null = null;
+        try {
+          listed = await this.terminalHost.list(hiveInstanceSuffix());
+        } catch (error) {
+          faults.push(
+            `the sessiond broker will not list sessions (${
+              error instanceof Error ? error.message : "unknown error"
+            }), so no message can reach any sessiond agent`,
+          );
+        }
+        for (const agent of sessiond) {
+          if (listed === null) break;
+          const match = listed.find((inspection) =>
+            inspection.locator.sessionId === agent.sessionLocator?.sessionId
+          );
+          if (match === undefined) {
+            faults.push(`${agent.name}'s sessiond session is not listed by the broker`);
+          } else if (match.presence !== "present") {
+            faults.push(
+              `${agent.name}'s sessiond session presence is ${match.presence}, not present`,
+            );
+          }
+        }
+      }
+    }
+    for (const fault of faults) {
+      if (this.alertedWakeFaults.has(fault)) continue;
+      this.alertedWakeFaults.add(fault);
+      await this.delivery.send(
+        "hive-control",
+        ORCHESTRATOR_NAME,
+        `Wake path check failed: ${fault}.`,
+      ).catch(() => undefined);
+    }
+    // Re-arm cleared faults so a recurrence is reported again.
+    for (const fault of [...this.alertedWakeFaults]) {
+      if (!faults.includes(fault)) this.alertedWakeFaults.delete(fault);
+    }
+    return faults;
+  }
+
   async runMaintenance(): Promise<void> {
     if (this.maintenanceRunning) return;
     this.maintenanceRunning = true;
@@ -3939,7 +4029,10 @@ export class HiveDaemon {
         ...(this.graphify === undefined ? {} : {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
         }),
-        deliveryBlocked: blocked.get(agent.name) ?? null,
+        // Only when blocked, so a healthy `detail:"full"` record stays the
+        // agent row verbatim. The compact team view — what queen reads —
+        // always carries the field, null included.
+        ...(blocked.has(agent.name) ? { deliveryBlocked: blocked.get(agent.name)! } : {}),
       }));
       if (history !== true) {
         agents = agents.filter((agent) =>

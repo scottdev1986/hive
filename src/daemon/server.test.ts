@@ -5286,3 +5286,93 @@ describe("audited kill never leaves a dead agent reported as working (#70)", () 
     }
   });
 });
+
+describe("wake-path self-check (2026-07-21 messaging regression, recommendation 4)", () => {
+  function wakeAlerts(db: HiveDatabase): string[] {
+    return db.listMessages()
+      .filter((message) => message.from === "hive-control")
+      .map((message) => message.body)
+      .filter((body) => body.startsWith("Wake path check failed:"));
+  }
+
+  test("a root wake path the daemon cannot see is reported once, and re-arms when it clears", async () => {
+    const db = new HiveDatabase(join(home, "wake-path-check.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+    });
+    try {
+      // POSITIVE CONTROL 1: with no live agents there is no wake to protect,
+      // so a missing root session is not a fault — proving the check below is
+      // reading the tmux probe and not simply always failing.
+      expect(await daemon.checkWakePaths()).toEqual([]);
+
+      db.insertAgent(agent({ status: "working" }));
+
+      // POSITIVE CONTROL 2: with the root session visible, a live team is
+      // clean — so the fault reported next is the absence, not the presence
+      // of an agent.
+      tmux.sessions.add(orchestratorTmuxSession());
+      expect(await daemon.checkWakePaths()).toEqual([]);
+      expect(wakeAlerts(db)).toEqual([]);
+
+      // #68's exact signature: the daemon cannot see the session its root wake
+      // would dial.
+      tmux.sessions.delete(orchestratorTmuxSession());
+      const faults = await daemon.checkWakePaths();
+      expect(faults).toHaveLength(1);
+      expect(faults[0]).toContain("the root wake path is lost");
+      expect(faults[0]).toContain(orchestratorTmuxSession());
+      expect(wakeAlerts(db)).toHaveLength(1);
+
+      // A persistent fault is one message, not one every thirty seconds.
+      expect(await daemon.checkWakePaths()).toHaveLength(1);
+      expect(wakeAlerts(db)).toHaveLength(1);
+
+      // Cleared, then broken again: the alert re-arms.
+      tmux.sessions.add(orchestratorTmuxSession());
+      expect(await daemon.checkWakePaths()).toEqual([]);
+      tmux.sessions.delete(orchestratorTmuxSession());
+      expect(await daemon.checkWakePaths()).toHaveLength(1);
+      expect(wakeAlerts(db)).toHaveLength(2);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("a live sessiond agent whose broker cannot be reached is reported", async () => {
+    const db = new HiveDatabase(join(home, "wake-path-sessiond.db"));
+    const tmux = new FakeDaemonTmux();
+    tmux.sessions.add(orchestratorTmuxSession());
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+    });
+    try {
+      db.insertAgent(agent({
+        status: "working",
+        sessionLocator: {
+          schemaVersion: 1,
+          instanceId: "hive-fixture",
+          subject: { kind: "agent", agentId: "agent-maya" },
+          generation: 1,
+          sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000801",
+          hostKind: "sessiond",
+          engineBuildId: "engine-fixture",
+        },
+      }));
+      const faults = await daemon.checkWakePaths();
+      expect(faults).toHaveLength(1);
+      expect(faults[0]).toContain("the sessiond broker will not list sessions");
+      expect(faults[0]).toContain("no message can reach any sessiond agent");
+      expect(wakeAlerts(db)).toHaveLength(1);
+    } finally {
+      db.close();
+    }
+  });
+});
