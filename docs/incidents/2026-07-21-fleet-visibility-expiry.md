@@ -166,3 +166,76 @@ memory ceiling.
    `terminationAuditJson` NULL, which is why this incident had no durable record
    in the DB at all and had to be reconstructed from workspace.log plus a
    4-second arithmetic coincidence.
+
+## Addendum: two recurrences confirm the mechanism (22:49Z, 22:57Z)
+
+The fleet died twice more the same evening. Both are the **same mechanism** —
+no second mechanism exists. The confirmation is stronger than the original
+diagnosis: it is now **per-agent**, not merely per-cluster. Each host dies
+`host_graceful_stop_bound_ms` (4.000 s) after **its own** lease deadline, and
+the death order reproduces the `expiresAt` order exactly.
+
+Agent names come from joining `terminal_host_bindings` to `agents` on the
+locator subject; deaths are the `host transport lost` lines in workspace.log,
+converted from local (UTC−4).
+
+**Event 2 — 22:49Z, seven hosts:**
+
+| agent | expiresAt (Z) | +4.000 s predicted | observed death | delta |
+| --- | --- | --- | --- | --- |
+| priya | 22:49:02.802 | 22:49:06.802 | 22:49:06.823 | +21 ms |
+| emma | 22:49:03.485 | 22:49:07.485 | 22:49:07.499 | +14 ms |
+| noah | 22:49:03.501 | 22:49:07.501 | 22:49:07.535 | +34 ms |
+| james | 22:49:03.518 | 22:49:07.518 | 22:49:07.538 | +20 ms |
+| omar | 22:49:03.534 | 22:49:07.534 | 22:49:07.556 | +22 ms |
+| lena | 22:49:03.551 | 22:49:07.551 | 22:49:07.575 | +24 ms |
+| liam | 22:49:03.569 | 22:49:07.569 | 22:49:07.589 | +20 ms |
+
+**Event 3 — 22:57Z, five hosts:**
+
+| agent | expiresAt (Z) | +4.000 s predicted | observed death | delta |
+| --- | --- | --- | --- | --- |
+| henry | 22:57:30.911 | 22:57:34.911 | 22:57:34.932 | +21 ms |
+| lucas | 22:57:30.930 | 22:57:34.930 | 22:57:34.950 | +20 ms |
+| ethan | 22:57:30.963 | 22:57:34.963 | 22:57:34.994 | +31 ms |
+| mia | 22:57:30.981 | 22:57:34.981 | 22:57:35.002 | +21 ms |
+| ava | 22:57:30.998 | 22:57:34.998 | 22:57:35.016 | +18 ms |
+
+Every delta across both events falls in **+14 ms to +34 ms**. The supporting
+signature holds each time: a `status poll timed out after 5000ms` precursor
+(22:48:52.854Z before event 2), and the HTTP 409 storm starting *after* the
+deaths (22:49:08.980Z and 22:57:36.512Z) — consequence, never cause.
+
+A reported death time of 22:49:18Z or 22:57:49–51Z is the **SIGKILL tail**, not
+the kill instant: the graceful terminate escalates ~11–16 s after transport
+loss. Measure from `host transport lost`, not from when the pane looks dead.
+
+### Why the recurrences happened after the fix landed
+
+The fixes were **landed but not active**. `hive` binary
+`.dev/root/versions/0.0.0/hive` has mtime **2026-07-21 17:32:15** local and the
+daemon (pid 81422) started 17:32:16 and ran continuously; the fix commits are
+**18:52:01** and **18:56:22** local — roughly 80 minutes *newer* than the
+binary. The running daemon could not contain them, so events 2 and 3 hit
+exactly the un-fixed path. Corroborating: every binding in both events still
+has `terminationAuditJson` NULL, which is precisely what the pre-fix code does;
+the new audit writer would have populated it.
+
+**Landed on main is not running.** Both halves ship in the same `hive` binary
+(`workspace-feed` is that binary too), so the fix requires the ordinary
+clean/build/run loop before it protects anything. No Swift change is involved —
+`HiveWorkspace.app` is untouched.
+
+### Verifying the fix once it is active
+
+After a rebuild and restart, the fix is self-verifying in the same file this
+incident was reconstructed from:
+
+- a slow publish writes `workspace visibility publish was slow: <n>ms for
+  revision <r>` to workspace.log, and a hung one writes `workspace visibility
+  publish timed out after 5000ms`;
+- any lease genuinely allowed to expire writes a `terminationAudit` row with
+  `origin: "visibility-expiry"` instead of leaving it NULL.
+
+A fleet death showing **neither** of those, while hosts still die ~4 s after a
+clustered `expiresAt`, would be a mechanism this root cause does not cover.
