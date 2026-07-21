@@ -72,9 +72,12 @@ fn runGolden(allocator: std.mem.Allocator) !void {
     const engine_build_id = std.fmt.bytesToHex(engine_digest, .lower);
     const input_proof_path = try std.fs.path.join(allocator, &.{ root, "input-proof.txt" });
     defer allocator.free(input_proof_path);
+    // The second banner exists for freeze case H: it puts a real terminal
+    // escape (`ESC [ 3 1 m`) and real multibyte text (`é`, `→`) into the
+    // retained stream, so a resume cursor can be placed strictly inside each.
     const provider_script = try std.fmt.allocPrint(
         allocator,
-        "printf 'GOLDEN-BANNER\\n'; while IFS= read -r line; do printf '%s\\n' \"$line\" >> {s}; printf 'OUT:%s\\n' \"$line\"; done",
+        "printf 'GOLDEN-BANNER\\n'; printf 'H:\\033[31mr\\303\\251\\342\\206\\222\\033[0m\\n'; while IFS= read -r line; do printf '%s\\n' \"$line\" >> {s}; printf 'OUT:%s\\n' \"$line\"; done",
         .{input_proof_path},
     );
     defer allocator.free(provider_script);
@@ -1498,6 +1501,129 @@ fn driveViewerWire(
         if (!std.mem.eql(u8, replay_reader.output.items, reader.output.items))
             return error.ReplayDiverged;
         try expectViewerClosed(&reader);
+    }
+
+    // Freeze case H: resume is exactly-once at byte boundaries even when the
+    // disconnect lands inside a terminal escape or inside a multibyte
+    // character. The cursor is a byte offset into retained output and nothing
+    // may round it to a sequence or codepoint edge.
+    const stream_bytes = reader.output.items;
+    const escape_start = std.mem.indexOf(u8, stream_bytes, "\x1b[31m") orelse
+        return error.ResumeFixtureMissing;
+    const multibyte_start = std.mem.indexOf(u8, stream_bytes, "\xc3\xa9") orelse
+        return error.ResumeFixtureMissing;
+    for ([_]u64{
+        @intCast(escape_start + 1), // after ESC, before the final byte
+        @intCast(multibyte_start + 1), // after the lead byte, before the continuation
+    }, 0..) |cursor, index| {
+        try resumeFromCursor(
+            allocator,
+            registry,
+            locator,
+            wire_locator,
+            socket_path,
+            cursor,
+            stream_bytes,
+            @intCast(index),
+        );
+    }
+}
+
+/// One freeze-case-H resume leg: attach at an exact byte cursor and require the
+/// host to deliver the retained tail from that byte, contiguously (ViewerReader
+/// rejects any stream_seq that is not the running high-water) and byte-identical
+/// to the same suffix of the stream a from-zero attach produced. Equal length
+/// plus equal bytes from an exact offset is what excludes both a duplicated
+/// boundary byte and a dropped one.
+fn resumeFromCursor(
+    allocator: std.mem.Allocator,
+    registry: *broker.Registry,
+    locator: broker.Locator,
+    wire_locator: WireLocatorPayload,
+    socket_path: []const u8,
+    cursor: u64,
+    expected_stream: []const u8,
+    leg: u8,
+) !void {
+    var token_storage: [32]u8 = undefined;
+    const token = try std.fmt.bufPrint(&token_storage, "golden-resume-token-{d}", .{leg});
+    var token_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(token, &token_hash, .{});
+    const operations = [_][]const u8{"view"};
+    if (registry.registerGrant(
+        locator,
+        token_hash,
+        "golden-viewer",
+        &operations,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .width_px = 800,
+            .height_px = 480,
+            .cell_width_px = 10,
+            .cell_height_px = 20,
+        },
+        90 + @as(u64, leg),
+    ) != null) return error.ViewerGrantRegistrationFailed;
+
+    const stream = try std.net.connectUnixSocket(socket_path);
+    defer stream.close();
+    var resume_reader: ViewerReader = .{
+        .allocator = allocator,
+        .stream = stream,
+        // Absolute: the first replayed frame must carry exactly this offset.
+        .next_seq = cursor,
+    };
+    defer resume_reader.deinit();
+    const hello = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .buildId = "golden-viewer-build",
+        .instanceId = instance_id,
+        .protocol = .{
+            .major = generated.protocol_major,
+            .minMinor = generated.protocol_min_minor,
+            .maxMinor = generated.protocol_max_minor,
+        },
+        .clientRole = "viewer",
+        .grantToken = token,
+    }, .{});
+    defer allocator.free(hello);
+    const request_id: u64 = 90 + @as(u64, leg) * 2;
+    try writeViewerRequest(stream, generated.frame_type.hello, request_id, 0, hello);
+    var welcome = try readViewerResponse(
+        &resume_reader,
+        generated.frame_type.welcome,
+        request_id,
+        generated.wire_schema.welcome_payload,
+    );
+    welcome.deinit(allocator);
+
+    var cursor_storage: [24]u8 = undefined;
+    const attach = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
+        .token = token,
+        .geometry = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPx = @as(u32, 800),
+            .heightPx = @as(u32, 480),
+            .cellWidthPx = @as(f64, 10),
+            .cellHeightPx = @as(f64, 20),
+        },
+        .afterSeq = try std.fmt.bufPrint(&cursor_storage, "{d}", .{cursor}),
+    }, .{});
+    defer allocator.free(attach);
+    try writeViewerRequest(stream, generated.frame_type.host_attach, request_id + 1, 0, attach);
+
+    const expected_tail = expected_stream[@intCast(cursor)..];
+    try resume_reader.collectOutputUntilLength(expected_tail.len);
+    if (!std.mem.eql(u8, resume_reader.output.items, expected_tail)) {
+        std.debug.print(
+            "real-host-golden: resume from byte {d} diverged from the from-zero suffix\n",
+            .{cursor},
+        );
+        return error.ResumeDiverged;
     }
 }
 
