@@ -43,6 +43,18 @@ export const FEED_RETRY_MAX_MS = 4_000;
 export const FEED_GIVE_UP_MS = 30_000;
 /** A hung status request must become a reported error, not a silent lapse. */
 export const FEED_STATUS_TIMEOUT_MS = 5_000;
+/** Bounds one visibility publish. sessiond expires a visibility lease after
+ * `visibility_expiry_ms` (15 s) and then terminates the host, so an unbounded
+ * publish is a fleet-wide kill switch: on 2026-07-21 one stalled publish froze
+ * renewal for every pane and sessiond terminated all five hosts 4 s after the
+ * common deadline (docs/incidents/2026-07-21-fleet-visibility-expiry.md).
+ * At 5 s a stall costs one renewal, leaving two further attempts inside the
+ * lease. */
+export const FEED_VISIBILITY_PUBLISH_TIMEOUT_MS = 5_000;
+/** A publish slower than this is reported while it is still only a warning.
+ * The incident had no latency signal at all, so a stall was only visible
+ * afterwards, as a gap between recorded lease deadlines. */
+export const FEED_VISIBILITY_PUBLISH_SLOW_MS = 1_000;
 
 export interface WorkspaceFeedDeps {
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
@@ -65,6 +77,9 @@ export interface WorkspaceFeedDeps {
 export interface WorkspaceVisibilityPublishDeps {
   readonly observeProcess?: (pid: number) => Readonly<{ startToken: string }>;
   readonly post?: typeof operatorFetch;
+  /** Overrides FEED_VISIBILITY_PUBLISH_TIMEOUT_MS; tests use a short one. */
+  readonly timeoutMs?: number;
+  readonly now?: () => number;
 }
 
 class WorkspaceVisibilityPublishError extends Error {
@@ -77,35 +92,72 @@ class WorkspaceVisibilityPublishError extends Error {
   }
 }
 
+/** A publish that never came back inside the bound. Distinct from a rejection:
+ * nothing is known about whether the daemon applied it. */
+export class WorkspaceVisibilityPublishTimeoutError extends Error {
+  constructor(readonly milliseconds: number) {
+    super(`workspace visibility publish timed out after ${milliseconds}ms`);
+  }
+}
+
 /** Publishes exactly one Workspace-authored full inventory with the feed's
- * operator credential. The daemon independently re-reads the same PID/token. */
+ * operator credential. The daemon independently re-reads the same PID/token.
+ *
+ * Bounded: the request carries an AbortSignal and is raced against its own
+ * timer, so a `post` that ignores the signal still cannot hang the caller.
+ * Resolves with how long the attempt took, so a stall is measurable live
+ * rather than only reconstructable from lease deadlines afterwards. */
 export async function publishWorkspaceVisibility(
   port: number,
   workspaceSessionId: string,
   workspacePid: number,
   inventory: WorkspaceVisibilityInventoryInput,
   deps: WorkspaceVisibilityPublishDeps = {},
-): Promise<void> {
+): Promise<{ durationMs: number }> {
   const parsed = WorkspaceVisibilityInventoryInputSchema.parse(inventory);
   const processIdentity = (deps.observeProcess ?? macProcessIdentity)(workspacePid);
-  const response = await (deps.post ?? operatorFetch)(
-    `http://127.0.0.1:${port}/workspace-visibility`,
-    {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({
-        ...parsed,
-        source: {
-          sessionId: workspaceSessionId,
-          process: {
-            processId: workspacePid,
-            startToken: processIdentity.startToken,
-          },
+  const timeoutMs = deps.timeoutMs ?? FEED_VISIBILITY_PUBLISH_TIMEOUT_MS;
+  const now = deps.now ?? Date.now;
+  const startedAt = now();
+  const controller = new AbortController();
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const expiry = new Promise<never>((_resolve, reject) => {
+    timer = setTimeout(() => {
+      // Reject before aborting. `abort()` runs its listeners synchronously, so
+      // aborting first lets the request's own AbortError win the race and the
+      // operator sees "aborted" instead of the measured duration — which is
+      // precisely the signal 2026-07-21 lacked.
+      reject(new WorkspaceVisibilityPublishTimeoutError(timeoutMs));
+      controller.abort();
+    }, timeoutMs);
+  });
+  let response: Response;
+  try {
+    response = await Promise.race([
+      (deps.post ?? operatorFetch)(
+        `http://127.0.0.1:${port}/workspace-visibility`,
+        {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          signal: controller.signal,
+          body: JSON.stringify({
+            ...parsed,
+            source: {
+              sessionId: workspaceSessionId,
+              process: {
+                processId: workspacePid,
+                startToken: processIdentity.startToken,
+              },
+            },
+          }),
         },
-      }),
-    },
-  );
-  if (response.ok) return;
+      ),
+      expiry,
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+  if (response.ok) return { durationMs: now() - startedAt };
   const body = await response.json().catch(() => null) as
     | { error?: unknown; diagnostic?: unknown; reason?: unknown }
     | null;
@@ -119,49 +171,93 @@ export async function publishWorkspaceVisibility(
   );
 }
 
-/** Serializes Workspace inventory publications. A competing live Workspace
- * source cannot be displaced safely, so one recorded conflict halts this
- * child rather than continuously retrying the same rejected ownership claim. */
+/** Publishes Workspace inventories at most one at a time, newest wins.
+ *
+ * Each inventory is a *full* snapshot, so a queued one is worthless the moment
+ * a newer one arrives: only the latest is kept and the rest are dropped. The
+ * at-most-one-in-flight rule is load-bearing and predates this — concurrent
+ * publishes race the daemon's revision check and produce the 409 loop of #48 —
+ * but chaining every publication onto the previous one (fde93610) made a
+ * single hung request block renewal for the whole fleet indefinitely (#98).
+ * Superseding keeps the serialization without the queue.
+ *
+ * A competing live Workspace source cannot be displaced safely, so one
+ * recorded conflict halts this child rather than continuously retrying the
+ * same rejected ownership claim. */
 export class WorkspaceVisibilityPublisher {
-  private publications = Promise.resolve();
+  private inFlight: Promise<void> | null = null;
+  private pending: WorkspaceVisibilityInventoryInput | null = null;
   private halted = false;
 
   constructor(
-    private readonly publish: (inventory: WorkspaceVisibilityInventoryInput) => Promise<void>,
+    private readonly publish: (
+      inventory: WorkspaceVisibilityInventoryInput,
+    ) => Promise<{ durationMs: number }>,
     private readonly write: (line: string) => void,
+    private readonly slowMs: number = FEED_VISIBILITY_PUBLISH_SLOW_MS,
   ) {}
 
   publishLine(line: Uint8Array): void {
-    if (line.byteLength === 0) return;
-    this.publications = this.publications.then(async () => {
-      if (this.halted) return;
-      const inventory = WorkspaceVisibilityInventoryInputSchema.parse(
+    if (line.byteLength === 0 || this.halted) return;
+    try {
+      this.pending = WorkspaceVisibilityInventoryInputSchema.parse(
         JSON.parse(Buffer.from(line).toString("utf8")),
       );
-      try {
-        await this.publish(inventory);
-      } catch (error) {
-        if (
-          error instanceof WorkspaceVisibilityPublishError &&
-          error.status === 409 && error.reason === "source-identity-mismatch"
-        ) {
-          this.halted = true;
-          throw new Error(
-            `workspace visibility publish halted [${error.reason}]: ${error.detail}`,
-          );
-        }
-        throw error;
-      }
-    }).catch((error: unknown) => {
-      this.write(JSON.stringify({
-        v: FEED_VERSION,
-        error: error instanceof Error ? error.message : String(error),
-      }));
+    } catch (error: unknown) {
+      this.report(error);
+      return;
+    }
+    this.pump();
+  }
+
+  private pump(): void {
+    if (this.inFlight !== null || this.halted) return;
+    const inventory = this.pending;
+    if (inventory === null) return;
+    this.pending = null;
+    const run = this.runOne(inventory).catch((error: unknown) => {
+      this.report(error);
+    }).then(() => {
+      this.inFlight = null;
+      this.pump();
     });
+    this.inFlight = run;
+  }
+
+  private async runOne(inventory: WorkspaceVisibilityInventoryInput): Promise<void> {
+    try {
+      const { durationMs } = await this.publish(inventory);
+      if (durationMs >= this.slowMs) {
+        this.write(JSON.stringify({
+          v: FEED_VERSION,
+          error: `workspace visibility publish was slow: ${durationMs}ms ` +
+            `for revision ${inventory.inventoryRevision}`,
+        }));
+      }
+    } catch (error) {
+      if (
+        error instanceof WorkspaceVisibilityPublishError &&
+        error.status === 409 && error.reason === "source-identity-mismatch"
+      ) {
+        this.halted = true;
+        this.pending = null;
+        throw new Error(
+          `workspace visibility publish halted [${error.reason}]: ${error.detail}`,
+        );
+      }
+      throw error;
+    }
+  }
+
+  private report(error: unknown): void {
+    this.write(JSON.stringify({
+      v: FEED_VERSION,
+      error: error instanceof Error ? error.message : String(error),
+    }));
   }
 
   async flush(): Promise<void> {
-    await this.publications;
+    while (this.inFlight !== null) await this.inFlight;
   }
 }
 

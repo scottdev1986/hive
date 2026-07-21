@@ -14,6 +14,7 @@ import {
   publishWorkspaceVisibility,
   runWorkspaceFeed,
   WorkspaceVisibilityPublisher,
+  WorkspaceVisibilityPublishTimeoutError,
 } from "./workspace-feed";
 import type { OrchestratorStatus } from "../daemon/orchestrator-status";
 
@@ -176,6 +177,100 @@ describe("runWorkspaceFeed", () => {
       v: 1,
       error: "workspace visibility publish halted [source-identity-mismatch]: " +
         "another live Workspace source already owns the inventory",
+    }]);
+  });
+
+  test("a hung publish is bounded, aborted, and reported with its duration", async () => {
+    let aborted = false;
+    await expect(publishWorkspaceVisibility(
+      4483,
+      "workspace-launch",
+      7210,
+      { schemaVersion: 1, inventoryRevision: "1", terminals: [] },
+      {
+        observeProcess: () => ({ startToken: "7210:500" }),
+        timeoutMs: 20,
+        // Never resolves: the 2026-07-21 stall, where the request simply
+        // never came back and renewal stopped for every pane.
+        post: (_input, init) => new Promise<Response>((_resolve, reject) => {
+          init?.signal?.addEventListener("abort", () => {
+            aborted = true;
+            reject(new Error("aborted"));
+          });
+        }),
+      },
+    )).rejects.toThrow(new WorkspaceVisibilityPublishTimeoutError(20));
+    expect(aborted).toBe(true);
+  });
+
+  test("a stalled publish does not block the next one: newest inventory still lands", async () => {
+    const output: Array<Record<string, unknown>> = [];
+    const published: string[] = [];
+    let attempts = 0;
+    const publisher = new WorkspaceVisibilityPublisher(
+      (inventory) => publishWorkspaceVisibility(
+        4483,
+        "workspace-launch",
+        7210,
+        inventory,
+        {
+          observeProcess: () => ({ startToken: "7210:500" }),
+          timeoutMs: 20,
+          post: async (_input, init) => {
+            attempts += 1;
+            const body = await new Request("http://x", init).json() as
+              { inventoryRevision: string };
+            // The first attempt hangs forever, exactly as on 2026-07-21.
+            if (attempts === 1) return await new Promise<Response>(() => {});
+            published.push(body.inventoryRevision);
+            return Response.json({
+              state: "accepted",
+              inventoryRevision: body.inventoryRevision,
+            });
+          },
+        },
+      ),
+      (line) => output.push(JSON.parse(line) as Record<string, unknown>),
+    );
+    const inventory = (revision: string): Uint8Array =>
+      Buffer.from(JSON.stringify({
+        schemaVersion: 1,
+        inventoryRevision: revision,
+        terminals: [],
+      }));
+
+    publisher.publishLine(inventory("1"));
+    // Three more arrive while revision 1 is stuck. They are full snapshots, so
+    // only the newest is worth sending; the middle two are dropped, never queued.
+    publisher.publishLine(inventory("2"));
+    publisher.publishLine(inventory("3"));
+    publisher.publishLine(inventory("4"));
+    await publisher.flush();
+
+    expect(attempts).toBe(2);
+    expect(published).toEqual(["4"]);
+    expect(output).toEqual([
+      { v: 1, error: "workspace visibility publish timed out after 20ms" },
+    ]);
+  });
+
+  test("a slow but successful publish is reported as a warning, not a failure", async () => {
+    const output: Array<Record<string, unknown>> = [];
+    const publisher = new WorkspaceVisibilityPublisher(
+      async () => ({ durationMs: 1_500 }),
+      (line) => output.push(JSON.parse(line) as Record<string, unknown>),
+      1_000,
+    );
+    publisher.publishLine(Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      inventoryRevision: "7",
+      terminals: [],
+    })));
+    await publisher.flush();
+
+    expect(output).toEqual([{
+      v: 1,
+      error: "workspace visibility publish was slow: 1500ms for revision 7",
     }]);
   });
 
