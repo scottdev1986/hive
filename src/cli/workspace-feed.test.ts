@@ -13,6 +13,7 @@ import {
   parseOrchestratorStatus,
   publishWorkspaceVisibility,
   runWorkspaceFeed,
+  WorkspaceVisibilityPublisher,
 } from "./workspace-feed";
 import type { OrchestratorStatus } from "../daemon/orchestrator-status";
 
@@ -134,6 +135,48 @@ describe("runWorkspaceFeed", () => {
       inventoryRevision: "1",
       terminals: [],
     });
+  });
+
+  test("records one live-source conflict and stops publishing that inventory", async () => {
+    const output: Array<Record<string, unknown>> = [];
+    let requests = 0;
+    const publisher = new WorkspaceVisibilityPublisher(
+      (inventory) => publishWorkspaceVisibility(
+        4483,
+        "competing-workspace",
+        7210,
+        inventory,
+        {
+          observeProcess: () => ({ startToken: "7210:500" }),
+          post: async () => {
+            requests += 1;
+            return Response.json({
+              state: "rejected",
+              reason: "source-identity-mismatch",
+              diagnostic: "another live Workspace source already owns the inventory",
+            }, { status: 409 });
+          },
+        },
+      ),
+      (line) => output.push(JSON.parse(line) as Record<string, unknown>),
+    );
+    const line = Buffer.from(JSON.stringify({
+      schemaVersion: 1,
+      inventoryRevision: "1",
+      terminals: [],
+    }));
+
+    publisher.publishLine(line);
+    publisher.publishLine(line);
+    publisher.publishLine(line);
+    await publisher.flush();
+
+    expect(requests).toEqual(1);
+    expect(output).toEqual([{
+      v: 1,
+      error: "workspace visibility publish halted [source-identity-mismatch]: " +
+        "another live Workspace source already owns the inventory",
+    }]);
   });
 
   test("preserves every known orchestrator lifecycle word", () => {

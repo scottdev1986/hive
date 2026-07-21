@@ -67,6 +67,16 @@ export interface WorkspaceVisibilityPublishDeps {
   readonly post?: typeof operatorFetch;
 }
 
+class WorkspaceVisibilityPublishError extends Error {
+  constructor(
+    readonly status: number,
+    readonly reason: string | null,
+    readonly detail: string,
+  ) {
+    super(`workspace visibility publish failed: ${detail}`);
+  }
+}
+
 /** Publishes exactly one Workspace-authored full inventory with the feed's
  * operator credential. The daemon independently re-reads the same PID/token. */
 export async function publishWorkspaceVisibility(
@@ -97,12 +107,62 @@ export async function publishWorkspaceVisibility(
   );
   if (response.ok) return;
   const body = await response.json().catch(() => null) as
-    | { error?: unknown; diagnostic?: unknown }
+    | { error?: unknown; diagnostic?: unknown; reason?: unknown }
     | null;
   const detail = typeof body?.diagnostic === "string"
     ? body.diagnostic
     : typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;
-  throw new Error(`workspace visibility publish failed: ${detail}`);
+  throw new WorkspaceVisibilityPublishError(
+    response.status,
+    typeof body?.reason === "string" ? body.reason : null,
+    detail,
+  );
+}
+
+/** Serializes Workspace inventory publications. A competing live Workspace
+ * source cannot be displaced safely, so one recorded conflict halts this
+ * child rather than continuously retrying the same rejected ownership claim. */
+export class WorkspaceVisibilityPublisher {
+  private publications = Promise.resolve();
+  private halted = false;
+
+  constructor(
+    private readonly publish: (inventory: WorkspaceVisibilityInventoryInput) => Promise<void>,
+    private readonly write: (line: string) => void,
+  ) {}
+
+  publishLine(line: Uint8Array): void {
+    if (line.byteLength === 0) return;
+    this.publications = this.publications.then(async () => {
+      if (this.halted) return;
+      const inventory = WorkspaceVisibilityInventoryInputSchema.parse(
+        JSON.parse(Buffer.from(line).toString("utf8")),
+      );
+      try {
+        await this.publish(inventory);
+      } catch (error) {
+        if (
+          error instanceof WorkspaceVisibilityPublishError &&
+          error.status === 409 && error.reason === "source-identity-mismatch"
+        ) {
+          this.halted = true;
+          throw new Error(
+            `workspace visibility publish halted [${error.reason}]: ${error.detail}`,
+          );
+        }
+        throw error;
+      }
+    }).catch((error: unknown) => {
+      this.write(JSON.stringify({
+        v: FEED_VERSION,
+        error: error instanceof Error ? error.message : String(error),
+      }));
+    });
+  }
+
+  async flush(): Promise<void> {
+    await this.publications;
+  }
 }
 
 /** `GET /autonomy` with the operator credential: the live dial, or null when
@@ -270,20 +330,13 @@ export async function runWorkspaceFeedCli(
   // reparented; a later process.ppid must never become a new visibility source.
   const workspacePid = process.ppid;
   let input = Buffer.alloc(0);
-  let publications = Promise.resolve();
+  const publisher = new WorkspaceVisibilityPublisher(
+    (inventory) =>
+      publishWorkspaceVisibility(port, workspaceSessionId, workspacePid, inventory),
+    (line) => void process.stdout.write(`${line}\n`),
+  );
   const publishLine = (line: Uint8Array): void => {
-    if (line.byteLength === 0) return;
-    publications = publications.then(async () => {
-      const value = WorkspaceVisibilityInventoryInputSchema.parse(
-        JSON.parse(Buffer.from(line).toString("utf8")),
-      );
-      await publishWorkspaceVisibility(port, workspaceSessionId, workspacePid, value);
-    }).catch((error: unknown) => {
-      process.stdout.write(`${JSON.stringify({
-        v: FEED_VERSION,
-        error: error instanceof Error ? error.message : String(error),
-      })}\n`);
-    });
+    publisher.publishLine(line);
   };
   const consumeInput = (chunk: Buffer | string): void => {
     input = Buffer.concat([input, typeof chunk === "string" ? Buffer.from(chunk) : chunk]);
@@ -304,7 +357,7 @@ export async function runWorkspaceFeedCli(
     return await runWorkspaceFeed(port, { signal: controller.signal });
   } finally {
     if (input.byteLength > 0) publishLine(input);
-    await publications;
+    await publisher.flush();
     process.off("SIGINT", stop);
     process.off("SIGTERM", stop);
     process.stdin.off("data", consumeInput);
