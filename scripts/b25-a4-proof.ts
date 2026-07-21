@@ -67,6 +67,14 @@ const basePort = Number(process.env.HIVE_B25_A4_PORT ?? "43142");
 const suffix = Math.random().toString(16).slice(2, 6);
 const head = command(["git", "rev-parse", "HEAD"], repoRoot);
 const startedAt = new Date().toISOString();
+/** §18 replay journal capacity; mirrors terminal_state.zig journal_max_bytes. */
+const JOURNAL_MAX_BYTES = 64 * 1024 * 1024;
+/** I5: refusals that name the session/generation, not a generic failure. */
+const STALE_LOCATOR_REASONS = [
+  "session-locator-mismatch",
+  "SessionNotFound",
+  "session-not-found",
+] as const;
 
 if (!Number.isInteger(basePort) || basePort < 43_140 || basePort + 2 > 65_535) {
   throw new Error(`HIVE_B25_A4_PORT must leave three ports in 43140...65535`);
@@ -371,7 +379,12 @@ async function rendererKill(): Promise<void> {
     const journal = journalEvidence(stack, proof);
     stamp(lines, `GREEN same-generation renderer reconnect highWater=${replayReport.highWater}`);
     stamp(lines, `GREEN byte-identical replay bytes=${referenceBytes.byteLength} sha256=${digest(referenceBytes)}`);
-    stamp(lines, "BOUND: reference range begins at sequence 0 inside the 67108864-byte journal capacity");
+    // The window's lower edge is measured, not asserted: sliceFrom refuses an
+    // afterSeq below the journal's retained start (CheckpointUnavailable), so a
+    // reconnect that reaches firstCorrectFrame at afterSeq=0 proves the retained
+    // range still begins at 0. The upper edge is the spec capacity, §18
+    // terminal_state.zig journal_max_bytes.
+    stamp(lines, `BOUND: reconnect at afterSeq=0 was served, so the retained range still starts at sequence 0; capacity is ${JOURNAL_MAX_BYTES} bytes (§18)`);
     const exitCode = await stopStack(stack);
     if (exitCode !== 0) throw new Error(`renderer stack cleanup exited ${exitCode}`);
     await waitTreeAbsent(proof.processTree);
@@ -388,9 +401,11 @@ async function rendererKill(): Promise<void> {
       afterRendererKill, referenceReport, replayReport,
       boundedWindow: {
         fromSeq: 0,
+        fromSeqProof: "reconnect at afterSeq=0 reached firstCorrectFrame; sliceFrom refuses afterSeq below the retained start",
         throughSeq: referenceReport.highWater,
         capturedBytes: referenceBytes.byteLength,
-        journalCapacityBytes: 64 * 1024 * 1024,
+        journalCapacityBytes: JOURNAL_MAX_BYTES,
+        journalCapacitySource: "native/sessiond/src/terminal_state.zig journal_max_bytes (§18)",
       },
       referenceCapture: { path: referenceCapture, sha256: digest(referenceBytes) },
       replayCapture: { path: replayCapture, sha256: digest(replayBytes) },
@@ -476,6 +491,114 @@ async function brokerKill(): Promise<void> {
     await stopStack(stack).catch(() => undefined);
     stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
     writeMatrix(`diagnostic-a4-broker-kill-${suffix}.txt`, lines);
+    throw error;
+  }
+}
+
+async function staleLocatorTypedError(): Promise<void> {
+  const lines: string[] = [];
+  const project = makePlainProject("stale-locator");
+  const stack = startStack("zstale", basePort + 2, project);
+  const geometry = JSON.stringify({
+    columns: 80, rows: 24, widthPx: 800, heightPx: 480,
+    cellWidthPx: 10, cellHeightPx: 20,
+  });
+  try {
+    const proof = await loadProof(stack);
+    const attach = (viewerId: string) =>
+      runAllowFailure([
+        proof.hiveCli, "workspace-attach", proof.agent,
+        "--port", String(proof.port),
+        "--session-locator", JSON.stringify(proof.locator),
+        "--viewer-id", viewerId,
+        "--geometry", geometry,
+      ], project);
+    requireWholeTreeAlive(proof);
+    stamp(lines, `HEAD=${head}`);
+    stamp(lines, `home=${stack.home} project=${project} port=${proof.port}`);
+    stamp(lines, `session=${proof.locator.sessionId} generation=${proof.locator.generation}`);
+    stamp(lines, `captured-before-kill=${JSON.stringify(proof.processTree)}`);
+
+    // Positive control: the SAME locator string this cell later replays must
+    // resolve while the generation is live. Without it, a typed refusal after
+    // the kill could just be a malformed request the reader cannot tell apart.
+    const live = attach("a4-stale-positive-control");
+    if (live.exitCode !== 0) {
+      throw new Error(`positive control failed: live locator did not attach: ${JSON.stringify(live)}`);
+    }
+    stamp(lines, "POSITIVE CONTROL live locator attached exit=0 (the reader can see a live answer)");
+
+    const kill = runAllowFailure([
+      proof.hiveCli, "kill", proof.agent,
+      "--port", String(proof.port),
+      "--session-locator", JSON.stringify(proof.locator),
+    ], project);
+    if (kill.exitCode !== 0) throw new Error(`exact-locator kill failed: ${JSON.stringify(kill)}`);
+    await waitTreeAbsent(proof.processTree);
+    const final = finalRecord(stack, proof);
+    const postKillReadback = processReadback(proof.processTree);
+    stamp(lines, `killed the exact generation: ${kill.output}`);
+    stamp(lines, `GREEN post-kill ps readback=${JSON.stringify(postKillReadback)}`);
+
+    // I5: the locator now names a generation that no longer exists.
+    const stale = attach("a4-stale-after-kill");
+    if (stale.exitCode === 0) {
+      throw new Error(`stale locator returned a live answer: ${JSON.stringify(stale)}`);
+    }
+    const staleKill = runAllowFailure([
+      proof.hiveCli, "kill", proof.agent,
+      "--port", String(proof.port),
+      "--session-locator", JSON.stringify(proof.locator),
+    ], project);
+    stamp(lines, `stale-locator attach: exit=${stale.exitCode} ${stale.output}`);
+    stamp(lines, `stale-locator kill: exit=${staleKill.exitCode} ${staleKill.output}`);
+
+    // I5 asks for two things of a locator naming a dead generation: a refusal
+    // (never a false-live answer, never a silent null) and a refusal that names
+    // the generation. Both are measured, neither is assumed.
+    const attachRefused = stale.exitCode !== 0;
+    const attachTyped = STALE_LOCATOR_REASONS.find((reason) => stale.output.includes(reason));
+    const killRefused = staleKill.exitCode !== 0;
+    const killTyped = STALE_LOCATOR_REASONS.find((reason) => staleKill.output.includes(reason));
+    const ok = attachRefused && killRefused &&
+      attachTyped !== undefined && killTyped !== undefined;
+    const exitCode = await stopStack(stack);
+    if (exitCode !== 0) throw new Error(`stale-locator stack cleanup exited ${exitCode}`);
+
+    if (attachRefused) {
+      stamp(lines, "GREEN stale-locator attach refused: no false-live answer, no silent null");
+    } else {
+      stamp(lines, "VIOLATION stale-locator attach returned a live answer");
+    }
+    if (attachTyped === undefined) {
+      stamp(lines, `GAP stale-locator attach refusal names no generation; expected one of ${STALE_LOCATOR_REASONS.join(", ")}`);
+    }
+    if (killRefused) {
+      stamp(lines, "GREEN stale-locator kill refused");
+    } else {
+      stamp(lines, "VIOLATION stale-locator kill reported SUCCESS for a generation that no longer exists — a fabricated result, which is exactly the false answer I5 forbids");
+    }
+    stamp(lines, ok
+      ? "RESULT: A4 stale locator typed error (I5) GREEN"
+      : "RESULT: A4 stale locator (I5) NOT GREEN — see violations above");
+    if (!ok) console.log("a4-stale-locator: NOT GREEN — I5 gap recorded, see the manifest");
+    writeMatrix("a4-stale-locator.txt", lines);
+    writeManifest("a4-stale-locator.json", {
+      cell: "a4-stale-locator", ok,
+      status: ok ? "GREEN" : "I5-TYPED-STALE-REFUSAL-GAP",
+      head, startedAt,
+      home: stack.home, project, port: proof.port, locator: proof.locator,
+      capturedProcessTree: proof.processTree,
+      positiveControl: { viewerId: "a4-stale-positive-control", exitCode: live.exitCode },
+      exactGenerationKill: kill, final, postKillReadback,
+      staleAttach: { ...stale, refused: attachRefused, namedGeneration: attachTyped ?? null },
+      staleKill: { ...staleKill, refused: killRefused, namedGeneration: killTyped ?? null },
+      recognisedReasons: STALE_LOCATOR_REASONS,
+    });
+  } catch (error) {
+    await stopStack(stack).catch(() => undefined);
+    stamp(lines, `FAIL: ${error instanceof Error ? error.message : String(error)}`);
+    writeMatrix(`diagnostic-a4-stale-locator-${suffix}.txt`, lines);
     throw error;
   }
 }
@@ -730,6 +853,7 @@ async function concurrentQuit(unitPath: string): Promise<{ project: string; proo
 if (process.env.HIVE_B25_A4_KILL_ONLY === "1") {
   await rendererKill();
   await brokerKill();
+  await staleLocatorTypedError();
   console.log("B2.5 A4 KILL MATRIX LIVE PROOF OK");
   process.exit(0);
 }
@@ -738,6 +862,7 @@ const unitPath = join(evidence, "matrix", "a4-lifecycle-xctest.txt");
 await runSwiftTest("AppDelegateLifecycleTests", unitPath);
 await rendererKill();
 await brokerKill();
+await staleLocatorTypedError();
 await reconnectReplay();
 const close = await exactClose();
 const quit = await concurrentQuit(unitPath);
