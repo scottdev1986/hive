@@ -1,4 +1,5 @@
 import AppKit
+import HiveTerminalKit
 import WorkspaceCore
 
 /// One pane: native header bar, content, and the two independent signals the
@@ -36,6 +37,15 @@ final class PaneView: NSView {
     /// attached. Terminal once set: §26 give-up never un-gives-up.
     private(set) var terminalFailure: (detail: String, badge: String, evidence: String)?
 
+    /// A host refusal the next keystroke can reverse (#87). Unlike
+    /// `terminalFailure` this is not a give-up: it clears as soon as input
+    /// flows again, so a pane never reads frozen while typing still works.
+    private var retryableInputRefusal: String?
+
+    /// Last header text the feed wrote, so a cleared retryable refusal restores
+    /// it without waiting for the next feed tick.
+    private var feedHeaderDescription = ""
+
     /// Installs the sessiond renderer over the content area. The tmux content
     /// view must not have been scheduled; close/kill authority is untouched
     /// (the renderer is a disposable viewer, §26).
@@ -56,11 +66,7 @@ final class PaneView: NSView {
                     evidence: evidence)
             }
             terminalView.onInputSubmissionStateChange = { [weak self] state in
-                guard let evidence = state.failureEvidence else { return }
-                self?.showTerminalFailure(
-                    detail: "input refused",
-                    badge: "Terminal input refused",
-                    evidence: evidence)
+                self?.applyInputSubmissionState(state)
             }
             terminal.startWhenGeometryReady()
         } catch {
@@ -264,16 +270,50 @@ final class PaneView: NSView {
 
     /// Re-asserts the recorded failure over whatever the feed just wrote.
     private func applyTerminalFailure() {
-        guard let terminalFailure else { return }
+        guard let terminalFailure else {
+            applyRetryableInputRefusal()
+            return
+        }
         failureBadge.isHidden = false
         failureBadge.toolTip = "\(terminalFailure.badge) — \(terminalFailure.evidence)"
         detailLabel.stringValue = terminalFailure.detail
         detailLabel.toolTip = terminalFailure.evidence
     }
 
+    /// #87: the two input refusals render differently on purpose. A refusal the
+    /// viewer cannot recover from latches the give-up badge; a retryable one —
+    /// the host is busy with automation, or holds this human's orphaned claim —
+    /// leaves the write path armed, so it must clear itself the moment input
+    /// flows again rather than leaving the pane reading frozen forever.
+    /// Module-internal so the split is testable without a live GPU surface.
+    func applyInputSubmissionState(_ state: InputSubmissionState) {
+        if let evidence = state.failureEvidence {
+            showTerminalFailure(
+                detail: "input refused",
+                badge: "Terminal input refused",
+                evidence: evidence)
+            return
+        }
+        retryableInputRefusal = state.retryableEvidence
+        applyTerminalFailure()
+    }
+
+    /// Shows the retryable refusal over the feed text while it holds, and puts
+    /// the feed text back when it clears. Never touches the failure badge.
+    private func applyRetryableInputRefusal() {
+        guard let retryableInputRefusal else {
+            detailLabel.stringValue = feedHeaderDescription
+            detailLabel.toolTip = feedHeaderDescription
+            return
+        }
+        detailLabel.stringValue = "input refused — type to retry"
+        detailLabel.toolTip = retryableInputRefusal
+    }
+
     func update(state: PaneState) {
         titleLabel.stringValue = state.title
         titleLabel.toolTip = state.title
+        feedHeaderDescription = state.headerDescription
         detailLabel.stringValue = state.headerDescription
         detailLabel.toolTip = state.headerDescription
 

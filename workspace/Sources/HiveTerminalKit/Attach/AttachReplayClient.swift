@@ -302,11 +302,16 @@ public final class AttachReplayClient {
         setInputSubmissionState(.waitingForClaim)
     }
 
+    /// The host orphaned this viewer's claim. It is the human's own claim and
+    /// the host readmits a returning human through operatorResume, so the write
+    /// path stays armed: the next keystroke re-acquires and resumes (#87).
     public func noteOrphaned(claimId: String) {
         activeClaimToken = nil
-        inputFenced = true
         claimPresentation = .humanOrphaned(viewerId: viewerId, claimId: claimId)
-        refuseInput(code: "HUMAN_ORPHANED", evidence: "human input claim is orphaned")
+        setInputSubmissionState(.retryableRefusal(
+            code: "HUMAN_ORPHANED",
+            evidence: "human input claim is orphaned"
+        ))
     }
 
     /// Frozen RESIZE request after geometry quiescence (M10).
@@ -511,18 +516,20 @@ public final class AttachReplayClient {
                 claimPresentation = .free
                 let diagnostic = result["diagnostic"] as? String ?? "human input is owned elsewhere"
                 NSLog("hive claim: denied viewer=%@ diagnostic=%@", viewerId, diagnostic)
-                refuseInput(
+                setInputSubmissionState(.retryableRefusal(
                     code: "CLAIM_DENIED",
                     evidence: diagnostic
-                )
+                ))
             } else {
                 activeClaimToken = nil
                 pendingInputBatches.removeAll()
                 claimPresentation = .free
-                inputFenced = true
                 let diagnostic = result["diagnostic"] as? String ?? "human input claim is unknown"
                 NSLog("hive claim: unknown viewer=%@ diagnostic=%@", viewerId, diagnostic)
-                setInputSubmissionState(.unknown(evidence: diagnostic))
+                setInputSubmissionState(.retryableRefusal(
+                    code: "CLAIM_UNKNOWN",
+                    evidence: diagnostic
+                ))
             }
             return .continueReplay
 
