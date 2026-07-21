@@ -246,15 +246,16 @@ describe("WP7 MCP status tools", () => {
     // blocker is `string | null`, so a client must be told null is a legal value.
     expect(JSON.stringify(properties.blocker)).toContain('"null"');
     expect(JSON.stringify(properties.phase)).toContain("blocked");
-    expect(schema?.required).toEqual(expect.arrayContaining([
-      "requestId",
+    // requestId stays declared but optional: it is caller-minted and no agent
+    // can discover one, so the daemon fills it in.
+    expect(schema?.required).toEqual([
       "assignmentId",
       "assignmentGeneration",
-      "phase",
       "summary",
       "evidenceRefs",
+      "phase",
       "blocker",
-    ]));
+    ]);
   });
 
   test("rejects the stringified argument shapes an empty schema produced", async () => {
@@ -273,6 +274,29 @@ describe("WP7 MCP status tools", () => {
     });
     expect(stringified.isError).toBeTrue();
     expect(daemon.status.listEvents()).toHaveLength(0);
+  });
+
+  // The acceptance bar: an agent knows its assignment id and generation from its
+  // spawn prompt and can read them back from hive_status. Nothing anywhere hands
+  // it a req_ value, so requiring one made the tool uncallable.
+  test("accepts a report carrying only values the caller can discover", async () => {
+    const { daemon } = harness();
+    const token = daemon.capabilities.mint("maya", "reader", { epoch: 0 }).token;
+    const assignment = daemon.status.currentAssignment("agent-maya")!;
+    const accepted = await callTool(daemon, token, "hive_update_status", {
+      assignmentId: assignment.assignmentId,
+      assignmentGeneration: assignment.assignmentGeneration,
+      phase: "complete",
+      summary: "Reported without minting an idempotency key",
+      blocker: null,
+      evidenceRefs: ["commit:fcc06d68"],
+    });
+    expect(accepted.isError).not.toBeTrue();
+    const reported = daemon.status.listEvents().at(-1)!;
+    expect(reported.kind).toBe("agent.status-reported");
+    expect(reported.data.requestId).toMatch(
+      /^req_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
+    );
   });
 
   // The advertised object schema cannot express the phase/blocker correlation

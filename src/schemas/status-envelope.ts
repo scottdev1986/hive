@@ -183,6 +183,12 @@ export type HiveUpdateStatusInput = z.infer<typeof HiveUpdateStatusInputSchema>;
 // fields the union discriminates, and shares StatusUpdateCommonShape with it.
 export const HiveUpdateStatusAdvertisedSchema = z.strictObject({
   ...StatusUpdateCommonShape,
+  // Optional here alone: requestId is a caller-minted idempotency key, and no
+  // agent can discover one — neither its spawn prompt nor hive_status exposes a
+  // req_ value. The daemon mints one when it is absent, so the wire record and
+  // the union above still always carry it. Supplying one makes a retry return
+  // the first result instead of appending a second report.
+  requestId: StatusUpdateCommonShape.requestId.optional(),
   phase: z.enum(STATUS_PHASES),
   blocker: z.union([
     z.string().min(1).max(STATUS_LIMITS.blockerCharactersMax),

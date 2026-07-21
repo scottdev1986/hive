@@ -107,7 +107,7 @@ import {
   type StatusIncarnationGenerationSource,
 } from "./status-generation";
 import type { SessionHost, SessionLocator } from "./session-host/contract";
-import { sameSessionLocator } from "./session-host/locators";
+import { mintSessionRequestId, sameSessionLocator } from "./session-host/locators";
 import { OPERATOR_SUBJECT, removeCredential, writeCredential } from "./credentials";
 import { HiveDatabase, type Approval } from "./db";
 import {
@@ -4082,7 +4082,7 @@ export class HiveDaemon {
     server.registerTool("hive_update_status", {
       title: "Report descriptive agent status",
       description:
-        "Append an authenticated, Assignment-bound descriptive status report. Complete is descriptive and never approves work or changes task, gate, review, or landing authority.",
+        "Append an authenticated, Assignment-bound descriptive status report. Complete is descriptive and never approves work or changes task, gate, review, or landing authority. Report with the assignmentId and assignmentGeneration your prompt gave you; requestId is an optional idempotency key the daemon mints for you, and passing your own makes a retry return the first result instead of appending a second report.",
       inputSchema: HiveUpdateStatusAdvertisedSchema,
     }, async (input) => {
       this.authorizeTool(
@@ -4107,7 +4107,10 @@ export class HiveDaemon {
         incarnationGeneration: incarnation.generation,
         capabilityEpoch: capability.epoch,
         toolSessionId: agent.toolSessionId ?? null,
-      }, input, new Date()), "statusReport");
+      }, {
+        ...input,
+        requestId: input.requestId ?? mintSessionRequestId(),
+      }, new Date()), "statusReport");
     });
 
     server.registerTool("hive_terminal_observe", {

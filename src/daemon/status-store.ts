@@ -174,7 +174,9 @@ export class StatusStore implements WorkspaceStatusEventSource {
       capabilityEpoch: number;
       toolSessionId: string | null;
     }>,
-    rawInput: HiveUpdateStatusAdvertisedInput,
+    // The daemon mints requestId when the caller omits it, so the store always
+    // receives one even though the advertised MCP schema makes it optional.
+    rawInput: HiveUpdateStatusAdvertisedInput & { requestId: string },
     now: Date,
   ): StatusReportResult {
     const input = HiveUpdateStatusInputSchema.parse(rawInput);
