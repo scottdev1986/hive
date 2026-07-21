@@ -1,4 +1,4 @@
-29371ecc045a03247e0cf33cb950b62c68965bf5c3fbcc94b4fc2f1d7d1fd885  raw/qualification/hive-b25-production-pane/EVIDENCE.md
+b7ee92650ccb1ded64932bb69308cdf8c58822eb77b3a4e619c58c8c1634c640  raw/qualification/hive-b25-production-pane/EVIDENCE.md
 6f1629cf15867e4507180797bce4e5495575c4dcee68a0c25f6aef1a27b5f192  raw/qualification/hive-b25-production-pane/provenance.txt
 62ec72bb036e503518e4ba427bfbe864c3637adfaa3985bc68b00a6ea1646211  raw/qualification/hive-b25-production-pane/matrix/production-wiring.txt
 a6fbeb8350d01f9dfdedbebf540381db5698113df8157dd18fa7854a6ca4d9e0  raw/qualification/hive-b25-production-pane/manifests/production-wiring.json
@@ -19,3 +19,11 @@ d10bbbebcf9e9d6f3480d96a0d61f4ab7376f6b61956796adf79207968fe48e4  raw/qualificat
 67072f3077deda452dcd50c67559ee6a2d60fd6ade2d646fd3d5e06797945917  raw/qualification/hive-b25-production-pane/matrix/stress-100mib-pane.txt
 4d03442496e596629135479029a80444dc2dba8f4543fb361802bb7ee15464b0  raw/qualification/hive-b25-production-pane/matrix/stress-100mib-pane-xctest.txt
 ed2352c58b29fcef28ffc8a7bf71f0137503e5637a3920501272213572dca38b  raw/qualification/hive-b25-production-pane/manifests/stress-100mib-pane.json
+9071985e7845866cc2c0ffdfce0bcdc4b0862594e87d0248b36eebe16c4e537a  raw/qualification/hive-b25-production-pane/matrix/production-wiring-pane.txt
+64e996c8a75c93db9b4a3ef010088230dc73d0e6805cae540210ec10f25875c2  raw/qualification/hive-b25-production-pane/manifests/production-wiring-pane.json
+b9ccc785b44cb8f2cd8957b5a3c0e34be20e64dfac6d8c91218f079d65b5bc79  raw/qualification/hive-b25-production-pane/screenshots/codex-ses_019f86b3-ed52-7d4b-883f-d21cea8041a5-workspace.png
+8ca2dcd757ebcb920ed9c9eca11c106e0e89affb079820e5550a17196a6d519e  raw/qualification/hive-b25-production-pane/transcripts/codex-ses_019f86b3-ed52-7d4b-883f-d21cea8041a5.journal.bin
+3aecd49b2c5f65b9deb2287ac9d3d1500f1e693d16e81c3141360ea1c599257d  raw/qualification/hive-b25-production-pane/screenshots/codex-ses_019f86b6-cb8a-747c-8ae7-1226a4fbf721-workspace.png
+b3b0f66b94d59dbada7e35f059cdb23afe5b622fb896c8ff727fc61ff7bfb131  raw/qualification/hive-b25-production-pane/transcripts/codex-ses_019f86b6-cb8a-747c-8ae7-1226a4fbf721.journal.bin
+b2039109a5a1a3714d82d31f0c4ac1100f578fece057fa4d343ab9d8aa612a84  raw/qualification/hive-b25-production-pane/screenshots/codex-ses_019f86bb-f335-7976-9dba-b9531d0f1f5c-workspace.png
+48cb826701cedc2335b3611b01bdd5c74b0dc731c3224bddff99a4446cb4384f  raw/qualification/hive-b25-production-pane/transcripts/codex-ses_019f86bb-f335-7976-9dba-b9531d0f1f5c.journal.bin

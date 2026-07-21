@@ -1,24 +1,78 @@
 {
   "cell": "production-wiring-pane",
-  "ok": false,
-  "head": "59d79123bb48fc579aaf09cb98a1299fa11723bd",
-  "home": "/tmp/hb25-p15",
-  "port": 43156,
-  "project": "/tmp/hb25-project-32f27c",
-  "requestedTool": "claude",
-  "requestedModel": "claude-haiku-4-5-20251001",
+  "ok": true,
+  "head": "5b4482177a16b5f8ef2ce9c44e919350d50ffee0",
+  "home": "/tmp/hb25-pane-452d31",
+  "port": 43141,
+  "project": "/tmp/hb25-project-452d31",
+  "requestedTool": "codex",
+  "requestedModel": null,
   "agent": "aria",
-  "observed": null,
-  "sideEffectMessageId": null,
-  "sideEffectMessageState": null,
-  "paneReport": null,
-  "capture": null,
-  "displayPreflight": {
-    "initialActiveDisplays": 0,
-    "activeDisplays": 0,
-    "wokeDisplay": false,
-    "screenLocked": true
+  "observed": {
+    "id": "d428c3fd-2ed2-440b-a677-f2b05eb5bcbb",
+    "name": "aria",
+    "tool": "codex",
+    "model": "gpt-5.6-sol",
+    "category": "simple_coding",
+    "status": "working",
+    "quotaReservationId": "bc36ea14-0afe-4191-a49e-3ccea7f4a63e",
+    "executionIdentity": {
+      "tool": "codex",
+      "model": "gpt-5.6-sol",
+      "effort": "medium"
+    },
+    "taskDescription": "Production-pane qualification; do not edit any file. Immediately call hive_send with from=\"aria\", to=\"queen\", priority=\"normal\", and body=\"B25_PRODUCTION_PANE_EXECUTED_005206b6-26d2-4e44-998e-b22feffd788d\". After the tool reports the message state, wait for further instructions.",
+    "worktreePath": "/tmp/hb25-project-452d31/.hive/worktrees/aria",
+    "branch": "hive/aria-production-pane-qualification",
+    "tmuxSession": "hive-aria-b541d4183f",
+    "sessionLocator": {
+      "schemaVersion": 1,
+      "instanceId": "b541d4183f",
+      "subject": {
+        "kind": "agent",
+        "agentId": "d428c3fd-2ed2-440b-a677-f2b05eb5bcbb"
+      },
+      "generation": 1,
+      "sessionId": "ses_019f86bb-f335-7976-9dba-b9531d0f1f5c",
+      "hostKind": "sessiond",
+      "engineBuildId": "9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b"
+    },
+    "toolSessionId": "019f86bb-f710-7c10-a148-c83cc6f5c2d8",
+    "recoveryAttempts": 0,
+    "contextPct": null,
+    "createdAt": "2026-07-21T22:11:32.217Z",
+    "lastEventAt": "2026-07-21T22:11:34.673Z",
+    "capabilityEpoch": 0,
+    "readOnly": true,
+    "writeRevoked": false,
+    "graphifyCalls": null
   },
-  "startedAt": "2026-07-20T06:04:10.716Z",
-  "writtenAt": "2026-07-20T06:04:12.354Z"
+  "sideEffectMessageId": "eeceede7-3357-44b9-a5fb-0bb6a3cb51b6",
+  "sideEffectMessageState": "queued",
+  "paneReport": "PRODUCTION PANE PROOF: agent=aria instance=b541d4183f session=ses_019f86bb-f335-7976-9dba-b9531d0f1f5c generation=1 engine=9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b highWater=25494 frame=(0.0, 0.0, 514.0, 743.0) drawCount=87 presented=true feedStatus=working window=2169 visible=true captureRect=224,96,1280,832 screenSize=1728,1117\nPRODUCTION PANE PROOF OK",
+  "capture": {
+    "journal": {
+      "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/david/raw/qualification/hive-b25-production-pane/transcripts/codex-ses_019f86bb-f335-7976-9dba-b9531d0f1f5c.journal.bin",
+      "bytes": 58153,
+      "sha256": "48cb826701cedc2335b3611b01bdd5c74b0dc731c3224bddff99a4446cb4384f",
+      "sequencePrefixHex": "0000000000000000000000000000e319"
+    },
+    "screenshot": {
+      "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/david/raw/qualification/hive-b25-production-pane/screenshots/codex-ses_019f86bb-f335-7976-9dba-b9531d0f1f5c-workspace.png",
+      "bytes": 821654,
+      "sha256": "b2039109a5a1a3714d82d31f0c4ac1100f578fece057fa4d343ab9d8aa612a84",
+      "windowNumber": 2169,
+      "captureRect": "224,96,1280,832",
+      "pixelWidth": 2560,
+      "pixelHeight": 1664
+    }
+  },
+  "displayPreflight": {
+    "initialActiveDisplays": 1,
+    "activeDisplays": 1,
+    "wokeDisplay": false,
+    "sessionLockState": "unlocked"
+  },
+  "startedAt": "2026-07-21T22:11:29.425Z",
+  "writtenAt": "2026-07-21T22:11:50.615Z"
 }

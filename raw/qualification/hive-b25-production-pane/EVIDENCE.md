@@ -7,7 +7,7 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Cell | Status | Artifact |
 |------|--------|----------|
 | Production wiring substrate (daemon-owned broker + visibility + handshake under short home @43140) | GREEN (substrate) | matrix/production-wiring.txt |
-| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | OPEN | matrix/production-wiring-pane.txt |
+| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `5b448217`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
 | A4 exact per-pane close | GREEN | matrix/a4-exact-close.txt |
 | A4 concurrent quit + process-tree | COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK | matrix/a4-quit.txt; matrix/diagnostic-a4-quit-harness-entanglement.txt |
 | A4 non-Hive project | GREEN | matrix/a4-non-hive-project.txt |
@@ -18,6 +18,25 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Row K Grok | OPEN | **no capture exists** — owed, see "Row K is owed" below |
 | Gate-10 Instruments leak/UAF | OPEN (multi-pane waits #40) | — |
 | Gate-10 multi-pane latency | OPEN (waits #40) | — |
+
+### 2026-07-21 production-wiring run
+
+The full production cell is green at `5b448217`: the staged release spawned a
+real Codex agent in a non-Hive repository, Workspace installed
+`HiveTerminalView` on its exact sessiond locator, presented nonblank window
+contents with no hidden renderer PTY, and the live vendor persisted the exact
+nonce through `hive_send`. The transcript reached 58,153 ordered bytes; the
+cell also mutated the display preflight, locator, transcript, screenshot, and
+nonce checks to prove each assertion bites.
+
+Two failed controls are retained rather than edited away. Session
+`ses_019f86b3-ed52-7d4b-883f-d21cea8041a5` shows Codex stopped at repository
+trust because the spawn override used a logical/dotted project path. Session
+`ses_019f86b6-cb8a-747c-8ae7-1226a4fbf721` shows the fixed renderer live while
+the isolated proof still waited for an MCP approval. The final session
+`ses_019f86bb-f335-7976-9dba-b9531d0f1f5c` uses the canonical inline-table
+trust override and a read-only agent with Hive-owned tool prompts disabled.
+Their screenshots and journals are digest-pinned below.
 
 ## Row K is owed — no capture exists
 
@@ -100,7 +119,7 @@ the money-guard set (`onDemandCap` / `onDemandUsed` / `prepaidBalance`); those
 zeros mean paid overflow is off, never "empty tank", and must never be rendered
 as remaining capacity.
 
-#### The binding blocker is the unlocked-GUI gate, not quota
+#### Historical 2026-07-20 blocker record: the GUI gate, not quota
 
 `matrix/production-wiring-pane.txt` (2026-07-20T06:04:12.348Z):
 
@@ -108,43 +127,45 @@ as remaining capacity.
     FAIL: real Workspace pixel qualification requires an unlocked macOS session
 
 Row K is defined as the real vendor TUIs driven **through the production pane**,
-so it inherits that same real-window preflight. Consequence: **row K is
-unattemptable today on all three vendors — including Claude, which has ample
-quota.** The production-wiring-full cell is a hard prerequisite, and it is
-gated on a human action, not on capacity.
+so it inherited that same real-window preflight. In that run, row K was
+unattemptable on all three vendors. The 2026-07-21 run above supersedes this
+blocker: the session was measured unlocked and the production-wiring-full cell
+is green. Row K remains open because this cell proves production wiring and one
+Codex execution nonce, not the full interaction matrix on all three vendors.
 
-#### Codex and Grok at 0% is a SECOND constraint, not the reason row K is open
+#### Historical 2026-07-20 quota snapshot
 
-Once the GUI gate clears, quota bites next: Claude could attempt row K
-immediately, Codex and Grok not until their resets (Codex 2026-07-26T00:00:27Z;
-Grok 2026-07-26T17:18:56Z, rolling — it drifts, so do not treat it as a calendar
-boundary). This is sequencing information. It is **not** the reason row K is
-open, and it must not be restated as one.
+At that observation, Codex and Grok were recorded at 0% until their resets
+(Codex 2026-07-26T00:00:27Z; Grok 2026-07-26T17:18:56Z, rolling). Those values
+are retained as timestamped evidence, not current availability: the successful
+Codex execution above proves enough capacity for this cell but does not measure
+the account's remaining quota.
 
-On the date itself: 2026-07-26 is **real and independently re-measured today**,
+On the date itself: 2026-07-26 was **real and independently re-measured on
+2026-07-20**,
 not a C1-era artifact. But the attribution in the received story was wrong twice
 over — the earliest 07-26 reset is **Codex's**, roughly 17 hours before Grok's,
 so "deferred because of Grok" is narrower than what was measured. The C1 record
 naming *both* pools was the accurate one.
 
-#### Trap: a full sub-pool does not mean the vendor is available
+#### Historical trap: a full sub-pool did not mean the vendor was available
 
 `hive_quota_status` also reports Codex pool `codex_bengalfox`
 (`gpt-5.3-codex-spark`) at used **0**, remaining **100%**, reset
-2026-07-27T12:43:37Z. **This does not give Codex capacity today.** A run reserves
-against *every* pool that meters the model, all-or-nothing, and the tightest pool
-governs (`src/daemon/quota-ledger.ts:1158-1164`). The account-wide `["*"]` pool
-sits at 0% remaining, so it gates spark too. Reading the spark row alone — or
+2026-07-27T12:43:37Z. **This did not give Codex capacity at that observation.**
+A run reserves against *every* pool that meters the model, all-or-nothing, and
+the tightest pool governs (`src/daemon/quota-ledger.ts:1158-1164`). The
+account-wide `["*"]` pool sat at 0% remaining, so it gated spark too. Reading the
+spark row alone — or
 checking only the first matching pool — is exactly how two deep-tier agents were
 once routed onto a model whose own weekly pool was at 99%.
 
 #### No capacity deferral is recorded for row K
 
-Deliberately. The measured binding blocker is the unlocked-GUI gate; recording a
-capacity deferral would re-attribute row K's openness to quota and recreate the
-defect this section exists to correct. B1 DoD-1 grants no carve-out, and none is
-sought here. The critical path is a human unlock session, after which Claude's
-row K becomes attemptable and Codex/Grok follow their 07-26 resets.
+Deliberately. B1 DoD-1 grants no carve-out, and none is sought here. The GUI
+prerequisite and a Codex production execution are now green; the remaining row
+K work is the full recorded Claude/Codex/Grok interaction matrix and independent
+reproduction, not an inferred capacity waiver.
 
 ## Provenance
 
