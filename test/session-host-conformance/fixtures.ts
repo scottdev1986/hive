@@ -375,6 +375,31 @@ const fixtureTerminalHostAttachGap = {
   missing: { start: "4096", endExclusive: "9001" },
   checkpointRequirement: "full",
 };
+const fixtureTerminalHostSubscriptionLimits = {
+  maxEventFrameBytes: 65_536,
+  retainedEventCount: 4_096,
+  unacknowledgedEventLowWater: 256,
+  unacknowledgedEventHighWater: 1_024,
+};
+const fixtureTerminalHostSubscribeRequest = {
+  session: fixtureTerminalHostSession,
+  protocol: { major: 1, minMinor: 0, maxMinor: 0 },
+  limits: fixtureTerminalHostSubscriptionLimits,
+  from: { position: "at", cursor: { eventSequence: "12", outputOffset: "4096" } },
+};
+const fixtureTerminalHostSubscribeResult = {
+  state: "subscribed",
+  session: fixtureTerminalHostSession,
+  protocol: { major: 1, minor: 0 },
+  limits: fixtureTerminalHostSubscriptionLimits,
+  resumeFrom: { eventSequence: "12", outputOffset: "4096" },
+};
+const fixtureTerminalHostSubscribeGap = {
+  state: "gap",
+  session: fixtureTerminalHostSession,
+  missing: { start: "12", endExclusive: "37" },
+  freshInspection: "required",
+};
 const fixtureTerminalHostTerminationRequest = {
   session: fixtureTerminalHostSession,
   mode: "immediate",
@@ -755,6 +780,26 @@ const validCases: readonly WireCorpusCase[] = [
     },
   },
   {
+    name: "frozen neutral subscribe request negotiates limits from an event position",
+    schema: "terminalHostSubscribeRequest",
+    value: fixtureTerminalHostSubscribeRequest,
+  },
+  {
+    name: "frozen neutral subscribe request may begin at the current end",
+    schema: "terminalHostSubscribeRequest",
+    value: { ...fixtureTerminalHostSubscribeRequest, from: { position: "end" } },
+  },
+  {
+    name: "frozen neutral subscribe result resumes at a host-reported cursor",
+    schema: "terminalHostSubscribeResult",
+    value: fixtureTerminalHostSubscribeResult,
+  },
+  {
+    name: "frozen neutral subscribe result reports an out-of-retention event gap",
+    schema: "terminalHostSubscribeResult",
+    value: fixtureTerminalHostSubscribeGap,
+  },
+  {
     name: "frozen neutral termination request",
     schema: "terminalHostTerminationRequest",
     value: fixtureTerminalHostTerminationRequest,
@@ -942,6 +987,16 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen attach result cannot claim it resumed inside a sequence",
     schema: "terminalHostAttachResult",
     value: { ...fixtureTerminalHostAttachResult, resumedMidSequence: false },
+  },
+  {
+    name: "frozen subscribe request rejects a reversed negotiation minor range",
+    schema: "terminalHostSubscribeRequest",
+    value: { ...fixtureTerminalHostSubscribeRequest, protocol: { major: 1, minMinor: 1, maxMinor: 0 } },
+  },
+  {
+    name: "frozen subscribe gap cannot drop its fresh-inspection requirement",
+    schema: "terminalHostSubscribeResult",
+    value: { ...fixtureTerminalHostSubscribeGap, freshInspection: "waived" },
   },
   {
     name: "frozen termination request requires target",

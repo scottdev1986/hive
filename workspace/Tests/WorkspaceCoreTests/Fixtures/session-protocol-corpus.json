@@ -1837,6 +1837,99 @@
       }
     },
     {
+      "name": "frozen neutral subscribe request negotiates limits from an event position",
+      "schema": "terminalHostSubscribeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 4096,
+          "unacknowledgedEventLowWater": 256,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "from": {
+          "position": "at",
+          "cursor": {
+            "eventSequence": "12",
+            "outputOffset": "4096"
+          }
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscribe request may begin at the current end",
+      "schema": "terminalHostSubscribeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 4096,
+          "unacknowledgedEventLowWater": 256,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "from": {
+          "position": "end"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscribe result resumes at a host-reported cursor",
+      "schema": "terminalHostSubscribeResult",
+      "value": {
+        "state": "subscribed",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 4096,
+          "unacknowledgedEventLowWater": 256,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "resumeFrom": {
+          "eventSequence": "12",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscribe result reports an out-of-retention event gap",
+      "schema": "terminalHostSubscribeResult",
+      "value": {
+        "state": "gap",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "missing": {
+          "start": "12",
+          "endExclusive": "37"
+        },
+        "freshInspection": "required"
+      }
+    },
+    {
       "name": "frozen neutral termination request",
       "schema": "terminalHostTerminationRequest",
       "value": {
@@ -3812,6 +3905,50 @@
           "checkpoint": "sha256:cafe"
         },
         "resumedMidSequence": false
+      }
+    },
+    {
+      "name": "frozen subscribe request rejects a reversed negotiation minor range",
+      "schema": "terminalHostSubscribeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 1,
+          "maxMinor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 4096,
+          "unacknowledgedEventLowWater": 256,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "from": {
+          "position": "at",
+          "cursor": {
+            "eventSequence": "12",
+            "outputOffset": "4096"
+          }
+        }
+      }
+    },
+    {
+      "name": "frozen subscribe gap cannot drop its fresh-inspection requirement",
+      "schema": "terminalHostSubscribeResult",
+      "value": {
+        "state": "gap",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "missing": {
+          "start": "12",
+          "endExclusive": "37"
+        },
+        "freshInspection": "waived"
       }
     },
     {

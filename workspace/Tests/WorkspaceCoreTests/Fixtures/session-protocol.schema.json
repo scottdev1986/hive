@@ -7551,6 +7551,349 @@
         }
       ]
     },
+    "terminalHostSubscribeRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "protocol": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "major": {
+              "type": "number",
+              "const": 1
+            },
+            "minMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "maxMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          },
+          "required": [
+            "major",
+            "minMinor",
+            "maxMinor"
+          ],
+          "additionalProperties": false,
+          "x-hive-ordered-minor-range": true
+        },
+        "limits": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "maxEventFrameBytes": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "retainedEventCount": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "unacknowledgedEventLowWater": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            },
+            "unacknowledgedEventHighWater": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 9007199254740991
+            }
+          },
+          "required": [
+            "maxEventFrameBytes",
+            "retainedEventCount",
+            "unacknowledgedEventLowWater",
+            "unacknowledgedEventHighWater"
+          ],
+          "additionalProperties": false
+        },
+        "from": {
+          "oneOf": [
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "string",
+                  "const": "at"
+                },
+                "cursor": {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "eventSequence": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    },
+                    "outputOffset": {
+                      "type": "string",
+                      "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                      "format": "hive-uint64-decimal"
+                    }
+                  },
+                  "required": [
+                    "eventSequence",
+                    "outputOffset"
+                  ],
+                  "additionalProperties": false
+                }
+              },
+              "required": [
+                "position",
+                "cursor"
+              ],
+              "additionalProperties": false
+            },
+            {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "position": {
+                  "type": "string",
+                  "const": "end"
+                }
+              },
+              "required": [
+                "position"
+              ],
+              "additionalProperties": false
+            }
+          ]
+        }
+      },
+      "required": [
+        "session",
+        "protocol",
+        "limits",
+        "from"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostSubscribeResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "subscribed"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minor"
+              ],
+              "additionalProperties": false
+            },
+            "limits": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "maxEventFrameBytes": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "retainedEventCount": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "unacknowledgedEventLowWater": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                },
+                "unacknowledgedEventHighWater": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 9007199254740991
+                }
+              },
+              "required": [
+                "maxEventFrameBytes",
+                "retainedEventCount",
+                "unacknowledgedEventLowWater",
+                "unacknowledgedEventHighWater"
+              ],
+              "additionalProperties": false
+            },
+            "resumeFrom": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "state",
+            "session",
+            "protocol",
+            "limits",
+            "resumeFrom"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "gap"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "missing": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            },
+            "freshInspection": {
+              "type": "string",
+              "const": "required"
+            }
+          },
+          "required": [
+            "state",
+            "session",
+            "missing",
+            "freshInspection"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "unknown"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "state",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "sessionLocator": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,

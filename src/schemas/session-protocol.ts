@@ -828,6 +828,70 @@ export const TerminalHostAttachResultSchema = z.discriminatedUnion("state", [
   }).readonly(),
   z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
 ]);
+/** §11 event flow-control limits, negotiated on the same terms as output (§6).
+ * Retained events are bounded and released by acknowledgement; these are the
+ * concrete caps and watermarks the behavioral contract deliberately leaves to
+ * the wire. Events are counted rather than measured, so the retention and
+ * acknowledgement bounds are event counts and one is a byte cap on a single
+ * delivered event. */
+export const TerminalHostSubscriptionLimitsSchema = z.strictObject({
+  maxEventFrameBytes: SafeUintSchema,
+  retainedEventCount: SafeUintSchema,
+  unacknowledgedEventLowWater: SafeUintSchema,
+  unacknowledgedEventHighWater: SafeUintSchema,
+}).readonly();
+/** §11 subscription cursor. It names both positions in the one session order —
+ * an event position and the output offset beside it — so a delivered event and
+ * the output around it stay comparable without a second clock. */
+export const TerminalHostSubscriptionCursorSchema = z.strictObject({
+  eventSequence: DecimalUint64Schema,
+  outputOffset: DecimalUint64Schema,
+}).readonly();
+/** §11 subscribe request. A subscription is a resumable cursor, not a boolean:
+ * it negotiates a same-major minor range and event flow-control limits, and
+ * begins either at a caller-supplied event position or at the current end. */
+export const TerminalHostSubscribeRequestSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  protocol: z.strictObject({
+    major: z.literal(SESSION_PROTOCOL_VERSION.major),
+    minMinor: ProtocolMinorSchema,
+    maxMinor: ProtocolMinorSchema,
+  }).refine(({ minMinor, maxMinor }) => minMinor <= maxMinor, "protocol minor range is reversed")
+    .meta({ "x-hive-ordered-minor-range": true }).readonly(),
+  limits: TerminalHostSubscriptionLimitsSchema,
+  from: z.discriminatedUnion("position", [
+    z.strictObject({
+      position: z.literal("at"),
+      cursor: TerminalHostSubscriptionCursorSchema,
+    }).readonly(),
+    z.strictObject({ position: z.literal("end") }).readonly(),
+  ]),
+}).readonly();
+/** §11 subscribe outcome. `resumeFrom` is where delivery WILL begin, reported by
+ * the host rather than echoed from the request — the same readback rule attach
+ * and the resize receipt follow. A cursor outside retention is a `gap` that
+ * states the missing event range and requires a fresh inspection; silent loss
+ * has no encoding. A subscription is never evidence that the session itself
+ * changed, so the outcome carries no field that could assert it did. */
+export const TerminalHostSubscribeResultSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("subscribed"),
+    session: TerminalHostSessionRefSchema,
+    protocol: SelectedProtocolSchema,
+    limits: TerminalHostSubscriptionLimitsSchema,
+    resumeFrom: TerminalHostSubscriptionCursorSchema,
+  }).readonly(),
+  z.strictObject({
+    state: z.literal("gap"),
+    session: TerminalHostSessionRefSchema,
+    missing: z.strictObject({
+      start: DecimalUint64Schema,
+      endExclusive: DecimalUint64Schema,
+    }).readonly(),
+    freshInspection: z.literal("required"),
+  }).readonly(),
+  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+]);
 
 const EncodedInputBytesSchema = z.string()
   .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
@@ -1331,6 +1395,8 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostResizeReceipt: TerminalHostResizeReceiptSchema,
   terminalHostAttachRequest: TerminalHostAttachRequestSchema,
   terminalHostAttachResult: TerminalHostAttachResultSchema,
+  terminalHostSubscribeRequest: TerminalHostSubscribeRequestSchema,
+  terminalHostSubscribeResult: TerminalHostSubscribeResultSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
