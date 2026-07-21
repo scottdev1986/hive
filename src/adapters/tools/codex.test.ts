@@ -1,5 +1,14 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import {
+  mkdir,
+  mkdtemp,
+  readFile,
+  realpath,
+  rm,
+  stat,
+  symlink,
+  writeFile,
+} from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
@@ -189,7 +198,7 @@ describe("Codex adapter", () => {
       "-c",
       'approval_policy="on-request"',
       "-c",
-      'projects."/tmp/worktree".trust_level="trusted"',
+      'projects={"/tmp/worktree"={trust_level="trusted"}}',
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
@@ -208,7 +217,7 @@ describe("Codex adapter", () => {
       "--sandbox",
       "read-only",
       "-c",
-      'projects."/tmp/worktree".trust_level="trusted"',
+      'projects={"/tmp/worktree"={trust_level="trusted"}}',
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",
@@ -265,7 +274,7 @@ describe("Codex adapter", () => {
   test("builds trusted-project, native-hook, and MCP CLI overrides", () => {
     expect(buildCodexTrustArgs("/tmp/work tree")).toEqual([
       "-c",
-      'projects."/tmp/work tree".trust_level="trusted"',
+      'projects={"/tmp/work tree"={trust_level="trusted"}}',
     ]);
 
     const command = buildCodexSpawnCommand({
@@ -310,6 +319,16 @@ describe("Codex adapter", () => {
     });
   });
 
+  test("trusts the physical worktree path Codex compares against", async () => {
+    const alias = join(tempRoot, "worktree-alias");
+    await symlink(worktreePath, alias, "dir");
+
+    expect(buildCodexTrustArgs(alias)).toEqual([
+      "-c",
+      `projects={${JSON.stringify(await realpath(worktreePath))}={trust_level="trusted"}}`,
+    ]);
+  });
+
   test("builds a resume argv that replays the spawn overrides as `codex resume`", () => {
     expect(buildCodexResumeCommand({
       name: "agent-4",
@@ -332,7 +351,7 @@ describe("Codex adapter", () => {
       "-c",
       'approval_policy="on-request"',
       "-c",
-      'projects."/tmp/worktree".trust_level="trusted"',
+      'projects={"/tmp/worktree"={trust_level="trusted"}}',
       "--dangerously-bypass-hook-trust",
       "-c",
       "features.hooks=true",

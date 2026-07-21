@@ -6,7 +6,7 @@ import {
   stat,
   writeFile,
 } from "node:fs/promises";
-import { createReadStream } from "node:fs";
+import { createReadStream, realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { createInterface } from "node:readline";
@@ -102,10 +102,23 @@ const shellToken = (value: string): string => {
 const tomlString = (value: string): string => JSON.stringify(value);
 
 export function buildCodexTrustArgs(worktreePath: string): string[] {
-  const absoluteWorktreePath = resolve(worktreePath);
+  let absoluteWorktreePath: string;
+  try {
+    // Codex compares trust against the physical cwd. On macOS `/tmp` resolves
+    // to `/private/tmp`; a logical-path override otherwise misses and leaves a
+    // fresh Hive agent blocked at the repository trust prompt.
+    absoluteWorktreePath = realpathSync.native(worktreePath);
+  } catch {
+    // Command-shape tests and diagnostics may intentionally name a path that
+    // does not exist yet. Preserve the prior absolute-path behavior there.
+    absoluteWorktreePath = resolve(worktreePath);
+  }
   return [
     "-c",
-    `projects.${tomlString(absoluteWorktreePath)}.trust_level="trusted"`,
+    // Codex 0.144.6 does not address a quoted path through a dotted `-c` key.
+    // Replacing the complete projects table is process-scoped and makes the
+    // same trust decision without touching the user's persisted config.
+    `projects={${tomlString(absoluteWorktreePath)}={trust_level="trusted"}}`,
   ];
 }
 
