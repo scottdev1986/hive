@@ -48,6 +48,7 @@ pub fn main() !void {
         return session_host.runHostRole(allocator, hive_home);
     }
     try runGolden(allocator);
+    try runDeadParentRecoveryDrill(allocator);
 }
 
 fn runGolden(allocator: std.mem.Allocator) !void {
@@ -499,6 +500,225 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         parsed_final.value.survivors.len != 0 or
         parsed_final.value.errors.len != 0)
         return error.InvalidFinalEvidence;
+}
+
+const dead_parent_session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000f6";
+
+/// Freeze case G's second half. The first half — a broker restart reattaching
+/// to a durable parent — is the golden above: the create broker exits and is
+/// reaped before a fresh `RecoveredRegistry` adopts the surviving host and goes
+/// on to inspect, attach and terminate it with direct-parent reap evidence.
+///
+/// This drill kills the durable parent for real and requires recovery to say so.
+/// It recovers TWICE against the same record: once while the host is alive, which
+/// must produce an entry, and once after the kill, which must produce
+/// `verification_unknown`. Without the live leg a wrong home, a too-long socket
+/// path or any other setup fault would report the same unknown and read as a
+/// pass; the two legs differ only by the kill.
+///
+/// It owns its own home: `broker.Runtime.open` is exclusive, so the create
+/// broker cannot fork out of a process that already holds the golden's runtime.
+fn runDeadParentRecoveryDrill(allocator: std.mem.Allocator) !void {
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(
+        &root_storage,
+        "/tmp/d{x}",
+        .{std.crypto.random.int(u32)},
+    );
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var home = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try home.chmod(0o700);
+    home.close();
+    const root_z = try allocator.dupeZ(u8, root);
+    defer allocator.free(root_z);
+    if (c.setenv("HIVE_HOME", root_z.ptr, 1) != 0) return error.SetEnvironmentFailed;
+
+    const engine_digest = try session_host.RealVtEngine.engineBuildId();
+    const engine_build_id = std.fmt.bytesToHex(engine_digest, .lower);
+    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
+        return error.WorkspaceIdentityUnavailable;
+    var workspace_token_storage: [64]u8 = undefined;
+    const workspace_token = try workspace.start_token.format(&workspace_token_storage);
+
+    const locator: broker.Locator = .{
+        .instance_id = instance_id,
+        .session_id = dead_parent_session_id,
+        .generation = 1,
+        .subject = .{ .agent = "aaron" },
+        .host_kind = .sessiond,
+        .engine_build_id = &engine_build_id,
+    };
+    const spec = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = .{
+            .schemaVersion = @as(u8, 1),
+            .instanceId = instance_id,
+            .subject = .{ .kind = "agent", .agentId = "aaron" },
+            .generation = @as(u64, 1),
+            .sessionId = dead_parent_session_id,
+            .hostKind = "sessiond",
+            .engineBuildId = &engine_build_id,
+        },
+        .provider = "codex",
+        .toolSessionId = @as(?[]const u8, null),
+        .cwd = root,
+        .argv = [_][]const u8{ "/bin/sh", "-c", "while :; do sleep 1; done" },
+        .environment = EmptyEnvironment{},
+        .expectedExecutable = "/bin/sh",
+        .readOnly = false,
+        .capabilityEpoch = @as(u64, 0),
+        .geometry = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPx = @as(u32, 800),
+            .heightPx = @as(u32, 480),
+            .cellWidthPx = @as(f64, 10),
+            .cellHeightPx = @as(f64, 20),
+        },
+        .launchGrantId = "dead-parent-launch-grant",
+        .launchGrantRevision = @as(u64, 1),
+        .visibility = .{
+            .workspaceSessionId = "golden-workspace",
+            .workspacePid = c.getpid(),
+            .workspaceStartToken = workspace_token,
+            .openTerminalRevision = "1",
+        },
+    }, .{});
+    defer allocator.free(spec);
+
+    const created_pipe = try std.posix.pipe();
+    var pipe_owned = true;
+    errdefer if (pipe_owned) {
+        std.posix.close(created_pipe[0]);
+        std.posix.close(created_pipe[1]);
+    };
+    try setCloseOnExec(created_pipe[0]);
+    try setCloseOnExec(created_pipe[1]);
+    const create_broker_pid = try std.posix.fork();
+    if (create_broker_pid == 0) {
+        std.posix.close(created_pipe[0]);
+        const created_writer: std.fs.File = .{ .handle = created_pipe[1] };
+        runCreateBroker(allocator, root, spec, locator, created_writer) catch |err| {
+            std.debug.print("dead-parent create broker failed: {s}\n", .{@errorName(err)});
+            created_writer.close();
+            std.posix.exit(125);
+        };
+        created_writer.close();
+        std.posix.exit(0);
+    }
+    std.posix.close(created_pipe[1]);
+    pipe_owned = false;
+    const created_reader: std.fs.File = .{ .handle = created_pipe[0] };
+    defer created_reader.close();
+    var create_status: c_int = 0;
+    if (c.waitpid(create_broker_pid, &create_status, 0) != create_broker_pid)
+        return error.CreateBrokerWaitFailed;
+    const create_status_bits: u32 = @bitCast(create_status);
+    if (!std.posix.W.IFEXITED(create_status_bits) or
+        std.posix.W.EXITSTATUS(create_status_bits) != 0)
+        return error.CreateBrokerFailed;
+    const created = try created_reader.readToEndAlloc(
+        allocator,
+        generated.limits.control_json_bytes,
+    );
+    defer allocator.free(created);
+    const CreatedProjection = struct {
+        created: bool,
+        inspection: struct { hostPid: i32, providerRoot: struct { pid: i32 } },
+    };
+    var parsed = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed.deinit();
+    if (!parsed.value.created) return error.DeadParentCreateFailed;
+    const host_pid = parsed.value.inspection.hostPid;
+    const provider_pid = parsed.value.inspection.providerRoot.pid;
+    // A failure anywhere below would otherwise strand a host and a provider that
+    // nothing else can wait. `host_killed` keeps this from signalling a pid the
+    // drill already reaped and the system may have handed to someone else.
+    var host_killed = false;
+    errdefer {
+        if (!host_killed) std.posix.kill(host_pid, std.posix.SIG.KILL) catch {};
+        std.posix.kill(provider_pid, std.posix.SIG.KILL) catch {};
+    }
+
+    var runtime = try broker.Runtime.open(allocator, root);
+    defer runtime.deinit();
+    const self_executable = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(self_executable);
+    const build_id = try executableBuildHash(allocator, self_executable);
+    defer allocator.free(build_id);
+
+    // Live leg: this exact recovery, against this exact record, adopts.
+    {
+        var recovered = broker.RecoveredRegistry.init(allocator);
+        defer recovered.deinit();
+        var connector = broker.WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
+        defer connector.deinit();
+        try recovered.recover(&runtime, 3, connector.connector());
+        switch (recovered.registry.lookup(locator) orelse return error.DeadParentControlMissing) {
+            .entry => {},
+            .failure => |failure| {
+                std.debug.print(
+                    "real-host-golden: live recovery control failed with {s}\n",
+                    .{@tagName(failure.code)},
+                );
+                return error.DeadParentControlFailed;
+            },
+        }
+    }
+
+    // Kill the durable parent for real and prove it is gone before recovering.
+    std.posix.kill(host_pid, std.posix.SIG.KILL) catch return error.DeadParentKillFailed;
+    host_killed = true;
+    try waitForProcessAbsence(host_pid);
+
+    var recovered = broker.RecoveredRegistry.init(allocator);
+    defer recovered.deinit();
+    var connector = broker.WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
+    defer connector.deinit();
+    try recovered.recover(&runtime, 4, connector.connector());
+    switch (recovered.registry.lookup(locator) orelse return error.DeadParentRecoveryMissing) {
+        .entry => return error.DeadParentRecoveryFabricated,
+        .failure => |failure| if (failure.code != .verification_unknown) {
+            std.debug.print(
+                "real-host-golden: dead-parent recovery reported {s}, not verification_unknown\n",
+                .{@tagName(failure.code)},
+            );
+            return error.DeadParentRecoveryFabricated;
+        },
+    }
+
+    // `verification_unknown` alone is a weak claim — several unrelated setup
+    // faults reach the same code. The specific obligation is that recovery
+    // invented no ending: no terminal evidence file exists for this session and
+    // the durable record still says live, so the unknown really is an unknown
+    // and not a quietly recorded exit.
+    var host_directory = try runtime.openHostDirectory(dead_parent_session_id, false);
+    defer host_directory.close();
+    if (host_directory.statFile("final.json")) |_| {
+        return error.DeadParentRecoveryFabricated;
+    } else |err| if (err != error.FileNotFound) return err;
+    const record_after = try host_directory.readFileAlloc(
+        allocator,
+        "record.json",
+        generated.limits.control_json_bytes,
+    );
+    defer allocator.free(record_after);
+    const RecordState = struct { state: []const u8 };
+    var parsed_record = try std.json.parseFromSlice(RecordState, allocator, record_after, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_record.deinit();
+    if (!std.mem.eql(u8, parsed_record.value.state, "live"))
+        return error.DeadParentRecoveryFabricated;
+
+    // The orphaned provider outlived its wait authority, which is precisely why
+    // recovery may not claim an exit. Clean it up: the drill owns the process it
+    // stranded, and nothing else can wait it.
+    std.posix.kill(provider_pid, std.posix.SIG.KILL) catch {};
+    waitForProcessAbsence(provider_pid) catch {};
 }
 
 fn writeViewerRequest(
