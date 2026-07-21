@@ -26,3 +26,9 @@ for key in commit patchedTree patchSeriesSha256 upstreamPublicHeaderSha256 bridg
   recorded=$(/usr/bin/plutil -extract "source.$key" raw -o - "$MANIFEST" 2>/dev/null) || exit 1
   [[ -n "$locked" && "$locked" == "$recorded" ]] || exit 1
 done
+
+# The engine build id incorporates Zig's optimize mode. A same-source Debug
+# archive is therefore incompatible with the ReleaseFast checkpoint/session
+# fence even though its source tuple matches the lock.
+optimize_mode=$(/usr/bin/plutil -extract buildEnvironment.optimizeMode raw -o - "$MANIFEST" 2>/dev/null) || exit 1
+[[ "$optimize_mode" == "ReleaseFast" ]] || exit 1

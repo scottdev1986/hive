@@ -1,0 +1,4 @@
+headless checkpoint harness: all checks passed
+checkpoint engine build id (arm64): 9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b
+headless checkpoint harness: all checks passed
+checkpoint engine build id (x86_64): ea592b32749f04556e942e0358c3360e423659f4d6bb23b719f81fc14b2cf349

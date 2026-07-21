@@ -77,6 +77,21 @@ jobs:
         if: steps.plan.outputs.action != 'release'
         run: echo "::notice::${{ steps.plan.outputs.version }} — this commit is already released."
 
+      # The Gate 6 lock restores every lib-vt-authored split through the
+      # ReleaseFast GhosttyKit surface on both macOS architectures. Build in a
+      # fresh per-run cache: a cache directory alone cannot establish the
+      # patched-tree or optimize-mode identity of an artifact.
+      - name: Build and release-lock GhosttyKit
+        if: steps.plan.outputs.action == 'release'
+        env:
+          HIVE_NATIVE_CACHE: ${{ runner.temp }}/hive-native
+        run: |
+          set -euo pipefail
+          brew install zig@0.15
+          brew link --force zig@0.15
+          scripts/provision-native-toolchain.sh
+          scripts/build-ghosttykit.sh --production
+
       # Graceful degradation lives here, not in a flag. If the Apple certificate
       # secret is absent the build stays unsigned and publishes exactly today's
       # artifacts; if the offline release key is absent the manifest stays

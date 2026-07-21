@@ -1,0 +1,8 @@
+qualification=M1-B1 Gate 7 AddressSanitizer renderer XCTest rerun
+host_arch=arm64
+ghostty_commit=73534c4680a809398b396c94ac7f12fcccb7963d
+ghostty_patched_tree=130bc9e74e4aed287d8778914b5ef077fcdf8fc4
+patch_series_sha256=a7dd844d48ee71b0fc29c603db04cb86c02c54a8b5559252c456e7da7ee9b61a
+optimize_mode=ReleaseFast
+artifact_manifest_sha256=68525a409ad0e25f23a710763d6ad3cc348d85e58b5adc2fa4f1787db9304ecd
+scope=automatable Gate7RenderingTests; physical display and sleep/wake remain PENDING_HUMAN

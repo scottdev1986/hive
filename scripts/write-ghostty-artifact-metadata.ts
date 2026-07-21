@@ -93,9 +93,13 @@ function inspectArchive(path: string): MachORecord[] {
   for (const line of lines) {
     if (line.endsWith(":")) {
       const archMatch = line.match(/\(architecture ([^)]+)\)/);
-      const memberMatch = line.match(/\(([^()]+\.(?:o|a))\):$/);
+      const memberMatch = line.match(/\(([^()]+\.(?:o|a))\)(?: \(architecture [^)]+\))?:$/);
       architecture = archMatch?.[1] ?? (defaultArchitectures.length === 1 ? (defaultArchitectures[0] ?? "unknown") : "unknown");
-      member = memberMatch?.[1] ?? line.slice(0, -1);
+      // `otool` prints its input path before every archive member. That input
+      // is an absolute, per-build scratch path, not artifact metadata. Record
+      // only the stable archive-member name; when there is no member heading,
+      // retain the artifact-relative archive path initialized above.
+      member = memberMatch?.[1] ?? archive;
       continue;
     }
     const platformMatch = line.match(/^\s*platform\s+(.+)$/);
@@ -177,11 +181,12 @@ const bridgeHeaderSha256 = process.env.HIVE_BRIDGE_HEADER_SHA256;
 const symbolListSha256 = process.env.HIVE_SYMBOL_LIST_SHA256;
 const metalBuild = process.env.HIVE_METAL_BUILD;
 const zigVersion = process.env.HIVE_ZIG_VERSION;
+const optimizeMode = process.env.HIVE_OPTIMIZE_MODE;
 if (!patchSeriesSha256 || !upstreamPublicHeaderSha256 || !bridgeHeaderSha256 || !symbolListSha256) {
   throw new Error("build did not provide source/ABI provenance hashes");
 }
-if (!metalToolchain || !metalBuild || !zigVersion) {
-  throw new Error("build did not provide Zig/Metal provenance");
+if (!metalToolchain || !metalBuild || !zigVersion || optimizeMode !== "ReleaseFast") {
+  throw new Error("build did not provide ReleaseFast Zig/Metal provenance");
 }
 
 const artifactManifest = {
@@ -202,6 +207,7 @@ const artifactManifest = {
     metalToolchain,
     metalBuild,
     zigVersion,
+    optimizeMode,
     networkPolicy: "offline; dependency cache verified before build",
     runnerLink: "Zig bundled Darwin stubs selected by scripts/zig-runner-tools/xcrun",
     sdkOverlay: "locked Xcode SDKs with only macOS libSystem.tbd replaced by Zig's bundled stub",

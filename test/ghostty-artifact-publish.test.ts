@@ -62,7 +62,7 @@ function writeArtifact(dir: string, source: SourceIdentity, marker: string): voi
   mkdirSync(dir, { recursive: true });
   writeFileSync(
     join(dir, "artifact-manifest.json"),
-    JSON.stringify({ schemaVersion: 1, source }, null, 2),
+    JSON.stringify({ schemaVersion: 1, source, buildEnvironment: { optimizeMode: "ReleaseFast" } }, null, 2),
   );
   writeFileSync(join(dir, "engine-marker.txt"), marker);
 }
@@ -185,4 +185,18 @@ test("lock check fails closed on missing manifest, missing key, and empty value"
   const empty = join(base, "empty");
   writeArtifact(empty, { ...newIdentity, patchSeriesSha256: "" }, "engine");
   expect(run([lockCheck, empty, lock]).exitCode).toBe(1);
+});
+
+test("lock check refuses a source-matching Debug artifact", () => {
+  const base = mkdtempSync(join(tmpdir(), "ghostty-lockcheck-"));
+  const lock = join(base, "toolchain-lock.json");
+  const artifact = join(base, "debug-artifact");
+  writeLock(lock, newIdentity);
+  writeArtifact(artifact, newIdentity, "debug-engine");
+  const manifest = join(artifact, "artifact-manifest.json");
+  const parsed = JSON.parse(readFileSync(manifest, "utf8")) as { buildEnvironment: { optimizeMode: string } };
+  parsed.buildEnvironment.optimizeMode = "Debug";
+  writeFileSync(manifest, JSON.stringify(parsed));
+
+  expect(run([lockCheck, artifact, lock]).exitCode).toBe(1);
 });

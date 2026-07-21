@@ -76,7 +76,8 @@ verify_vendor() {
 
   tmp=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-verify.XXXXXX")
   trap 'rm -rf "$tmp"' EXIT HUP INT TERM
-  /usr/bin/rsync -a --exclude .git "$VENDOR/" "$tmp/"
+  /usr/bin/rsync -a --exclude .git --exclude zig-cache/ --exclude .zig-cache/ --exclude zig-out/ \
+    "$VENDOR/" "$tmp/"
 
   reverse=$(series_entries | /usr/bin/awk '{ line[NR] = $0 } END { for (i = NR; i > 0; i--) print line[i] }')
   if [ -n "$reverse" ]; then
@@ -103,7 +104,7 @@ verify_vendor() {
     exit 1
   fi
   /bin/rm -rf "$tmp/.git"
-  if ! /usr/bin/diff -qr "$tmp" "$VENDOR" >/dev/null; then
+  if ! /usr/bin/diff -qr -x zig-cache -x .zig-cache -x zig-out "$tmp" "$VENDOR" >/dev/null; then
     echo "vendored Ghostty tree differs from commit $EXPECTED_COMMIT plus ordered patch series" >&2
     /usr/bin/diff -qr "$tmp" "$VENDOR" | /usr/bin/sed -n '1,40p' >&2
     exit 1

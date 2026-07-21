@@ -27,6 +27,10 @@ if [[ ! -d "$XCFRAMEWORK" ]]; then
   echo "GhosttyKit artifact missing: $XCFRAMEWORK" >&2
   exit 1
 fi
+if ! "$ROOT/scripts/ghostty-artifact-lock-check.sh" "$ARTIFACT" "$LOCK"; then
+  echo "Gate 6 release lock requires a ReleaseFast artifact bound to the current source tuple" >&2
+  exit 1
+fi
 
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-release-lock.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM

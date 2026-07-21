@@ -17,35 +17,44 @@ lock_value() {
 }
 
 commit=$(lock_value ghostty.commit)
-ARTIFACT="$CACHE/artifacts/ghostty-$commit-zig-$(lock_value zig.version)"
+artifact_name="ghostty-$commit-zig-$(lock_value zig.version)"
 TMP=$(mktemp -d "${TMPDIR:-/tmp}/hive-ghostty-repro.XXXXXX")
 trap 'rm -rf "$TMP"' EXIT HUP INT TERM
 mkdir -p "$EVIDENCE"
+if [[ ! -d "$CACHE/zig-global" ]]; then
+  echo "verified Ghostty dependency cache is missing: $CACHE/zig-global" >&2
+  exit 1
+fi
 
 hash_shipped() {
-  local output=$1
+  local artifact=$1
+  local output=$2
   {
     printf '%s\n' 'set=GhosttyKit.xcframework lib-vt notices sbom.cdx.json'
     (
-      cd "$ARTIFACT"
+      cd "$artifact"
       find GhosttyKit.xcframework lib-vt notices -type f -print \
         | LC_ALL=C /usr/bin/sort
     ) | while IFS= read -r relative; do
-      (cd "$ARTIFACT" && /usr/bin/shasum -a 256 "$relative")
+      (cd "$artifact" && /usr/bin/shasum -a 256 "$relative")
     done
-    (cd "$ARTIFACT" && /usr/bin/shasum -a 256 sbom.cdx.json)
+    (cd "$artifact" && /usr/bin/shasum -a 256 sbom.cdx.json)
   } >"$output"
 }
 
 capture_run() {
   local label=$1
+  local run_cache="$TMP/cache-$label"
+  local artifact="$run_cache/artifacts/$artifact_name"
   echo "clean build $label/$RUNS"
-  "$ROOT/scripts/build-ghosttykit.sh" \
+  mkdir -p "$run_cache"
+  ln -s "$CACHE/zig-global" "$run_cache/zig-global"
+  HIVE_NATIVE_CACHE="$run_cache" "$ROOT/scripts/build-ghosttykit.sh" \
     >"$EVIDENCE/clean-build-$label.txt" 2>&1
-  /bin/cp "$ARTIFACT/artifact-manifest.json" \
+  /bin/cp "$artifact/artifact-manifest.json" \
     "$EVIDENCE/repro-build-$label-manifest.json"
-  hash_shipped "$EVIDENCE/shipped-runtime-$label.sha256"
-  /usr/bin/rsync -a "$ARTIFACT/checkpoint-fixtures/" \
+  hash_shipped "$artifact" "$EVIDENCE/shipped-runtime-$label.sha256"
+  /usr/bin/rsync -a "$artifact/checkpoint-fixtures/" \
     "$TMP/checkpoint-$label/"
 }
 
@@ -63,14 +72,26 @@ if ! /usr/bin/cmp -s "$EVIDENCE/shipped-runtime-a.sha256" \
   echo "shipped runtime artifacts are not reproducible" >&2
   exit 1
 fi
+if ! /usr/bin/cmp -s "$EVIDENCE/repro-build-a-manifest.json" \
+  "$EVIDENCE/repro-build-b-manifest.json" || \
+   ! /usr/bin/cmp -s "$EVIDENCE/repro-build-b-manifest.json" \
+  "$EVIDENCE/repro-build-c-manifest.json"; then
+  echo "artifact manifests are not reproducible" >&2
+  exit 1
+fi
 
 jq -r '.files[] | [.path, .sha256, .size, .type] | @tsv' \
   "$EVIDENCE/repro-build-b-manifest.json" >"$TMP/manifest-b.tsv"
 jq -r '.files[] | [.path, .sha256, .size, .type] | @tsv' \
   "$EVIDENCE/repro-build-c-manifest.json" >"$TMP/manifest-c.tsv"
+diff_status=0
 diff -u --label build-b-files --label build-c-files \
   "$TMP/manifest-b.tsv" "$TMP/manifest-c.tsv" \
-  >"$EVIDENCE/reproducibility-file-hash.diff" || test $? -eq 1
+  >"$EVIDENCE/reproducibility-file-hash.diff" || diff_status=$?
+if [[ "$diff_status" -ne 0 ]]; then
+  echo "artifact file hashes are not reproducible" >&2
+  exit "$diff_status"
+fi
 
 fixture_paths="$TMP/fixture-paths.txt"
 : >"$fixture_paths"
@@ -93,11 +114,19 @@ byte_at() {
 }
 
 archive_path_refs=0
-while IFS= read -r archive; do
-  refs=$(/usr/bin/strings "$archive" | /usr/bin/grep -F -o "$ROOT" | wc -l || true)
-  archive_path_refs=$((archive_path_refs + refs))
-done < <(find "$ARTIFACT/GhosttyKit.xcframework" "$ARTIFACT/lib-vt" \
-  -type f -name '*.a' -print | LC_ALL=C sort)
+for label in a b c; do
+  artifact="$TMP/cache-$label/artifacts/$artifact_name"
+  while IFS= read -r archive; do
+    refs=$(/usr/bin/strings "$archive" \
+      | /usr/bin/grep -Ec '^/(Users|private|tmp|var|opt|Applications|Volumes)/' || true)
+    archive_path_refs=$((archive_path_refs + refs))
+  done < <(find "$artifact/GhosttyKit.xcframework" "$artifact/lib-vt" \
+    -type f -name '*.a' -print | LC_ALL=C sort)
+done
+if [[ "$archive_path_refs" -ne 0 ]]; then
+  echo "shipped static archives retain $archive_path_refs absolute build-path references" >&2
+  exit 1
+fi
 
 {
   printf 'status=qualified_shipped_runtime_artifacts_byte_identical\n'
@@ -139,9 +168,9 @@ done < <(find "$ARTIFACT/GhosttyKit.xcframework" "$ARTIFACT/lib-vt" \
       "$(byte_at "$middle" "$offset")" \
       "$(byte_at "$new" "$offset")"
   done <"$fixture_paths"
-  printf 'path_independence=known_limitation\n'
+  printf 'path_independence=qualified\n'
   printf 'static_archive_absolute_build_path_references=%s\n' "$archive_path_refs"
-  printf 'path_independence_scope=Gate4_follow_up; runtime artifacts reproduce at the fixed content-addressed build path\n'
+  printf 'path_independence_scope=all shipped static archives and artifact manifests; three independent cache generations\n'
 } >"$EVIDENCE/reproducibility-gap.txt"
 
 echo "shipped runtime reproducibility qualified; evidence: $EVIDENCE"

@@ -1,0 +1,35 @@
+native toolchain lock validated
+Ghostty dependency cache verified: 36 packages
+native preflight passed: TOOLCHAINS=com.apple.dt.toolchain.Metal.32023.883 ZIG=/opt/homebrew/bin/zig
+applying Ghostty patch: 0001-hive-manual-io-checkpoint.patch
+applying Ghostty patch: 0002-hive-terminal-reply-effects.patch
+applying Ghostty patch: 0003-hive-gate6-restore-in-place.patch
+applying Ghostty patch: 0004-hive-semantic-snapshot.patch
+vendored Ghostty verified: commit=73534c4680a809398b396c94ac7f12fcccb7963d tree=0aeaa44eda9efaf41523c3c0d4f6851eb81e536e patched_tree=130bc9e74e4aed287d8778914b5ef077fcdf8fc4 patches=a7dd844d48ee71b0fc29c603db04cb86c02c54a8b5559252c456e7da7ee9b61a
+C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 symbols=7
+C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 symbols=7
+1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7
+OK
+All 1 tests passed.
+1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7
+OK
+All 1 tests passed.
+Ghostty bridge ABI skeleton validated
+building universal GhosttyKit.xcframework
+building libghostty-vt slice: arm64
+building libghostty-vt slice: x86_64
+C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 symbols=7
+C_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 symbols=7
+1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7
+OK
+All 1 tests passed.
+1/1 bridge-abi.test.Hive bridge ABI values and layout...ZIG_ABI_OK pointer=8 enum_size=4 enum_align=4 event_size=24 event_align=8 row_size=48 snapshot_size=224 callconv=c symbols=7
+OK
+All 1 tests passed.
+Ghostty bridge ABI skeleton validated
+headless checkpoint harness: all checks passed
+checkpoint engine build id (arm64): 9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b
+headless checkpoint harness: all checks passed
+checkpoint engine build id (x86_64): ea592b32749f04556e942e0358c3360e423659f4d6bb23b719f81fc14b2cf349
+artifact metadata written: 498 files, 1124 Mach-O members
+Ghostty native artifacts: /Users/scottkellar/Projects/hive/.dev/tmp/hive-ghostty-repro.s2cdLy/cache-a/artifacts/ghostty-73534c4680a809398b396c94ac7f12fcccb7963d-zig-0.15.2

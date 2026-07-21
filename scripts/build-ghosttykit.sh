@@ -155,6 +155,17 @@ for target in aarch64:arm64 x86_64:x86_64; do
   /bin/cp "$prefix/lib/libghostty-vt.a" "$OUT/lib-vt/$hive_arch/libghostty-vt.a"
 done
 
+# ReleaseFast still carries DWARF in static archives. Those sections embed the
+# ephemeral worktree/cache locations from the build host, so identical inputs
+# produce different shipped bytes and leak local paths. The release artifact
+# needs no debugger symbols; remove only those sections after every slice has
+# been assembled. Keep this before the checkpoint and ABI qualifications so
+# they exercise exactly the bytes we ship.
+while IFS= read -r archive; do
+  /usr/bin/strip -S "$archive"
+done < <(find "$OUT/GhosttyKit.xcframework" "$OUT/lib-vt" -type f -name '*.a' \
+  -print | LC_ALL=C /usr/bin/sort)
+
 mkdir -p "$OUT/include" "$OUT/symbols" "$OUT/notices/ghostty" "$OUT/provenance/patches"
 /bin/cp "$ROOT/native/include/hive_ghostty_bridge.h" "$OUT/include/"
 /usr/bin/ditto "$WORK/zig-out-vt-arm64/include" "$OUT/include/ghostty-vt"
@@ -206,6 +217,7 @@ export HIVE_SYMBOL_LIST_SHA256="$SYMBOL_SHA"
 export HIVE_METAL_TOOLCHAIN="$METAL_TOOLCHAIN"
 export HIVE_METAL_BUILD="$METAL_BUILD"
 export HIVE_ZIG_VERSION="$version"
+export HIVE_OPTIMIZE_MODE=ReleaseFast
 export HIVE_ZIG_BUNDLED_STUB="$BUNDLED_STUB"
 export HIVE_XCODE_LIBSYSTEM_STUB="$XCODE_STUB"
 export HIVE_ZIG_GLOBAL_CACHE="$CACHE/zig-global"
