@@ -1745,6 +1745,98 @@
       }
     },
     {
+      "name": "frozen neutral attach request negotiates protocol and checkpoints",
+      "schema": "terminalHostAttachRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "checkpointCapabilities": [
+          {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1"
+          }
+        ],
+        "cursor": {
+          "eventSequence": "12",
+          "outputOffset": "4096",
+          "checkpoint": "sha256:cafe"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral attach result resumes at a host-reported cursor",
+      "schema": "terminalHostAttachResult",
+      "value": {
+        "state": "attached",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minor": 0
+        },
+        "checkpoint": {
+          "contentType": "application/vnd.hive.terminal-checkpoint",
+          "schemaVersion": "1"
+        },
+        "resumeFrom": {
+          "eventSequence": "12",
+          "outputOffset": "4096",
+          "checkpoint": "sha256:cafe"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral attach result reports an out-of-retention gap",
+      "schema": "terminalHostAttachResult",
+      "value": {
+        "state": "gap",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "missing": {
+          "start": "4096",
+          "endExclusive": "9001"
+        },
+        "checkpointRequirement": "full"
+      }
+    },
+    {
+      "name": "frozen neutral attach cursor may bind no applied checkpoint",
+      "schema": "terminalHostAttachRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "checkpointCapabilities": [
+          {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1"
+          }
+        ],
+        "cursor": {
+          "eventSequence": "12",
+          "outputOffset": "4096",
+          "checkpoint": null
+        }
+      }
+    },
+    {
       "name": "frozen neutral termination request",
       "schema": "terminalHostTerminationRequest",
       "value": {
@@ -3669,6 +3761,57 @@
           "heightPixels": 999
         },
         "applicationNotified": true
+      }
+    },
+    {
+      "name": "frozen attach request rejects a reversed negotiation minor range",
+      "schema": "terminalHostAttachRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 1,
+          "maxMinor": 0
+        },
+        "checkpointCapabilities": [
+          {
+            "contentType": "application/vnd.hive.terminal-checkpoint",
+            "schemaVersion": "1"
+          }
+        ],
+        "cursor": {
+          "eventSequence": "12",
+          "outputOffset": "4096",
+          "checkpoint": "sha256:cafe"
+        }
+      }
+    },
+    {
+      "name": "frozen attach result cannot claim it resumed inside a sequence",
+      "schema": "terminalHostAttachResult",
+      "value": {
+        "state": "attached",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minor": 0
+        },
+        "checkpoint": {
+          "contentType": "application/vnd.hive.terminal-checkpoint",
+          "schemaVersion": "1"
+        },
+        "resumeFrom": {
+          "eventSequence": "12",
+          "outputOffset": "4096",
+          "checkpoint": "sha256:cafe"
+        },
+        "resumedMidSequence": false
       }
     },
     {

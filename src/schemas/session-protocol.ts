@@ -770,6 +770,64 @@ export const TerminalHostResizeReceiptSchema = z.strictObject({
   orderedAt: DecimalUint64Schema,
   window: TerminalHostWindowSizeSchema,
 }).readonly();
+/** §7 checkpoint capability. A caller that cannot apply a checkpoint offers
+ * none, so this is the unit of the checkpoint half of attach negotiation and
+ * names the same pair a checkpoint document carries. */
+export const TerminalHostCheckpointCapabilitySchema = z.strictObject({
+  contentType: z.string().min(1),
+  schemaVersion: z.string().min(1),
+}).readonly();
+/** §7 attachment cursor. It names BOTH positions in the one session order — an
+ * event position and an output byte offset — so a resumed attachment and the
+ * events around it stay comparable without a second clock, and it MAY bind an
+ * opaque checkpoint identity: the hash of the checkpoint the caller has already
+ * applied, or null when it has applied none. The identity is opaque here on
+ * purpose — attach compares it, it never interprets it. */
+export const TerminalHostAttachCursorSchema = z.strictObject({
+  eventSequence: DecimalUint64Schema,
+  outputOffset: DecimalUint64Schema,
+  checkpoint: z.string().min(1).nullable(),
+}).readonly();
+/** §7 attach request. It offers a same-major protocol minor range and the
+ * checkpoint capabilities the caller can apply; the host selects one of each,
+ * which is what makes attachment negotiated rather than assumed. */
+export const TerminalHostAttachRequestSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  protocol: z.strictObject({
+    major: z.literal(SESSION_PROTOCOL_VERSION.major),
+    minMinor: ProtocolMinorSchema,
+    maxMinor: ProtocolMinorSchema,
+  }).refine(({ minMinor, maxMinor }) => minMinor <= maxMinor, "protocol minor range is reversed")
+    .meta({ "x-hive-ordered-minor-range": true }).readonly(),
+  checkpointCapabilities: z.array(TerminalHostCheckpointCapabilitySchema).readonly(),
+  cursor: TerminalHostAttachCursorSchema,
+}).readonly();
+/** §7 attach outcome. `resumeFrom` is where the stream WILL resume, reported by
+ * the host rather than assumed from the cursor that was asked for — the same
+ * readback rule the resize receipt follows. There is deliberately no field for
+ * a partially delivered escape sequence or a split multibyte character: resume
+ * is exactly-once at byte boundaries, so no shape here can excuse resuming
+ * inside one. A cursor outside retention is a `gap` that states the missing
+ * range and requires a full checkpoint; silent loss has no encoding. */
+export const TerminalHostAttachResultSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("attached"),
+    session: TerminalHostSessionRefSchema,
+    protocol: SelectedProtocolSchema,
+    checkpoint: TerminalHostCheckpointCapabilitySchema.nullable(),
+    resumeFrom: TerminalHostAttachCursorSchema,
+  }).readonly(),
+  z.strictObject({
+    state: z.literal("gap"),
+    session: TerminalHostSessionRefSchema,
+    missing: z.strictObject({
+      start: DecimalUint64Schema,
+      endExclusive: DecimalUint64Schema,
+    }).readonly(),
+    checkpointRequirement: z.literal("full"),
+  }).readonly(),
+  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+]);
 
 const EncodedInputBytesSchema = z.string()
   .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
@@ -1271,6 +1329,8 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostTerminationResult: TerminalHostTerminationResultSchema,
   terminalHostResizeRequest: TerminalHostResizeRequestSchema,
   terminalHostResizeReceipt: TerminalHostResizeReceiptSchema,
+  terminalHostAttachRequest: TerminalHostAttachRequestSchema,
+  terminalHostAttachResult: TerminalHostAttachResultSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,

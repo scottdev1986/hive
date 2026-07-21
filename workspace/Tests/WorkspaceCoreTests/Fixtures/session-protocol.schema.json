@@ -7234,6 +7234,323 @@
       ],
       "additionalProperties": false
     },
+    "terminalHostAttachRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "protocol": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "major": {
+              "type": "number",
+              "const": 1
+            },
+            "minMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            },
+            "maxMinor": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 255
+            }
+          },
+          "required": [
+            "major",
+            "minMinor",
+            "maxMinor"
+          ],
+          "additionalProperties": false,
+          "x-hive-ordered-minor-range": true
+        },
+        "checkpointCapabilities": {
+          "readOnly": true,
+          "type": "array",
+          "items": {
+            "readOnly": true,
+            "type": "object",
+            "properties": {
+              "contentType": {
+                "type": "string",
+                "minLength": 1
+              },
+              "schemaVersion": {
+                "type": "string",
+                "minLength": 1
+              }
+            },
+            "required": [
+              "contentType",
+              "schemaVersion"
+            ],
+            "additionalProperties": false
+          }
+        },
+        "cursor": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "eventSequence": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "outputOffset": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "checkpoint": {
+              "anyOf": [
+                {
+                  "type": "string",
+                  "minLength": 1
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "eventSequence",
+            "outputOffset",
+            "checkpoint"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "session",
+        "protocol",
+        "checkpointCapabilities",
+        "cursor"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostAttachResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "attached"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "protocol": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "major": {
+                  "type": "number",
+                  "const": 1
+                },
+                "minor": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 255
+                }
+              },
+              "required": [
+                "major",
+                "minor"
+              ],
+              "additionalProperties": false
+            },
+            "checkpoint": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "contentType": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "schemaVersion": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "contentType",
+                    "schemaVersion"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            },
+            "resumeFrom": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "checkpoint": {
+                  "anyOf": [
+                    {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset",
+                "checkpoint"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "state",
+            "session",
+            "protocol",
+            "checkpoint",
+            "resumeFrom"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "gap"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "missing": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            },
+            "checkpointRequirement": {
+              "type": "string",
+              "const": "full"
+            }
+          },
+          "required": [
+            "state",
+            "session",
+            "missing",
+            "checkpointRequirement"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "unknown"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "state",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "sessionLocator": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,

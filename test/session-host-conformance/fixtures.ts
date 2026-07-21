@@ -354,6 +354,27 @@ const fixtureTerminalHostResizeReceipt = {
   orderedAt: "7",
   window: fixtureTerminalHostResizeRequest.window,
 };
+const fixtureTerminalHostAttachRequest = {
+  session: fixtureTerminalHostSession,
+  protocol: { major: 1, minMinor: 0, maxMinor: 0 },
+  checkpointCapabilities: [
+    { contentType: "application/vnd.hive.terminal-checkpoint", schemaVersion: "1" },
+  ],
+  cursor: { eventSequence: "12", outputOffset: "4096", checkpoint: "sha256:cafe" },
+};
+const fixtureTerminalHostAttachResult = {
+  state: "attached",
+  session: fixtureTerminalHostSession,
+  protocol: { major: 1, minor: 0 },
+  checkpoint: { contentType: "application/vnd.hive.terminal-checkpoint", schemaVersion: "1" },
+  resumeFrom: { eventSequence: "12", outputOffset: "4096", checkpoint: "sha256:cafe" },
+};
+const fixtureTerminalHostAttachGap = {
+  state: "gap",
+  session: fixtureTerminalHostSession,
+  missing: { start: "4096", endExclusive: "9001" },
+  checkpointRequirement: "full",
+};
 const fixtureTerminalHostTerminationRequest = {
   session: fixtureTerminalHostSession,
   mode: "immediate",
@@ -711,6 +732,29 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureTerminalHostResizeReceipt,
   },
   {
+    name: "frozen neutral attach request negotiates protocol and checkpoints",
+    schema: "terminalHostAttachRequest",
+    value: fixtureTerminalHostAttachRequest,
+  },
+  {
+    name: "frozen neutral attach result resumes at a host-reported cursor",
+    schema: "terminalHostAttachResult",
+    value: fixtureTerminalHostAttachResult,
+  },
+  {
+    name: "frozen neutral attach result reports an out-of-retention gap",
+    schema: "terminalHostAttachResult",
+    value: fixtureTerminalHostAttachGap,
+  },
+  {
+    name: "frozen neutral attach cursor may bind no applied checkpoint",
+    schema: "terminalHostAttachRequest",
+    value: {
+      ...fixtureTerminalHostAttachRequest,
+      cursor: { ...fixtureTerminalHostAttachRequest.cursor, checkpoint: null },
+    },
+  },
+  {
     name: "frozen neutral termination request",
     schema: "terminalHostTerminationRequest",
     value: fixtureTerminalHostTerminationRequest,
@@ -888,6 +932,16 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen resize receipt cannot claim the application handled it",
     schema: "terminalHostResizeReceipt",
     value: { ...fixtureTerminalHostResizeReceipt, applicationNotified: true },
+  },
+  {
+    name: "frozen attach request rejects a reversed negotiation minor range",
+    schema: "terminalHostAttachRequest",
+    value: { ...fixtureTerminalHostAttachRequest, protocol: { major: 1, minMinor: 1, maxMinor: 0 } },
+  },
+  {
+    name: "frozen attach result cannot claim it resumed inside a sequence",
+    schema: "terminalHostAttachResult",
+    value: { ...fixtureTerminalHostAttachResult, resumedMidSequence: false },
   },
   {
     name: "frozen termination request requires target",
