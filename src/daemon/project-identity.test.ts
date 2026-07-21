@@ -7,8 +7,9 @@ import {
   statSync,
   writeFileSync,
 } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 
 import {
   evidenceMatches,
@@ -20,7 +21,7 @@ import {
 import { repairLegacyMountEvidence, resolveHandshakeProject } from "./project-identity";
 
 const originalHiveHome = process.env.HIVE_HOME;
-const root = mkdtempSync(join(tmpdir(), "hive-project-identity-"));
+const root = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-project-identity-"));
 const hiveHome = join(root, "home");
 const project = join(root, "project");
 mkdirSync(hiveHome);

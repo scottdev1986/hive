@@ -2,6 +2,7 @@ import { afterAll, beforeAll, describe, expect, test } from "bun:test";
 import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
+import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { writeGrokAgentConfig } from "./tools/grok";
 import {
@@ -36,7 +37,7 @@ async function git(...args: string[]): Promise<string> {
 }
 
 beforeAll(async () => {
-  tempRoot = await mkdtemp(join(tmpdir(), "hive-worktrees-"));
+  tempRoot = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-worktrees-"));
   repoRoot = join(tempRoot, "repo");
   await writeFile(join(tempRoot, ".keep"), "");
 

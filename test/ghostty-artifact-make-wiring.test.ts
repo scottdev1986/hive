@@ -44,8 +44,15 @@ function lockSha(): string {
   return result.stdout.toString().slice(0, 16);
 }
 
-/** Seeds a cache whose artifact records `source`, stamped for the current lock. */
-function seedCache(source: Record<string, string>): { cache: string; stamp: string } {
+/**
+ * Seeds a cache whose artifact records `source`, stamped for the current lock, plus the
+ * already-staged xcframework the plan is compared against.
+ *
+ * Staging is seeded rather than read from the checkout: `make -n build` also plans a
+ * restage whenever nothing is staged yet, which is true of any worktree where `make
+ * build` has not run, and that restage says nothing about the artifact's identity.
+ */
+function seedCache(source: Record<string, string>): { cache: string; stamp: string; staged: string } {
   const cache = mkdtempSync(join(tmpdir(), "ghostty-make-wiring-"));
   const artifact = join(
     cache,
@@ -57,14 +64,16 @@ function seedCache(source: Record<string, string>): { cache: string; stamp: stri
     join(artifact, "artifact-manifest.json"),
     JSON.stringify({ schemaVersion: 1, source }, null, 2),
   );
+  const staged = join(cache, "staged", "GhosttyKit.xcframework");
+  mkdirSync(staged, { recursive: true });
+  writeFileSync(join(staged, "Info.plist"), "");
   const stamp = join(artifact, `.hive-lock-${lockSha()}.stamp`);
   writeFileSync(stamp, "");
-  // Backdate it behind the checkout's staged Info.plist, so a planned restage
-  // can only come from the stamp being remade — never from this fixture being
-  // the newer file.
+  // Backdate it behind the staged Info.plist, so a planned restage can only come
+  // from the stamp being remade — never from this fixture being the newer file.
   const old = new Date("2020-01-01T00:00:00Z");
   utimesSync(stamp, old, old);
-  return { cache, stamp };
+  return { cache, stamp, staged };
 }
 
 function lockedIdentity(): Record<string, string> {
@@ -87,8 +96,8 @@ function lockedIdentity(): Record<string, string> {
  * aim at any more, and a prerequisite that stops being reachable from `build`
  * is the same silent staleness this file exists to catch.
  */
-function planBuild(cache: string): string {
-  const result = Bun.spawnSync(["make", "-n", "build", `NATIVE_CACHE=${cache}`], {
+function planBuild(cache: string, staged: string): string {
+  const result = Bun.spawnSync(["make", "-n", "build", `NATIVE_CACHE=${cache}`, `GHOSTTYKIT=${staged}`], {
     cwd: root,
     stdout: "pipe",
     stderr: "pipe",
@@ -98,7 +107,7 @@ function planBuild(cache: string): string {
 
 test("a stale artifact wearing a current lock stamp is rebuilt and restaged", () => {
   // The incident's own drift: same upstream commit, regenerated patch series.
-  const { cache, stamp } = seedCache({
+  const { cache, stamp, staged } = seedCache({
     ...lockedIdentity(),
     patchedTree: "d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb",
     patchSeriesSha256:
@@ -106,7 +115,7 @@ test("a stale artifact wearing a current lock stamp is rebuilt and restaged", ()
   });
   expect(existsSync(stamp)).toBe(true);
 
-  const plan = planBuild(cache);
+  const plan = planBuild(cache, staged);
   expect(plan).toContain(REBUILD);
   expect(plan).toContain(STAGE);
   // The lying stamp is gone, so a later build cannot trust it either.
@@ -116,9 +125,9 @@ test("a stale artifact wearing a current lock stamp is rebuilt and restaged", ()
 test("an artifact recording the lock's source identity is left alone", () => {
   // Two-way control: without this, a heal that always fires would pass the
   // test above while forcing a 25-40 minute rebuild on every single make.
-  const { cache, stamp } = seedCache(lockedIdentity());
+  const { cache, stamp, staged } = seedCache(lockedIdentity());
 
-  const plan = planBuild(cache);
+  const plan = planBuild(cache, staged);
   expect(plan).not.toContain(REBUILD);
   expect(plan).not.toContain(STAGE);
   expect(existsSync(stamp)).toBe(true);

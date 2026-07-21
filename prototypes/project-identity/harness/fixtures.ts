@@ -1,7 +1,8 @@
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+
+import { OUTSIDE_REPO_TMPDIR } from "../../../test/outside-repo-tmpdir";
 
 const GIT_ENV = {
   ...process.env,
@@ -18,7 +19,7 @@ export function git(cwd: string, ...args: string[]): string {
 }
 
 export function tempRoot(prefix = "hive-identity-"): string {
-  return realpathSync.native(mkdtempSync(join(tmpdir(), prefix)));
+  return realpathSync.native(mkdtempSync(join(OUTSIDE_REPO_TMPDIR, prefix)));
 }
 
 export function commitFile(repo: string, name: string, content = "x"): void {

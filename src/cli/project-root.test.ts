@@ -1,8 +1,8 @@
 import { afterAll, describe, expect, test } from "bun:test";
 import { execFileSync } from "node:child_process";
 import { mkdirSync, mkdtempSync, realpathSync, rmSync } from "node:fs";
-import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import { projectRootOrCwd, resolveProjectRoot } from "./project-root";
 
 const dirs: string[] = [];
@@ -11,7 +11,7 @@ afterAll(() => {
 });
 
 function tempDir(prefix: string): string {
-  const dir = mkdtempSync(join(tmpdir(), prefix));
+  const dir = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, prefix));
   dirs.push(dir);
   return dir;
 }
@@ -22,8 +22,7 @@ describe("resolveProjectRoot", () => {
     execFileSync("git", ["init"], { cwd: repo, stdio: "ignore" });
     const subdir = join(repo, "nested", "deeper");
     mkdirSync(subdir, { recursive: true });
-    // Compare against the physical path: git reports physical paths, and
-    // os.tmpdir() is a symlink on macOS.
+    // Compare against the physical path: git reports physical paths.
     const root = realpathSync(repo);
     expect(resolveProjectRoot(subdir)).toEqual(root);
     expect(projectRootOrCwd(subdir)).toEqual(root);

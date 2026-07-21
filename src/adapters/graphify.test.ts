@@ -3,6 +3,7 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
+import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import {
   buildGraph,
   buildGraphBrief,
@@ -197,7 +198,7 @@ describe("ensureGraphifyIgnored", () => {
   });
 
   test("outside a git repo it fails loudly instead of writing anywhere", async () => {
-    const root = await mkdtemp(join(tmpdir(), "hive-nogit-"));
+    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-nogit-"));
     const result = await ensureGraphifyIgnored(root);
     expect(result.ok).toBe(false);
     await rm(root, { recursive: true, force: true });
