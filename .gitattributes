@@ -1,0 +1,6 @@
+# Qualification captures are raw terminal output: PTY bytes, escape sequences
+# and all. Git's text heuristics see enough of them as text to rewrite line
+# endings, which silently changes the bytes a capture exists to preserve — a
+# checkout then hashes differently from the manifest that recorded it, and the
+# byte-identity claim contradicts itself. Store them verbatim.
+raw/qualification/**/captures/** -text -diff
