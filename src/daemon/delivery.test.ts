@@ -1391,7 +1391,7 @@ describe("reconciling messages we handed over", () => {
 
   test("a probe that says running defers to the silence cap, and a failed probe never rings by itself", async () => {
     const db = new HiveDatabase(join(home, "recon-probe-running.db"));
-    const probes: string[] = [];
+    const probes: AgentRecord[] = [];
     const delivery = new MessageDelivery(
       db,
       new RecordingTmuxSender(),
@@ -1400,7 +1400,7 @@ describe("reconciling messages we handed over", () => {
       undefined,
       {},
       async (recipient) => {
-        probes.push(recipient.tmuxSession);
+        probes.push(recipient);
         throw new Error("ps unavailable");
       },
     );
@@ -1424,6 +1424,7 @@ describe("reconciling messages we handed over", () => {
       // The probe failed; the recipient shows recent life; silence is earned.
       await delivery.reconcileInjected();
       expect(probes.length).toBeGreaterThan(0);
+      expect(probes[0]?.name).toBe("maya");
       expect(unconfirmedAlerts(db)).toHaveLength(0);
     } finally {
       db.close();

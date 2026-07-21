@@ -274,6 +274,19 @@ describe("crash classification", () => {
     expect(h.db.getAgentByName("maya")?.status).toEqual("working");
   });
 
+  test("a legacy session with an unmeasurable provider process is left alone", async () => {
+    const h = harness({ processAlive: async () => null });
+    h.db.insertAgent(agent({ status: "working" }));
+    h.tmux.sessions.add("hive-maya");
+
+    expect(await h.recovery.sweep()).toEqual([{
+      agent: "maya",
+      action: "skipped",
+      reason: "agent process presence is unknown",
+    }]);
+    expect(h.db.getAgentByName("maya")?.status).toEqual("working");
+  });
+
   test("a bound running sessiond agent is inspected through the frozen host", async () => {
     const sessionLocator = {
       schemaVersion: 1 as const,
@@ -1269,16 +1282,33 @@ describe("manual recovery", () => {
     expect(outcome).toMatchObject({ agent: "maya", action: "resumed" });
   });
 
-  test("skips an agent whose session is running", async () => {
-    const h = harness();
+  test("skips an agent whose process is running", async () => {
+    const h = harness({ processAlive: async () => true });
     h.db.insertAgent(agent({ status: "working" }));
     h.tmux.sessions.add("hive-maya");
 
     expect(await h.recovery.recoverAgent("maya")).toEqual({
       agent: "maya",
       action: "skipped",
-      reason: "tmux session is running",
+      reason: "agent process is running",
     });
+  });
+
+  test("cleans a live container whose agent process died before resuming", async () => {
+    let h: Harness;
+    h = harness({
+      processAlive: async () => h.tmux.created.length > 0,
+    });
+    h.signalProofOfLife();
+    h.db.insertAgent(agent({ status: "working", toolSessionId: "sess-1" }));
+    h.tmux.sessions.add("hive-maya");
+
+    expect(await h.recovery.recoverAgent("maya")).toMatchObject({
+      agent: "maya",
+      action: "resumed",
+    });
+    expect(h.tmux.killed).toContain("hive-maya");
+    expect(h.tmux.created).toHaveLength(1);
   });
 
   test("refuses done and write-revoked agents", async () => {

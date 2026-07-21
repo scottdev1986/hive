@@ -5735,6 +5735,34 @@ describe("wake-path self-check (2026-07-21 messaging regression, recommendation 
     }
   });
 
+  test("hive_status never calls a measurably dead legacy vendor working", async () => {
+    const db = new HiveDatabase(join(home, "status-dead-legacy-vendor.db"));
+    const tmux = new FakeDaemonTmux();
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: new StubSpawner(),
+      tmux,
+      resourceRunners: {
+        panePids: async () => [100],
+        ps: async () => "100 1 1 -zsh\n",
+        orphans: null,
+      },
+    });
+    try {
+      db.insertAgent(agent({ status: "working", toolSessionId: "sess-maya" }));
+
+      const status = await fetchAgentStatus(4483, actingAs(daemon, "operator"));
+      expect(status.find((record) => record.name === "maya")).toMatchObject({
+        status: "stuck",
+        failureReason: expect.stringContaining("tmux measured the vendor process absent"),
+      });
+      expect(db.getAgentByName("maya")?.status).toBe("working");
+    } finally {
+      db.close();
+    }
+  });
+
   test("stuck-message triage measures a live sessiond vendor before naming death", async () => {
     const db = new HiveDatabase(join(home, "stuck-live-sessiond-vendor.db"));
     const tmux = new FakeDaemonTmux();

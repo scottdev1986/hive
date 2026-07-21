@@ -1384,12 +1384,12 @@ export class MessageDelivery {
     // An open turn. Before inferring anything from silence, ask the OS: a
     // stopped or vanished process is a measured state, provable in one call,
     // and it rings NOW — not after a timeout dressed up as a diagnosis. A
-    // failed probe reads as running (never alarm on a read we could not
+    // failed probe remains unknown (never alarm on a read we could not
     // make); the silence cap below remains the honest last resort for the one
     // wedge the kernel cannot see, a process alive but internally hung.
     if (agent !== null && this.processState !== undefined) {
       const state = await this.processState(agent)
-        .catch(() => "running" as const);
+        .catch(() => "unknown" as const);
       if (state === "stopped") {
         return `${recipient}'s process is stopped (suspended mid-turn, ps state T) — it cannot hear anything`;
       }

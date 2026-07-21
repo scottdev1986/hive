@@ -178,14 +178,17 @@ import {
 } from "./teardown";
 import {
   assessResources,
+  descendantsOf,
   paneProcessState,
   parseAvailableMemoryMb,
   parseProcessTable,
   parseStateTable,
+  processCommandName,
   runPs,
   runPsState,
   runVmStat,
   type CommandOutput,
+  type PaneProcessState,
   type SessionProcessRoots,
 } from "./resources";
 import type { LifecycleConfig, ResourceLimits } from "../schemas";
@@ -859,31 +862,7 @@ export class HiveDaemon {
           tmux: tmuxSender,
         }),
       {},
-      // The stalled-message triage's OS probe. Sessiond agents are checked
-      // through the host that owns their vendor process; only measured death
-      // can label them gone. Legacy tmux agents use their pane tree.
-      async (agent) => {
-        if (agent.sessionLocator?.hostKind === "sessiond") {
-          const inspection = await this.terminalHost.inspect(
-            requireSessiondAgentLocator(agent),
-          );
-          if (sessiondVendorProcessIsDead(inspection)) return "gone";
-          return inspection.executableVerified ? "running" : "unknown";
-        }
-        const tmuxSession = agent.tmuxSession;
-        let pids: number[];
-        try {
-          pids = await this.panePids(tmuxSession);
-        } catch {
-          const legacy = await this.tmux.inspectLegacyTmuxSession(tmuxSession);
-          if (legacy.presence === "unknown") {
-            throw new Error("SessionHost process presence is unknown");
-          }
-          return legacy.presence === "present" ? "running" : "gone";
-        }
-        if (pids.length === 0) return "gone";
-        return paneProcessState(parseStateTable(await runPsState()), pids);
-      },
+      (agent) => this.agentProcessState(agent),
       undefined,
       // #68/#16 interim: daemon→idle-sessiond-agent input over the neutral
       // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
@@ -1002,6 +981,11 @@ export class HiveDaemon {
       authorizeLaunch: async (identity) =>
         await this.spawner.authorizeLaunch?.(identity) ?? null,
       flushQueued: (agentName) => this.delivery.flushQueued(agentName),
+      processAlive: async (agent) => {
+        if (agent.sessionLocator?.hostKind === "sessiond") return true;
+        const state = await this.agentProcessState(agent);
+        return state === "unknown" ? null : state !== "gone";
+      },
       // A thunk, not a value: a resume launched after the user flips the
       // Agents-menu dial must match the setting the user can see, not the one
       // the daemon booted with.
@@ -1385,6 +1369,47 @@ export class HiveDaemon {
       )?.createEvidence !== undefined;
   }
 
+  /** For legacy tmux, distinguish the provider CLI from its surviving shell
+   * or terminal wrapper. An unreadable process table is unknown, never death. */
+  private async legacyVendorProcessState(
+    agent: AgentRecord,
+  ): Promise<PaneProcessState | "unknown"> {
+    try {
+      const roots = await this.panePids(agent.tmuxSession);
+      if (roots.length === 0) {
+        const session = await this.tmux.inspectLegacyTmuxSession(agent.tmuxSession);
+        return session.presence === "lost" ? "gone" : "unknown";
+      }
+      const commands = parseProcessTable(await this.psSample());
+      if (commands.length === 0) return "unknown";
+      const providerPids = descendantsOf(commands, roots)
+        .filter((sample) => processCommandName(sample.command) === agent.tool)
+        .map((sample) => sample.pid);
+      if (providerPids.length === 0) return "gone";
+      const states = parseStateTable(await runPsState());
+      return states.length === 0 ? "running" : paneProcessState(states, providerPids);
+    } catch {
+      return "unknown";
+    }
+  }
+
+  private async agentProcessState(
+    agent: AgentRecord,
+  ): Promise<PaneProcessState | "unknown"> {
+    if (agent.sessionLocator?.hostKind !== "sessiond") {
+      return this.legacyVendorProcessState(agent);
+    }
+    try {
+      const inspection = await this.terminalHost.inspect(
+        requireSessiondAgentLocator(agent),
+      );
+      if (sessiondVendorProcessIsDead(inspection)) return "gone";
+      return inspection.executableVerified ? "running" : "unknown";
+    } catch {
+      return "unknown";
+    }
+  }
+
   private statusLiveness(
     agent: AgentRecord,
     sessions: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null,
@@ -1405,6 +1430,22 @@ export class HiveDaemon {
       failureReason: inspection === undefined
         ? "sessiond measured the vendor session absent; run hive_recover to resume it"
         : "sessiond measured the vendor process as dead; run hive_recover to resume it",
+    };
+  }
+
+  private async legacyStatusLiveness(agent: AgentRecord): Promise<AgentRecord> {
+    // Before the provider reports its durable session id, a just-spawned tmux
+    // container is not enough evidence to call its vendor process dead.
+    if (agent.status !== "working" || agent.sessionLocator?.hostKind === "sessiond" ||
+      agent.toolSessionId === undefined) {
+      return agent;
+    }
+    if (await this.legacyVendorProcessState(agent) !== "gone") return agent;
+    return {
+      ...agent,
+      status: "stuck",
+      failureReason:
+        "tmux measured the vendor process absent; run hive_recover to resume it",
     };
   }
 
@@ -4094,9 +4135,9 @@ export class HiveDaemon {
       )) {
         sessions = await this.terminalHost.list(hiveInstanceSuffix()).catch(() => null);
       }
-      let agents = storedAgents.map((agent) =>
-        this.statusLiveness(agent, sessions)
-      ).map((agent): AgentRecord => ({
+      let agents = (await Promise.all(storedAgents.map(async (agent) =>
+        await this.legacyStatusLiveness(this.statusLiveness(agent, sessions))
+      ))).map((agent): AgentRecord => ({
         ...agent,
         ...(this.graphify === undefined ? {} : {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,

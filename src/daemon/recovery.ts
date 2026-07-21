@@ -152,6 +152,9 @@ export interface CrashRecoveryDependencies {
    * pane redraw belongs to the relaunched agent or to its wrapper. Defaults to
    * the real `ps`. */
   ps?: () => Promise<string>;
+  /** Provider-process truth for legacy tmux sessions. Null is unmeasurable,
+   * never a guess that a surviving wrapper is an agent. */
+  processAlive?: (agent: AgentRecord) => Promise<boolean | null>;
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -268,7 +271,7 @@ export class CrashRecovery {
     });
   }
 
-  private async sessionPresent(agent: AgentRecord): Promise<boolean> {
+  private async sessionContainerPresent(agent: AgentRecord): Promise<boolean> {
     if (agent.sessionLocator?.hostKind === "sessiond") {
       if (this.deps.terminalHost === undefined) {
         throw new Error("sessiond recovery inspection is not configured");
@@ -296,10 +299,27 @@ export class CrashRecovery {
     return inspection.presence === "present";
   }
 
+  private async sessionPresent(agent: AgentRecord): Promise<boolean> {
+    if (!await this.sessionContainerPresent(agent)) return false;
+    // James's sessiond predicate above is the authoritative process reading.
+    // Legacy tmux needs the separate provider-command measurement below.
+    if (agent.sessionLocator?.hostKind === "sessiond" ||
+      this.deps.processAlive === undefined) {
+      return true;
+    }
+    const alive = await this.deps.processAlive(agent);
+    if (alive === null) {
+      throw new Error(`Agent process presence is unknown for ${agent.name}`);
+    }
+    return alive;
+  }
+
   private runningSessionReason(agent: AgentRecord): string {
     return agent.sessionLocator?.hostKind === "sessiond"
       ? "sessiond host reports the session is running"
-      : "tmux session is running";
+      : this.deps.processAlive === undefined
+      ? "tmux session is running"
+      : "agent process is running";
   }
 
   private async captureVisible(agent: AgentRecord): Promise<string> {
@@ -332,7 +352,22 @@ export class CrashRecovery {
       if (isSpawning && this.deps.db.isAgentNameReserved(agent.name)) {
         continue;
       }
-      if (await this.sessionPresent(agent)) {
+      let sessionPresent: boolean;
+      try {
+        sessionPresent = await this.sessionPresent(agent);
+      } catch (error) {
+        if (!(error instanceof Error) ||
+          !error.message.startsWith("Agent process presence is unknown for ")) {
+          throw error;
+        }
+        outcomes.push({
+          agent: agent.name,
+          action: "skipped",
+          reason: "agent process presence is unknown",
+        });
+        continue;
+      }
+      if (sessionPresent) {
         continue;
       }
       // #66: a deliberate kill must never be classified as a crash. The
@@ -469,6 +504,26 @@ export class CrashRecovery {
         action: "skipped",
         reason: this.runningSessionReason(agent),
       };
+    }
+    // A tmux wrapper can outlive its vendor CLI. Remove the dead container
+    // before launching the recovered agent into the same session name.
+    if (agent.sessionLocator?.hostKind !== "sessiond" &&
+      await this.sessionContainerPresent(agent)) {
+      if (this.deps.stopSession === undefined) {
+        return {
+          agent: agent.name,
+          action: "skipped",
+          reason: "dead agent process remains inside a session that cannot be cleaned",
+        };
+      }
+      const stopped = await this.deps.stopSession(agent);
+      if (stopped.survivors.length > 0) {
+        return {
+          agent: agent.name,
+          action: "skipped",
+          reason: `${stopped.survivors.length} process(es) survived dead-session cleanup`,
+        };
+      }
     }
     if (!options.manual && agent.recoveryAttempts >= MAX_AUTO_RESUME_ATTEMPTS) {
       return this.markDead(
