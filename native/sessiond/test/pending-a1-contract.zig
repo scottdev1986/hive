@@ -355,6 +355,81 @@ test "pending A1/D: resize receipt matches independent TIOCGWINSZ readback" {
     );
 }
 
+// Qualification row D on a real terminal: interleaved input and burst resize
+// must preserve one mutation order with monotonic revisions and an applied
+// readback, and the foreground application must still observe the FINAL
+// geometry. Ordering is read from the host's own sequence, and the final
+// SIGWINCH is read from the child's `stty size` rather than assumed — the host
+// cannot see the notification itself, so the child has to report it.
+test "THV1-REAL-D: burst resize interleaves input and foreground observes final SIGWINCH" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    var host = try pty_host.PtyHost.init(std.testing.allocator);
+    defer host.deinit();
+    const outcome = try host.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            // The trap must survive a burst of SIGWINCH, so the loop body is the
+            // `read` BUILTIN: a trapped signal interrupts a builtin and the trap
+            // runs, whereas a foreground external command (`cat`) makes the
+            // shell defer every trap until that command exits — which reports no
+            // geometry at all. A trapped signal makes `read` return >128, so
+            // continue on an interrupt and stop only on real end-of-input.
+            "trap '/bin/stty size' WINCH; printf 'READY\\n'; while :; do IFS= read -r line; status=$?; " ++
+                "if [ $status -gt 128 ]; then continue; elif [ $status -ne 0 ]; then break; fi; done",
+        },
+        .envp = &[_][]const u8{},
+        // Canonical with echo on purpose: the TERMINAL then echoes each accepted
+        // transaction, so the input evidence below is the terminal's own
+        // readback and does not depend on the shell winning a race with the
+        // resize burst that is deliberately interrupting it.
+        .terminal_profile = .{ .input_mode = .canonical, .echo = true },
+        .geometry = .{ .columns = 90, .rows = 30, .width_px = 900, .height_px = 600 },
+    });
+    switch (outcome) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+
+    var output: std.ArrayList(u8) = .{};
+    defer output.deinit(std.testing.allocator);
+    try collectUntil(&host, &output, "READY");
+    var previous_order = host.operationSequence();
+    for (1..13) |revision| {
+        var input_storage: [32]u8 = undefined;
+        const input = try std.fmt.bufPrint(&input_storage, "input-{d}\n", .{revision});
+        _ = try host.writeAccept(input);
+        try host.writeDrainAll();
+        const input_order = host.operationSequence();
+        try std.testing.expect(input_order > previous_order);
+        const requested: pty_host.Geometry = .{
+            .columns = @intCast(90 + revision),
+            .rows = @intCast(30 + revision),
+            .width_px = @intCast(900 + revision * 10),
+            .height_px = @intCast(600 + revision * 10),
+        };
+        const receipt = try host.resize(requested, @intCast(revision));
+        try std.testing.expect(receipt.ordered_at > input_order);
+        try std.testing.expect(receipt.readback.eql(requested));
+        previous_order = receipt.ordered_at;
+    }
+    // 30 + 12 rows by 90 + 12 columns: the LAST geometry, so seeing it proves
+    // the burst coalesced to a truthful final revision rather than a stale one.
+    try collectUntil(&host, &output, "42 102");
+    // Every interleaved transaction reached the terminal, in order. This is the
+    // terminal's own readback, not a claim about the foreground application
+    // consuming the bytes — the host cannot observe that, so the test does not
+    // assert it any more than the resize receipt has a field for it.
+    var searched: usize = 0;
+    for (1..13) |revision| {
+        var expected_storage: [32]u8 = undefined;
+        const expected = try std.fmt.bufPrint(&expected_storage, "input-{d}", .{revision});
+        const at = std.mem.indexOfPos(u8, output.items, searched, expected) orelse
+            return error.TestUnexpectedResult;
+        searched = at + expected.len;
+    }
+}
 
 test "THV1-REAL-E: XOFF stops and XON resumes real PTY output" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
@@ -415,6 +490,76 @@ test "THV1-REAL-E: XOFF stops and XON resumes real PTY output" {
     try std.testing.expect(resumed);
 }
 
+// Qualification row F on a real terminal: normal AND signaled exit must retain
+// every tail byte, and output closure must order separately from exit and from
+// the authoritative reap. The reap is taken FIRST here on purpose — that is the
+// order that loses the tail if the host frees the master before draining it, so
+// a green result is evidence the tail survives its own reap rather than
+// evidence the test drained early.
+test "THV1-REAL-F: exit and reap precede a complete PTY tail drain" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    for ([_]struct { script: []const u8, tail: []const u8, signal: ?i32 }{
+        .{ .script = "printf tail-normal; exit 7", .tail = "tail-normal", .signal = null },
+        .{ .script = "printf tail-signal; kill -TERM $$", .tail = "tail-signal", .signal = c.SIGTERM },
+    }) |case| {
+        var host = try pty_host.PtyHost.init(std.testing.allocator);
+        defer host.deinit();
+        const outcome = try host.spawn(.{
+            .argv = &[_][]const u8{ "/bin/sh", "-c", case.script },
+            .envp = &[_][]const u8{},
+            .geometry = .{ .columns = 80, .rows = 24 },
+        });
+        switch (outcome) {
+            .running => {},
+            .exec_failed => return error.TestUnexpectedResult,
+        }
+        // Output closure comes FIRST and on its own terms. Draining is also what
+        // lets a child finish writing, so a test that refused to read until
+        // after the reap would deadlock on any tail larger than the terminal
+        // buffer rather than qualify anything.
+        var tail: std.ArrayList(u8) = .{};
+        defer tail.deinit(std.testing.allocator);
+        var closed = false;
+        for (0..3000) |_| {
+            const chunk = host.readAvailable() catch |err| switch (err) {
+                error.Closed => {
+                    closed = true;
+                    break;
+                },
+                else => return err,
+            };
+            try tail.appendSlice(std.testing.allocator, chunk.bytes);
+            if (chunk.bytes.len == 0) std.Thread.sleep(std.time.ns_per_ms);
+        }
+        try std.testing.expect(closed);
+
+        // Exit and the authoritative reap are then observed SEPARATELY from that
+        // closure — three orderings, not one event. The poll is bounded so a
+        // child that never exits fails this row loudly instead of hanging the
+        // whole native suite on an unbounded wait.
+        var exit: pty_host.ExitEvidence = undefined;
+        var reaped = false;
+        for (0..3000) |_| {
+            exit = try host.waitExit(false);
+            if (exit.reaped) {
+                reaped = true;
+                break;
+            }
+            std.Thread.sleep(std.time.ns_per_ms);
+        }
+        try std.testing.expect(reaped);
+        try std.testing.expectEqual(pty_host.ReapAuthority.direct_parent, exit.authority);
+        if (case.signal) |signal| {
+            try std.testing.expectEqual(@as(?i32, signal), exit.term_signal);
+        } else {
+            try std.testing.expectEqual(@as(?u8, 7), exit.exit_code);
+        }
+
+        // Every tail byte survived, and survived its own closure and reap.
+        try std.testing.expectEqualStrings(case.tail, tail.items);
+    }
+}
 
 test "THV1-REAL-K: canonical EOF raw control-D and hangup remain distinct" {
     if (@import("builtin").os.tag != .macos) return error.SkipZigTest;

@@ -7977,6 +7977,10 @@
               "type": "string",
               "const": "active"
             },
+            "renewed": {
+              "type": "boolean",
+              "const": true
+            },
             "lease": {
               "readOnly": true,
               "type": "object",
@@ -8058,6 +8062,7 @@
           },
           "required": [
             "state",
+            "renewed",
             "lease"
           ],
           "additionalProperties": false
@@ -8069,6 +8074,10 @@
             "state": {
               "type": "string",
               "const": "rejected"
+            },
+            "renewed": {
+              "type": "boolean",
+              "const": false
             },
             "reason": {
               "type": "string",
@@ -8091,6 +8100,7 @@
           },
           "required": [
             "state",
+            "renewed",
             "reason",
             "diagnostic"
           ],
@@ -8104,6 +8114,10 @@
               "type": "string",
               "const": "unknown"
             },
+            "renewed": {
+              "type": "boolean",
+              "const": false
+            },
             "diagnostic": {
               "type": "string",
               "minLength": 1
@@ -8111,6 +8125,7 @@
           },
           "required": [
             "state",
+            "renewed",
             "diagnostic"
           ],
           "additionalProperties": false

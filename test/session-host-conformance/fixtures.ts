@@ -409,8 +409,13 @@ const fixtureTerminalHostVisibilityRenewalRequest = {
   session: fixtureTerminalHostSession,
   visibility: fixtureTerminalHostVisibilityRequest,
 };
+// A lease is active only BETWEEN issuedAt and a finite expiresAt, and the
+// visibility extension freezes that neutral duration at 15 seconds — so an
+// active fixture must span a real window, not collapse to a single instant.
+const FIXTURE_LEASE_EXPIRY = "2026-07-16T12:00:15.000Z";
 const fixtureTerminalHostVisibilityRenewalResult = {
   state: "active",
+  renewed: true,
   lease: {
     session: fixtureTerminalHostSession,
     sourceSession: fixtureTerminalHostVisibilityRequest.sourceSession,
@@ -418,7 +423,7 @@ const fixtureTerminalHostVisibilityRenewalResult = {
     inventoryRevision: fixtureTerminalHostVisibilityRequest.inventoryRevision,
     state: "active",
     issuedAt: FIXTURE_TIME,
-    expiresAt: FIXTURE_TIME,
+    expiresAt: FIXTURE_LEASE_EXPIRY,
   },
 };
 const fixtureTerminalHostTerminationRequest = {
@@ -833,12 +838,17 @@ const validCases: readonly WireCorpusCase[] = [
   {
     name: "frozen neutral visibility renewal rejects with one typed reason",
     schema: "terminalHostVisibilityRenewalResult",
-    value: { state: "rejected", reason: "stale-revision", diagnostic: "revision 19 is behind the source" },
+    value: {
+      state: "rejected",
+      renewed: false,
+      reason: "stale-revision",
+      diagnostic: "revision 19 is behind the source",
+    },
   },
   {
     name: "frozen neutral visibility renewal reports incomplete evidence as unknown",
     schema: "terminalHostVisibilityRenewalResult",
-    value: { state: "unknown", diagnostic: "inventory revision unavailable" },
+    value: { state: "unknown", renewed: false, diagnostic: "inventory revision unavailable" },
   },
   {
     name: "frozen neutral termination request",
@@ -1050,7 +1060,22 @@ const invalidCases: readonly WireCorpusCase[] = [
   {
     name: "frozen visibility renewal cannot reject for an untyped reason",
     schema: "terminalHostVisibilityRenewalResult",
-    value: { state: "rejected", reason: "renderer-disconnect", diagnostic: "viewer went away" },
+    value: {
+      state: "rejected",
+      renewed: false,
+      reason: "renderer-disconnect",
+      diagnostic: "viewer went away",
+    },
+  },
+  {
+    name: "frozen visibility rejection cannot claim it renewed the lease",
+    schema: "terminalHostVisibilityRenewalResult",
+    value: {
+      state: "rejected",
+      renewed: true,
+      reason: "lease-expired",
+      diagnostic: "deadline already passed",
+    },
   },
   {
     name: "frozen termination request requires target",

@@ -1952,6 +1952,7 @@
       "schema": "terminalHostVisibilityRenewalResult",
       "value": {
         "state": "active",
+        "renewed": true,
         "lease": {
           "session": {
             "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
@@ -1965,7 +1966,7 @@
           "inventoryRevision": "19",
           "state": "active",
           "issuedAt": "2026-07-16T12:00:00.000Z",
-          "expiresAt": "2026-07-16T12:00:00.000Z"
+          "expiresAt": "2026-07-16T12:00:15.000Z"
         }
       }
     },
@@ -1974,6 +1975,7 @@
       "schema": "terminalHostVisibilityRenewalResult",
       "value": {
         "state": "rejected",
+        "renewed": false,
         "reason": "stale-revision",
         "diagnostic": "revision 19 is behind the source"
       }
@@ -1983,6 +1985,7 @@
       "schema": "terminalHostVisibilityRenewalResult",
       "value": {
         "state": "unknown",
+        "renewed": false,
         "diagnostic": "inventory revision unavailable"
       }
     },
@@ -4031,8 +4034,19 @@
       "schema": "terminalHostVisibilityRenewalResult",
       "value": {
         "state": "rejected",
+        "renewed": false,
         "reason": "renderer-disconnect",
         "diagnostic": "viewer went away"
+      }
+    },
+    {
+      "name": "frozen visibility rejection cannot claim it renewed the lease",
+      "schema": "terminalHostVisibilityRenewalResult",
+      "value": {
+        "state": "rejected",
+        "renewed": true,
+        "reason": "lease-expired",
+        "diagnostic": "deadline already passed"
       }
     },
     {

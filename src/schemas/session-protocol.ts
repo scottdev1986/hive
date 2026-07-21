@@ -940,10 +940,16 @@ export const TerminalHostVisibilityRenewalRequestSchema = z.strictObject({
 export const TerminalHostVisibilityRenewalResultSchema = z.discriminatedUnion("state", [
   z.strictObject({
     state: z.literal("active"),
+    renewed: z.literal(true),
     lease: TerminalHostVisibilityLeaseSchema,
   }).readonly(),
   z.strictObject({
     state: z.literal("rejected"),
+    // §3 names this field: a rejected or unknown renewal HAS `renewed: false`.
+    // Carrying it as a literal rather than leaving it implied in the
+    // discriminator means a consumer that reads the field without switching on
+    // the state still cannot read a rejection as a renewal.
+    renewed: z.literal(false),
     reason: z.enum([
       "invalid-revision",
       "stale-revision",
@@ -957,7 +963,11 @@ export const TerminalHostVisibilityRenewalResultSchema = z.discriminatedUnion("s
     ]),
     diagnostic: z.string().min(1),
   }).readonly(),
-  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+  z.strictObject({
+    state: z.literal("unknown"),
+    renewed: z.literal(false),
+    diagnostic: z.string().min(1),
+  }).readonly(),
 ]);
 
 const EncodedInputBytesSchema = z.string()

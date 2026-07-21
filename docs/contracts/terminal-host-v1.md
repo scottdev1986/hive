@@ -79,23 +79,26 @@ Events carry the facts inspection reports, ordered rather than sampled: lifecycl
 
 This operation set is semantic. Implementations may combine transport messages or use different internal process/terminal primitives while preserving every observable guarantee.
 
-## Freeze qualification A–K
+## Freeze qualification A–K and T
+
+Row letters are unique across the contract family rather than per document: A–K are defined here, L–S in the [visibility extension](terminal-host-visibility-v1.md), and section 11's row continues that shared sequence at T.
 
 | ID | Required observation | Shape status |
 |---|---|---|
 | A | All three standard streams are the same terminal; child is session leader with a valid foreground group; initial profile and four-field window precede the first instruction. | Neutral green |
-| B | Invalid executable, working directory, environment size, and descriptor transfer return typed failures without ghost-running state; Unicode/spaces and a generic non-repository working directory succeed. | Neutral green; real typed discriminator pending A1 |
-| C | Only declared descriptors survive; handle transfer ownership and closure are deterministic. | Neutral green; real transfer/leak discriminator pending A1 |
-| D | Interleaved input and burst resize preserve mutation order, monotonic revisions, applied readback, and final foreground observation. | Neutral green; real receipt discriminator pending A1 |
+| B | Invalid executable, working directory, environment size, and descriptor transfer return typed failures without ghost-running state; Unicode/spaces and a generic non-repository working directory succeed. | Neutral green; real typed discriminator green (THV1-REAL-B) |
+| C | Only declared descriptors survive; handle transfer ownership and closure are deterministic. | Neutral green; real transfer/leak discriminator green |
+| D | Interleaved input and burst resize preserve mutation order, monotonic revisions, applied readback, and final foreground observation. | Neutral green; real receipt discriminator green (THV1-REAL-D) |
 | E | A 100 MiB producer with slow/disconnected viewers and software flow stop/start has bounded memory, byte integrity, and explicit pressure/gap. | Neutral green; real candidate baseline green |
-| F | Normal and signaled exit retain all tail bytes and separately order output closure, exit, and authoritative reap. | Neutral green; real candidate baseline green |
+| F | Normal and signaled exit retain all tail bytes and separately order output closure, exit, and authoritative reap. | Neutral green; real tail/reap discriminator green (THV1-REAL-F) |
 | G | Broker restart reattaches to a durable parent; parent loss reports unavailable authority rather than fabricated exit. | Neutral green; real candidate baseline green |
 | H | Disconnect inside an escape and multibyte encoding resumes once from checkpoint/cursor without byte duplication or loss. | Neutral green; real candidate baseline green |
 | I | Concurrent human and automation writes obey claim fencing, transaction idempotency, and non-interleaving. | Neutral green; real candidate baseline green |
 | J | Immediate process-tree termination either removes an escaped descendant or reports it as a survivor. | Neutral green; real candidate baseline green |
 | K | Canonical end-of-file, the same byte in literal mode, and terminal hangup have distinct results. | Neutral green; real candidate baseline green |
+| T | A subscription resumes from a caller-supplied event position or the current end, delivers every retained event in host order exactly once, bounds retained events by negotiated limits released by acknowledgement, and reports a cursor outside retention as an explicit gap carrying the missing event range and a fresh-inspection requirement. | Neutral green |
 
-Every neutral case has a mutation control: injecting that case's semantic violation makes the corresponding assertion fail. The three pending-A1 real discriminators are expected failures, remain executable and visible, and must turn green before declaring the real-session freeze complete. The ordinary suite reports them as intentional xfails; the separately invoked `pending-a1-contract` native qualification target is intentionally red and includes a live arbitrary-descriptor-leak probe.
+Every neutral case has a mutation control: injecting that case's semantic violation makes the corresponding assertion fail. The real-host discriminators are no longer expected failures — `pending-a1-contract` runs inside the ordinary native suite and is green, and it includes a live arbitrary-descriptor-leak probe. Its rows carry their own mutation controls too: inverting D's final observed geometry or F's retained tail bytes turns exactly those two rows red.
 
 Qualification versions: contract `1.0.0`; neutral fixture `1.0.0`; audited sessiond candidate `82b671a5b14e9489d584f41e0c36c65813923d3e`; Zig `0.15.2`; Bun `1.3.14`; libghostty-vt `1.3.2-dev` at `73534c4680a809398b396c94ac7f12fcccb7963d`.
 
