@@ -29,6 +29,17 @@ import {
   type TerminalHostBindingStore,
 } from "./terminal-host-binding";
 
+/** A sessiond host can outlive the vendor process it launched. A stale
+ * executable identity is therefore death evidence, unlike missing identity
+ * evidence during initial registration. */
+export function sessiondVendorProcessIsDead(
+  inspection: Pick<SessionInspection, "presence" | "diagnosticIds">,
+): boolean {
+  return inspection.presence === "exited" ||
+    inspection.presence === "lost" ||
+    inspection.diagnosticIds.includes("SESSIOND_EXECUTABLE_EVIDENCE_STALE");
+}
+
 /**
  * Keep locator validation here, above the frozen neutral host. The backend
  * never learns agent IDs, Hive instances, generations, or visibility policy.

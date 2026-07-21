@@ -21,8 +21,8 @@ import {
 import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
+  sessiondVendorProcessIsDead,
 } from "./session-host/hive-terminal-host";
-import { sessiondVendorProcessIsDead } from "./session-host/contract";
 import {
   SessiondHost,
   type LandedTerminalHost,

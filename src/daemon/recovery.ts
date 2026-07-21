@@ -51,9 +51,9 @@ import {
 } from "./session-host/tmux-host";
 import {
   requireSessiondAgentLocator,
+  sessiondVendorProcessIsDead,
   type HiveTerminalHostAdapter,
 } from "./session-host/hive-terminal-host";
-import { sessiondVendorProcessIsDead } from "./session-host/contract";
 import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
 
 // Three auto-resumes for one agent means the process is dying on its own,
