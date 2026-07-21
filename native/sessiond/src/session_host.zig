@@ -7598,6 +7598,227 @@ test "INPUT_ORPHAN_DISCARD ends the HumanOrphaned deadlock and automation is hea
     try std.testing.expect(std.mem.indexOf(u8, retried, "\"state\":\"granted\"") != null);
 }
 
+fn a3BytesPayload(
+    allocator: std.mem.Allocator,
+    registration: HostRegistration,
+    claim_token: []const u8,
+    transaction_id: []const u8,
+    idempotency_key: []const u8,
+    body: []const u8,
+) ![]u8 {
+    const encoded = try allocator.alloc(u8, std.base64.standard.Encoder.calcSize(body.len));
+    defer allocator.free(encoded);
+    _ = std.base64.standard.Encoder.encode(encoded, body);
+    return std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .claimToken = claim_token,
+        .transactionId = transaction_id,
+        .idempotencyKey = idempotency_key,
+        .operation = .{ .kind = "bytes", .encoding = "base64", .bytes = encoded },
+    }, .{});
+}
+
+test "A3 live drill: automation never writes inside a human composition" {
+    const human_bytes = [_][]const u8{ "H1", "H2", "H3", "H4" };
+    const composition = "H1H2H3H4";
+    const automation = "AUTOMATION";
+
+    var pty = try pty_host.PtyHost.init(std.testing.allocator);
+    defer pty.deinit();
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    const output_name = "a3-interleaving.bin";
+    const created = try tmp.dir.createFile(output_name, .{});
+    created.close();
+    var path_buf: [std.fs.max_path_bytes]u8 = undefined;
+    const output_path = try tmp.dir.realpath(output_name, &path_buf);
+    switch (try pty.spawn(.{
+        .argv = &[_][]const u8{
+            "/bin/sh",
+            "-c",
+            "exec /bin/cat >> \"$1\"",
+            "hive-a3-drill",
+            output_path,
+        },
+        .geometry = .{ .columns = 80, .rows = 24 },
+    })) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+
+    var sink: PtyQueueSink = .{ .pty = &pty };
+    var encoder: TestIdentityEncoder = .{};
+    var arbiter = input_arbiter.InputArbiter.init(
+        std.testing.allocator,
+        sink.arbiterSink(),
+        encoder.encoder(),
+        encoder.cancelEncoder(),
+    );
+    defer arbiter.deinit();
+    const registration = fixtureRegistration();
+    var core = try HostCore.init(
+        std.testing.allocator,
+        registration,
+        @splat(0x31),
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        1_000,
+    );
+    defer core.deinit();
+    core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
+
+    const human_claim = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-human",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 10_000),
+        .idempotencyKey = "a3-human",
+    }, .{});
+    defer std.testing.allocator.free(human_claim);
+    const human_granted = try core.claimInput(human_claim, "viewer-human", 2_000);
+    defer std.testing.allocator.free(human_granted);
+    try std.testing.expect(std.mem.indexOf(u8, human_granted, "\"state\":\"granted\"") != null);
+    try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
+    const human_token = core.active_claim.?.token;
+
+    // Contend at every transaction boundary: the active human claim denies
+    // automation, and a submit attempted with a forged token is fenced by the
+    // single host write path before it can reach the PTY.
+    for (human_bytes, 0..) |body, index| {
+        var id_storage: [48]u8 = undefined;
+        const id = try std.fmt.bufPrint(&id_storage, "a3-human-{d}", .{index});
+        const human_submit = try a3BytesPayload(
+            std.testing.allocator,
+            registration,
+            human_token,
+            id,
+            id,
+            body,
+        );
+        defer std.testing.allocator.free(human_submit);
+        const human_applied = try core.submitInput(human_submit, "viewer-human", 3_000);
+        defer std.testing.allocator.free(human_applied);
+        try std.testing.expect(
+            std.mem.indexOf(u8, human_applied, "\"stage\":\"written-to-terminal\"") != null,
+        );
+
+        var auto_id_storage: [48]u8 = undefined;
+        const auto_id = try std.fmt.bufPrint(&auto_id_storage, "a3-auto-{d}", .{index});
+        const auto_claim = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .session = .{
+                .key = registration.record.locator.session_id,
+                .incarnation = "1",
+            },
+            .writer = "hive-daemon",
+            .kind = "automation",
+            .leaseMilliseconds = @as(u64, 10_000),
+            .idempotencyKey = auto_id,
+        }, .{});
+        defer std.testing.allocator.free(auto_claim);
+        const auto_denied = try core.claimInput(auto_claim, "hive-daemon", 3_000);
+        defer std.testing.allocator.free(auto_denied);
+        try std.testing.expect(std.mem.indexOf(u8, auto_denied, "\"state\":\"denied\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, auto_denied, human_token) != null);
+
+        const forced_submit = try a3BytesPayload(
+            std.testing.allocator,
+            registration,
+            "forged-automation-claim",
+            auto_id,
+            auto_id,
+            automation,
+        );
+        defer std.testing.allocator.free(forced_submit);
+        const auto_refused = try core.submitInput(forced_submit, "hive-daemon", 3_000);
+        defer std.testing.allocator.free(auto_refused);
+        try std.testing.expect(std.mem.indexOf(u8, auto_refused, "\"stage\":\"rejected\"") != null);
+        try std.testing.expect(std.mem.indexOf(u8, auto_refused, "input claim fenced") != null);
+    }
+
+    for (0..500) |_| {
+        const file = try tmp.dir.openFile(output_name, .{});
+        const size = try file.getEndPos();
+        file.close();
+        if (size >= composition.len) break;
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    std.Thread.sleep(150 * std.time.ns_per_ms);
+    const during_file = try tmp.dir.openFile(output_name, .{});
+    defer during_file.close();
+    const during = try during_file.readToEndAlloc(std.testing.allocator, 4096);
+    defer std.testing.allocator.free(during);
+    try std.testing.expectEqualStrings(composition, during);
+
+    const release = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .claimToken = human_token,
+        .kind = "submit",
+    }, .{});
+    defer std.testing.allocator.free(release);
+    const released = try core.releaseInput(release, "viewer-human", 4_000);
+    defer std.testing.allocator.free(released);
+    try std.testing.expectEqual(input_arbiter.State.free, arbiter.currentState());
+
+    // Positive control: the same automation path reaches the child immediately
+    // after release, so its absence above is the human claim, not a dead path.
+    const auto_claim = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "hive-daemon",
+        .kind = "automation",
+        .leaseMilliseconds = @as(u64, 10_000),
+        .idempotencyKey = "a3-auto-after-release",
+    }, .{});
+    defer std.testing.allocator.free(auto_claim);
+    const auto_granted = try core.claimInput(auto_claim, "hive-daemon", 5_000);
+    defer std.testing.allocator.free(auto_granted);
+    try std.testing.expect(std.mem.indexOf(u8, auto_granted, "\"state\":\"granted\"") != null);
+    const auto_submit = try a3BytesPayload(
+        std.testing.allocator,
+        registration,
+        core.active_claim.?.token,
+        "a3-auto-submit",
+        "a3-auto-submit",
+        automation,
+    );
+    defer std.testing.allocator.free(auto_submit);
+    const auto_applied = try core.submitInput(auto_submit, "hive-daemon", 5_000);
+    defer std.testing.allocator.free(auto_applied);
+    try std.testing.expect(
+        std.mem.indexOf(u8, auto_applied, "\"stage\":\"written-to-terminal\"") != null,
+    );
+
+    for (0..500) |_| {
+        const file = try tmp.dir.openFile(output_name, .{});
+        const size = try file.getEndPos();
+        file.close();
+        if (size >= composition.len + automation.len) break;
+        std.Thread.sleep(2 * std.time.ns_per_ms);
+    }
+    std.Thread.sleep(150 * std.time.ns_per_ms);
+    const final_file = try tmp.dir.openFile(output_name, .{});
+    defer final_file.close();
+    const recorded = try final_file.readToEndAlloc(std.testing.allocator, 4096);
+    defer std.testing.allocator.free(recorded);
+    try std.testing.expectEqualStrings(composition ++ automation, recorded);
+}
+
 test "INPUT_ORPHAN_DISCARD rejects a locator that is not this host's" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
