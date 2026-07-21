@@ -400,6 +400,27 @@ const fixtureTerminalHostSubscribeGap = {
   missing: { start: "12", endExclusive: "37" },
   freshInspection: "required",
 };
+const fixtureTerminalHostVisibilityRequest = {
+  sourceSession: "workspace-session-7",
+  sourceProcess: { processId: 5150, startToken: "5150:998877" },
+  inventoryRevision: "19",
+};
+const fixtureTerminalHostVisibilityRenewalRequest = {
+  session: fixtureTerminalHostSession,
+  visibility: fixtureTerminalHostVisibilityRequest,
+};
+const fixtureTerminalHostVisibilityRenewalResult = {
+  state: "active",
+  lease: {
+    session: fixtureTerminalHostSession,
+    sourceSession: fixtureTerminalHostVisibilityRequest.sourceSession,
+    sourceProcess: fixtureTerminalHostVisibilityRequest.sourceProcess,
+    inventoryRevision: fixtureTerminalHostVisibilityRequest.inventoryRevision,
+    state: "active",
+    issuedAt: FIXTURE_TIME,
+    expiresAt: FIXTURE_TIME,
+  },
+};
 const fixtureTerminalHostTerminationRequest = {
   session: fixtureTerminalHostSession,
   mode: "immediate",
@@ -800,6 +821,26 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureTerminalHostSubscribeGap,
   },
   {
+    name: "frozen neutral visibility renewal repeats the complete request",
+    schema: "terminalHostVisibilityRenewalRequest",
+    value: fixtureTerminalHostVisibilityRenewalRequest,
+  },
+  {
+    name: "frozen neutral visibility renewal returns a new active bounded lease",
+    schema: "terminalHostVisibilityRenewalResult",
+    value: fixtureTerminalHostVisibilityRenewalResult,
+  },
+  {
+    name: "frozen neutral visibility renewal rejects with one typed reason",
+    schema: "terminalHostVisibilityRenewalResult",
+    value: { state: "rejected", reason: "stale-revision", diagnostic: "revision 19 is behind the source" },
+  },
+  {
+    name: "frozen neutral visibility renewal reports incomplete evidence as unknown",
+    schema: "terminalHostVisibilityRenewalResult",
+    value: { state: "unknown", diagnostic: "inventory revision unavailable" },
+  },
+  {
     name: "frozen neutral termination request",
     schema: "terminalHostTerminationRequest",
     value: fixtureTerminalHostTerminationRequest,
@@ -997,6 +1038,19 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen subscribe gap cannot drop its fresh-inspection requirement",
     schema: "terminalHostSubscribeResult",
     value: { ...fixtureTerminalHostSubscribeGap, freshInspection: "waived" },
+  },
+  {
+    name: "frozen visibility renewal rejects a nonpositive inventory revision",
+    schema: "terminalHostVisibilityRenewalRequest",
+    value: {
+      ...fixtureTerminalHostVisibilityRenewalRequest,
+      visibility: { ...fixtureTerminalHostVisibilityRequest, inventoryRevision: "0" },
+    },
+  },
+  {
+    name: "frozen visibility renewal cannot reject for an untyped reason",
+    schema: "terminalHostVisibilityRenewalResult",
+    value: { state: "rejected", reason: "renderer-disconnect", diagnostic: "viewer went away" },
   },
   {
     name: "frozen termination request requires target",

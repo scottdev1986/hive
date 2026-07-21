@@ -1930,6 +1930,63 @@
       }
     },
     {
+      "name": "frozen neutral visibility renewal repeats the complete request",
+      "schema": "terminalHostVisibilityRenewalRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "visibility": {
+          "sourceSession": "workspace-session-7",
+          "sourceProcess": {
+            "processId": 5150,
+            "startToken": "5150:998877"
+          },
+          "inventoryRevision": "19"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral visibility renewal returns a new active bounded lease",
+      "schema": "terminalHostVisibilityRenewalResult",
+      "value": {
+        "state": "active",
+        "lease": {
+          "session": {
+            "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+            "incarnation": "3"
+          },
+          "sourceSession": "workspace-session-7",
+          "sourceProcess": {
+            "processId": 5150,
+            "startToken": "5150:998877"
+          },
+          "inventoryRevision": "19",
+          "state": "active",
+          "issuedAt": "2026-07-16T12:00:00.000Z",
+          "expiresAt": "2026-07-16T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral visibility renewal rejects with one typed reason",
+      "schema": "terminalHostVisibilityRenewalResult",
+      "value": {
+        "state": "rejected",
+        "reason": "stale-revision",
+        "diagnostic": "revision 19 is behind the source"
+      }
+    },
+    {
+      "name": "frozen neutral visibility renewal reports incomplete evidence as unknown",
+      "schema": "terminalHostVisibilityRenewalResult",
+      "value": {
+        "state": "unknown",
+        "diagnostic": "inventory revision unavailable"
+      }
+    },
+    {
       "name": "frozen neutral termination request",
       "schema": "terminalHostTerminationRequest",
       "value": {
@@ -3949,6 +4006,33 @@
           "endExclusive": "37"
         },
         "freshInspection": "waived"
+      }
+    },
+    {
+      "name": "frozen visibility renewal rejects a nonpositive inventory revision",
+      "schema": "terminalHostVisibilityRenewalRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "visibility": {
+          "sourceSession": "workspace-session-7",
+          "sourceProcess": {
+            "processId": 5150,
+            "startToken": "5150:998877"
+          },
+          "inventoryRevision": "0"
+        }
+      }
+    },
+    {
+      "name": "frozen visibility renewal cannot reject for an untyped reason",
+      "schema": "terminalHostVisibilityRenewalResult",
+      "value": {
+        "state": "rejected",
+        "reason": "renderer-disconnect",
+        "diagnostic": "viewer went away"
       }
     },
     {

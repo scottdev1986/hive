@@ -892,6 +892,73 @@ export const TerminalHostSubscribeResultSchema = z.discriminatedUnion("state", [
   }).readonly(),
   z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
 ]);
+/** An inventory revision is strictly positive; zero and any leading zero are
+ * noncanonical and fail before the guarded operation runs. Same canonical
+ * pattern the status spine uses, so the native validator rejects both. */
+const PositiveDecimalUint64Schema = z.string()
+  .regex(/^(?:[1-9][0-9]{0,19})$/)
+  .refine(
+    (value) => BigInt(value) <= 18_446_744_073_709_551_615n,
+    "must fit in an unsigned 64-bit integer",
+  ).meta({ format: "hive-uint64-decimal" });
+/** Visibility extension §Boundary. The complete neutral evidence a source
+ * offers: one source-session identity, its EXACT live process identity, and the
+ * current positive inventory revision. A PID by itself is never identity, so
+ * the process carries the operating-system-derived start token that makes PID
+ * reuse detectable. Possession of a socket, renderer traffic, a heartbeat, or a
+ * saved snapshot is not evidence, and none of them has a field here. */
+export const TerminalHostVisibilityRequestSchema = z.strictObject({
+  sourceSession: z.string().min(1),
+  sourceProcess: TerminalHostProcessIdentitySchema,
+  inventoryRevision: PositiveDecimalUint64Schema,
+}).readonly();
+/** Visibility extension §Normative vocabulary. A lease binds the host-issued
+ * exact session reference, the ACCEPTED source identity, and the ACCEPTED
+ * revision, and is active only between `issuedAt` and a finite `expiresAt`. */
+export const TerminalHostVisibilityLeaseSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  sourceSession: z.string().min(1),
+  sourceProcess: TerminalHostProcessIdentitySchema,
+  inventoryRevision: PositiveDecimalUint64Schema,
+  state: z.literal("active"),
+  issuedAt: Rfc3339UtcMillisecondsSchema,
+  expiresAt: Rfc3339UtcMillisecondsSchema,
+}).readonly();
+/** Visibility extension §3 renewal request. It names the exact session
+ * reference and repeats the COMPLETE visibility request — renewal re-proves
+ * current representation rather than trusting the lease it already holds. */
+export const TerminalHostVisibilityRenewalRequestSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  visibility: TerminalHostVisibilityRequestSchema,
+}).readonly();
+/** Visibility extension §3/§5 renewal outcome. Success returns a NEW active
+ * lease with a finite expiry. A rejection carries exactly one typed reason from
+ * the closed §5 list and no lease: it does not extend the deadline, and — the
+ * expired case aside — it never pretends the prior lease or process vanished,
+ * because the existing bounded deadline stays authoritative. Partial or
+ * unavailable evidence is `unknown`, never absence, rejection, or success. */
+export const TerminalHostVisibilityRenewalResultSchema = z.discriminatedUnion("state", [
+  z.strictObject({
+    state: z.literal("active"),
+    lease: TerminalHostVisibilityLeaseSchema,
+  }).readonly(),
+  z.strictObject({
+    state: z.literal("rejected"),
+    reason: z.enum([
+      "invalid-revision",
+      "stale-revision",
+      "unverified-revision",
+      "source-identity-mismatch",
+      "source-not-live",
+      "session-not-represented",
+      "duplicate-session-owner",
+      "session-generation-mismatch",
+      "lease-expired",
+    ]),
+    diagnostic: z.string().min(1),
+  }).readonly(),
+  z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
+]);
 
 const EncodedInputBytesSchema = z.string()
   .max(Math.ceil(TERMINAL_LIMITS.inputTransactionBytes / 3) * 4)
@@ -1397,6 +1464,8 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostAttachResult: TerminalHostAttachResultSchema,
   terminalHostSubscribeRequest: TerminalHostSubscribeRequestSchema,
   terminalHostSubscribeResult: TerminalHostSubscribeResultSchema,
+  terminalHostVisibilityRenewalRequest: TerminalHostVisibilityRenewalRequestSchema,
+  terminalHostVisibilityRenewalResult: TerminalHostVisibilityRenewalResultSchema,
   sessionLocator: SessionLocatorSchema,
   terminalGeometry: TerminalGeometrySchema,
   sessionSpec: SessionSpecSchema,
