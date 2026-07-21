@@ -633,6 +633,11 @@ async function main(): Promise<void> {
   client = new Client({ name: "b25-production-pane-proof", version: "1" });
   await client.connect(transport);
   log(command([stagedHive, "autonomy", "dangerous"], project, env));
+  const autonomyReadback = command([stagedHive, "autonomy"], project, env);
+  if (!autonomyReadback.startsWith("dangerous — ")) {
+    throw new Error(`autonomy readback is not dangerous: ${autonomyReadback}`);
+  }
+  log(`GREEN autonomy readback: ${autonomyReadback}`);
 
   instanceId = hiveInstanceSuffix(home);
   const workspaceProcess = Bun.spawn([
