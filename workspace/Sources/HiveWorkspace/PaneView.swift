@@ -29,6 +29,13 @@ final class PaneView: NSView {
     /// it. nil for tmux panes.
     private(set) var sessiondTerminal: SessiondPaneTerminal?
 
+    /// The terminal's own failure, held apart from the feed's header text.
+    /// `update(state:)` rewrites detailLabel and re-hides failureBadge on every
+    /// feed tick, so a failure that is not re-applied there is visible for one
+    /// tick and then gone — leaving a pane that reads healthy while nothing is
+    /// attached. Terminal once set: §26 give-up never un-gives-up.
+    private(set) var terminalFailure: (detail: String, badge: String, evidence: String)?
+
     /// Installs the sessiond renderer over the content area. The tmux content
     /// view must not have been scheduled; close/kill authority is untouched
     /// (the renderer is a disposable viewer, §26).
@@ -43,18 +50,17 @@ final class PaneView: NSView {
             // surface a visible failure on the pane instead of a silently
             // frozen frame (fires on the main thread from the recovery timer).
             terminal.onFailure = { [weak self] evidence in
-                guard let self else { return }
-                self.failureBadge.isHidden = false
-                self.failureBadge.toolTip = "Terminal renderer disconnected — \(evidence)"
-                self.detailLabel.stringValue = "renderer disconnected"
-                self.detailLabel.toolTip = evidence
+                self?.showTerminalFailure(
+                    detail: "renderer disconnected",
+                    badge: "Terminal renderer disconnected",
+                    evidence: evidence)
             }
             terminalView.onInputSubmissionStateChange = { [weak self] state in
-                guard let self, let evidence = state.failureEvidence else { return }
-                self.failureBadge.isHidden = false
-                self.failureBadge.toolTip = "Terminal input refused — \(evidence)"
-                self.detailLabel.stringValue = "input refused"
-                self.detailLabel.toolTip = evidence
+                guard let evidence = state.failureEvidence else { return }
+                self?.showTerminalFailure(
+                    detail: "input refused",
+                    badge: "Terminal input refused",
+                    evidence: evidence)
             }
             terminal.startWhenGeometryReady()
         } catch {
@@ -248,6 +254,23 @@ final class PaneView: NSView {
 
     // MARK: State rendering
 
+    /// Records a terminal failure and shows it. Main-thread only (both callers
+    /// fire from the main queue). Module-internal so the durability guard can
+    /// drive it without a live GPU surface.
+    func showTerminalFailure(detail: String, badge: String, evidence: String) {
+        terminalFailure = (detail, badge, evidence)
+        applyTerminalFailure()
+    }
+
+    /// Re-asserts the recorded failure over whatever the feed just wrote.
+    private func applyTerminalFailure() {
+        guard let terminalFailure else { return }
+        failureBadge.isHidden = false
+        failureBadge.toolTip = "\(terminalFailure.badge) — \(terminalFailure.evidence)"
+        detailLabel.stringValue = terminalFailure.detail
+        detailLabel.toolTip = terminalFailure.evidence
+    }
+
     func update(state: PaneState) {
         titleLabel.stringValue = state.title
         titleLabel.toolTip = state.title
@@ -270,6 +293,7 @@ final class PaneView: NSView {
         } else {
             failureBadge.isHidden = true
         }
+        applyTerminalFailure()
 
         let wasWaiting = currentStatus.isWaiting
         currentStatus = state.status

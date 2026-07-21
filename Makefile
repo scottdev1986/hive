@@ -57,8 +57,10 @@ LOCK := $(ROOT)/native/toolchain-lock.json
 # Shared per-user native cache (#46): the zig caches and the
 # lock-keyed Ghostty artifacts live OUTSIDE the checkout so every worktree
 # shares compiled deps naturally. Correctness comes from content keys, never
-# from the path: artifacts are keyed by ghostty commit + zig version + the lock
-# digest, and the zig caches are content-addressed and lock-protected by zig
+# from the path: an artifact DIRECTORY is keyed by ghostty commit + zig version
+# and the lock digest names a stamp INSIDE it (so a same-key artifact from
+# other locked inputs is a real possibility the heal below must catch), and the
+# zig caches are content-addressed and lock-protected by zig
 # itself. Only per-checkout build products (sessiond ReleaseFast staging)
 # stay under $(ROOT)/.cache.
 NATIVE_CACHE ?= $(HOME)/.cache/hive/native
@@ -97,6 +99,15 @@ GHOSTTY_ARTIFACT_INFO := $(GHOSTTY_ARTIFACT)/GhosttyKit.xcframework/Info.plist
 # WITHOUT a lock bump is caught loudly by the always-run vendor-verify below.
 LOCK_SHA := $(shell /usr/bin/shasum -a 256 $(LOCK) | cut -c1-16)
 GHOSTTY_ARTIFACT_STAMP := $(GHOSTTY_ARTIFACT)/.hive-lock-$(LOCK_SHA).stamp
+# The artifact key omits every locked input except commit+zig, so a cache
+# poisoned before the publish check existed (a stale artifact wearing a current
+# lock stamp) would skip rebuilding forever. Drop that stamp while make is
+# still PARSING: a prerequisite's recipe runs too late to affect a target make
+# has already stat'd, so the same check as an order-only prerequisite left the
+# poisoned artifact staged and make exited 0 (see the script's header).
+GHOSTTY_ARTIFACT_HEAL := $(shell "$(ROOT)/scripts/ghostty-artifact-heal.sh" \
+  "$(GHOSTTY_ARTIFACT)" "$(LOCK)" "$(GHOSTTY_ARTIFACT_STAMP)")
+$(if $(GHOSTTY_ARTIFACT_HEAL),$(info make: $(GHOSTTY_ARTIFACT_HEAL)))
 GHOSTTYKIT := $(ROOT)/workspace/Vendor/GhosttyKit.xcframework
 GHOSTTYKIT_INFO := $(GHOSTTYKIT)/Info.plist
 # Deliberately NOT the name SwiftPM emits. A debug build carries its file name
@@ -237,23 +248,11 @@ vendor-verify:
 
 ghostty ghosttykit: vendor-verify $(GHOSTTYKIT_INFO)
 
-# The artifact key omits every locked input except commit+zig, so a cache
-# poisoned before the publish check existed (stale artifact certified by a
-# current lock stamp — 689bc0a0) would skip rebuilding forever. This always-
-# runs before the stamp rule and drops the stamp when the cached manifest no
-# longer records the lock's source identity, forcing rebuild + republish.
-.PHONY: ghostty-artifact-heal
-ghostty-artifact-heal:
-	@if [ -f "$(GHOSTTY_ARTIFACT)/artifact-manifest.json" ] && \
-	  ! "$(ROOT)/scripts/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)"; then \
-	  echo "make: cached GhosttyKit artifact does not match the toolchain lock; forcing rebuild"; \
-	  /bin/rm -f "$(GHOSTTY_ARTIFACT_STAMP)"; \
-	fi
-
 # No mtime prerequisites: the stamp name is the content key (see LOCK_SHA
 # above), so a fresh worktree reuses the shared artifact instead of spending
-# 25-40 minutes rebuilding it because its checkout mtimes are new (#46).
-$(GHOSTTY_ARTIFACT_STAMP): | toolchain ghostty-artifact-heal
+# 25-40 minutes rebuilding it because its checkout mtimes are new (#46). The
+# stale-incumbent heal runs at parse time (GHOSTTY_ARTIFACT_HEAL above).
+$(GHOSTTY_ARTIFACT_STAMP): | toolchain
 	@echo "building lock-pinned GhosttyKit"
 	@"$(ROOT)/scripts/build-ghosttykit.sh"
 	@test -f "$(GHOSTTY_ARTIFACT_INFO)" || { echo "make: GhosttyKit build produced no artifact; rerun 'make ghostty'" >&2; exit 1; }
@@ -261,7 +260,15 @@ $(GHOSTTY_ARTIFACT_STAMP): | toolchain ghostty-artifact-heal
 	@test -f "$(GHOSTTY_ARTIFACT)/checkpoint-fixtures/$(UNAME_M)/corpus.hvg6" || { echo "make: GhosttyKit checkpoint corpus is missing; rerun 'make ghostty'" >&2; exit 1; }
 	@touch "$@"
 
+# sessiond compiles the engine from vendor/ghostty (native/sessiond/build.zig
+# takes it as a zig dependency) while the Workspace app links THIS staged
+# archive, and the two are compared at runtime by the M3 engine fence. Nothing
+# structural makes them equal: only that vendor-verify proves the tree is the
+# lock's, and this check proves the artifact is the lock's too. Without it a
+# stale artifact stages silently and every pane attach dies as
+# "renderer disconnected" with the status feed still green.
 $(GHOSTTYKIT_INFO): $(GHOSTTY_ARTIFACT_STAMP)
+	@"$(ROOT)/scripts/ghostty-artifact-lock-check.sh" "$(GHOSTTY_ARTIFACT)" "$(LOCK)" || { echo "make: cached GhosttyKit artifact does not record the toolchain lock's ghostty source identity; refusing to stage it (rerun 'make ghostty')" >&2; exit 1; }
 	@echo "staging lock-pinned GhosttyKit for SwiftPM"
 	@/bin/rm -rf "$(GHOSTTYKIT)" "$(ROOT)/workspace/Vendor/checkpoint-fixtures"
 	@mkdir -p "$(ROOT)/workspace/Vendor"

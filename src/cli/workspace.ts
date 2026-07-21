@@ -26,6 +26,7 @@
  * They cannot skew.
  */
 import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { spawn } from "node:child_process";
 import {
   checkForUpdate,
@@ -106,9 +107,24 @@ export function workspaceOpenArguments(
     ...(temporaryDirectory === undefined
       ? []
       : ["--env", `TMPDIR=${temporaryDirectory}`]),
+    // `open` wires the app's stderr to /dev/null unless told otherwise, and
+    // the app's NSLog diagnostics are the ONLY record of why a pane's renderer
+    // gave up — every attach failure, every recovery tick, and the bounded
+    // give-up itself are written there and were being discarded. Keyed to the
+    // instance home already in `args`, so a Dock launch with no instance keeps
+    // the default.
+    ...(instanceHome(args) === undefined
+      ? []
+      : ["--stderr", join(instanceHome(args) as string, "workspace.log")]),
     "--args",
     ...args,
   ];
+}
+
+/** The `--instance-home` value in a launch argument list, when there is one. */
+function instanceHome(args: readonly string[]): string | undefined {
+  const index = args.indexOf("--instance-home");
+  return index === -1 ? undefined : args[index + 1];
 }
 
 const openApp = async (

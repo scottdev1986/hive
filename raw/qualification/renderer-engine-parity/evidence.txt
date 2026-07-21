@@ -1,0 +1,60 @@
+Workspace pane "renderer disconnected" — engine-build-id parity
+================================================================
+Recorded 2026-07-21 by david against the live dev instance
+HIVE_HOME=/tmp/hv-a27e3d322a, daemon port 63544, live agent maya
+(d3bb109d-1030-411c-b890-86d6eb964f8b, sessiond-hosted, idle).
+
+WHAT WAS MEASURED (not inferred)
+--------------------------------
+Each engine build id was read by calling hive_ghostty_engine_build_id_v1()
+IN the process itself, via lldb. The id is computed at runtime from the
+engine's own source identity, so it cannot be read out of the binary with
+`strings`.
+
+  installed HiveWorkspace.app pid 36953   0d9070c47bab025ff394278906697ab5728fcc66668503f96e12bf0c62f0f300
+  hive-sessiond              pid 39929    9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b
+  maya sessionLocator.engineBuildId       9b78f469...  (matches sessiond)
+
+Every viewer attach therefore failed AttachReplayClient's M3 engine fence
+after a successful grant, exhausted §26 bounded recovery, and surfaced as
+"renderer disconnected".
+
+CONTROL: the divergence is tree-state, not target shape
+-------------------------------------------------------
+The engine-build-id probe linked against BOTH halves of the SAME cached
+artifact — GhosttyKit.xcframework (what the Workspace app links) and
+lib-vt (the shape sessiond compiles) — reports one id:
+
+  cached GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a   0d9070c4...
+  cached lib-vt/arm64/libghostty-vt.a                                      0d9070c4...
+
+So the two consumers agree whenever they are built from the same tree. They
+diverged because sessiond compiles vendor/ghostty from source at build time
+(native/sessiond/build.zig takes ghostty as a zig dependency) while the app
+links the SHARED CACHED xcframework, whose key ghostty-<commit>-zig-<version>
+omits the patch series. 689bc0a0 regenerated the patches without moving the
+commit, so the key collided:
+
+  toolchain lock       patchedTree 130bc9e7  patchSeries a7dd844d
+  cached artifact      patchedTree d92dc8fe  patchSeries ddeaf792
+
+AFTER THE REBUILD
+-----------------
+  freshly built GhosttyKit.xcframework (arm64)   9b78f469...   == sessiond
+  rebuilt Workspace, in-process                  9b78f469...   == sessiond
+
+SCREENSHOTS (the renderer's own IOSurface, read from the layer's contents)
+--------------------------------------------------------------------------
+maya-pane-stale-engine-0d9070c4.png
+    maya's pane in the installed app with the mismatched engine: a blank
+    themed terminal. The pane never attached at all — no `hive
+    workspace-attach` subprocess, no connection to
+    $HIVE_HOME/runtime/sessiond/hosts/ses_.../host.sock (lsof), while the
+    header read "claude · claude-opus-4-8 · idle · ctx 4%" with the failure
+    badge hidden.
+
+maya-pane-matched-engine-9b78f469.png
+    the same pane, same live session, rendered by a Workspace built against
+    the matching engine: maya's real Claude TUI — the queen message she
+    received, her reply, the prompt caret, and her status line
+    "maya · 5h 9% · 7d 68% / bypass permissions on".

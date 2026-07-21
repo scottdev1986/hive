@@ -46,6 +46,25 @@ describe("hive opens the installed release Workspace", () => {
     ]);
   });
 
+  test("an instance launch keeps the app's stderr instead of discarding it", () => {
+    // `open` sends the app's stderr to /dev/null by default, and the app's
+    // NSLog output is the only record of a pane renderer's attach failures and
+    // its bounded give-up. Losing it made "renderer disconnected" undiagnosable
+    // from the machine it happened on.
+    expect(workspaceOpenArguments(
+      "/Applications/HiveWorkspace.app",
+      ["--project", "/repo", "--instance-home", "/tmp/hv-abc123"],
+      "/usr/bin",
+      "/var/folders/user/T/",
+    )).toEqual([
+      "-n", "-a", "/Applications/HiveWorkspace.app",
+      "--env", "PATH=/usr/bin",
+      "--env", "TMPDIR=/var/folders/user/T/",
+      "--stderr", "/tmp/hv-abc123/workspace.log",
+      "--args", "--project", "/repo", "--instance-home", "/tmp/hv-abc123",
+    ]);
+  });
+
   test("resolves the app through the active version symlink", () => {
     install("0.0.7");
     expect(resolveWorkspaceApp(root)).toEqual(join(root, "current", "HiveWorkspace.app"));
