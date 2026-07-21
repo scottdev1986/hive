@@ -144,6 +144,13 @@ pub const RealVtEngine = struct {
     effects: std.ArrayList(u8) = .{},
     effect_failed: bool = false,
     digest_value: [32]u8 = @splat(0),
+    /// PTY output has landed since `digest_value` was measured. The digest is a
+    /// full checkpoint export, so measuring it per write made sustained output
+    /// cost O(terminal state) per chunk; only `digestCb` actually reads it.
+    digest_dirty: bool = false,
+    /// Checkpoint exports performed by this engine, so the "not once per
+    /// written chunk" bound above is assertable rather than merely intended.
+    bridge_exports: usize = 0,
     last_bridge_address: usize = 0,
     last_copy_address: usize = 0,
     /// Live grid + cell pixel geometry, updated by resize; drives XTWINOPS
@@ -290,7 +297,7 @@ pub const RealVtEngine = struct {
         self.effect_failed = false;
         ghostty_c.ghostty_terminal_vt_write(self.terminal, bytes.ptr, bytes.len);
         if (self.effect_failed) return error.PtyEffectFailed;
-        try self.updateDigest();
+        self.digest_dirty = true;
     }
 
     fn exportCb(
@@ -318,6 +325,17 @@ pub const RealVtEngine = struct {
 
     fn digestCb(context: *anyopaque) [32]u8 {
         const self: *RealVtEngine = @ptrCast(@alignCast(context));
+        if (!self.digest_dirty) return self.digest_value;
+        self.updateDigest() catch {
+            // §23 forbids claiming a clean restore from state that was never
+            // verified, so an unmeasurable digest must never compare equal to
+            // another engine's. The live and the fresh verify engine are alive
+            // at the same moment, so their addresses cannot collide.
+            self.digest_value = @splat(0);
+            std.mem.writeInt(usize, self.digest_value[0..@sizeOf(usize)], @intFromPtr(self), .little);
+            return self.digest_value;
+        };
+        self.digest_dirty = false;
         return self.digest_value;
     }
 
@@ -458,6 +476,7 @@ pub const RealVtEngine = struct {
     fn exportBridge(self: *RealVtEngine) !BridgeBytes {
         var payload: ?[*]u8 = null;
         var length: usize = 0;
+        self.bridge_exports += 1;
         if (bridge_c.hive_ghostty_terminal_checkpoint_export_v1(
             @ptrCast(self.terminal),
             &bridgeAllocate,
@@ -6847,6 +6866,315 @@ test "null-sink VT effects retention fails closed at the journal ceiling" {
     RealVtEngine.writePtyCallback(audit.terminal, audit, reply.ptr, reply.len);
     try std.testing.expect(audit.effect_failed);
     try std.testing.expectEqual(terminal_state.journal_max_bytes, audit.effects.items.len);
+}
+
+// The engine digest is a full checkpoint export of the whole terminal. Taking
+// it on every write made each output chunk cost O(terminal state), which is
+// what made a sustained-output run livelock; only tryCheckpoint reads it.
+test "sustained output does not export a checkpoint per written chunk" {
+    const real = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    const engine = real.engine();
+    defer engine.deinit();
+
+    const baseline = real.bridge_exports;
+    var index: usize = 0;
+    while (index < 16) : (index += 1) try engine.write("sustained output ");
+    try std.testing.expectEqual(baseline, real.bridge_exports);
+
+    // Deferring the measurement must not stale it: the first read pays for one
+    // export, a repeat read pays for none, and a later write invalidates it.
+    const measured = engine.digest();
+    try std.testing.expectEqual(baseline + 1, real.bridge_exports);
+    try std.testing.expectEqualSlices(u8, &measured, &engine.digest());
+    try std.testing.expectEqual(baseline + 1, real.bridge_exports);
+
+    try engine.write("and more output ");
+    const after = engine.digest();
+    try std.testing.expectEqual(baseline + 2, real.bridge_exports);
+    try std.testing.expect(!std.mem.eql(u8, &measured, &after));
+}
+
+// Freeze case E producer size (`docs/contracts/terminal-host-v1.md`). An exact
+/// multiple of `freeze_e_block_bytes`, so the expected byte at absolute offset
+/// `o` is `block[o % freeze_e_block_bytes]`.
+const freeze_e_target_bytes: usize = 100 * 1024 * 1024;
+const freeze_e_block_bytes: usize = 64 * 1024;
+/// Bytes read before the software stop is issued: far enough into the file that
+/// the producer provably still has work left, cheap enough to reach quickly.
+const freeze_e_stop_after_bytes: u64 = 8 * 1024 * 1024;
+
+/// Minimal VT engine for freeze case E. libghostty-vt verifies page integrity
+/// on every scroll in a Debug build, which puts 100 MiB of real parsing well
+/// over an hour in the ordinary native suite; VT throughput and fidelity are
+/// B1's qualification surface, not this case's. Everything freeze case E is
+/// about — the PTY, software flow control, the journal, the checkpoint store,
+/// eviction and the gap — stays real, and this double costs O(1) per chunk by
+/// carrying a rolling hash of the bytes written instead of the bytes.
+const FreezeEEngine = struct {
+    const magic = "FREEZEE1";
+
+    allocator: std.mem.Allocator,
+    rolling: u64 = 0,
+
+    fn create(allocator: std.mem.Allocator) !*FreezeEEngine {
+        const self = try allocator.create(FreezeEEngine);
+        self.* = .{ .allocator = allocator };
+        return self;
+    }
+
+    fn engine(self: *FreezeEEngine) terminal_state.VtEngine {
+        return .{
+            .context = self,
+            .deinitFn = deinitCb,
+            .writeFn = writeCb,
+            .exportFn = exportCb,
+            .importFn = importCb,
+            .digestFn = digestCb,
+            .effectsFn = effectsCb,
+            .resizeFn = resizeCb,
+        };
+    }
+
+    fn factory() terminal_state.VtEngineFactory {
+        return .{ .context = @ptrCast(&freeze_e_factory_context), .createFn = factoryCreate };
+    }
+
+    fn factoryCreate(
+        context: *anyopaque,
+        allocator: std.mem.Allocator,
+        columns: u32,
+        rows: u32,
+    ) anyerror!terminal_state.VtEngine {
+        _ = .{ context, columns, rows };
+        const created = try FreezeEEngine.create(allocator);
+        return created.engine();
+    }
+
+    fn deinitCb(context: *anyopaque) void {
+        const self: *FreezeEEngine = @ptrCast(@alignCast(context));
+        self.allocator.destroy(self);
+    }
+
+    fn writeCb(context: *anyopaque, bytes: []const u8) anyerror!void {
+        const self: *FreezeEEngine = @ptrCast(@alignCast(context));
+        for (bytes) |byte| self.rolling = self.rolling *% 31 +% byte;
+    }
+
+    fn exportCb(context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 {
+        const self: *FreezeEEngine = @ptrCast(@alignCast(context));
+        const out = try allocator.alloc(u8, magic.len + 8);
+        @memcpy(out[0..magic.len], magic);
+        std.mem.writeInt(u64, out[magic.len..][0..8], self.rolling, .little);
+        return out;
+    }
+
+    fn importCb(context: *anyopaque, payload: []const u8) anyerror!void {
+        const self: *FreezeEEngine = @ptrCast(@alignCast(context));
+        if (payload.len != magic.len + 8 or !std.mem.eql(u8, payload[0..magic.len], magic))
+            return error.InvalidCheckpoint;
+        self.rolling = std.mem.readInt(u64, payload[magic.len..][0..8], .little);
+    }
+
+    fn digestCb(context: *anyopaque) [32]u8 {
+        const self: *FreezeEEngine = @ptrCast(@alignCast(context));
+        var storage: [8]u8 = undefined;
+        std.mem.writeInt(u64, &storage, self.rolling, .little);
+        var out: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash(&storage, &out, .{});
+        return out;
+    }
+
+    fn effectsCb(context: *anyopaque) []const u8 {
+        _ = context;
+        return &.{};
+    }
+
+    fn resizeCb(context: *anyopaque, columns: u32, rows: u32, width: u32, height: u32) anyerror!void {
+        _ = .{ context, columns, rows, width, height };
+    }
+};
+
+var freeze_e_factory_context: u8 = 0;
+
+/// Drains a real PTY into the real journal exactly as the host loop does, while
+/// recording the two facts freeze case E is about: the digest of every byte read
+/// and the high-water of retained journal memory.
+const FreezeEDrainer = struct {
+    host: *pty_host.PtyHost,
+    state: *terminal_state.TerminalState,
+    digest: std.crypto.hash.sha2.Sha256 = std.crypto.hash.sha2.Sha256.init(.{}),
+    total: u64 = 0,
+    max_retained: usize = 0,
+
+    /// Reads until `until` bytes have been consumed, or until `idle_budget`
+    /// consecutive would-block polls prove the producer quiescent. Returns true
+    /// only for the quiescent stop, so a caller can tell "stopped" from "done".
+    fn drain(self: *FreezeEDrainer, until: u64, idle_budget: usize) !bool {
+        var idle: usize = 0;
+        while (self.total < until) {
+            const chunk = self.host.readAvailable() catch |err| switch (err) {
+                error.Closed => return false,
+                else => return err,
+            };
+            if (chunk.bytes.len == 0) {
+                idle += 1;
+                if (idle >= idle_budget) return true;
+                std.Thread.sleep(1 * std.time.ns_per_ms);
+                continue;
+            }
+            idle = 0;
+            self.digest.update(chunk.bytes);
+            try self.state.feedOutput(chunk.bytes);
+            self.total += chunk.bytes.len;
+            self.max_retained = @max(self.max_retained, self.state.journal.retainedBytes());
+        }
+        return false;
+    }
+};
+
+fn freezeESendFlowByte(host: *pty_host.PtyHost, byte: u8) !void {
+    _ = try host.writeAccept(&[_]u8{byte});
+    try host.writeDrainAll();
+}
+
+// Freeze case E: a 100 MiB producer with a stopped/resumed reader and software
+// flow stop/start must keep byte integrity, bound retained memory, and report
+// an explicit gap instead of a silently shortened replay. pty_host's SLO-04
+// seed proves the read path alone; this drives the real journal, the real
+// checkpoint store, and the real VT engine behind them.
+test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gaps explicitly" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+
+    const allocator = std.testing.allocator;
+    const block = try allocator.alloc(u8, freeze_e_block_bytes);
+    defer allocator.free(block);
+    // Printable ASCII only: a control byte would make the producer a VT fuzz
+    // corpus (B1's subject), and OPOST|ONLCR would rewrite a bare newline into
+    // CR LF so the bytes read would no longer be the bytes produced. Column
+    // wrapping still drives the scrollback this case needs.
+    for (block, 0..) |*byte, index| byte.* = 0x20 + @as(u8, @intCast(index % 95));
+    comptime std.debug.assert(freeze_e_target_bytes % freeze_e_block_bytes == 0);
+
+    var tmp = std.testing.tmpDir(.{});
+    defer tmp.cleanup();
+    {
+        const file = try tmp.dir.createFile("freeze-e.bin", .{});
+        defer file.close();
+        var written: usize = 0;
+        while (written < freeze_e_target_bytes) : (written += freeze_e_block_bytes)
+            try file.writeAll(block);
+    }
+    var path_storage: [std.fs.max_path_bytes]u8 = undefined;
+    const source_path = try tmp.dir.realpath("freeze-e.bin", &path_storage);
+
+    var expected_hasher = std.crypto.hash.sha2.Sha256.init(.{});
+    {
+        var written: usize = 0;
+        while (written < freeze_e_target_bytes) : (written += freeze_e_block_bytes)
+            expected_hasher.update(block);
+    }
+    var expected_digest: [32]u8 = undefined;
+    expected_hasher.final(&expected_digest);
+
+    var host = try pty_host.PtyHost.init(allocator);
+    defer host.deinit();
+    switch (try host.spawn(.{
+        .argv = &[_][]const u8{ "/bin/cat", source_path },
+        .terminal_profile = .{ .software_flow_control = true },
+        .geometry = .{ .columns = 80, .rows = 24, .width_px = 640, .height_px = 384 },
+    })) {
+        .running => {},
+        .exec_failed => return error.TestUnexpectedResult,
+    }
+
+    const engine = try FreezeEEngine.create(allocator);
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    var timer = try std.time.Timer.start();
+    var timer_clock: TimerClock = .{ .timer = &timer };
+    var state = terminal_state.TerminalState.init(
+        allocator,
+        engine.engine(),
+        FreezeEEngine.factory(),
+        .{ .context = &timer_clock, .nowFn = TimerClock.now },
+        &engine_build_id,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .cell_width_px_16_16 = 8 << 16,
+            .cell_height_px_16_16 = 16 << 16,
+        },
+    );
+    defer state.deinit();
+
+    var drainer: FreezeEDrainer = .{ .host = &host, .state = &state };
+
+    // Positive control for the quiescence instrument: while the producer runs,
+    // the same detector that must fire after XOFF must NOT fire here. Without
+    // this, "quiescent" could just mean "the poll budget was too small".
+    try std.testing.expect(!try drainer.drain(freeze_e_stop_after_bytes, 2_000));
+    try std.testing.expectEqual(freeze_e_stop_after_bytes, drainer.total);
+
+    var flow_transitions: u8 = 0;
+    try freezeESendFlowByte(&host, 19); // stop_byte (^S)
+    flow_transitions += 1;
+    try std.testing.expect(try drainer.drain(freeze_e_target_bytes, 200));
+    const stopped_total = drainer.total;
+    try std.testing.expect(stopped_total < freeze_e_target_bytes);
+
+    // The stop holds: a further quiet window yields no byte at all.
+    std.Thread.sleep(100 * std.time.ns_per_ms);
+    try std.testing.expect(try drainer.drain(freeze_e_target_bytes, 50));
+    try std.testing.expectEqual(stopped_total, drainer.total);
+
+    try freezeESendFlowByte(&host, 17); // start_byte (^Q)
+    flow_transitions += 1;
+    try std.testing.expect(!try drainer.drain(freeze_e_target_bytes, 5_000));
+    try std.testing.expectEqual(@as(u8, 2), flow_transitions);
+
+    // Byte integrity: every produced byte arrived exactly once, in order,
+    // across the stop and the restart.
+    var observed_digest: [32]u8 = undefined;
+    drainer.digest.final(&observed_digest);
+    try std.testing.expectEqual(@as(u64, freeze_e_target_bytes), drainer.total);
+    try std.testing.expectEqualSlices(u8, &expected_digest, &observed_digest);
+    try std.testing.expectEqual(@as(u64, freeze_e_target_bytes), state.outputSeq());
+
+    // Bounded memory: 100 MiB flowed through a journal that never exceeded its
+    // ceiling, and nothing outside the journal is retained on its behalf.
+    try std.testing.expect(drainer.max_retained <= terminal_state.journal_max_bytes);
+    try std.testing.expect(state.journal.retainedBytes() <= terminal_state.journal_max_bytes);
+
+    // Explicit gap: the evicted prefix is refused, never silently shortened.
+    const retained_start = state.retainedOutputStart();
+    try std.testing.expect(retained_start > 0);
+    try std.testing.expectError(error.CheckpointUnavailable, state.journal.sliceFrom(0));
+    try std.testing.expectError(
+        error.CheckpointUnavailable,
+        state.journal.sliceFrom(retained_start - 1),
+    );
+
+    // The gap boundary is exact and its checkpoint requirement is honest: when
+    // a checkpoint is offered as the bridge, it must reach the retained start.
+    const retained = try state.journal.sliceFrom(retained_start);
+    try std.testing.expectEqual(freeze_e_target_bytes - retained_start, retained.len);
+    if (state.checkpointAvailable()) {
+        const checkpoint = state.newestCheckpoint() orelse return error.TestUnexpectedResult;
+        try std.testing.expect(checkpoint.header.through_seq >= retained_start);
+    }
+
+    // Retained bytes are the exact source bytes at their absolute offsets, so
+    // eviction moved the window without corrupting or resequencing the tail.
+    var offset: usize = 0;
+    while (offset < retained.len) {
+        const from = @as(usize, @intCast((retained_start + offset) % freeze_e_block_bytes));
+        const take = @min(freeze_e_block_bytes - from, retained.len - offset);
+        try std.testing.expectEqualSlices(
+            u8,
+            block[from..][0..take],
+            retained[offset..][0..take],
+        );
+        offset += take;
+    }
 }
 
 fn grantRegistrationPayload(
