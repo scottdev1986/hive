@@ -1,67 +1,67 @@
 {
   "cell": "production-wiring-pane",
   "ok": true,
-  "head": "42e74c55825c1dcbb14dede80f03f1f082f75595",
-  "home": "/tmp/hb25-pane-3c9b44",
-  "port": 43144,
-  "project": "/tmp/hb25-project-3c9b44",
+  "head": "0aa486b39246b6294ff21466059da0fa32d24ddc",
+  "home": "/tmp/hb25-pane-cde262",
+  "port": 43145,
+  "project": "/tmp/hb25-project-cde262",
   "requestedTool": "codex",
   "requestedModel": null,
   "agent": "aria",
   "observed": {
-    "id": "b7fd4c27-5a4d-410d-8a50-314c6137d658",
+    "id": "d5373753-16bf-43d4-9946-af4c7de77891",
     "name": "aria",
     "tool": "codex",
     "model": "gpt-5.6-sol",
     "category": "simple_coding",
     "status": "working",
-    "quotaReservationId": "eac815fb-e37e-4380-acad-2d7dbc15dad9",
+    "quotaReservationId": "b1307032-04ee-4621-9a88-6a04654a64c0",
     "executionIdentity": {
       "tool": "codex",
       "model": "gpt-5.6-sol",
       "effort": "medium"
     },
-    "taskDescription": "Production-pane qualification; do not edit any file. Immediately call hive_send with from=\"aria\", to=\"queen\", priority=\"normal\", and body=\"B25_PRODUCTION_PANE_EXECUTED_f2c35fed-f2f8-418a-86f5-eb3fbe78f0e9\". After the tool reports the message state, wait for further instructions.",
-    "worktreePath": "/tmp/hb25-project-3c9b44/.hive/worktrees/aria",
+    "taskDescription": "Production-pane qualification; do not edit any file. Immediately call hive_send with from=\"aria\", to=\"queen\", priority=\"normal\", and body=\"B25_PRODUCTION_PANE_EXECUTED_4646eefa-0f8f-43a5-8167-59a3e50a69fc\". After the tool reports the message state, wait for further instructions.",
+    "worktreePath": "/tmp/hb25-project-cde262/.hive/worktrees/aria",
     "branch": "hive/aria-production-pane-qualification",
-    "tmuxSession": "hive-aria-4142664123",
+    "tmuxSession": "hive-aria-91ccd1a315",
     "sessionLocator": {
       "schemaVersion": 1,
-      "instanceId": "4142664123",
+      "instanceId": "91ccd1a315",
       "subject": {
         "kind": "agent",
-        "agentId": "b7fd4c27-5a4d-410d-8a50-314c6137d658"
+        "agentId": "d5373753-16bf-43d4-9946-af4c7de77891"
       },
       "generation": 1,
-      "sessionId": "ses_019f86ce-458e-7ee1-961b-18a636f66fb1",
+      "sessionId": "ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951",
       "hostKind": "sessiond",
       "engineBuildId": "9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b"
     },
-    "toolSessionId": "019f86ce-4961-7673-ae03-e77ebddb522c",
+    "toolSessionId": "019f86d5-e9af-7ee0-a6d7-c5ab9fd2ebd2",
     "recoveryAttempts": 0,
     "contextPct": null,
-    "createdAt": "2026-07-21T22:31:32.976Z",
-    "lastEventAt": "2026-07-21T22:31:45.754Z",
+    "createdAt": "2026-07-21T22:39:52.792Z",
+    "lastEventAt": "2026-07-21T22:39:55.105Z",
     "capabilityEpoch": 0,
     "readOnly": true,
     "writeRevoked": false,
     "graphifyCalls": null
   },
-  "sideEffectMessageId": "f513eaf4-f602-4afe-8917-3891ffabb0e5",
+  "sideEffectMessageId": "7ff49cc2-e9a2-4f71-b020-e0e2c50e5d86",
   "sideEffectMessageState": "queued",
-  "paneReport": "PRODUCTION PANE PROOF: agent=aria instance=4142664123 session=ses_019f86ce-458e-7ee1-961b-18a636f66fb1 generation=1 engine=9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b highWater=31609 frame=(0.0, 0.0, 514.0, 743.0) drawCount=55 presented=true feedStatus=working window=2197 visible=true captureRect=224,96,1280,832 screenSize=1728,1117\nPRODUCTION PANE PROOF OK",
+  "paneReport": "PRODUCTION PANE PROOF: agent=aria instance=91ccd1a315 session=ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951 generation=1 engine=9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b highWater=22670 frame=(0.0, 0.0, 514.0, 743.0) drawCount=78 presented=true feedStatus=idle window=2245 visible=true captureRect=224,96,1280,832 screenSize=1728,1117\nPRODUCTION PANE PROOF OK",
   "capture": {
     "journal": {
-      "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/james/raw/qualification/hive-b25-production-pane/transcripts/codex-ses_019f86ce-458e-7ee1-961b-18a636f66fb1.journal.bin",
-      "bytes": 99295,
-      "sha256": "5c23b8c9d8c116e81e466c4a48cd047d990d0e5455bcf3f73f8b20e1559645a1",
-      "sequencePrefixHex": "000000000000000000000000000183cf"
+      "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/james/raw/qualification/hive-b25-production-pane/transcripts/codex-ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951.journal.bin",
+      "bytes": 60367,
+      "sha256": "c61554c0bd2c7b3c580441f1226ba041c86a44b04ba7700300da4e185784304f",
+      "sequencePrefixHex": "0000000000000000000000000000ebbf"
     },
     "screenshot": {
-      "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/james/raw/qualification/hive-b25-production-pane/screenshots/codex-ses_019f86ce-458e-7ee1-961b-18a636f66fb1-workspace.png",
-      "bytes": 814005,
-      "sha256": "43be7cb409aecf6597d9bf6c60df88c6f36cf3c63326bc2c9528b95df96afbb6",
-      "windowNumber": 2197,
+      "path": "/Users/scottkellar/Projects/hive/.hive/worktrees/james/raw/qualification/hive-b25-production-pane/screenshots/codex-ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951-workspace.png",
+      "bytes": 820391,
+      "sha256": "8814d36474d2fdcbe19fb628a80d8ba80d005e027826c11c78d2dc56d0c6a173",
+      "windowNumber": 2245,
       "captureRect": "224,96,1280,832",
       "pixelWidth": 2560,
       "pixelHeight": 1664
@@ -73,6 +73,6 @@
     "wokeDisplay": false,
     "sessionLockState": "unlocked"
   },
-  "startedAt": "2026-07-21T22:31:30.283Z",
-  "writtenAt": "2026-07-21T22:31:57.727Z"
+  "startedAt": "2026-07-21T22:39:50.201Z",
+  "writtenAt": "2026-07-21T22:40:12.722Z"
 }

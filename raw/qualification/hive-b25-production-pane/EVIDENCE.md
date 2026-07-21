@@ -7,7 +7,7 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 | Cell | Status | Artifact |
 |------|--------|----------|
 | Production wiring substrate (daemon-owned broker + visibility + handshake under short home @43140) | GREEN (substrate) | matrix/production-wiring.txt |
-| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `42e74c55`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
+| Production wiring full (sessiond agent + HiveTerminalView under real Workspace) | GREEN (Codex, `0aa486b3`) | matrix/production-wiring-pane.txt; manifests/production-wiring-pane.json |
 | A4 exact per-pane close | GREEN | matrix/a4-exact-close.txt |
 | A4 concurrent quit + process-tree | COMPOSED-NOW / FAITHFUL-PENDING-UNLOCK | matrix/a4-quit.txt; matrix/diagnostic-a4-quit-harness-entanglement.txt |
 | A4 non-Hive project | GREEN | matrix/a4-non-hive-project.txt |
@@ -21,18 +21,20 @@ Pin series continued from helga by horatio. Ports 43140+. Short homes only.
 
 ### 2026-07-21 production-wiring runs
 
-The full production cell is green at `42e74c55`: the worktree-pinned staged
+The rebased full production cell is green at `0aa486b3`: the worktree-pinned staged
 release spawned a real Codex agent in a non-Hive repository, Workspace installed
 `HiveTerminalView` on its exact sessiond locator, and the staged CLI both set and
 read back dangerous autonomy before the unattended spawn. The pane presented
 nonblank window contents with no hidden renderer PTY, and the live vendor
-persisted the exact nonce through `hive_send`. Final session
-`ses_019f86ce-458e-7ee1-961b-18a636f66fb1` reached high-water 31,609 with 55
-draws and a 99,295-byte ordered journal. The cell also mutates the display
+persisted the exact nonce through `hive_send`. Session
+`ses_019f86d5-e5fc-75ab-8f34-d56fdfff1951` reached high-water 22,670 with 78
+draws and a 60,367-byte ordered journal. The cell also mutates the display
 preflight, locator, transcript, screenshot, and nonce checks to prove each
 assertion bites.
 
-The earlier full production run at `5b448217` likewise spawned a
+The pre-rebase confirmation at `42e74c55` reached high-water 31,609 with 55
+draws and a 99,295-byte ordered journal; its digest-pinned capture remains as a
+control. The earlier full production run at `5b448217` likewise spawned a
 real Codex agent in a non-Hive repository, Workspace installed
 `HiveTerminalView` on its exact sessiond locator, presented nonblank window
 contents with no hidden renderer PTY, and the live vendor persisted the exact
@@ -44,7 +46,7 @@ Two failed controls are retained rather than edited away. Session
 `ses_019f86b3-ed52-7d4b-883f-d21cea8041a5` shows Codex stopped at repository
 trust because the spawn override used a logical/dotted project path. Session
 `ses_019f86b6-cb8a-747c-8ae7-1226a4fbf721` shows the fixed renderer live while
-the isolated proof still waited for an MCP approval. The final session
+the isolated proof still waited for an MCP approval. The earlier successful session
 `ses_019f86bb-f335-7976-9dba-b9531d0f1f5c` uses the canonical inline-table
 trust override and a read-only agent with Hive-owned tool prompts disabled.
 Their screenshots and journals are digest-pinned below. The broader defect that
