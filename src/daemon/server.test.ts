@@ -35,6 +35,7 @@ import {
   type ProcessIdentityState,
 } from "./mutation-lease";
 import { mintAgentTmuxSessionLocator } from "./session-host/tmux-host";
+import { mintSessionRequestId } from "./session-host/locators";
 import { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
 import {
   SessiondBrokerUnavailableError,
@@ -376,6 +377,62 @@ test("a stalled publisher does not expire a live Workspace, but a dead one still
     workspaceAlive = false;
     expect(await daemon.renewWorkspaceVisibility()).toBe(0);
     expect(renewals).toEqual(["2", "2", "2"]);
+
+    // ...and the reason is now durable. Before this, a VISIBILITY_EXPIRED kill
+    // left terminationAuditJson NULL, which is why the fleet death had no
+    // record in the DB at all.
+    const audited = db.getTerminalHostBindingByLocator(locator);
+    expect(audited?.terminationAudit).toMatchObject({
+      origin: "visibility-expiry",
+      reason: "workspace visibility source no longer verifies; " +
+        "renewal withheld and the sessiond lease will expire",
+    });
+
+    // Written once: the 5s tick must not rewrite its own audit.
+    const firstRequestId = audited?.terminationAudit?.requestId;
+    expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+    expect(
+      db.getTerminalHostBindingByLocator(locator)?.terminationAudit?.requestId,
+    ).toBe(firstRequestId!);
+  } finally {
+    db.close();
+  }
+});
+
+test("a termination audit's origin is a closed set, and absent means operator", async () => {
+  const db = new HiveDatabase(":memory:");
+  const locator = {
+    ...mintAgentTmuxSessionLocator("agent-origin"),
+    hostKind: "sessiond" as const,
+    engineBuildId: "engine-origin",
+  };
+  db.bindTerminalHostSession({
+    locator,
+    visibility: {
+      workspaceSessionId: "workspace-origin",
+      workspacePid: 7601,
+      workspaceStartToken: "7601:100",
+      openTerminalRevision: "1",
+    },
+  });
+  try {
+    // Absent origin is an operator kill — every row written before the field
+    // existed reads exactly as it always did.
+    const legacy = db.recordTerminalHostTermination(locator, {
+      reason: "stop agent agent-origin",
+      requestId: mintSessionRequestId(),
+      requestedAt: "2026-07-18T12:00:00.000Z",
+    });
+    expect(legacy.terminationAudit?.origin).toBeUndefined();
+
+    // A value outside the closed set is rejected, not silently stored.
+    expect(() => db.recordTerminalHostTermination(locator, {
+      reason: "stop agent agent-origin",
+      requestId: mintSessionRequestId(),
+      requestedAt: "2026-07-18T12:00:00.000Z",
+      origin: "sessiond-decided",
+    } as unknown as Parameters<typeof db.recordTerminalHostTermination>[1]))
+      .toThrow();
   } finally {
     db.close();
   }

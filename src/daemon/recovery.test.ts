@@ -527,6 +527,89 @@ describe("crash classification", () => {
     expect(alerts[0]).toContain("deliberately");
   });
 
+  test("a visibility-expiry audit records the kill without suppressing recovery (#98)", async () => {
+    // Same durable audit as the test above, differing only in origin. sessiond
+    // killed these hosts to protect the visibility invariant; nobody asked for
+    // the agent to stop, so it must still be resumed. On 2026-07-21 the five
+    // expired agents were resumed, and reading this as a deliberate kill would
+    // have made that incident strictly worse.
+    const sessionLocator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-fixture",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000101",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-fixture",
+    };
+    const exitedInspection: SessionInspection = {
+      schemaVersion: 1,
+      locator: sessionLocator,
+      presence: "exited",
+      complete: false,
+      hostPid: null,
+      hostStartToken: null,
+      providerRoot: null,
+      expectedExecutable: "claude",
+      executableVerified: false,
+      outputSeq: "0",
+      checkpointSeq: "0",
+      checkpointAvailable: false,
+      input: { state: "UNKNOWN", ownerViewerId: null, claimId: null },
+      viewerCount: 0,
+      geometry: {
+        columns: 80,
+        rows: 24,
+        widthPx: 800,
+        heightPx: 480,
+        cellWidthPx: 10,
+        cellHeightPx: 20,
+      },
+      resources: {},
+      visibility: {
+        state: "attaching",
+        workspaceSessionId: "workspace-fixture",
+        openTerminalRevision: "1",
+        expiresAt: "2026-07-10T09:00:15.000Z",
+      },
+      exit: null,
+      survivors: [],
+      evidenceAt: timestamp,
+      diagnosticIds: [],
+    };
+    const h = harness({
+      terminalHost: {
+        inspect: async () => exitedInspection,
+      },
+      resolveClaudeSessionId: async () => "claude-session-98",
+    });
+    h.signalProofOfLife();
+    h.db.bindTerminalHostSession({
+      locator: sessionLocator,
+      visibility: {
+        workspaceSessionId: "workspace-fixture",
+        workspacePid: 4100,
+        workspaceStartToken: "4100:123456",
+        openTerminalRevision: "7",
+      },
+    });
+    h.db.recordTerminalHostTermination(sessionLocator, {
+      reason: "workspace visibility source no longer verifies; " +
+        "renewal withheld and the sessiond lease will expire",
+      requestId: "req_018f1e90-7b5a-7cc0-8000-000000000104",
+      requestedAt: timestamp,
+      origin: "visibility-expiry",
+    });
+    h.db.insertAgent(agent({ status: "idle", sessionLocator }));
+
+    const outcomes = await h.recovery.sweep();
+
+    // Resumed, not reconciled as a deliberate kill. The sibling test above is
+    // the control: identical setup with an operator audit is marked dead.
+    expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
+    expect(h.db.getAgentByName("maya")?.status).not.toBe("dead");
+  });
+
   test("a fail-closed critical control is never converted into death or a resume", async () => {
     const h = harness();
     const message = h.db.insertMessage({

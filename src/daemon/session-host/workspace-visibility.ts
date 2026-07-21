@@ -218,6 +218,16 @@ export class WorkspaceVisibilityAuthority {
     return this.current;
   }
 
+  /** Whether the Workspace that authored the current inventory still verifies
+   * by PID and start token. False with no snapshot, and false when the process
+   * cannot be observed at all — the same fail-closed reading `admit` uses.
+   * Distinguishes "this inventory is unrenewable because its author is gone"
+   * from `admit`'s many other null answers, so the daemon can record *why* it
+   * is letting sessiond expire these hosts. */
+  sourceVerified(): boolean {
+    return this.current !== null && this.sourceIsLive(this.current.source);
+  }
+
   private sourceIsLive(source: VisibilitySourceIdentity): boolean {
     try {
       return this.dependencies.observeProcess(source.process.processId)?.startToken ===

@@ -24,6 +24,13 @@ export const HiveTerminalTerminationAuditSchema = z.strictObject({
   reason: TerminationRequestSchema.unwrap().shape.reason,
   requestId: TerminationRequestSchema.unwrap().shape.requestId,
   requestedAt: SessionInspectionSchema.unwrap().shape.evidenceAt,
+  /** Who ended the session. Absent means `operator`, so every row written
+   * before this field existed — and every operator writer — keeps its exact
+   * meaning. Recovery treats an operator audit as a deliberate kill and stops
+   * resuming the agent; `visibility-expiry` is infrastructure protecting an
+   * invariant, not operator intent, so it records the cause without
+   * suppressing recovery. */
+  origin: z.enum(["operator", "visibility-expiry"]).optional(),
 }).readonly();
 
 export type HiveTerminalTerminationAudit = z.infer<

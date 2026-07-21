@@ -3228,8 +3228,51 @@ export class HiveDaemon {
   async renewWorkspaceVisibility(): Promise<number> {
     const snapshot = this.workspaceVisibility?.currentSnapshot() ?? null;
     if (snapshot === null) return 0;
+    if (!this.workspaceVisibility!.sourceVerified()) {
+      this.recordVisibilityExpiryAudits(snapshot);
+      return 0;
+    }
     const renewals = await this.renewVisibleTerminals(snapshot.terminals);
     return renewals.filter((renewal) => renewal?.state === "renewed").length;
+  }
+
+  /**
+   * Records why these hosts are about to die. When the authoring Workspace no
+   * longer verifies, the daemon stops renewing and sessiond terminates each
+   * host with VISIBILITY_EXPIRED — a kill that, before this, left
+   * `terminationAuditJson` NULL. That is why the 2026-07-21 fleet death had no
+   * durable record at all and had to be reconstructed from workspace.log.
+   *
+   * `origin: "visibility-expiry"` is load-bearing: recovery treats an operator
+   * audit as a deliberate kill and stops resuming the agent, but nobody asked
+   * for these agents to stop, so they must stay recoverable. Written once per
+   * binding — a binding that already carries an audit is left alone, so the
+   * 5 s tick cannot overwrite an operator's record or rewrite its own.
+   */
+  private recordVisibilityExpiryAudits(
+    snapshot: WorkspaceVisibilitySnapshot,
+  ): void {
+    const requestedAt = new Date().toISOString();
+    for (const terminal of snapshot.terminals) {
+      const binding = this.db.getTerminalHostBindingByLocator(terminal.locator);
+      if (binding?.createEvidence === undefined) continue;
+      if (binding.terminationAudit !== undefined) continue;
+      try {
+        this.db.recordTerminalHostTermination(terminal.locator, {
+          reason: "workspace visibility source no longer verifies; " +
+            "renewal withheld and the sessiond lease will expire",
+          requestId: mintSessionRequestId(),
+          requestedAt,
+          origin: "visibility-expiry",
+        });
+      } catch (error) {
+        console.error(
+          `Hive visibility-expiry audit failed for ${terminal.locator.sessionId}: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      }
+    }
   }
 
   private async tokenUsageEndpoint(

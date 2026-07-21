@@ -243,7 +243,14 @@ export class CrashRecovery {
   /** The durable half of the same consult (#66): a sessiond session that was
    * torn down through the one kill path carries a termination audit on its
    * terminal-host binding. Recovery reads it before calling a death a crash —
-   * this is what survives a daemon restart mid-teardown. */
+   * this is what survives a daemon restart mid-teardown.
+   *
+   * Only an *operator* audit is deliberate. A `visibility-expiry` audit records
+   * infrastructure protecting the visibility invariant — nobody asked for that
+   * agent to stop — so it must not suppress recovery: on 2026-07-21 the five
+   * expired agents were resumed, and treating that kill as deliberate would
+   * have made the incident strictly worse. Absent origin is `operator`, which
+   * is every row written before the field existed. */
   private deliberateTerminationAudit(
     agent: AgentRecord,
   ): HiveTerminalTerminationAudit | null {
@@ -251,7 +258,9 @@ export class CrashRecovery {
     const binding = this.deps.db.getTerminalHostBindingByLocator(
       requireSessiondAgentLocator(agent),
     );
-    return binding?.terminationAudit ?? null;
+    const audit = binding?.terminationAudit ?? null;
+    if (audit?.origin === "visibility-expiry") return null;
+    return audit;
   }
 
   private daemonPort(): number {
