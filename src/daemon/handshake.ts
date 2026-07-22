@@ -32,17 +32,36 @@ async function sourceFiles(directory: string): Promise<string[]> {
   const entries = await readdir(directory, { withFileTypes: true });
   const files = await Promise.all(entries.map(async (entry) => {
     const path = join(directory, entry.name);
-    if (entry.isDirectory()) return sourceFiles(path);
-    return entry.isFile() && entry.name.endsWith(".ts") ? [path] : [];
+    if (entry.isDirectory()) {
+      return entry.name === "__fixtures__" ? [] : sourceFiles(path);
+    }
+    return entry.isFile() && entry.name.endsWith(".ts") && !entry.name.endsWith(".test.ts")
+      ? [path]
+      : [];
   }));
   return files.flat();
 }
 
-export async function sourceBuildHash(sourceRoot: string): Promise<string> {
-  const files = (await sourceFiles(sourceRoot)).sort();
+async function skillFiles(directory: string): Promise<string[]> {
+  const entries = await readdir(directory, { withFileTypes: true });
+  const files = await Promise.all(entries.map(async (entry) => {
+    const path = join(directory, entry.name);
+    if (entry.isDirectory()) return skillFiles(path);
+    return entry.isFile() && entry.name === "SKILL.md" ? [path] : [];
+  }));
+  return files.flat();
+}
+
+export async function sourceBuildHash(repoRoot: string): Promise<string> {
+  const files = [
+    ...await sourceFiles(join(repoRoot, "src")),
+    ...await skillFiles(join(repoRoot, "skills")),
+    join(repoRoot, "graphify.lock"),
+    join(repoRoot, "bun.lock"),
+  ].sort();
   const hash = createHash("sha256");
   for (const file of files) {
-    hash.update(relative(sourceRoot, file));
+    hash.update(relative(repoRoot, file));
     hash.update("\0");
     hash.update(await readFile(file));
     hash.update("\0");
@@ -61,13 +80,13 @@ export async function sourceBuildHash(sourceRoot: string): Promise<string> {
  */
 export async function currentBuildHash(): Promise<string> {
   if (HIVE_BUILD_HASH !== null) return HIVE_BUILD_HASH;
-  return sourceBuildHash(resolveSourceRoot());
+  return sourceBuildHash(resolveRepoRoot());
 }
 
-function resolveSourceRoot(): string {
+function resolveRepoRoot(): string {
   // Both the source checkout and a packaged build retain this module beneath
   // `src/daemon`; resolving from import.meta.dir avoids the caller's cwd.
-  return join(import.meta.dir, "..");
+  return join(import.meta.dir, "..", "..");
 }
 
 export async function expectedDaemonHandshake(

@@ -1,5 +1,4 @@
 import { readFile, realpath } from "node:fs/promises";
-import { join } from "node:path";
 import { sourceBuildHash } from "../src/daemon/handshake";
 import {
   DAEMON_STARTUP_PREFIX,
@@ -82,7 +81,7 @@ export async function verifyDevRun(
   const [runningBinary, stagedBinary, currentSourceHash] = await Promise.all([
     realpath(announcement.binaryPath),
     realpath(expectedBinary),
-    sourceBuildHash(join(repoRoot, "src")),
+    sourceBuildHash(repoRoot),
   ]);
   if (runningBinary !== stagedBinary) {
     throw new Error(

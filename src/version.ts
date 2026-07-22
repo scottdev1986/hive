@@ -37,7 +37,7 @@ export const HIVE_BUILD_DATE = defined(process.env.HIVE_BUILD_DATE) ?? "unknown"
  */
 export const HIVE_BUILD_HASH = defined(process.env.HIVE_BUILD_HASH);
 
-/** Hash of the TypeScript source inputs compiled into this release. */
+/** Hash of the source and bundled data inputs compiled into this release. */
 export const HIVE_SOURCE_HASH = defined(process.env.HIVE_SOURCE_HASH);
 
 /**

@@ -82,15 +82,55 @@ export async function startBrokerAndDiscoverEngineBuildId(
   dependencies: Readonly<{
     startBroker: () => Promise<void>;
     discoverEngineBuildId: () => Promise<string>;
-    onBrokerStartFailure: (error: unknown) => Promise<never>;
+    onFatalFailure: (
+      stage: "broker-start" | "engine-discovery",
+      error: unknown,
+    ) => Promise<never>;
   }>,
 ): Promise<string> {
   try {
     await dependencies.startBroker();
   } catch (error) {
-    return await dependencies.onBrokerStartFailure(error);
+    return await dependencies.onFatalFailure("broker-start", error);
   }
-  return dependencies.discoverEngineBuildId();
+  try {
+    return await dependencies.discoverEngineBuildId();
+  } catch (error) {
+    return await dependencies.onFatalFailure("engine-discovery", error);
+  }
+}
+
+export async function exitAfterDaemonStartupFailure(
+  stage: "broker-start" | "engine-discovery",
+  error: unknown,
+  dependencies: Readonly<{
+    stopBroker: () => Promise<void>;
+    stopDaemon: () => Promise<void>;
+    cleanupLifecycle: () => void;
+    exit: (code: number) => never;
+  }>,
+): Promise<never> {
+  const message = error instanceof Error ? error.message : String(error);
+  const label = stage === "broker-start"
+    ? "sessiond broker failed to start"
+    : "sessiond engine build discovery failed";
+  console.error(`${label}: ${message}`);
+  try {
+    await dependencies.stopBroker();
+  } catch {
+    // ignore
+  }
+  try {
+    await dependencies.stopDaemon();
+  } catch {
+    // stop may refuse on unrelated teardown; still drop lifecycle below
+  }
+  try {
+    dependencies.cleanupLifecycle();
+  } catch {
+    // stop() with manageLifecycle already cleaned; belt-and-braces
+  }
+  return dependencies.exit(1);
 }
 
 export function stopSpawnSession(
@@ -349,27 +389,14 @@ export async function runDaemon(): Promise<void> {
   const engineBuildId = await startBrokerAndDiscoverEngineBuildId({
     startBroker: () => sessiondBroker.start(),
     discoverEngineBuildId: () => sessiond.discoverEngineBuildId(),
-    onBrokerStartFailure: async (error): Promise<never> => {
-      const message = error instanceof Error ? error.message : String(error);
-      console.error(`sessiond broker failed to start: ${message}`);
-      try {
-        await sessiondBroker.stop();
-      } catch {
-        // ignore
-      }
-      try {
-        await daemon.stop();
-      } catch {
-        // stop may refuse on unrelated teardown; still drop lifecycle below
-      }
-      try {
-        cleanupLifecycleFiles();
-      } catch {
-        // stop() with manageLifecycle already cleaned; belt-and-braces
-      }
-      // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
-      process.exit(1);
-    },
+    onFatalFailure: (stage, error) =>
+      exitAfterDaemonStartupFailure(stage, error, {
+        stopBroker: () => sessiondBroker.stop(),
+        stopDaemon: () => daemon.stop(),
+        cleanupLifecycle: cleanupLifecycleFiles,
+        // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
+        exit: (code) => process.exit(code),
+      }),
   });
   console.log(formatDaemonStartupAnnouncement({
     engineBuildId,
