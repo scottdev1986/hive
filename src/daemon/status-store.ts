@@ -310,6 +310,15 @@ export class StatusStore implements WorkspaceStatusEventSource {
     return event;
   }
 
+  /** Register a listener for every event this store publishes. Listeners run
+   * synchronously on the write path, so a listener that must not affect the
+   * primary record (e.g. episodic-memory projection) has to isolate its own
+   * failures. Returns an unsubscribe function. */
+  onEvent(listener: (event: WorkspaceEventV2) => void): () => void {
+    this.listeners.add(listener);
+    return () => this.listeners.delete(listener);
+  }
+
   listEvents(afterSeq = "0"): WorkspaceEventV2[] {
     const rows = this.db.database.query(`
       SELECT payload FROM status_workspace_events

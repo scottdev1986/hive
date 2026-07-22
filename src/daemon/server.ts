@@ -106,6 +106,8 @@ import {
   type Role,
 } from "./capabilities";
 import { StatusStore } from "./status-store";
+import type { EpisodicStore } from "./episodic-store";
+import type { WorkspaceEventV2 } from "../schemas/status-envelope";
 import {
   StatusIncarnationUnavailableError,
   unavailableStatusIncarnationGenerationSource,
@@ -483,6 +485,11 @@ export interface HiveDaemonOptions {
   spawner: Spawner;
   db?: HiveDatabase;
   statusStore?: StatusStore;
+  /** The per-project episodic memory store (HiveMemory HM-1). The daemon
+   * projects its status/observation events into it and closes it in stop().
+   * Production opens it via EpisodicStore.forProjectRoot so the store's
+   * location comes from the daemon's own project identity. */
+  episodicStore?: EpisodicStore;
   /** WP2/WP3 bind these seams. Observation itself only calls capture. */
   sessionHost?: Pick<SessionHost, "capture">;
   /** Frozen neutral sessiond backend; Hive policy is applied by its binding adapter. */
@@ -644,6 +651,8 @@ export class HiveDaemon {
   readonly memory: MemoryIndex;
   readonly capabilities: CapabilityStore;
   readonly status: StatusStore;
+  /** Per-project episodic memory; null when no store was provided. */
+  readonly episodic: EpisodicStore | null;
   private memoryLock: Promise<unknown> = Promise.resolve();
   private readonly ownsDatabase: boolean;
   private readonly port: number;
@@ -757,6 +766,14 @@ export class HiveDaemon {
       }
     }
     this.memory = new MemoryIndex(this.db.database);
+    this.episodic = options.episodicStore ?? null;
+    // Every status-store write — agent reports, source events, and the
+    // terminal observation audit — is also projected into episodic memory.
+    // The listener runs synchronously on the status write path, so the
+    // projection isolates its own failures inside ingestEpisodicEvent.
+    if (this.episodic !== null) {
+      this.status.onEvent((event) => this.ingestEpisodicEvent(event));
+    }
     this.spawner = options.spawner;
     this.sessionHost = options.sessionHost ?? null;
     this.resolveSessionLocator = options.resolveSessionLocator ?? null;
@@ -2501,6 +2518,43 @@ export class HiveDaemon {
   }
 
   /**
+   * Project one published status event into the episodic store as a compact
+   * typed row. Episodic memory is a derived projection of the primary record,
+   * so a failure here logs and continues — it must never break the status
+   * write that published the event.
+   */
+  private ingestEpisodicEvent(event: WorkspaceEventV2): void {
+    if (this.episodic === null) return;
+    try {
+      const summary = typeof event.data.summary === "string"
+        ? event.data.summary
+        : event.kind;
+      this.episodic.appendEvent({
+        ts: event.occurredAt,
+        agent: event.entity.kind === "agent"
+          ? event.entity.id
+          : typeof event.data.agentId === "string"
+          ? event.data.agentId
+          : null,
+        type: event.kind,
+        summary: summary.slice(0, 500),
+        provenance: {
+          eventId: event.eventId,
+          seq: event.seq,
+          entity: event.entity,
+          source: event.source,
+        },
+      });
+    } catch (error) {
+      console.error(
+        `Hive episodic ingest failed for ${event.kind} (${event.eventId}): ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
+  }
+
+  /**
    * Stopping the daemon stops the MACHINE, not just the process.
    *
    * This used to kill the orchestrator's tmux session and exit, which left
@@ -2583,6 +2637,7 @@ export class HiveDaemon {
     if (this.ownsDatabase) {
       this.db.close();
     }
+    this.episodic?.close();
     this.ownedMachineMutations?.close();
     if (refusal !== undefined) throw refusal;
   }

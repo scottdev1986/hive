@@ -19,6 +19,7 @@ import {
   releaseDaemonLock,
 } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
+import { EpisodicStore } from "../daemon/episodic-store";
 import {
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
@@ -292,6 +293,20 @@ export async function runDaemon(): Promise<void> {
   // Constructed unconditionally — start() reads the repo's opt-in state and is
   // a no-op for the repos that never enabled it.
   const graphify = new GraphifyService(repoRoot);
+  // The per-project episodic memory store (HiveMemory HM-1). Its location is
+  // derived from the daemon's own project identity, never a caller parameter.
+  // Memory is a derived projection of the daemon's primary records, so a
+  // store that cannot open must not stop the daemon from booting.
+  let episodicStore: EpisodicStore | undefined;
+  try {
+    episodicStore = EpisodicStore.forProjectRoot(repoRoot);
+  } catch (error) {
+    console.error(
+      `Hive episodic store failed to open; continuing without episodic memory: ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  }
   const spawner = new HiveSpawner({
     ...terminalComposition.spawnerDependencies,
     db,
@@ -362,6 +377,7 @@ export async function runDaemon(): Promise<void> {
     workspaceVisibility,
     repoRoot,
     graphify,
+    episodicStore,
     port,
     manageLifecycle: true,
     sessiondBroker,
