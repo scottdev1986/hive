@@ -330,6 +330,7 @@ export const DecimalUint64Schema = z.string().regex(new RegExp(DECIMAL_UINT64_PA
   "must fit in an unsigned 64-bit integer",
 ).meta({ format: "hive-uint64-decimal" });
 export const SafeUintSchema = z.number().int().nonnegative().max(Number.MAX_SAFE_INTEGER);
+const PositiveSafeUintSchema = SafeUintSchema.min(1);
 export const PositiveGenerationSchema = SafeUintSchema.min(1);
 export const Rfc3339UtcMillisecondsSchema = z.iso.datetime({
   offset: false,
@@ -699,9 +700,12 @@ export const TerminalHostCheckpointSchema = z.strictObject({
   throughOutputOffset: DecimalUint64Schema,
   opaqueBytes: TerminalHostCheckpointBytesSchema,
 }).readonly();
+/** Shared by inspection and by the §11 lifecycle event: events carry the facts
+ * inspection reports, so one vocabulary states a lifecycle in both. */
+const TerminalHostLifecycleSchema = z.enum(["creating", "running", "exited", "lost", "unknown"]);
 export const TerminalHostSessionInspectionSchema = z.strictObject({
   session: TerminalHostSessionRefSchema,
-  lifecycle: z.enum(["creating", "running", "exited", "lost", "unknown"]),
+  lifecycle: TerminalHostLifecycleSchema,
   completeness: TerminalHostCompletenessSchema,
   host: TerminalHostProcessIdentitySchema.nullable(),
   child: TerminalHostProcessIdentitySchema.nullable(),
@@ -833,13 +837,20 @@ export const TerminalHostAttachResultSchema = z.discriminatedUnion("state", [
  * concrete caps and watermarks the behavioral contract deliberately leaves to
  * the wire. Events are counted rather than measured, so the retention and
  * acknowledgement bounds are event counts and one is a byte cap on a single
- * delivered event. */
+ * delivered event. Every bound is strictly positive — a zero cap negotiates a
+ * subscription that can never deliver, and a zero high-water one that is
+ * always over its bound — and the low-water may not exceed the high-water,
+ * which would make the release threshold unreachable from above. */
 export const TerminalHostSubscriptionLimitsSchema = z.strictObject({
-  maxEventFrameBytes: SafeUintSchema,
-  retainedEventCount: SafeUintSchema,
-  unacknowledgedEventLowWater: SafeUintSchema,
-  unacknowledgedEventHighWater: SafeUintSchema,
-}).readonly();
+  maxEventFrameBytes: PositiveSafeUintSchema,
+  retainedEventCount: PositiveSafeUintSchema,
+  unacknowledgedEventLowWater: PositiveSafeUintSchema,
+  unacknowledgedEventHighWater: PositiveSafeUintSchema,
+}).refine(
+  ({ unacknowledgedEventLowWater, unacknowledgedEventHighWater }) =>
+    unacknowledgedEventLowWater <= unacknowledgedEventHighWater,
+  "event watermarks are reversed",
+).meta({ "x-hive-ordered-event-watermarks": true }).readonly();
 /** §11 subscription cursor. It names both positions in the one session order —
  * an event position and the output offset beside it — so a delivered event and
  * the output around it stay comparable without a second clock. */
@@ -877,6 +888,7 @@ export const TerminalHostSubscribeResultSchema = z.discriminatedUnion("state", [
   z.strictObject({
     state: z.literal("subscribed"),
     session: TerminalHostSessionRefSchema,
+    subscriptionId: z.string().min(1),
     protocol: SelectedProtocolSchema,
     limits: TerminalHostSubscriptionLimitsSchema,
     resumeFrom: TerminalHostSubscriptionCursorSchema,
@@ -892,6 +904,91 @@ export const TerminalHostSubscribeResultSchema = z.discriminatedUnion("state", [
   }).readonly(),
   z.strictObject({ state: z.literal("unknown"), diagnostic: z.string().min(1) }).readonly(),
 ]);
+/** §11 delivered event. Exactly the eight facts inspection reports, ordered
+ * rather than sampled: a lifecycle transition, launch evidence, an applied
+ * resize revision, an input-ownership change, a retention gap, output closure,
+ * exit, and reap. Output closure, exit and reap stay three separate facts
+ * exactly as in §4, so no encoding can collapse them into one. Every event
+ * carries the session reference that fences it — an incarnation that has ended
+ * never delivers a successor's events — and `at`, its position in the one
+ * session order, so a delivered event and the output around it are comparable
+ * without a second clock. There is deliberately no variant for a subscription
+ * ending: a subscription ends on cancellation, on the end of its incarnation
+ * after that incarnation's final facts, or on a typed failure, and no ending
+ * fabricates an event. */
+export const TerminalHostSubscriptionEventSchema = z.discriminatedUnion("fact", [
+  z.strictObject({
+    fact: z.literal("lifecycle"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    lifecycle: TerminalHostLifecycleSchema,
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("launch"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    outcome: TerminalHostLaunchOutcomeSchema,
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("resize-applied"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    revision: DecimalUint64Schema,
+    window: TerminalHostWindowSizeSchema,
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("input-ownership"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    owner: TerminalHostInputClaimSchema.nullable(),
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("retention-gap"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    missing: z.strictObject({
+      start: DecimalUint64Schema,
+      endExclusive: DecimalUint64Schema,
+    }).readonly(),
+    freshInspection: z.literal("required"),
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("output-closed"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    reason: z.string().min(1),
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("exit"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    exit: TerminalHostExitStatusSchema,
+  }).readonly(),
+  z.strictObject({
+    fact: z.literal("reap"),
+    session: TerminalHostSessionRefSchema,
+    at: TerminalHostSubscriptionCursorSchema,
+    reap: TerminalHostReapEvidenceSchema,
+  }).readonly(),
+]);
+/** §11 event acknowledgement. Retained events are released by acknowledgement
+ * on the same terms as output, and subscribers are independent, so the release
+ * names WHICH subscription it releases: without that identity one subscriber's
+ * acknowledgement would release events another has not been delivered. */
+export const TerminalHostEventAcknowledgementRequestSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  subscriptionId: z.string().min(1),
+  through: TerminalHostSubscriptionCursorSchema,
+}).readonly();
+/** §11 acknowledgement receipt. `through` is what the host actually released
+ * through, reported by the host rather than echoed from the request — the same
+ * readback rule attach, subscribe and the resize receipt follow. */
+export const TerminalHostEventAcknowledgementSchema = z.strictObject({
+  session: TerminalHostSessionRefSchema,
+  subscriptionId: z.string().min(1),
+  through: TerminalHostSubscriptionCursorSchema,
+  availableEventCredit: SafeUintSchema,
+}).readonly();
 /** An inventory revision is strictly positive; zero and any leading zero are
  * noncanonical and fail before the guarded operation runs. Same canonical
  * pattern the status spine uses, so the native validator rejects both. */
@@ -1482,6 +1579,9 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostAttachResult: TerminalHostAttachResultSchema,
   terminalHostSubscribeRequest: TerminalHostSubscribeRequestSchema,
   terminalHostSubscribeResult: TerminalHostSubscribeResultSchema,
+  terminalHostSubscriptionEvent: TerminalHostSubscriptionEventSchema,
+  terminalHostEventAcknowledgementRequest: TerminalHostEventAcknowledgementRequestSchema,
+  terminalHostEventAcknowledgement: TerminalHostEventAcknowledgementSchema,
   terminalHostVisibilityRenewalRequest: TerminalHostVisibilityRenewalRequestSchema,
   terminalHostVisibilityRenewalResult: TerminalHostVisibilityRenewalResultSchema,
   sessionLocator: SessionLocatorSchema,

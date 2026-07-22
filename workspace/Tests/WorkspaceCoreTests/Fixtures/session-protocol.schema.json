@@ -7608,22 +7608,22 @@
           "properties": {
             "maxEventFrameBytes": {
               "type": "integer",
-              "minimum": 0,
+              "minimum": 1,
               "maximum": 9007199254740991
             },
             "retainedEventCount": {
               "type": "integer",
-              "minimum": 0,
+              "minimum": 1,
               "maximum": 9007199254740991
             },
             "unacknowledgedEventLowWater": {
               "type": "integer",
-              "minimum": 0,
+              "minimum": 1,
               "maximum": 9007199254740991
             },
             "unacknowledgedEventHighWater": {
               "type": "integer",
-              "minimum": 0,
+              "minimum": 1,
               "maximum": 9007199254740991
             }
           },
@@ -7633,7 +7633,8 @@
             "unacknowledgedEventLowWater",
             "unacknowledgedEventHighWater"
           ],
-          "additionalProperties": false
+          "additionalProperties": false,
+          "x-hive-ordered-event-watermarks": true
         },
         "from": {
           "oneOf": [
@@ -7728,6 +7729,10 @@
               ],
               "additionalProperties": false
             },
+            "subscriptionId": {
+              "type": "string",
+              "minLength": 1
+            },
             "protocol": {
               "readOnly": true,
               "type": "object",
@@ -7754,22 +7759,22 @@
               "properties": {
                 "maxEventFrameBytes": {
                   "type": "integer",
-                  "minimum": 0,
+                  "minimum": 1,
                   "maximum": 9007199254740991
                 },
                 "retainedEventCount": {
                   "type": "integer",
-                  "minimum": 0,
+                  "minimum": 1,
                   "maximum": 9007199254740991
                 },
                 "unacknowledgedEventLowWater": {
                   "type": "integer",
-                  "minimum": 0,
+                  "minimum": 1,
                   "maximum": 9007199254740991
                 },
                 "unacknowledgedEventHighWater": {
                   "type": "integer",
-                  "minimum": 0,
+                  "minimum": 1,
                   "maximum": 9007199254740991
                 }
               },
@@ -7779,7 +7784,8 @@
                 "unacknowledgedEventLowWater",
                 "unacknowledgedEventHighWater"
               ],
-              "additionalProperties": false
+              "additionalProperties": false,
+              "x-hive-ordered-event-watermarks": true
             },
             "resumeFrom": {
               "readOnly": true,
@@ -7806,6 +7812,7 @@
           "required": [
             "state",
             "session",
+            "subscriptionId",
             "protocol",
             "limits",
             "resumeFrom"
@@ -7893,6 +7900,1140 @@
           "additionalProperties": false
         }
       ]
+    },
+    "terminalHostSubscriptionEvent": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "lifecycle"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "lifecycle": {
+              "type": "string",
+              "enum": [
+                "creating",
+                "running",
+                "exited",
+                "lost",
+                "unknown"
+              ]
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "lifecycle"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "launch"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "outcome": {
+              "oneOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "running"
+                    },
+                    "child": {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "processId": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "startToken": {
+                          "type": "string",
+                          "minLength": 1
+                        }
+                      },
+                      "required": [
+                        "processId",
+                        "startToken"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "execProof": {
+                      "type": "string",
+                      "const": "replacement-observed"
+                    },
+                    "jobControl": {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "sessionLeader": {
+                          "type": "boolean"
+                        },
+                        "controllingTerminal": {
+                          "type": "boolean"
+                        },
+                        "standardStreamsShareTerminal": {
+                          "type": "boolean"
+                        },
+                        "childSessionId": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "childProcessGroupId": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "foregroundProcessGroupId": {
+                          "type": "integer",
+                          "exclusiveMinimum": 0,
+                          "maximum": 9007199254740991
+                        },
+                        "terminalIdentity": {
+                          "type": "string",
+                          "minLength": 1
+                        },
+                        "initialProfileAppliedBeforeExec": {
+                          "type": "boolean"
+                        },
+                        "initialWindowAppliedBeforeExec": {
+                          "type": "boolean"
+                        },
+                        "completeness": {
+                          "type": "string",
+                          "enum": [
+                            "complete",
+                            "partial",
+                            "unavailable",
+                            "unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "sessionLeader",
+                        "controllingTerminal",
+                        "standardStreamsShareTerminal",
+                        "childSessionId",
+                        "childProcessGroupId",
+                        "foregroundProcessGroupId",
+                        "terminalIdentity",
+                        "initialProfileAppliedBeforeExec",
+                        "initialWindowAppliedBeforeExec",
+                        "completeness"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "child",
+                    "execProof",
+                    "jobControl"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "exec-failed"
+                    },
+                    "layer": {
+                      "type": "string",
+                      "enum": [
+                        "command",
+                        "working-directory",
+                        "environment",
+                        "descriptor-transfer",
+                        "terminal-setup",
+                        "exec-transition"
+                      ]
+                    },
+                    "osCode": {
+                      "anyOf": [
+                        {
+                          "type": "string"
+                        },
+                        {
+                          "type": "integer",
+                          "minimum": -9007199254740991,
+                          "maximum": 9007199254740991
+                        },
+                        {
+                          "type": "null"
+                        }
+                      ]
+                    },
+                    "diagnostic": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "layer",
+                    "osCode",
+                    "diagnostic"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "exited"
+                    },
+                    "exit": {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "signal": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "signal",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    "reap": {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "authority": {
+                          "type": "string",
+                          "enum": [
+                            "direct-parent",
+                            "durable-parent-record",
+                            "unavailable"
+                          ]
+                        },
+                        "reaped": {
+                          "type": "boolean"
+                        },
+                        "status": {
+                          "anyOf": [
+                            {
+                              "readOnly": true,
+                              "type": "object",
+                              "properties": {
+                                "code": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "minimum": -9007199254740991,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "signal": {
+                                  "anyOf": [
+                                    {
+                                      "type": "integer",
+                                      "minimum": 0,
+                                      "maximum": 9007199254740991
+                                    },
+                                    {
+                                      "type": "null"
+                                    }
+                                  ]
+                                },
+                                "observedAt": {
+                                  "type": "string",
+                                  "format": "date-time",
+                                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                                }
+                              },
+                              "required": [
+                                "code",
+                                "signal",
+                                "observedAt"
+                              ],
+                              "additionalProperties": false
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "completeness": {
+                          "type": "string",
+                          "enum": [
+                            "complete",
+                            "partial",
+                            "unavailable",
+                            "unknown"
+                          ]
+                        }
+                      },
+                      "required": [
+                        "authority",
+                        "reaped",
+                        "status",
+                        "completeness"
+                      ],
+                      "additionalProperties": false
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "exit",
+                    "reap"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "state": {
+                      "type": "string",
+                      "const": "unknown"
+                    },
+                    "diagnostic": {
+                      "type": "string",
+                      "minLength": 1
+                    }
+                  },
+                  "required": [
+                    "state",
+                    "diagnostic"
+                  ],
+                  "additionalProperties": false
+                }
+              ]
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "outcome"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "resize-applied"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "window": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                },
+                "heightPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPixels",
+                "heightPixels"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "revision",
+            "window"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "input-ownership"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "owner": {
+              "anyOf": [
+                {
+                  "readOnly": true,
+                  "type": "object",
+                  "properties": {
+                    "token": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "writer": {
+                      "type": "string",
+                      "minLength": 1
+                    },
+                    "kind": {
+                      "type": "string",
+                      "enum": [
+                        "human",
+                        "automation"
+                      ]
+                    },
+                    "leaseExpiresAt": {
+                      "type": "string",
+                      "format": "date-time",
+                      "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                    }
+                  },
+                  "required": [
+                    "token",
+                    "writer",
+                    "kind",
+                    "leaseExpiresAt"
+                  ],
+                  "additionalProperties": false
+                },
+                {
+                  "type": "null"
+                }
+              ]
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "owner"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "retention-gap"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "missing": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "start": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "endExclusive": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "start",
+                "endExclusive"
+              ],
+              "additionalProperties": false
+            },
+            "freshInspection": {
+              "type": "string",
+              "const": "required"
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "missing",
+            "freshInspection"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "output-closed"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "reason": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "reason"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "exit"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "exit": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "code": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": -9007199254740991,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "signal": {
+                  "anyOf": [
+                    {
+                      "type": "integer",
+                      "minimum": 0,
+                      "maximum": 9007199254740991
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "observedAt": {
+                  "type": "string",
+                  "format": "date-time",
+                  "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                }
+              },
+              "required": [
+                "code",
+                "signal",
+                "observedAt"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "exit"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "fact": {
+              "type": "string",
+              "const": "reap"
+            },
+            "session": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "key": {
+                  "type": "string",
+                  "minLength": 1
+                },
+                "incarnation": {
+                  "type": "string",
+                  "minLength": 1
+                }
+              },
+              "required": [
+                "key",
+                "incarnation"
+              ],
+              "additionalProperties": false
+            },
+            "at": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "eventSequence": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                },
+                "outputOffset": {
+                  "type": "string",
+                  "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+                  "format": "hive-uint64-decimal"
+                }
+              },
+              "required": [
+                "eventSequence",
+                "outputOffset"
+              ],
+              "additionalProperties": false
+            },
+            "reap": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "authority": {
+                  "type": "string",
+                  "enum": [
+                    "direct-parent",
+                    "durable-parent-record",
+                    "unavailable"
+                  ]
+                },
+                "reaped": {
+                  "type": "boolean"
+                },
+                "status": {
+                  "anyOf": [
+                    {
+                      "readOnly": true,
+                      "type": "object",
+                      "properties": {
+                        "code": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": -9007199254740991,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "signal": {
+                          "anyOf": [
+                            {
+                              "type": "integer",
+                              "minimum": 0,
+                              "maximum": 9007199254740991
+                            },
+                            {
+                              "type": "null"
+                            }
+                          ]
+                        },
+                        "observedAt": {
+                          "type": "string",
+                          "format": "date-time",
+                          "pattern": "^(?:(?:\\d\\d[2468][048]|\\d\\d[13579][26]|\\d\\d0[48]|[02468][048]00|[13579][26]00)-02-29|\\d{4}-(?:(?:0[13578]|1[02])-(?:0[1-9]|[12]\\d|3[01])|(?:0[469]|11)-(?:0[1-9]|[12]\\d|30)|(?:02)-(?:0[1-9]|1\\d|2[0-8])))T(?:(?:[01]\\d|2[0-3]):[0-5]\\d:[0-5]\\d\\.\\d{3}(?:Z))$"
+                        }
+                      },
+                      "required": [
+                        "code",
+                        "signal",
+                        "observedAt"
+                      ],
+                      "additionalProperties": false
+                    },
+                    {
+                      "type": "null"
+                    }
+                  ]
+                },
+                "completeness": {
+                  "type": "string",
+                  "enum": [
+                    "complete",
+                    "partial",
+                    "unavailable",
+                    "unknown"
+                  ]
+                }
+              },
+              "required": [
+                "authority",
+                "reaped",
+                "status",
+                "completeness"
+              ],
+              "additionalProperties": false
+            }
+          },
+          "required": [
+            "fact",
+            "session",
+            "at",
+            "reap"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
+    "terminalHostEventAcknowledgementRequest": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "through": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "eventSequence": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "outputOffset": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            }
+          },
+          "required": [
+            "eventSequence",
+            "outputOffset"
+          ],
+          "additionalProperties": false
+        }
+      },
+      "required": [
+        "session",
+        "subscriptionId",
+        "through"
+      ],
+      "additionalProperties": false
+    },
+    "terminalHostEventAcknowledgement": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "readOnly": true,
+      "type": "object",
+      "properties": {
+        "session": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "key": {
+              "type": "string",
+              "minLength": 1
+            },
+            "incarnation": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "key",
+            "incarnation"
+          ],
+          "additionalProperties": false
+        },
+        "subscriptionId": {
+          "type": "string",
+          "minLength": 1
+        },
+        "through": {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "eventSequence": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "outputOffset": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            }
+          },
+          "required": [
+            "eventSequence",
+            "outputOffset"
+          ],
+          "additionalProperties": false
+        },
+        "availableEventCredit": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 9007199254740991
+        }
+      },
+      "required": [
+        "session",
+        "subscriptionId",
+        "through",
+        "availableEventCredit"
+      ],
+      "additionalProperties": false
     },
     "terminalHostVisibilityRenewalRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",

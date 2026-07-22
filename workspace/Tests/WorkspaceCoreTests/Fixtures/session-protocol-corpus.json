@@ -1897,6 +1897,7 @@
           "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
           "incarnation": "3"
         },
+        "subscriptionId": "subscription-fixture",
         "protocol": {
           "major": 1,
           "minor": 0
@@ -1927,6 +1928,224 @@
           "endExclusive": "37"
         },
         "freshInspection": "required"
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the lifecycle fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "lifecycle",
+        "lifecycle": "running",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the launch fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "launch",
+        "outcome": {
+          "state": "running",
+          "child": {
+            "processId": 4101,
+            "startToken": "4101:123457"
+          },
+          "execProof": "replacement-observed",
+          "jobControl": {
+            "sessionLeader": true,
+            "controllingTerminal": true,
+            "standardStreamsShareTerminal": true,
+            "childSessionId": 4101,
+            "childProcessGroupId": 4101,
+            "foregroundProcessGroupId": 4101,
+            "terminalIdentity": "/dev/ttys001",
+            "initialProfileAppliedBeforeExec": true,
+            "initialWindowAppliedBeforeExec": true,
+            "completeness": "complete"
+          }
+        },
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the resize-applied fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "resize-applied",
+        "revision": "41",
+        "window": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1776,
+          "heightPixels": 999
+        },
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the input-ownership fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "input-ownership",
+        "owner": {
+          "token": "claim-fixture-token",
+          "writer": "viewer-fixture",
+          "kind": "human",
+          "leaseExpiresAt": "2026-07-16T12:00:15.000Z"
+        },
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the retention-gap fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "retention-gap",
+        "missing": {
+          "start": "12",
+          "endExclusive": "37"
+        },
+        "freshInspection": "required",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the output-closed fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "output-closed",
+        "reason": "terminal-hangup",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the exit fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "exit",
+        "exit": {
+          "code": null,
+          "signal": 9,
+          "observedAt": "2026-07-16T12:00:00.000Z"
+        },
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event carries the reap fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "reap",
+        "reap": {
+          "authority": "direct-parent",
+          "reaped": false,
+          "status": null,
+          "completeness": "complete"
+        },
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral subscription event may report released input ownership",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "input-ownership",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        },
+        "owner": null
+      }
+    },
+    {
+      "name": "frozen neutral event acknowledgement names the subscription it releases",
+      "schema": "terminalHostEventAcknowledgementRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "subscriptionId": "subscription-fixture",
+        "through": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen neutral event acknowledgement reports the released readback and credit",
+      "schema": "terminalHostEventAcknowledgement",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "subscriptionId": "subscription-fixture",
+        "through": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        },
+        "availableEventCredit": 1024
       }
     },
     {
@@ -4009,6 +4228,151 @@
           "endExclusive": "37"
         },
         "freshInspection": "waived"
+      }
+    },
+    {
+      "name": "frozen subscribe limits reject a retention cap that can never deliver",
+      "schema": "terminalHostSubscribeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 0,
+          "unacknowledgedEventLowWater": 256,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "from": {
+          "position": "at",
+          "cursor": {
+            "eventSequence": "12",
+            "outputOffset": "4096"
+          }
+        }
+      }
+    },
+    {
+      "name": "frozen subscribe limits reject reversed event watermarks",
+      "schema": "terminalHostSubscribeRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minMinor": 0,
+          "maxMinor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 4096,
+          "unacknowledgedEventLowWater": 1025,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "from": {
+          "position": "at",
+          "cursor": {
+            "eventSequence": "12",
+            "outputOffset": "4096"
+          }
+        }
+      }
+    },
+    {
+      "name": "frozen subscribe result cannot omit the subscription an acknowledgement releases",
+      "schema": "terminalHostSubscribeResult",
+      "value": {
+        "state": "subscribed",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "protocol": {
+          "major": 1,
+          "minor": 0
+        },
+        "limits": {
+          "maxEventFrameBytes": 65536,
+          "retainedEventCount": 4096,
+          "unacknowledgedEventLowWater": 256,
+          "unacknowledgedEventHighWater": 1024
+        },
+        "resumeFrom": {
+          "eventSequence": "12",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen subscription event cannot collapse exit into output closure",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "output-closed",
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        },
+        "reason": "terminal-hangup",
+        "exit": {
+          "code": null,
+          "signal": 9,
+          "observedAt": "2026-07-16T12:00:00.000Z"
+        }
+      }
+    },
+    {
+      "name": "frozen subscription event cannot deliver an unfenced fact",
+      "schema": "terminalHostSubscriptionEvent",
+      "value": {
+        "fact": "lifecycle",
+        "lifecycle": "running",
+        "at": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen event acknowledgement cannot release without naming its subscription",
+      "schema": "terminalHostEventAcknowledgementRequest",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "subscriptionId": "",
+        "through": {
+          "eventSequence": "13",
+          "outputOffset": "4096"
+        }
+      }
+    },
+    {
+      "name": "frozen event acknowledgement cannot report a nondecimal released position",
+      "schema": "terminalHostEventAcknowledgement",
+      "value": {
+        "session": {
+          "key": "ses_018f1e90-7b5a-7cc0-8000-000000000001",
+          "incarnation": "3"
+        },
+        "subscriptionId": "subscription-fixture",
+        "through": {
+          "eventSequence": "013",
+          "outputOffset": "4096"
+        },
+        "availableEventCredit": 1024
       }
     },
     {

@@ -508,6 +508,16 @@ fn validateSchema(value: std.json.Value, schema: std.json.Value) bool {
                 if ((numberAsF64(minimum) orelse return false) > (numberAsF64(maximum) orelse return false))
                     return false;
             };
+            // Event retention is released between its watermarks, so the
+            // low-water may not exceed the high-water: that would put the
+            // release threshold above the bound that triggers it, leaving it
+            // unreachable from above.
+            if (object.get("x-hive-ordered-event-watermarks")) |ordered| if (ordered == .bool and ordered.bool) {
+                const low = value_object.get("unacknowledgedEventLowWater") orelse return false;
+                const high = value_object.get("unacknowledgedEventHighWater") orelse return false;
+                if ((numberAsF64(low) orelse return false) > (numberAsF64(high) orelse return false))
+                    return false;
+            };
             // A visibility lease is active only BETWEEN its timestamps, so the
             // deadline must follow the issue instant strictly. Both stamps are
             // UTC with fixed millisecond precision and no offset (validated as

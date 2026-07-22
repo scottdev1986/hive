@@ -390,6 +390,7 @@ const fixtureTerminalHostSubscribeRequest = {
 const fixtureTerminalHostSubscribeResult = {
   state: "subscribed",
   session: fixtureTerminalHostSession,
+  subscriptionId: "subscription-fixture",
   protocol: { major: 1, minor: 0 },
   limits: fixtureTerminalHostSubscriptionLimits,
   resumeFrom: { eventSequence: "12", outputOffset: "4096" },
@@ -399,6 +400,41 @@ const fixtureTerminalHostSubscribeGap = {
   session: fixtureTerminalHostSession,
   missing: { start: "12", endExclusive: "37" },
   freshInspection: "required",
+};
+const fixtureTerminalHostEventCursor = { eventSequence: "13", outputOffset: "4096" };
+/** One value per §11 fact, in the order the contract names them. */
+const fixtureTerminalHostSubscriptionEvents = [
+  { fact: "lifecycle", lifecycle: "running" },
+  { fact: "launch", outcome: fixtureTerminalHostCreateResult.outcome },
+  {
+    fact: "resize-applied",
+    revision: fixtureTerminalHostResizeReceipt.revision,
+    window: fixtureTerminalHostResizeReceipt.window,
+  },
+  { fact: "input-ownership", owner: fixtureTerminalHostClaim },
+  {
+    fact: "retention-gap",
+    missing: { start: "12", endExclusive: "37" },
+    freshInspection: "required",
+  },
+  { fact: "output-closed", reason: "terminal-hangup" },
+  { fact: "exit", exit: fixtureTerminalHostExit },
+  { fact: "reap", reap: fixtureTerminalHostInspection.reap },
+].map((event) => ({
+  ...event,
+  session: fixtureTerminalHostSession,
+  at: fixtureTerminalHostEventCursor,
+}));
+const fixtureTerminalHostEventAcknowledgementRequest = {
+  session: fixtureTerminalHostSession,
+  subscriptionId: "subscription-fixture",
+  through: fixtureTerminalHostEventCursor,
+};
+const fixtureTerminalHostEventAcknowledgement = {
+  session: fixtureTerminalHostSession,
+  subscriptionId: "subscription-fixture",
+  through: fixtureTerminalHostEventCursor,
+  availableEventCredit: 1_024,
 };
 const fixtureTerminalHostVisibilityRequest = {
   sourceSession: "workspace-session-7",
@@ -825,6 +861,31 @@ const validCases: readonly WireCorpusCase[] = [
     schema: "terminalHostSubscribeResult",
     value: fixtureTerminalHostSubscribeGap,
   },
+  ...fixtureTerminalHostSubscriptionEvents.map((event) => ({
+    name: `frozen neutral subscription event carries the ${event.fact} fact`,
+    schema: "terminalHostSubscriptionEvent" as const,
+    value: event,
+  })),
+  {
+    name: "frozen neutral subscription event may report released input ownership",
+    schema: "terminalHostSubscriptionEvent",
+    value: {
+      fact: "input-ownership",
+      session: fixtureTerminalHostSession,
+      at: fixtureTerminalHostEventCursor,
+      owner: null,
+    },
+  },
+  {
+    name: "frozen neutral event acknowledgement names the subscription it releases",
+    schema: "terminalHostEventAcknowledgementRequest",
+    value: fixtureTerminalHostEventAcknowledgementRequest,
+  },
+  {
+    name: "frozen neutral event acknowledgement reports the released readback and credit",
+    schema: "terminalHostEventAcknowledgement",
+    value: fixtureTerminalHostEventAcknowledgement,
+  },
   {
     name: "frozen neutral visibility renewal repeats the complete request",
     schema: "terminalHostVisibilityRenewalRequest",
@@ -1048,6 +1109,60 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen subscribe gap cannot drop its fresh-inspection requirement",
     schema: "terminalHostSubscribeResult",
     value: { ...fixtureTerminalHostSubscribeGap, freshInspection: "waived" },
+  },
+  {
+    name: "frozen subscribe limits reject a retention cap that can never deliver",
+    schema: "terminalHostSubscribeRequest",
+    value: {
+      ...fixtureTerminalHostSubscribeRequest,
+      limits: { ...fixtureTerminalHostSubscriptionLimits, retainedEventCount: 0 },
+    },
+  },
+  {
+    name: "frozen subscribe limits reject reversed event watermarks",
+    schema: "terminalHostSubscribeRequest",
+    value: {
+      ...fixtureTerminalHostSubscribeRequest,
+      limits: {
+        ...fixtureTerminalHostSubscriptionLimits,
+        unacknowledgedEventLowWater:
+          fixtureTerminalHostSubscriptionLimits.unacknowledgedEventHighWater + 1,
+      },
+    },
+  },
+  {
+    name: "frozen subscribe result cannot omit the subscription an acknowledgement releases",
+    schema: "terminalHostSubscribeResult",
+    value: { ...fixtureTerminalHostSubscribeResult, subscriptionId: undefined },
+  },
+  {
+    name: "frozen subscription event cannot collapse exit into output closure",
+    schema: "terminalHostSubscriptionEvent",
+    value: {
+      fact: "output-closed",
+      session: fixtureTerminalHostSession,
+      at: fixtureTerminalHostEventCursor,
+      reason: "terminal-hangup",
+      exit: fixtureTerminalHostExit,
+    },
+  },
+  {
+    name: "frozen subscription event cannot deliver an unfenced fact",
+    schema: "terminalHostSubscriptionEvent",
+    value: { ...fixtureTerminalHostSubscriptionEvents[0], session: undefined },
+  },
+  {
+    name: "frozen event acknowledgement cannot release without naming its subscription",
+    schema: "terminalHostEventAcknowledgementRequest",
+    value: { ...fixtureTerminalHostEventAcknowledgementRequest, subscriptionId: "" },
+  },
+  {
+    name: "frozen event acknowledgement cannot report a nondecimal released position",
+    schema: "terminalHostEventAcknowledgement",
+    value: {
+      ...fixtureTerminalHostEventAcknowledgement,
+      through: { eventSequence: "013", outputOffset: "4096" },
+    },
   },
   {
     name: "frozen visibility renewal rejects a nonpositive inventory revision",

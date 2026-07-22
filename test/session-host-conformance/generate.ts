@@ -292,6 +292,14 @@ func validates(_ value: Any, against schema: [String: Any]) -> Bool {
            let minimum = (object["minMinor"] as? NSNumber)?.intValue,
            let maximum = (object["maxMinor"] as? NSNumber)?.intValue,
            minimum > maximum { return false }
+        // Event retention is released between its watermarks, so the low-water
+        // may not exceed the high-water: that would put the release threshold
+        // above the bound that triggers it and make it unreachable from above.
+        if schema["x-hive-ordered-event-watermarks"] as? Bool == true {
+            guard let low = (object["unacknowledgedEventLowWater"] as? NSNumber)?.intValue,
+                  let high = (object["unacknowledgedEventHighWater"] as? NSNumber)?.intValue,
+                  low <= high else { return false }
+        }
         // A lease is active only BETWEEN its timestamps. Both stamps are UTC with
         // fixed millisecond precision and no offset, so string order is
         // chronological order and the deadline must follow the issue instant.
