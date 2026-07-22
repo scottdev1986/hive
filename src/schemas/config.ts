@@ -22,6 +22,28 @@ export const LifecycleConfigSchema = z.strictObject({
   idleReapMinutes: z.number().int().positive().default(10),
 });
 
+// HiveMemory HM-2 WP3 (board #72; planning/story-m3-s37-digests-lifecycle.md
+// DoD 5): the per-tier retention constants the daemon's memory sweep runs on,
+// as the `[memory.retention]` section of ~/.hive/config.toml. The numbers are
+// ratifiable starting points; changes are loud — the daemon logs the effective
+// config at start. `facts_retention` and `digests_retention` are not knobs:
+// facts are bi-temporal history (contradiction stamps invalid_at; rows are
+// never deleted) and a digest is the downsample an aged event tier collapses
+// into, so "forever" is the only value the schema accepts. Naming follows the
+// story's snake_case key names; the rest of this file is camelCase.
+export const MemoryRetentionConfigSchema = z.strictObject({
+  // Raw hot tier: episodic `events` rows older than this are deleted by the
+  // sweep (unless a digest's provenance still references them).
+  events_hot_days: z.number().int().positive().default(30),
+  facts_retention: z.literal("forever").default("forever"),
+  digests_retention: z.literal("forever").default("forever"),
+  // A wiki article whose status is verified and whose verified date is older
+  // than this demotes to stale (S3.7 DoD 7: visible, still readable, never
+  // deleted).
+  stale_after_days: z.number().int().positive().default(90),
+  sweep_interval_hours: z.number().positive().default(24),
+});
+
 export const HiveConfigSchema = z.strictObject({
   codex: z.strictObject({
     driver: z.enum(["tui", "app-server"]).default("tui"),
@@ -59,8 +81,12 @@ export const HiveConfigSchema = z.strictObject({
   }).prefault({}),
   resources: ResourceLimitsSchema.prefault({}),
   lifecycle: LifecycleConfigSchema.prefault({}),
+  memory: z.strictObject({
+    retention: MemoryRetentionConfigSchema.prefault({}),
+  }).prefault({}),
 });
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
 export type LifecycleConfig = z.infer<typeof LifecycleConfigSchema>;
+export type MemoryRetentionConfig = z.output<typeof MemoryRetentionConfigSchema>;
 export type HiveConfig = z.infer<typeof HiveConfigSchema>;

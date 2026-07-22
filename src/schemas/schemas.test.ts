@@ -42,6 +42,15 @@ describe("HiveConfigSchema", () => {
         idleReap: true,
         idleReapMinutes: 10,
       },
+      memory: {
+        retention: {
+          events_hot_days: 30,
+          facts_retention: "forever",
+          digests_retention: "forever",
+          stale_after_days: 90,
+          sweep_interval_hours: 24,
+        },
+      },
     });
   });
 

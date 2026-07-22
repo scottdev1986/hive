@@ -128,6 +128,10 @@ import {
 import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
 import {
+  runRetentionSweep,
+  type RetentionSweepReport,
+} from "./memory-retention";
+import {
   BunTmuxSender,
   CoexistingSessionSender,
   MessageDelivery,
@@ -211,7 +215,7 @@ import {
   type PaneProcessState,
   type SessionProcessRoots,
 } from "./resources";
-import type { LifecycleConfig, ResourceLimits } from "../schemas";
+import type { LifecycleConfig, MemoryRetentionConfig, ResourceLimits } from "../schemas";
 import { HIVE_VERSION } from "../version";
 import type { ModelInventory } from "./model-inventory";
 import { TokenUsageStore } from "./token-usage";
@@ -612,6 +616,10 @@ export interface HiveDaemonOptions {
   /** Idle-agent reap sweep (config `[lifecycle]`); stays off when omitted so
    * embedded daemons (tests, tooling) never close an agent unasked. */
   lifecycle?: LifecycleConfig;
+  /** Memory retention sweep (config `[memory.retention]`, HiveMemory HM-2
+   * WP3); stays off when omitted so embedded daemons never age out memory
+   * state unasked. Also inert without an episodic store. */
+  retention?: MemoryRetentionConfig;
   /** Test seams for the resource sweep's process interrogation. */
   resourceRunners?: {
     ps?: CommandOutput;
@@ -736,6 +744,9 @@ export class HiveDaemon {
     | { status: "error"; error: string } = { status: "unknown" };
   private readonly resources: ResourceLimits | null;
   private readonly lifecycleConfig: LifecycleConfig | null;
+  private readonly retentionConfig: MemoryRetentionConfig | null;
+  private retentionTimer: ReturnType<typeof setInterval> | null = null;
+  private retentionRunning = false;
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
   private readonly panePids: (session: string) => Promise<number[]>;
@@ -981,6 +992,7 @@ export class HiveDaemon {
     this.landReadiness = options.readLandReadiness ?? readLandReadiness;
     this.resources = options.resources ?? null;
     this.lifecycleConfig = options.lifecycle ?? null;
+    this.retentionConfig = options.retention ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.panePids = options.resourceRunners?.panePids ??
@@ -1315,6 +1327,25 @@ export class HiveDaemon {
       });
     }, WORKSPACE_VISIBILITY_RENEWAL_MS);
     this.visibilityRenewalTimer.unref?.();
+    // Memory retention (HiveMemory HM-2 WP3): a periodic timer on
+    // sweep_interval_hours, plus one sweep at start so a daemon that was down
+    // past its cadence does not wait a full interval to age anything out.
+    // The effective config is logged every start — retention policy changes
+    // are loud (S3.7 DoD 5).
+    if (this.retentionConfig !== null && this.episodic !== null) {
+      const retention = this.retentionConfig;
+      console.log(
+        `Hive memory retention: events hot for ${retention.events_hot_days}d, ` +
+          `verified articles demote to stale after ${retention.stale_after_days}d, ` +
+          `sweep every ${retention.sweep_interval_hours}h; ` +
+          "facts and digests are kept forever (invariant, not a setting)",
+      );
+      this.retentionTimer = setInterval(() => {
+        this.triggerMemoryRetentionSweep("periodic");
+      }, retention.sweep_interval_hours * 3_600_000);
+      this.retentionTimer.unref?.();
+      this.triggerMemoryRetentionSweep("startup");
+    }
     void this.runMaintenance().catch((error) => {
       console.error(
         `Hive startup recovery failed: ${
@@ -2440,6 +2471,11 @@ export class HiveDaemon {
     // top of that is how a kill that obeyed reads as a kill that refused.
     await this.reportKill(agent, reaped, preserved, stranded);
 
+    // A session end is a retention lifecycle boundary (S3.7 DoD 5): the sweep
+    // rides it. Fire-and-forget — retention is maintenance and must never add
+    // failure modes to a kill.
+    this.triggerMemoryRetentionSweep("agent session end");
+
     return { agent: updated, cleaned, reaped, preserved, stranded };
   }
 
@@ -2631,6 +2667,10 @@ export class HiveDaemon {
       clearInterval(this.visibilityRenewalTimer);
       this.visibilityRenewalTimer = null;
     }
+    if (this.retentionTimer !== null) {
+      clearInterval(this.retentionTimer);
+      this.retentionTimer = null;
+    }
     this.bunServer?.stop(true);
     this.bunServer = null;
     this.codexControl?.close();
@@ -2652,6 +2692,71 @@ export class HiveDaemon {
   // dead with its worktree preserved and the stranded state surfaced.
   async reconcileAgents(): Promise<RecoveryOutcome[]> {
     return this.recovery.sweep();
+  }
+
+  /**
+   * The memory retention sweep (HiveMemory HM-2 WP3; config
+   * `[memory.retention]`, off entirely when the daemon is not given a
+   * retention config or an episodic store — embedded daemons in tests and
+   * tooling must never age out memory state unasked). Aged hot-tier events
+   * are deleted (digest-referenced rows survive), facts and digests are kept
+   * forever by invariant, and verified wiki articles past `stale_after_days`
+   * demote to stale. Runs on the periodic timer, once at start, and on every
+   * agent session end (killAgentTeardown fires the trigger); overlapping runs
+   * collapse onto the latch. Returns the report, or null when the sweep is
+   * off or already running.
+   */
+  async runMemoryRetentionSweep(): Promise<RetentionSweepReport | null> {
+    const config = this.retentionConfig;
+    const episodic = this.episodic;
+    if (config === null || episodic === null) return null;
+    if (this.retentionRunning) return null;
+    this.retentionRunning = true;
+    try {
+      // The demotion half writes article files, so the sweep takes the same
+      // serialized memory write path as memory_write (SPEC decision 5) — a
+      // retention pass must never interleave with an agent's write. The FTS
+      // rebuild below re-enters the lock after this one releases, so it
+      // cannot live inside.
+      const report = await this.serializeMemory(() =>
+        runRetentionSweep({
+          episodic,
+          repoRoot: this.repoRoot,
+          config,
+          now: new Date(),
+        })
+      );
+      if (report.eventsDeleted > 0 || report.articlesDemoted.length > 0) {
+        console.log(
+          `Hive memory retention sweep: deleted ${report.eventsDeleted} ` +
+            `aged event(s), demoted ${report.articlesDemoted.length} ` +
+            "verified article(s) to stale",
+        );
+      }
+      if (report.articlesDemoted.length > 0) {
+        // The FTS index is a disposable projection of the article files and
+        // the demotions just rewrote files; reproject so a stale status is
+        // visible to memory_search right away. A failure here is logged by
+        // the caller's catch like any other sweep failure.
+        await this.rebuildMemoryIndex();
+      }
+      return report;
+    } finally {
+      this.retentionRunning = false;
+    }
+  }
+
+  /** Fire-and-forget trigger for the event-driven retention paths (agent
+   * session end, daemon start, the periodic timer). A sweep failure is
+   * maintenance noise, never a daemon failure: log and move on. */
+  private triggerMemoryRetentionSweep(reason: string): void {
+    void this.runMemoryRetentionSweep().catch((error) => {
+      console.error(
+        `Hive memory retention sweep (${reason}) failed: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    });
   }
 
   /**

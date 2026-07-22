@@ -387,6 +387,7 @@ export async function runDaemon(): Promise<void> {
     codexControl: codexAppServer,
     resources: config.resources,
     lifecycle: config.lifecycle,
+    retention: config.memory.retention,
     // One source of truth for autonomy: this very `config` object, which the
     // spawner also reads at each spawn. Persist first, mutate second — if the
     // disk write fails, the live value never diverges from the file.

@@ -329,6 +329,34 @@ export class EpisodicStore {
     );
   }
 
+  /** Raw provenance JSON of every digest row (HiveMemory HM-2 WP3): the
+   * retention sweep parses these to learn which event rows are still a
+   * digest's drill-down target and must survive the hot-tier cutoff. */
+  digestProvenanceBlobs(): string[] {
+    return this.database.query("SELECT provenance FROM digests ORDER BY id")
+      .all()
+      .map((row) => z.object({ provenance: z.string() }).parse(row).provenance);
+  }
+
+  /** Delete `events` rows older than `cutoff` (ISO timestamp; the column's
+   * format sorts lexicographically) except the ids in `keepIds` — a
+   * digest-referenced event is a drill-down target, not garbage. Returns the
+   * number of rows actually deleted. Facts and digests are never swept: that
+   * is an invariant, so there is deliberately no parameter for them. */
+  sweepEvents(cutoff: string, keepIds: ReadonlySet<number>): number {
+    const at = IsoTimestampSchema.parse(cutoff);
+    const candidates = this.database.query(
+      "SELECT id FROM events WHERE ts < ?",
+    ).all(at).map((row) => z.object({ id: z.number() }).parse(row).id);
+    const deletable = candidates.filter((id) => !keepIds.has(id));
+    if (deletable.length === 0) return 0;
+    const placeholders = deletable.map(() => "?").join(", ");
+    this.database.query(
+      `DELETE FROM events WHERE id IN (${placeholders})`,
+    ).run(...deletable);
+    return deletable.length;
+  }
+
   close(): void {
     this.database.close();
   }

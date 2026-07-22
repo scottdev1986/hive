@@ -486,6 +486,32 @@ export async function deleteMemoryFact(
   return true;
 }
 
+/**
+ * Retention stale-demotion (HiveMemory HM-2 WP3; S3.7 DoD 7): a `verified`
+ * article whose verification has aged out becomes `stale` — visible in the
+ * index, still readable, never deleted. This is a status update on the
+ * existing article, not a new observation, so unlike writeMemoryFact it
+ * appends no raw file; the article file is rewritten through the same
+ * serializer and the scope index and log stay consistent. Returns the demoted
+ * article, or null when there is no verified article with that id.
+ */
+export async function demoteMemoryFact(
+  root: string,
+  scope: MemoryScope,
+  id: string,
+  options: { date?: string } = {},
+): Promise<MemoryFact | null> {
+  validateMemoryId(id);
+  const fact = await findMemoryFact(root, scope, id);
+  if (fact === null || fact.status !== "verified") return null;
+  const date = options.date ?? todayIsoDate();
+  const demoted = MemoryFactSchema.parse({ ...fact, status: "stale", date });
+  await writeFile(fact.path, serializeMemoryFile(demoted));
+  await rebuildScopeIndex(root, scope);
+  await appendLog(root, scope, date, `stale-demote | ${fact.title}`);
+  return demoted;
+}
+
 interface LegacyFact {
   id: string;
   title: string;
