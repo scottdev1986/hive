@@ -1,4 +1,4 @@
-import { describe, expect, test } from "bun:test";
+import { describe, expect, jest, test } from "bun:test";
 import { Database } from "bun:sqlite";
 import { Client } from "@modelcontextprotocol/sdk/client/index.js";
 import { StreamableHTTPClientTransport } from "@modelcontextprotocol/sdk/client/streamableHttp.js";
@@ -22,7 +22,12 @@ import {
   CatalogedQuotaLedger as QuotaLedger,
 } from "./authorized-launch.test-support";
 import { QuotaService } from "./quota";
-import { HIVE_VERSION, HiveDaemon, inferLegacyControl } from "./server";
+import {
+  HIVE_VERSION,
+  HiveDaemon,
+  inferLegacyControl,
+  WORKSPACE_VISIBILITY_RENEWAL_MS,
+} from "./server";
 import { readLiveClaudeModel } from "./live-model";
 import { formatStatusTable } from "../cli/status";
 import { fetchAgentStatus } from "../cli/mcp";
@@ -263,11 +268,46 @@ test("only the operator may publish a live advancing Workspace inventory", async
   }
 });
 
-test("a stalled publisher does not expire a live Workspace, but a dead one still expires", async () => {
+test("a started daemon fires the workspace visibility renewal clock", async () => {
+  jest.useFakeTimers();
+  const db = new HiveDatabase(":memory:");
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    port: 0,
+  });
+  const renewal = jest.spyOn(daemon, "renewWorkspaceVisibility")
+    .mockResolvedValue(0);
+  jest.spyOn(daemon, "runMaintenance").mockResolvedValue(undefined);
+  jest.spyOn(daemon, "checkWakePaths").mockResolvedValue([]);
+  try {
+    daemon.start();
+    jest.advanceTimersByTime(WORKSPACE_VISIBILITY_RENEWAL_MS - 1);
+    expect(renewal).not.toHaveBeenCalled();
+    jest.advanceTimersByTime(1);
+    expect(renewal).toHaveBeenCalledTimes(1);
+  } finally {
+    await daemon.stop();
+    db.close();
+    jest.useRealTimers();
+  }
+});
+
+test("visibility expiry audit follows sessiond kill evidence", async () => {
   // 2026-07-21: renewal rode only on the Workspace's publishes, so one hung
   // publish was indistinguishable from a dead Workspace and sessiond killed
-  // all five vendors. The daemon now re-renews the last accepted inventory on
-  // its own clock — but ONLY while the recorded source still verifies.
+  // all five vendors. A transient source-observation failure must not invent
+  // that kill, while a verified source whose broker renewal fails must still
+  // receive the durable audit after sessiond enforces its lease.
+  jest.useFakeTimers();
+  let clock = Date.parse("2026-07-18T12:00:00.000Z");
+  jest.setSystemTime(clock);
+  const advanceClock = (milliseconds: number): void => {
+    jest.advanceTimersByTime(milliseconds);
+    clock += milliseconds;
+    jest.setSystemTime(clock);
+  };
   const db = new HiveDatabase(":memory:");
   const agentId = "agent-stalled";
   const locator = {
@@ -307,35 +347,89 @@ test("a stalled publisher does not expire a live Workspace, but a dead one still
     status: "working",
     sessionLocator: locator,
   }));
-  const renewals: unknown[] = [];
+  const events: string[] = [];
+  let sourceObservation: "live" | "throw" = "live";
+  let brokerAvailable = true;
+  let killed = false;
+  let leaseExpiry = "2026-07-18T12:00:15.000Z";
+  let visibilityTimer: ReturnType<typeof setTimeout> | undefined;
   const unsupported = async (): Promise<never> => {
     throw new Error("unexpected terminal-host operation");
+  };
+  const inspection = (
+    session: Parameters<LandedTerminalHost["inspect"]>[0],
+    recordObservation = false,
+  ): Awaited<ReturnType<LandedTerminalHost["inspect"]>> => {
+    if (recordObservation) {
+      events.push(killed ? "kill-observed" : "live-observed");
+    }
+    const observedAt = new Date().toISOString();
+    const exit = killed ? { code: null, signal: 15, observedAt } : null;
+    return {
+      session,
+      lifecycle: killed ? "exited" : "running",
+      completeness: "complete",
+      host: null,
+      child: null,
+      jobControl: null,
+      window: {
+        value: { columns: 80, rows: 24, widthPixels: 800, heightPixels: 480 },
+        revision: "1",
+      },
+      output: { closed: killed, retained: { start: "0", endExclusive: "0" } },
+      checkpoints: { retained: 0, newest: null },
+      inputOwner: null,
+      exit,
+      reap: {
+        authority: "direct-parent",
+        reaped: killed,
+        status: exit,
+        completeness: "complete",
+      },
+      descendants: [],
+      survivors: [],
+      evidenceAt: observedAt,
+      diagnostics: [],
+    };
   };
   const terminalHost: LandedTerminalHost = {
     create: unsupported,
     claimInput: unsupported,
     submitInput: unsupported,
     resize: unsupported,
-    inspect: unsupported,
+    inspect: async (session) => inspection(session, true),
     issueAttach: unsupported,
-    list: async () => [],
+    list: async () => [inspection({
+      key: locator.sessionId,
+      incarnation: String(locator.generation),
+    })],
     terminate: unsupported,
     renewVisibility: async (requestedLocator, request) => {
-      renewals.push(request.openTerminalRevision);
+      if (!brokerAvailable) {
+        events.push("renewal-unknown");
+        throw new Error("sessiond broker unavailable");
+      }
+      events.push("renewed");
+      clearTimeout(visibilityTimer);
+      leaseExpiry = new Date(Date.now() + 15_000).toISOString();
+      visibilityTimer = setTimeout(() => {
+        killed = true;
+        events.push("visibility-kill");
+      }, 15_000);
       return {
         locator: requestedLocator,
         state: "active",
-        expiresAt: "2026-07-18T12:00:30.000Z",
+        expiresAt: leaseExpiry,
         openTerminalRevision: request.openTerminalRevision,
       };
     },
   };
-  // The Workspace process is alive until the test kills it.
-  let workspaceAlive = true;
   const visibility = new WorkspaceVisibilityAuthority({
     expectedInstanceId: locator.instanceId,
-    observeProcess: (pid) =>
-      workspaceAlive && pid === 7501 ? { startToken: "7501:100" } : null,
+    observeProcess: (pid) => {
+      if (sourceObservation === "throw") throw new Error("transient ps failure");
+      return pid === 7501 ? { startToken: "7501:100" } : null;
+    },
     discoverEngineBuildId: async () => "engine-stalled",
   });
   const daemon = new HiveDaemon({
@@ -363,39 +457,64 @@ test("a stalled publisher does not expire a live Workspace, but a dead one still
       },
     );
     expect(published.status).toBe(200);
-    expect(renewals).toEqual(["2"]);
+    expect(events).toEqual(["renewed"]);
 
     // The publisher now stalls: no further POST ever arrives. The daemon's own
     // renewal keeps the verified-live Workspace's lease alive.
-    expect(await daemon.renewWorkspaceVisibility()).toBe(1);
-    expect(await daemon.renewWorkspaceVisibility()).toBe(1);
-    expect(renewals).toEqual(["2", "2", "2"]);
-
-    // Positive control — the gate is still armed. The Workspace dies; nothing
-    // else changes. No renewal is issued, the lease lapses, and sessiond's
-    // VISIBILITY_EXPIRED enforcement kills the host exactly as before.
-    workspaceAlive = false;
+    advanceClock(5_000);
+    sourceObservation = "throw";
     expect(await daemon.renewWorkspaceVisibility()).toBe(0);
-    expect(renewals).toEqual(["2", "2", "2"]);
+    expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
+      .toBeUndefined();
 
-    // ...and the reason is now durable. Before this, a VISIBILITY_EXPIRED kill
-    // left terminationAuditJson NULL, which is why the fleet death had no
-    // record in the DB at all.
+    // A later observation recovers and renews normally. The transient failure
+    // did not leave a permanent false expiry row.
+    sourceObservation = "live";
+    expect(await daemon.renewWorkspaceVisibility()).toBe(1);
+    expect(events).toEqual(["renewed", "renewed"]);
+
+    // The source remains verified, but the broker now fails closed. Before the
+    // deadline this is only an unknown renewal, not expiry evidence.
+    brokerAvailable = false;
+    advanceClock(5_000);
+    expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+    expect(killed).toBe(false);
+    expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
+      .toBeUndefined();
+
+    // Sessiond's independent clock reaches the last verified lease, kills the
+    // host, and only the following daemon observation writes the audit.
+    advanceClock(10_001);
+    expect(killed).toBe(true);
+    expect(Date.now()).toBe(clock);
+    expect(Date.parse(
+      db.getTerminalHostBindingByLocator(locator)!.createEvidence!.visibility.expiresAt,
+    )).toBeLessThan(Date.now());
+    expect(events.at(-1)).toBe("visibility-kill");
+    expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
+      .toBeUndefined();
+    expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+    expect(events.slice(-3)).toEqual([
+      "visibility-kill",
+      "renewal-unknown",
+      "kill-observed",
+    ]);
     const audited = db.getTerminalHostBindingByLocator(locator);
     expect(audited?.terminationAudit).toMatchObject({
       origin: "visibility-expiry",
-      reason: "workspace visibility source no longer verifies; " +
-        "renewal withheld and the sessiond lease will expire",
+      reason: "sessiond reports the visibility lease expired and the host died",
     });
 
-    // Written once: the 5s tick must not rewrite its own audit.
+    // Written once: later 5s ticks must not rewrite their evidence.
     const firstRequestId = audited?.terminationAudit?.requestId;
     expect(await daemon.renewWorkspaceVisibility()).toBe(0);
     expect(
       db.getTerminalHostBindingByLocator(locator)?.terminationAudit?.requestId,
     ).toBe(firstRequestId!);
   } finally {
+    clearTimeout(visibilityTimer);
     db.close();
+    jest.useRealTimers();
   }
 });
 

@@ -132,35 +132,41 @@ export async function publishWorkspaceVisibility(
     }, timeoutMs);
   });
   let response: Response;
+  let body: { error?: unknown; diagnostic?: unknown; reason?: unknown } | null;
   try {
-    response = await Promise.race([
-      (deps.post ?? operatorFetch)(
-        `http://127.0.0.1:${port}/workspace-visibility`,
-        {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          signal: controller.signal,
-          body: JSON.stringify({
-            ...parsed,
-            source: {
-              sessionId: workspaceSessionId,
-              process: {
-                processId: workspacePid,
-                startToken: processIdentity.startToken,
+    [response, body] = await Promise.race([
+      (async () => {
+        const response = await (deps.post ?? operatorFetch)(
+          `http://127.0.0.1:${port}/workspace-visibility`,
+          {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            signal: controller.signal,
+            body: JSON.stringify({
+              ...parsed,
+              source: {
+                sessionId: workspaceSessionId,
+                process: {
+                  processId: workspacePid,
+                  startToken: processIdentity.startToken,
+                },
               },
-            },
-          }),
-        },
-      ),
+            }),
+          },
+        );
+        const body = response.ok
+          ? null
+          : await response.json().catch(() => null) as
+            | { error?: unknown; diagnostic?: unknown; reason?: unknown }
+            | null;
+        return [response, body] as const;
+      })(),
       expiry,
     ]);
   } finally {
     clearTimeout(timer);
   }
   if (response.ok) return { durationMs: now() - startedAt };
-  const body = await response.json().catch(() => null) as
-    | { error?: unknown; diagnostic?: unknown; reason?: unknown }
-    | null;
   const detail = typeof body?.diagnostic === "string"
     ? body.diagnostic
     : typeof body?.error === "string" ? body.error : `HTTP ${response.status}`;

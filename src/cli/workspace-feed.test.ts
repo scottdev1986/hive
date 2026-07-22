@@ -203,6 +203,30 @@ describe("runWorkspaceFeed", () => {
     expect(aborted).toBe(true);
   });
 
+  test("a publish whose headers arrive but body stalls is still bounded", async () => {
+    const outcome = publishWorkspaceVisibility(
+      4483,
+      "workspace-launch",
+      7210,
+      { schemaVersion: 1, inventoryRevision: "1", terminals: [] },
+      {
+        observeProcess: () => ({ startToken: "7210:500" }),
+        timeoutMs: 20,
+        post: async () => new Response(
+          new ReadableStream({ start() {} }),
+          { status: 409 },
+        ),
+      },
+    ).then(
+      () => "resolved",
+      (error: unknown) => error,
+    );
+    expect(await Promise.race([
+      outcome,
+      Bun.sleep(100).then(() => "still pending"),
+    ])).toBeInstanceOf(WorkspaceVisibilityPublishTimeoutError);
+  });
+
   test("a stalled publish does not block the next one: newest inventory still lands", async () => {
     const output: Array<Record<string, unknown>> = [];
     const published: string[] = [];

@@ -3228,18 +3228,18 @@ export class HiveDaemon {
   async renewWorkspaceVisibility(): Promise<number> {
     const snapshot = this.workspaceVisibility?.currentSnapshot() ?? null;
     if (snapshot === null) return 0;
-    if (!this.workspaceVisibility!.sourceVerified()) {
-      this.recordVisibilityExpiryAudits(snapshot);
-      return 0;
-    }
-    const renewals = await this.renewVisibleTerminals(snapshot.terminals);
+    const renewals = this.workspaceVisibility!.sourceVerified()
+      ? await this.renewVisibleTerminals(snapshot.terminals)
+      : [];
+    await this.recordVisibilityExpiryAudits(snapshot);
     return renewals.filter((renewal) => renewal?.state === "renewed").length;
   }
 
   /**
-   * Records why these hosts are about to die. When the authoring Workspace no
-   * longer verifies, the daemon stops renewing and sessiond terminates each
-   * host with VISIBILITY_EXPIRED — a kill that, before this, left
+   * Records why these hosts died. A withheld or failed renewal can let the
+   * sessiond lease expire, but neither condition proves termination: only an
+   * expired inspection with vendor-death evidence may write the audit. Before
+   * this, a VISIBILITY_EXPIRED kill left
    * `terminationAuditJson` NULL. That is why the 2026-07-21 fleet death had no
    * durable record at all and had to be reconstructed from workspace.log.
    *
@@ -3249,20 +3249,29 @@ export class HiveDaemon {
    * binding — a binding that already carries an audit is left alone, so the
    * 5 s tick cannot overwrite an operator's record or rewrite its own.
    */
-  private recordVisibilityExpiryAudits(
+  private async recordVisibilityExpiryAudits(
     snapshot: WorkspaceVisibilitySnapshot,
-  ): void {
-    const requestedAt = new Date().toISOString();
+  ): Promise<void> {
     for (const terminal of snapshot.terminals) {
       const binding = this.db.getTerminalHostBindingByLocator(terminal.locator);
       if (binding?.createEvidence === undefined) continue;
       if (binding.terminationAudit !== undefined) continue;
+      if (Date.parse(binding.createEvidence.visibility.expiresAt) > Date.now()) continue;
+      let inspection: Awaited<ReturnType<SessionHost["inspect"]>>;
+      try {
+        inspection = await this.terminalHost.inspect(terminal.locator);
+      } catch {
+        continue;
+      }
+      if (
+        inspection.visibility.state !== "expired" ||
+        !sessiondVendorProcessIsDead(inspection)
+      ) continue;
       try {
         this.db.recordTerminalHostTermination(terminal.locator, {
-          reason: "workspace visibility source no longer verifies; " +
-            "renewal withheld and the sessiond lease will expire",
+          reason: "sessiond reports the visibility lease expired and the host died",
           requestId: mintSessionRequestId(),
-          requestedAt,
+          requestedAt: new Date().toISOString(),
           origin: "visibility-expiry",
         });
       } catch (error) {
