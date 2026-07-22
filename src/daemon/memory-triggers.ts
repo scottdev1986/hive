@@ -1,0 +1,370 @@
+// Trigger protocol (HiveMemory HM-3 WP7, board #120; plan
+// 2026-07-22-hivememory-epic-rework.md §3 item 3, article lesson A1).
+//
+// Recitation is not compliance: instructions in ambient context lose to the
+// vendor's own system prompt, but a trigger invoked IN THE USER TURN is
+// honored. So the queen and the operator can summon memory explicitly with
+// trigger words, and the DAEMON — never the agent's goodwill — executes them:
+//
+//   recall: <query>        — run the FTS wiki search + pitfall-check for the
+//                            query and deliver the labeled results to the
+//                            target agent INSTEAD of the raw trigger text.
+//   note this: <fact>      — write a repo-scope wiki observation (status
+//                            unverified) and deliver a short confirmation.
+//   document this: <topic> — write a topic-typed curated article scaffold
+//                            (status unverified) and deliver a confirmation.
+//
+// Only queen or operator senders carry trigger authority; an agent that sends
+// trigger-shaped text has it delivered verbatim, enforced here at the daemon
+// (sender classification), not in prose. Every execution is audited as an
+// episodic `memory-trigger` event with sender/target/kind provenance.
+import {
+  discoverMemoryFacts,
+  factVerificationFlag,
+  listMemoryFacts,
+  normalizeTitle,
+  type MemoryWriteFileResult,
+} from "../adapters/memory";
+import {
+  isOrchestratorName,
+  type AgentMessage,
+  type MemorySource,
+  type MemoryWriteInput,
+} from "../schemas";
+import { OPERATOR_SUBJECT } from "./credentials";
+import type { EpisodicStore } from "./episodic-store";
+import type { MemoryIndex } from "./memory-index";
+
+export type MemoryTriggerKind = "recall" | "note" | "document";
+
+export interface MemoryTrigger {
+  kind: MemoryTriggerKind;
+  payload: string;
+}
+
+const TRIGGER_PHRASES: ReadonlyArray<readonly [MemoryTriggerKind, string]> = [
+  ["note", "note this"],
+  ["document", "document this"],
+  ["recall", "recall"],
+];
+
+/**
+ * Detect a trigger at the START of a message body (case-insensitive, the
+ * colon is required, leading whitespace tolerated): "recall: <q>",
+ * "note this: <fact>", "document this: <topic>". Trigger-shaped text anywhere
+ * else in the body, a missing colon, or an empty payload is an ordinary
+ * message and returns null.
+ */
+export function detectMemoryTrigger(text: string): MemoryTrigger | null {
+  const trimmed = text.trimStart();
+  const lower = trimmed.toLowerCase();
+  for (const [kind, phrase] of TRIGGER_PHRASES) {
+    if (!lower.startsWith(`${phrase}:`)) continue;
+    const payload = trimmed.slice(phrase.length + 1).trim();
+    if (payload.length === 0) return null;
+    return { kind, payload };
+  }
+  return null;
+}
+
+/**
+ * Who may trigger. Queen (the orchestrator, any alias) and the operator
+ * subject carry authority; every other sender — agent names, hive-control and
+ * the other system senders — does not, so agent-to-agent trigger text is
+ * delivered verbatim and never executed.
+ */
+export type MemoryTriggerAuthority = "queen" | "operator";
+
+export function memoryTriggerAuthority(
+  from: string,
+): MemoryTriggerAuthority | null {
+  if (isOrchestratorName(from)) return "queen";
+  if (from === OPERATOR_SUBJECT) return "operator";
+  return null;
+}
+
+export interface MemoryTriggerDeps {
+  /** Lazy because the daemon assigns repoRoot after delivery is built. */
+  repoRoot: () => string;
+  /** The daemon's FTS index over the wiki; null degrades recall to an honest
+   * "surface absent" block (writes still execute). */
+  memory: Pick<MemoryIndex, "search"> | null;
+  /** The daemon's serialized writeMemoryFact (file lock + FTS upsert). */
+  write: (input: MemoryWriteInput) => Promise<MemoryWriteFileResult>;
+  /** The audit sink; null skips the episodic `memory-trigger` event. */
+  episodic: Pick<EpisodicStore, "appendEvent"> | null;
+}
+
+export interface MemoryTriggerContext {
+  authority: MemoryTriggerAuthority;
+  /** The canonical sender name (for evidence/provenance text). */
+  from: string;
+  /** The agent the trigger message was addressed to. */
+  target: string;
+}
+
+export interface MemoryTriggerExecution {
+  /** The labeled block that REPLACES the raw trigger text on the wire. The
+   * trigger is a command, not message content. */
+  body: string;
+  /** One-line summary for the episodic audit event. */
+  summary: string;
+  /** Kind-specific audit provenance (query, or article id + action). */
+  provenance: Record<string, unknown>;
+}
+
+const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
+
+const todayIsoDate = (): string => new Date().toISOString().slice(0, 10);
+
+/** The MemoryTopicSchema kebab-case shape, derived from free text. */
+function deriveTopic(payload: string): string {
+  const topic = payload
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 60)
+    .replace(/-+$/g, "");
+  return topic.length > 0 ? topic : "notes";
+}
+
+const SYSTEM_NOTE = (from: string, trigger: string) =>
+  `system-injected by the Hive daemon: ${from} invoked the "${trigger}" ` +
+  "trigger; this is durable-memory machinery, not part of any sender's message.";
+
+async function executeRecall(
+  query: string,
+  context: MemoryTriggerContext,
+  deps: MemoryTriggerDeps,
+): Promise<MemoryTriggerExecution> {
+  const header = (outcome: string) =>
+    `🧠 Hive memory recall for '${query}' — ${outcome} (${SYSTEM_NOTE(context.from, "recall:")})`;
+
+  if (deps.memory === null) {
+    return {
+      body: header("memory surface unavailable") +
+        "\nThis daemon has no wiki search index wired, so the recall could " +
+        "not run — the surface is ABSENT, which is not the same as an empty " +
+        "result. Nothing was searched.",
+      summary: `recall trigger from ${context.from} to ${context.target}: memory surface absent`,
+      provenance: { query, outcome: "absent" },
+    };
+  }
+
+  const hits = deps.memory.search(query, { limit: 8 });
+  if (hits.length === 0) {
+    return {
+      body: header("no matching memory") +
+        "\nThe wiki was searched and nothing matched — an honest empty " +
+        "result, not a missing index. Broaden the query with memory_search, " +
+        'or record what you learn with "note this:".',
+      summary:
+        `recall trigger from ${context.from} to ${context.target}: no matches for "${query}"`,
+      provenance: { query, outcome: "empty" },
+    };
+  }
+
+  // Pitfall-check partition: the FTS row carries no kind, so resolve kinds
+  // from the on-disk articles (the same pattern as memory_query pitfall-check).
+  const facts = await listMemoryFacts(deps.repoRoot());
+  const statusByKey = new Map(
+    facts.map((fact) =>
+      [`${fact.scope}:${fact.id}`, factVerificationFlag(fact)] as const
+    ),
+  );
+  const pitfalls = new Set(
+    facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
+      `${fact.scope}:${fact.id}`
+    ),
+  );
+  const line = (hit: (typeof hits)[number]): string => {
+    const flag = statusByKey.get(`${hit.scope}:${hit.id}`) ??
+      (hit.status === "verified" ? null : hit.status);
+    return `- [${hit.scope}/${hit.topic}] ${hit.id} (${hit.date})` +
+      (flag === null || flag === undefined ? "" : ` [${flag}]`) +
+      `${pitfalls.has(`${hit.scope}:${hit.id}`) ? " [pitfall]" : ""}: ` +
+      `${hit.title} — ${oneLine(hit.snippet)}`;
+  };
+  const pitfallHits = hits.filter((hit) =>
+    pitfalls.has(`${hit.scope}:${hit.id}`)
+  );
+  const articleHits = hits.filter((hit) =>
+    !pitfalls.has(`${hit.scope}:${hit.id}`)
+  );
+  const sections: string[] = [];
+  if (pitfallHits.length > 0) {
+    sections.push("Pitfalls matching this query:", ...pitfallHits.map(line));
+  }
+  if (articleHits.length > 0) {
+    sections.push("Articles:", ...articleHits.map(line));
+  }
+  return {
+    body: header(`${hits.length} result${hits.length === 1 ? "" : "s"}`) +
+      "\n[unverified], [stale] and [conflicted] entries are hints to " +
+      "reconcile before acting, not authority; pull the full article with " +
+      "memory_read(scope, id).\n" +
+      sections.join("\n"),
+    summary:
+      `recall trigger from ${context.from} to ${context.target}: ${hits.length} result(s) for "${query}"`,
+    provenance: { query, outcome: "ok", results: hits.length },
+  };
+}
+
+/**
+ * Write a trigger-sourced wiki article, honoring the write path's dedup
+ * contract (HiveMemory plan D1 layer 1): a normalized-title match is a
+ * duplicate, re-issued as an update to the existing id (same pattern as the
+ * pitfall harvester) rather than rejected back at the user. Returns the
+ * written article and whether it created or updated.
+ */
+async function writeTriggerArticle(
+  input: Omit<MemoryWriteInput, "id" | "supersedes">,
+  deps: MemoryTriggerDeps,
+): Promise<{ written: MemoryWriteFileResult; action: "created" | "updated" }> {
+  const duplicate = (await discoverMemoryFacts(deps.repoRoot(), "repo")).find(
+    (fact) => normalizeTitle(fact.title) === normalizeTitle(input.title),
+  );
+  if (duplicate === undefined) {
+    return { written: await deps.write({ ...input, supersedes: [] }), action: "created" };
+  }
+  // The update keeps the existing article's topic — writeMemoryFact rejects
+  // an id that moves topics, and an update is not a move.
+  const written = await deps.write({
+    ...input,
+    id: duplicate.id,
+    topic: duplicate.topic,
+    supersedes: [duplicate.id],
+  });
+  return { written, action: "updated" };
+}
+
+async function executeWrite(
+  kind: "note" | "document",
+  payload: string,
+  context: MemoryTriggerContext,
+  deps: MemoryTriggerDeps,
+): Promise<MemoryTriggerExecution> {
+  const source: MemorySource = context.authority === "queen"
+    ? "orchestrator"
+    : "human";
+  const trigger = kind === "note" ? "note this:" : "document this:";
+  const evidence = `${context.from} via the "${trigger}" trigger in a message to ` +
+    `${context.target}, ${todayIsoDate()}`;
+  const base = {
+    scope: "repo" as const,
+    title: payload,
+    source,
+    evidence,
+    status: "unverified" as const,
+    kind: "article" as const,
+    tags: ["trigger", kind],
+  };
+  const input: Omit<MemoryWriteInput, "id" | "supersedes"> = kind === "note"
+    ? { ...base, topic: "notes", body: payload }
+    : {
+      ...base,
+      topic: deriveTopic(payload),
+      body: [
+        "## Claim",
+        "",
+        payload,
+        "",
+        "## Verification",
+        "",
+        "TODO: this article is a scaffold the Hive daemon wrote from a " +
+        `"${trigger}" trigger; the claim is UNVERIFIED. Check it against ` +
+        "the repo, correct the body as needed, then promote it with " +
+        "memory_write (status: verified and a verified date) before " +
+        "treating it as authority.",
+      ].join("\n"),
+    };
+  const { written, action } = await writeTriggerArticle(input, deps);
+  const verb = kind === "note" ? "Hive noted" : "Hive documented";
+  const did = action === "created"
+    ? `wrote article [${written.scope}/${written.topic}] ${written.id}`
+    : `updated existing article [${written.scope}/${written.topic}] ${written.id}`;
+  return {
+    body: `🧠 ${verb}: "${written.title}" [unverified] (${SYSTEM_NOTE(context.from, trigger)} ` +
+      `The daemon ${did}. Unverified is a claim to reconcile, not ` +
+      "authority — verify with memory_read and promote before relying on it.)",
+    summary:
+      `${kind} trigger from ${context.from} to ${context.target}: ${action} [repo/${written.topic}] ${written.id}`,
+    provenance: {
+      scope: written.scope,
+      topic: written.topic,
+      id: written.id,
+      action,
+    },
+  };
+}
+
+/**
+ * Execute one detected trigger. Throws on failure — the delivery seam
+ * isolates that (original text plus a failure note, never a dropped
+ * message). The audit event is appended here, after the action it records
+ * actually happened; an audit failure is logged, never thrown into delivery.
+ */
+export async function executeMemoryTrigger(
+  trigger: MemoryTrigger,
+  context: MemoryTriggerContext,
+  deps: MemoryTriggerDeps,
+): Promise<MemoryTriggerExecution> {
+  const execution = trigger.kind === "recall"
+    ? await executeRecall(trigger.payload, context, deps)
+    : await executeWrite(trigger.kind, trigger.payload, context, deps);
+  if (deps.episodic !== null) {
+    try {
+      deps.episodic.appendEvent({
+        agent: context.target,
+        type: "memory-trigger",
+        summary: execution.summary,
+        provenance: {
+          sender: context.from,
+          target: context.target,
+          kind: trigger.kind,
+          ...execution.provenance,
+        },
+      });
+    } catch (error) {
+      console.error(
+        `Hive could not audit the memory trigger from ${context.from} to ${context.target}: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+  }
+  return execution;
+}
+
+/**
+ * The delivery seam's view of the trigger protocol: given the stored
+ * message, decide whether it is an authorized trigger and, if so, return the
+ * labeled block that replaces its body. Null means deliver the body as
+ * formatted — no trigger, or no authority to trigger.
+ */
+export interface MemoryTriggerExecutor {
+  execute(
+    message: Pick<AgentMessage, "from" | "to" | "body">,
+  ): Promise<string | null>;
+}
+
+export function createMemoryTriggerExecutor(
+  deps: MemoryTriggerDeps,
+): MemoryTriggerExecutor {
+  return {
+    async execute(message) {
+      // Authority first: an agent's trigger-shaped text is verbatim message
+      // content, never a command — enforced here, at the daemon.
+      const authority = memoryTriggerAuthority(message.from);
+      if (authority === null) return null;
+      const trigger = detectMemoryTrigger(message.body);
+      if (trigger === null) return null;
+      const execution = await executeMemoryTrigger(
+        trigger,
+        { authority, from: message.from, target: message.to },
+        deps,
+      );
+      return execution.body;
+    },
+  };
+}

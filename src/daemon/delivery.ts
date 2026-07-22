@@ -44,6 +44,7 @@ import type {
   ComposedMemoryDelta,
   WakeDeltaProvider,
 } from "./memory-delta";
+import type { MemoryTriggerExecutor } from "./memory-triggers";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
@@ -353,6 +354,13 @@ export class MessageDelivery {
      * the send lane — no vendor hook required (Grok has none). Absent
      * (embedded daemons, tests), delivery is byte-identical to before. */
     private readonly wakeDelta?: WakeDeltaProvider,
+    /** Trigger protocol (HiveMemory HM-3 WP7): queen/operator trigger words
+     * ("recall:", "note this:", "document this:") execute at the daemon and
+     * their labeled result replaces the delivered body — user-turn invocation
+     * outranks ambient context (article lesson A1). Agent senders carry no
+     * trigger authority; their trigger-shaped text is delivered verbatim.
+     * Absent (embedded daemons, tests), delivery is byte-identical to before. */
+    private readonly memoryTriggers?: MemoryTriggerExecutor,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -906,6 +914,35 @@ export class MessageDelivery {
   }
 
   /**
+   * Execute an authorized memory trigger (HiveMemory HM-3 WP7) and return
+   * the text that should replace this message's formatted body: the labeled
+   * recall results or write confirmation. Null means deliver the body as
+   * formatted — no trigger phrase, or a sender without trigger authority
+   * (agent trigger-shaped text is verbatim message content, never executed).
+   *
+   * Failure-isolated like every other memory path: a trigger that throws
+   * must never drop or block the message, so the original text goes out with
+   * a visible note that the trigger failed.
+   */
+  private async composeTriggerReplacement(
+    message: AgentMessage,
+  ): Promise<string | null> {
+    if (this.memoryTriggers === undefined) return null;
+    try {
+      return await this.memoryTriggers.execute(message);
+    } catch (error) {
+      const detail = error instanceof Error ? error.message : "unknown error";
+      console.error(
+        `Hive memory trigger in message ${message.id} (${message.from} → ${message.to}) ` +
+          `failed; delivering the original text: ${detail}`,
+      );
+      return `${this.formatAgentMessage(message)}\n\n` +
+        `⚠️ Hive memory trigger failed (${detail}); ` +
+        "the original message is delivered unmodified.";
+    }
+  }
+
+  /**
    * Compose the recipient's wake-delta block (HiveMemory HM-3 WP6). A delta
    * failure must never block message delivery — the plain message goes out
    * and the failure is logged, the same failure-isolation posture as every
@@ -952,14 +989,19 @@ export class MessageDelivery {
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
+    // Trigger protocol (HiveMemory HM-3 WP7): an authorized queen/operator
+    // trigger executes at the daemon and its labeled result REPLACES the
+    // message body — the trigger is a command, not content for the agent.
+    const replacement = await this.composeTriggerReplacement(message);
+    const base = replacement === null
+      ? this.formatAgentMessage(message)
+      : replacement;
     // Wake-delta injection (HiveMemory HM-3 WP6): the delta rides whatever
     // text this delivery sends, visibly labeled as system-injected memory so
     // it can never be mistaken for the sender's words. Composed once per
     // attempt; the high-water mark advances only after the delivery lands.
     const delta = await this.composeWakeDelta(recipient);
-    const text = delta === null
-      ? this.formatAgentMessage(message)
-      : `${this.formatAgentMessage(message)}\n\n${delta.block}`;
+    const text = delta === null ? base : `${base}\n\n${delta.block}`;
     // A sessiond-hosted pane has no tmux paste target: the tmux path below
     // cannot address it (reaching it once bounced hive_send with a false
     // "mismatched SessionLocator", and thrown from the flush loops it silently
@@ -1138,10 +1180,12 @@ export class MessageDelivery {
     agent: AgentRecord,
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
-    const delta = await this.composeWakeDelta(agent);
-    const text = delta === null
+    const replacement = await this.composeTriggerReplacement(message);
+    const base = replacement === null
       ? this.formatAgentMessage(message)
-      : `${this.formatAgentMessage(message)}\n\n${delta.block}`;
+      : replacement;
+    const delta = await this.composeWakeDelta(agent);
+    const text = delta === null ? base : `${base}\n\n${delta.block}`;
     await this.nativeControl!.deliver(agent, text, {
       interrupt: message.priority === "urgent",
     });

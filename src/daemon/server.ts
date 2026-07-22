@@ -135,6 +135,7 @@ import {
 import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
 import { createWakeDeltaProvider } from "./memory-delta";
+import { createMemoryTriggerExecutor } from "./memory-triggers";
 import { harvestPitfalls } from "./pitfall-harvest";
 import {
   runRetentionSweep,
@@ -1020,6 +1021,19 @@ export class HiveDaemon {
           store: this.episodic,
           memory: this.memory,
           budgetTokens: options.wakeBudgetTokens,
+        })
+        : undefined,
+      // Trigger protocol (HiveMemory HM-3 WP7): queen/operator trigger words
+      // execute memory recall/writes at the daemon and their labeled result
+      // replaces the delivered body. repoRoot is read lazily because it is
+      // assigned later in this constructor; writes ride the daemon's
+      // serialized writeMemoryFact so the FTS index stays current.
+      this.episodic !== null
+        ? createMemoryTriggerExecutor({
+          repoRoot: () => this.repoRoot,
+          memory: this.memory,
+          write: (input) => this.writeMemoryFact(input),
+          episodic: this.episodic,
         })
         : undefined,
     );
