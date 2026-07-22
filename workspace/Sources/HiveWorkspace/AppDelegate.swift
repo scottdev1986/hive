@@ -9,6 +9,8 @@ import WorkspaceCore
 /// --orchestrator-session <tmux session> --orchestrator <claude|codex|grok>`.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
 
+    static let terminationStopArguments = ["stop", "--force"]
+
     private let config: LaunchConfig
     private(set) var controller: ProjectWindowController?
     private var feedClient: FeedClient?
@@ -471,7 +473,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
         }
         let process = Process()
         process.executableURL = URL(fileURLWithPath: hivePath)
-        process.arguments = ["stop"]
+        // Agent teardown already preserves unlanded commits and worktrees.
+        // Quit is not an interactive terminal, so do not turn that preserved
+        // work into a confirmation prompt that can only cancel application
+        // termination.
+        process.arguments = Self.terminationStopArguments
         var environment = ProcessInfo.processInfo.environment
         environment["HIVE_HOME"] = instanceHome
         process.environment = environment

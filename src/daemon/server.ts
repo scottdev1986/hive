@@ -1325,6 +1325,10 @@ export class HiveDaemon {
     this.bunServer = Bun.serve({
       port: this.port,
       hostname: this.hostname,
+      // Fleet shutdown verifies each captured process tree in sequence. The
+      // default 10-second request timeout can sever a healthy /stop before
+      // that verification finishes, even though teardown continues server-side.
+      idleTimeout: 60,
       fetch: (request) => this.fetch(request),
     });
     const listeningPort = this.bunServer.port;
@@ -4303,9 +4307,7 @@ export class HiveDaemon {
    *   2. the invoker must not be an agent worktree shell — client-reported and
    *      therefore accident prevention, not a security boundary (a same-UID
    *      process can read the operator credential; credentials.ts says so);
-   *   3. every live sessiond agent must hold a terminal-host binding, or its
-   *      teardown could never be verified (#65, now enforced daemon-side);
-   *   4. unlanded work refuses the stop unless explicitly confirmed, naming
+   *   3. unlanded work refuses the stop unless explicitly confirmed, naming
    *      the agents and their unlanded state.
    *
    * Past the commit latch, the daemon drives every kill and then its own exit
@@ -4377,30 +4379,6 @@ export class HiveDaemon {
           "worktree, and agent shells hold no fleet-kill authority. " +
           "No agent was killed.",
       }, { status: 403 });
-    }
-    const unverifiable = live.filter((agent) => {
-      const locator = agent.sessionLocator;
-      if (locator === undefined || locator.hostKind !== "sessiond") return false;
-      return this.db.getTerminalHostBindingByLocator({
-        ...locator,
-        hostKind: "sessiond",
-      }) === null;
-    });
-    if (unverifiable.length > 0) {
-      deny(
-        `unverifiable sessiond teardown: ${
-          unverifiable.map((agent) => agent.name).join(", ")
-        }`,
-      );
-      return json({
-        state: "refused-unverifiable",
-        error: "Hive refused shutdown before touching any agent: " +
-          unverifiable.map((agent) =>
-            `${agent.name}: sessiond locator has no terminal-host binding in this Hive instance`
-          ).join("; ") +
-          "\nNo agent was killed. Fix: inspect the named agents (hive status), " +
-          "close them individually, then rerun `hive stop`.",
-      }, { status: 409 });
     }
     const unlanded: Array<{
       name: string;

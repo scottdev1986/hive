@@ -6,6 +6,10 @@ import WorkspaceCore
 @MainActor
 final class AppDelegateLifecycleTests: XCTestCase {
 
+    func testWorkspaceQuitForcesTheAlreadyWorkPreservingFleetStop() {
+        XCTAssertEqual(AppDelegate.terminationStopArguments, ["stop", "--force"])
+    }
+
     func testLiveResizeSmokeTargetsTheAgentCreatedByEachHarnessMode() {
         XCTAssertEqual(
             SmokeRunner.sessiondLiveResizeInputAgent(

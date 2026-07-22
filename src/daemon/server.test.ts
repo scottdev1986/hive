@@ -5521,7 +5521,7 @@ describe("POST /stop — atomic-or-abortive fleet shutdown (#70)", () => {
     }
   });
 
-  test("refuses before touching any agent when a sessiond teardown is unverifiable (#65)", async () => {
+  test("a never-created sessiond generation cannot veto fleet shutdown", async () => {
     const db = new HiveDatabase(join(home, "stop-unverifiable.db"));
     const tmux = new FakeDaemonTmux();
     tmux.sessions.add("hive-maya");
@@ -5548,13 +5548,14 @@ describe("POST /stop — atomic-or-abortive fleet shutdown (#70)", () => {
         method: "POST",
         body: stopBody({ confirmUnlanded: true }),
       });
-      expect(response.status).toBe(409);
-      expect(await response.json()).toMatchObject({
-        state: "refused-unverifiable",
+      expect(response.status).toBe(200);
+      expect(await response.json()).toEqual({
+        state: "stopping",
+        killed: ["maya"],
       });
       expect(tmux.killed).toEqual([]);
-      expect(db.getAgentByName("maya")?.status).toBe("working");
-      expect(shutdown).toBe(false);
+      expect(db.getAgentByName("maya")?.status).toBe("dead");
+      expect(shutdown).toBe(true);
     } finally {
       tmux.sessions.clear();
       await daemon.stop();

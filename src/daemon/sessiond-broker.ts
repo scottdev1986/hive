@@ -49,7 +49,11 @@ import { IS_RELEASE_BUILD } from "../version";
 const DEFAULT_MAX_RESTARTS = 3;
 const DEFAULT_RESTART_WINDOW_MS = 60_000;
 const DEFAULT_READY_TIMEOUT_MS = 10_000;
-const DEFAULT_STOP_TIMEOUT_MS = 5_000;
+// Every hosted terminal has already been terminated before the broker stops.
+// The broker owns no remaining conversation to drain, so a short grace period
+// is enough to reap an ordinary exit without making application shutdown wait
+// five seconds on a wedged broker.
+const DEFAULT_STOP_TIMEOUT_MS = 500;
 const READY_POLL_MS = 50;
 
 /** Darwin sys/un.h — measured: SOL_LOCAL=0, LOCAL_PEERPID=0x002. */
@@ -310,7 +314,7 @@ export interface SessiondBrokerSupervisorOptions {
   readonly restartWindowMs?: number;
   /** How long to wait for kernel-ready proof after spawn. Default 10s. */
   readonly readyTimeoutMs?: number;
-  /** How long to wait for a graceful SIGTERM before SIGKILL. Default 5s. */
+  /** How long to wait for a graceful SIGTERM before SIGKILL. Default 500ms. */
   readonly stopTimeoutMs?: number;
   /** Called once when bounded restart is exhausted (never infinite). */
   readonly onFatal?: (error: Error) => void;

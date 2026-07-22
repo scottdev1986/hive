@@ -575,4 +575,20 @@ describe("hive stop daemon", () => {
     expect(cleanedPid).toBe(4242);
     expect(logs).toEqual(["Stopped the Hive daemon and its sessions."]);
   });
+
+  test("default shutdown wait outlives the broker's own stop deadline", async () => {
+    let checks = 0;
+
+    await stopHive({
+      readPid: () => 4242,
+      liveness: async () => ++checks > 120 ? "dead" : "live",
+      cleanup: () => {},
+      sleep: async () => {},
+      log: () => {},
+      invoker: nonWorktreeInvoker(),
+      requestStop: async () => ({ state: "stopping", killed: [] }),
+    });
+
+    expect(checks).toBeGreaterThan(100);
+  });
 });

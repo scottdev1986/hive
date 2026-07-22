@@ -523,12 +523,14 @@ export type StopResponseBody =
   | { state: "stopping"; killed: string[] }
   | { state: "already-stopping" }
   | { state: "refused-unlanded"; unlanded: StopUnlandedAgent[]; error?: string }
-  | { state: "refused-unverifiable" | "refused-invoker"; error?: string }
+  | { state: "refused-invoker"; error?: string }
   | { state: "stop-failed"; failures: string[]; error?: string };
 
+const DEFAULT_DAEMON_STOP_TIMEOUT_MS = 30_000;
+
 /** POST /stop — the daemon's own atomic-or-abortive shutdown (#70). One
- * request; every gate (agent-worktree invoker, #65 binding verification,
- * unlanded work) is evaluated daemon-side before anything dies, and past the
+ * request; every gate (agent-worktree invoker and unlanded work) is evaluated
+ * daemon-side before anything dies, and past the
  * commit point the daemon drives kills and its own exit to completion whether
  * or not this client survives to see the answer. */
 async function defaultRequestStop(
@@ -673,7 +675,6 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
       );
     }
     if (
-      response.state === "refused-unverifiable" ||
       response.state === "refused-invoker" ||
       response.state === "refused-unlanded"
     ) {
@@ -682,7 +683,10 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
       );
     }
     const sleep = deps.sleep ?? ((milliseconds: number) => Bun.sleep(milliseconds));
-    const attempts = Math.max(1, Math.ceil((deps.timeoutMs ?? 5_000) / 50));
+    const attempts = Math.max(
+      1,
+      Math.ceil((deps.timeoutMs ?? DEFAULT_DAEMON_STOP_TIMEOUT_MS) / 50),
+    );
     state = await liveness();
     for (let attempt = 0; state !== "dead" && attempt < attempts; attempt += 1) {
       await sleep(50);
