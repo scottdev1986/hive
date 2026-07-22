@@ -2195,7 +2195,9 @@ export class HiveSpawner implements Spawner {
     // config below must all describe the same server observation.
     const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
     const [memoryIndex, brief, graphBrief] = await Promise.all([
-      buildMemoryIndex(worktree.path, { brief: request.task }),
+      // Memory resolves against the primary checkout, never the worktree:
+      // .hive/memory is gitignored, so worktrees never contain it.
+      buildMemoryIndex(this.dependencies.repoRoot, { brief: request.task }),
       buildScopedBrief(
         worktree.path,
         request.task,

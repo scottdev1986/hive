@@ -1720,6 +1720,14 @@ describe("HiveSpawner wiring", () => {
     tempRoots.push(root);
     const { db: quotaDb, quota } = strandingQuota(root);
     const store = new FakeStore();
+    // HIVE_HOME pointing at a regular file, not a directory. buildMemoryIndex
+    // walks <home>/memory and dies on ENOTDIR — the real rejection, not a
+    // mocked one, and the one promise in that Promise.all with no `.catch`
+    // of its own.
+    const homeFile = join(root, "hive-home-is-a-file");
+    await writeFile(homeFile, "not a directory");
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = homeFile;
     const spawner = newTestSpawner({
       isModelEnabled: async () => true,
       db: store,
@@ -1728,23 +1736,28 @@ describe("HiveSpawner wiring", () => {
       config: {},
       readRoutingPolicy: quotaSpreadPolicy,
       tmux: new FakeTmux(),
-      // A worktree path that is a regular file, not a directory. buildMemoryIndex
-      // walks it and dies on ENOTDIR — the real rejection, not a mocked one, and
-      // the one promise in that Promise.all with no `.catch` of its own.
       createWorktree: async (_repoRoot, name, slug) => {
-        const path = join(root, `${name}-not-a-directory`);
-        await writeFile(path, "worktree path is a file");
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
       sleep: signalReadiness(store),
       quota,
     });
 
-    await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
-      .toThrow();
-    expect(store.listAgents()).toEqual([]);
-    expect(reservedOnCodex(quota)).toEqual(0);
-    expect(quota.ledger.activeReservations()).toEqual([]);
+    try {
+      await expect(spawner.spawn({ task: "Deep task", category: "complex_coding" })).rejects
+        .toThrow();
+      expect(store.listAgents()).toEqual([]);
+      expect(reservedOnCodex(quota)).toEqual(0);
+      expect(quota.ledger.activeReservations()).toEqual([]);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HIVE_HOME;
+      } else {
+        process.env.HIVE_HOME = previousHome;
+      }
+    }
     quotaDb.close();
   });
 
@@ -2454,7 +2467,9 @@ describe("HiveSpawner wiring", () => {
     process.env.HIVE_HOME = globalHome;
     try {
       const worktreePath = join(root, "maya");
-      const repoMemory = join(worktreePath, ".hive", "memory");
+      // Memory lives in the primary checkout (repoRoot): .hive/memory is
+      // gitignored and never present in the agent's worktree.
+      const repoMemory = join(root, ".hive", "memory");
       await mkdir(repoMemory, { recursive: true });
       await Bun.write(
         join(repoMemory, "flaky-login-test.md"),
