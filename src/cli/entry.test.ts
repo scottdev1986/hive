@@ -24,6 +24,8 @@ describe("CLI command descriptions", () => {
     const promote = routing?.commands.find((command) => command.name() === "promote-default");
 
     expect(promote?.description()).toContain("machine default");
+    expect(promote?.description()).toContain("Replace");
+    expect(promote?.description()).toContain("discarding");
   });
 });
 

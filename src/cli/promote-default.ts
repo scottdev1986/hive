@@ -34,6 +34,11 @@ export async function promoteDefaultModelControl(
 ): Promise<PromoteDefaultModelControlResult> {
   const currentHome = resolve(options.currentHome ?? getHiveHome());
   const targetHome = resolve(options.defaultHome ?? defaultHiveHome());
+  if (currentHome === targetHome) {
+    throw new Error(
+      "Refusing to promote Model Control: this Hive home is already the machine default; nothing to promote.",
+    );
+  }
   const liveness = await daemonInstanceLiveness(
     targetHome,
     hiveInstanceSuffix(targetHome),
@@ -69,13 +74,14 @@ export async function promoteDefaultModelControl(
     // Preserve a malformed existing preference rather than overwriting it as
     // an incidental side effect of the database promotion.
     preferences.read();
+    const targetRevision = target.read(now).revision;
+    await preferences.replace(source.selection);
     const next = target.promote(
       source,
-      target.read(now).revision,
+      targetRevision,
       PROMOTE_ACTOR,
       now,
     );
-    await preferences.replace(source.selection);
     return { sourceRevision: source.revision, targetRevision: next.revision };
   } finally {
     targetDb.close();

@@ -321,6 +321,16 @@ export class RoutingPolicyStore {
     now: Date = new Date(),
   ): RoutingPolicy {
     const validated = RoutingPolicySchema.parse(source);
+    if (validated.revision === 0) {
+      throw new Error(
+        "Refusing to promote Model Control: the source has no user-authored policy yet (revision 0).",
+      );
+    }
+    if (validated.provisional) {
+      throw new Error(
+        "Refusing to promote Model Control: the source still has Hive's provisional baseline; edit Model Control before promoting.",
+      );
+    }
     return this.db.database.transaction(() => {
       const current = this.read(now);
       if (expectedRevision !== current.revision) {

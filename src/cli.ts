@@ -386,7 +386,7 @@ export function createProgram(): Command {
   routing
     .command("promote-default")
     .description(
-      "Copy this instance's Model Control policy and selection modes to the machine default",
+      "Replace the machine default's Model Control policy and selection modes with this instance's (discarding its existing policy)",
     )
     .action(async () => {
       const result = await promoteDefaultModelControl();

@@ -118,6 +118,98 @@ test("promote rejects a stale default revision rather than clobbering it", () =>
   }
 });
 
+test("promote refuses an empty revision-0 source without changing the default", async () => {
+  const { currentHome, defaultHome } = fixture();
+  const targetPolicy = writeCurrentPolicy(defaultHome);
+  const sourceDb = new HiveDatabase(join(currentHome, "hive.db"));
+  sourceDb.close();
+
+  await expect(promoteDefaultModelControl({ currentHome, defaultHome, now: NOW }))
+    .rejects.toThrow("source has no user-authored policy yet (revision 0)");
+
+  const targetDb = new HiveDatabase(join(defaultHome, "hive.db"));
+  try {
+    const target = new RoutingPolicyStore(targetDb);
+    expectCopied(target.read(NOW), targetPolicy);
+    expect(targetDb.database.query("SELECT COUNT(*) AS count FROM routing_policy_events").get())
+      .toEqual({ count: 3 });
+  } finally {
+    targetDb.close();
+  }
+});
+
+test("promote refuses a provisional source without changing the default", async () => {
+  const { currentHome, defaultHome } = fixture();
+  const targetPolicy = writeCurrentPolicy(defaultHome);
+  const sourceDb = new HiveDatabase(join(currentHome, "hive.db"));
+  try {
+    new RoutingPolicyStore(sourceDb).seedProvisionalBaseline(
+      { vendorDefaults: { grok: "grok-composer-2.5-fast" } },
+      NOW,
+    );
+  } finally {
+    sourceDb.close();
+  }
+
+  await expect(promoteDefaultModelControl({ currentHome, defaultHome, now: NOW }))
+    .rejects.toThrow("source still has Hive's provisional baseline");
+
+  const targetDb = new HiveDatabase(join(defaultHome, "hive.db"));
+  try {
+    const target = new RoutingPolicyStore(targetDb);
+    expectCopied(target.read(NOW), targetPolicy);
+    expect(targetDb.database.query("SELECT COUNT(*) AS count FROM routing_policy_events").get())
+      .toEqual({ count: 3 });
+  } finally {
+    targetDb.close();
+  }
+});
+
+test("promote refuses when the current home is already the machine default", async () => {
+  const { defaultHome } = fixture();
+  const policy = writeCurrentPolicy(defaultHome);
+
+  await expect(promoteDefaultModelControl({
+    currentHome: defaultHome,
+    defaultHome,
+    now: NOW,
+  })).rejects.toThrow("already the machine default; nothing to promote");
+
+  const db = new HiveDatabase(join(defaultHome, "hive.db"));
+  try {
+    const store = new RoutingPolicyStore(db);
+    expectCopied(store.read(NOW), policy);
+    expect(db.database.query("SELECT COUNT(*) AS count FROM routing_policy_events").get())
+      .toEqual({ count: 3 });
+  } finally {
+    db.close();
+  }
+});
+
+test("promote leaves policy unchanged when selection mirror replacement fails", async () => {
+  const { currentHome, defaultHome } = fixture();
+  writeCurrentPolicy(currentHome);
+  const targetPolicy = writeCurrentPolicy(defaultHome);
+  const replace = spyOn(SelectionPreferenceStore.prototype, "replace")
+    .mockRejectedValueOnce(new Error("selection mirror unavailable"));
+  try {
+    await expect(promoteDefaultModelControl({ currentHome, defaultHome, now: NOW }))
+      .rejects.toThrow("selection mirror unavailable");
+  } finally {
+    replace.mockRestore();
+  }
+
+  const targetDb = new HiveDatabase(join(defaultHome, "hive.db"));
+  try {
+    const target = new RoutingPolicyStore(targetDb);
+    expectCopied(target.read(NOW), targetPolicy);
+    expect(targetDb.database.query("SELECT COUNT(*) AS count FROM routing_policy_events").get())
+      .toEqual({ count: 3 });
+  } finally {
+    targetDb.close();
+  }
+});
+
 test("promote refuses while the default daemon owns its database", async () => {
   const { currentHome, defaultHome } = fixture();
   writeCurrentPolicy(currentHome);
