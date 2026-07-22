@@ -4,3 +4,4 @@
 # checkout then hashes differently from the manifest that recorded it, and the
 # byte-identity claim contradicts itself. Store them verbatim.
 raw/qualification/**/captures/** -text -diff
+raw/qualification/**/transcripts/** -text -diff
