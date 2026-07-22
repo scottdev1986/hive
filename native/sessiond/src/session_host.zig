@@ -14,7 +14,9 @@ const protocol = @import("protocol");
 const pty_host = @import("pty_host");
 const neutral_host = @import("neutral_host");
 const neutral_control_plane = @import("neutral_control_plane");
-const terminal_state = @import("terminal_state");
+/// Re-exported so real-host tests can derive checkpoint thresholds from the
+/// shipped constants instead of restating them.
+pub const terminal_state = @import("terminal_state");
 
 const c = @cImport({
     @cInclude("fcntl.h");
@@ -4784,6 +4786,25 @@ fn pumpAttachedViewer(
         // Budget exhaustion detaches the viewer (fail closed); an expired
         // lease simply skips the pump — the loop top owns lease teardown.
         const deadline = ConnectionDeadline.init(timer, core.lease, timer.read()) catch return;
+        // Retention loss is typed and observable, never a silent freeze. The
+        // journal-pressure path evicts past a viewer that has fallen a whole
+        // journal behind, and that viewer's unacknowledged window is exactly
+        // what is full — so the backpressure gate below would skip the cursor
+        // read forever, the CheckpointUnavailable would never be observed, and
+        // the pane would stall with its socket still open. The gap is therefore
+        // checked BEFORE the gate (contract §6: silent loss is forbidden; §7: a
+        // cursor outside retention owes a full checkpoint requirement).
+        // The loss cannot be typed ON this stream: only EVENT and OUTPUT may be
+        // unsolicited (protocol.zig unsolicitedType), and an ERROR frame is
+        // response-flagged, so request_id 0 is malformed by validateHeader.
+        // Detaching is therefore the observable signal — the viewer sees EOF and
+        // re-attaches, and beginViewerStream types the gap there, where a
+        // request_id exists to correlate it (CHECKPOINT_UNAVAILABLE, or a
+        // SNAPSHOT_BYTES replay when a checkpoint can bridge the cursor).
+        if (state.retainedOutputStart() > viewer.sent_seq) {
+            detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
+            return;
+        }
         if (state.outputSeq() > viewer.sent_seq and
             viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
         {
@@ -6028,6 +6049,83 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
     pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
     try std.testing.expect(attached == null);
     try std.testing.expect(state.viewer_floor_seq == null);
+}
+
+// The journal-pressure path deliberately evicts past the viewer floor, and the
+// viewer it drops is by definition one whose unacknowledged window is full. If
+// the pump tested backpressure first it would skip the cursor read forever: the
+// lost range would never be observed, the socket would stay open, and the pane
+// would freeze silently — which contract §6 forbids.
+test "retention loss detaches a viewer whose unacknowledged window is full" {
+    const StoppedClock = struct {
+        fn now(_: *anyopaque) u64 {
+            return 1;
+        }
+    };
+    var clock_context: u8 = 0;
+
+    const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    var state = terminal_state.TerminalState.init(
+        std.testing.allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &clock_context, .nowFn = StoppedClock.now },
+        &engine_build_id,
+        .{ .columns = 80, .rows = 24 },
+    );
+    defer state.deinit();
+
+    const secret: [32]u8 = @splat(0x3d);
+    var core = try HostCore.init(
+        std.testing.allocator,
+        fixtureRegistration(),
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        0,
+    );
+    defer core.deinit();
+    var timer = try std.time.Timer.start();
+
+    const sockets = try socketPair();
+    defer sockets[1].close();
+
+    // Exactly what the pressure path leaves behind: the journal has been
+    // evicted past a viewer whose unacknowledged window is at the cap. Feeding
+    // there for real costs 8 MiB of Debug libghostty-vt parsing (minutes — see
+    // FreezeEEngine), so the cursors are set to that state directly.
+    const window = generated.limits.viewer_queue_bytes;
+    state.journal.start_seq = window + 1;
+    state.output_seq = window + 1;
+    var attached: ?AttachedViewer = .{
+        .stream = sockets[0],
+        .authorization = .{
+            .viewer_id = try std.testing.allocator.dupe(u8, "viewer-b"),
+            .operations = .{ .view = true },
+            .geometry = fixtureRegistration().record.geometry,
+            .after_seq = 0,
+        },
+        .sent_seq = window,
+        .acked_seq = 0,
+    };
+    defer if (attached) |*viewer| viewer.close(std.testing.allocator);
+    state.setViewerFloor(attached.?.sent_seq);
+    // Precondition: the backpressure gate really is shut, so this test cannot
+    // pass through the ordinary push-then-fail route.
+    try std.testing.expect(attached.?.sent_seq - attached.?.acked_seq >= window);
+    try std.testing.expect(state.retainedOutputStart() > attached.?.sent_seq);
+
+    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expect(attached == null);
+    try std.testing.expect(state.viewer_floor_seq == null);
+
+    // Peer-observable: EOF, not an open socket that never speaks again. The
+    // wire cannot carry a typed failure here (ERROR is response-flagged and an
+    // unsolicited request_id 0 is malformed), so the close IS the signal, and
+    // the re-attach types the gap.
+    var eof: [1]u8 = undefined;
+    try std.testing.expectEqual(@as(usize, 0), try std.posix.read(sockets[1].handle, &eof));
 }
 
 test "real input encoder uses terminal paste mode and separate Ghostty keys" {

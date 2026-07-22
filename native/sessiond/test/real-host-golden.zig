@@ -49,6 +49,7 @@ pub fn main() !void {
     }
     try runGolden(allocator);
     try runDeadParentRecoveryDrill(allocator);
+    try runCheckpointEvictionDrill(allocator);
 }
 
 fn runGolden(allocator: std.mem.Allocator) !void {
@@ -1731,4 +1732,323 @@ fn executableBuildHash(allocator: std.mem.Allocator, path: []const u8) ![]u8 {
     const digest = hasher.finalResult();
     const hex = std.fmt.bytesToHex(digest, .lower);
     return allocator.dupe(u8, &hex);
+}
+
+const burst_session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000f7";
+
+/// #91 end to end: the host loop feeds PTY output into TerminalState and THEN
+/// pumps the attached viewer, so a checkpoint firing from inside feedOutput
+/// evicted the journal ahead of the viewer's sent_seq; the pump's next push
+/// read an evicted range and the host detached a live pane on the checkpoint
+/// cadence.
+///
+/// The golden above cannot catch that and never could: it streams far under the
+/// 2 MiB checkpoint interval and finishes well inside the 30 s one, so no
+/// checkpoint — and therefore no eviction — ever fires during it. Its
+/// freeze-case-H resume rows in fact REQUIRE that: they attach at byte cursors
+/// inside the opening banners, which only resolve while start_seq is still 0.
+/// A burst spliced into the golden would evict exactly what those rows read,
+/// so this drill owns its own home, session and provider.
+///
+/// The viewer attaches FIRST and only then releases the burst through a trigger
+/// file, so every byte crosses the checkpoint threshold with a viewer attached
+/// — which is the ordering the defect lived in. A detach surfaces as a closed
+/// stream or an OUTPUT sequence gap, and ViewerReader refuses both.
+fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
+    var root_storage: [64]u8 = undefined;
+    const root = try std.fmt.bufPrint(
+        &root_storage,
+        "/tmp/b{x}",
+        .{std.crypto.random.int(u32)},
+    );
+    try std.fs.makeDirAbsolute(root);
+    defer std.fs.deleteTreeAbsolute(root) catch {};
+    var home = try std.fs.openDirAbsolute(root, .{ .no_follow = true });
+    try home.chmod(0o700);
+    home.close();
+    const root_z = try allocator.dupeZ(u8, root);
+    defer allocator.free(root_z);
+    if (c.setenv("HIVE_HOME", root_z.ptr, 1) != 0) return error.SetEnvironmentFailed;
+
+    // Derived from the shipped interval, never restated: raising the constant
+    // must not silently stop this drill from reaching a checkpoint.
+    const burst_bytes: usize = session_host.terminal_state.checkpoint_output_interval_bytes + (256 * 1024);
+    // The burst is SGR-reset sequences, not printable text. libghostty-vt
+    // verifies page integrity on every scroll in a Debug build (see
+    // FreezeEEngine in session_host.zig: 100 MiB of real parsing runs well over
+    // an hour), and a printable burst scrolls every 1920 bytes — the host then
+    // spends longer inside feedOutput than its whole visibility lease. ESC [ 0 m
+    // writes no cell and scrolls nothing, so the journal, checkpoint interval
+    // and eviction this drill is about all stay real at a fraction of the cost.
+    // It is also free of the ^S/^Q the PTY treats as flow control.
+    const burst_block_bytes: usize = 16 * 1024;
+    const burst_blocks = burst_bytes / burst_block_bytes;
+    const trigger_path = try std.fs.path.join(allocator, &.{ root, "burst-trigger" });
+    defer allocator.free(trigger_path);
+    const provider_script = try std.fmt.allocPrint(
+        allocator,
+        "printf 'BURST-READY\\n'; while [ ! -f {s} ]; do sleep 0.05; done; " ++
+            "awk 'BEGIN{{s=sprintf(\"%*s\",{d},\"\");gsub(/ /,\"\\033[0m\",s);" ++
+            "for(i=0;i<{d};i++)printf \"%s\",s}}'; printf 'BURST-DONE\\n'; " ++
+            "while :; do sleep 1; done",
+        .{ trigger_path, burst_block_bytes / 4, burst_blocks },
+    );
+    defer allocator.free(provider_script);
+
+    const engine_digest = try session_host.RealVtEngine.engineBuildId();
+    const engine_build_id = std.fmt.bytesToHex(engine_digest, .lower);
+    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
+        return error.WorkspaceIdentityUnavailable;
+    var workspace_token_storage: [64]u8 = undefined;
+    const workspace_token = try workspace.start_token.format(&workspace_token_storage);
+    const locator: broker.Locator = .{
+        .instance_id = instance_id,
+        .session_id = burst_session_id,
+        .generation = 1,
+        .subject = .{ .agent = "aaron" },
+        .host_kind = .sessiond,
+        .engine_build_id = &engine_build_id,
+    };
+    const spec = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = .{
+            .schemaVersion = @as(u8, 1),
+            .instanceId = instance_id,
+            .subject = .{ .kind = "agent", .agentId = "aaron" },
+            .generation = @as(u64, 1),
+            .sessionId = burst_session_id,
+            .hostKind = "sessiond",
+            .engineBuildId = &engine_build_id,
+        },
+        .provider = "codex",
+        .toolSessionId = @as(?[]const u8, null),
+        .cwd = root,
+        .argv = [_][]const u8{ "/bin/sh", "-c", provider_script },
+        .environment = EmptyEnvironment{},
+        .expectedExecutable = "/bin/sh",
+        .readOnly = false,
+        .capabilityEpoch = @as(u64, 0),
+        .geometry = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPx = @as(u32, 800),
+            .heightPx = @as(u32, 480),
+            .cellWidthPx = @as(f64, 10),
+            .cellHeightPx = @as(f64, 20),
+        },
+        .launchGrantId = "burst-launch-grant",
+        .launchGrantRevision = @as(u64, 1),
+        .visibility = .{
+            .workspaceSessionId = "golden-workspace",
+            .workspacePid = c.getpid(),
+            .workspaceStartToken = workspace_token,
+            .openTerminalRevision = "1",
+        },
+    }, .{});
+    defer allocator.free(spec);
+
+    const created_pipe = try std.posix.pipe();
+    var pipe_owned = true;
+    errdefer if (pipe_owned) {
+        std.posix.close(created_pipe[0]);
+        std.posix.close(created_pipe[1]);
+    };
+    try setCloseOnExec(created_pipe[0]);
+    try setCloseOnExec(created_pipe[1]);
+    const create_broker_pid = try std.posix.fork();
+    if (create_broker_pid == 0) {
+        std.posix.close(created_pipe[0]);
+        const created_writer: std.fs.File = .{ .handle = created_pipe[1] };
+        runCreateBroker(allocator, root, spec, locator, created_writer) catch |err| {
+            std.debug.print("burst create broker failed: {s}\n", .{@errorName(err)});
+            created_writer.close();
+            std.posix.exit(125);
+        };
+        created_writer.close();
+        std.posix.exit(0);
+    }
+    std.posix.close(created_pipe[1]);
+    pipe_owned = false;
+    const created_reader: std.fs.File = .{ .handle = created_pipe[0] };
+    defer created_reader.close();
+    var create_status: c_int = 0;
+    if (c.waitpid(create_broker_pid, &create_status, 0) != create_broker_pid)
+        return error.CreateBrokerWaitFailed;
+    const create_status_bits: u32 = @bitCast(create_status);
+    if (!std.posix.W.IFEXITED(create_status_bits) or
+        std.posix.W.EXITSTATUS(create_status_bits) != 0)
+        return error.CreateBrokerFailed;
+    const created = try created_reader.readToEndAlloc(
+        allocator,
+        generated.limits.control_json_bytes,
+    );
+    defer allocator.free(created);
+    const CreatedProjection = struct {
+        created: bool,
+        inspection: struct { hostPid: i32, providerRoot: struct { pid: i32 } },
+    };
+    var parsed_created = try std.json.parseFromSlice(CreatedProjection, allocator, created, .{
+        .ignore_unknown_fields = true,
+    });
+    defer parsed_created.deinit();
+    if (!parsed_created.value.created) return error.BurstHostCreateFailed;
+
+    var runtime = try broker.Runtime.open(allocator, root);
+    defer runtime.deinit();
+    const self_executable = try std.fs.selfExePathAlloc(allocator);
+    defer allocator.free(self_executable);
+    const build_id = try executableBuildHash(allocator, self_executable);
+    defer allocator.free(build_id);
+    var recovered = broker.RecoveredRegistry.init(allocator);
+    defer recovered.deinit();
+    var connector = broker.WireRecoveryConnector.init(allocator, runtime.canonical_home, build_id);
+    defer connector.deinit();
+    try recovered.recover(&runtime, 3, connector.connector());
+    switch (recovered.registry.lookup(locator) orelse return error.AdoptedHostMissing) {
+        .entry => {},
+        .failure => return error.HostAdoptionFailed,
+    }
+    var lifecycle_launcher = try session_host.ProductionHostLauncher.init(allocator, root);
+    defer lifecycle_launcher.deinit();
+    var control_plane: broker.ProductionControlPlane = undefined;
+    try control_plane.init(allocator, root);
+    defer control_plane.deinit();
+    var lifecycle_backend = broker.ProductionBackend.init(
+        allocator,
+        &runtime,
+        &recovered.registry,
+        &control_plane,
+        lifecycle_launcher.launcher(),
+    );
+    defer lifecycle_backend.deinit();
+    const backend = lifecycle_backend.backend();
+    const wire_locator: WireLocatorPayload = .{
+        .schemaVersion = @as(u8, 1),
+        .instanceId = instance_id,
+        .subject = .{ .kind = "agent", .agentId = "aaron" },
+        .generation = @as(u64, 1),
+        .sessionId = burst_session_id,
+        .hostKind = "sessiond",
+        .engineBuildId = &engine_build_id,
+    };
+
+    const grant_token = "burst-viewer-token";
+    var grant_hash: [32]u8 = undefined;
+    std.crypto.hash.sha2.Sha256.hash(grant_token, &grant_hash, .{});
+    const operations = [_][]const u8{"view"};
+    if (recovered.registry.registerGrant(
+        locator,
+        grant_hash,
+        "burst-viewer",
+        &operations,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .width_px = 800,
+            .height_px = 480,
+            .cell_width_px = 10,
+            .cell_height_px = 20,
+        },
+        4,
+    ) != null) return error.ViewerGrantRegistrationFailed;
+
+    const socket_path = try std.fs.path.join(allocator, &.{
+        root,
+        "runtime/sessiond/hosts",
+        burst_session_id,
+        "host.sock",
+    });
+    defer allocator.free(socket_path);
+    const stream = try std.net.connectUnixSocket(socket_path);
+    defer stream.close();
+    var reader: ViewerReader = .{ .allocator = allocator, .stream = stream, .next_seq = 0 };
+    defer reader.deinit();
+    const hello = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .buildId = "burst-viewer-build",
+        .instanceId = instance_id,
+        .protocol = .{
+            .major = generated.protocol_major,
+            .minMinor = generated.protocol_min_minor,
+            .maxMinor = generated.protocol_max_minor,
+        },
+        .clientRole = "viewer",
+        .grantToken = grant_token,
+    }, .{});
+    defer allocator.free(hello);
+    try writeViewerRequest(stream, generated.frame_type.hello, 10, 0, hello);
+    var welcome = try readViewerResponse(
+        &reader,
+        generated.frame_type.welcome,
+        10,
+        generated.wire_schema.welcome_payload,
+    );
+    welcome.deinit(allocator);
+
+    const attach = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .locator = wire_locator,
+        .token = grant_token,
+        .geometry = .{
+            .columns = @as(u16, 80),
+            .rows = @as(u16, 24),
+            .widthPx = @as(u32, 800),
+            .heightPx = @as(u32, 480),
+            .cellWidthPx = @as(f64, 10),
+            .cellHeightPx = @as(f64, 20),
+        },
+        .afterSeq = "0",
+    }, .{});
+    defer allocator.free(attach);
+    try writeViewerRequest(stream, generated.frame_type.host_attach, 11, 0, attach);
+
+    // The viewer is live before a single burst byte exists.
+    try reader.collectOutputUntilContains("BURST-READY");
+    const attached_at = reader.output.items.len;
+
+    // The host is single-threaded and about to sit in the burst; renew first so
+    // the drill carries no wall-clock assumption about the 15 s lease.
+    try renewVisibility(allocator, backend, wire_locator, 12);
+
+    const trigger = try std.fs.createFileAbsolute(trigger_path, .{});
+    trigger.close();
+
+    // The load-bearing loop. Somewhere inside it the host crosses the
+    // checkpoint interval, checkpoints from within feedOutput, and evicts. With
+    // the viewer floor unclamped the host detaches here and the read fails on a
+    // closed stream; contiguity is enforced frame by frame by consumeOutput.
+    // Renewal rides along because the host is single-threaded: it only serves
+    // the control socket between PTY reads, and its lease is 15 s.
+    var renewal_timer = try std.time.Timer.start();
+    var renewal_request: u64 = 20;
+    while (std.mem.indexOf(u8, reader.output.items, "BURST-DONE") == null) {
+        var frame = try reader.readWireFrame();
+        defer frame.deinit(allocator);
+        if (!try reader.consumeOutput(&frame)) return error.UnexpectedControlFrame;
+        if (renewal_timer.read() >= generated.limits.visibility_renewal_ms * std.time.ns_per_ms) {
+            try renewVisibility(allocator, backend, wire_locator, renewal_request);
+            renewal_request += 1;
+            renewal_timer.reset();
+        }
+    }
+
+    // Not vacuous: prove a checkpoint interval's worth of output really did
+    // cross the wire AFTER the viewer attached.
+    const streamed = reader.output.items.len - attached_at;
+    if (streamed <= session_host.terminal_state.checkpoint_output_interval_bytes) {
+        std.debug.print(
+            "checkpoint-eviction drill: only {d} bytes streamed while attached; " ++
+                "need more than the {d}-byte checkpoint interval\n",
+            .{ streamed, session_host.terminal_state.checkpoint_output_interval_bytes },
+        );
+        return error.BurstBelowCheckpointInterval;
+    }
+
+    // Teardown only: termination semantics are the golden's surface, not this
+    // drill's. Same direct kill the dead-parent drill uses, so the home can be
+    // removed without leaving the host or its provider behind.
+    std.posix.kill(parsed_created.value.inspection.hostPid, std.posix.SIG.KILL) catch {};
+    std.posix.kill(parsed_created.value.inspection.providerRoot.pid, std.posix.SIG.KILL) catch {};
+    try waitForProcessAbsence(parsed_created.value.inspection.hostPid);
+    try waitForProcessAbsence(parsed_created.value.inspection.providerRoot.pid);
 }
