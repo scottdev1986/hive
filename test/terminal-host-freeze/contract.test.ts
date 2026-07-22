@@ -367,6 +367,51 @@ async function assertJ(host: NeutralTerminalHostFixture): Promise<void> {
 async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   const session = await createRunning(host, request("freeze-u"));
   const { retainedEventCount, unacknowledgedEventHighWater } = fixtureSubscriptionLimits;
+  // Tracked so the PAIRED half of every cursor can be checked against the real
+  // byte total rather than against whatever the host happens to report.
+  let producedBytes = 0;
+  const produce = (text: string): void => {
+    const bytes = encoder.encode(text);
+    producedBytes += bytes.byteLength;
+    host.appendOutput(session, bytes);
+  };
+  const subscribeAtEnd = async () => {
+    const result = await host.subscribe({
+      session,
+      capabilities: { protocolVersions: ["1.0.0"] },
+      limits: fixtureSubscriptionLimits,
+      from: { position: "end" },
+    });
+    if (result.state !== "subscribed") throw new Error(`expected subscribed, got ${result.state}`);
+    return result;
+  };
+
+  // A position beyond the produced end names events the session never emitted.
+  // It is not a retention fact, and it must never be accepted: a subscription
+  // seeded from it would carry acknowledgement authority over events that do
+  // not exist and release real ones as they arrived. Proven on its own session
+  // so the refusal cannot be confused with retention state below.
+  const unproduced = await createRunning(host, request("freeze-u-future"));
+  const future = await host.subscribe({
+    session: unproduced,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "at", cursor: { eventSequence: "9999", outputOffset: "0" } },
+  });
+  expect(future.state).toBe("unknown");
+  host.appendOutput(unproduced, encoder.encode("survives"));
+  expect(host.retainedEvents(unproduced)).toBe(1);
+  const afterFuture = await host.subscribe({
+    session: unproduced,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "end" },
+  });
+  if (afterFuture.state !== "subscribed") {
+    throw new Error(`refused position fabricated a ${afterFuture.state}`);
+  }
+  expect(afterFuture.resumeFrom).toEqual({ eventSequence: "2", outputOffset: "8" });
+
   const reader = await host.subscribe({
     session,
     capabilities: { protocolVersions: ["1.0.0"] },
@@ -380,11 +425,11 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
 
   // Exactly once: draining twice never repeats a delivered event, and a later
   // drain sees only what arrived after the previous one.
-  host.appendOutput(session, encoder.encode("alpha"));
-  host.appendOutput(session, encoder.encode("beta"));
+  produce("alpha");
+  produce("beta");
   expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["1", "2"]);
   expect(await drain(host, session, reader.subscriptionId)).toEqual([]);
-  host.appendOutput(session, encoder.encode("gamma"));
+  produce("gamma");
   expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["3"]);
   await host.acknowledgeEvents({
     session,
@@ -395,8 +440,8 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   // Exactly once at the INTERRUPTION boundary, which a full drain cannot see:
   // a subscriber that receives one event and abandons the stream before asking
   // for the next must not be redelivered that event when it resumes.
-  host.appendOutput(session, encoder.encode("delta-1"));
-  host.appendOutput(session, encoder.encode("delta-2"));
+  produce("delta-1");
+  produce("delta-2");
   const interrupted: string[] = [];
   for await (const event of host.events({ session, subscriptionId: reader.subscriptionId })) {
     interrupted.push(event.eventSequence);
@@ -416,16 +461,16 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   if (tail.state !== "subscribed") throw new Error(`expected subscribed, got ${tail.state}`);
   expect(tail.resumeFrom.eventSequence).toBe("6");
   expect(tail.subscriptionId).not.toBe(reader.subscriptionId);
-  host.appendOutput(session, encoder.encode("epsilon"));
+  produce("epsilon");
   expect((await drain(host, session, tail.subscriptionId)).map(sequenceOf)).toEqual(["6"]);
   expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["6"]);
 
   // Delivery is bounded by negotiated credit, observed as behavior: once this
   // subscription holds high-water events delivered and unacknowledged, its own
   // drain yields nothing even though events are waiting...
-  host.appendOutput(session, encoder.encode("zeta"));
+  produce("zeta");
   expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["7"]);
-  host.appendOutput(session, encoder.encode("eta"));
+  produce("eta");
   expect(await drain(host, session, reader.subscriptionId)).toEqual([]);
   // ...and the session is not stalled by it: the other subscriber still moves.
   expect((await drain(host, session, tail.subscriptionId)).map(sequenceOf)).toEqual(["7", "8"]);
@@ -444,6 +489,42 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   expect(host.retainedEvents(session)).toBeLessThan(retainedBeforeAck);
   expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["8"]);
 
+  // Eviction removed real events, and the cursor is a PAIR: the output offset
+  // beside a position must still name the true byte total.
+  const pairedAfterEviction = await subscribeAtEnd();
+  expect(pairedAfterEviction.resumeFrom.outputOffset).toBe(String(producedBytes));
+
+  // The discriminating case is a position whose output base was CARRIED BY the
+  // evicted events themselves: resuming at the oldest retained event, where no
+  // surviving event can supply the offset. Rebuilding from the survivors alone
+  // reports a fabricated zero, and the event and the output around it stop
+  // being comparable — which is the whole point of the paired cursor.
+  const paired = await createRunning(host, request("freeze-u-paired"));
+  const pairedReader = await host.subscribe({
+    session: paired,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
+  });
+  if (pairedReader.state !== "subscribed") throw new Error("paired reader not subscribed");
+  host.appendOutput(paired, encoder.encode("abc"));
+  host.appendOutput(paired, encoder.encode("defgh"));
+  await drain(host, paired, pairedReader.subscriptionId);
+  await host.acknowledgeEvents({
+    session: paired,
+    subscriptionId: pairedReader.subscriptionId,
+    through: { eventSequence: "1", outputOffset: "3" },
+  });
+  expect(host.retainedEvents(paired)).toBe(1);
+  const resumed = await host.subscribe({
+    session: paired,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "at", cursor: { eventSequence: "2", outputOffset: "3" } },
+  });
+  if (resumed.state !== "subscribed") throw new Error(`expected subscribed, got ${resumed.state}`);
+  expect(resumed.resumeFrom).toEqual({ eventSequence: "2", outputOffset: "3" });
+
   // An acknowledgement can never reach past what was delivered: a subscription
   // cannot release events it was never given.
   const overreach = await host.acknowledgeEvents({
@@ -455,7 +536,7 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
 
   // Retention is a real bound on STORAGE, not a number that says it is bounded.
   for (let index = 0; index < retainedEventCount * 2; index += 1) {
-    host.appendOutput(session, encoder.encode(`overflow-${index}`));
+    produce(`overflow-${index}`);
   }
   expect(host.retainedEvents(session)).toBeLessThanOrEqual(retainedEventCount);
 

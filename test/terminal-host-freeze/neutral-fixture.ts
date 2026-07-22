@@ -81,6 +81,7 @@ type RecordState = {
   mutationSequence: number;
   events: TerminalEvent[];
   retainedEventStart: number;
+  retainedOutputOffset: number;
   subscriptions: Map<string, SubscriptionState>;
   outputChunks: OutputChunk[];
   outputEnd: number;
@@ -388,9 +389,21 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     if (!request.capabilities.protocolVersions.includes("1.0.0")) {
       return { state: "unknown", diagnostic: "no compatible protocol" };
     }
+    // The current end is the highest position a subscription may name: it is
+    // where the next event will be. A position beyond it names events the
+    // session has never produced, which is not a retention fact and must not
+    // become one — accepting it would let a caller claim to have acknowledged
+    // events that do not exist and release real ones as they arrive.
+    const end = record.eventSequence + 1;
     const from = request.from.position === "end"
-      ? record.eventSequence + 1
+      ? end
       : Number(request.from.cursor.eventSequence);
+    if (!Number.isSafeInteger(from) || from < 1) {
+      return { state: "unknown", diagnostic: "subscription position is not an event position" };
+    }
+    if (from > end) {
+      return { state: "unknown", diagnostic: "subscription position is beyond the produced end" };
+    }
     if (from < record.retainedEventStart) {
       return {
         state: "gap",
@@ -726,6 +739,7 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       mutationSequence: 0,
       events: [],
       retainedEventStart: 1,
+      retainedOutputOffset: 0,
       subscriptions: new Map(),
       outputChunks: [],
       outputEnd: 0,
@@ -822,23 +836,34 @@ export class NeutralTerminalHostFixture implements TerminalHost {
   }
 
   private evictThrough(record: RecordState, throughSequence: number): void {
-    const drop = throughSequence - record.retainedEventStart + 1;
+    // Never release past what has actually been produced: a position nobody
+    // could have reached must not authorize deleting real events.
+    const bounded = Math.min(throughSequence, record.eventSequence);
+    const drop = Math.min(bounded - record.retainedEventStart + 1, record.events.length);
     if (drop <= 0) return;
-    record.events.splice(0, drop);
+    // Eviction takes the events, but it must not take the output base with
+    // them: the offset standing at the retained start is what pairs a later
+    // cursor with the output around it, and rebuilding it from the retained
+    // events alone would report a fabricated zero.
+    for (const event of record.events.splice(0, drop)) {
+      if (event.kind === "output") {
+        record.retainedOutputOffset = Number(event.outputRange.endExclusive);
+      }
+    }
     record.retainedEventStart += drop;
   }
 
   /** The output offset standing beside an event position, so a delivered event
    * and the output around it are comparable without a second clock. */
   private outputOffsetAt(record: RecordState, sequence: number): number {
-    let offset = 0;
+    // Events evicted from retention took their ranges with them, so the walk
+    // starts from the offset standing at the retained start rather than from a
+    // reconstructed zero.
+    let offset = record.retainedOutputOffset;
     for (const event of record.events) {
       if (Number(event.eventSequence) >= sequence) break;
       if (event.kind === "output") offset = Number(event.outputRange.endExclusive);
     }
-    // Events evicted from retention took their offsets with them, so a position
-    // at or below the retained start reports the retained start's offset rather
-    // than a reconstructed zero.
     return offset;
   }
 
