@@ -64,7 +64,11 @@ The shell setting reaches the daemon. The `launchctl` setting is separately
 required because LaunchServices does not inherit the launching shell's
 environment. Add `launchctl unsetenv HIVE_ORCHESTRATOR_HOST` to the run's traps
 before launching Workspace, and verify the variable is absent during final
-cleanup. A restart after it is unset returns to the tmux default.
+cleanup. A restart after it is unset returns to the tmux default. This setting
+is global to the GUI login session, not scoped by `HIVE_HOME`: while it is set,
+no other Hive Workspace may be launched. Extend the one-second process watcher
+to fail immediately if any non-manifest Workspace process starts during that
+interval. Existing serving Workspace identities must remain unchanged.
 
 For the genuine quota-envelope cell, place this test-only overlay in the
 isolated instance's `quota.toml` before daemon start. Replace `claude` with the
@@ -109,7 +113,8 @@ SQL
 ```
 
 The preflight passes only when the returned locator has the manifest's exact
-`instanceId`, `subject.kind: "root"`, `hostKind: "sessiond"`, generation 1,
+`instanceId`, `subject.kind: "root"`, `hostKind: "sessiond"`, generation 1 on
+a fresh instance,
 a nonempty `engineBuildId`, non-null `createEvidence`, and a null termination
 audit. A separate read-only query must return zero agents rows named queen or
 orchestrator: the root has a terminal binding and turn events, never an
@@ -118,6 +123,11 @@ assignment/landing record. Record its session id and generation as `R0`. From qu
 `include: "metadata"` and `maxRows: 1`. Require the same locator, positive
 geometry, a decimal output sequence, `text: null`, and no scope or subject
 error. This is the positive control for reading later negative states.
+
+If an interrupted run deliberately resumes the same manifest-owned home, `R0`
+is the lowest root generation recorded for that `RUN_ID`, not necessarily 1;
+retain and disclose every earlier binding. Reusing an unowned or unexplained
+home is not a retry and fails preflight.
 
 Read the manifest-recorded tmux socket with `has-session` for the exact legacy
 queen session. It must be absent. Prove the tmux reader first against a known
@@ -284,6 +294,12 @@ queued → injected → applied sequence and absence of a draft turn are the liv
 evidence. If the old lease expires before reattach, record this cell as failed
 and run the deterministic expiry case F3; do not relabel a new-generation
 recovery as an orphan-discard pass.
+
+Record the elapsed time from the old Workspace's verified death to the new
+exact metadata observation on every attempt, pass or fail. Repeated durations
+at or above 15 seconds mean this cell is structurally unreachable at the
+current lease, not flaky; report that measured blocker instead of retrying it
+until one run happens to win.
 
 ## F — root crash, stall, expiry, and recovery
 
