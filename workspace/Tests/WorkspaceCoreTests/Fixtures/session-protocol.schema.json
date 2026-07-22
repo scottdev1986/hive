@@ -7234,6 +7234,116 @@
       ],
       "additionalProperties": false
     },
+    "terminalHostResizeResult": {
+      "$schema": "https://json-schema.org/draft/2020-12/schema",
+      "oneOf": [
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "applied"
+            },
+            "revision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "readback": {
+              "readOnly": true,
+              "type": "object",
+              "properties": {
+                "columns": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "rows": {
+                  "type": "integer",
+                  "minimum": 1,
+                  "maximum": 1000
+                },
+                "widthPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                },
+                "heightPixels": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 65535
+                }
+              },
+              "required": [
+                "columns",
+                "rows",
+                "widthPixels",
+                "heightPixels"
+              ],
+              "additionalProperties": false,
+              "x-hive-max-active-cells": 250000
+            },
+            "orderedAt": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            },
+            "foregroundProcessObservation": {
+              "type": "string",
+              "const": "not-claimed"
+            }
+          },
+          "required": [
+            "state",
+            "revision",
+            "readback",
+            "orderedAt",
+            "foregroundProcessObservation"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "stale"
+            },
+            "currentRevision": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,19})$",
+              "format": "hive-uint64-decimal"
+            }
+          },
+          "required": [
+            "state",
+            "currentRevision"
+          ],
+          "additionalProperties": false
+        },
+        {
+          "readOnly": true,
+          "type": "object",
+          "properties": {
+            "state": {
+              "type": "string",
+              "const": "unknown"
+            },
+            "diagnostic": {
+              "type": "string",
+              "minLength": 1
+            }
+          },
+          "required": [
+            "state",
+            "diagnostic"
+          ],
+          "additionalProperties": false
+        }
+      ]
+    },
     "terminalHostAttachRequest": {
       "$schema": "https://json-schema.org/draft/2020-12/schema",
       "readOnly": true,

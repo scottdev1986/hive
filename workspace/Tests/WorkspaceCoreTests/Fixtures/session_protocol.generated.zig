@@ -101,6 +101,7 @@ pub const wire_schema = struct {
     pub const terminal_host_termination_result = "terminalHostTerminationResult";
     pub const terminal_host_resize_request = "terminalHostResizeRequest";
     pub const terminal_host_resize_receipt = "terminalHostResizeReceipt";
+    pub const terminal_host_resize_result = "terminalHostResizeResult";
     pub const terminal_host_attach_request = "terminalHostAttachRequest";
     pub const terminal_host_attach_result = "terminalHostAttachResult";
     pub const terminal_host_subscribe_request = "terminalHostSubscribeRequest";

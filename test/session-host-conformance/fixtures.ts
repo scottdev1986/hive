@@ -819,6 +819,21 @@ const validCases: readonly WireCorpusCase[] = [
     value: fixtureTerminalHostResizeReceipt,
   },
   {
+    name: "frozen neutral resize applies at the revision it was asked for",
+    schema: "terminalHostResizeResult",
+    value: fixtureTerminalHostResize,
+  },
+  {
+    name: "frozen neutral resize reports a stale revision with the current one",
+    schema: "terminalHostResizeResult",
+    value: { state: "stale", currentRevision: "41" },
+  },
+  {
+    name: "frozen neutral resize reports an unreachable terminal as unknown",
+    schema: "terminalHostResizeResult",
+    value: { state: "unknown", diagnostic: "neutral-host-control-unavailable" },
+  },
+  {
     name: "frozen neutral attach request negotiates protocol and checkpoints",
     schema: "terminalHostAttachRequest",
     value: fixtureTerminalHostAttachRequest,
@@ -1089,6 +1104,16 @@ const invalidCases: readonly WireCorpusCase[] = [
     name: "frozen resize receipt cannot claim the application handled it",
     schema: "terminalHostResizeReceipt",
     value: { ...fixtureTerminalHostResizeReceipt, applicationNotified: true },
+  },
+  {
+    name: "frozen resize result cannot claim the foreground process observed it",
+    schema: "terminalHostResizeResult",
+    value: { ...fixtureTerminalHostResize, foregroundProcessObservation: "observed" },
+  },
+  {
+    name: "frozen stale resize cannot omit the revision that superseded it",
+    schema: "terminalHostResizeResult",
+    value: { state: "stale" },
   },
   {
     name: "frozen attach request rejects a reversed negotiation minor range",

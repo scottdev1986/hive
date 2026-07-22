@@ -1745,6 +1745,38 @@
       }
     },
     {
+      "name": "frozen neutral resize applies at the revision it was asked for",
+      "schema": "terminalHostResizeResult",
+      "value": {
+        "state": "applied",
+        "revision": "8",
+        "readback": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1110,
+          "heightPixels": 740
+        },
+        "orderedAt": "2",
+        "foregroundProcessObservation": "not-claimed"
+      }
+    },
+    {
+      "name": "frozen neutral resize reports a stale revision with the current one",
+      "schema": "terminalHostResizeResult",
+      "value": {
+        "state": "stale",
+        "currentRevision": "41"
+      }
+    },
+    {
+      "name": "frozen neutral resize reports an unreachable terminal as unknown",
+      "schema": "terminalHostResizeResult",
+      "value": {
+        "state": "unknown",
+        "diagnostic": "neutral-host-control-unavailable"
+      }
+    },
+    {
       "name": "frozen neutral attach request negotiates protocol and checkpoints",
       "schema": "terminalHostAttachRequest",
       "value": {
@@ -4133,6 +4165,29 @@
           "heightPixels": 999
         },
         "applicationNotified": true
+      }
+    },
+    {
+      "name": "frozen resize result cannot claim the foreground process observed it",
+      "schema": "terminalHostResizeResult",
+      "value": {
+        "state": "applied",
+        "revision": "8",
+        "readback": {
+          "columns": 111,
+          "rows": 37,
+          "widthPixels": 1110,
+          "heightPixels": 740
+        },
+        "orderedAt": "2",
+        "foregroundProcessObservation": "observed"
+      }
+    },
+    {
+      "name": "frozen stale resize cannot omit the revision that superseded it",
+      "schema": "terminalHostResizeResult",
+      "value": {
+        "state": "stale"
       }
     },
     {

@@ -122,6 +122,83 @@ pub const WireInspectionPayload = struct {
 
 const ListRequest = struct { schemaVersion: u8 };
 const InspectRequest = struct { schemaVersion: u8, session: neutral_host.SessionRef };
+const ResizeRequest = struct {
+    schemaVersion: u8,
+    session: neutral_host.SessionRef,
+    window: WireWindowSize,
+    revision: []const u8,
+    idempotencyKey: []const u8,
+};
+
+/// §5 outcomes. Each carries `schemaVersion` on top of the frozen result shape,
+/// exactly as the termination payload carries it on top of its result. The
+/// applied variant reports the geometry read back from the terminal AFTER the
+/// set, and has deliberately no field claiming the foreground application
+/// handled its notification: the host cannot observe that, so the projection
+/// cannot say it. A superseded revision is `stale` and names the revision that
+/// superseded it, so a caller learns where the order actually is.
+pub const WireAppliedResizePayload = struct {
+    schemaVersion: u8 = 1,
+    state: enum { applied } = .applied,
+    revision: []const u8,
+    readback: WireWindowSize,
+    orderedAt: []const u8,
+    foregroundProcessObservation: enum { @"not-claimed" } = .@"not-claimed",
+};
+
+pub const WireStaleResizePayload = struct {
+    schemaVersion: u8 = 1,
+    state: enum { stale } = .stale,
+    currentRevision: []const u8,
+};
+
+pub const WireUnknownResizePayload = struct {
+    schemaVersion: u8 = 1,
+    state: enum { unknown } = .unknown,
+    diagnostic: []const u8,
+};
+
+fn staleResize(
+    allocator: std.mem.Allocator,
+    current_revision: u64,
+) !neutral_host.OperationResponse {
+    return .{ .payload = try std.json.Stringify.valueAlloc(allocator, WireStaleResizePayload{
+        .currentRevision = try decimal(allocator, current_revision),
+    }, .{}) };
+}
+
+fn unknownResize(
+    allocator: std.mem.Allocator,
+    diagnostic: []const u8,
+) !neutral_host.OperationResponse {
+    return .{ .payload = try std.json.Stringify.valueAlloc(allocator, WireUnknownResizePayload{
+        .diagnostic = diagnostic,
+    }, .{}) };
+}
+
+/// §5 applied evidence from the terminal the control plane does not own.
+pub const AppliedResize = struct {
+    revision: u64,
+    orderedAt: u64,
+    readback: neutral_host.WindowSize,
+};
+
+/// Host-side seam for ordered terminal mutation. Inspection reads evidence
+/// through EvidenceProvider; a mutation needs the terminal itself, which this
+/// control plane deliberately does not own. Optional-null on HostOperations for
+/// the same reason Controller.host is: only the mutating operation needs it.
+pub const TerminalProvider = struct {
+    context: *anyopaque,
+    resizeFn: *const fn (*anyopaque, neutral_host.WindowSize, u64) anyerror!AppliedResize,
+
+    pub fn resize(
+        self: TerminalProvider,
+        window: neutral_host.WindowSize,
+        revision: u64,
+    ) !AppliedResize {
+        return self.resizeFn(self.context, window, revision);
+    }
+};
 const HostInspectRequest = struct { schemaVersion: u8, includeCheckpoint: bool };
 const TerminateRequest = struct {
     schemaVersion: u8,
@@ -842,6 +919,9 @@ pub const HostOperations = struct {
     evidence: EvidenceProvider,
     clock: EvidenceClock,
     scratch: std.heap.ArenaAllocator,
+    /// Only `resize` mutates the terminal, so operations assembled purely to
+    /// inspect or terminate are not obliged to carry one they cannot use.
+    terminal: ?TerminalProvider = null,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -884,8 +964,65 @@ pub const HostOperations = struct {
         return switch (request.operation) {
             .inspect => self.inspect(request.payload),
             .terminate => self.terminate(request),
+            .resize => self.resize(request.payload),
             else => .{ .accepted = false, .payload = "operation-not-implemented" },
         };
+    }
+
+    /// Frozen `resize`. §5 is an ordered mutation, not a setter: the revision
+    /// must advance, the geometry returned is what the terminal reported AFTER
+    /// the set rather than what was asked for, and a superseded revision names
+    /// the revision that superseded it instead of failing opaquely. The
+    /// revision floor is the durable record's, so a resize is fenced by the
+    /// same evidence a later inspection reports.
+    fn resize(self: *HostOperations, payload: []const u8) !neutral_host.OperationResponse {
+        _ = self.scratch.reset(.retain_capacity);
+        const allocator = self.scratch.allocator();
+        const request = try std.json.parseFromSliceLeaky(ResizeRequest, allocator, payload, .{});
+        if (request.schemaVersion != 1) return error.InvalidResizeRequest;
+        if (!request.session.eql(self.session)) return error.StaleSessionRef;
+
+        const record = self.registry.get(self.session) orelse return error.SessionNotFound;
+        // Copied out as a scalar: nothing below may read through a Record that
+        // borrows registry storage across a registry mutation.
+        const current_revision = record.windowRevision;
+        const revision = std.fmt.parseInt(u64, request.revision, 10) catch
+            return error.InvalidResizeRequest;
+        if (revision == 0 or revision <= current_revision) return staleResize(allocator, current_revision);
+
+        const terminal = self.terminal orelse return unknownResize(
+            allocator,
+            "neutral-terminal-provider-unavailable",
+        );
+        const applied = terminal.resize(.{
+            .columns = request.window.columns,
+            .rows = request.window.rows,
+            .widthPixels = request.window.widthPixels,
+            .heightPixels = request.window.heightPixels,
+        }, revision) catch |err| switch (err) {
+            error.OutOfMemory => return err,
+            // The terminal is the authority on its own revision order. If it
+            // rejects the revision as superseded, that is `stale` carrying the
+            // revision that superseded it, not an opaque failure.
+            error.StaleResizeRevision => return staleResize(allocator, current_revision),
+            // A terminal that cannot be set is `unknown`: never a silent
+            // success, and never a fabricated readback.
+            else => return unknownResize(allocator, @errorName(err)),
+        };
+
+        // Commit the READBACK, not the request: a later inspection must report
+        // the geometry the terminal actually holds.
+        _ = try self.registry.update(self.session, .{
+            .window = applied.readback,
+            .windowRevision = applied.revision,
+        });
+        const response = try std.json.Stringify.valueAlloc(allocator, WireAppliedResizePayload{
+            .revision = try decimal(allocator, applied.revision),
+            .readback = wireWindow(applied.readback),
+            .orderedAt = try decimal(allocator, applied.orderedAt),
+        }, .{});
+        if (response.len > generated.limits.control_json_bytes) return error.ResizeResponseTooLarge;
+        return .{ .payload = response };
     }
 
     fn commitTerminationResult(
@@ -1231,6 +1368,43 @@ pub const Controller = struct {
             return error.CreateResponseTooLarge;
         }
         return response;
+    }
+
+    /// Frozen `resize`. The controller does not decide the outcome — it carries
+    /// the request to the host that owns the terminal and returns what the host
+    /// committed. An unreachable host is `unknown`: the caller learns the
+    /// resize was not evidenced, never that it was applied or refused.
+    pub fn resize(self: *Controller, payload: []const u8) ![]u8 {
+        var arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer arena.deinit();
+        const allocator = arena.allocator();
+        const request = try std.json.parseFromSliceLeaky(ResizeRequest, allocator, payload, .{});
+        if (request.schemaVersion != 1) return error.InvalidResizeRequest;
+        _ = self.registry.get(request.session) orelse return error.SessionNotFound;
+
+        const committed = blk: {
+            var client = self.registry.connect(request.session) catch break :blk null;
+            defer client.deinit();
+            var response = client.call(
+                self.allocator,
+                .resize,
+                request.idempotencyKey,
+                payload,
+            ) catch break :blk null;
+            defer response.deinit();
+            if (!response.accepted) break :blk null;
+            break :blk try self.allocator.dupe(u8, response.payload);
+        };
+        if (committed) |response| {
+            if (response.len > generated.limits.control_json_bytes) {
+                self.allocator.free(response);
+                return error.ResizeResponseTooLarge;
+            }
+            return response;
+        }
+        return std.json.Stringify.valueAlloc(self.allocator, WireUnknownResizePayload{
+            .diagnostic = "neutral-host-control-unavailable",
+        }, .{});
     }
 
     fn fallbackInspectionValue(
@@ -2187,6 +2361,275 @@ test "controller inspect degrades when the host is unreachable but propagates al
 /// next one returns null, and every allocation after that succeeds again.
 /// std.testing.FailingAllocator fails every allocation from its index onward,
 /// which cannot express "the host call fails but the fallback has memory".
+/// A terminal that ACCEPTS every revision and reports a readback deliberately
+/// unequal to the request. Both properties are load-bearing: a permissive
+/// terminal is the only way to prove the control plane enforces the revision
+/// order itself rather than inheriting pty_host's check, and a divergent
+/// readback is the only way to tell a projection that reports what the terminal
+/// said from one that echoes what it was asked for. A real terminal returns the
+/// geometry it was given, so it cannot distinguish those two.
+const DivergentTerminal = struct {
+    ordered_at: u64 = 40,
+    fail_with: ?anyerror = null,
+    calls: usize = 0,
+
+    fn resize(
+        context: *anyopaque,
+        window: neutral_host.WindowSize,
+        revision: u64,
+    ) anyerror!AppliedResize {
+        const self: *DivergentTerminal = @ptrCast(@alignCast(context));
+        self.calls += 1;
+        if (self.fail_with) |err| return err;
+        self.ordered_at += 1;
+        return .{
+            .revision = revision,
+            .orderedAt = self.ordered_at,
+            .readback = .{
+                .columns = window.columns - 1,
+                .rows = window.rows - 1,
+                .widthPixels = window.widthPixels,
+                .heightPixels = window.heightPixels,
+            },
+        };
+    }
+
+    fn provider(self: *DivergentTerminal) TerminalProvider {
+        return .{ .context = self, .resizeFn = resize };
+    }
+};
+
+const SilentEvidence = struct {
+    fn measure(_: *anyopaque, _: std.mem.Allocator) !LiveEvidence {
+        return .{};
+    }
+
+    fn provider(self: *SilentEvidence) EvidenceProvider {
+        return .{ .context = self, .measureFn = measure };
+    }
+};
+
+const ResizeProofFixture = struct {
+    root_storage: [64]u8 = undefined,
+    root: []const u8 = &.{},
+    runtime: neutral_host.Runtime = undefined,
+    registry: neutral_host.Registry = undefined,
+    evidence: SilentEvidence = .{},
+    operations: HostOperations = undefined,
+    session: neutral_host.SessionRef = undefined,
+
+    fn open(self: *ResizeProofFixture, allocator: std.mem.Allocator) !void {
+        self.root = try std.fmt.bufPrint(&self.root_storage, "/tmp/ncpr-{x}", .{
+            std.crypto.random.int(u64),
+        });
+        try std.fs.makeDirAbsolute(self.root);
+        var directory = try std.fs.openDirAbsolute(self.root, .{ .no_follow = true });
+        try directory.chmod(0o700);
+        directory.close();
+        self.runtime = try neutral_host.Runtime.open(allocator, self.root);
+        self.registry = try neutral_host.Registry.open(allocator, &self.runtime);
+        var digest: [32]u8 = undefined;
+        std.crypto.hash.sha2.Sha256.hash("resize-proof", &digest, .{});
+        const reserved = switch (try self.registry.reserve(
+            "foreign://neutral/resize-proof",
+            "create-resize-proof",
+            digest,
+            .{ .columns = 80, .rows = 24, .widthPixels = 800, .heightPixels = 480 },
+        )) {
+            .reserved => |record| record,
+            .existing => return error.UnexpectedCreateReplay,
+        };
+        self.session = reserved.session;
+        var platform = process_inspector.RealPlatform.init();
+        self.operations = try HostOperations.init(
+            allocator,
+            &self.registry,
+            self.session,
+            platform.platform(),
+            self.evidence.provider(),
+            EvidenceClock.system(),
+        );
+        // The registry recycles record storage, so bind to the copy the
+        // operations made rather than to the reserved record's slices.
+        self.session = self.operations.session;
+    }
+
+    fn close(self: *ResizeProofFixture) void {
+        self.operations.deinit();
+        self.registry.deinit();
+        self.runtime.deinit();
+        std.fs.deleteTreeAbsolute(self.root) catch {};
+    }
+
+    fn request(
+        self: *ResizeProofFixture,
+        allocator: std.mem.Allocator,
+        columns: u32,
+        revision: []const u8,
+    ) ![]u8 {
+        return std.json.Stringify.valueAlloc(allocator, .{
+            .schemaVersion = @as(u8, 1),
+            .session = self.session,
+            .window = .{
+                .columns = columns,
+                .rows = @as(u32, 24),
+                .widthPixels = @as(u32, 800),
+                .heightPixels = @as(u32, 480),
+            },
+            .revision = revision,
+            .idempotencyKey = "resize-proof-key",
+        }, .{});
+    }
+
+    fn call(self: *ResizeProofFixture, payload: []const u8) !neutral_host.OperationResponse {
+        return self.operations.handler().call(.{
+            .session = self.session,
+            .operation = .resize,
+            .idempotencyKey = "resize-proof-key",
+            .payload = payload,
+        });
+    }
+};
+
+fn resizeState(allocator: std.mem.Allocator, payload: []const u8) ![]const u8 {
+    const Projection = struct { state: []const u8 };
+    const parsed = try std.json.parseFromSliceLeaky(Projection, allocator, payload, .{
+        .ignore_unknown_fields = true,
+    });
+    return parsed.state;
+}
+
+test "neutral resize commits the terminal readback rather than the requested geometry" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var fixture: ResizeProofFixture = .{};
+    try fixture.open(std.testing.allocator);
+    defer fixture.close();
+    var terminal: DivergentTerminal = .{};
+    fixture.operations.terminal = terminal.provider();
+
+    const response = try fixture.call(try fixture.request(allocator, 120, "3"));
+    try std.testing.expect(response.accepted);
+    const Applied = struct {
+        state: []const u8,
+        revision: []const u8,
+        orderedAt: []const u8,
+        readback: WireWindowSize,
+        foregroundProcessObservation: []const u8,
+    };
+    const applied = try std.json.parseFromSliceLeaky(Applied, allocator, response.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    try std.testing.expectEqualStrings("applied", applied.state);
+    try std.testing.expectEqualStrings("3", applied.revision);
+    try std.testing.expectEqualStrings("41", applied.orderedAt);
+    // The terminal reported 119x23 for a request of 120x24. The projection must
+    // report what the terminal said.
+    try std.testing.expectEqual(@as(u32, 119), applied.readback.columns);
+    try std.testing.expectEqual(@as(u32, 23), applied.readback.rows);
+    // And it must never claim the foreground application handled the change.
+    try std.testing.expectEqualStrings("not-claimed", applied.foregroundProcessObservation);
+
+    // A later inspection answers from the record, so the record must hold the
+    // readback too, not the request.
+    const record = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
+    try std.testing.expectEqual(@as(u64, 3), record.windowRevision);
+    try std.testing.expectEqual(@as(u32, 119), record.window.columns);
+    try std.testing.expectEqual(@as(u32, 23), record.window.rows);
+}
+
+test "neutral resize enforces the record's revision order against a permissive terminal" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var fixture: ResizeProofFixture = .{};
+    try fixture.open(std.testing.allocator);
+    defer fixture.close();
+    var terminal: DivergentTerminal = .{};
+    fixture.operations.terminal = terminal.provider();
+
+    try std.testing.expectEqualStrings("applied", try resizeState(
+        allocator,
+        (try fixture.call(try fixture.request(allocator, 120, "5"))).payload,
+    ));
+    try std.testing.expectEqual(@as(usize, 1), terminal.calls);
+
+    // This terminal would accept every one of these. Only the control plane's
+    // own check can refuse them, and it must name the revision in force.
+    for ([_][]const u8{ "5", "4", "0" }) |revision| {
+        const response = try fixture.call(try fixture.request(allocator, 120, revision));
+        const Stale = struct { state: []const u8, currentRevision: []const u8 };
+        const stale = try std.json.parseFromSliceLeaky(Stale, allocator, response.payload, .{
+            .ignore_unknown_fields = true,
+        });
+        try std.testing.expectEqualStrings("stale", stale.state);
+        try std.testing.expectEqualStrings("5", stale.currentRevision);
+    }
+    // A superseded revision never reaches the terminal at all.
+    try std.testing.expectEqual(@as(usize, 1), terminal.calls);
+}
+
+test "neutral resize reports an unusable terminal as unknown and mutates nothing" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var fixture: ResizeProofFixture = .{};
+    try fixture.open(std.testing.allocator);
+    defer fixture.close();
+
+    // No terminal at all: the control plane does not own one, and must say so
+    // rather than report a resize it cannot have applied.
+    const absent = try fixture.call(try fixture.request(allocator, 120, "2"));
+    try std.testing.expectEqualStrings("unknown", try resizeState(allocator, absent.payload));
+
+    var terminal: DivergentTerminal = .{ .fail_with = error.IoFailed };
+    fixture.operations.terminal = terminal.provider();
+    const failed = try fixture.call(try fixture.request(allocator, 120, "2"));
+    try std.testing.expectEqualStrings("unknown", try resizeState(allocator, failed.payload));
+
+    // Neither outcome may leave the record claiming a revision was applied.
+    const record = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
+    try std.testing.expectEqual(@as(u64, 0), record.windowRevision);
+
+    // A terminal that reports its own supersession is `stale`, not `unknown`:
+    // the outcome is a revision fact, not an opaque failure.
+    terminal.fail_with = error.StaleResizeRevision;
+    const superseded = try fixture.call(try fixture.request(allocator, 120, "2"));
+    try std.testing.expectEqualStrings("stale", try resizeState(allocator, superseded.payload));
+}
+
+test "neutral resize is fenced by the session reference it names" {
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var fixture: ResizeProofFixture = .{};
+    try fixture.open(std.testing.allocator);
+    defer fixture.close();
+    var terminal: DivergentTerminal = .{};
+    fixture.operations.terminal = terminal.provider();
+
+    const payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{ .key = fixture.session.key, .incarnation = "successor" },
+        .window = .{
+            .columns = @as(u32, 120),
+            .rows = @as(u32, 24),
+            .widthPixels = @as(u32, 800),
+            .heightPixels = @as(u32, 480),
+        },
+        .revision = "9",
+        .idempotencyKey = "resize-proof-key",
+    }, .{});
+    try std.testing.expectError(error.StaleSessionRef, fixture.operations.handler().call(.{
+        .session = fixture.session,
+        .operation = .resize,
+        .idempotencyKey = "resize-proof-key",
+        .payload = payload,
+    }));
+    try std.testing.expectEqual(@as(usize, 0), terminal.calls);
+}
+
 const FailOnceAllocator = struct {
     backing: std.mem.Allocator,
     countdown: usize,

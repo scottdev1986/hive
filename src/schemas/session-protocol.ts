@@ -1575,6 +1575,7 @@ export const SESSION_WIRE_SCHEMAS = {
   terminalHostTerminationResult: TerminalHostTerminationResultSchema,
   terminalHostResizeRequest: TerminalHostResizeRequestSchema,
   terminalHostResizeReceipt: TerminalHostResizeReceiptSchema,
+  terminalHostResizeResult: TerminalHostResizeResultSchema,
   terminalHostAttachRequest: TerminalHostAttachRequestSchema,
   terminalHostAttachResult: TerminalHostAttachResultSchema,
   terminalHostSubscribeRequest: TerminalHostSubscribeRequestSchema,
