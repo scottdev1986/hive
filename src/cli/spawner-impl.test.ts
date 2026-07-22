@@ -338,6 +338,10 @@ function controlMessage(id: string, epoch = 1): AgentMessage {
 class FakeStore {
   readonly agents: AgentRecord[];
   readonly reservations = new Set<string>();
+  readonly discardedFailedSpawns: Array<{
+    agentId: string;
+    proof: "never-created" | "verified-stopped";
+  }> = [];
   /** The real approvals queue, in memory: the spend guard asks through it. */
   readonly approvals = new Map<string, Approval>();
 
@@ -392,7 +396,11 @@ class FakeStore {
     return record;
   }
 
-  discardFailedSpawn(agentId: string): boolean {
+  discardFailedSpawn(
+    agentId: string,
+    proof: "never-created" | "verified-stopped",
+  ): boolean {
+    this.discardedFailedSpawns.push({ agentId, proof });
     const index = this.agents.findIndex((candidate) => candidate.id === agentId);
     if (index < 0) return true;
     if (this.agents[index]?.status !== "failed") return false;
@@ -1224,6 +1232,10 @@ describe("HiveSpawner wiring", () => {
     expect(quota.ledger.activeReservations()).toEqual([]);
     expect(stopAttempts).toBe(0);
     expect(removals).toBe(1);
+    expect(store.discardedFailedSpawns).toEqual([{
+      agentId: expect.any(String),
+      proof: "never-created",
+    }]);
     quotaDb.close();
   });
 
@@ -2598,6 +2610,10 @@ describe("HiveSpawner wiring", () => {
     expect(failed.detail).toContain("Error: model not supported");
     expect(failed.detail).not.toContain("startup line 1\n");
     expect(store.agents).toEqual([]);
+    expect(store.discardedFailedSpawns).toEqual([{
+      agentId: expect.any(String),
+      proof: "verified-stopped",
+    }]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
   });

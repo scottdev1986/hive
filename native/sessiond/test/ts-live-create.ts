@@ -336,28 +336,30 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             sleep: async () => {
               for (const agent of db.listAgents()) {
                 if (agent.status === "spawning") {
-                  const locator = requireSessiondAgentLocator(agent);
-                  if (workspaceVisibility.currentSnapshot() === null) {
-                    expect(workspaceVisibility.publish({
-                      schemaVersion: 1,
-                      source: {
-                        sessionId: admittedVisibility.workspaceSessionId,
-                        process: {
-                          processId: admittedVisibility.workspacePid,
-                          startToken: admittedVisibility.workspaceStartToken,
+                  if (agent.sessionLocator?.hostKind === "sessiond") {
+                    const locator = requireSessiondAgentLocator(agent);
+                    if (workspaceVisibility.currentSnapshot() === null) {
+                      expect(workspaceVisibility.publish({
+                        schemaVersion: 1,
+                        source: {
+                          sessionId: admittedVisibility.workspaceSessionId,
+                          process: {
+                            processId: admittedVisibility.workspacePid,
+                            startToken: admittedVisibility.workspaceStartToken,
+                          },
                         },
-                      },
-                      inventoryRevision: admittedVisibility.openTerminalRevision,
-                      terminals: [{
-                        agentId: agent.id,
-                        agentName: agent.name,
-                        locator,
-                      state: "pending",
-                      }],
-                    })).toEqual({
-                      state: "accepted",
-                      inventoryRevision: admittedVisibility.openTerminalRevision,
-                    });
+                        inventoryRevision: admittedVisibility.openTerminalRevision,
+                        terminals: [{
+                          agentId: agent.id,
+                          agentName: agent.name,
+                          locator,
+                          state: "pending",
+                        }],
+                      })).toEqual({
+                        state: "accepted",
+                        inventoryRevision: admittedVisibility.openTerminalRevision,
+                      });
+                    }
                   }
                   db.insertAgent({ ...agent, status: "working" });
                 }
@@ -599,7 +601,9 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             model: "gpt-sessiond-live",
           });
           expect(tmuxAgent.sessionLocator?.hostKind).toBe("tmux");
+          expect(tmuxAgent.status).toBe("working");
           expect(tmux.sessions).toHaveLength(1);
+          expect(tmux.active.has(tmuxAgent.tmuxSession)).toBe(true);
           expect(
             db.listAgents().filter(
               (agent) => agent.sessionLocator?.hostKind === "sessiond",
