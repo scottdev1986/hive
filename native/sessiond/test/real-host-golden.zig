@@ -1892,6 +1892,15 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
     });
     defer parsed_created.deinit();
     if (!parsed_created.value.created) return error.BurstHostCreateFailed;
+    const host_pid = parsed_created.value.inspection.hostPid;
+    const provider_pid = parsed_created.value.inspection.providerRoot.pid;
+    // A failure anywhere below would otherwise strand a host and its provider.
+    // As in the dead-parent drill, do not signal the host after observing it gone.
+    var host_killed = false;
+    errdefer {
+        if (!host_killed) std.posix.kill(host_pid, std.posix.SIG.KILL) catch {};
+        std.posix.kill(provider_pid, std.posix.SIG.KILL) catch {};
+    }
 
     var runtime = try broker.Runtime.open(allocator, root);
     defer runtime.deinit();
@@ -2004,7 +2013,6 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
 
     // The viewer is live before a single burst byte exists.
     try reader.collectOutputUntilContains("BURST-READY");
-    const attached_at = reader.output.items.len;
 
     // The host is single-threaded and about to sit in the burst; renew first so
     // the drill carries no wall-clock assumption about the 15 s lease.
@@ -2032,23 +2040,95 @@ fn runCheckpointEvictionDrill(allocator: std.mem.Allocator) !void {
         }
     }
 
-    // Not vacuous: prove a checkpoint interval's worth of output really did
-    // cross the wire AFTER the viewer attached.
-    const streamed = reader.output.items.len - attached_at;
-    if (streamed <= session_host.terminal_state.checkpoint_output_interval_bytes) {
-        std.debug.print(
-            "checkpoint-eviction drill: only {d} bytes streamed while attached; " ++
-                "need more than the {d}-byte checkpoint interval\n",
-            .{ streamed, session_host.terminal_state.checkpoint_output_interval_bytes },
-        );
-        return error.BurstBelowCheckpointInterval;
-    }
+    // The byte stream alone cannot prove tryCheckpoint succeeded: interval
+    // failures are deliberately swallowed while output continues. INSPECT
+    // refreshes from the live TerminalState, so require both a checkpoint and
+    // an evicted retained prefix from this attached run.
+    try inspectCheckpointEviction(allocator, backend, burst_session_id);
 
     // Teardown only: termination semantics are the golden's surface, not this
     // drill's. Same direct kill the dead-parent drill uses, so the home can be
     // removed without leaving the host or its provider behind.
-    std.posix.kill(parsed_created.value.inspection.hostPid, std.posix.SIG.KILL) catch {};
-    std.posix.kill(parsed_created.value.inspection.providerRoot.pid, std.posix.SIG.KILL) catch {};
-    try waitForProcessAbsence(parsed_created.value.inspection.hostPid);
-    try waitForProcessAbsence(parsed_created.value.inspection.providerRoot.pid);
+    std.posix.kill(host_pid, std.posix.SIG.KILL) catch {};
+    try waitForProcessAbsence(host_pid);
+    host_killed = true;
+    std.posix.kill(provider_pid, std.posix.SIG.KILL) catch {};
+    try waitForProcessAbsence(provider_pid);
+}
+
+/// The neutral INSPECT operation refreshes its output and checkpoint evidence
+/// directly from the live host before replying.
+fn inspectCheckpointEviction(
+    allocator: std.mem.Allocator,
+    backend: broker.BrokerBackend,
+    expected_session_id: []const u8,
+) !void {
+    const list_payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+    }, .{});
+    defer allocator.free(list_payload);
+    const listed = switch (backend.call(
+        allocator,
+        requestHeader(generated.frame_type.list, list_payload.len),
+        list_payload,
+        100,
+    )) {
+        .response => |payload| payload,
+        .no_response, .failure => return error.CheckpointEvictionListFailed,
+    };
+    defer allocator.free(listed);
+    const ListedProjection = struct {
+        entries: []const struct {
+            session: struct { key: []const u8, incarnation: []const u8 },
+        },
+    };
+    var parsed_listed = try std.json.parseFromSlice(
+        ListedProjection,
+        allocator,
+        listed,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed_listed.deinit();
+    const session = blk: {
+        for (parsed_listed.value.entries) |entry| {
+            if (std.mem.eql(u8, entry.session.key, expected_session_id)) break :blk entry.session;
+        }
+        return error.CheckpointEvictionSessionMissing;
+    };
+
+    const inspect_payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = session,
+    }, .{});
+    defer allocator.free(inspect_payload);
+    const inspected = switch (backend.call(
+        allocator,
+        requestHeader(generated.frame_type.inspect, inspect_payload.len),
+        inspect_payload,
+        101,
+    )) {
+        .response => |payload| payload,
+        .no_response, .failure => return error.CheckpointEvictionInspectFailed,
+    };
+    defer allocator.free(inspected);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.inspected_payload,
+        inspected,
+    )) return error.InvalidCheckpointEvictionInspection;
+    const InspectionProjection = struct {
+        output: struct { retained: struct { start: []const u8 } },
+        checkpoints: struct { retained: u32 },
+    };
+    var parsed = try std.json.parseFromSlice(
+        InspectionProjection,
+        allocator,
+        inspected,
+        .{ .ignore_unknown_fields = true },
+    );
+    defer parsed.deinit();
+    const inspection = parsed.value;
+    const retained_start = try std.fmt.parseInt(u64, inspection.output.retained.start, 10);
+    if (inspection.checkpoints.retained == 0) return error.CheckpointNotObserved;
+    if (retained_start == 0) return error.CheckpointEvictionNotObserved;
 }
