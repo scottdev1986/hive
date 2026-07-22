@@ -117,6 +117,94 @@ const oneLine = (value: string): string => value.replace(/\s+/g, " ").trim();
 
 const todayIsoDate = (): string => new Date().toISOString().slice(0, 10);
 
+// ---------------------------------------------------------------------------
+// The shared recall bundle (HiveMemory plan §5): the trigger protocol's
+// "recall:" path and the memory_recall MCP tool render the SAME ranked bundle
+// — wiki FTS hits partitioned into pitfalls and articles with verification
+// labels — so the formatting lives here exactly once.
+// ---------------------------------------------------------------------------
+
+export interface MemoryRecallRow {
+  scope: string;
+  topic: string;
+  id: string;
+  date: string;
+  title: string;
+  snippet: string;
+  status: string;
+  /** The verification label rendered next to the row; null for verified. */
+  flag: string | null;
+  pitfall: boolean;
+}
+
+/** The hint-not-authority label every recall surface carries. */
+export const MEMORY_RECALL_HINT_NOTE =
+  "[unverified], [stale] and [conflicted] entries are hints to reconcile " +
+  "before acting, not authority; pull the full article with " +
+  "memory_read(scope, id).";
+
+export interface MemoryRecallBundle {
+  /** absent = no wiki search index wired; empty = searched, no matches. */
+  state: "ok" | "empty" | "absent";
+  pitfalls: MemoryRecallRow[];
+  articles: MemoryRecallRow[];
+}
+
+export function formatMemoryRecallRow(row: MemoryRecallRow): string {
+  return `- [${row.scope}/${row.topic}] ${row.id} (${row.date})` +
+    (row.flag === null ? "" : ` [${row.flag}]`) +
+    (row.pitfall ? " [pitfall]" : "") +
+    `: ${row.title} — ${oneLine(row.snippet)}`;
+}
+
+/**
+ * Search the wiki for `query` and partition the hits into the pitfall class
+ * and ordinary articles, each row carrying its verification label. The FTS
+ * row carries no kind, so kinds resolve from the on-disk articles (the same
+ * pattern as memory_query pitfall-check).
+ */
+export async function buildMemoryRecallBundle(
+  query: string,
+  deps: Pick<MemoryTriggerDeps, "memory" | "repoRoot">,
+  limit = 8,
+): Promise<MemoryRecallBundle> {
+  if (deps.memory === null) {
+    return { state: "absent", pitfalls: [], articles: [] };
+  }
+  const hits = deps.memory.search(query, { limit });
+  if (hits.length === 0) {
+    return { state: "empty", pitfalls: [], articles: [] };
+  }
+  const facts = await listMemoryFacts(deps.repoRoot());
+  const statusByKey = new Map(
+    facts.map((fact) =>
+      [`${fact.scope}:${fact.id}`, factVerificationFlag(fact)] as const
+    ),
+  );
+  const pitfallKeys = new Set(
+    facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
+      `${fact.scope}:${fact.id}`
+    ),
+  );
+  const rows = hits.map((hit): MemoryRecallRow => ({
+    scope: hit.scope,
+    topic: hit.topic,
+    id: hit.id,
+    date: hit.date,
+    title: hit.title,
+    snippet: hit.snippet,
+    status: hit.status,
+    flag: statusByKey.get(`${hit.scope}:${hit.id}`) ??
+      (hit.status === "verified" ? null : hit.status),
+    pitfall: pitfallKeys.has(`${hit.scope}:${hit.id}`),
+  }));
+  return {
+    state: "ok",
+    pitfalls: rows.filter((row) => row.pitfall),
+    articles: rows.filter((row) => !row.pitfall),
+  };
+}
+
 /** The MemoryTopicSchema kebab-case shape, derived from free text. */
 function deriveTopic(payload: string): string {
   const topic = payload
@@ -140,7 +228,8 @@ async function executeRecall(
   const header = (outcome: string) =>
     `🧠 Hive memory recall for '${query}' — ${outcome} (${SYSTEM_NOTE(context.from, "recall:")})`;
 
-  if (deps.memory === null) {
+  const bundle = await buildMemoryRecallBundle(query, deps);
+  if (bundle.state === "absent") {
     return {
       body: header("memory surface unavailable") +
         "\nThis daemon has no wiki search index wired, so the recall could " +
@@ -150,9 +239,7 @@ async function executeRecall(
       provenance: { query, outcome: "absent" },
     };
   }
-
-  const hits = deps.memory.search(query, { limit: 8 });
-  if (hits.length === 0) {
+  if (bundle.state === "empty") {
     return {
       body: header("no matching memory") +
         "\nThe wiki was searched and nothing matched — an honest empty " +
@@ -164,49 +251,24 @@ async function executeRecall(
     };
   }
 
-  // Pitfall-check partition: the FTS row carries no kind, so resolve kinds
-  // from the on-disk articles (the same pattern as memory_query pitfall-check).
-  const facts = await listMemoryFacts(deps.repoRoot());
-  const statusByKey = new Map(
-    facts.map((fact) =>
-      [`${fact.scope}:${fact.id}`, factVerificationFlag(fact)] as const
-    ),
-  );
-  const pitfalls = new Set(
-    facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
-      `${fact.scope}:${fact.id}`
-    ),
-  );
-  const line = (hit: (typeof hits)[number]): string => {
-    const flag = statusByKey.get(`${hit.scope}:${hit.id}`) ??
-      (hit.status === "verified" ? null : hit.status);
-    return `- [${hit.scope}/${hit.topic}] ${hit.id} (${hit.date})` +
-      (flag === null || flag === undefined ? "" : ` [${flag}]`) +
-      `${pitfalls.has(`${hit.scope}:${hit.id}`) ? " [pitfall]" : ""}: ` +
-      `${hit.title} — ${oneLine(hit.snippet)}`;
-  };
-  const pitfallHits = hits.filter((hit) =>
-    pitfalls.has(`${hit.scope}:${hit.id}`)
-  );
-  const articleHits = hits.filter((hit) =>
-    !pitfalls.has(`${hit.scope}:${hit.id}`)
-  );
+  const count = bundle.pitfalls.length + bundle.articles.length;
   const sections: string[] = [];
-  if (pitfallHits.length > 0) {
-    sections.push("Pitfalls matching this query:", ...pitfallHits.map(line));
+  if (bundle.pitfalls.length > 0) {
+    sections.push(
+      "Pitfalls matching this query:",
+      ...bundle.pitfalls.map(formatMemoryRecallRow),
+    );
   }
-  if (articleHits.length > 0) {
-    sections.push("Articles:", ...articleHits.map(line));
+  if (bundle.articles.length > 0) {
+    sections.push("Articles:", ...bundle.articles.map(formatMemoryRecallRow));
   }
   return {
-    body: header(`${hits.length} result${hits.length === 1 ? "" : "s"}`) +
-      "\n[unverified], [stale] and [conflicted] entries are hints to " +
-      "reconcile before acting, not authority; pull the full article with " +
-      "memory_read(scope, id).\n" +
+    body: header(`${count} result${count === 1 ? "" : "s"}`) +
+      `\n${MEMORY_RECALL_HINT_NOTE}\n` +
       sections.join("\n"),
     summary:
-      `recall trigger from ${context.from} to ${context.target}: ${hits.length} result(s) for "${query}"`,
-    provenance: { query, outcome: "ok", results: hits.length },
+      `recall trigger from ${context.from} to ${context.target}: ${count} result(s) for "${query}"`,
+    provenance: { query, outcome: "ok", results: count },
   };
 }
 

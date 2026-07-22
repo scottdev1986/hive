@@ -1,5 +1,5 @@
 import { lstat, mkdir, readdir, readFile, rm } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { tmpdir, homedir } from "node:os";
 import { join } from "node:path";
 import { McpServer } from "@modelcontextprotocol/sdk/server/mcp.js";
 import {
@@ -44,6 +44,7 @@ import {
 import {
   deleteMemoryFact as deleteMemoryFactFile,
   listMemoryFacts,
+  normalizeTitle,
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
@@ -109,6 +110,7 @@ import {
 import { StatusStore } from "./status-store";
 import type { EpisodicStore } from "./episodic-store";
 import {
+  estimateTokens,
   MemoryQueryInputSchema,
   runMemoryQuery,
 } from "./episodic-projections";
@@ -135,7 +137,17 @@ import {
 import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
 import { createWakeDeltaProvider } from "./memory-delta";
-import { createMemoryTriggerExecutor } from "./memory-triggers";
+import {
+  buildMemoryRecallBundle,
+  createMemoryTriggerExecutor,
+  MEMORY_RECALL_HINT_NOTE,
+} from "./memory-triggers";
+import {
+  promotionProvenanceBlock,
+  promotionSource,
+  scanPromotionRedaction,
+} from "./memory-promote";
+import { projectHiveUuid } from "./project-state";
 import { harvestPitfalls } from "./pitfall-harvest";
 import {
   runRetentionSweep,
@@ -450,6 +462,35 @@ const MemoryPitfallRequestSchema = z.object({
   scope: MemoryScopeSchema.optional(),
   id: MemoryIdSchema.optional(),
   limit: z.number().int().positive().max(50).optional(),
+});
+
+// memory_note (HiveMemory plan §5): the lightweight episodic fact write.
+// Episodic topics are free-form (no wiki kebab-case constraint); source is
+// always the caller's own capability subject, never caller-supplied.
+const MemoryNoteRequestSchema = z.object({
+  topic: z.string().min(1).max(120),
+  title: z.string().min(1),
+  body: z.string(),
+  confidence: z.number().min(0).max(1).optional(),
+  validAt: z.iso.datetime({ offset: true }).optional(),
+});
+
+// memory_recall (HiveMemory plan §5): the trigger protocol's ranked bundle
+// as a tool. budget may only lower the server-enforced ceiling.
+const MemoryRecallRequestSchema = z.object({
+  query: z.string().min(1),
+  budget: z.number().int().positive().optional(),
+});
+
+// Server-enforced memory_recall token ceiling (chars/4 estimation, the same
+// accounting memory_query uses).
+export const MEMORY_RECALL_DEFAULT_BUDGET = 800;
+
+// memory_promote (HiveMemory plan D3): names a REPO-scope pitfall article to
+// copy into the global wiki. There is deliberately no scope parameter —
+// repo→global is the only direction promotion exists.
+const MemoryPromoteRequestSchema = z.object({
+  id: MemoryIdSchema,
 });
 
 export type { LandBranch };
@@ -5783,6 +5824,190 @@ export class HiveDaemon {
           })),
         },
         "results",
+      );
+    });
+
+    // The remaining HiveMemory plan §5 surface: episodic note writes, the
+    // trigger protocol's recall bundle as a tool, and D3 cross-scope pitfall
+    // promotion.
+    server.registerTool("memory_note", {
+      title: "Record a Hive episodic memory note",
+      description:
+        "Record a lightweight fact in this project's episodic memory — the bi-temporal store agents and the queen share, not the curated wiki. Source is your own identity. Dedup is enforced: if a currently-believed fact with the same normalized title exists, the write is REFUSED and the existing fact's id and body are returned — to correct a belief, invalidate the named fact and record its replacement (the store is bi-temporal: never delete, supersede). For durable curated knowledge use memory_write instead.",
+      inputSchema: MemoryNoteRequestSchema,
+    }, async (input) => {
+      this.authorizeTool(capability, "memory_note", "memory:write");
+      if (this.episodic === null) {
+        return toolResult(
+          {
+            state: "absent",
+            detail: "episodic store is not open on this daemon",
+          },
+          "result",
+        );
+      }
+      // Dedup layer 1 for the episodic layer (HiveMemory plan D1): the same
+      // normalized-title contract the wiki write path enforces. A duplicate
+      // is refused with the existing row, because the contradiction path is
+      // invalidate-and-supersede, never a silent second current belief.
+      const duplicate = this.episodic.currentFacts().find(
+        (fact) => normalizeTitle(fact.title) === normalizeTitle(input.title),
+      );
+      if (duplicate !== undefined) {
+        return toolResult(
+          {
+            state: "duplicate",
+            detail:
+              "a currently-believed fact with this normalized title already " +
+              "exists — nothing was recorded. To correct it, invalidate the " +
+              "existing fact and record the replacement as its superseder.",
+            existing: {
+              id: duplicate.id,
+              title: duplicate.title,
+              body: duplicate.body,
+              validAt: duplicate.validAt,
+            },
+          },
+          "result",
+        );
+      }
+      const fact = this.episodic.recordFact({
+        kind: "fact",
+        topic: input.topic,
+        title: input.title,
+        body: input.body,
+        source: capability.subject,
+        ...(input.confidence === undefined
+          ? {}
+          : { confidence: input.confidence }),
+        ...(input.validAt === undefined ? {} : { validAt: input.validAt }),
+      });
+      return toolResult(
+        {
+          state: "recorded",
+          fact: {
+            id: fact.id,
+            kind: fact.kind,
+            topic: fact.topic,
+            title: fact.title,
+            source: fact.source,
+            confidence: fact.confidence,
+            validAt: fact.validAt,
+          },
+        },
+        "fact",
+      );
+    });
+
+    server.registerTool("memory_recall", {
+      title: "Recall ranked Hive memory for a query",
+      description:
+        "The ranked recall bundle the trigger protocol produces, as a tool: full-text wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it; over-budget bundles are cut pitfalls-first with truncated:true and an omitted count. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
+      inputSchema: MemoryRecallRequestSchema,
+    }, async ({ query, budget }) => {
+      this.authorizeTool(capability, "memory_recall", "memory:read", undefined, false);
+      const bundle = await buildMemoryRecallBundle(query, {
+        memory: this.memory,
+        repoRoot: () => this.repoRoot,
+      });
+      const ceiling = MEMORY_RECALL_DEFAULT_BUDGET;
+      const effective = Math.min(budget ?? ceiling, ceiling);
+      // Pitfalls first: the mistake class is the highest-priority injection
+      // (plan §3), so a clamped budget starves articles before pitfalls.
+      const keptPitfalls: typeof bundle.pitfalls = [];
+      const keptArticles: typeof bundle.articles = [];
+      let tokens = 0;
+      let omitted = 0;
+      for (const row of [...bundle.pitfalls, ...bundle.articles]) {
+        const cost = estimateTokens(row);
+        if (tokens + cost > effective) {
+          omitted += 1;
+          continue;
+        }
+        tokens += cost;
+        (row.pitfall ? keptPitfalls : keptArticles).push(row);
+      }
+      return toolResult(
+        {
+          state: bundle.state,
+          detail: bundle.state === "absent"
+            ? "this daemon has no wiki search index wired"
+            : bundle.state === "empty"
+            ? `the wiki was searched and nothing matched "${query}"`
+            : null,
+          note: MEMORY_RECALL_HINT_NOTE,
+          budget: effective,
+          tokens,
+          truncated: omitted > 0,
+          omitted,
+          pitfalls: keptPitfalls,
+          articles: keptArticles,
+        },
+        "results",
+      );
+    });
+
+    server.registerTool("memory_promote", {
+      title: "Promote a repo pitfall to global Hive memory",
+      description:
+        "Copy one REPO-scope pitfall article into the global wiki as a new article — the only way memory crosses a project boundary (HiveMemory plan D3). Queen/operator only. The copy keeps kind and status and gains an origin_project provenance block (project uuid, original id, date). A redaction check runs BEFORE anything is written: absolute paths, this repo's own path, home directories, private hostnames, and token-like strings in the body refuse the promotion and name every finding — edit the repo article to generalize it first, then re-run. Facts and events are never promotable; kind=pitfall only.",
+      inputSchema: MemoryPromoteRequestSchema,
+    }, async ({ id }) => {
+      // A cross-scope write rides the delete tier (operator/orchestrator),
+      // not memory:write — plan §5.
+      this.authorizeTool(capability, "memory_promote", "memory:delete");
+      const fact = await readMemoryFact(this.repoRoot, "repo", id);
+      if (fact === null) {
+        throw new Error(`Memory pitfall not found: [repo] ${id}`);
+      }
+      if (fact.kind !== "pitfall") {
+        throw new Error(
+          `Only pitfall-kind articles are promotable; [repo] ${id} is kind "${fact.kind}"`,
+        );
+      }
+      const findings = scanPromotionRedaction(fact.body, {
+        repoRoot: this.repoRoot,
+        home: homedir(),
+      });
+      if (findings.length > 0) {
+        throw new Error(
+          `memory_promote redaction check refused [repo] ${id}: the body ` +
+          "carries content that must not cross into global scope. Edit the " +
+          "repo article to generalize it, then re-run. Findings:\n" +
+          findings.map((finding) => `- ${finding.kind}: ${finding.match}`)
+            .join("\n"),
+        );
+      }
+      const written = await this.writeMemoryFact({
+        scope: "global",
+        topic: fact.topic,
+        title: fact.title,
+        body: fact.body + promotionProvenanceBlock({
+          hiveUuid: projectHiveUuid(this.repoRoot),
+          id: fact.id,
+          date: new Date().toISOString().slice(0, 10),
+        }),
+        tags: [...fact.tags, "promoted"],
+        source: promotionSource(fact),
+        evidence:
+          `Promoted from repo-scope pitfall "${fact.id}" by ${capability.subject} via memory_promote`,
+        status: fact.status,
+        kind: "pitfall",
+        supersedes: [],
+        ...(fact.verified === undefined ? {} : { verified: fact.verified }),
+      });
+      return toolResult(
+        {
+          promoted: {
+            scope: written.scope,
+            topic: written.topic,
+            id: written.id,
+            title: written.title,
+            status: written.status,
+          },
+          origin: { scope: "repo", id: fact.id },
+        },
+        "fact",
       );
     });
 
