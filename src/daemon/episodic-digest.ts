@@ -73,6 +73,7 @@ interface ExactValue {
   value: string;
   eventId: number;
 }
+export type { ExactValue };
 
 // Exact-value extraction (S3.7 DoD 3): SHAs, file paths, error strings,
 // exit codes, and typed counts are pulled out of the event's summary AND
@@ -86,7 +87,10 @@ const EXIT_CODE_PATTERN = /\bexit(?:ed)?(?:\s+with)?(?:\s+code)?[\s:=]\s*(\d{1,5
 const ERROR_PATTERN = /\b(\w*(?:Error|Exception))\s*:?\s*([^\n;.]{0,100})/g;
 const COUNT_PATTERN = /\b(\d+)\s+(commits?|files?|tests?|events?)\b/g;
 
-function extractExactValues(event: EpisodicEvent, into: ExactValue[]): void {
+// Exported for the WP5 pitfall harvester: a candidate's exact-values table is
+// extracted with the exact same patterns the digest side table uses, so a
+// pitfall and its session digest never disagree about what the values were.
+export function extractExactValues(event: EpisodicEvent, into: ExactValue[]): void {
   const text = `${event.summary} ${event.provenance}`;
   const push = (kind: ExactValue["kind"], value: string) => {
     const trimmed = value.trim();

@@ -43,6 +43,7 @@ import {
 } from "./session-host/workspace-visibility";
 import {
   deleteMemoryFact as deleteMemoryFactFile,
+  listMemoryFacts,
   readMemoryFact,
   writeMemoryFact as writeMemoryFactFile,
 } from "../adapters/memory";
@@ -133,6 +134,7 @@ import {
 } from "./routing-policy-store";
 import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
+import { harvestPitfalls } from "./pitfall-harvest";
 import {
   runRetentionSweep,
   type RetentionSweepReport,
@@ -436,6 +438,16 @@ const MemoryFactRequestSchema = z.object({
 
 const MemoryWriteRequestSchema = MemoryWriteInputSchema.safeExtend({
   id: MemoryIdSchema.optional(),
+});
+
+// The focused pitfall surface (HiveMemory HM-2 WP5): search lists/searches
+// pitfall-kind articles only; get reads one and refuses non-pitfall ids.
+const MemoryPitfallRequestSchema = z.object({
+  action: z.enum(["search", "get"]),
+  query: z.string().min(1).optional(),
+  scope: MemoryScopeSchema.optional(),
+  id: MemoryIdSchema.optional(),
+  limit: z.number().int().positive().max(50).optional(),
 });
 
 export type { LandBranch };
@@ -2488,6 +2500,14 @@ export class HiveDaemon {
       closedAssignment?.assignmentId ?? null,
       "agent session end",
     );
+    // The mistake harvest rides the same boundary, strictly after the digest
+    // compile (HiveMemory HM-2 WP5): failure clusters become unverified
+    // pitfall candidates citing the digest's provenance.
+    this.harvestSessionPitfalls(
+      agent.id,
+      closedAssignment?.assignmentId ?? null,
+      "agent session end",
+    );
 
     // A session end is a retention lifecycle boundary (S3.7 DoD 5): the sweep
     // rides it. Fire-and-forget — retention is maintenance and must never add
@@ -2609,9 +2629,17 @@ export class HiveDaemon {
       // record. Failure-isolated separately so a compile failure is never
       // reported as an ingest failure.
       if (agentId !== null && isDigestBoundaryEvent(event.kind, event.data)) {
+        const sessionId = this.status.currentAssignment(agentId)?.assignmentId ??
+          null;
         this.compileSessionDigest(
           agentId,
-          this.status.currentAssignment(agentId)?.assignmentId ?? null,
+          sessionId,
+          `landing/completion event ${event.kind}`,
+        );
+        // The mistake harvest rides the same boundary, after the digest.
+        this.harvestSessionPitfalls(
+          agentId,
+          sessionId,
           `landing/completion event ${event.kind}`,
         );
       }
@@ -2811,6 +2839,37 @@ export class HiveDaemon {
         }`,
       );
     }
+  }
+
+  /** The mistake harvest (HiveMemory HM-2 WP5): runs at the same session
+   * boundaries as the digest compile, strictly AFTER it, so the harvested
+   * candidate's provenance can cite the digest id. Fire-and-forget like the
+   * retention sweep: the harvester already captures per-candidate failures
+   * in its report, and anything that escapes is maintenance noise, never a
+   * failure of the lifecycle path that triggered it. Writes go through the
+   * serialized memory write path (SPEC decision 5) so a harvest can never
+   * interleave with an agent's own memory_write. */
+  private harvestSessionPitfalls(
+    agentId: string,
+    sessionId: string | null,
+    reason: string,
+  ): void {
+    const episodic = this.episodic;
+    if (episodic === null) return;
+    void harvestPitfalls({
+      store: episodic,
+      repoRoot: this.repoRoot,
+      agent: agentId,
+      sessionId,
+      write: (input) => this.writeMemoryFact(input),
+      search: (query) => this.memory.search(query, { limit: 5 }),
+    }).catch((error) => {
+      console.error(
+        `Hive pitfall harvest (${reason}) failed for ${agentId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
   }
 
   /**
@@ -5629,6 +5688,79 @@ export class HiveDaemon {
         resolveAgentId: (name) => this.db.getAgentByName(name)?.id ?? null,
       }, input);
       return toolResult(result, "result");
+    });
+
+    // The focused pitfall surface (HiveMemory HM-2 WP5): the mistake-harvest
+    // read path. Pitfall-kind articles only — an agent checking "has anyone
+    // burned themselves here before" never wades through the whole wiki.
+    // search with no query lists every pitfall (optionally scope-filtered);
+    // search with a query runs the same FTS memory_search uses, filtered to
+    // pitfalls; get reads one article and refuses a non-pitfall id. Every
+    // row carries its verification status — unverified is a hint, not
+    // authority, everywhere it appears.
+    server.registerTool("memory_pitfall", {
+      title: "Search and read Hive pitfall memory",
+      description:
+        "List, search, or read pitfall-kind memory articles — the 'we burned ourselves before' class, including unverified harvest candidates from session boundaries. action=search with a query runs full-text search filtered to pitfalls; with no query it lists every pitfall article (optionally scope-filtered). action=get reads one article by scope+id and refuses non-pitfall ids. Every result carries its verification status: unverified is a harvested claim to reconcile before acting, never authority.",
+      inputSchema: MemoryPitfallRequestSchema,
+    }, async ({ action, query, scope, id, limit }) => {
+      this.authorizeTool(capability, "memory_pitfall", "memory:read", undefined, false);
+      if (action === "get") {
+        if (scope === undefined || id === undefined) {
+          throw new Error("memory_pitfall action=get requires scope and id");
+        }
+        const fact = await readMemoryFact(this.repoRoot, scope, id);
+        if (fact === null) {
+          throw new Error(`Memory pitfall not found: [${scope}] ${id}`);
+        }
+        if (fact.kind !== "pitfall") {
+          throw new Error(
+            `Memory article [${scope}] ${id} is kind "${fact.kind}", not a pitfall`,
+          );
+        }
+        return toolResult(fact, "fact");
+      }
+      const facts = await listMemoryFacts(this.repoRoot);
+      const pitfalls = facts.filter((fact) =>
+        fact.kind === "pitfall" &&
+        (scope === undefined || fact.scope === scope)
+      );
+      if (query === undefined) {
+        return toolResult(
+          {
+            state: pitfalls.length === 0 ? "empty" : "ok",
+            pitfalls: pitfalls.map((fact) => ({
+              scope: fact.scope,
+              id: fact.id,
+              topic: fact.topic,
+              title: fact.title,
+              status: fact.status,
+              date: fact.date,
+            })),
+          },
+          "results",
+        );
+      }
+      const ids = new Set(pitfalls.map((fact) => `${fact.scope}:${fact.id}`));
+      const hits = this.memory.search(query, {
+        ...(scope === undefined ? {} : { scope }),
+        limit: limit ?? 10,
+      }).filter((hit) => ids.has(`${hit.scope}:${hit.id}`));
+      return toolResult(
+        {
+          state: hits.length === 0 ? "empty" : "ok",
+          pitfalls: hits.map((hit) => ({
+            scope: hit.scope,
+            id: hit.id,
+            topic: hit.topic,
+            title: hit.title,
+            status: hit.status,
+            date: hit.date,
+            snippet: hit.snippet,
+          })),
+        },
+        "results",
+      );
     });
 
     // The mid-task half of the graph-first mandate: the same locate the spawn

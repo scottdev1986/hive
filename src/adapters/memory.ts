@@ -67,8 +67,10 @@ function wikiRoot(root: string, scope: MemoryScope): string {
 // Dedup layer 1 (HiveMemory plan D1) matches on this, not on the raw title:
 // case-folded, every non-alphanumeric run collapsed to one dash, trimmed.
 // Unlike slugify it never truncates, so titles differing only past the slug
-// cutoff still collide.
-function normalizeTitle(title: string): string {
+// cutoff still collide. Exported for the WP5 pitfall harvester, which honors
+// the same dedup contract by re-issuing a normalized-title duplicate as an
+// update to the existing id instead of colliding with it.
+export function normalizeTitle(title: string): string {
   return title
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, "-")
