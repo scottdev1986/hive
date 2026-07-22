@@ -554,14 +554,12 @@ describe("hive stop daemon", () => {
     expect(logs).toEqual([]);
   });
 
-  test("reports success only after liveness proves the daemon dead", async () => {
-    const tmux = new FakeStopTmux([]);
+  test("reports success after daemon death without a residual tmux sweep", async () => {
     const states: Array<"live" | "unknown" | "dead"> = ["live", "unknown", "dead"];
     const logs: string[] = [];
     let cleanedPid: number | undefined;
 
     await stopHive({
-      tmux,
       readPid: () => 4242,
       liveness: async () => states.shift() ?? "dead",
       cleanup: (pid) => {

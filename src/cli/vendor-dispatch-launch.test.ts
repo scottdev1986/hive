@@ -14,6 +14,7 @@ import type { CapabilityProvider } from "../schemas";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
+  launchLegacyTmuxOrchestrator,
   launchOrchestrator,
   orchestratorConfigRoot,
   prepareOrchestratorConfig,
@@ -107,7 +108,7 @@ test("launching an unknown vendor's orchestrator spawns nothing and touches no t
   let resolvedClaude = false;
   let askedTmux = false;
 
-  await expect(launchOrchestrator(
+  await expect(launchLegacyTmuxOrchestrator(
     UNKNOWN_TOOL,
     4317,
     process.cwd(),

@@ -16,14 +16,35 @@ export interface OrchestratorSessiondControl {
   inspect(requestId: string): Promise<OrchestratorSessiondSnapshot | null>;
 }
 
+export class OrchestratorLaunchFailedError extends Error {
+  readonly code = "ORCHESTRATOR_LAUNCH_FAILED" as const;
+
+  constructor(readonly detail: string) {
+    super(`ORCHESTRATOR_LAUNCH_FAILED: ${detail}`);
+    this.name = "OrchestratorLaunchFailedError";
+  }
+}
+
+function typedLaunchFailure(
+  action: string,
+  error: unknown,
+): OrchestratorLaunchFailedError {
+  if (error instanceof OrchestratorLaunchFailedError) return error;
+  return new OrchestratorLaunchFailedError(
+    `${action}: ${error instanceof Error ? error.message : String(error)}`,
+  );
+}
+
 type AuthorizedFetch = (
   input: string | URL | Request,
   init?: RequestInit,
 ) => Promise<Response>;
 
-async function responseError(response: Response): Promise<Error> {
+async function responseError(response: Response): Promise<OrchestratorLaunchFailedError> {
   const body = await response.json().catch(() => null) as { error?: string } | null;
-  return new Error(body?.error ?? `queen session request failed with HTTP ${response.status}`);
+  return new OrchestratorLaunchFailedError(
+    body?.error ?? `queen session request failed with HTTP ${response.status}`,
+  );
 }
 
 export function daemonOrchestratorSessiondControl(
@@ -63,10 +84,14 @@ function requireExactRootGeneration(
     locator.instanceId !== hiveInstanceSuffix() ||
     locator.sessionId !== rootSessionIdForLaunchRequest(launch.requestId)
   ) {
-    throw new Error("sessiond queen returned a locator outside the launch request");
+    throw new OrchestratorLaunchFailedError(
+      "sessiond queen returned a locator outside the launch request",
+    );
   }
   if (expected !== null && !sameSessionLocator(expected, locator)) {
-    throw new Error("sessiond queen locator changed during one launch request");
+    throw new OrchestratorLaunchFailedError(
+      "sessiond queen locator changed during one launch request",
+    );
   }
   return locator;
 }
@@ -80,21 +105,37 @@ export async function runOrchestratorSessiondLaunch(
   sleep: (milliseconds: number) => Promise<void> = (milliseconds) =>
     Bun.sleep(milliseconds),
 ): Promise<number> {
-  let snapshot = await control.start(launch);
+  const start = async (): Promise<OrchestratorSessiondSnapshot> => {
+    try {
+      return await control.start(launch);
+    } catch (error) {
+      throw typedLaunchFailure("sessiond queen start request failed", error);
+    }
+  };
+  const inspect = async (): Promise<OrchestratorSessiondSnapshot | null> => {
+    try {
+      return await control.inspect(launch.requestId);
+    } catch (error) {
+      throw typedLaunchFailure("sessiond queen inspection failed", error);
+    }
+  };
+  let snapshot = await start();
   let locator = requireExactRootGeneration(launch, snapshot, null);
   while (true) {
     switch (snapshot.state) {
       case "exited":
         return snapshot.exitCode ?? 1;
       case "failed":
-        return 1;
+        throw new OrchestratorLaunchFailedError(
+          snapshot.diagnostic ?? "sessiond queen launch failed without a diagnostic",
+        );
       case "awaiting-visibility":
       case "running":
         await sleep(250);
         break;
     }
-    const inspected = await control.inspect(launch.requestId);
-    snapshot = inspected ?? await control.start(launch);
+    const inspected = await inspect();
+    snapshot = inspected ?? await start();
     locator = requireExactRootGeneration(launch, snapshot, locator);
   }
 }

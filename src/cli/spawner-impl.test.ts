@@ -1147,6 +1147,115 @@ describe("HiveSpawner name pool", () => {
 });
 
 describe("HiveSpawner wiring", () => {
+  test("sessiond recovery waits for the replacement generation to become visible", async () => {
+    const recovered = {
+      ...agent("maya", "working"),
+      sessionLocator: {
+        schemaVersion: 1 as const,
+        instanceId: "hive-recovery",
+        subject: { kind: "agent" as const, agentId: "agent-maya" },
+        generation: 2,
+        sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000902",
+        hostKind: "sessiond" as const,
+        engineBuildId: "engine-recovery",
+      },
+    } satisfies AgentRecord;
+    let admissions = 0;
+    const created: string[] = [];
+    const spawner = newTestSpawner({
+      db: new FakeStore([recovered]),
+      repoRoot: "/tmp/hive-sessiond-recovery",
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      sessiond: {
+        admit: async () => {
+          admissions += 1;
+          return admissions === 1
+            ? null
+            : {
+              engineBuildId: "engine-recovery",
+              visibility: {
+                workspaceSessionId: "workspace-recovery",
+                workspacePid: 4100,
+                workspaceStartToken: "4100:123456",
+                openTerminalRevision: "2",
+              },
+            };
+        },
+        terminalHost: {
+          create: async (spec) => {
+            created.push(spec.locator.sessionId);
+            return undefined as never;
+          },
+          inspect: async () => undefined as never,
+        },
+      },
+      sleep: async () => {},
+    });
+
+    await spawner.createRecoverySession(
+      recovered,
+      "/usr/bin/codex resume thread-1",
+      "codex",
+      "recovery:agent-maya:1",
+    );
+
+    expect(admissions).toBe(3);
+    expect(created).toEqual([recovered.sessionLocator.sessionId]);
+  });
+
+  test("sessiond admission refusal is atomic and never falls back to tmux", async () => {
+    const store = new FakeStore();
+    const tmux = new FakeTmux();
+    let worktreeAttempts = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: "/tmp/hive-sessiond-required",
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux,
+      createWorktree: async () => {
+        worktreeAttempts += 1;
+        throw new Error("worktree must not be created");
+      },
+      sessiond: {
+        prepare: async () => null,
+        admit: async () => {
+          throw new Error("null preparation must fail before visibility admission");
+        },
+        terminalHost: {
+          create: async () => {
+            throw new Error("sessiond refusal must not create");
+          },
+          inspect: async () => {
+            throw new Error("sessiond refusal must not inspect");
+          },
+        },
+      },
+      sleep: async () => {},
+    });
+
+    const failure = await spawner.spawn({
+      task: "No transport fallback",
+      category: "simple_coding",
+      name: "maya",
+    }).catch((error: unknown) => error);
+    expect(failure).toBeInstanceOf(SpawnFailedError);
+    expect(failure).toMatchObject({
+      code: "SPAWN_FAILED",
+      layer: "transport",
+      outcome: "failed",
+    });
+    expect((failure as Error).message).toContain("sessiond spawn admission is unavailable");
+    expect(worktreeAttempts).toBe(0);
+    expect(tmux.sessions).toEqual([]);
+    expect(store.agents).toEqual([]);
+    expect(store.reservations.size).toBe(0);
+  });
+
   test("a typed sessiond capacity refusal atomically releases row, pane, name, and quota", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-sessiond-capacity-"));
     tempRoots.push(root);
@@ -2597,6 +2706,7 @@ describe("HiveSpawner wiring", () => {
       removeWorktree: async (repoRoot, path) => {
         removals.push([repoRoot, path]);
       },
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
       sleep: async () => {},
     });
 
@@ -2907,6 +3017,7 @@ describe("HiveSpawner wiring", () => {
         return { path, branch: `hive/${name}-${slug}` };
       },
       removeWorktree: async () => {},
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
       sleep: async () => {},
       readCodexActivity: async () => null,
     });

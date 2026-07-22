@@ -5,8 +5,7 @@
  * the Workspace session boundary (update notice, fresh runtime selection,
  * daemon bring-up, init-once onboarding line), and launches the
  * installed release app with everything it needs on argv: `--project <root>`,
- * `--port <port>`, `--hive <this binary>`, the instance-scoped
- * `--orchestrator-session`, and, for an explicit orchestrator entry,
+ * `--port <port>`, `--hive <this binary>`, and, for an explicit orchestrator entry,
  * `--orchestrator <claude|codex|grok>` — so the app spawns
  * `workspace-feed` from the same build as the daemon, never whatever `hive`
  * happens to be on the app's PATH. Run outside a git repo, it stays a
@@ -43,9 +42,7 @@ import {
 } from "../update/paths";
 import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
-import { orchestratorTmuxSession } from "../daemon/tmux-sessions";
 import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
-import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import { getHiveHome } from "../daemon/db";
 import { isRepoInitialized, runInitCli } from "./init";
 import { startSession, type StartDeps, type StartedSession } from "./start";
@@ -72,7 +69,6 @@ const INSTALL_HINT =
 export interface LaunchDeps {
   readonly root?: string;
   readonly open?: (app: string, args: readonly string[]) => Promise<number>;
-  readonly sessions?: TmuxSessionHost;
   /** Present when a session is up: the app opens this project against this
    * daemon. Absent, the app launches standalone (placeholder window). */
   readonly session?: {
@@ -151,8 +147,6 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         : INSTALL_HINT,
     );
   }
-  const endpoint = (deps.sessions ?? new TmuxSessionHost())
-    .compatibilityEndpoint(orchestratorTmuxSession());
   const args = deps.session === undefined
     ? []
     : [
@@ -166,10 +160,6 @@ export async function launchWorkspace(deps: LaunchDeps): Promise<number> {
         getHiveHome(),
         "--hive",
         deps.session.hivePath ?? process.execPath,
-        "--orchestrator-session",
-        endpoint.tmuxSession,
-        "--tmux-socket",
-        endpoint.socketName,
         ...(deps.session.orchestrator === undefined
           ? []
           : ["--orchestrator", deps.session.orchestrator]),

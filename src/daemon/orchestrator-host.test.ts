@@ -10,13 +10,15 @@ import {
 import type { HiveTerminalBinding } from "./session-host/terminal-host-binding";
 
 describe("orchestrator host selection", () => {
-  test("tmux remains the default while #114 gates the explicit sessiond opt-in", () => {
-    expect(configuredOrchestratorHost({})).toBe("tmux");
-    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "" })).toBe("tmux");
-    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "tmux" })).toBe("tmux");
-    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "sessiond" })).toBe("sessiond");
-    expect(() => configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "other" }))
-      .toThrow("must be sessiond or tmux");
+  test("production has one host and no environment selector can restore tmux", () => {
+    const previous = process.env.HIVE_ORCHESTRATOR_HOST;
+    try {
+      process.env.HIVE_ORCHESTRATOR_HOST = "tmux";
+      expect(configuredOrchestratorHost()).toBe("sessiond");
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_ORCHESTRATOR_HOST;
+      else process.env.HIVE_ORCHESTRATOR_HOST = previous;
+    }
   });
 });
 

@@ -413,18 +413,24 @@ describe("crash classification", () => {
       hostKind: "sessiond" as const,
       engineBuildId: "engine-fixture",
     };
+    const created: AgentRecord[] = [];
     const h = harness({
+      createRecoverySession: async (record) => {
+        created.push(record);
+      },
       terminalHost: {
         inspect: async () => ({
           schemaVersion: 1,
-          locator: sessionLocator,
+          locator: created[0]?.sessionLocator ?? sessionLocator,
           presence: "present",
           complete: false,
           hostPid: null,
           hostStartToken: null,
-          providerRoot: null,
+          providerRoot: created.length === 0
+            ? null
+            : { pid: 200, startToken: "200:123456", processGroupId: 200 },
           expectedExecutable: "claude",
-          executableVerified: false,
+          executableVerified: created.length > 0,
           outputSeq: "0",
           checkpointSeq: "0",
           checkpointAvailable: false,
@@ -464,7 +470,12 @@ describe("crash classification", () => {
       action: "resumed",
       sessionId: "sess-dead-mid-turn",
     });
-    expect(h.tmux.created).toHaveLength(1);
+    expect(created[0]?.sessionLocator).toMatchObject({
+      hostKind: "sessiond",
+      engineBuildId: "engine-fixture",
+      generation: 2,
+    });
+    expect(h.tmux.created).toHaveLength(0);
   });
 
   test("a deliberate kill in flight is never classified as a crash (#66)", async () => {
@@ -628,9 +639,25 @@ describe("crash classification", () => {
       evidenceAt: timestamp,
       diagnosticIds: [],
     };
+    const created: AgentRecord[] = [];
     const h = harness({
+      createRecoverySession: async (record) => {
+        created.push(record);
+      },
       terminalHost: {
-        inspect: async () => exitedInspection,
+        inspect: async () => created.length === 0
+          ? exitedInspection
+          : {
+            ...exitedInspection,
+            locator: created[0]!.sessionLocator!,
+            presence: "present",
+            providerRoot: {
+              pid: 200,
+              startToken: "200:123456",
+              processGroupId: 200,
+            },
+            executableVerified: true,
+          },
       },
       resolveClaudeSessionId: async () => "claude-session-98",
     });
@@ -659,6 +686,12 @@ describe("crash classification", () => {
     // the control: identical setup with an operator audit is marked dead.
     expect(outcomes).toMatchObject([{ agent: "maya", action: "resumed" }]);
     expect(h.db.getAgentByName("maya")?.status).not.toBe("dead");
+    expect(created[0]?.sessionLocator).toMatchObject({
+      hostKind: "sessiond",
+      engineBuildId: "engine-fixture",
+      generation: 2,
+    });
+    expect(h.tmux.created).toEqual([]);
   });
 
   test("a fail-closed critical control is never converted into death or a resume", async () => {

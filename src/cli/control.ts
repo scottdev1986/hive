@@ -595,9 +595,6 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
         "Fix: run `hive stop` from the project root, outside .hive/worktrees/.",
     );
   }
-  const sessions = deps.sessions ?? (deps.tmux === undefined
-    ? new TmuxSessionHost()
-    : undefined);
   const pid = (deps.readPid ?? readDaemonPid)();
   const liveness = deps.liveness ?? (() =>
     daemonInstanceLiveness(getHiveHome(), hiveInstanceSuffix())
@@ -693,10 +690,12 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     }
   }
 
-  const stoppedSessions = await stopAgentSessions({
-    ...(deps.tmux === undefined ? {} : { tmux: deps.tmux }),
-    ...(sessions === undefined ? {} : { sessions }),
-  });
+  const stoppedSessions = deps.tmux === undefined && deps.sessions === undefined
+    ? 0
+    : await stopAgentSessions({
+      ...(deps.tmux === undefined ? {} : { tmux: deps.tmux }),
+      ...(deps.sessions === undefined ? {} : { sessions: deps.sessions }),
+    });
   cleanup(pid ?? undefined);
   const sessionLabel = stoppedSessions === 1 ? "session" : "sessions";
   const report = daemonWasLive

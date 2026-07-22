@@ -336,11 +336,11 @@ export interface HiveSpawnerDependencies {
    * not-configured is never a route.
    */
   readRoutingPolicy?: () => RoutingPolicy;
-  tmux: TmuxSessionManager;
+  tmux?: TmuxSessionManager;
   /**
-   * Narrow sessiond coexistence seam. Production leaves this absent until
-   * Workspace owns a real visibility registration; a harness may admit one
-   * exact candidate with that evidence. Absence preserves the tmux path.
+   * Production terminal seam. Workspace must own a real visibility
+   * registration before it admits the exact candidate. Absence is retained
+   * only for explicit legacy tmux fixtures pending #1/#2.
    */
   sessiond?: SessiondSpawnAdmission;
   stopSession: StopAgentSession;
@@ -771,10 +771,12 @@ export class HiveSpawner implements Spawner {
     toolSessionId: string,
   ) => Promise<string | null>;
   private readonly repoUnavailableNames: typeof unavailableAgentNames;
-  private readonly sessions: TmuxSessionHost;
+  private readonly sessions: TmuxSessionHost | null;
 
   constructor(private readonly dependencies: HiveSpawnerDependencies) {
-    this.sessions = dependencies.tmux instanceof TmuxSessionHost
+    this.sessions = dependencies.tmux === undefined
+      ? null
+      : dependencies.tmux instanceof TmuxSessionHost
       ? dependencies.tmux
       : new TmuxSessionHost({ adapter: dependencies.tmux });
     this.makeWorktree = dependencies.createWorktree ?? createWorktree;
@@ -809,8 +811,9 @@ export class HiveSpawner implements Spawner {
   ): Promise<void> {
     const locator = this.requireAgentLocator(record);
     if (locator.hostKind === "tmux") {
-      bindAgentSession(this.sessions, record);
-      await this.sessions.create(
+      const sessions = this.requireLegacySessions(record);
+      bindAgentSession(sessions, record);
+      await sessions.create(
         tmuxSessionSpec(record, command, expectedExecutable, launchGrantId),
         new Uint8Array(),
       );
@@ -824,13 +827,27 @@ export class HiveSpawner implements Spawner {
     );
   }
 
+  async createRecoverySession(
+    record: AgentRecord,
+    command: string,
+    expectedExecutable: string,
+    launchGrantId: string,
+  ): Promise<void> {
+    if (this.requireAgentLocator(record).hostKind === "sessiond") {
+      await this.awaitInitialSessiondPolicy(record);
+    }
+    await this.createSession(record, command, expectedExecutable, launchGrantId);
+  }
+
   private async sessionPresent(record: AgentRecord): Promise<boolean> {
     const locator = this.requireAgentLocator(record);
     const inspection = locator.hostKind === "sessiond"
       ? await this.requireSessiondHost(record).inspect(
         requireSessiondAgentLocator(record),
       )
-      : await this.sessions.inspect(bindAgentSession(this.sessions, record));
+      : await this.requireLegacySessions(record).inspect(
+        bindAgentSession(this.requireLegacySessions(record), record),
+      );
     if (inspection.presence === "unknown") {
       throw new Error(`Session presence is unknown for ${record.name}`);
     }
@@ -841,8 +858,9 @@ export class HiveSpawner implements Spawner {
     if (this.requireAgentLocator(record).hostKind === "sessiond") {
       throw new Error("sessiond visible capture is not available");
     }
-    return (await this.sessions.capture(
-      bindAgentSession(this.sessions, record),
+    const sessions = this.requireLegacySessions(record);
+    return (await sessions.capture(
+      bindAgentSession(sessions, record),
       { include: "visible-text", maxRows: 50_000 },
     )).text ?? "";
   }
@@ -856,6 +874,15 @@ export class HiveSpawner implements Spawner {
       throw new Error(`Agent ${record.id} has a mismatched SessionLocator`);
     }
     return locator;
+  }
+
+  private requireLegacySessions(record: AgentRecord): TmuxSessionHost {
+    if (this.sessions === null) {
+      throw new Error(
+        `Agent ${record.id} has a legacy tmux locator, but production is sessiond-only`,
+      );
+    }
+    return this.sessions;
   }
 
   private async requireSessiondPolicy(
@@ -1474,7 +1501,7 @@ export class HiveSpawner implements Spawner {
   ): Promise<string | null> {
     const locator = this.requireAgentLocator(record).hostKind === "sessiond"
       ? requireSessiondAgentLocator(record)
-      : bindAgentSession(this.sessions, record);
+      : bindAgentSession(this.requireLegacySessions(record), record);
     const proof = await watchForProofOfLife(locator, record.lastEventAt, {
       hasSession: () => this.sessionPresent(record),
       capturePane: () => this.captureVisible(record),
@@ -1510,8 +1537,8 @@ export class HiveSpawner implements Spawner {
             requireSessiondAgentLocator(record),
           )).providerRoot?.pid,
         ].filter((pid): pid is number => pid !== undefined && pid !== null)
-        : await this.sessions.sessionProcessRoots(
-          bindAgentSession(this.sessions, record),
+        : await this.requireLegacySessions(record).sessionProcessRoots(
+          bindAgentSession(this.requireLegacySessions(record), record),
         );
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(
@@ -2115,6 +2142,23 @@ export class HiveSpawner implements Spawner {
           unknownVendor(tool, "execution identity");
       }
     }
+    const agentId = crypto.randomUUID();
+    const sessiondCandidate = this.dependencies.sessiond;
+    const preparedSessiond = await sessiondCandidate?.prepare?.({
+      agentId,
+      agentName: name,
+    });
+    const sessiondPolicy = preparedSessiond === undefined
+      ? await sessiondCandidate?.admit({ agentId, agentName: name }) ?? null
+      : preparedSessiond;
+    if (sessiondCandidate !== undefined && sessiondPolicy === null) {
+      throw new SpawnFailedError(
+        name,
+        "transport",
+        "failed",
+        "failed to spawn: sessiond spawn admission is unavailable",
+      );
+    }
     const worktree: CreatedWorktree = await this.makeWorktree(
       this.dependencies.repoRoot,
       name,
@@ -2179,21 +2223,12 @@ export class HiveSpawner implements Spawner {
     // the first moment. This is the same defect that already bit the liveModel
     // reader, fixed there the same way.
     const grokSessionId = tool === "grok" ? crypto.randomUUID() : undefined;
-    const agentId = crypto.randomUUID();
-    const sessiondCandidate = this.dependencies.sessiond;
-    const preparedSessiond = await sessiondCandidate?.prepare?.({
-      agentId,
-      agentName: name,
-    });
-    const sessiondPolicy = preparedSessiond === undefined
-      ? await sessiondCandidate?.admit({ agentId, agentName: name }) ?? null
-      : preparedSessiond;
-    const sessionLocator = sessiondPolicy === null
+    const sessionLocator = sessiondCandidate === undefined
       ? mintAgentTmuxSessionLocator(agentId)
       : {
         ...mintAgentTmuxSessionLocator(agentId),
         hostKind: "sessiond" as const,
-        engineBuildId: sessiondPolicy.engineBuildId,
+        engineBuildId: sessiondPolicy!.engineBuildId,
       };
     let record = this.dependencies.db.insertAgent({
       // A fresh AgentUUID, always. Reusing a closed holder's id would overwrite
@@ -2381,7 +2416,7 @@ export class HiveSpawner implements Spawner {
         authorized = revalidated;
         return requireAuthorizedLaunch(authorized);
       };
-      const launchTmux = async (
+      const launchSession = async (
         candidate: AuthorizedLaunch,
         command: string,
         expectedExecutable: string,
@@ -2398,7 +2433,7 @@ export class HiveSpawner implements Spawner {
       // See the control-restart path: readiness looks for the process hive
       // actually launched, so this must follow the session that wins.
       let launchedCommand = launchedCommandName(argv);
-      await launchTmux(
+      await launchSession(
         await revalidateAtAdapter(),
         withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
         launchedCommand,
@@ -2447,7 +2482,7 @@ export class HiveSpawner implements Spawner {
               worktree.path,
             )
             : fallbackCommand;
-          await launchTmux(
+          await launchSession(
             await revalidateAtAdapter(),
             fallbackShell,
             launchedCommand,
@@ -2511,7 +2546,7 @@ export class HiveSpawner implements Spawner {
 
     const locator = this.requireAgentLocator(record).hostKind === "sessiond"
       ? requireSessiondAgentLocator(record)
-      : bindAgentSession(this.sessions, record);
+      : bindAgentSession(this.requireLegacySessions(record), record);
     const proof = await watchForProofOfLife(locator, baselineEventAt, {
       hasSession: () => this.sessionPresent(record),
       capturePane: () => this.captureVisible(record),

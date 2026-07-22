@@ -8,8 +8,7 @@ import {
   retireLegacyRoutingToml,
   RoutingPolicyStore,
 } from "../daemon/routing-policy-store";
-import { BunTmuxSender } from "../daemon/delivery";
-import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
+import type { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import {
@@ -136,11 +135,16 @@ export async function exitAfterDaemonStartupFailure(
 export function stopSpawnSession(
   agent: AgentRecord,
   dependencies: Readonly<{
-    sessions: TmuxSessionHost;
+    sessions?: TmuxSessionHost;
     terminalHost: Pick<HiveTerminalHostAdapter, "inspect" | "terminate">;
   }>,
 ) {
   if (agent.sessionLocator?.hostKind !== "sessiond") {
+    if (dependencies.sessions === undefined) {
+      throw new Error(
+        `Agent ${agent.id} has a legacy tmux locator, but production is sessiond-only`,
+      );
+    }
     return stopAgentSession(agent, { sessions: dependencies.sessions });
   }
   return stopSessiondAgentSession(agent, {
@@ -150,6 +154,30 @@ export function stopSpawnSession(
         requireSessiondAgentLocator(record),
       )).hostPid,
   });
+}
+
+export interface ProductionTerminalComposition {
+  terminalHost: SessiondHost;
+  spawnerDependencies: Readonly<Record<never, never>>;
+  daemonDependencies: Readonly<{ terminalHost: SessiondHost }>;
+}
+
+/** The production terminal composition has one constructor call and one host.
+ * Legacy tmux implementations remain importable by explicit tests until #1/#2,
+ * but are not members of this graph. */
+export function createProductionTerminalComposition(
+  options: ConstructorParameters<typeof SessiondHost>[0],
+  construct: (
+    kind: "sessiond",
+    options: ConstructorParameters<typeof SessiondHost>[0],
+  ) => SessiondHost = (_kind, hostOptions) => new SessiondHost(hostOptions),
+): ProductionTerminalComposition {
+  const terminalHost = construct("sessiond", options);
+  return {
+    terminalHost,
+    spawnerDependencies: {},
+    daemonDependencies: { terminalHost },
+  };
 }
 
 export async function runDaemon(): Promise<void> {
@@ -241,8 +269,11 @@ export async function runDaemon(): Promise<void> {
       new GrokQuotaProbe(new GrokStdioProbeTransport()),
     ],
   );
-  const sessions = new TmuxSessionHost();
-  const sessiond = new SessiondHost({ repoRoot, pendingBindings: db });
+  const terminalComposition = createProductionTerminalComposition({
+    repoRoot,
+    pendingBindings: db,
+  });
+  const sessiond = terminalComposition.terminalHost;
   const workspaceVisibility = new WorkspaceVisibilityAuthority({
     expectedInstanceId: hiveInstanceSuffix(),
     observeProcess: (pid) => macProcessIdentity(pid),
@@ -262,6 +293,7 @@ export async function runDaemon(): Promise<void> {
   // a no-op for the repos that never enabled it.
   const graphify = new GraphifyService(repoRoot);
   const spawner = new HiveSpawner({
+    ...terminalComposition.spawnerDependencies,
     db,
     repoRoot,
     // `port` is normally 0: Bun chooses the instance's ephemeral port only
@@ -305,9 +337,7 @@ export async function runDaemon(): Promise<void> {
     isModelEnabled: policyModelEnablement(routingPolicy),
     // The release valve reads the provider's own metering, not a model name.
     readBilling: (provider) => readBillingWithMemory(provider),
-    tmux: sessions,
     stopSession: (agent) => stopSpawnSession(agent, {
-      sessions,
       terminalHost: daemon.sessiondTerminalHost,
     }),
     // Even when quota-aware routing is disabled, critical read-only restarts
@@ -320,16 +350,8 @@ export async function runDaemon(): Promise<void> {
       admit: (candidate) => daemon.admitSessiondSpawn(candidate),
     },
   });
-  // Not a hand-rolled lambda. The previous one was `(session, text) =>
-  // the legacy sender could not forward the delivery options, so urgent input
-  // `options` argument delivery passes it — and because `options` is optional
-  // on TmuxSender, a two-parameter function satisfies the interface and
-  // typechecks clean. So every message the real daemon ever sent went out with
-  // interrupt dropped: "urgent interrupts at the next safe boundary" was a
-  // label on a database row, never a behaviour, in production only. Tests
-  // missed it because they use BunTmuxSender, which does forward.
-  const tmuxSender = new BunTmuxSender(sessions);
   daemon = new HiveDaemon({
+    ...terminalComposition.daemonDependencies,
     statusIncarnationGenerationSource:
       agentRecordStatusIncarnationGenerationSource((agentId) =>
         db.getAgentById(agentId)
@@ -337,9 +359,6 @@ export async function runDaemon(): Promise<void> {
     db,
     spawner,
     statusStore,
-    tmuxSender,
-    tmux: sessions,
-    terminalHost: sessiond,
     workspaceVisibility,
     repoRoot,
     graphify,

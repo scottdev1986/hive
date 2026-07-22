@@ -9,8 +9,6 @@ import {
 
 export type OrchestratorHostKind = "sessiond" | "tmux";
 
-export const ORCHESTRATOR_HOST_ENV = "HIVE_ORCHESTRATOR_HOST";
-
 export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
   .shape.locator.unwrap().extend({
     subject: z.strictObject({ kind: z.literal("root") }).readonly(),
@@ -19,16 +17,10 @@ export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
   }).readonly();
 export type RootSessiondLocator = z.infer<typeof RootSessiondLocatorSchema>;
 
-/** #114 gates the default flip. sessiond remains an explicit restart-proof opt-in. */
-export function configuredOrchestratorHost(
-  environment: Readonly<Record<string, string | undefined>> = process.env,
-): OrchestratorHostKind {
-  const value = environment[ORCHESTRATOR_HOST_ENV];
-  if (value === undefined || value === "" || value === "tmux") return "tmux";
-  if (value === "sessiond") return "sessiond";
-  throw new Error(
-    `${ORCHESTRATOR_HOST_ENV} must be sessiond or tmux (received ${JSON.stringify(value)})`,
-  );
+/** Production has one terminal host. The union remains only for explicit
+ * legacy fixtures until #1/#2 delete the dead tmux implementation. */
+export function configuredOrchestratorHost(): OrchestratorHostKind {
+  return "sessiond";
 }
 
 /** The launch request survives HTTP retries, so its UUID is also the stable

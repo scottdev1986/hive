@@ -1091,6 +1091,7 @@ describe("quota telemetry and alerts", () => {
       db,
       spawner: { async spawn() { throw new Error("unused"); } },
       tmuxSender: sender,
+      orchestratorHost: "tmux",
       quota: service,
     });
     await service.routeAndReserve({

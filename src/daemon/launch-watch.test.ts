@@ -166,7 +166,10 @@ const CASES = [
 
 suite("Claude spawn launch watch", () => {
   for (const { role, agent, readOnly } of CASES) {
-  test(
+  // Skipped after #112: this fixture launches Claude directly inside tmux,
+  // which is no longer a production terminal path. #1/#2 own deletion or
+  // replacement under the zero-living-references acceptance.
+  test.skip(
     `a fresh ${role} worktree reaches its first turn with no interactive prompt`,
     async () => {
       const temporaryRoot = await mkdtemp(join(tmpdir(), "hive-launch-watch-"));

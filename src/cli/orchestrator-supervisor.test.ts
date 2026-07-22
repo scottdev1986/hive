@@ -4,6 +4,7 @@ import {
   buildOrchestratorRecoveryBrief,
   superviseOrchestratorSession,
 } from "./orchestrator-supervisor";
+import { OrchestratorLaunchFailedError } from "./orchestrator-sessiond";
 
 function agent(
   name: string,
@@ -31,6 +32,35 @@ function agent(
 }
 
 describe("orchestrator session supervisor", () => {
+  test("a typed sessiond launch failure is loud and retries only through sessiond", async () => {
+    const launches: string[] = [];
+    const reports: string[] = [];
+    const result = await superviseOrchestratorSession({
+      launch: async (brief) => {
+        launches.push(brief);
+        if (launches.length === 1) {
+          throw new OrchestratorLaunchFailedError("sessiond broker unavailable");
+        }
+        return 0;
+      },
+      fetchAgents: async () => launches.length === 1 ? [agent("maya")] : [],
+      sendRecoveryPing: async () => {},
+      sleep: async () => {},
+      now: (() => {
+        let now = 0;
+        return () => (now += 60_000);
+      })(),
+      report: (message) => { reports.push(message); },
+    });
+
+    expect(result).toBe(0);
+    expect(launches).toHaveLength(2);
+    expect(reports).toContain(
+      "[hive] ORCHESTRATOR_LAUNCH_FAILED: sessiond broker unavailable",
+    );
+    expect(launches[1]).toContain("BACKUP ORCHESTRATOR");
+  });
+
   test("does not replace a startup or finished-session root when no agents are live", async () => {
     const launches: string[] = [];
     const pings: string[] = [];

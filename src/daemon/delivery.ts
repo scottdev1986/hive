@@ -260,7 +260,7 @@ export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
 
 
 export class BunSessionSender implements SessionSender, TmuxSender {
-  constructor(private readonly sessions: TmuxSessionHost = new TmuxSessionHost()) {}
+  constructor(private readonly sessions: TmuxSessionHost) {}
 
   async sendSessionMessage(
     recipient: AgentRecord,

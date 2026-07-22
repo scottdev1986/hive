@@ -41,6 +41,12 @@ export interface Spawner {
    * is atomic and throws; it never returns a persisted `failed` row. */
   spawn(req: SpawnRequest): Promise<AgentRecord>;
   authorizeLaunch?(identity: ExecutionIdentity): Promise<AuthorizedLaunch>;
+  createRecoverySession?(
+    agent: AgentRecord,
+    command: string,
+    expectedExecutable: string,
+    launchGrantId: string,
+  ): Promise<void>;
   restartForControl?(
     agent: AgentRecord,
     message: AgentMessage,

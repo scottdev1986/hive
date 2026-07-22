@@ -1,18 +1,20 @@
 # sessiond queen restart proof
 
-Status: designed, not yet executed. This procedure cannot prove the host swap
-from a queen that was itself launched on tmux. Every result cell starts
-unchecked and must be run after a restart from one immutable candidate.
+Status: designed, not yet executed. The runtime is sessiond-only at the next
+restart, so every result cell starts unchecked and must be run after an orderly
+transition to one immutable candidate.
 
 ## Ruling and gate
 
-`HIVE_ORCHESTRATOR_HOST=sessiond` is the restart-proof opt-in. The absent or
-empty setting still selects tmux. Issue #114 gates changing that default;
-removing the tmux implementation remains separate work in #1/#2.
+Sessiond is the only production host for queen and agents. There is no host
+selector or tmux fallback, and `HIVE_ORCHESTRATOR_HOST` is ignored. A sessiond
+launch refusal fails loudly and typed. The tmux implementation remains as dead
+code; #1/#2 own its deletion under zero-living-references acceptance.
 
-The acceptance decision requires every communication row below, the visibility
-lease checks, and the scroll row to pass on the same candidate. A unit test, a
-successful input call, or a screen redraw is not a live pass:
+The code transition is not gated on this live run. Post-restart acceptance still
+requires every communication row below, the visibility lease checks, and the
+scroll row to pass on the same candidate. A unit test, a successful input call,
+or a screen redraw is not a live pass:
 
 - queued means durable but not handed to the provider;
 - injected means sessiond returned the `INPUT_SUBMIT` receipt;
@@ -34,8 +36,8 @@ The journal and checkpoint bridge preserve continuity across detach and
 reattach, but they do not add another visible-history tier. Post-reattach
 history is capped by the renderer's 48 MiB terminal-state budget. The measured
 fixed-width corpus exceeds tmux's configured 50,000-logical-line history, but
-any live root that restores materially less than that tmux baseline fails the
-default-swap gate. See
+any live root that restores materially less than that tmux baseline fails this
+acceptance proof. See
 [sessiond scrollback measurement](../terminal/sessiond-scrollback-measurement.md)
 for the reproducible corpus and checkpoint evidence.
 
@@ -47,6 +49,13 @@ image allowance totals 326,707,089 bytes, leaving 210,163,823 bytes
 71,727 total rows and 71,227 history rows; the equivalent arm64 real-renderer
 fixture produced 309,923,825 bytes and restored successfully.
 
+That checkpoint ceiling is a serialized-payload bound, not a process-memory
+bound. The 309.9 MB restore measured 727,711,744 bytes of RSS (about 2.3x the
+payload), so a checkpoint near the 512 MiB ceiling could transiently approach
+1.2 GB at the same ratio. Cell S must record candidate and restored-process RSS
+and treat memory-pressure failure as a failed observation, not as proof that
+the byte ceiling is safe.
+
 ## Test-owned restart setup
 
 Run this as an extension of the isolated development-fleet procedure in
@@ -55,26 +64,26 @@ immutable candidate, `RUN_ID`, ownership manifest, action journal, process and
 filesystem watchers, production baseline, exact-identity cleanup, and final
 attestation rules. Do not run it against the continuously serving instance.
 
-In addition to that procedure's variables, record:
+Before launching the candidate, stop the old/pre-flip binary through its public
+`hive stop` path. A force kill or skipped stop fails preflight: only the old
+binary owns cleanup of its live tmux namespace. Wait for its exact daemon PID to
+exit, then inspect both its manifest-recorded tmux socket and the global
+`hive-*` session inventory. Both must be empty. Prove each reader against a
+known live read-only baseline first. If either inventory still contains a
+session, restart the old binary, complete the orderly stop, and repeat the
+preflight; do not start the sessiond-only candidate over residual tmux state.
+
+In addition to the acceptance procedure's variables, record:
 
 ```sh
-PROOF_HOST=sessiond
 PROOF_ROOT_RECIPIENT=queen
 PROOF_ROOT_VISIBILITY_ID=root
-export HIVE_ORCHESTRATOR_HOST="$PROOF_HOST"
-launchctl setenv HIVE_ORCHESTRATOR_HOST "$PROOF_HOST"
-test "$(launchctl getenv HIVE_ORCHESTRATOR_HOST)" = "$PROOF_HOST"
 ```
 
-The shell setting reaches the daemon. The `launchctl` setting is separately
-required because LaunchServices does not inherit the launching shell's
-environment. Add `launchctl unsetenv HIVE_ORCHESTRATOR_HOST` to the run's traps
-before launching Workspace, and verify the variable is absent during final
-cleanup. A restart after it is unset returns to the tmux default. This setting
-is global to the GUI login session, not scoped by `HIVE_HOME`: while it is set,
-no other Hive Workspace may be launched. Extend the one-second process watcher
-to fail immediately if any non-manifest Workspace process starts during that
-interval. Existing serving Workspace identities must remain unchanged.
+No session-global `launchctl setenv` is permitted or required. Keep the
+one-second process watcher active and fail immediately if any non-manifest
+Workspace process starts during the proof. Existing serving Workspace
+identities must remain unchanged.
 
 For the genuine quota-envelope cell, place this test-only overlay in the
 isolated instance's `quota.toml` before daemon start. Replace `claude` with the
@@ -135,11 +144,10 @@ is the lowest root generation recorded for that `RUN_ID`, not necessarily 1;
 retain and disclose every earlier binding. Reusing an unowned or unexplained
 home is not a retry and fails preflight.
 
-Read the manifest-recorded tmux socket with `has-session` for the exact legacy
-queen session. It must be absent. Prove the tmux reader first against a known
-live socket/session from the read-only baseline; if the isolated instance has
-no tmux server at all, record both that positive control and the exact test
-socket's absent-server result. The provider root recorded in
+Re-read the manifest-recorded old tmux socket and global `hive-*` inventory.
+They must remain empty after candidate launch: the new binary never constructs
+or sweeps tmux. Record both the pre-launch positive controls and the candidate's
+absent-server/session results. The provider root recorded in
 `createEvidence.verifiedProviderRoot` must instead belong to the exact sessiond
 binding. Do not accept "no tmux process found" until the positive-control
 inventory proves the command is reading the correct instance socket.
@@ -166,7 +174,7 @@ reuse an id between cells.
 | F1 — provider crash | [ ] | old process absent; generation increment; queued mail applied |
 | F2 — feed stall | [ ] | same generation remains live beyond 15 s; no expiry audit |
 | F3 — source death/expiry | [ ] | expiry audit; restart generation; queued mail applied |
-| S — scrolling | [ ] | wheel/momentum, anchored output, follow-bottom, keys, reattach history |
+| S — scrolling | [ ] | wheel/momentum, anchored output, follow-bottom, keys, reattach history, checkpoint/restore RSS |
 
 Any missing cell is `NOT RUN` or `BLOCKED`, never pass.
 
@@ -350,7 +358,7 @@ token no longer verifies. Sessiond must terminate the old root host.
 Require the exact old binding to gain a termination audit with
 `origin: "visibility-expiry"` only after inspection proves an expired lease and
 dead vendor process. The queued message must remain queued and unchanged; no
-stage may be skipped. Restart the same candidate with the opt-in still set.
+stage may be skipped. Restart the same candidate through the default launch path.
 Require a new root generation, a visible recovery/startup explanation, and the
 same message id injected then applied once after the stale composer marker is
 cleared. The expiry may take the disposable agent hosts down too; their
@@ -385,8 +393,8 @@ For the fixed 80,000-line measurement corpus, the numeric expectation is
 the actual earliest reachable token and byte/row geometry instead of converting
 it into a fake line guarantee. A discontinuity within the budget, an effective
 history materially below tmux's 50,000-line baseline, broken momentum, a jump
-to bottom on new output, or a Shift chord reaching the provider fails the
-default-swap gate.
+to bottom on new output, or a Shift chord reaching the provider fails this
+acceptance proof.
 
 ## Cross-language seam debt
 
@@ -422,20 +430,15 @@ This ledger separates code-closed work from restart evidence and deferrals.
 | Session capacity leak and failed-spawn ghosts (#115) | Code closed with atomic failed spawn and more-than-32 spawn/kill baseline coverage. Pre-fix never-bound ghost rows already held by an old daemon are not hot-repairable; restarting into the fixed binary clears them. |
 | Checkpoint/resize invariant and aggregate terminal disk budget (#114) | Code closed. The production root uses the 512 MiB streaming producer: 309,929,873-byte maximum-geometry terminal payload + 16,777,216-byte image allowance = 326,707,089 bytes, leaving 210,163,823 bytes (200.428 MiB) of measured headroom. |
 | Swift/TypeScript duplicate constants | Deferred to the separately filed pin-work; exercised, not compile-time proved, here. |
-| Tmux removal | Deferred to #1/#2. The fallback remains required. |
-| Launch-watch failures (#111) | Pre-existing and untouched; no `src/daemon/launch-watch*` file is part of this migration. |
+| Tmux runtime unwire | Code closed by #112: production composition, queen launch, agent spawn, recovery, delivery, Workspace launch, and ordinary stop construct no tmux host and offer no fallback. The dead implementation remains for #1/#2 to delete. |
+| Launch-watch fixtures (#111) | The two direct-tmux Claude cases are deliberately skipped after #112 because they exercise no production terminal path. #1/#2 own deletion or replacement. |
 
-## Default and removal decision
+## Runtime and evidence decision
 
-The sessiond default may change only when:
-
-1. issue #114's checkpoint/resize invariant is landed and its exact long-root
-   reattach measurement is recorded;
-2. every cell in this document passes on one immutable restarted candidate;
-3. the root never dies during F2, and F3 is loud and recoverable;
-4. the scroll row meets or exceeds the measured tmux baseline; and
-5. Bun tests, TypeScript typecheck, and the Workspace tests are green apart
-   from separately proved pre-existing failures.
-
-That decision changes only the default. The tmux host stays functional until
-#1/#2 remove it under their own evidence.
+Issue #112 closes the default flip and live tmux unwire in code. The next
+restart therefore launches the default queen and every agent on sessiond, with
+typed failure instead of fallback. This matrix is the post-restart evidence
+record: any failed cell is a release defect to report with its measured state,
+not permission to downgrade the candidate to tmux. Issue #114's invariant and
+long-root measurements are landed; #1/#2 retain only deletion of the now-dead
+tmux implementation and its explicit legacy fixtures.

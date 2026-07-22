@@ -10,6 +10,8 @@ import type {
   OrchestratorSessiondSnapshot,
 } from "../daemon/orchestrator-sessiond";
 import {
+  daemonOrchestratorSessiondControl,
+  OrchestratorLaunchFailedError,
   runOrchestratorSessiondLaunch,
   type OrchestratorSessiondControl,
 } from "./orchestrator-sessiond";
@@ -77,7 +79,7 @@ describe("sessiond orchestrator launch client", () => {
       .rejects.toThrow("locator changed");
   });
 
-  test("returns failure so the existing supervisor can relaunch with queued mail", async () => {
+  test("returns a typed failure instead of falling back after sessiond launch refusal", async () => {
     const control: OrchestratorSessiondControl = {
       start: async () => ({
         ...snapshot("failed"),
@@ -85,7 +87,40 @@ describe("sessiond orchestrator launch client", () => {
       }),
       inspect: async () => null,
     };
-    await expect(runOrchestratorSessiondLaunch(launch, control, async () => {}))
-      .resolves.toBe(1);
+    const error = await runOrchestratorSessiondLaunch(launch, control, async () => {})
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
+    expect(error).toMatchObject({
+      code: "ORCHESTRATOR_LAUNCH_FAILED",
+      detail: "visibility expired before create",
+    });
+  });
+
+  test("HTTP launch refusal is typed before a queen process can exist", async () => {
+    const control = daemonOrchestratorSessiondControl(
+      4317,
+      async () => Response.json({ error: "sessiond is unavailable" }, { status: 503 }),
+    );
+    const error = await control.start(launch).catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
+    expect(error).toMatchObject({
+      code: "ORCHESTRATOR_LAUNCH_FAILED",
+      detail: "sessiond is unavailable",
+    });
+  });
+
+  test("an unreachable control surface is a typed terminal launch failure", async () => {
+    const control: OrchestratorSessiondControl = {
+      start: async () => {
+        throw new TypeError("connect ECONNREFUSED 127.0.0.1");
+      },
+      inspect: async () => null,
+    };
+
+    const error = await runOrchestratorSessiondLaunch(launch, control, async () => {})
+      .catch((cause: unknown) => cause);
+    expect(error).toBeInstanceOf(OrchestratorLaunchFailedError);
+    expect(error).toMatchObject({ code: "ORCHESTRATOR_LAUNCH_FAILED" });
+    expect((error as Error).message).toContain("ECONNREFUSED");
   });
 });

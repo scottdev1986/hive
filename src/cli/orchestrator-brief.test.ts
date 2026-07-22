@@ -16,6 +16,7 @@ import {
   buildOrchestratorLaunchCommand,
   buildCodexRootAuthorityCommand,
   CODEX_ROOT_TOKEN_SUBJECT,
+  launchLegacyTmuxOrchestrator,
   launchOrchestrator,
   orchestratorConfigRoot,
   prepareFreshOrchestratorSession,
@@ -230,7 +231,7 @@ describe("orchestrator brief", () => {
 
   test("Codex launch does not resolve or version-gate Claude", async () => {
     let command: string[] = [];
-    const exitCode = await launchOrchestrator(
+    const exitCode = await launchLegacyTmuxOrchestrator(
       "codex",
       4317,
       process.cwd(),
@@ -257,7 +258,7 @@ describe("orchestrator brief", () => {
     );
   });
 
-  test("launches the opt-in queen through sessiond without touching tmux", async () => {
+  test("launches the default queen through sessiond without touching tmux", async () => {
     const launches: Parameters<OrchestratorSessiondControl["start"]>[0][] = [];
     const control: OrchestratorSessiondControl = {
       start: async (request) => {
@@ -307,7 +308,7 @@ describe("orchestrator brief", () => {
       "recovery fixture",
       undefined,
       undefined,
-      { host: "sessiond", sessiondControl: control },
+      { sessiondControl: control },
     );
 
     expect(exitCode).toBe(17);
@@ -539,7 +540,7 @@ describe("orchestrator brief", () => {
       await writeFile(settingsPath, existingSettings);
       await writeFile(mcpPath, existingMcp);
 
-      const exitCode = await launchOrchestrator(
+      const exitCode = await launchLegacyTmuxOrchestrator(
         "claude",
         4317,
         root,
@@ -575,7 +576,7 @@ describe("orchestrator brief", () => {
     const settingsPath = join(root, ".claude", "settings.local.json");
     const mcpPath = join(root, ".mcp.json");
     try {
-      await expect(launchOrchestrator(
+      await expect(launchLegacyTmuxOrchestrator(
         "claude",
         4317,
         root,
@@ -593,7 +594,7 @@ describe("orchestrator brief", () => {
   });
 
   test("refuses to launch without a working Claude CLI", async () => {
-    await expect(launchOrchestrator(
+    await expect(launchLegacyTmuxOrchestrator(
       "claude",
       4317,
       process.cwd(),
@@ -618,7 +619,7 @@ describe("orchestrator brief", () => {
       );
 
       let capturedCommand: string[] = [];
-      await launchOrchestrator(
+      await launchLegacyTmuxOrchestrator(
         "claude",
         4317,
         root,

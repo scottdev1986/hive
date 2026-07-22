@@ -10,11 +10,7 @@ import {
   workspaceOpenArguments,
   type LaunchDeps,
 } from "./workspace";
-import {
-  hiveInstanceSuffix,
-  hiveTmuxSocketName,
-  orchestratorTmuxSession,
-} from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
 import { getHiveHome } from "../daemon/db";
 
 let root: string;
@@ -105,8 +101,6 @@ describe("hive opens the installed release Workspace", () => {
       "--instance-id", hiveInstanceSuffix(),
       "--instance-home", getHiveHome(),
       "--hive", "/opt/hive/bin/hive",
-      "--orchestrator-session", orchestratorTmuxSession(),
-      "--tmux-socket", hiveTmuxSocketName(),
     ]]);
   });
 
@@ -129,8 +123,6 @@ describe("hive opens the installed release Workspace", () => {
       "--instance-id", hiveInstanceSuffix(),
       "--instance-home", getHiveHome(),
       "--hive", "/opt/hive/bin/hive",
-      "--orchestrator-session", orchestratorTmuxSession(),
-      "--tmux-socket", hiveTmuxSocketName(),
       "--orchestrator", "codex",
     ]]);
   });
@@ -149,8 +141,6 @@ describe("hive opens the installed release Workspace", () => {
       "--instance-id", hiveInstanceSuffix(),
       "--instance-home", getHiveHome(),
       "--hive", process.execPath,
-      "--orchestrator-session", orchestratorTmuxSession(),
-      "--tmux-socket", hiveTmuxSocketName(),
     ]]);
   });
 

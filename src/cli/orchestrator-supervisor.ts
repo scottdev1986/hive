@@ -4,6 +4,7 @@ import { operatorFetch } from "./credential";
 import { buildHookEvent, postHookEvent } from "./event";
 import { fetchAgentStatus, sendOrchestratorMessage } from "./mcp";
 import { launchOrchestrator } from "./orchestrator";
+import { OrchestratorLaunchFailedError } from "./orchestrator-sessiond";
 import { withOrchestratorRuntime } from "./orchestrator-runtime";
 import { withNativeOrchestratorTurnMonitor } from "./orchestrator-turn-monitor";
 import {
@@ -96,7 +97,14 @@ export async function superviseOrchestratorSession(
 
   while (true) {
     const startedAt = dependencies.now();
-    const exitCode = await dependencies.launch(recoveryBrief);
+    let exitCode: number;
+    try {
+      exitCode = await dependencies.launch(recoveryBrief);
+    } catch (error) {
+      if (!(error instanceof OrchestratorLaunchFailedError)) throw error;
+      dependencies.report(`[hive] ${error.message}`);
+      exitCode = 1;
+    }
     const lifetime = Math.max(0, dependencies.now() - startedAt);
     const agents = await readKnownAgentState(dependencies);
     const liveAgents = agents.filter(isLiveAgent);

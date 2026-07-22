@@ -35,48 +35,6 @@ import {
   type RoutingPolicy,
 } from "../../../src/schemas";
 
-class FakeTmux {
-  readonly sessions: Array<[string, string, string]> = [];
-  readonly active = new Set<string>();
-
-  async newSession(name: string, cwd: string, command: string): Promise<void> {
-    this.sessions.push([name, cwd, command]);
-    this.active.add(name);
-  }
-
-  async hasSession(name: string): Promise<boolean> {
-    return this.active.has(name);
-  }
-
-  async capturePane(): Promise<string> {
-    return "";
-  }
-
-  async paneState(): Promise<{
-    columns: number;
-    rows: number;
-    cursorColumn: number;
-    cursorRow: number;
-    cursorVisible: boolean;
-  }> {
-    return {
-      columns: 80,
-      rows: 24,
-      cursorColumn: 0,
-      cursorRow: 0,
-      cursorVisible: false,
-    };
-  }
-
-  async listPanePids(): Promise<number[]> {
-    return [];
-  }
-
-  async killSession(name: string): Promise<void> {
-    this.active.delete(name);
-  }
-}
-
 const observedAt = "2026-07-18T12:00:00.000Z";
 
 function codexCapability(): CapabilityRecord {
@@ -178,6 +136,14 @@ async function waitForExactProcessAbsence(
   }
   throw new Error(`owned sessiond process ${pid} outlived visibility expiry`);
 }
+
+test.skip(
+  "legacy tmux spawner backend is dead after #112; deletion belongs to #1/#2",
+  () => {
+    // #112 deliberately unwires this runtime lane. #1/#2 own replacement or
+    // deletion under the zero-living-references acceptance.
+  },
+);
 
 test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
@@ -283,7 +249,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           let admittedAgentName = "maya";
           let admittedVisibility = visibility;
 
-          const tmux = new FakeTmux();
           const stopSpawnedSession = async (agent: AgentRecord) => {
             if (agent.sessionLocator?.hostKind === "sessiond") {
               return await stopSessiondAgentSession(agent, {
@@ -292,8 +257,7 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
                   (await adapter.inspect(requireSessiondAgentLocator(record))).hostPid,
               });
             }
-            await tmux.killSession(agent.tmuxSession);
-            return { killed: [], survivors: [] };
+            throw new Error("legacy tmux teardown is not part of the sessiond harness");
           };
           const spawner = new HiveSpawner({
             db,
@@ -315,7 +279,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
               },
             }),
             isModelEnabled: async () => true,
-            tmux,
             sessiond: {
               terminalHost: adapter,
               prepare: (candidate) => candidate.agentName === admittedAgentName
@@ -593,17 +556,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
             .toContain(injected.receipt.stage);
           expect(injected.receipt.transactionId).toBe("msg-68-live-proof");
 
-          const tmuxAgent = await spawner.spawn({
-            task: "Exercise the default tmux backend",
-            category: "complex_coding",
-            name: "theo",
-            tool: "codex",
-            model: "gpt-sessiond-live",
-          });
-          expect(tmuxAgent.sessionLocator?.hostKind).toBe("tmux");
-          expect(tmuxAgent.status).toBe("working");
-          expect(tmux.sessions).toHaveLength(1);
-          expect(tmux.active.has(tmuxAgent.tmuxSession)).toBe(true);
           expect(
             db.listAgents().filter(
               (agent) => agent.sessionLocator?.hostKind === "sessiond",
@@ -618,11 +570,6 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           const stopped = { survivors: null as readonly unknown[] | null };
           const daemonStates: Array<"live" | "dead"> = ["live", "dead"];
           await stopHive({
-            tmux: {
-              listSessions: async () => [...tmux.active],
-              listPanePids: async () => [],
-              killSession: async (name) => tmux.killSession(name),
-            },
             readPid: () => process.pid,
             liveness: async () => daemonStates.shift() ?? "dead",
             cleanup: () => {},

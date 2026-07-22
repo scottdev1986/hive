@@ -155,6 +155,7 @@ test("managed daemon shutdown reaps the orchestrator session", async () => {
     db,
     spawner: new StubSpawner(),
     tmux,
+    orchestratorHost: "tmux",
     manageLifecycle: true,
   });
   try {
@@ -1409,6 +1410,7 @@ test("managed shutdown refuses to exit after an agent teardown probe fails", asy
     db,
     spawner: new StubSpawner(),
     tmux,
+    orchestratorHost: "tmux",
     manageLifecycle: true,
     resourceRunners: {
       panePids: async () => {
@@ -1529,6 +1531,7 @@ test("managed shutdown refuses unreadable orchestrator process roots", async () 
     db,
     spawner: new StubSpawner(),
     tmux,
+    orchestratorHost: "tmux",
     manageLifecycle: true,
     resourceRunners: {
       panePids: async () => {
@@ -2156,6 +2159,7 @@ describe("HiveDaemon HTTP server", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
       tmuxSender: new SilentTmuxSender(db),
       quota,
     });
@@ -2629,6 +2633,7 @@ describe("HiveDaemon HTTP server", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
+      tmux: new FakeDaemonTmux(),
       tmuxSender: new SilentTmuxSender(db),
     });
     db.insertAgent(agent({ tmuxSession: agentTmuxSession("maya", home) }));
@@ -4954,6 +4959,7 @@ describe("delivery reconciliation runs in maintenance", () => {
       spawner: new StubSpawner(),
       tmux: new FakeDaemonTmux(),
       tmuxSender: new SilentTmuxSender(db),
+      orchestratorHost: "tmux",
     });
     try {
       expect(db.getAgentByName("orchestrator")).toBeNull();
@@ -5971,6 +5977,7 @@ describe("wake-path self-check (2026-07-21 messaging regression, recommendation 
       db,
       spawner: new StubSpawner(),
       tmux,
+      orchestratorHost: "tmux",
     });
     try {
       // POSITIVE CONTROL 1: with no live agents there is no wake to protect,
@@ -6020,6 +6027,7 @@ describe("wake-path self-check (2026-07-21 messaging regression, recommendation 
       db,
       spawner: new StubSpawner(),
       tmux,
+      orchestratorHost: "tmux",
     });
     try {
       db.insertAgent(agent({
@@ -6064,6 +6072,7 @@ describe("wake-path self-check (2026-07-21 messaging regression, recommendation 
       db,
       spawner: new StubSpawner(),
       tmux,
+      orchestratorHost: "tmux",
       terminalHost: {
         create: unsupported,
         claimInput: unsupported,

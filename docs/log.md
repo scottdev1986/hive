@@ -1,16 +1,17 @@
 # Wiki Log
 
-## [2026-07-22] change | Add the sessiond queen restart gate
+## [2026-07-22] change | Make the queen restart proof sessiond-only
 
-The sessiond-hosted root remains an explicit `HIVE_ORCHESTRATOR_HOST=sessiond`
-restart opt-in while issue #114 gates the default flip. The restart proof now binds
-the six communication lanes to durable message/approval ids and provider boundaries,
-adds active-draft and orphan recovery, separates a stalled feed from a dead Workspace
-visibility source, and requires both automatic provider-crash relaunch and loud
-fail-closed visibility expiry with queued-mail recovery.
+At the next restart, sessiond is the only production terminal host for queen and
+agents. There is no host selector or tmux fallback; launch refusal is typed and
+loud. The dead tmux implementation remains for #1/#2 to delete. The restart proof
+binds the six communication lanes to durable message/approval ids and provider
+boundaries, adds active-draft and orphan recovery, separates a stalled feed from a
+dead Workspace visibility source, and requires both automatic provider-crash
+relaunch and loud fail-closed visibility expiry with queued-mail recovery.
 
-The gate also adds physical wheel/momentum and keyboard paging on the root before
-cutover. It states the measured 48 MiB post-restore boundary honestly: 71,703 history
+The proof also covers physical wheel/momentum and keyboard paging on the root. It
+states the measured 48 MiB post-restore boundary honestly: 71,703 history
 rows for the fixed 80,000-line 80×24 corpus, with content-dependent row count and no
 claim that journal replay adds another visible-history tier. Swift/TypeScript
 duplicates for the scrollback budget and root/queen identity are recorded as separate

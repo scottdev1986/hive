@@ -35,10 +35,7 @@ import {
 import { CODEX_CAPABILITY_TOKEN_ENV } from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
-import {
-  configuredOrchestratorHost,
-  type OrchestratorHostKind,
-} from "../daemon/orchestrator-host";
+import { type OrchestratorHostKind } from "../daemon/orchestrator-host";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
 import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
 import { processCommandName } from "../daemon/resources";
@@ -164,7 +161,7 @@ function orchestratorSessionHost(
 }
 
 export async function prepareFreshOrchestratorSession(
-  input: TmuxSessionHost | OrchestratorTmux = new TmuxSessionHost(),
+  input: TmuxSessionHost | OrchestratorTmux,
 ): Promise<void> {
   const sessions = orchestratorSessionHost(input);
   const session = orchestratorTmuxSession();
@@ -433,27 +430,28 @@ export function buildOrchestratorLaunchCommand(
 }
 
 export interface LaunchOrchestratorOptions {
-  host?: OrchestratorHostKind;
   sessiondControl?: OrchestratorSessiondControl;
   sessiondSleep?: (milliseconds: number) => Promise<void>;
 }
 
-export async function launchOrchestrator(
+async function launchOrchestratorOnHost(
   tool: OrchestratorTool,
   port: number,
   cwd = process.cwd(),
   spawn: OrchestratorSpawn = spawnOrchestrator,
   detectVersion?: () => Promise<string | null>,
   resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
-  input: TmuxSessionHost | OrchestratorTmux = new TmuxSessionHost(),
+  input?: TmuxSessionHost | OrchestratorTmux,
   recoveryBrief = "",
   listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
   provisionCodexToken: (port: number) => Promise<string | null> =
     provisionCodexRootToken,
   options: LaunchOrchestratorOptions = {},
+  host: OrchestratorHostKind = "sessiond",
 ): Promise<number> {
-  const sessions = orchestratorSessionHost(input);
-  const host = options.host ?? configuredOrchestratorHost();
+  const sessions = host === "tmux"
+    ? orchestratorSessionHost(input ?? new TmuxSessionHost())
+    : null;
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
   let claudePath = "claude";
@@ -483,7 +481,7 @@ export async function launchOrchestrator(
     default:
       unknownVendor(tool, "orchestrator launch");
   }
-  if (host === "tmux") await prepareFreshOrchestratorSession(sessions);
+  if (sessions !== null) await prepareFreshOrchestratorSession(sessions);
   await prepareOrchestratorConfig(tool, port, cwd);
   let codexTokenFile = "";
   let codexMcpExclusionArgs: string[] = [];
@@ -597,7 +595,7 @@ export async function launchOrchestrator(
       codexTokenFile,
       recoveryBrief,
       codexMcpExclusionArgs,
-      sessions,
+      sessions!,
     ),
     {
       cwd,
@@ -607,4 +605,66 @@ export async function launchOrchestrator(
     },
   );
   return await child.exited;
+}
+
+/** Production queen launch. There is no runtime host selector or fallback. */
+export function launchOrchestrator(
+  tool: OrchestratorTool,
+  port: number,
+  cwd = process.cwd(),
+  spawn: OrchestratorSpawn = spawnOrchestrator,
+  detectVersion?: () => Promise<string | null>,
+  resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
+  input?: TmuxSessionHost | OrchestratorTmux,
+  recoveryBrief = "",
+  listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
+  provisionCodexToken: (port: number) => Promise<string | null> =
+    provisionCodexRootToken,
+  options: LaunchOrchestratorOptions = {},
+): Promise<number> {
+  return launchOrchestratorOnHost(
+    tool,
+    port,
+    cwd,
+    spawn,
+    detectVersion,
+    resolveExecutable,
+    input,
+    recoveryBrief,
+    listCodexMcpServers,
+    provisionCodexToken,
+    options,
+    "sessiond",
+  );
+}
+
+/** Explicit legacy fixture seam. Production never calls this; #1/#2 own its
+ * deletion with the rest of the dead tmux implementation. */
+export function launchLegacyTmuxOrchestrator(
+  tool: OrchestratorTool,
+  port: number,
+  cwd = process.cwd(),
+  spawn: OrchestratorSpawn = spawnOrchestrator,
+  detectVersion?: () => Promise<string | null>,
+  resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
+  input: TmuxSessionHost | OrchestratorTmux = new TmuxSessionHost(),
+  recoveryBrief = "",
+  listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
+  provisionCodexToken: (port: number) => Promise<string | null> =
+    provisionCodexRootToken,
+): Promise<number> {
+  return launchOrchestratorOnHost(
+    tool,
+    port,
+    cwd,
+    spawn,
+    detectVersion,
+    resolveExecutable,
+    input,
+    recoveryBrief,
+    listCodexMcpServers,
+    provisionCodexToken,
+    {},
+    "tmux",
+  );
 }

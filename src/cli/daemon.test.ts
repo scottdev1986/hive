@@ -5,12 +5,34 @@ import { pathToFileURL } from "node:url";
 import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import type { AgentRecord } from "../schemas";
 import type { SessionInspection } from "../daemon/session-host/contract";
-import type { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import {
+  createProductionTerminalComposition,
   exitAfterDaemonStartupFailure,
   startBrokerAndDiscoverEngineBuildId,
   stopSpawnSession,
 } from "./daemon";
+
+test("production terminal composition constructs sessiond only", () => {
+  const constructed: string[] = [];
+  const terminalHost = {} as import("../daemon/session-host/sessiond-host").SessiondHost;
+  const composition = createProductionTerminalComposition(
+    { repoRoot: "/repo" },
+    (kind) => {
+      constructed.push(kind);
+      return terminalHost;
+    },
+  );
+
+  expect(constructed).toEqual(["sessiond"]);
+  expect(composition).toEqual({
+    terminalHost,
+    spawnerDependencies: {},
+    daemonDependencies: { terminalHost },
+  });
+  expect("tmux" in composition.spawnerDependencies).toBe(false);
+  expect("tmux" in composition.daemonDependencies).toBe(false);
+  expect("tmuxSender" in composition.daemonDependencies).toBe(false);
+});
 
 test("engine discovery failure tears down a live daemon and exits 1", async () => {
   const fixture = mkdtempSync(join(OUTSIDE_REPO_TMPDIR, "hive-discovery-failure-"));
@@ -123,7 +145,6 @@ test("spawn cleanup dispatches a sessiond row by its exact locator", async () =>
   const terminated: unknown[] = [];
 
   await expect(stopSpawnSession(record, {
-    sessions: {} as TmuxSessionHost,
     terminalHost: {
       inspect: async (candidate) => {
         inspected.push(candidate);
