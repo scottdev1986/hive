@@ -433,6 +433,28 @@ final class InputEncodingTests: XCTestCase {
                        "only the exact Shift chord is viewer-local")
     }
 
+    func testShiftNavigationKeysStayLocalWhenTheEngineDeclinesTheAction() {
+        let engine = FakeManualSurface()
+        engine.bindingActionResult = false
+        let terminal = makeTerminal(engine)
+
+        for keyCode in [kVK_PageUp, kVK_PageDown, kVK_Home, kVK_End] {
+            terminal.keyDown(with: makeKeyEvent(
+                characters: "",
+                modifierFlags: [.shift],
+                keyCode: UInt16(keyCode)))
+        }
+
+        XCTAssertEqual(engine.bindingActions, [
+            "scroll_page_up",
+            "scroll_page_down",
+            "scroll_to_top",
+            "scroll_to_bottom",
+        ])
+        XCTAssertTrue(engine.keysSentDetail.isEmpty,
+                      "recognized viewer chords must not fall through to PTY input")
+    }
+
     func testFirstResponderHandoffMirrorsFocusIntoTheSurface() {
         let engine = FakeManualSurface()
         let terminal = makeTerminal(engine)

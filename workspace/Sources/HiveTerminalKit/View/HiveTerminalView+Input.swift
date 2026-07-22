@@ -175,13 +175,17 @@ extension HiveTerminalView {
         }
         switch Int(event.keyCode) {
         case kVK_PageUp:
-            return engine.performBindingAction("scroll_page_up")
+            _ = engine.performBindingAction("scroll_page_up")
+            return true
         case kVK_PageDown:
-            return engine.performBindingAction("scroll_page_down")
+            _ = engine.performBindingAction("scroll_page_down")
+            return true
         case kVK_Home:
-            return engine.performBindingAction("scroll_to_top")
+            _ = engine.performBindingAction("scroll_to_top")
+            return true
         case kVK_End:
-            return performScrollToBottom()
+            _ = performScrollToBottom()
+            return true
         default:
             return false
         }
