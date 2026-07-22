@@ -291,7 +291,7 @@ index 05949b8e..bb0cbbc6 100644
  
      var decoded_terminal = try readTerminal(&r, alloc);
      errdefer decoded_terminal.deinit(alloc);
-@@ -685,6 +799,53 @@ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
+@@ -685,6 +799,61 @@ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
      };
  }
  
@@ -342,10 +342,18 @@ index 05949b8e..bb0cbbc6 100644
 +        try std.testing.expect(!acceptsBuildId(&legacy_build_id));
 +}
 +
++test "legacy build id acceptance matches exact production configuration" {
++    const expected = build_options.c_abi and !build_options.slow_runtime_safety and switch (builtin.target.cpu.arch) {
++        .aarch64, .x86_64 => true,
++        else => false,
++    };
++    try std.testing.expectEqual(expected, acceptsBuildId(&legacy_build_id));
++}
++
  fn writeTerminal(w: *Writer, t: *const Terminal) Error!void {
      try w.plain(t.status_display);
      try w.plain(t.rows);
-@@ -928,18 +1089,12 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
+@@ -928,18 +1097,12 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
          // Raw page bytes, with the union-bearing set regions zeroed on the
          // wire: stored set items contain in-memory union padding that Zig
          // cannot canonicalize in place, so those regions travel as
@@ -367,7 +375,7 @@ index 05949b8e..bb0cbbc6 100644
          // The grapheme and hyperlink-map hash tables / bitmap allocators store
          // interior offsets whose ALIGNMENT is asserted on deref; a corrupt
          // stored offset would reach Offset.ptr's unreachable in ReleaseFast
-@@ -948,9 +1103,13 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
+@@ -948,9 +1111,13 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
          // validated side tables on import — no raw region byte is ever
          // dereferenced during decode. (string_alloc stays raw: it is u8, so it
          // never misaligns, and its only readers already bounds-check offsets.)
@@ -384,7 +392,7 @@ index 05949b8e..bb0cbbc6 100644
  
          try writeSetTable(w, &canon.styles, canon.memory);
          try writeSetTable(w, &canon.hyperlink_set, canon.memory);
-@@ -959,6 +1118,29 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
+@@ -959,6 +1126,29 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
      }
  }
  
@@ -414,17 +422,17 @@ index 05949b8e..bb0cbbc6 100644
  /// Emit a side table of (cell linear index, codepoints) for every cell that
  /// carries grapheme continuation data. Safe: `page` is our canonical clone.
  fn writeGraphemeTable(w: *Writer, page: *const Page) Error!void {
-@@ -1073,3 +1255,3 @@ fn readPageList(r: *Reader, alloc: Allocator) Error!PageList {
+@@ -1073,3 +1263,3 @@ fn readPageList(r: *Reader, alloc: Allocator) Error!PageList {
 -    // within the 64 MiB byte cap would otherwise drive a multi-terabyte
 +    // within the 512 MiB byte cap would otherwise drive a multi-terabyte
      // preheat before a single page is validated.
      if (count > (r.bytes.len -| r.offset) / std.heap.page_size_min)
-@@ -1081,3 +1263,3 @@ fn readPageList(r: *Reader, alloc: Allocator) Error!PageList {
+@@ -1081,3 +1271,3 @@ fn readPageList(r: *Reader, alloc: Allocator) Error!PageList {
      // structurally-valid large count cannot force a huge preheat — a valid
 -    // 64 MiB payload holds at most this many std-capacity pages.
 +    // maximum-size payload holds at most this many std-capacity pages.
      const max_preheat_pages = max_payload_bytes / Page.layout(pagepkg.std_capacity).total_size;
-@@ -1838,6 +2020,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
+@@ -1838,6 +2028,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
                  error.InvalidCheckpoint,
                  error.CheckpointTooLarge,
                  error.OutOfMemory,
@@ -432,7 +440,7 @@ index 05949b8e..bb0cbbc6 100644
                  => {},
              }
              if (debug.deinit() != .ok) {
-@@ -1874,6 +2057,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
+@@ -1874,6 +2065,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
                  error.InvalidCheckpoint,
                  error.CheckpointTooLarge,
                  error.OutOfMemory,
@@ -440,7 +448,7 @@ index 05949b8e..bb0cbbc6 100644
                  => {},
              }
          }
-@@ -1912,7 +2096,7 @@ test "checkpoint decode rejects corruption in scrubbed grapheme regions" {
+@@ -1912,7 +2104,7 @@ test "checkpoint decode rejects corruption in scrubbed grapheme regions" {
              snap.deinit(a);
          } else |err| switch (err) {
              error.InvalidCheckpoint => rejections += 1,
@@ -449,7 +457,7 @@ index 05949b8e..bb0cbbc6 100644
          }
          try std.testing.expectEqual(std.heap.Check.ok, debug.deinit());
      }
-@@ -1951,3 +2135,3 @@ test "readPageList rejects a page-count bomb before any preheat" {
+@@ -1951,3 +2143,3 @@ test "readPageList rejects a page-count bomb before any preheat" {
      // preheated count * Page.layout(std_capacity) (~512 KiB each) BEFORE any
 -    // page was validated. A crafted count within the 64 MiB byte cap drove a
 +    // page was validated. A crafted count within the 512 MiB byte cap drove a

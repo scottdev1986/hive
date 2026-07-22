@@ -1534,6 +1534,8 @@ const MockEngine = struct {
     stream_padding_bytes: usize = 0,
     /// When true, write returns error (F1 fallible VT write).
     fail_write: bool = false,
+    /// When true, resize returns error without changing the engine geometry.
+    fail_resize: bool = false,
     /// Last applied resize (init-time geometry sync counts as a resize).
     columns: u32 = 0,
     rows: u32 = 0,
@@ -1576,6 +1578,7 @@ const MockEngine = struct {
         cell_height_px: u32,
     ) anyerror!void {
         const self: *MockEngine = @ptrCast(@alignCast(ctx));
+        if (self.fail_resize) return error.ResizeFailed;
         self.columns = columns;
         self.rows = rows;
         self.cell_width_px = cell_width_px;
@@ -1758,6 +1761,27 @@ fn makeState() !TestState {
         tmp.dir,
     );
     return .{ .ts = ts, .factory = factory, .clock = clock, .engine_ptr = eng, .tmp = tmp };
+}
+
+test "failed resize rollback disables reconnect instead of claiming recovery" {
+    var s = try makeState();
+    defer s.deinit();
+    try s.ts.feedOutput("stable");
+    try s.ts.tryCheckpoint();
+    try testing.expect(s.ts.checkpointAvailable());
+
+    var prepared = try s.ts.prepareResize(.{ .columns = 120, .rows = 40 });
+    defer prepared.deinit();
+    s.engine_ptr.fail_resize = true;
+    try testing.expectError(error.Internal, s.ts.applyPreparedResize(&prepared));
+
+    try testing.expect(!s.ts.reconnect_available);
+    try testing.expectEqual(@as(u32, 80), s.ts.geometry.columns);
+    try testing.expectEqual(@as(u32, 24), s.ts.geometry.rows);
+    try testing.expectEqual(@as(u32, 1), s.ts.retainedCheckpointCount());
+    var destination = try MockEngine.create(testing.allocator);
+    defer destination.destroy();
+    try testing.expectError(error.CheckpointUnavailable, s.ts.restoreInto(destination.engine()));
 }
 
 test "streamed HVTCP001 producer crosses legacy cap with bounded writes and SHA-256" {

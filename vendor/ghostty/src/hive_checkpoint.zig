@@ -846,6 +846,14 @@ test "legacy build id is rejected outside its exact production configuration" {
         try std.testing.expect(!acceptsBuildId(&legacy_build_id));
 }
 
+test "legacy build id acceptance matches exact production configuration" {
+    const expected = build_options.c_abi and !build_options.slow_runtime_safety and switch (builtin.target.cpu.arch) {
+        .aarch64, .x86_64 => true,
+        else => false,
+    };
+    try std.testing.expectEqual(expected, acceptsBuildId(&legacy_build_id));
+}
+
 fn writeTerminal(w: *Writer, t: *const Terminal) Error!void {
     try w.plain(t.status_display);
     try w.plain(t.rows);

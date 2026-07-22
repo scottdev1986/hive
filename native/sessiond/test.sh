@@ -49,14 +49,31 @@ echo "header-standalone ABI check passed"
 # this standard gate so deleting the acceptsBuildId configuration fence is a
 # measured failure rather than a green Ghostty-only unit-test mutation.
 cd "$ROOT/vendor/ghostty"
-"$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-debug" \
+if ! checkpoint_debug_summary=$("$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-debug" \
   --global-cache-dir "$CACHE/zig-global" \
   test-lib-vt -Dtarget="$TARGET" --sysroot "$OVERLAY" \
-  -Dtest-filter="legacy build id is rejected outside its exact production configuration"
-"$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-release" \
+  -Dtest-filter="legacy build id is rejected outside its exact production configuration" \
+  --summary all 2>&1); then
+  printf '%s\n' "$checkpoint_debug_summary" >&2
+  exit 1
+fi
+printf '%s\n' "$checkpoint_debug_summary"
+case "$checkpoint_debug_summary" in
+  *"Build Summary: 21/21 steps succeeded; 53/53 tests passed"*) ;;
+  *) echo "Debug checkpoint test count drifted; the filtered assertion may not have executed" >&2; exit 1 ;;
+esac
+if ! checkpoint_release_summary=$("$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-release" \
   --global-cache-dir "$CACHE/zig-global" \
   test-lib-vt -Dtarget="$TARGET" --sysroot "$OVERLAY" -Doptimize=ReleaseFast \
-  -Dtest-filter="legacy pre-stream checkpoint fixture remains readable"
+  -Dtest-filter="legacy" --summary all 2>&1); then
+  printf '%s\n' "$checkpoint_release_summary" >&2
+  exit 1
+fi
+printf '%s\n' "$checkpoint_release_summary"
+case "$checkpoint_release_summary" in
+  *"Build Summary: 21/21 steps succeeded; 138/139 tests passed; 1 skipped"*) ;;
+  *) echo "ReleaseFast checkpoint test count drifted; the filtered assertions may not have executed" >&2; exit 1 ;;
+esac
 
 # real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
 # inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
