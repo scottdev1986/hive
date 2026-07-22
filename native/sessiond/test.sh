@@ -43,6 +43,21 @@ env -u CPATH -u C_INCLUDE_PATH -u CPLUS_INCLUDE_PATH \
   "$ROOT/native/tests/abi/header-standalone.c"
 echo "header-standalone ABI check passed"
 
+# Recovery compatibility is build-configuration-sensitive. The production
+# ReleaseFast C ABI must read the immediately preceding on-disk checkpoint,
+# while Debug/non-C-ABI layouts must reject that ID. Keep both assertions in
+# this standard gate so deleting the acceptsBuildId configuration fence is a
+# measured failure rather than a green Ghostty-only unit-test mutation.
+cd "$ROOT/vendor/ghostty"
+"$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-debug" \
+  --global-cache-dir "$CACHE/zig-global" \
+  test-lib-vt -Dtarget="$TARGET" --sysroot "$OVERLAY" \
+  -Dtest-filter="legacy build id is rejected outside its exact production configuration"
+"$ZIG" build --cache-dir "$CACHE/zig-local/ghostty-checkpoint-release" \
+  --global-cache-dir "$CACHE/zig-global" \
+  test-lib-vt -Dtarget="$TARGET" --sysroot "$OVERLAY" -Doptimize=ReleaseFast \
+  -Dtest-filter="legacy pre-stream checkpoint fixture remains readable"
+
 # real-host-golden overrides HIVE_HOME to a private /tmp root; agent shells that
 # inherit a live HIVE_HOME must not skip that override (see real-host-golden.zig).
 cd "$ROOT/native/sessiond"
