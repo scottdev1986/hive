@@ -137,7 +137,7 @@ fn proveControllerCreate(allocator: std.mem.Allocator) !void {
     defer allocator.free(replayed);
     if (!std.mem.eql(u8, created, replayed)) return error.ControllerCreateReplayDiverged;
 
-    try proveResizeAgainstRealTerminal(allocator, &registry, &pty, platform.platform(), .{
+    try proveResizeOverTheRealRoute(allocator, &runtime, &registry, &pty, platform.platform(), .{
         .key = parsed.value.session.key,
         .incarnation = parsed.value.session.incarnation,
     });
@@ -147,30 +147,44 @@ fn proveControllerCreate(allocator: std.mem.Allocator) !void {
     _ = c.waitpid(child_pid, &status, 0);
 }
 
-/// Binds the frozen `resize` handler to a REAL terminal and to the wire. The
-/// geometry asserted is what the terminal reported through TIOCGWINSZ after the
-/// set, so a projection that echoed the request instead of the readback cannot
-/// pass here, and a superseded revision must come back as `stale` naming the
-/// revision that superseded it rather than as an opaque refusal.
-fn proveResizeAgainstRealTerminal(
+/// Drives `resize` over the route the PRODUCT takes: Controller.resize, across
+/// the neutral Client/Endpoint transport, into a HostOperations bound to a REAL
+/// terminal. An earlier version of this proof called handler().call on a
+/// hand-built operations object, which passed while the shipped host bound no
+/// terminal at all and answered every resize `unknown` -- a golden that
+/// hand-feeds the handler proves nothing about the wiring.
+///
+/// The geometry asserted is what the terminal reported through TIOCGWINSZ after
+/// the set, so a projection that echoed the request cannot pass, and a
+/// superseded revision comes back as `stale` naming the revision in force.
+fn proveResizeOverTheRealRoute(
     allocator: std.mem.Allocator,
+    runtime: *neutral_host.Runtime,
     registry: *neutral_host.Registry,
     pty: *pty_host.PtyHost,
     platform: process_inspector.Platform,
     session: neutral_host.SessionRef,
 ) !void {
+    var endpoint = try neutral_host.HostEndpoint.open(allocator, runtime, session);
+    defer endpoint.deinit();
     var evidence: GoldenEvidence = .{};
+    var terminal: PtyTerminal = .{ .pty = pty };
     var operations = try neutral_control_plane.HostOperations.init(
         allocator,
         registry,
-        session,
+        endpoint.session,
         platform,
         evidence.provider(),
         neutral_control_plane.EvidenceClock.system(),
+        terminal.provider(),
     );
     defer operations.deinit();
-    var terminal: PtyTerminal = .{ .pty = pty };
-    operations.terminal = terminal.provider();
+    var controller: neutral_control_plane.Controller = .{
+        .allocator = allocator,
+        .registry = registry,
+        .platform = platform,
+        .clock = neutral_control_plane.EvidenceClock.system(),
+    };
 
     const window = .{
         .columns = @as(u32, 132),
@@ -201,28 +215,33 @@ fn proveResizeAgainstRealTerminal(
         wire_request,
     )) return error.ResizeRequestViolatesWireSchema;
 
-    const applied = try operations.handler().call(.{
-        .session = session,
-        .operation = .resize,
-        .idempotencyKey = "controller-resize-1",
-        .payload = request,
-    });
-    if (!applied.accepted) return error.ResizeRejected;
-    try validateResizeResult(allocator, applied.payload);
+    // Controller.resize connects over the endpoint socket and blocks until the
+    // host answers, so the host is served from another thread. This is the same
+    // client/server split the product runs; nothing here reaches the handler.
+    var server: EndpointServer = .{ .endpoint = &endpoint, .operations = &operations };
+    const applied = try server.round(&controller, request);
+    defer allocator.free(applied);
+    try validateResizeResult(allocator, applied);
 
+    // The outcome fields are optional HERE only so the state check reports the
+    // real problem: an unbound terminal answers `unknown`, and a struct that
+    // demanded `revision` would fail as a parse error rather than naming it.
+    // Both are required below once the state is known to be `applied`.
     const Applied = struct {
         state: []const u8,
-        revision: []const u8,
-        readback: struct { columns: u32, rows: u32 },
+        revision: ?[]const u8 = null,
+        readback: ?struct { columns: u32, rows: u32 } = null,
     };
-    var parsed = try std.json.parseFromSlice(Applied, allocator, applied.payload, .{
+    var parsed = try std.json.parseFromSlice(Applied, allocator, applied, .{
         .ignore_unknown_fields = true,
     });
     defer parsed.deinit();
     if (!std.mem.eql(u8, parsed.value.state, "applied")) return error.ResizeNotApplied;
-    if (!std.mem.eql(u8, parsed.value.revision, "7")) return error.ResizeWrongRevision;
-    if (parsed.value.readback.columns != window.columns or
-        parsed.value.readback.rows != window.rows) return error.ResizeReadbackDiverged;
+    const revision = parsed.value.revision orelse return error.ResizeReceiptMissingRevision;
+    const readback = parsed.value.readback orelse return error.ResizeReceiptMissingReadback;
+    if (!std.mem.eql(u8, revision, "7")) return error.ResizeWrongRevision;
+    if (readback.columns != window.columns or readback.rows != window.rows)
+        return error.ResizeReadbackDiverged;
 
     // The durable record must now hold what the TERMINAL reported, because a
     // later inspection answers from it.
@@ -232,16 +251,11 @@ fn proveResizeAgainstRealTerminal(
         return error.ResizeWindowNotCommitted;
 
     // Replaying the same revision is superseded, not applied twice.
-    const stale = try operations.handler().call(.{
-        .session = session,
-        .operation = .resize,
-        .idempotencyKey = "controller-resize-1",
-        .payload = request,
-    });
-    if (!stale.accepted) return error.ResizeRejected;
-    try validateResizeResult(allocator, stale.payload);
+    const stale = try server.round(&controller, request);
+    defer allocator.free(stale);
+    try validateResizeResult(allocator, stale);
     const Stale = struct { state: []const u8, currentRevision: []const u8 };
-    var stale_parsed = try std.json.parseFromSlice(Stale, allocator, stale.payload, .{
+    var stale_parsed = try std.json.parseFromSlice(Stale, allocator, stale, .{
         .ignore_unknown_fields = true,
     });
     defer stale_parsed.deinit();
@@ -274,30 +288,68 @@ const PtyTerminal = struct {
         context: *anyopaque,
         window: neutral_host.WindowSize,
         revision: u64,
-    ) anyerror!neutral_control_plane.AppliedResize {
+    ) anyerror!neutral_control_plane.TerminalResize {
         const self: *PtyTerminal = @ptrCast(@alignCast(context));
-        const receipt = try self.pty.resize(.{
+        const receipt = self.pty.resize(.{
             .columns = window.columns,
             .rows = window.rows,
             .width_px = window.widthPixels,
             .height_px = window.heightPixels,
-        }, revision);
-        return .{
+        }, revision) catch |err| switch (err) {
+            error.StaleResizeRevision => return .{ .superseded = .{
+                .revision = self.pty.resizeRevision(),
+                .orderedAt = self.pty.resizeOrderedAt(),
+                .readback = geometryToWindow(self.pty.geometry),
+            } },
+            else => return err,
+        };
+        return .{ .applied = .{
             .revision = receipt.revision,
             .orderedAt = receipt.ordered_at,
-            .readback = .{
-                .columns = receipt.readback.columns,
-                .rows = receipt.readback.rows,
-                .widthPixels = receipt.readback.width_px,
-                .heightPixels = receipt.readback.height_px,
-            },
-        };
+            .readback = geometryToWindow(receipt.readback),
+        } };
     }
 
     fn provider(self: *PtyTerminal) neutral_control_plane.TerminalProvider {
         return .{ .context = self, .resizeFn = resize };
     }
 };
+
+/// One request/response round over the real transport: the host serves on a
+/// thread while Controller.resize drives the client side.
+const EndpointServer = struct {
+    endpoint: *neutral_host.HostEndpoint,
+    operations: *neutral_control_plane.HostOperations,
+    served: ?anyerror = null,
+
+    fn serve(self: *EndpointServer) void {
+        self.endpoint.serveOne(self.operations.handler()) catch |err| {
+            self.served = err;
+        };
+    }
+
+    fn round(
+        self: *EndpointServer,
+        controller: *neutral_control_plane.Controller,
+        request: []const u8,
+    ) ![]u8 {
+        self.served = null;
+        const thread = try std.Thread.spawn(.{}, serve, .{self});
+        const response = controller.resize(request);
+        thread.join();
+        if (self.served) |err| return err;
+        return response;
+    }
+};
+
+fn geometryToWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
+    return .{
+        .columns = geometry.columns,
+        .rows = geometry.rows,
+        .widthPixels = geometry.width_px,
+        .heightPixels = geometry.height_px,
+    };
+}
 
 const GoldenEvidence = struct {
     fn measure(_: *anyopaque, _: std.mem.Allocator) !neutral_control_plane.LiveEvidence {

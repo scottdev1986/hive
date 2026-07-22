@@ -5068,6 +5068,73 @@ fn queueInitialInput(
     try sink.arbiterSink().write(encoded.items);
 }
 
+/// The real terminal behind the neutral control plane's mutation seam. The
+/// neutral plane deliberately owns no terminal, so without this binding its
+/// resize handler has nothing to set and answers `unknown`.
+///
+/// It performs the SAME two-part mutation the production resize path does: the
+/// PTY set with its post-set readback, and the shadow VT following the applied
+/// window so later checkpoints carry the real geometry rather than the
+/// create-time size (§23). Setting the PTY alone would leave the shadow behind
+/// and make a restored checkpoint render at the wrong size.
+const NeutralTerminalSource = struct {
+    pty: *pty_host.PtyHost,
+    state: *terminal_state.TerminalState,
+
+    fn provider(self: *NeutralTerminalSource) neutral_control_plane.TerminalProvider {
+        return .{ .context = self, .resizeFn = resize };
+    }
+
+    fn resize(
+        context: *anyopaque,
+        window: neutral_host.WindowSize,
+        revision: u64,
+    ) anyerror!neutral_control_plane.TerminalResize {
+        const self: *NeutralTerminalSource = @ptrCast(@alignCast(context));
+        const receipt = self.pty.resize(.{
+            .columns = window.columns,
+            .rows = window.rows,
+            .width_px = window.widthPixels,
+            .height_px = window.heightPixels,
+        }, revision) catch |err| switch (err) {
+            // The PTY is the authority on its own revision order. Report the
+            // order it is actually in so a caller retrying a revision the
+            // terminal already holds can be reconciled instead of refused with
+            // a number that is in force nowhere.
+            error.StaleResizeRevision => return .{ .superseded = self.current() },
+            else => return err,
+        };
+        try self.state.resize(.{
+            .columns = receipt.readback.columns,
+            .rows = receipt.readback.rows,
+            .cell_width_px_16_16 = cellFixed16_16(receipt.readback.width_px, receipt.readback.columns),
+            .cell_height_px_16_16 = cellFixed16_16(receipt.readback.height_px, receipt.readback.rows),
+        });
+        return .{ .applied = .{
+            .revision = receipt.revision,
+            .orderedAt = receipt.ordered_at,
+            .readback = neutralWindow(receipt.readback),
+        } };
+    }
+
+    fn current(self: *NeutralTerminalSource) neutral_control_plane.AppliedResize {
+        return .{
+            .revision = self.pty.resizeRevision(),
+            .orderedAt = self.pty.resizeOrderedAt(),
+            .readback = neutralWindow(self.pty.geometry),
+        };
+    }
+
+    fn neutralWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
+        return .{
+            .columns = geometry.columns,
+            .rows = geometry.rows,
+            .widthPixels = geometry.width_px,
+            .heightPixels = geometry.height_px,
+        };
+    }
+};
+
 const NeutralLiveEvidenceSource = struct {
     core: *HostCore,
     pty: *pty_host.PtyHost,
@@ -5575,6 +5642,9 @@ pub fn runHostRole(
         .state = &state,
     };
     var neutral_platform = process_inspector.RealPlatform.init();
+    // Bound at construction: without a terminal the neutral resize handler has
+    // nothing to set and every resize the shipped host receives is `unknown`.
+    var neutral_terminal: NeutralTerminalSource = .{ .pty = &pty, .state = &state };
     var neutral_operations = try neutral_control_plane.HostOperations.init(
         allocator,
         &neutral_registry,
@@ -5582,6 +5652,7 @@ pub fn runHostRole(
         neutral_platform.platform(),
         neutral_evidence.provider(),
         neutral_control_plane.EvidenceClock.system(),
+        neutral_terminal.provider(),
     );
     defer neutral_operations.deinit();
     var neutral_serving: NeutralHostServing = .{

@@ -183,19 +183,31 @@ pub const AppliedResize = struct {
     readback: neutral_host.WindowSize,
 };
 
+/// What the terminal says when it will not apply a revision. It reports the
+/// order IT is in, because the durable record is not authoritative here: a set
+/// that succeeded before its commit failed leaves the record behind the
+/// terminal, and answering from the record would name a revision that is in
+/// force nowhere. `current` is the state that revision left behind, so a caller
+/// retrying the revision the terminal already holds can be answered with the
+/// receipt it should have received the first time.
+pub const TerminalResize = union(enum) {
+    applied: AppliedResize,
+    superseded: AppliedResize,
+};
+
 /// Host-side seam for ordered terminal mutation. Inspection reads evidence
 /// through EvidenceProvider; a mutation needs the terminal itself, which this
 /// control plane deliberately does not own. Optional-null on HostOperations for
 /// the same reason Controller.host is: only the mutating operation needs it.
 pub const TerminalProvider = struct {
     context: *anyopaque,
-    resizeFn: *const fn (*anyopaque, neutral_host.WindowSize, u64) anyerror!AppliedResize,
+    resizeFn: *const fn (*anyopaque, neutral_host.WindowSize, u64) anyerror!TerminalResize,
 
     pub fn resize(
         self: TerminalProvider,
         window: neutral_host.WindowSize,
         revision: u64,
-    ) !AppliedResize {
+    ) !TerminalResize {
         return self.resizeFn(self.context, window, revision);
     }
 };
@@ -920,8 +932,12 @@ pub const HostOperations = struct {
     clock: EvidenceClock,
     scratch: std.heap.ArenaAllocator,
     /// Only `resize` mutates the terminal, so operations assembled purely to
-    /// inspect or terminate are not obliged to carry one they cannot use.
-    terminal: ?TerminalProvider = null,
+    /// inspect or terminate may legitimately carry none. It is a REQUIRED
+    /// init parameter rather than a defaulted field because a defaulted one is
+    /// silently forgettable: the production host omitted it once and every
+    /// resize it served answered `unknown` with nothing red to show for it.
+    /// Passing null is now a visible choice a reviewer can see.
+    terminal: ?TerminalProvider,
 
     pub fn init(
         allocator: std.mem.Allocator,
@@ -930,6 +946,7 @@ pub const HostOperations = struct {
         platform: process_inspector.Platform,
         evidence: EvidenceProvider,
         clock: EvidenceClock,
+        terminal: ?TerminalProvider,
     ) !HostOperations {
         const key = try allocator.dupe(u8, session.key);
         errdefer allocator.free(key);
@@ -944,6 +961,7 @@ pub const HostOperations = struct {
             .evidence = evidence,
             .clock = clock,
             .scratch = std.heap.ArenaAllocator.init(allocator),
+            .terminal = terminal,
         };
     }
 
@@ -994,20 +1012,38 @@ pub const HostOperations = struct {
             allocator,
             "neutral-terminal-provider-unavailable",
         );
-        const applied = terminal.resize(.{
+        const outcome = terminal.resize(.{
             .columns = request.window.columns,
             .rows = request.window.rows,
             .widthPixels = request.window.widthPixels,
             .heightPixels = request.window.heightPixels,
         }, revision) catch |err| switch (err) {
             error.OutOfMemory => return err,
-            // The terminal is the authority on its own revision order. If it
-            // rejects the revision as superseded, that is `stale` carrying the
-            // revision that superseded it, not an opaque failure.
-            error.StaleResizeRevision => return staleResize(allocator, current_revision),
             // A terminal that cannot be set is `unknown`: never a silent
             // success, and never a fabricated readback.
             else => return unknownResize(allocator, @errorName(err)),
+        };
+        const applied = switch (outcome) {
+            .applied => |value| value,
+            // The set landed but its commit did not, so the record fell behind
+            // the terminal. The terminal is the authority on its own order, so
+            // answer from IT: if the revision the caller is retrying is the one
+            // the terminal already holds, that resize DID apply and the caller
+            // is owed the receipt it missed, not a refusal. Repairing the
+            // record below makes the retry idempotent rather than permanently
+            // stuck behind a floor that never advances.
+            .superseded => |current| blk: {
+                // Either way the record is behind the terminal, so repair it
+                // first: inspection answers from the record, and leaving it
+                // behind would keep reporting a geometry the terminal stopped
+                // holding and keep admitting revisions the terminal refuses.
+                _ = try self.registry.update(self.session, .{
+                    .window = current.readback,
+                    .windowRevision = current.revision,
+                });
+                if (current.revision != revision) return staleResize(allocator, current.revision);
+                break :blk current;
+            },
         };
 
         // Commit the READBACK, not the request: a later inspection must report
@@ -1383,14 +1419,24 @@ pub const Controller = struct {
         _ = self.registry.get(request.session) orelse return error.SessionNotFound;
 
         const committed = blk: {
-            var client = self.registry.connect(request.session) catch break :blk null;
+            var client = self.registry.connect(request.session) catch |err| {
+                // Local allocation failure is not host evidence. Reporting it
+                // as an unreachable host would tell the caller something about
+                // the SESSION that only happened inside this process --
+                // the same distinction Controller.inspect makes.
+                if (err == error.OutOfMemory) return err;
+                break :blk null;
+            };
             defer client.deinit();
             var response = client.call(
                 self.allocator,
                 .resize,
                 request.idempotencyKey,
                 payload,
-            ) catch break :blk null;
+            ) catch |err| {
+                if (err == error.OutOfMemory) return err;
+                break :blk null;
+            };
             defer response.deinit();
             if (!response.accepted) break :blk null;
             break :blk try self.allocator.dupe(u8, response.payload);
@@ -1864,6 +1910,7 @@ fn runProofHost(root: []const u8, session: neutral_host.SessionRef, ready_fd: st
         real_platform.platform(),
         evidence.provider(),
         EvidenceClock.system(),
+        null,
     );
     defer operations.deinit();
 
@@ -2156,6 +2203,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
         real_platform.platform(),
         evidence_a.provider(),
         EvidenceClock.system(),
+        null,
     );
     defer operations_a.deinit();
     const response_a = try operations_a.handler().call(.{
@@ -2249,6 +2297,7 @@ test "pending termination re-execution never signals a start-token-mismatched pi
         real_platform.platform(),
         evidence_b.provider(),
         EvidenceClock.system(),
+        null,
     );
     defer operations_b.deinit();
     const response_b = try operations_b.handler().call(.{
@@ -2372,26 +2421,41 @@ const DivergentTerminal = struct {
     ordered_at: u64 = 40,
     fail_with: ?anyerror = null,
     calls: usize = 0,
+    /// When set, the terminal reports itself already at this revision instead
+    /// of applying, exactly as a terminal does after a set whose commit failed.
+    holds_revision: ?u64 = null,
+    held_readback: ?neutral_host.WindowSize = null,
+    applied_revision: ?u64 = null,
 
     fn resize(
         context: *anyopaque,
         window: neutral_host.WindowSize,
         revision: u64,
-    ) anyerror!AppliedResize {
+    ) anyerror!TerminalResize {
         const self: *DivergentTerminal = @ptrCast(@alignCast(context));
         self.calls += 1;
         if (self.fail_with) |err| return err;
+        const readback: neutral_host.WindowSize = .{
+            .columns = window.columns - 1,
+            .rows = window.rows - 1,
+            .widthPixels = window.widthPixels,
+            .heightPixels = window.heightPixels,
+        };
+        // Standing in for a terminal whose own order has already passed this
+        // revision, which is what a set that outlived its failed commit leaves
+        // behind. It answers with the order IT is in.
+        if (self.holds_revision) |held| return .{ .superseded = .{
+            .revision = held,
+            .orderedAt = self.ordered_at,
+            .readback = self.held_readback orelse readback,
+        } };
         self.ordered_at += 1;
-        return .{
+        self.applied_revision = revision;
+        return .{ .applied = .{
             .revision = revision,
             .orderedAt = self.ordered_at,
-            .readback = .{
-                .columns = window.columns - 1,
-                .rows = window.rows - 1,
-                .widthPixels = window.widthPixels,
-                .heightPixels = window.heightPixels,
-            },
-        };
+            .readback = readback,
+        } };
     }
 
     fn provider(self: *DivergentTerminal) TerminalProvider {
@@ -2448,6 +2512,7 @@ const ResizeProofFixture = struct {
             platform.platform(),
             self.evidence.provider(),
             EvidenceClock.system(),
+            null,
         );
         // The registry recycles record storage, so bind to the copy the
         // operations made rather than to the reserved record's slices.
@@ -2592,11 +2657,72 @@ test "neutral resize reports an unusable terminal as unknown and mutates nothing
     const record = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
     try std.testing.expectEqual(@as(u64, 0), record.windowRevision);
 
-    // A terminal that reports its own supersession is `stale`, not `unknown`:
-    // the outcome is a revision fact, not an opaque failure.
-    terminal.fail_with = error.StaleResizeRevision;
+    // A terminal that reports its own supersession is a revision fact, not an
+    // opaque failure, and the record is repaired to the order the terminal is
+    // actually in rather than left behind admitting revisions it refuses.
+    terminal.fail_with = null;
+    terminal.holds_revision = 9;
     const superseded = try fixture.call(try fixture.request(allocator, 120, "2"));
-    try std.testing.expectEqualStrings("stale", try resizeState(allocator, superseded.payload));
+    const Stale = struct { state: []const u8, currentRevision: []const u8 };
+    const stale = try std.json.parseFromSliceLeaky(Stale, allocator, superseded.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    try std.testing.expectEqualStrings("stale", stale.state);
+    try std.testing.expectEqualStrings("9", stale.currentRevision);
+    const repaired = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
+    try std.testing.expectEqual(@as(u64, 9), repaired.windowRevision);
+}
+
+test "neutral resize reconciles a set whose commit never landed" {
+    // owen's repro: the terminal applied revision 5 and the commit that should
+    // have recorded it failed, leaving the record at 0. The retry used to pass
+    // the stale record floor, be refused by the terminal, and be answered
+    // `stale` with currentRevision "0" -- a revision in force NOWHERE, for a
+    // resize that had in fact applied.
+    var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
+    defer arena.deinit();
+    const allocator = arena.allocator();
+    var fixture: ResizeProofFixture = .{};
+    try fixture.open(std.testing.allocator);
+    defer fixture.close();
+    var terminal: DivergentTerminal = .{
+        .holds_revision = 5,
+        .held_readback = .{ .columns = 119, .rows = 23, .widthPixels = 800, .heightPixels = 480 },
+    };
+    fixture.operations.terminal = terminal.provider();
+    const record_before = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
+    try std.testing.expectEqual(@as(u64, 0), record_before.windowRevision);
+
+    const response = try fixture.call(try fixture.request(allocator, 120, "5"));
+    const Applied = struct {
+        state: []const u8,
+        revision: []const u8,
+        readback: WireWindowSize,
+    };
+    const applied = try std.json.parseFromSliceLeaky(Applied, allocator, response.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    // The caller is owed the receipt it missed, not a refusal for a resize that
+    // did apply.
+    try std.testing.expectEqualStrings("applied", applied.state);
+    try std.testing.expectEqualStrings("5", applied.revision);
+    try std.testing.expectEqual(@as(u32, 119), applied.readback.columns);
+
+    // And the record is repaired, so the floor no longer trails the terminal.
+    const repaired = fixture.registry.get(fixture.session) orelse return error.SessionMissing;
+    try std.testing.expectEqual(@as(u64, 5), repaired.windowRevision);
+    try std.testing.expectEqual(@as(u32, 119), repaired.window.columns);
+
+    // A terminal genuinely AHEAD of the request is still stale, and reports its
+    // own number rather than the record's.
+    terminal.holds_revision = 8;
+    const ahead = try fixture.call(try fixture.request(allocator, 120, "6"));
+    const Stale = struct { state: []const u8, currentRevision: []const u8 };
+    const stale = try std.json.parseFromSliceLeaky(Stale, allocator, ahead.payload, .{
+        .ignore_unknown_fields = true,
+    });
+    try std.testing.expectEqualStrings("stale", stale.state);
+    try std.testing.expectEqualStrings("8", stale.currentRevision);
 }
 
 test "neutral resize is fenced by the session reference it names" {

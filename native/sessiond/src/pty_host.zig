@@ -224,6 +224,7 @@ pub const PtyHost = struct {
     input_seq: u64 = 0,
     operation_sequence: u64 = 0,
     resize_revision: u64 = 0,
+    resize_ordered_at: u64 = 0,
     write_queue: std.ArrayList(u8) = .{},
     read_buf: []u8 = &[_]u8{},
     closed: bool = false,
@@ -577,6 +578,7 @@ pub const PtyHost = struct {
         const readback = geometryFromWinsize(applied);
         self.geometry = readback;
         self.resize_revision = revision;
+        self.resize_ordered_at = ordered_at;
         self.operation_sequence = ordered_at;
         return .{
             .revision = revision,
@@ -591,6 +593,14 @@ pub const PtyHost = struct {
 
     pub fn resizeRevision(self: *const PtyHost) u64 {
         return self.resize_revision;
+    }
+
+    /// The ordered position the CURRENT revision was applied at. Retained
+    /// separately from `operation_sequence`, which later input advances: a
+    /// receipt reconstructed from the live sequence would report a position the
+    /// resize never occupied.
+    pub fn resizeOrderedAt(self: *const PtyHost) u64 {
+        return self.resize_ordered_at;
     }
 
     pub fn availableWriteCredit(self: *const PtyHost) usize {
