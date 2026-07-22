@@ -45,6 +45,17 @@ export interface SessiondAgentInput {
     text: string,
     options: Readonly<{ messageId: string }>,
   ): Promise<SessiondInjectResult>;
+  /**
+   * Send raw keys to a session parked on a vendor prompt. Not a message: no
+   * bracketed paste and no submit, because the bytes ARE the keystroke the
+   * widget is waiting for. Absent on hosts that predate #102, which means the
+   * decision cannot be delivered — never that it was.
+   */
+  injectKeys?(
+    agent: AgentRecord,
+    keys: string,
+    options: Readonly<{ transactionId: string }>,
+  ): Promise<SessiondInjectResult>;
 }
 
 /** The broker RPCs this injector needs. */
@@ -78,6 +89,32 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     text: string,
     options: Readonly<{ messageId: string }>,
   ): Promise<SessiondInjectResult> {
+    return this.submit(
+      agent,
+      new TextEncoder().encode(
+        BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
+      ),
+      options.messageId,
+    );
+  }
+
+  async injectKeys(
+    agent: AgentRecord,
+    keys: string,
+    options: Readonly<{ transactionId: string }>,
+  ): Promise<SessiondInjectResult> {
+    return this.submit(
+      agent,
+      new TextEncoder().encode(keys),
+      options.transactionId,
+    );
+  }
+
+  private async submit(
+    agent: AgentRecord,
+    bytes: Uint8Array,
+    transactionId: string,
+  ): Promise<SessiondInjectResult> {
     const locator = requireSessiondAgentLocator(agent);
     // TWO SessionRef incarnation semantics meet here, and confusing them is
     // exactly how the #68 live proof failed silently on every tick:
@@ -109,7 +146,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
         reason: `session lifecycle is ${inspection.lifecycle}, not running`,
       };
     }
-    const first = await this.submitOnce(locator, inspection, text, options);
+    const first = await this.submitOnce(locator, inspection, bytes, transactionId);
     if (first.outcome !== "declined") return first;
     const mode = first.reason.includes(HUMAN_ORPHANED)
       ? "orphaned"
@@ -117,7 +154,14 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
       ? "held"
       : null;
     if (mode === null) return first;
-    return this.resolveHumanClaim(locator, inspection, text, options, first.reason, mode);
+    return this.resolveHumanClaim(
+      locator,
+      inspection,
+      bytes,
+      transactionId,
+      first.reason,
+      mode,
+    );
   }
 
   /**
@@ -129,8 +173,8 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
   private async resolveHumanClaim(
     locator: ReturnType<typeof requireSessiondAgentLocator>,
     inspection: SessionInspection,
-    text: string,
-    options: Readonly<{ messageId: string }>,
+    bytes: Uint8Array,
+    transactionId: string,
     declineReason: string,
     mode: OrphanDiscardMode,
   ): Promise<SessiondInjectResult> {
@@ -153,7 +197,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     const recovery = discard.state === "discarded"
       ? `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`
       : `held human claim (owner ${discard.priorOwnerViewerId}) preempted for delivery; retrying`;
-    const retried = await this.submitOnce(locator, inspection, text, options);
+    const retried = await this.submitOnce(locator, inspection, bytes, transactionId);
     if (retried.outcome === "declined") {
       return { outcome: "declined", reason: `${recovery}; retry declined: ${retried.reason}` };
     }
@@ -164,8 +208,8 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
   private async submitOnce(
     locator: ReturnType<typeof requireSessiondAgentLocator>,
     inspection: SessionInspection,
-    text: string,
-    options: Readonly<{ messageId: string }>,
+    bytes: Uint8Array,
+    transactionId: string,
   ): Promise<SessiondInjectResult> {
     const session = {
       key: locator.sessionId,
@@ -181,14 +225,11 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
 
     const client = await this.attach({ locator, grant, geometry, viewerId: this.viewerId });
     try {
-      const bytes = new TextEncoder().encode(
-        BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
-      );
       const result = await client.injectAutomated({
         session,
         writer: this.viewerId,
-        transactionId: options.messageId,
-        idempotencyKey: options.messageId,
+        transactionId,
+        idempotencyKey: transactionId,
         bytes,
         leaseMilliseconds: CLAIM_LEASE_MS,
       });

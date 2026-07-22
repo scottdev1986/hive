@@ -165,6 +165,44 @@ describe("hive event", () => {
     });
   });
 
+  // Verbatim PermissionRequest payload from codex-cli 0.145.0, captured from a
+  // real session parked on its approval popup. #102: without the command this
+  // carries, the bridged approval reads "Approval requested", which names
+  // neither what the agent wants to do nor how risky it is.
+  test("captures what a codex approval popup is asking about", () => {
+    expect(parseHookStdin(JSON.stringify({
+      session_id: "019f8741-d7c3-74b0-b088-12b03d9868b1",
+      turn_id: "019f8741-d8b3-7471-8eed-49303c15c44e",
+      transcript_path: "/tmp/rollout.jsonl",
+      cwd: "/repo",
+      hook_event_name: "PermissionRequest",
+      model: "gpt-5.6-sol",
+      permission_mode: "default",
+      tool_name: "Bash",
+      tool_input: {
+        command: "curl -sS -o /dev/null https://example.com",
+        description: "Do you want to allow this exact curl command?",
+      },
+    }))).toEqual({
+      toolSessionId: "019f8741-d7c3-74b0-b088-12b03d9868b1",
+      description: "Bash: curl -sS -o /dev/null https://example.com",
+    });
+
+    // A non-shell tool has no command, so the vendor's own description is the
+    // thing being decided.
+    expect(parseHookStdin(JSON.stringify({
+      hook_event_name: "PermissionRequest",
+      tool_name: "WebFetch",
+      tool_input: { description: "Fetch https://example.com" },
+    }))).toEqual({ description: "WebFetch: Fetch https://example.com" });
+
+    // A lifecycle payload carries no tool, so it contributes no description.
+    expect(parseHookStdin(JSON.stringify({
+      session_id: "abc123",
+      hook_event_name: "SessionStart",
+    }))).toEqual({ toolSessionId: "abc123" });
+  });
+
   test("carries the notification type onto the event", () => {
     expect(
       buildHookEvent("notification", {

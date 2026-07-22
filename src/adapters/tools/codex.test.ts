@@ -168,6 +168,9 @@ const expectedHookOverrides = (worktreePath: string): string[] =>
   [
     ["SessionStart", "session-start"],
     ["UserPromptSubmit", "turn-start"],
+    // #102: the vendor's approval popup is the one blocking state no other
+    // hook reports, so it must ride the same override channel as the rest.
+    ["PermissionRequest", "approval-request"],
     ["PostToolUse", "tool-boundary"],
     ["Stop", "turn-end"],
   ].flatMap(([event, kind]) => [

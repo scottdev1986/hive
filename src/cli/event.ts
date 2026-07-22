@@ -83,13 +83,36 @@ export async function postHookEvent(
 // one merely idle. Dropping it here is what let a blocked agent be reported as
 // "working" indefinitely: the hook fired, said exactly what was wrong, and Hive
 // kept only the session id.
-export function parseHookStdin(
-  text: string,
-): Pick<HookEventOptions, "toolSessionId" | "notificationType"> {
-  const captured: Pick<
-    HookEventOptions,
-    "toolSessionId" | "notificationType"
-  > = {};
+export type CapturedHookStdin = Pick<
+  HookEventOptions,
+  "toolSessionId" | "notificationType" | "description"
+>;
+
+/**
+ * What a Codex `PermissionRequest` payload is asking about, as the approval
+ * description an orchestrator has to decide on. Codex 0.145.0 sends the tool
+ * and its input (`tool_input.command` for a shell approval, otherwise the
+ * vendor's own one-line description); without it the bridged approval reads
+ * "Approval requested", which names neither the agent's intent nor its risk.
+ */
+function approvalDescription(parsed: object): string | undefined {
+  if (!("tool_name" in parsed) || typeof parsed.tool_name !== "string") {
+    return undefined;
+  }
+  const input = "tool_input" in parsed && typeof parsed.tool_input === "object" &&
+      parsed.tool_input !== null
+    ? parsed.tool_input as Record<string, unknown>
+    : {};
+  const detail = typeof input.command === "string"
+    ? input.command
+    : typeof input.description === "string"
+    ? input.description
+    : null;
+  return detail === null ? parsed.tool_name : `${parsed.tool_name}: ${detail}`;
+}
+
+export function parseHookStdin(text: string): CapturedHookStdin {
+  const captured: CapturedHookStdin = {};
   try {
     const parsed: unknown = JSON.parse(text);
     if (typeof parsed !== "object" || parsed === null) return captured;
@@ -106,6 +129,8 @@ export function parseHookStdin(
     ) {
       captured.notificationType = parsed.notification_type;
     }
+    const description = approvalDescription(parsed);
+    if (description !== undefined) captured.description = description;
   } catch {
     // Anything that is not the documented hook JSON is simply not a capture.
   }
@@ -125,7 +150,7 @@ const processStdinSource: HookStdinSource = {
 export async function readHookStdin(
   source: HookStdinSource = processStdinSource,
   timeoutMs = 750,
-): Promise<Pick<HookEventOptions, "toolSessionId">> {
+): Promise<CapturedHookStdin> {
   if (source.isTTY) {
     return {};
   }

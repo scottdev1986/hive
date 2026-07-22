@@ -69,6 +69,26 @@ export type CodexAgentConfigOptions = Pick<
 
 export const CODEX_NOTIFY_SCRIPT = "hive-notify.sh";
 
+/**
+ * The keystrokes codex's own approval popup advertises, and the only way a
+ * Hive approval decision reaches a TUI-hosted session: there is no app-server
+ * request to resolve, so the answer has to arrive as the key the widget is
+ * waiting for.
+ *
+ * Measured against codex-cli 0.145.0 by driving a real session to an
+ * on-request approval in a pty. The popup renders:
+ *   1. Yes, proceed (y)
+ *   3. No, and tell Codex what to do differently (esc)
+ * and both keys were sent and observed dismissing the prompt (the vendor's own
+ * "Action Required" terminal title cleared, and the turn continued). Escape
+ * declines without opening a text field — the model simply asks again, which
+ * bridges as a fresh approval rather than a second dead end.
+ */
+export const CODEX_TUI_APPROVAL_KEYS = {
+  approve: "y",
+  deny: "\u001b",
+} as const;
+
 /** The env var codex reads the agent's bearer from (bearer_token_env_var).
  * Populated only inside the agent's tmux launch shell, never in any argv. */
 export const CODEX_CAPABILITY_TOKEN_ENV = "HIVE_CAPABILITY_TOKEN";
@@ -193,6 +213,14 @@ function buildCodexConfigArgs(
     hookOverride("SessionStart", `${notifyPath} session-start`),
     "-c",
     hookOverride("UserPromptSubmit", `${notifyPath} turn-start`),
+    "-c",
+    // The vendor's own "I am parked on an approval popup" event. Without it a
+    // TUI-hosted codex agent that hits an on-request approval is invisible:
+    // hive_approvals stays empty, no tool boundary is ever reached, and every
+    // control surface is a dead end at once (#102). Measured against codex-cli
+    // 0.145.0: the hook fires the moment the popup renders and its stdin
+    // carries the tool and command being decided.
+    hookOverride("PermissionRequest", `${notifyPath} approval-request`),
     "-c",
     hookOverride("PostToolUse", `${notifyPath} tool-boundary`),
     "-c",

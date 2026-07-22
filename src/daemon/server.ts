@@ -128,6 +128,7 @@ import {
 } from "./delivery";
 import { OrchestratorRootDelivery } from "./orchestrator-root-delivery";
 import { readLiveGrokModel } from "../adapters/tools/grok";
+import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/tools/codex";
 import {
   clampPct,
   type ClaudeTelemetryReader,
@@ -679,6 +680,10 @@ export class HiveDaemon {
   private readonly modelInventory: HiveDaemonOptions["modelInventory"];
   private routingPolicy: RoutingPolicyStore | null = null;
   private readonly codexControl: HiveDaemonOptions["codexControl"];
+  /** The same daemon→session input wire delivery uses, kept here because an
+   * approval decision for a TUI-hosted vendor session is a keystroke, not a
+   * message (#102). */
+  private readonly sessiondInput: SessiondAgentInput;
   private readonly autonomy: AutonomyControl | undefined;
   private readonly selectionPreferences: SelectionPreferenceControl | undefined;
   private readonly graphify: GraphifyService | undefined;
@@ -785,6 +790,17 @@ export class HiveDaemon {
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
     this.codexControl = options.codexControl;
+    this.sessiondInput = options.sessiondInput ??
+      new SessiondViewerAgentInput(
+        landedTerminalHost,
+        `hive-daemon:${hiveInstanceSuffix()}`,
+        undefined,
+        // §22 orphan discard lives on the real sessiond client only; an
+        // injected test host keeps the pre-fix decline-and-queue behaviour.
+        landedTerminalHost instanceof SessiondHost
+          ? (locator, mode) => landedTerminalHost.discardInputOrphan(locator, mode)
+          : undefined,
+      );
     this.autonomy = options.autonomy;
     this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
@@ -874,17 +890,7 @@ export class HiveDaemon {
       // #68/#16 interim: daemon→idle-sessiond-agent input over the neutral
       // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
       // the viewer wire is the interim addition.
-      options.sessiondInput ??
-        new SessiondViewerAgentInput(
-          landedTerminalHost,
-          `hive-daemon:${hiveInstanceSuffix()}`,
-          undefined,
-          // §22 orphan discard lives on the real sessiond client only; an
-          // injected test host keeps the pre-fix decline-and-queue behaviour.
-          landedTerminalHost instanceof SessiondHost
-            ? (locator, mode) => landedTerminalHost.discardInputOrphan(locator, mode)
-            : undefined,
-        ),
+      this.sessiondInput,
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -2672,6 +2678,69 @@ export class HiveDaemon {
       await this.quota?.cancel(record.controlQuotaReservationId);
     }
     return message;
+  }
+
+  /**
+   * Deliver an approval decision to a vendor session that is parked on its own
+   * TUI prompt, and report whether it actually landed.
+   *
+   * A TUI-hosted codex agent has no app-server request to resolve: the vendor
+   * is sitting on its approval popup, and the only thing that advances it is
+   * the keystroke that popup advertises. Without this an approved request left
+   * the agent exactly as blocked as a denied one — #102, where the approval
+   * queue, steer, urgent, and the pane were dead ends simultaneously and the
+   * agent had to be killed with committed work stranded.
+   *
+   * Never claims delivery it did not make: a host with no key channel, or a
+   * declined injection, returns false and says why on the daemon's stderr.
+   */
+  private async answerVendorPrompt(
+    approval: Approval,
+    approved: boolean,
+  ): Promise<boolean> {
+    // Only the vendor's own tool prompt is answerable this way; cost-consent
+    // and land-rearm are Hive's own approvals, with nothing waiting at a pane.
+    if (approval.kind !== "tool-permission") return false;
+    const agent = this.db.getAgentByName(approval.agentName);
+    if (agent === null || agent.tool !== "codex") return false;
+    // A human can answer the popup at the pane, and the following tool
+    // boundary is what proves it: that observation moves the agent out of
+    // awaiting-approval. Pressing a key after it would type into a composer
+    // the model is using.
+    if (agent.status !== "awaiting-approval") return false;
+    // The app-server driver answers over its own protocol; sending a keystroke
+    // as well would answer the NEXT prompt too.
+    if (this.codexControl?.hasAgent(agent.name) === true) return false;
+    if (agent.sessionLocator?.hostKind !== "sessiond") return false;
+    const keys = approved
+      ? CODEX_TUI_APPROVAL_KEYS.approve
+      : CODEX_TUI_APPROVAL_KEYS.deny;
+    if (this.sessiondInput.injectKeys === undefined) {
+      console.error(
+        `Hive resolved approval ${approval.id} but this session host cannot ` +
+          `send keys, so ${agent.name} is still waiting at its vendor prompt`,
+      );
+      return false;
+    }
+    try {
+      const result = await this.sessiondInput.injectKeys(agent, keys, {
+        transactionId: `approval:${approval.id}`,
+      });
+      if (result.outcome === "declined") {
+        console.error(
+          `Hive could not answer ${agent.name}'s vendor approval prompt: ${result.reason}`,
+        );
+        return false;
+      }
+      return true;
+    } catch (error) {
+      console.error(
+        `Hive failed to answer ${agent.name}'s vendor approval prompt: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      return false;
+    }
   }
 
   async queueCodexApproval(
@@ -4796,11 +4865,18 @@ export class HiveDaemon {
         approval.id,
         decision === "approve",
       );
+      const answered = await this.answerVendorPrompt(
+        approval,
+        decision === "approve",
+      );
       const agent = this.db.getAgentByName(approval.agentName);
       if (agent?.status === "awaiting-approval") {
         this.db.upsertAgent({
           ...agent,
-          status: this.codexControl?.isTurnActive(approval.agentName)
+          // An answered vendor prompt hands the turn straight back to the
+          // model, so the agent is working, not idle: calling it idle invites
+          // the wake loop to paste queued mail into a busy pane.
+          status: answered || this.codexControl?.isTurnActive(approval.agentName)
             ? "working"
             : "idle",
         });
