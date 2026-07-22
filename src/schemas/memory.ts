@@ -127,6 +127,13 @@ export const MemoryWriteInputSchema = z.strictObject({
 });
 export type MemoryWriteInput = z.input<typeof MemoryWriteInputSchema>;
 
+export const MemorySimilarCandidateSchema = z.strictObject({
+  scope: MemoryScopeSchema,
+  id: z.string().min(1),
+  title: z.string().min(1),
+});
+export type MemorySimilarCandidate = z.infer<typeof MemorySimilarCandidateSchema>;
+
 export const MemoryWriteResultSchema = z.strictObject({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
@@ -137,6 +144,7 @@ export const MemoryWriteResultSchema = z.strictObject({
   source: MemorySourceSchema,
   status: MemoryVerificationStatusSchema,
   verified: IsoDateSchema.optional(),
+  similarCandidates: z.array(MemorySimilarCandidateSchema).optional(),
 }).superRefine((input, context) => {
   const verificationError = verificationDateError(input);
   if (verificationError !== null) {
@@ -152,6 +160,7 @@ export type MemoryWriteResult = z.infer<typeof MemoryWriteResultSchema>;
 export function compactMemoryWriteResult(
   fact: MemoryFact,
   rawPath: string,
+  similarCandidates: MemorySimilarCandidate[] = [],
 ): MemoryWriteResult {
   return {
     id: fact.id,
@@ -163,6 +172,9 @@ export function compactMemoryWriteResult(
     source: fact.source,
     status: fact.status,
     ...(fact.verified !== undefined ? { verified: fact.verified } : {}),
+    // Advisory only (dedup layer 2): omitted when empty so a clean write's
+    // response stays exactly as compact as before.
+    ...(similarCandidates.length > 0 ? { similarCandidates } : {}),
   };
 }
 

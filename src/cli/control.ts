@@ -412,6 +412,12 @@ export async function writeMemoryCli(input: MemoryWriteInput): Promise<void> {
     `wrote [${fact.scope}/${fact.topic}] ${fact.id} — ${fact.path}\n` +
       `raw observation: ${fact.rawPath}`,
   );
+  for (const candidate of fact.similarCandidates ?? []) {
+    console.log(
+      `similar: [${candidate.scope}] ${candidate.id} — ${candidate.title} ` +
+        `(re-issue as an update to that id if this duplicates it)`,
+    );
+  }
 }
 
 export async function readMemoryCli(

@@ -5324,13 +5324,23 @@ export class HiveDaemon {
     server.registerTool("memory_write", {
       title: "Write a Hive memory observation and article",
       description:
-        "Record one immutable raw observation and create or update its compiled memory article. The schema is enforced here: topic, source provenance, evidence, verification status, and supersedes relationships are required. Search first; update a matching id instead of adding a duplicate. For a correction, pass the corrected article id in supersedes, make body state current truth, and preserve prior reasoning through the raw history. status=verified requires verified=YYYY-MM-DD; conflicted means the article must describe the unresolved disagreement. Repo scope lives under .hive/memory/{raw,wiki}; global under ~/.hive/memory/{raw,wiki}. Writes are serialized, rebuild wiki/index.md, append wiki/log.md, and immediately update compiled-article search.",
+        "Record one immutable raw observation and create or update its compiled memory article. The schema is enforced here: topic, source provenance, evidence, verification status, and supersedes relationships are required. Search first; update a matching id instead of adding a duplicate. A normalized-title duplicate under a different id is rejected — re-issue as an update to the id named in the error (id set, supersedes including it). A successful write may return similarCandidates: near-duplicate articles to resolve with a follow-up update or merge. For a correction, pass the corrected article id in supersedes, make body state current truth, and preserve prior reasoning through the raw history. status=verified requires verified=YYYY-MM-DD; conflicted means the article must describe the unresolved disagreement. Repo scope lives under .hive/memory/{raw,wiki}; global under ~/.hive/memory/{raw,wiki}. Writes are serialized, rebuild wiki/index.md, append wiki/log.md, and immediately update compiled-article search.",
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
       const written = await this.writeMemoryFact(input);
+      // Dedup layer 2 (HiveMemory plan D1): advisory FTS bm25 candidates over
+      // the index writeMemoryFact just upserted, so the freshly written
+      // article is searchable here. The write already succeeded — candidates
+      // only tell the calling agent what to resolve with a follow-up update.
+      const similarCandidates = this.memory.search(written.title, { limit: 4 })
+        .filter((result) =>
+          !(result.scope === written.scope && result.id === written.id)
+        )
+        .slice(0, 3)
+        .map(({ scope, id, title }) => ({ scope, id, title }));
       return toolResult(
-        compactMemoryWriteResult(written, written.rawPath),
+        compactMemoryWriteResult(written, written.rawPath, similarCandidates),
         "fact",
       );
     });
@@ -5352,7 +5362,7 @@ export class HiveDaemon {
     server.registerTool("memory_delete", {
       title: "Delete a compiled Hive memory article",
       description:
-        "Delete one compiled article and remove it from the index. Immutable raw observations remain as audit evidence.",
+        "Delete one compiled article and remove it from the index. Refused while another article still lists this id in supersedes — update or delete the referencing article first. Immutable raw observations remain as audit evidence.",
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
       this.authorizeTool(capability, "memory_delete", "memory:delete");

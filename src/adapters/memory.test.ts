@@ -160,6 +160,79 @@ describe("raw observations and compiled articles", () => {
     expect(await readFile(written.rawPath, "utf8")).toContain("Observation");
   });
 
+  test("a normalized-title duplicate under a different id is rejected with an update pointer", async () => {
+    const root = await makeRoot();
+    await writeMemoryFact(root, input({
+      id: "quota-token-spend",
+      title: "Quota: Token Spend!",
+    }));
+
+    await expect(writeMemoryFact(root, input({
+      id: "spend-notes",
+      title: "quota token spend",
+      body: "The same fact, written twice.",
+    }))).rejects.toThrow(
+      'Duplicate memory article title: [repo] quota-token-spend already covers ' +
+        '"Quota: Token Spend!". Re-issue as an update to that id: write with ' +
+        'id "quota-token-spend" and supersedes: ["quota-token-spend"].',
+    );
+    // Nothing was written for the rejected duplicate.
+    expect(await readMemoryFact(root, "repo", "spend-notes")).toBeNull();
+
+    // Re-issued as an update to the named id, the write goes through.
+    const updated = await writeMemoryFact(root, input({
+      id: "quota-token-spend",
+      title: "quota token spend",
+      body: "The same fact, corrected in place.",
+      supersedes: ["quota-token-spend"],
+    }));
+    expect(updated.id).toBe("quota-token-spend");
+    expect((await readMemoryFact(root, "repo", "quota-token-spend"))?.body)
+      .toBe("The same fact, corrected in place.");
+  });
+
+  test("genuinely different titles do not collide", async () => {
+    const root = await makeRoot();
+    await writeMemoryFact(root, input({
+      id: "quota-token-spend",
+      title: "Quota token spend",
+    }));
+    const other = await writeMemoryFact(root, input({
+      id: "quota-spend-policy",
+      title: "Quota spend policy",
+    }));
+    expect(other.id).toBe("quota-spend-policy");
+  });
+
+  test("delete is refused while another article's supersedes points at the target", async () => {
+    const root = await makeRoot();
+    await writeMemoryFact(root, input({ id: "old-fact", title: "Old fact" }));
+    await writeMemoryFact(root, input({
+      id: "new-fact",
+      title: "New fact",
+      supersedes: ["old-fact"],
+    }));
+    // The superseding write removed the old article; re-create it so a live
+    // supersedes pointer (new-fact -> old-fact) targets a live article.
+    await writeMemoryFact(root, input({ id: "old-fact", title: "Old fact" }));
+
+    await expect(deleteMemoryFact(root, "repo", "old-fact")).rejects.toThrow(
+      "Cannot delete memory article [repo] old-fact: still referenced in " +
+        "supersedes by [repo] new-fact",
+    );
+    expect(await readMemoryFact(root, "repo", "old-fact")).not.toBeNull();
+
+    // Once the referencing article is itself superseded away, the pointer is
+    // gone and the delete goes through.
+    await writeMemoryFact(root, input({
+      id: "newest-fact",
+      title: "Newest fact",
+      supersedes: ["new-fact"],
+    }));
+    expect(await deleteMemoryFact(root, "repo", "old-fact")).toBe(true);
+    expect(await readMemoryFact(root, "repo", "old-fact")).toBeNull();
+  });
+
   test("validates ids before resolving filesystem paths", async () => {
     const root = await makeRoot();
     await expect(readMemoryFact(root, "repo", "../escape"))

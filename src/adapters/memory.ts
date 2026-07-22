@@ -64,6 +64,17 @@ function wikiRoot(root: string, scope: MemoryScope): string {
   return join(scopeRoot(root, scope), "wiki");
 }
 
+// Dedup layer 1 (HiveMemory plan D1) matches on this, not on the raw title:
+// case-folded, every non-alphanumeric run collapsed to one dash, trimmed.
+// Unlike slugify it never truncates, so titles differing only past the slug
+// cutoff still collide.
+function normalizeTitle(title: string): string {
+  return title
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "");
+}
+
 function slugify(value: string, max = 40): string {
   const slug = value
     .toLowerCase()
@@ -366,6 +377,25 @@ export async function writeMemoryFact(
   }
   validateMemoryId(id);
 
+  // Dedup layer 1 (HiveMemory plan D1): a normalized-title match under a
+  // different id is a duplicate fact, not a new article. Checked against
+  // on-disk articles, never the FTS index, which may be stale. A same-id
+  // match falls through to the normal update path below, and an id this
+  // write supersedes away stops colliding the moment the write lands.
+  const normalizedTitle = normalizeTitle(input.title);
+  const collision = (await discoverMemoryFacts(root, input.scope)).find(
+    (fact) =>
+      fact.id !== id && !input.supersedes.includes(fact.id) &&
+      normalizeTitle(fact.title) === normalizedTitle,
+  );
+  if (collision !== undefined) {
+    throw new Error(
+      `Duplicate memory article title: [${input.scope}] ${collision.id} ` +
+        `already covers "${collision.title}". Re-issue as an update to that ` +
+        `id: write with id "${collision.id}" and supersedes: ["${collision.id}"].`,
+    );
+  }
+
   const existing = await findMemoryFact(root, input.scope, id);
   if (existing !== null && existing.topic !== input.topic) {
     throw new Error(
@@ -436,6 +466,20 @@ export async function deleteMemoryFact(
   validateMemoryId(id);
   const fact = await findMemoryFact(root, scope, id);
   if (fact === null) return false;
+  // Deleting an article another article still supersedes would dangle a
+  // provenance pointer: the supersession chain is how readers trace current
+  // truth back through its raw evidence.
+  // TODO(#18): also check WorkManifest references when the manifest store lands
+  const blockers = (await discoverMemoryFacts(root, scope)).filter(
+    (other) => other.id !== id && other.supersedes.includes(id),
+  );
+  if (blockers.length > 0) {
+    throw new Error(
+      `Cannot delete memory article [${scope}] ${id}: still referenced in ` +
+        `supersedes by ${blockers.map((other) => `[${scope}] ${other.id}`).join(", ")}. ` +
+        `Update or delete the referencing article first.`,
+    );
+  }
   await rm(fact.path);
   await rebuildScopeIndex(root, scope);
   await appendLog(root, scope, todayIsoDate(), `delete | ${fact.title}`);

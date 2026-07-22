@@ -444,6 +444,68 @@ describe("memory MCP tools", () => {
     }
   });
 
+  test("memory_write returns advisory FTS similar-candidates for near-duplicates", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      tmux: new NoopTmux(),
+      repoRoot,
+    });
+    const client = await connectedClient(daemon);
+    try {
+      // The first write has nothing to collide with: no candidates key.
+      const first = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: validWrite({
+          id: "quota-token-spend-limits",
+          title: "Quota token spend limits",
+          body: "Provider caps reset at midnight UTC.",
+        }),
+      })) as Record<string, unknown>;
+      expect(first.similarCandidates).toBeUndefined();
+
+      // A near-duplicate: different normalized title (layer 1 lets it
+      // through), overlapping terms — the write succeeds and the lookalike
+      // comes back as an advisory candidate.
+      const second = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: validWrite({
+          title: "Quota token spend",
+          body: "How much each provider lets us burn.",
+        }),
+      })) as {
+        id: string;
+        similarCandidates?: Array<{ scope: string; id: string; title: string }>;
+      };
+      expect(second.id).toBe("quota-token-spend");
+      expect(second.similarCandidates).toContainEqual({
+        scope: "repo",
+        id: "quota-token-spend-limits",
+        title: "Quota token spend limits",
+      });
+      // The article itself is never its own candidate.
+      expect(second.similarCandidates!.map((candidate) => candidate.id))
+        .not.toContain("quota-token-spend");
+
+      // A write with no lookalikes carries no candidates.
+      const clean = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: validWrite({
+          title: "Zebra delivery protocol",
+          body: "Entirely unrelated to quotas.",
+        }),
+      })) as Record<string, unknown>;
+      expect(clean.similarCandidates).toBeUndefined();
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+
   test("memory_reindex rebuilds the search index from files edited outside the daemon", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
