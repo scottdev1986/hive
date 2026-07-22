@@ -275,6 +275,110 @@ describe("spawn index", () => {
     expect(Math.ceil(built.length / 4)).toBeLessThan(900);
   });
 
+  test("an old pitfall outranks fresh articles within the cap", async () => {
+    const root = await makeRoot();
+    for (let index = 0; index < 35; index += 1) {
+      await writeMemoryFact(root, input({
+        id: `fresh-${index}`,
+        title: `Fresh finding ${index}`,
+      }));
+    }
+    await writeMemoryFact(root, input({
+      id: "old-pitfall",
+      title: "Do not trust the quota cache",
+      kind: "pitfall",
+      date: "2026-05-20",
+      verified: "2026-05-20",
+    }));
+    const built = await buildMemoryIndex(root);
+    const rows = built.split("\n").filter((line) => line.startsWith("- ["));
+    expect(rows).toHaveLength(30);
+    expect(rows[0]).toContain("old-pitfall");
+    expect(rows[0]).toContain("[pitfall]");
+    expect(built).toContain("6 older articles omitted");
+  });
+
+  test("an older article matching the brief outranks newer unrelated ones", async () => {
+    const root = await makeRoot();
+    await writeMemoryFact(root, input({
+      id: "quota-reconciliation",
+      title: "Quota tables double-count on retry",
+      date: "2026-06-01",
+      verified: "2026-06-01",
+    }));
+    await writeMemoryFact(root, input({
+      id: "login-flake",
+      title: "The login test is flaky",
+    }));
+    await writeMemoryFact(root, input({
+      id: "deploy-freeze",
+      title: "Deploys freeze under load",
+    }));
+    const built = await buildMemoryIndex(root, {
+      brief: "Repair the quota tables reconciliation",
+    });
+    expect(built.indexOf("quota-reconciliation"))
+      .toBeLessThan(built.indexOf("login-flake"));
+    expect(built.indexOf("quota-reconciliation"))
+      .toBeLessThan(built.indexOf("deploy-freeze"));
+  });
+
+  test("without a brief it degrades to pitfalls then newest, capped, no duplicates", async () => {
+    const root = await makeRoot();
+    await writeMemoryFact(root, input({
+      id: "old-pitfall",
+      title: "Old lesson",
+      kind: "pitfall",
+      date: "2026-05-01",
+      verified: "2026-05-01",
+    }));
+    await writeMemoryFact(root, input({
+      id: "newer-pitfall",
+      title: "Newer lesson",
+      kind: "pitfall",
+      date: "2026-06-01",
+      verified: "2026-06-01",
+    }));
+    for (let index = 0; index < 35; index += 1) {
+      await writeMemoryFact(root, input({
+        id: `fresh-${index}`,
+        title: `Fresh finding ${index}`,
+      }));
+    }
+    const built = await buildMemoryIndex(root);
+    const rows = built.split("\n").filter((line) => line.startsWith("- ["));
+    expect(rows).toHaveLength(30);
+    expect(new Set(rows).size).toBe(rows.length);
+    expect(rows[0]).toContain("newer-pitfall");
+    expect(rows[1]).toContain("old-pitfall");
+    expect(rows.slice(2).every((line) => !line.includes("[pitfall]")))
+      .toBe(true);
+    expect(built).toContain("7 older articles omitted");
+  });
+
+  test("the omitted count stays accurate when relevance ranking trims the cap", async () => {
+    const root = await makeRoot();
+    for (let index = 0; index < 31; index += 1) {
+      await writeMemoryFact(root, input({
+        id: `unrelated-${index}`,
+        title: `Unrelated finding ${index}`,
+      }));
+    }
+    await writeMemoryFact(root, input({
+      id: "quota-reconciliation",
+      title: "Quota tables double-count on retry",
+      date: "2026-06-01",
+      verified: "2026-06-01",
+    }));
+    const built = await buildMemoryIndex(root, {
+      brief: "Repair the quota tables reconciliation",
+    });
+    const rows = built.split("\n").filter((line) => line.startsWith("- ["));
+    expect(rows).toHaveLength(30);
+    expect(rows[0]).toContain("quota-reconciliation");
+    expect(built).toContain("2 older articles omitted");
+  });
+
   test("surfaces verification status directly", () => {
     expect(factVerificationFlag({
       status: "conflicted",

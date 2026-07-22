@@ -2187,7 +2187,7 @@ export class HiveSpawner implements Spawner {
     // config below must all describe the same server observation.
     const graphifyUrl = this.dependencies.graphifyUrl?.() ?? null;
     const [memoryIndex, brief, graphBrief] = await Promise.all([
-      buildMemoryIndex(worktree.path),
+      buildMemoryIndex(worktree.path, { brief: request.task }),
       buildScopedBrief(
         worktree.path,
         request.task,

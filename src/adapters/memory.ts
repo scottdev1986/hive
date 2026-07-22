@@ -833,16 +833,72 @@ async function readIndexRows(root: string, scope: MemoryScope): Promise<string[]
   }
 }
 
-export async function buildMemoryIndex(root: string): Promise<string> {
+// Brief-relevance matching (HiveMemory HM-3) keeps its stopword list tiny on
+// purpose: the length floor does most of the filtering, and a bigger list is
+// more ways to silently drop a token that would have matched.
+const BRIEF_STOPWORDS = new Set([
+  "the",
+  "this",
+  "that",
+  "with",
+  "from",
+  "have",
+  "been",
+  "were",
+  "your",
+  "task",
+  "agent",
+]);
+
+function significantTokens(text: string): Set<string> {
+  const tokens = new Set<string>();
+  for (const match of text.toLowerCase().matchAll(/[a-z0-9]+/g)) {
+    const token = match[0];
+    if (token.length >= 4 && !BRIEF_STOPWORDS.has(token)) tokens.add(token);
+  }
+  return tokens;
+}
+
+export interface BuildMemoryIndexOptions {
+  /** The assignment brief; rows sharing a significant token outrank the rest. */
+  brief?: string;
+}
+
+export async function buildMemoryIndex(
+  root: string,
+  options: BuildMemoryIndexOptions = {},
+): Promise<string> {
   await rebuildMemoryIndexFiles(root);
+  const briefTokens = options.brief === undefined
+    ? new Set<string>()
+    : significantTokens(options.brief);
   const rows = [
     ...await readIndexRows(root, "repo"),
     ...await readIndexRows(root, "global"),
-  ].sort((a, b) => {
-    const aDate = a.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "";
-    const bDate = b.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "";
-    return bDate.localeCompare(aDate) || a.localeCompare(b);
-  });
+  ].map((row) => {
+    const rowTokens = briefTokens.size === 0
+      ? null
+      : significantTokens(row);
+    let matches = 0;
+    if (rowTokens !== null) {
+      for (const token of briefTokens) {
+        if (rowTokens.has(token)) matches += 1;
+      }
+    }
+    return {
+      row,
+      date: row.match(/\((\d{4}-\d{2}-\d{2})\)/)?.[1] ?? "",
+      pitfall: row.includes("[pitfall]"),
+      matches,
+    };
+  }).sort((a, b) => {
+    // Pitfalls first, newest-first within the class; then articles sharing a
+    // significant brief token (most distinct matches, then recency); then
+    // newest fill. Each row is sorted exactly once, so no row appears twice.
+    if (a.pitfall !== b.pitfall) return a.pitfall ? -1 : 1;
+    if (!a.pitfall && a.matches !== b.matches) return b.matches - a.matches;
+    return b.date.localeCompare(a.date) || a.row.localeCompare(b.row);
+  }).map(({ row }) => row);
   if (rows.length === 0) return "";
   const shown = rows.slice(0, MEMORY_INDEX_MAX_ENTRIES);
   const omitted = rows.length - shown.length;
