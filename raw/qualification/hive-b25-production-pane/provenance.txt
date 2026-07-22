@@ -34,3 +34,4 @@ production_pane_host=arm64 macOS-26.3.1-25D2128
 production_pane_swift=6.3.3
 production_pane_bun=1.3.14
 production_pane_engine_build_id=9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b
+authorship=authored by agent james on branch hive/james-m1-b2-b2-5-continuation-github (original tip 5ca587f6, preserved ref refs/hive-preserved/hive/james-m1-b2-b2-5-continuation-github); replayed onto main as the 05eb3336..656b2283 series during 2026-07-22 worktree cleanup; three earlier commits were discarded as patch-id twins of ffa603ff/08b4975d/8b3a4c11
