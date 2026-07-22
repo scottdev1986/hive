@@ -181,6 +181,14 @@ static void *test_alloc(void *context, size_t length, size_t alignment) {
   return NULL;
 }
 
+static ghostty_result_e test_checkpoint_write(
+  void *context, const uint8_t *bytes, size_t length) {
+  (void)context;
+  (void)bytes;
+  (void)length;
+  return (ghostty_result_e)GHOSTTY_SUCCESS;
+}
+
 static void test_event(void *context, const hive_ghostty_event_s *event) {
   (void)context;
   (void)event;
@@ -189,6 +197,8 @@ static void test_event(void *context, const hive_ghostty_event_s *event) {
 int main(void) {
   hive_ghostty_write_fn write_callback = test_write;
   hive_ghostty_alloc_fn alloc_callback = test_alloc;
+  hive_ghostty_checkpoint_write_fn checkpoint_write_callback =
+    test_checkpoint_write;
   hive_ghostty_event_fn event_callback = test_event;
   const char *(*build_id)(void) = hive_ghostty_engine_build_id_v1;
   ghostty_surface_t (*new_manual)(
@@ -208,6 +218,9 @@ int main(void) {
   ghostty_result_e (*export_terminal)(
     ghostty_terminal_t, hive_ghostty_alloc_fn, void *, uint8_t **, size_t *) =
     hive_ghostty_terminal_checkpoint_export_v1;
+  ghostty_result_e (*export_terminal_stream)(
+    ghostty_terminal_t, hive_ghostty_checkpoint_write_fn, void *, size_t *) =
+    hive_ghostty_terminal_checkpoint_export_stream_v1;
   ghostty_result_e (*import_terminal)(
     ghostty_terminal_t, const uint8_t *, size_t) =
     hive_ghostty_terminal_checkpoint_import_v1;
@@ -218,9 +231,11 @@ int main(void) {
   (void)restore_surface;
   (void)semantic_snapshot;
   (void)export_terminal;
+  (void)export_terminal_stream;
   (void)import_terminal;
   (void)write_callback;
   (void)alloc_callback;
+  (void)checkpoint_write_callback;
   (void)event_callback;
   return 0;
 }

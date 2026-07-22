@@ -2447,6 +2447,20 @@ pub const CAPI = struct {
         );
     }
 
+    export fn hive_ghostty_terminal_checkpoint_export_stream_v1(
+        terminal_: c_terminal.Terminal,
+        write_fn: ?c_terminal.CheckpointWriteFn,
+        context: ?*anyopaque,
+        out_length: ?*usize,
+    ) callconv(.c) GhosttyResult {
+        return c_terminal.checkpoint_export_stream(
+            terminal_,
+            write_fn,
+            context,
+            out_length,
+        );
+    }
+
     export fn hive_ghostty_terminal_checkpoint_import_v1(
         terminal_: c_terminal.Terminal,
         payload: ?[*]const u8,

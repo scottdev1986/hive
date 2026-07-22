@@ -137,6 +137,21 @@ comptime {
         ) callconv(.c) c.ghostty_result_e,
     );
     assertExactType(
+        "hive_ghostty_checkpoint_write_fn",
+        c.hive_ghostty_checkpoint_write_fn,
+        ?*const fn (?*anyopaque, [*c]const u8, usize) callconv(.c) c.ghostty_result_e,
+    );
+    assertExactType(
+        "hive_ghostty_terminal_checkpoint_export_stream_v1",
+        @TypeOf(c.hive_ghostty_terminal_checkpoint_export_stream_v1),
+        fn (
+            c.ghostty_terminal_t,
+            c.hive_ghostty_checkpoint_write_fn,
+            ?*anyopaque,
+            [*c]usize,
+        ) callconv(.c) c.ghostty_result_e,
+    );
+    assertExactType(
         "hive_ghostty_terminal_checkpoint_import_v1",
         @TypeOf(c.hive_ghostty_terminal_checkpoint_import_v1),
         fn (c.ghostty_terminal_t, [*c]const u8, usize) callconv(.c) c.ghostty_result_e,
@@ -158,7 +173,7 @@ test "Hive bridge ABI values and layout" {
     try std.testing.expectEqual(@as(c_uint, 0), c.HIVE_GHOSTTY_TERMINAL_REPLIES_DISABLED);
     try std.testing.expectEqual(@as(c_uint, 1), c.HIVE_GHOSTTY_TERMINAL_REPLIES_ENABLED);
     std.debug.print(
-        "ZIG_ABI_OK pointer={} enum_size={} enum_align={} event_size={} event_align={} row_size={} snapshot_size={} callconv=c symbols=7\n",
+        "ZIG_ABI_OK pointer={} enum_size={} enum_align={} event_size={} event_align={} row_size={} snapshot_size={} callconv=c symbols=8\n",
         .{
             @sizeOf(?*anyopaque),
             @sizeOf(c.hive_ghostty_event_e),

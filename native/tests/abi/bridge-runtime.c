@@ -42,7 +42,7 @@ int main(void) {
   CHECK(_Alignof(hive_ghostty_semantic_snapshot_s) == _Alignof(void *));
   printf(
     "C_ABI_OK pointer=%zu enum_size=%zu enum_align=%zu event_size=%zu "
-    "event_align=%zu row_size=%zu snapshot_size=%zu symbols=7\n",
+    "event_align=%zu row_size=%zu snapshot_size=%zu symbols=8\n",
     sizeof(void *), sizeof(hive_ghostty_event_e), _Alignof(hive_ghostty_event_e),
     sizeof(hive_ghostty_event_s), _Alignof(hive_ghostty_event_s),
     sizeof(hive_ghostty_semantic_row_s), sizeof(hive_ghostty_semantic_snapshot_s));

@@ -89,7 +89,7 @@ if [[ "$control_status" -eq 0 || -n "$control_output" ]]; then
   exit 1
 fi
 
-# Seven-symbol allowlist on the shipped embedded library, both arches.
+# Eight-symbol allowlist on the shipped embedded library, both arches.
 mac_plist="$XCFRAMEWORK/Info.plist"
 mac_index=$(/usr/libexec/PlistBuddy -c "Print :AvailableLibraries" "$mac_plist" \
   | /usr/bin/awk '/Dict {/ { idx++ } /SupportedPlatform = macos/ { print idx - 1; found=1 } END { if (!found) exit 1 }')
@@ -100,8 +100,8 @@ for arch in arm64 x86_64; do
   /usr/bin/nm -arch "$arch" -gUj "$embedded_library" \
     | /usr/bin/sed 's/^_//' \
     | /usr/bin/grep '^hive_ghostty_' \
-    | LC_ALL=C /usr/bin/sort -u >"$EVIDENCE/$arch-seven-symbols.txt"
-  /usr/bin/cmp "$EVIDENCE/$arch-seven-symbols.txt" "$ROOT/native/abi/ghostty-bridge.exports"
+    | LC_ALL=C /usr/bin/sort -u >"$EVIDENCE/$arch-eight-symbols.txt"
+  /usr/bin/cmp "$EVIDENCE/$arch-eight-symbols.txt" "$ROOT/native/abi/ghostty-bridge.exports"
 done
 
 assert_protocol() {

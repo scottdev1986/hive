@@ -29,8 +29,8 @@ Ghostling do not provide evidence for it.
 | Patched Git tree | `d92dc8fe76f3cd7c13879b34c972c8eaa0ed3dcb` |
 | Ordered patch-series SHA-256 | `ddeaf79284f0072f29d69dbf6580fd8f58eba98ceff11525f83f91f03f6e09e0` |
 | Upstream public-header SHA-256 | `36ca1c10cd07094abbf77cb14c2531899ca74c089a62f6f6cdeb07aa4927b2af` |
-| Hive bridge-header SHA-256 | `275ca6b8d3af85d9e9addcdc4f4e0edc599cd8fba2f93b19fd3d1f089688fafe` |
-| Seven-symbol allowlist SHA-256 | `16e34bd7e3776904a8b5c13b69ebb3a883dcd071f090ac57e32f95cdb61139e9` |
+| Hive bridge-header SHA-256 | `0c3817a25030029468d72454edba38c6b3c9aa694a575e758e6de9c75d667872` |
+| Eight-symbol allowlist SHA-256 | `cc5f40c736e4f7dc401c760d586801f075502e452909ec1da3f6d50c13723968` |
 | Zig | `0.15.2`; official arm64 archive `3cc2bab…fa6b`; official x86_64 archive `375b6909…b43f7f` |
 | Apple toolchain | Xcode `26.6` build `17F113`; Swift `6.3.3`; Swift tools `5.10` |
 | Deployment | macOS `14.0`; universal arm64 and x86_64 static slices |

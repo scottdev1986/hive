@@ -404,6 +404,12 @@ pub const CheckpointAllocFn = *const fn (
     usize,
 ) callconv(lib.calling_conv) ?*anyopaque;
 
+pub const CheckpointWriteFn = *const fn (
+    ?*anyopaque,
+    ?[*]const u8,
+    usize,
+) callconv(lib.calling_conv) Result;
+
 pub fn engine_build_id() callconv(lib.calling_conv) [*:0]const u8 {
     return hive_checkpoint.buildIdHex();
 }
@@ -436,7 +442,7 @@ pub fn checkpoint_export(
     ) catch |err| return switch (err) {
         error.OutOfMemory => .out_of_memory,
         error.CheckpointTooLarge => .out_of_space,
-        error.InvalidCheckpoint => .invalid_value,
+        error.InvalidCheckpoint, error.WriteFailed => .invalid_value,
     };
     defer alloc.free(payload);
     const memory = alloc_fn(context, payload.len, 1) orelse
@@ -445,6 +451,50 @@ pub fn checkpoint_export(
     @memcpy(result[0..payload.len], payload);
     out_payload.* = result;
     out_length.* = payload.len;
+    return .success;
+}
+
+pub fn checkpoint_export_stream(
+    terminal_: Terminal,
+    write_fn_: ?CheckpointWriteFn,
+    context: ?*anyopaque,
+    out_length_: ?*usize,
+) callconv(lib.calling_conv) Result {
+    const out_length = out_length_ orelse return .invalid_value;
+    out_length.* = 0;
+    const wrapper = terminal_ orelse return .invalid_value;
+    const write_fn = write_fn_ orelse return .invalid_value;
+    if (!wrapper.checkpoint_valid) return .no_value;
+
+    const StreamContext = struct {
+        write_fn: CheckpointWriteFn,
+        context: ?*anyopaque,
+        result: Result = .success,
+
+        fn write(context_: *anyopaque, bytes: []const u8) bool {
+            const self: *@This() = @ptrCast(@alignCast(context_));
+            const result = self.write_fn(self.context, bytes.ptr, bytes.len);
+            if (result != .success) {
+                self.result = result;
+                return false;
+            }
+            return true;
+        }
+    };
+    var stream: StreamContext = .{ .write_fn = write_fn, .context = context };
+    const length = hive_checkpoint.encodeStream(
+        wrapper.terminal.gpa(),
+        wrapper.terminal,
+        &wrapper.stream,
+        wrapper.checkpoint_pending.items,
+        .{ .context = &stream, .writeFn = StreamContext.write },
+    ) catch |err| return switch (err) {
+        error.OutOfMemory => .out_of_memory,
+        error.CheckpointTooLarge => .out_of_space,
+        error.InvalidCheckpoint => .invalid_value,
+        error.WriteFailed => if (stream.result == .success) .invalid_value else stream.result,
+    };
+    out_length.* = length;
     return .success;
 }
 
@@ -459,7 +509,7 @@ pub fn checkpoint_import(
     const alloc = wrapper.terminal.gpa();
     var snapshot = hive_checkpoint.decode(alloc, payload) catch |err| return switch (err) {
         error.OutOfMemory => .out_of_memory,
-        error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+        error.CheckpointTooLarge, error.InvalidCheckpoint, error.WriteFailed => .invalid_value,
     };
     var snapshot_owned = true;
     defer if (snapshot_owned) snapshot.deinit(alloc);
@@ -3597,6 +3647,99 @@ test "checkpoint C ABI uses caller allocator and rejects malformed payload" {
         source.?.terminal.getTitle().?,
         restored.?.terminal.getTitle().?,
     );
+}
+
+test "streaming checkpoint export is byte-identical, bounded, and abortable" {
+    const AllocState = struct {
+        memory: ?[]u8 = null,
+
+        fn alloc(
+            context: ?*anyopaque,
+            length: usize,
+            alignment: usize,
+        ) callconv(lib.calling_conv) ?*anyopaque {
+            const self: *@This() = @ptrCast(@alignCast(context orelse return null));
+            if (alignment != 1 or self.memory != null) return null;
+            self.memory = testing.allocator.alloc(u8, length) catch return null;
+            return self.memory.?.ptr;
+        }
+    };
+    const StreamState = struct {
+        bytes: std.ArrayList(u8) = .empty,
+        calls: usize = 0,
+        max_chunk: usize = 0,
+        abort: bool = false,
+
+        fn write(
+            context: ?*anyopaque,
+            bytes_: ?[*]const u8,
+            length: usize,
+        ) callconv(lib.calling_conv) Result {
+            const self: *@This() = @ptrCast(@alignCast(context orelse return .invalid_value));
+            if (self.abort) return .out_of_space;
+            const bytes = bytes_ orelse return .invalid_value;
+            if (length == 0 or length > hive_checkpoint.stream_chunk_bytes)
+                return .invalid_value;
+            self.bytes.appendSlice(testing.allocator, bytes[0..length]) catch
+                return .out_of_memory;
+            self.calls += 1;
+            self.max_chunk = @max(self.max_chunk, length);
+            return .success;
+        }
+    };
+
+    var source: Terminal = null;
+    try testing.expectEqual(Result.success, new(
+        &lib.alloc.test_allocator,
+        &source,
+        .{ .cols = 20, .rows = 5, .max_scrollback = 10_000 },
+    ));
+    defer free(source);
+    const source_bytes = "before\r\n\x1b]2;saved\x07\x1b[31";
+    vt_write(source, source_bytes, source_bytes.len);
+
+    var payload: ?[*]u8 = null;
+    var payload_length: usize = 0;
+    var alloc_state: AllocState = .{};
+    try testing.expectEqual(
+        Result.success,
+        checkpoint_export(
+            source,
+            &AllocState.alloc,
+            &alloc_state,
+            &payload,
+            &payload_length,
+        ),
+    );
+    defer testing.allocator.free(alloc_state.memory.?);
+
+    var streamed: StreamState = .{};
+    defer streamed.bytes.deinit(testing.allocator);
+    var streamed_length: usize = 99;
+    try testing.expectEqual(
+        Result.success,
+        checkpoint_export_stream(source, &StreamState.write, &streamed, &streamed_length),
+    );
+    try testing.expect(streamed.calls > 0);
+    try testing.expect(streamed.max_chunk <= hive_checkpoint.stream_chunk_bytes);
+    try testing.expectEqual(payload_length, streamed_length);
+    try testing.expectEqualSlices(u8, payload.?[0..payload_length], streamed.bytes.items);
+
+    var aborted: StreamState = .{ .abort = true };
+    defer aborted.bytes.deinit(testing.allocator);
+    streamed_length = 99;
+    try testing.expectEqual(
+        Result.out_of_space,
+        checkpoint_export_stream(source, &StreamState.write, &aborted, &streamed_length),
+    );
+    try testing.expectEqual(@as(usize, 0), streamed_length);
+
+    streamed_length = 99;
+    try testing.expectEqual(
+        Result.invalid_value,
+        checkpoint_export_stream(null, &StreamState.write, &streamed, &streamed_length),
+    );
+    try testing.expectEqual(@as(usize, 0), streamed_length);
 }
 
 test "checkpoint export of a poisoned checkpoint reports no value" {

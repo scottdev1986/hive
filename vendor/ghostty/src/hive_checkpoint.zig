@@ -20,7 +20,13 @@ const Selection = terminal.Selection;
 const GlyphEntry = terminal.apc.glyph.Glossary.Entry;
 const GlyphOutline = @import("font/opentype/glyf.zig").Glyf.Outline;
 
-pub const max_payload_bytes = 64 * 1024 * 1024;
+/// Maximum payload accepted by the streaming producer and contiguous importer.
+pub const max_payload_bytes = 512 * 1024 * 1024;
+/// The legacy allocating exporter stays at its original bound. Large
+/// checkpoints must use encodeStream so the payload is never materialized as
+/// one allocation.
+pub const max_contiguous_export_bytes = 64 * 1024 * 1024;
+pub const stream_chunk_bytes = 64 * 1024;
 const magic = "HVGCP001";
 const version: u16 = 1;
 
@@ -100,35 +106,34 @@ fn hashTypeLayout(hash: *Sha256, comptime T: type) void {
 /// membership at compile time — serializing a type that is not fingerprinted
 /// is a build error, so the two can never drift apart.
 const fingerprinted_types = .{
-    c_char, c_int,
-    u8,     u16,
-    u21,    u32,
-    u64,    usize,
-    bool,   ?u21,
+    c_char,                                                                     c_int,
+    u8,                                                                         u16,
+    u21,                                                                        u32,
+    u64,                                                                        usize,
+    bool,                                                                       ?u21,
 
-    @TypeOf(@as(Handler, undefined).apc_handler.max_bytes), @TypeOf(@as(Handler, undefined).apc_handler.enabled),
-    @TypeOf(@as(Handler, undefined).default_cursor),        @TypeOf(@as(Handler, undefined).default_cursor_style),
-    @TypeOf(@as(Handler, undefined).default_cursor_blink),  @TypeOf(@as(Terminal, undefined).status_display),
-    @TypeOf(@as(Terminal, undefined).rows),                 @TypeOf(@as(Terminal, undefined).cols),
-    Terminal.ScrollingRegion,                               Terminal.Colors,
-    @TypeOf(@as(Terminal, undefined).modes),                @TypeOf(@as(Terminal, undefined).mouse_shape),
-    @TypeOf(@as(Terminal, undefined).flags),                ScreenSet.Key,
-    @TypeOf(@as(PageList, undefined).cols),                 @TypeOf(@as(PageList, undefined).rows),
-    Page,                                                   Page.Layout,
-    pagepkg.Row,                                            pagepkg.Cell,
-    ?Screen.SavedCursor,                                    Screen.CharsetState,
-    @TypeOf(@as(Screen, undefined).protected_mode),         @TypeOf(@as(Screen, undefined).kitty_keyboard),
-    Screen.SemanticPrompt,                                  CursorWire,
-    point.Coordinate,                                       terminal.Style,
-    hyperlink.PageEntry,                                    Screen.CursorStyle,
-    StyleSet,                                               HyperlinkSet,
-    terminal.Style.Color,
-
-    terminal.kitty.graphics.Image,                                         @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits),
-    @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),
-    terminal.kitty.graphics.ImageStorage.PlacementKey,                     terminal.kitty.graphics.ImageStorage.Placement,
-    @TypeOf(@as(GlyphEntry, undefined).design),                            @TypeOf(@as(GlyphEntry, undefined).width),
-    @TypeOf(@as(GlyphEntry, undefined).constraint),                        GlyphOutline.Point,
+    @TypeOf(@as(Handler, undefined).apc_handler.max_bytes),                     @TypeOf(@as(Handler, undefined).apc_handler.enabled),
+    @TypeOf(@as(Handler, undefined).default_cursor),                            @TypeOf(@as(Handler, undefined).default_cursor_style),
+    @TypeOf(@as(Handler, undefined).default_cursor_blink),                      @TypeOf(@as(Terminal, undefined).status_display),
+    @TypeOf(@as(Terminal, undefined).rows),                                     @TypeOf(@as(Terminal, undefined).cols),
+    Terminal.ScrollingRegion,                                                   Terminal.Colors,
+    @TypeOf(@as(Terminal, undefined).modes),                                    @TypeOf(@as(Terminal, undefined).mouse_shape),
+    @TypeOf(@as(Terminal, undefined).flags),                                    ScreenSet.Key,
+    @TypeOf(@as(PageList, undefined).cols),                                     @TypeOf(@as(PageList, undefined).rows),
+    Page,                                                                       Page.Layout,
+    pagepkg.Row,                                                                pagepkg.Cell,
+    ?Screen.SavedCursor,                                                        Screen.CharsetState,
+    @TypeOf(@as(Screen, undefined).protected_mode),                             @TypeOf(@as(Screen, undefined).kitty_keyboard),
+    Screen.SemanticPrompt,                                                      CursorWire,
+    point.Coordinate,                                                           terminal.Style,
+    hyperlink.PageEntry,                                                        Screen.CursorStyle,
+    StyleSet,                                                                   HyperlinkSet,
+    terminal.Style.Color,                                                       terminal.kitty.graphics.Image,
+    @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display),
+    @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),        terminal.kitty.graphics.ImageStorage.PlacementKey,
+    terminal.kitty.graphics.ImageStorage.Placement,                             @TypeOf(@as(GlyphEntry, undefined).design),
+    @TypeOf(@as(GlyphEntry, undefined).width),                                  @TypeOf(@as(GlyphEntry, undefined).constraint),
+    GlyphOutline.Point,
 };
 
 fn isFingerprinted(comptime T: type) bool {
@@ -212,9 +217,49 @@ pub fn buildIdHex() [*:0]const u8 {
     return @ptrCast(&build_id_hex);
 }
 
+fn hexNibble(comptime value: u8) u8 {
+    return switch (value) {
+        '0'...'9' => value - '0',
+        'a'...'f' => value - 'a' + 10,
+        else => @compileError("invalid legacy checkpoint build id"),
+    };
+}
+
+fn buildIdBytes(comptime value: *const [64]u8) [32]u8 {
+    var result: [32]u8 = undefined;
+    inline for (0..32) |index| {
+        result[index] = (hexNibble(value[index * 2]) << 4) |
+            hexNibble(value[index * 2 + 1]);
+    }
+    return result;
+}
+
+/// The immediately preceding on-disk HVGCP001 producer IDs. The serializer
+/// layout is unchanged by the streaming transport, so these exact IDs remain
+/// safe to decode. Keeping a narrow, architecture-specific allowlist avoids
+/// turning build binding into a wildcard for unrelated historical layouts.
+pub const legacy_build_id: [32]u8 = switch (builtin.target.cpu.arch) {
+    .aarch64 => buildIdBytes("9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b"),
+    .x86_64 => buildIdBytes("ea592b32749f04556e942e0358c3360e423659f4d6bb23b719f81fc14b2cf349"),
+    else => @splat(0),
+};
+
+pub fn acceptsBuildId(candidate: *const [32]u8) bool {
+    if (std.mem.eql(u8, candidate, buildId())) return true;
+    // The deployed IDs below were authored by the ReleaseFast C ABI build.
+    // Other lib-vt test configurations have different plain/page layouts even
+    // on the same architecture and must not treat these IDs as compatible.
+    if (!build_options.c_abi or build_options.slow_runtime_safety) return false;
+    return switch (builtin.target.cpu.arch) {
+        .aarch64, .x86_64 => std.mem.eql(u8, candidate, &legacy_build_id),
+        else => false,
+    };
+}
+
 pub const Error = Allocator.Error || error{
     InvalidCheckpoint,
     CheckpointTooLarge,
+    WriteFailed,
 };
 
 /// The structural wire codec. Every value reaches the wire as live data
@@ -392,15 +437,39 @@ fn hashPlainValue(hash: *Sha256, value: anytype) void {
 const Writer = struct {
     alloc: Allocator,
     bytes: std.ArrayList(u8) = .empty,
+    sink: ?StreamSink = null,
+    limit: usize = max_contiguous_export_bytes,
+    total: usize = 0,
+    buffered: usize = 0,
+    buffer: [stream_chunk_bytes]u8 = undefined,
 
     fn deinit(self: *Writer) void {
         self.bytes.deinit(self.alloc);
     }
 
     fn write(self: *Writer, bytes: []const u8) Error!void {
-        if (bytes.len > max_payload_bytes -| self.bytes.items.len)
+        if (bytes.len > self.limit -| self.total)
             return error.CheckpointTooLarge;
-        try self.bytes.appendSlice(self.alloc, bytes);
+        self.total += bytes.len;
+        const sink = self.sink orelse {
+            try self.bytes.appendSlice(self.alloc, bytes);
+            return;
+        };
+        var remaining = bytes;
+        while (remaining.len > 0) {
+            const take = @min(self.buffer.len - self.buffered, remaining.len);
+            @memcpy(self.buffer[self.buffered..][0..take], remaining[0..take]);
+            self.buffered += take;
+            remaining = remaining[take..];
+            if (self.buffered == self.buffer.len) try self.flush(sink);
+        }
+    }
+
+    fn flush(self: *Writer, sink: StreamSink) Error!void {
+        if (self.buffered == 0) return;
+        if (!sink.writeFn(sink.context, self.buffer[0..self.buffered]))
+            return error.WriteFailed;
+        self.buffered = 0;
     }
 
     fn plain(self: *Writer, value: anytype) Error!void {
@@ -415,8 +484,22 @@ const Writer = struct {
     }
 
     fn finish(self: *Writer) Error![]u8 {
+        std.debug.assert(self.sink == null);
         return try self.bytes.toOwnedSlice(self.alloc);
     }
+
+    fn finishStream(self: *Writer) Error!usize {
+        const sink = self.sink orelse unreachable;
+        try self.flush(sink);
+        return self.total;
+    }
+};
+
+pub const StreamSink = struct {
+    context: *anyopaque,
+    /// False aborts export with WriteFailed. Every call is non-empty and no
+    /// larger than stream_chunk_bytes.
+    writeFn: *const fn (context: *anyopaque, bytes: []const u8) bool,
 };
 
 const Reader = struct {
@@ -644,17 +727,47 @@ pub fn encode(
     var w: Writer = .{ .alloc = alloc };
     errdefer w.deinit();
 
+    try encodeToWriter(&w, t, stream, pending);
+    return try w.finish();
+}
+
+/// Encode the byte-identical HVGCP001 payload through a bounded callback.
+/// The callback never receives more than stream_chunk_bytes and no payload-
+/// sized allocation is created by this function.
+pub fn encodeStream(
+    alloc: Allocator,
+    t: *const Terminal,
+    stream: *const Stream,
+    pending: []const u8,
+    sink: StreamSink,
+) Error!usize {
+    var w: Writer = .{
+        .alloc = alloc,
+        .sink = sink,
+        .limit = max_payload_bytes,
+    };
+    defer w.deinit();
+
+    try encodeToWriter(&w, t, stream, pending);
+    return try w.finishStream();
+}
+
+fn encodeToWriter(
+    w: *Writer,
+    t: *const Terminal,
+    stream: *const Stream,
+    pending: []const u8,
+) Error!void {
     try w.write(magic);
     try w.plain(version);
     try w.write(buildId());
-    try writeTerminal(&w, t);
+    try writeTerminal(w, t);
     try w.plain(stream.handler.apc_handler.max_bytes);
     try w.plain(stream.handler.apc_handler.enabled);
     try w.plain(stream.handler.default_cursor);
     try w.plain(stream.handler.default_cursor_style);
     try w.plain(stream.handler.default_cursor_blink);
     try w.slice(pending);
-    return try w.finish();
 }
 
 pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
@@ -663,8 +776,9 @@ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
     if (!std.mem.eql(u8, try r.take(magic.len), magic))
         return error.InvalidCheckpoint;
     if (try r.plain(u16) != version) return error.InvalidCheckpoint;
-    if (!std.mem.eql(u8, try r.take(buildId().len), buildId()))
-        return error.InvalidCheckpoint;
+    var payload_build_id: [32]u8 = undefined;
+    @memcpy(&payload_build_id, try r.take(payload_build_id.len));
+    if (!acceptsBuildId(&payload_build_id)) return error.InvalidCheckpoint;
 
     var decoded_terminal = try readTerminal(&r, alloc);
     errdefer decoded_terminal.deinit(alloc);
@@ -683,6 +797,48 @@ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
         .handler = handler,
         .pending = pending,
     };
+}
+
+test "legacy pre-stream checkpoint fixture remains readable" {
+    if (!acceptsBuildId(&legacy_build_id)) return error.SkipZigTest;
+    const encoded = switch (builtin.target.cpu.arch) {
+        .aarch64 => @embedFile("testdata/hive_checkpoint_legacy_arm64.hvgcp.gz.b64"),
+        .x86_64 => @embedFile("testdata/hive_checkpoint_legacy_x86_64.hvgcp.gz.b64"),
+        else => return error.SkipZigTest,
+    };
+    const trimmed = std.mem.trim(u8, encoded, " \r\n\t");
+    const compressed_length = try std.base64.standard.Decoder.calcSizeForSlice(trimmed);
+    const compressed = try std.testing.allocator.alloc(u8, compressed_length);
+    defer std.testing.allocator.free(compressed);
+    try std.base64.standard.Decoder.decode(compressed, trimmed);
+
+    var flate_buffer: [std.compress.flate.max_window_len]u8 = undefined;
+    var compressed_reader: std.Io.Reader = .fixed(compressed);
+    var decompressor: std.compress.flate.Decompress = .init(
+        &compressed_reader,
+        .gzip,
+        &flate_buffer,
+    );
+    var payload: std.ArrayList(u8) = .empty;
+    defer payload.deinit(std.testing.allocator);
+    try decompressor.reader.appendRemaining(
+        std.testing.allocator,
+        &payload,
+        .limited(1024 * 1024),
+    );
+
+    try std.testing.expect(payload.items.len > magic.len + @sizeOf(u16) + legacy_build_id.len);
+    const build_id_offset = magic.len + @sizeOf(u16);
+    try std.testing.expectEqualSlices(
+        u8,
+        &legacy_build_id,
+        payload.items[build_id_offset..][0..legacy_build_id.len],
+    );
+    var snapshot = try decode(std.testing.allocator, payload.items);
+    snapshot.deinit(std.testing.allocator);
+
+    payload.items[build_id_offset] ^= 0xff;
+    try std.testing.expectError(error.InvalidCheckpoint, decode(std.testing.allocator, payload.items));
 }
 
 fn writeTerminal(w: *Writer, t: *const Terminal) Error!void {
@@ -928,18 +1084,12 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
         // Raw page bytes, with the union-bearing set regions zeroed on the
         // wire: stored set items contain in-memory union padding that Zig
         // cannot canonicalize in place, so those regions travel as
-        // structural side tables instead.
+        // structural side tables instead. Emit the zero regions in order
+        // rather than appending then mutating an output ArrayList: the latter
+        // requires the complete checkpoint to be resident and cannot stream.
         const l = Page.layout(canon.capacity);
         if (canon.memory.len > std.math.maxInt(u32)) return error.CheckpointTooLarge;
         try w.plain(@as(u32, @intCast(canon.memory.len)));
-        const base = w.bytes.items.len;
-        try w.write(canon.memory);
-        const wire_page = w.bytes.items[base..][0..canon.memory.len];
-        @memset(wire_page[l.styles_start..][0..l.styles_layout.total_size], 0);
-        @memset(
-            wire_page[l.hyperlink_set_start..][0..l.hyperlink_set_layout.total_size],
-            0,
-        );
         // The grapheme and hyperlink-map hash tables / bitmap allocators store
         // interior offsets whose ALIGNMENT is asserted on deref; a corrupt
         // stored offset would reach Offset.ptr's unreachable in ReleaseFast
@@ -948,15 +1098,42 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
         // validated side tables on import — no raw region byte is ever
         // dereferenced during decode. (string_alloc stays raw: it is u8, so it
         // never misaligns, and its only readers already bounds-check offsets.)
-        @memset(wire_page[l.grapheme_alloc_start..][0..l.grapheme_alloc_layout.total_size], 0);
-        @memset(wire_page[l.grapheme_map_start..][0..l.grapheme_map_layout.total_size], 0);
-        @memset(wire_page[l.hyperlink_map_start..][0..l.hyperlink_map_layout.total_size], 0);
+        try writeScrubbedPage(w, canon.memory, .{
+            .{ l.styles_start, l.styles_layout.total_size },
+            .{ l.grapheme_alloc_start, l.grapheme_alloc_layout.total_size },
+            .{ l.grapheme_map_start, l.grapheme_map_layout.total_size },
+            .{ l.hyperlink_set_start, l.hyperlink_set_layout.total_size },
+            .{ l.hyperlink_map_start, l.hyperlink_map_layout.total_size },
+        });
 
         try writeSetTable(w, &canon.styles, canon.memory);
         try writeSetTable(w, &canon.hyperlink_set, canon.memory);
         try writeGraphemeTable(w, &canon);
         try writeHyperlinkMapTable(w, &canon);
     }
+}
+
+fn writeScrubbedPage(
+    w: *Writer,
+    memory: []const u8,
+    regions: [5][2]usize,
+) Error!void {
+    const zeroes = [_]u8{0} ** stream_chunk_bytes;
+    var cursor: usize = 0;
+    for (regions) |region| {
+        const start = region[0];
+        const end = start + region[1];
+        std.debug.assert(start >= cursor and end <= memory.len);
+        try w.write(memory[cursor..start]);
+        var remaining = region[1];
+        while (remaining > 0) {
+            const take = @min(remaining, zeroes.len);
+            try w.write(zeroes[0..take]);
+            remaining -= take;
+        }
+        cursor = end;
+    }
+    try w.write(memory[cursor..]);
 }
 
 /// Emit a side table of (cell linear index, codepoints) for every cell that
@@ -1838,6 +2015,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
                 error.InvalidCheckpoint,
                 error.CheckpointTooLarge,
                 error.OutOfMemory,
+                error.WriteFailed,
                 => {},
             }
             if (debug.deinit() != .ok) {
@@ -1874,6 +2052,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
                 error.InvalidCheckpoint,
                 error.CheckpointTooLarge,
                 error.OutOfMemory,
+                error.WriteFailed,
                 => {},
             }
         }
@@ -1912,7 +2091,7 @@ test "checkpoint decode rejects corruption in scrubbed grapheme regions" {
             snap.deinit(a);
         } else |err| switch (err) {
             error.InvalidCheckpoint => rejections += 1,
-            error.CheckpointTooLarge, error.OutOfMemory => {},
+            error.CheckpointTooLarge, error.OutOfMemory, error.WriteFailed => {},
         }
         try std.testing.expectEqual(std.heap.Check.ok, debug.deinit());
     }

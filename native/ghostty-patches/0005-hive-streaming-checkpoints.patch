@@ -1,0 +1,641 @@
+diff --git a/src/apprt/embedded.zig b/src/apprt/embedded.zig
+index 83e2458e..c5642c36 100644
+--- a/src/apprt/embedded.zig
++++ b/src/apprt/embedded.zig
+@@ -2447,6 +2447,20 @@ pub const CAPI = struct {
+         );
+     }
+ 
++    export fn hive_ghostty_terminal_checkpoint_export_stream_v1(
++        terminal_: c_terminal.Terminal,
++        write_fn: ?c_terminal.CheckpointWriteFn,
++        context: ?*anyopaque,
++        out_length: ?*usize,
++    ) callconv(.c) GhosttyResult {
++        return c_terminal.checkpoint_export_stream(
++            terminal_,
++            write_fn,
++            context,
++            out_length,
++        );
++    }
++
+     export fn hive_ghostty_terminal_checkpoint_import_v1(
+         terminal_: c_terminal.Terminal,
+         payload: ?[*]const u8,
+diff --git a/src/hive_checkpoint.zig b/src/hive_checkpoint.zig
+index 05949b8e..bb0cbbc6 100644
+--- a/src/hive_checkpoint.zig
++++ b/src/hive_checkpoint.zig
+@@ -20,7 +20,13 @@ const Selection = terminal.Selection;
+ const GlyphEntry = terminal.apc.glyph.Glossary.Entry;
+ const GlyphOutline = @import("font/opentype/glyf.zig").Glyf.Outline;
+ 
+-pub const max_payload_bytes = 64 * 1024 * 1024;
++/// Maximum payload accepted by the streaming producer and contiguous importer.
++pub const max_payload_bytes = 512 * 1024 * 1024;
++/// The legacy allocating exporter stays at its original bound. Large
++/// checkpoints must use encodeStream so the payload is never materialized as
++/// one allocation.
++pub const max_contiguous_export_bytes = 64 * 1024 * 1024;
++pub const stream_chunk_bytes = 64 * 1024;
+ const magic = "HVGCP001";
+ const version: u16 = 1;
+ 
+@@ -100,35 +106,34 @@ fn hashTypeLayout(hash: *Sha256, comptime T: type) void {
+ /// membership at compile time — serializing a type that is not fingerprinted
+ /// is a build error, so the two can never drift apart.
+ const fingerprinted_types = .{
+-    c_char, c_int,
+-    u8,     u16,
+-    u21,    u32,
+-    u64,    usize,
+-    bool,   ?u21,
+-
+-    @TypeOf(@as(Handler, undefined).apc_handler.max_bytes), @TypeOf(@as(Handler, undefined).apc_handler.enabled),
+-    @TypeOf(@as(Handler, undefined).default_cursor),        @TypeOf(@as(Handler, undefined).default_cursor_style),
+-    @TypeOf(@as(Handler, undefined).default_cursor_blink),  @TypeOf(@as(Terminal, undefined).status_display),
+-    @TypeOf(@as(Terminal, undefined).rows),                 @TypeOf(@as(Terminal, undefined).cols),
+-    Terminal.ScrollingRegion,                               Terminal.Colors,
+-    @TypeOf(@as(Terminal, undefined).modes),                @TypeOf(@as(Terminal, undefined).mouse_shape),
+-    @TypeOf(@as(Terminal, undefined).flags),                ScreenSet.Key,
+-    @TypeOf(@as(PageList, undefined).cols),                 @TypeOf(@as(PageList, undefined).rows),
+-    Page,                                                   Page.Layout,
+-    pagepkg.Row,                                            pagepkg.Cell,
+-    ?Screen.SavedCursor,                                    Screen.CharsetState,
+-    @TypeOf(@as(Screen, undefined).protected_mode),         @TypeOf(@as(Screen, undefined).kitty_keyboard),
+-    Screen.SemanticPrompt,                                  CursorWire,
+-    point.Coordinate,                                       terminal.Style,
+-    hyperlink.PageEntry,                                    Screen.CursorStyle,
+-    StyleSet,                                               HyperlinkSet,
+-    terminal.Style.Color,
+-
+-    terminal.kitty.graphics.Image,                                         @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits),
+-    @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),
+-    terminal.kitty.graphics.ImageStorage.PlacementKey,                     terminal.kitty.graphics.ImageStorage.Placement,
+-    @TypeOf(@as(GlyphEntry, undefined).design),                            @TypeOf(@as(GlyphEntry, undefined).width),
+-    @TypeOf(@as(GlyphEntry, undefined).constraint),                        GlyphOutline.Point,
++    c_char,                                                                     c_int,
++    u8,                                                                         u16,
++    u21,                                                                        u32,
++    u64,                                                                        usize,
++    bool,                                                                       ?u21,
++
++    @TypeOf(@as(Handler, undefined).apc_handler.max_bytes),                     @TypeOf(@as(Handler, undefined).apc_handler.enabled),
++    @TypeOf(@as(Handler, undefined).default_cursor),                            @TypeOf(@as(Handler, undefined).default_cursor_style),
++    @TypeOf(@as(Handler, undefined).default_cursor_blink),                      @TypeOf(@as(Terminal, undefined).status_display),
++    @TypeOf(@as(Terminal, undefined).rows),                                     @TypeOf(@as(Terminal, undefined).cols),
++    Terminal.ScrollingRegion,                                                   Terminal.Colors,
++    @TypeOf(@as(Terminal, undefined).modes),                                    @TypeOf(@as(Terminal, undefined).mouse_shape),
++    @TypeOf(@as(Terminal, undefined).flags),                                    ScreenSet.Key,
++    @TypeOf(@as(PageList, undefined).cols),                                     @TypeOf(@as(PageList, undefined).rows),
++    Page,                                                                       Page.Layout,
++    pagepkg.Row,                                                                pagepkg.Cell,
++    ?Screen.SavedCursor,                                                        Screen.CharsetState,
++    @TypeOf(@as(Screen, undefined).protected_mode),                             @TypeOf(@as(Screen, undefined).kitty_keyboard),
++    Screen.SemanticPrompt,                                                      CursorWire,
++    point.Coordinate,                                                           terminal.Style,
++    hyperlink.PageEntry,                                                        Screen.CursorStyle,
++    StyleSet,                                                                   HyperlinkSet,
++    terminal.Style.Color,                                                       terminal.kitty.graphics.Image,
++    @TypeOf(@as(terminal.kitty.graphics.ImageStorage, undefined).image_limits), @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).display),
++    @TypeOf(@as(terminal.kitty.graphics.LoadingImage, undefined).quiet),        terminal.kitty.graphics.ImageStorage.PlacementKey,
++    terminal.kitty.graphics.ImageStorage.Placement,                             @TypeOf(@as(GlyphEntry, undefined).design),
++    @TypeOf(@as(GlyphEntry, undefined).width),                                  @TypeOf(@as(GlyphEntry, undefined).constraint),
++    GlyphOutline.Point,
+ };
+ 
+ fn isFingerprinted(comptime T: type) bool {
+@@ -212,9 +217,49 @@ pub fn buildIdHex() [*:0]const u8 {
+     return @ptrCast(&build_id_hex);
+ }
+ 
++fn hexNibble(comptime value: u8) u8 {
++    return switch (value) {
++        '0'...'9' => value - '0',
++        'a'...'f' => value - 'a' + 10,
++        else => @compileError("invalid legacy checkpoint build id"),
++    };
++}
++
++fn buildIdBytes(comptime value: *const [64]u8) [32]u8 {
++    var result: [32]u8 = undefined;
++    inline for (0..32) |index| {
++        result[index] = (hexNibble(value[index * 2]) << 4) |
++            hexNibble(value[index * 2 + 1]);
++    }
++    return result;
++}
++
++/// The immediately preceding on-disk HVGCP001 producer IDs. The serializer
++/// layout is unchanged by the streaming transport, so these exact IDs remain
++/// safe to decode. Keeping a narrow, architecture-specific allowlist avoids
++/// turning build binding into a wildcard for unrelated historical layouts.
++pub const legacy_build_id: [32]u8 = switch (builtin.target.cpu.arch) {
++    .aarch64 => buildIdBytes("9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b"),
++    .x86_64 => buildIdBytes("ea592b32749f04556e942e0358c3360e423659f4d6bb23b719f81fc14b2cf349"),
++    else => @splat(0),
++};
++
++pub fn acceptsBuildId(candidate: *const [32]u8) bool {
++    if (std.mem.eql(u8, candidate, buildId())) return true;
++    // The deployed IDs below were authored by the ReleaseFast C ABI build.
++    // Other lib-vt test configurations have different plain/page layouts even
++    // on the same architecture and must not treat these IDs as compatible.
++    if (!build_options.c_abi or build_options.slow_runtime_safety) return false;
++    return switch (builtin.target.cpu.arch) {
++        .aarch64, .x86_64 => std.mem.eql(u8, candidate, &legacy_build_id),
++        else => false,
++    };
++}
++
+ pub const Error = Allocator.Error || error{
+     InvalidCheckpoint,
+     CheckpointTooLarge,
++    WriteFailed,
+ };
+ 
+ /// The structural wire codec. Every value reaches the wire as live data
+@@ -392,15 +437,39 @@ fn hashPlainValue(hash: *Sha256, value: anytype) void {
+ const Writer = struct {
+     alloc: Allocator,
+     bytes: std.ArrayList(u8) = .empty,
++    sink: ?StreamSink = null,
++    limit: usize = max_contiguous_export_bytes,
++    total: usize = 0,
++    buffered: usize = 0,
++    buffer: [stream_chunk_bytes]u8 = undefined,
+ 
+     fn deinit(self: *Writer) void {
+         self.bytes.deinit(self.alloc);
+     }
+ 
+     fn write(self: *Writer, bytes: []const u8) Error!void {
+-        if (bytes.len > max_payload_bytes -| self.bytes.items.len)
++        if (bytes.len > self.limit -| self.total)
+             return error.CheckpointTooLarge;
+-        try self.bytes.appendSlice(self.alloc, bytes);
++        self.total += bytes.len;
++        const sink = self.sink orelse {
++            try self.bytes.appendSlice(self.alloc, bytes);
++            return;
++        };
++        var remaining = bytes;
++        while (remaining.len > 0) {
++            const take = @min(self.buffer.len - self.buffered, remaining.len);
++            @memcpy(self.buffer[self.buffered..][0..take], remaining[0..take]);
++            self.buffered += take;
++            remaining = remaining[take..];
++            if (self.buffered == self.buffer.len) try self.flush(sink);
++        }
++    }
++
++    fn flush(self: *Writer, sink: StreamSink) Error!void {
++        if (self.buffered == 0) return;
++        if (!sink.writeFn(sink.context, self.buffer[0..self.buffered]))
++            return error.WriteFailed;
++        self.buffered = 0;
+     }
+ 
+     fn plain(self: *Writer, value: anytype) Error!void {
+@@ -415,8 +484,22 @@ const Writer = struct {
+     }
+ 
+     fn finish(self: *Writer) Error![]u8 {
++        std.debug.assert(self.sink == null);
+         return try self.bytes.toOwnedSlice(self.alloc);
+     }
++
++    fn finishStream(self: *Writer) Error!usize {
++        const sink = self.sink orelse unreachable;
++        try self.flush(sink);
++        return self.total;
++    }
++};
++
++pub const StreamSink = struct {
++    context: *anyopaque,
++    /// False aborts export with WriteFailed. Every call is non-empty and no
++    /// larger than stream_chunk_bytes.
++    writeFn: *const fn (context: *anyopaque, bytes: []const u8) bool,
+ };
+ 
+ const Reader = struct {
+@@ -644,17 +727,47 @@ pub fn encode(
+     var w: Writer = .{ .alloc = alloc };
+     errdefer w.deinit();
+ 
++    try encodeToWriter(&w, t, stream, pending);
++    return try w.finish();
++}
++
++/// Encode the byte-identical HVGCP001 payload through a bounded callback.
++/// The callback never receives more than stream_chunk_bytes and no payload-
++/// sized allocation is created by this function.
++pub fn encodeStream(
++    alloc: Allocator,
++    t: *const Terminal,
++    stream: *const Stream,
++    pending: []const u8,
++    sink: StreamSink,
++) Error!usize {
++    var w: Writer = .{
++        .alloc = alloc,
++        .sink = sink,
++        .limit = max_payload_bytes,
++    };
++    defer w.deinit();
++
++    try encodeToWriter(&w, t, stream, pending);
++    return try w.finishStream();
++}
++
++fn encodeToWriter(
++    w: *Writer,
++    t: *const Terminal,
++    stream: *const Stream,
++    pending: []const u8,
++) Error!void {
+     try w.write(magic);
+     try w.plain(version);
+     try w.write(buildId());
+-    try writeTerminal(&w, t);
++    try writeTerminal(w, t);
+     try w.plain(stream.handler.apc_handler.max_bytes);
+     try w.plain(stream.handler.apc_handler.enabled);
+     try w.plain(stream.handler.default_cursor);
+     try w.plain(stream.handler.default_cursor_style);
+     try w.plain(stream.handler.default_cursor_blink);
+     try w.slice(pending);
+-    return try w.finish();
+ }
+ 
+ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
+@@ -663,8 +776,9 @@ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
+     if (!std.mem.eql(u8, try r.take(magic.len), magic))
+         return error.InvalidCheckpoint;
+     if (try r.plain(u16) != version) return error.InvalidCheckpoint;
+-    if (!std.mem.eql(u8, try r.take(buildId().len), buildId()))
+-        return error.InvalidCheckpoint;
++    var payload_build_id: [32]u8 = undefined;
++    @memcpy(&payload_build_id, try r.take(payload_build_id.len));
++    if (!acceptsBuildId(&payload_build_id)) return error.InvalidCheckpoint;
+ 
+     var decoded_terminal = try readTerminal(&r, alloc);
+     errdefer decoded_terminal.deinit(alloc);
+@@ -685,6 +799,48 @@ pub fn decode(alloc: Allocator, payload: []const u8) Error!Snapshot {
+     };
+ }
+ 
++test "legacy pre-stream checkpoint fixture remains readable" {
++    if (!acceptsBuildId(&legacy_build_id)) return error.SkipZigTest;
++    const encoded = switch (builtin.target.cpu.arch) {
++        .aarch64 => @embedFile("testdata/hive_checkpoint_legacy_arm64.hvgcp.gz.b64"),
++        .x86_64 => @embedFile("testdata/hive_checkpoint_legacy_x86_64.hvgcp.gz.b64"),
++        else => return error.SkipZigTest,
++    };
++    const trimmed = std.mem.trim(u8, encoded, " \r\n\t");
++    const compressed_length = try std.base64.standard.Decoder.calcSizeForSlice(trimmed);
++    const compressed = try std.testing.allocator.alloc(u8, compressed_length);
++    defer std.testing.allocator.free(compressed);
++    try std.base64.standard.Decoder.decode(compressed, trimmed);
++
++    var flate_buffer: [std.compress.flate.max_window_len]u8 = undefined;
++    var compressed_reader: std.Io.Reader = .fixed(compressed);
++    var decompressor: std.compress.flate.Decompress = .init(
++        &compressed_reader,
++        .gzip,
++        &flate_buffer,
++    );
++    var payload: std.ArrayList(u8) = .empty;
++    defer payload.deinit(std.testing.allocator);
++    try decompressor.reader.appendRemaining(
++        std.testing.allocator,
++        &payload,
++        .limited(1024 * 1024),
++    );
++
++    try std.testing.expect(payload.items.len > magic.len + @sizeOf(u16) + legacy_build_id.len);
++    const build_id_offset = magic.len + @sizeOf(u16);
++    try std.testing.expectEqualSlices(
++        u8,
++        &legacy_build_id,
++        payload.items[build_id_offset..][0..legacy_build_id.len],
++    );
++    var snapshot = try decode(std.testing.allocator, payload.items);
++    snapshot.deinit(std.testing.allocator);
++
++    payload.items[build_id_offset] ^= 0xff;
++    try std.testing.expectError(error.InvalidCheckpoint, decode(std.testing.allocator, payload.items));
++}
++
+ fn writeTerminal(w: *Writer, t: *const Terminal) Error!void {
+     try w.plain(t.status_display);
+     try w.plain(t.rows);
+@@ -928,18 +1084,12 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
+         // Raw page bytes, with the union-bearing set regions zeroed on the
+         // wire: stored set items contain in-memory union padding that Zig
+         // cannot canonicalize in place, so those regions travel as
+-        // structural side tables instead.
++        // structural side tables instead. Emit the zero regions in order
++        // rather than appending then mutating an output ArrayList: the latter
++        // requires the complete checkpoint to be resident and cannot stream.
+         const l = Page.layout(canon.capacity);
+         if (canon.memory.len > std.math.maxInt(u32)) return error.CheckpointTooLarge;
+         try w.plain(@as(u32, @intCast(canon.memory.len)));
+-        const base = w.bytes.items.len;
+-        try w.write(canon.memory);
+-        const wire_page = w.bytes.items[base..][0..canon.memory.len];
+-        @memset(wire_page[l.styles_start..][0..l.styles_layout.total_size], 0);
+-        @memset(
+-            wire_page[l.hyperlink_set_start..][0..l.hyperlink_set_layout.total_size],
+-            0,
+-        );
+         // The grapheme and hyperlink-map hash tables / bitmap allocators store
+         // interior offsets whose ALIGNMENT is asserted on deref; a corrupt
+         // stored offset would reach Offset.ptr's unreachable in ReleaseFast
+@@ -948,9 +1098,13 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
+         // validated side tables on import — no raw region byte is ever
+         // dereferenced during decode. (string_alloc stays raw: it is u8, so it
+         // never misaligns, and its only readers already bounds-check offsets.)
+-        @memset(wire_page[l.grapheme_alloc_start..][0..l.grapheme_alloc_layout.total_size], 0);
+-        @memset(wire_page[l.grapheme_map_start..][0..l.grapheme_map_layout.total_size], 0);
+-        @memset(wire_page[l.hyperlink_map_start..][0..l.hyperlink_map_layout.total_size], 0);
++        try writeScrubbedPage(w, canon.memory, .{
++            .{ l.styles_start, l.styles_layout.total_size },
++            .{ l.grapheme_alloc_start, l.grapheme_alloc_layout.total_size },
++            .{ l.grapheme_map_start, l.grapheme_map_layout.total_size },
++            .{ l.hyperlink_set_start, l.hyperlink_set_layout.total_size },
++            .{ l.hyperlink_map_start, l.hyperlink_map_layout.total_size },
++        });
+ 
+         try writeSetTable(w, &canon.styles, canon.memory);
+         try writeSetTable(w, &canon.hyperlink_set, canon.memory);
+@@ -959,6 +1113,29 @@ fn writePageList(w: *Writer, pages: *const PageList) Error!void {
+     }
+ }
+ 
++fn writeScrubbedPage(
++    w: *Writer,
++    memory: []const u8,
++    regions: [5][2]usize,
++) Error!void {
++    const zeroes = [_]u8{0} ** stream_chunk_bytes;
++    var cursor: usize = 0;
++    for (regions) |region| {
++        const start = region[0];
++        const end = start + region[1];
++        std.debug.assert(start >= cursor and end <= memory.len);
++        try w.write(memory[cursor..start]);
++        var remaining = region[1];
++        while (remaining > 0) {
++            const take = @min(remaining, zeroes.len);
++            try w.write(zeroes[0..take]);
++            remaining -= take;
++        }
++        cursor = end;
++    }
++    try w.write(memory[cursor..]);
++}
++
+ /// Emit a side table of (cell linear index, codepoints) for every cell that
+ /// carries grapheme continuation data. Safe: `page` is our canonical clone.
+ fn writeGraphemeTable(w: *Writer, page: *const Page) Error!void {
+@@ -1838,6 +2015,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
+                 error.InvalidCheckpoint,
+                 error.CheckpointTooLarge,
+                 error.OutOfMemory,
++                error.WriteFailed,
+                 => {},
+             }
+             if (debug.deinit() != .ok) {
+@@ -1874,6 +2052,7 @@ test "checkpoint import survives deterministic byte flip fuzz" {
+                 error.InvalidCheckpoint,
+                 error.CheckpointTooLarge,
+                 error.OutOfMemory,
++                error.WriteFailed,
+                 => {},
+             }
+         }
+@@ -1912,7 +2091,7 @@ test "checkpoint decode rejects corruption in scrubbed grapheme regions" {
+             snap.deinit(a);
+         } else |err| switch (err) {
+             error.InvalidCheckpoint => rejections += 1,
+-            error.CheckpointTooLarge, error.OutOfMemory => {},
++            error.CheckpointTooLarge, error.OutOfMemory, error.WriteFailed => {},
+         }
+         try std.testing.expectEqual(std.heap.Check.ok, debug.deinit());
+     }
+diff --git a/src/lib_vt.zig b/src/lib_vt.zig
+index f01297e7..2d230832 100644
+--- a/src/lib_vt.zig
++++ b/src/lib_vt.zig
+@@ -275,6 +275,7 @@ comptime {
+         @export(&c.terminal_get_multi, .{ .name = "ghostty_terminal_get_multi" });
+         @export(&hive_terminal_c.engine_build_id, .{ .name = "hive_ghostty_engine_build_id_v1" });
+         @export(&hive_terminal_c.checkpoint_export, .{ .name = "hive_ghostty_terminal_checkpoint_export_v1" });
++        @export(&hive_terminal_c.checkpoint_export_stream, .{ .name = "hive_ghostty_terminal_checkpoint_export_stream_v1" });
+         @export(&hive_terminal_c.checkpoint_import, .{ .name = "hive_ghostty_terminal_checkpoint_import_v1" });
+         @export(&c.terminal_select_word, .{ .name = "ghostty_terminal_select_word" });
+         @export(&c.terminal_select_word_between, .{ .name = "ghostty_terminal_select_word_between" });
+diff --git a/src/terminal/c/terminal.zig b/src/terminal/c/terminal.zig
+index 543a9d41..9e59301b 100644
+--- a/src/terminal/c/terminal.zig
++++ b/src/terminal/c/terminal.zig
+@@ -404,6 +404,12 @@ pub const CheckpointAllocFn = *const fn (
+     usize,
+ ) callconv(lib.calling_conv) ?*anyopaque;
+ 
++pub const CheckpointWriteFn = *const fn (
++    ?*anyopaque,
++    ?[*]const u8,
++    usize,
++) callconv(lib.calling_conv) Result;
++
+ pub fn engine_build_id() callconv(lib.calling_conv) [*:0]const u8 {
+     return hive_checkpoint.buildIdHex();
+ }
+@@ -436,7 +442,7 @@ pub fn checkpoint_export(
+     ) catch |err| return switch (err) {
+         error.OutOfMemory => .out_of_memory,
+         error.CheckpointTooLarge => .out_of_space,
+-        error.InvalidCheckpoint => .invalid_value,
++        error.InvalidCheckpoint, error.WriteFailed => .invalid_value,
+     };
+     defer alloc.free(payload);
+     const memory = alloc_fn(context, payload.len, 1) orelse
+@@ -448,6 +454,50 @@ pub fn checkpoint_export(
+     return .success;
+ }
+ 
++pub fn checkpoint_export_stream(
++    terminal_: Terminal,
++    write_fn_: ?CheckpointWriteFn,
++    context: ?*anyopaque,
++    out_length_: ?*usize,
++) callconv(lib.calling_conv) Result {
++    const out_length = out_length_ orelse return .invalid_value;
++    out_length.* = 0;
++    const wrapper = terminal_ orelse return .invalid_value;
++    const write_fn = write_fn_ orelse return .invalid_value;
++    if (!wrapper.checkpoint_valid) return .no_value;
++
++    const StreamContext = struct {
++        write_fn: CheckpointWriteFn,
++        context: ?*anyopaque,
++        result: Result = .success,
++
++        fn write(context_: *anyopaque, bytes: []const u8) bool {
++            const self: *@This() = @ptrCast(@alignCast(context_));
++            const result = self.write_fn(self.context, bytes.ptr, bytes.len);
++            if (result != .success) {
++                self.result = result;
++                return false;
++            }
++            return true;
++        }
++    };
++    var stream: StreamContext = .{ .write_fn = write_fn, .context = context };
++    const length = hive_checkpoint.encodeStream(
++        wrapper.terminal.gpa(),
++        wrapper.terminal,
++        &wrapper.stream,
++        wrapper.checkpoint_pending.items,
++        .{ .context = &stream, .writeFn = StreamContext.write },
++    ) catch |err| return switch (err) {
++        error.OutOfMemory => .out_of_memory,
++        error.CheckpointTooLarge => .out_of_space,
++        error.InvalidCheckpoint => .invalid_value,
++        error.WriteFailed => if (stream.result == .success) .invalid_value else stream.result,
++    };
++    out_length.* = length;
++    return .success;
++}
++
+ pub fn checkpoint_import(
+     terminal_: Terminal,
+     payload_: ?[*]const u8,
+@@ -459,7 +509,7 @@ pub fn checkpoint_import(
+     const alloc = wrapper.terminal.gpa();
+     var snapshot = hive_checkpoint.decode(alloc, payload) catch |err| return switch (err) {
+         error.OutOfMemory => .out_of_memory,
+-        error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
++        error.CheckpointTooLarge, error.InvalidCheckpoint, error.WriteFailed => .invalid_value,
+     };
+     var snapshot_owned = true;
+     defer if (snapshot_owned) snapshot.deinit(alloc);
+@@ -3599,6 +3649,99 @@ test "checkpoint C ABI uses caller allocator and rejects malformed payload" {
+     );
+ }
+ 
++test "streaming checkpoint export is byte-identical, bounded, and abortable" {
++    const AllocState = struct {
++        memory: ?[]u8 = null,
++
++        fn alloc(
++            context: ?*anyopaque,
++            length: usize,
++            alignment: usize,
++        ) callconv(lib.calling_conv) ?*anyopaque {
++            const self: *@This() = @ptrCast(@alignCast(context orelse return null));
++            if (alignment != 1 or self.memory != null) return null;
++            self.memory = testing.allocator.alloc(u8, length) catch return null;
++            return self.memory.?.ptr;
++        }
++    };
++    const StreamState = struct {
++        bytes: std.ArrayList(u8) = .empty,
++        calls: usize = 0,
++        max_chunk: usize = 0,
++        abort: bool = false,
++
++        fn write(
++            context: ?*anyopaque,
++            bytes_: ?[*]const u8,
++            length: usize,
++        ) callconv(lib.calling_conv) Result {
++            const self: *@This() = @ptrCast(@alignCast(context orelse return .invalid_value));
++            if (self.abort) return .out_of_space;
++            const bytes = bytes_ orelse return .invalid_value;
++            if (length == 0 or length > hive_checkpoint.stream_chunk_bytes)
++                return .invalid_value;
++            self.bytes.appendSlice(testing.allocator, bytes[0..length]) catch
++                return .out_of_memory;
++            self.calls += 1;
++            self.max_chunk = @max(self.max_chunk, length);
++            return .success;
++        }
++    };
++
++    var source: Terminal = null;
++    try testing.expectEqual(Result.success, new(
++        &lib.alloc.test_allocator,
++        &source,
++        .{ .cols = 20, .rows = 5, .max_scrollback = 10_000 },
++    ));
++    defer free(source);
++    const source_bytes = "before\r\n\x1b]2;saved\x07\x1b[31";
++    vt_write(source, source_bytes, source_bytes.len);
++
++    var payload: ?[*]u8 = null;
++    var payload_length: usize = 0;
++    var alloc_state: AllocState = .{};
++    try testing.expectEqual(
++        Result.success,
++        checkpoint_export(
++            source,
++            &AllocState.alloc,
++            &alloc_state,
++            &payload,
++            &payload_length,
++        ),
++    );
++    defer testing.allocator.free(alloc_state.memory.?);
++
++    var streamed: StreamState = .{};
++    defer streamed.bytes.deinit(testing.allocator);
++    var streamed_length: usize = 99;
++    try testing.expectEqual(
++        Result.success,
++        checkpoint_export_stream(source, &StreamState.write, &streamed, &streamed_length),
++    );
++    try testing.expect(streamed.calls > 0);
++    try testing.expect(streamed.max_chunk <= hive_checkpoint.stream_chunk_bytes);
++    try testing.expectEqual(payload_length, streamed_length);
++    try testing.expectEqualSlices(u8, payload.?[0..payload_length], streamed.bytes.items);
++
++    var aborted: StreamState = .{ .abort = true };
++    defer aborted.bytes.deinit(testing.allocator);
++    streamed_length = 99;
++    try testing.expectEqual(
++        Result.out_of_space,
++        checkpoint_export_stream(source, &StreamState.write, &aborted, &streamed_length),
++    );
++    try testing.expectEqual(@as(usize, 0), streamed_length);
++
++    streamed_length = 99;
++    try testing.expectEqual(
++        Result.invalid_value,
++        checkpoint_export_stream(null, &StreamState.write, &streamed, &streamed_length),
++    );
++    try testing.expectEqual(@as(usize, 0), streamed_length);
++}
++
+ test "checkpoint export of a poisoned checkpoint reports no value" {
+     // Regression: a poisoned checkpoint (checkpoint_valid == false after
+     // an allocation failure poisoned the pending tail) used to report
+diff --git a/src/testdata/hive_checkpoint_legacy_arm64.hvgcp.gz.b64 b/src/testdata/hive_checkpoint_legacy_arm64.hvgcp.gz.b64
+new file mode 100644
+index 00000000..58b34d97
+--- /dev/null
++++ b/src/testdata/hive_checkpoint_legacy_arm64.hvgcp.gz.b64
+@@ -0,0 +1 @@
++H4sICBzlX2oCA2Nhc2UtMDAtc3BsaXQtMDAwLmh2Z2NwAO3Yfdxf9eDH8XO1mxZRrahY90wkrUia6G66ZS0pE/kyWcWklHUpaUUOKxJTy5h0ZyJHU5LWdKPJKiblzNxnKZMawuX2OOd7vdcv/R6/h8fvof88n4/Hdr6v65zv53w+n/Pdrl3b77B9954yYcKOA8W8wYePueShe+7d8K5dTpp+06Xr7LB06cH7XHTXwD3HzXvg3r02OKtobVJMKf7Hxu2vg4p/tdkWW90+ffrV1x+9esmJp1+0eOGc62YvvuaWW5dMnz797smHXLv0gPtu2ffky1bcfP7y4264ctWqVf039YqiLIqqKOqiaLrq9YpeWfSqolcXvaY7WfaKsizKqijromy6a6teUZVFVRVVXVRN99a6V9RlUVdFXRd1045UNL2iKYumKpq6aJpu4G7odqz2ze3VTXefTtnrVb1e3es13W3bKsteWfXKulc23Szak1XZq6peVfeqpptUe21d9uqqV9e9umnn2L6115S9puo1da9puil3a2gn3c6ynVbTraC7Uzt0O1b75qZbUNetqizrsmy69bW3bauqyqouq6ZbbjuL9mRdlXVd1k27+nZS7bVlU5VNXTZNtxndZrXvbrejXX/T7U23pHawdtLtLJtuq7obt2O3Q7djNd3OdafbbtVV1XQb2a6vvW1bdV3VTbuv7XLbWbQnq6aumqbb5u6plN213UY33a53e1d2b+22o+keQrfCshupm3TTPZNuHmU3cDd00z2i7uqyu0+naZ9Yu5Ht+trbtlU3TdP/NDT95930n2jTf2ZN/6k0/X1v+jvb9Peu6e9O019/019h019D059l059H079T0x+r6V/d9HvMmDFjx44dN27c+PHjJ0yYMHHixEmTJk2ePHnq1KnTpk2bMWPGzJkzZ82aNXv27Dlz5syfP3/BggULFy5ctGjRkiVLli1btmLFipUrVz744IM+/z7//82f/+LfGbl1ceS//j6m/epAzm75yHUDj9Px/2etx37hscPcPyIvZq3bP0xpvydu8n9cOzi2e8OOox85sbp9Pfe+Uf0Vd5a3r+9fe3QxVI8q/nNDy0c9atpHr5lnjqf9rzVduN7wce7E0f1lTCkOWmtWccPwQ2inuHrX0Y/HrB41ykCxZvdG5jjikXNr9mTumi/sMXp4A7sxNs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
+diff --git a/src/testdata/hive_checkpoint_legacy_x86_64.hvgcp.gz.b64 b/src/testdata/hive_checkpoint_legacy_x86_64.hvgcp.gz.b64
+new file mode 100644
+index 00000000..f95f1662
+--- /dev/null
++++ b/src/testdata/hive_checkpoint_legacy_x86_64.hvgcp.gz.b64
+@@ -0,0 +1 @@
++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
+

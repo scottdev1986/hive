@@ -142,6 +142,14 @@ ghostty_result_e hive_ghostty_surface_semantic_snapshot_v1(
 ghostty_result_e hive_ghostty_terminal_checkpoint_export_v1(
   ghostty_terminal_t, hive_ghostty_alloc_fn, void *context,
   uint8_t **payload, size_t *length);
+/* Streams the byte-identical HVGCP001 payload in chunks no larger than 64 KiB.
+ * The callback returns GHOSTTY_SUCCESS to continue or another result to abort;
+ * length is set only after the complete payload has been written. */
+typedef ghostty_result_e (*hive_ghostty_checkpoint_write_fn)(
+  void *context, const uint8_t *bytes, size_t length);
+ghostty_result_e hive_ghostty_terminal_checkpoint_export_stream_v1(
+  ghostty_terminal_t, hive_ghostty_checkpoint_write_fn, void *context,
+  size_t *length);
 ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
   ghostty_terminal_t, const uint8_t *payload, size_t length);
 

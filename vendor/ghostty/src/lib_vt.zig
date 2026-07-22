@@ -275,6 +275,7 @@ comptime {
         @export(&c.terminal_get_multi, .{ .name = "ghostty_terminal_get_multi" });
         @export(&hive_terminal_c.engine_build_id, .{ .name = "hive_ghostty_engine_build_id_v1" });
         @export(&hive_terminal_c.checkpoint_export, .{ .name = "hive_ghostty_terminal_checkpoint_export_v1" });
+        @export(&hive_terminal_c.checkpoint_export_stream, .{ .name = "hive_ghostty_terminal_checkpoint_export_stream_v1" });
         @export(&hive_terminal_c.checkpoint_import, .{ .name = "hive_ghostty_terminal_checkpoint_import_v1" });
         @export(&c.terminal_select_word, .{ .name = "ghostty_terminal_select_word" });
         @export(&c.terminal_select_word_between, .{ .name = "ghostty_terminal_select_word_between" });

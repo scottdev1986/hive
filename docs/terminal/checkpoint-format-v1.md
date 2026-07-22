@@ -22,8 +22,22 @@ below is re-proven live in the qualification phase.
   and a restore parameter — it is NOT in the HVGCP payload.
 
 Export exists only on the lib-vt side (sessiond's headless terminal); the app
-surface only restores. Bounded: payload hard cap 64 MiB, enforced on both
-encode and decode entry.
+surface only restores. The v1 bytes did not change for the deep-scrollback
+fix: the legacy allocating exporter remains capped at 64 MiB, while the
+producer can stream the same HVGCP001 bytes in chunks of at most 64 KiB up to
+the 512 MiB semantic/import cap. HVTCP001 is spooled in one pass: its header is
+reserved, the outer payload SHA-256 and length are accumulated while writing,
+and the complete header is patched and synced only after export succeeds.
+HVGCP001 still has no body digest; HVTCP001 still provides whole-payload
+integrity.
+
+Changing the serializer source changes the engineBuildId even though the v1
+wire bytes remain byte-identical. Import therefore accepts the immediately
+pre-stream ReleaseFast C-ABI build ID for the same architecture in addition to
+the current ID. Other build configurations remain rejected because their
+plain/page layouts are not interchangeable. A captured pre-stream production
+fixture is decoded by the matching target test; arbitrary historical IDs are
+not allowlisted.
 
 ## 2. State captured (and deliberately not captured)
 
@@ -217,7 +231,7 @@ Changes over the candidate (Gate-6 backlog items A and B are closed in-scope):
 
 Every decoded scalar is range-validated before use: enum tags checked against
 declared values, bools restricted to {0,1}, tagged-union tags validated,
-counts/lengths checked against the remaining payload and the 64 MiB cap before
+counts/lengths checked against the remaining payload and the 512 MiB cap before
 allocation, page memory length must be a nonzero multiple of the page size and
 exactly equal to `Page.layout(capacity).total_size`, and Page interior
 offsets/capacity/size fields validated against page-memory bounds so corrupt

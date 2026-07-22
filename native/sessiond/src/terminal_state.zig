@@ -19,6 +19,7 @@
 //! src/schemas/session-protocol.ts / session_protocol.generated.zig.
 
 const std = @import("std");
+const builtin = @import("builtin");
 const generated = @import("session_protocol_generated");
 const hvtcp001_header = @import("hvtcp001_header");
 
@@ -26,8 +27,38 @@ const hvtcp001_header = @import("hvtcp001_header");
 
 /// Replay journal capacity per generation (§18).
 pub const journal_max_bytes: usize = 64 * 1024 * 1024;
-/// Maximum opaque checkpoint payload (§18 / §23).
-pub const checkpoint_max_bytes: usize = 64 * 1024 * 1024;
+/// Maximum opaque checkpoint payload accepted by the streamed producer and
+/// legacy contiguous importer (§18 / §23). The old allocating producer stays
+/// at 64 MiB; larger checkpoints must use the bounded streaming path.
+pub const checkpoint_max_bytes: usize = 512 * 1024 * 1024;
+pub const checkpoint_contiguous_max_bytes: usize = 64 * 1024 * 1024;
+pub const checkpoint_stream_chunk_bytes: usize = 64 * 1024;
+
+fn buildIdBytes(comptime value: *const [64]u8) [32]u8 {
+    var result: [32]u8 = undefined;
+    inline for (0..32) |index| {
+        const high = std.fmt.charToDigit(value[index * 2], 16) catch
+            @compileError("invalid legacy checkpoint build id");
+        const low = std.fmt.charToDigit(value[index * 2 + 1], 16) catch
+            @compileError("invalid legacy checkpoint build id");
+        result[index] = (high << 4) | low;
+    }
+    return result;
+}
+
+pub const legacy_engine_build_id: [32]u8 = switch (builtin.target.cpu.arch) {
+    .aarch64 => buildIdBytes("9b78f469a4efe2e513d4377766c2a5092fcaca5146a2d401e2709bece542118b"),
+    .x86_64 => buildIdBytes("ea592b32749f04556e942e0358c3360e423659f4d6bb23b719f81fc14b2cf349"),
+    else => @splat(0),
+};
+
+pub fn acceptsEngineBuildId(candidate: *const [32]u8, current: *const [32]u8) bool {
+    if (std.mem.eql(u8, candidate, current)) return true;
+    return switch (builtin.target.cpu.arch) {
+        .aarch64, .x86_64 => std.mem.eql(u8, candidate, &legacy_engine_build_id),
+        else => false,
+    };
+}
 /// Dual retain: newest valid + previous valid (§18).
 pub const retained_checkpoints: usize = 2;
 /// Stream chunk bound for OUTPUT / SNAPSHOT_BYTES (§18).
@@ -184,6 +215,10 @@ pub const VtEngine = struct {
     writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
     /// See ownership contract above — Zig-allocator-owned on success.
     exportFn: *const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8,
+    /// Bounded producer used for checkpoints above the legacy contiguous cap.
+    /// Null keeps old engine doubles/source compatibility and falls back to
+    /// exportFn, still writing the result in bounded chunks.
+    exportStreamFn: ?*const fn (context: *anyopaque, sink: OpaqueStreamSink) anyerror!usize = null,
     importFn: *const fn (context: *anyopaque, payload: []const u8) anyerror!void,
     digestFn: *const fn (context: *anyopaque) [32]u8,
     /// Snapshot of PTY-bound effect bytes collected since create/import (for TG2 stream compare).
@@ -209,6 +244,25 @@ pub const VtEngine = struct {
         return self.exportFn(self.context, allocator);
     }
 
+    pub fn exportOpaqueStream(
+        self: VtEngine,
+        allocator: std.mem.Allocator,
+        sink: OpaqueStreamSink,
+    ) anyerror!usize {
+        if (self.exportStreamFn) |export_stream| {
+            return export_stream(self.context, sink);
+        }
+        const payload = try self.exportOpaque(allocator);
+        defer allocator.free(payload);
+        var offset: usize = 0;
+        while (offset < payload.len) {
+            const take = @min(checkpoint_stream_chunk_bytes, payload.len - offset);
+            try sink.write(payload[offset..][0..take]);
+            offset += take;
+        }
+        return payload.len;
+    }
+
     pub fn importOpaque(self: VtEngine, payload: []const u8) anyerror!void {
         return self.importFn(self.context, payload);
     }
@@ -229,6 +283,15 @@ pub const VtEngine = struct {
         cell_height_px: u32,
     ) anyerror!void {
         return self.resizeFn(self.context, columns, rows, cell_width_px, cell_height_px);
+    }
+};
+
+pub const OpaqueStreamSink = struct {
+    context: *anyopaque,
+    writeFn: *const fn (context: *anyopaque, bytes: []const u8) anyerror!void,
+
+    pub fn write(self: OpaqueStreamSink, bytes: []const u8) anyerror!void {
+        return self.writeFn(self.context, bytes);
     }
 };
 
@@ -311,20 +374,22 @@ pub fn decodeHeader(bytes: *const [header_bytes]u8) EnvelopeError!CheckpointHead
 }
 
 /// Assemble header + opaque payload into an owned file image. Computes payload SHA-256.
+pub const CheckpointFields = struct {
+    through_seq: u64,
+    created_mono_nanos: u64,
+    columns: u32,
+    rows: u32,
+    cell_width_px_16_16: u32,
+    cell_height_px_16_16: u32,
+    engine_build_id: *const [32]u8,
+};
+
 pub fn assembleEnvelope(
     allocator: std.mem.Allocator,
-    fields: struct {
-        through_seq: u64,
-        created_mono_nanos: u64,
-        columns: u32,
-        rows: u32,
-        cell_width_px_16_16: u32,
-        cell_height_px_16_16: u32,
-        engine_build_id: *const [32]u8,
-    },
+    fields: CheckpointFields,
     opaque_payload: []const u8,
 ) Error![]u8 {
-    if (opaque_payload.len > checkpoint_max_bytes) return error.PayloadTooLarge;
+    if (opaque_payload.len > checkpoint_contiguous_max_bytes) return error.PayloadTooLarge;
     if (opaque_payload.len > std.math.maxInt(u32)) return error.PayloadTooLarge;
 
     var sha: [32]u8 = undefined;
@@ -374,6 +439,73 @@ pub fn verifyPayload(header: CheckpointHeader, payload: []const u8) EnvelopeErro
     var sha: [32]u8 = undefined;
     std.crypto.hash.sha2.Sha256.hash(payload, &sha, .{});
     if (!std.mem.eql(u8, &sha, &header.payload_sha256)) return error.PayloadSha256Mismatch;
+}
+
+/// Write HVTCP001 directly to a caller-owned spool. A zero header is reserved,
+/// the opaque payload is hashed while the engine streams it, then the complete
+/// header is patched at offset zero and the file is synced. A failed export
+/// never leaves a header that could be mistaken for a complete checkpoint.
+pub fn writeEnvelopeStream(
+    allocator: std.mem.Allocator,
+    engine: VtEngine,
+    file: *std.fs.File,
+    fields: CheckpointFields,
+) Error!CheckpointHeader {
+    const FileSink = struct {
+        file: *std.fs.File,
+        sha: std.crypto.hash.sha2.Sha256 = .init(.{}),
+        length: usize = 0,
+
+        fn write(context: *anyopaque, bytes: []const u8) anyerror!void {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            if (bytes.len == 0 or bytes.len > checkpoint_stream_chunk_bytes)
+                return error.Internal;
+            if (bytes.len > checkpoint_max_bytes -| self.length)
+                return error.PayloadTooLarge;
+            self.file.writeAll(bytes) catch return error.IoFailed;
+            self.sha.update(bytes);
+            self.length += bytes.len;
+        }
+    };
+
+    file.setEndPos(0) catch return error.IoFailed;
+    file.seekTo(0) catch return error.IoFailed;
+    const empty_header = [_]u8{0} ** header_bytes;
+    file.writeAll(&empty_header) catch return error.IoFailed;
+
+    var sink: FileSink = .{ .file = file };
+    const reported_length = engine.exportOpaqueStream(
+        allocator,
+        .{ .context = &sink, .writeFn = FileSink.write },
+    ) catch |err| return switch (err) {
+        error.OutOfMemory => error.OutOfMemory,
+        error.PayloadTooLarge => error.PayloadTooLarge,
+        error.IoFailed => error.IoFailed,
+        else => error.CheckpointUnavailable,
+    };
+    if (reported_length == 0 or reported_length != sink.length)
+        return error.CheckpointUnavailable;
+    if (sink.length > std.math.maxInt(u32)) return error.PayloadTooLarge;
+
+    var payload_sha256: [payload_sha256_bytes]u8 = undefined;
+    sink.sha.final(&payload_sha256);
+    const header: CheckpointHeader = .{
+        .through_seq = fields.through_seq,
+        .created_mono_nanos = fields.created_mono_nanos,
+        .columns = fields.columns,
+        .rows = fields.rows,
+        .cell_width_px_16_16 = fields.cell_width_px_16_16,
+        .cell_height_px_16_16 = fields.cell_height_px_16_16,
+        .engine_build_id = fields.engine_build_id.*,
+        .payload_length = @intCast(sink.length),
+        .payload_sha256 = payload_sha256,
+    };
+    var header_buffer: [header_bytes]u8 = undefined;
+    encodeHeader(header, &header_buffer);
+    file.seekTo(0) catch return error.IoFailed;
+    file.writeAll(&header_buffer) catch return error.IoFailed;
+    file.sync() catch return error.IoFailed;
+    return header;
 }
 
 // ── In-memory journal (file persistence is host composition / disk layer) ───
@@ -748,7 +880,7 @@ pub const TerminalState = struct {
             self.reconnect_available = false;
             return error.CheckpointUnavailable;
         }
-        if (opaque_payload.len > checkpoint_max_bytes) {
+        if (opaque_payload.len > checkpoint_contiguous_max_bytes) {
             self.reconnect_available = false;
             return error.PayloadTooLarge;
         }
@@ -828,7 +960,7 @@ pub const TerminalState = struct {
         if (!self.reconnect_available) return error.CheckpointUnavailable;
         const cp = self.checkpoints.newest() orelse return error.CheckpointUnavailable;
 
-        if (!std.mem.eql(u8, &cp.header.engine_build_id, &self.engine_build_id)) {
+        if (!acceptsEngineBuildId(&cp.header.engine_build_id, &self.engine_build_id)) {
             return error.EngineMismatch;
         }
 
@@ -1116,6 +1248,8 @@ const MockEngine = struct {
     empty_export: bool = false,
     /// When true, export returns payload that won't round-trip digest.
     incomplete_export: bool = false,
+    /// Test-only streamed payload size; bypasses the mock checkpoint body.
+    stream_padding_bytes: usize = 0,
     /// When true, write returns error (F1 fallible VT write).
     fail_write: bool = false,
     /// Last applied resize (init-time geometry sync counts as a resize).
@@ -1143,6 +1277,7 @@ const MockEngine = struct {
             .deinitFn = deinitCb,
             .writeFn = writeCb,
             .exportFn = exportCb,
+            .exportStreamFn = exportStreamCb,
             .importFn = importCb,
             .digestFn = digestCb,
             .effectsFn = effectsCb,
@@ -1204,6 +1339,38 @@ const MockEngine = struct {
         std.crypto.hash.sha2.Sha256.hash(self.state.items, &sha, .{});
         try out.appendSlice(allocator, &sha);
         return try out.toOwnedSlice(allocator);
+    }
+
+    fn exportStreamCb(ctx: *anyopaque, sink: OpaqueStreamSink) anyerror!usize {
+        const self: *MockEngine = @ptrCast(@alignCast(ctx));
+        if (self.fail_export) return error.CheckpointUnavailable;
+        if (self.empty_export) return 0;
+        if (self.stream_padding_bytes > 0) {
+            const zeroes = [_]u8{0} ** checkpoint_stream_chunk_bytes;
+            var remaining = self.stream_padding_bytes;
+            while (remaining > 0) {
+                const take = @min(remaining, zeroes.len);
+                try sink.write(zeroes[0..take]);
+                remaining -= take;
+            }
+            return self.stream_padding_bytes;
+        }
+        try sink.write("MOCKCP01");
+        var sha: [32]u8 = undefined;
+        if (self.incomplete_export) {
+            std.crypto.hash.sha2.Sha256.hash(&.{}, &sha, .{});
+            try sink.write(&sha);
+            return 8 + sha.len;
+        }
+        var offset: usize = 0;
+        while (offset < self.state.items.len) {
+            const take = @min(checkpoint_stream_chunk_bytes, self.state.items.len - offset);
+            try sink.write(self.state.items[offset..][0..take]);
+            offset += take;
+        }
+        std.crypto.hash.sha2.Sha256.hash(self.state.items, &sha, .{});
+        try sink.write(&sha);
+        return 8 + self.state.items.len + sha.len;
     }
 
     fn importCb(ctx: *anyopaque, payload: []const u8) anyerror!void {
@@ -1298,6 +1465,86 @@ fn makeState() !TestState {
         .{ .columns = 80, .rows = 24 },
     );
     return .{ .ts = ts, .factory = factory, .clock = clock, .engine_ptr = eng };
+}
+
+test "streamed HVTCP001 producer crosses legacy cap with bounded writes and SHA-256" {
+    var tmp = testing.tmpDir(.{});
+    defer tmp.cleanup();
+    var file = try tmp.dir.createFile("streamed-checkpoint.bin", .{ .read = true });
+    defer file.close();
+
+    const engine_ptr = try MockEngine.create(testing.allocator);
+    const engine = engine_ptr.engine();
+    defer engine.deinit();
+    engine_ptr.stream_padding_bytes = checkpoint_contiguous_max_bytes + 1;
+    const engine_id = testBuildId();
+    const header = try writeEnvelopeStream(testing.allocator, engine, &file, .{
+        .through_seq = 41,
+        .created_mono_nanos = 73,
+        .columns = 500,
+        .rows = 500,
+        .cell_width_px_16_16 = 8 << 16,
+        .cell_height_px_16_16 = 16 << 16,
+        .engine_build_id = &engine_id,
+    });
+
+    try testing.expectEqual(
+        @as(u32, @intCast(checkpoint_contiguous_max_bytes + 1)),
+        header.payload_length,
+    );
+    const stat = try file.stat();
+    try testing.expectEqual(header_bytes + engine_ptr.stream_padding_bytes, stat.size);
+
+    var expected_hash = std.crypto.hash.sha2.Sha256.init(.{});
+    const zeroes = [_]u8{0} ** checkpoint_stream_chunk_bytes;
+    var remaining = engine_ptr.stream_padding_bytes;
+    while (remaining > 0) {
+        const take = @min(remaining, zeroes.len);
+        expected_hash.update(zeroes[0..take]);
+        remaining -= take;
+    }
+    var expected_sha: [payload_sha256_bytes]u8 = undefined;
+    expected_hash.final(&expected_sha);
+    try testing.expectEqualSlices(u8, &expected_sha, &header.payload_sha256);
+
+    file.seekTo(0) catch return error.IoFailed;
+    var header_buffer: [header_bytes]u8 = undefined;
+    try testing.expectEqual(header_buffer.len, try file.readAll(&header_buffer));
+    const decoded = try decodeHeader(&header_buffer);
+    try testing.expectEqualDeep(header, decoded);
+
+    engine_ptr.fail_export = true;
+    try testing.expectError(
+        error.CheckpointUnavailable,
+        writeEnvelopeStream(testing.allocator, engine, &file, .{
+            .through_seq = 42,
+            .created_mono_nanos = 74,
+            .columns = 500,
+            .rows = 500,
+            .cell_width_px_16_16 = 8 << 16,
+            .cell_height_px_16_16 = 16 << 16,
+            .engine_build_id = &engine_id,
+        }),
+    );
+    try testing.expectEqual(@as(u64, header_bytes), (try file.stat()).size);
+    file.seekTo(0) catch return error.IoFailed;
+    try testing.expectEqual(header_buffer.len, try file.readAll(&header_buffer));
+    try testing.expectEqualSlices(u8, &([_]u8{0} ** header_bytes), &header_buffer);
+}
+
+test "restore engine compatibility accepts only current and immediate legacy IDs" {
+    const current = testBuildId();
+    try testing.expect(acceptsEngineBuildId(&current, &current));
+    switch (builtin.target.cpu.arch) {
+        .aarch64, .x86_64 => try testing.expect(acceptsEngineBuildId(
+            &legacy_engine_build_id,
+            &current,
+        )),
+        else => {},
+    }
+    var unrelated = legacy_engine_build_id;
+    unrelated[0] ^= 0xff;
+    try testing.expect(!acceptsEngineBuildId(&unrelated, &current));
 }
 
 test "feedOutput advances exclusive outputSeq and journals bytes" {
@@ -1762,7 +2009,8 @@ test "engineBuildId is embedded from caller, not recomputed" {
 
 test "limits match §18 / schema" {
     try testing.expectEqual(@as(usize, 64 * 1024 * 1024), journal_max_bytes);
-    try testing.expectEqual(@as(usize, 64 * 1024 * 1024), checkpoint_max_bytes);
+    try testing.expectEqual(@as(usize, 512 * 1024 * 1024), checkpoint_max_bytes);
+    try testing.expectEqual(@as(usize, 64 * 1024 * 1024), checkpoint_contiguous_max_bytes);
     try testing.expectEqual(@as(usize, 2), retained_checkpoints);
     try testing.expectEqual(@as(usize, 64 * 1024), stream_chunk_max_bytes);
     try testing.expectEqual(@as(u64, 2 * 1024 * 1024), checkpoint_output_interval_bytes);
