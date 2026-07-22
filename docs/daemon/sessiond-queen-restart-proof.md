@@ -118,7 +118,10 @@ geometry, a decimal output sequence, `text: null`, and no scope or subject
 error. This is the positive control for reading later negative states.
 
 Read the manifest-recorded tmux socket with `has-session` for the exact legacy
-queen session. It must be absent. The provider root recorded in
+queen session. It must be absent. Prove the tmux reader first against a known
+live socket/session from the read-only baseline; if the isolated instance has
+no tmux server at all, record both that positive control and the exact test
+socket's absent-server result. The provider root recorded in
 `createEvidence.verifiedProviderRoot` must instead belong to the exact sessiond
 binding. Do not accept "no tmux process found" until the positive-control
 inventory proves the command is reading the correct instance socket.
