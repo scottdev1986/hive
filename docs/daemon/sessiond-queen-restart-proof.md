@@ -227,8 +227,10 @@ handwritten quota message or only a status read fails the cell.
 
 ## D — queen approval round trip
 
-Use a sandboxed disposable agent and a harmless command that the selected
-vendor genuinely routes to its permission surface; for example, the Codex
+Switch the isolated instance to the Workspace's sandboxed autonomy setting,
+wait for the feed to confirm it, then spawn a disposable agent. Use a harmless
+command that the selected vendor genuinely routes to its permission surface;
+for example, the Codex
 fixture-equivalent read-only request is a `curl` to `https://example.com` with
 output discarded. Do not manufacture an approval row. If the provider
 auto-allows the command, choose another harmless read-only request that
@@ -241,6 +243,7 @@ exact id. The result must be `resolved`; the vendor prompt must visibly leave,
 the exact command must run once, and the agent must return to working and then
 idle. The agent's later `hive-approvals` resolution envelope is the final
 positive control that the decision crossed back over the terminal bridge.
+Restore and re-confirm the run's prior autonomy setting before the next cell.
 
 ## E — delivery honesty under human input ownership
 
