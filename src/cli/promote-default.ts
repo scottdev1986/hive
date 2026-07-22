@@ -27,7 +27,9 @@ export interface PromoteDefaultModelControlResult {
 /**
  * Promote this instance's explicit Model Control document to the machine
  * default. A live (or unprovably dead) default daemon owns its database, so
- * this command writes only after its lock has been proved dead.
+ * this command writes only after its lock has been proved dead. The audited,
+ * CAS-protected database promotion deliberately precedes the selection mirror:
+ * if the mirror write fails, the recoverable database remains authoritative.
  */
 export async function promoteDefaultModelControl(
   options: PromoteDefaultModelControlOptions = {},
@@ -64,6 +66,18 @@ export async function promoteDefaultModelControl(
   } finally {
     sourceDb.close();
   }
+  // Mirror RoutingPolicyStore.promote's source-quality guard before opening
+  // either target store, so a refused promotion cannot change either target.
+  if (source.revision === 0) {
+    throw new Error(
+      "Refusing to promote Model Control: the source has no user-authored policy yet (revision 0).",
+    );
+  }
+  if (source.provisional) {
+    throw new Error(
+      "Refusing to promote Model Control: the source still has Hive's provisional baseline; edit Model Control before promoting.",
+    );
+  }
 
   const targetDb = new HiveDatabase(join(targetHome, "hive.db"));
   try {
@@ -75,13 +89,21 @@ export async function promoteDefaultModelControl(
     // an incidental side effect of the database promotion.
     preferences.read();
     const targetRevision = target.read(now).revision;
-    await preferences.replace(source.selection);
     const next = target.promote(
       source,
       targetRevision,
       PROMOTE_ACTOR,
       now,
     );
+    try {
+      await preferences.replace(source.selection);
+    } catch (error) {
+      throw new Error(
+        "Model Control was promoted, but the selection mirror is stale. " +
+          "Rerun `hive promote-default` to update ~/.hive/routing-selection.json.",
+        { cause: error },
+      );
+    }
     return { sourceRevision: source.revision, targetRevision: next.revision };
   } finally {
     targetDb.close();

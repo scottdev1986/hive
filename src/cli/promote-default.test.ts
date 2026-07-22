@@ -1,5 +1,5 @@
 import { afterEach, expect, spyOn, test } from "bun:test";
-import { existsSync, mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -121,6 +121,9 @@ test("promote rejects a stale default revision rather than clobbering it", () =>
 test("promote refuses an empty revision-0 source without changing the default", async () => {
   const { currentHome, defaultHome } = fixture();
   const targetPolicy = writeCurrentPolicy(defaultHome);
+  const mirrorPath = join(defaultHome, "routing-selection.json");
+  const mirrorBefore = '{"schemaVersion":1,"selection":{"global":"choice","categories":{}}}\n';
+  writeFileSync(mirrorPath, mirrorBefore);
   const sourceDb = new HiveDatabase(join(currentHome, "hive.db"));
   sourceDb.close();
 
@@ -136,11 +139,15 @@ test("promote refuses an empty revision-0 source without changing the default", 
   } finally {
     targetDb.close();
   }
+  expect(readFileSync(mirrorPath, "utf8")).toBe(mirrorBefore);
 });
 
 test("promote refuses a provisional source without changing the default", async () => {
   const { currentHome, defaultHome } = fixture();
   const targetPolicy = writeCurrentPolicy(defaultHome);
+  const mirrorPath = join(defaultHome, "routing-selection.json");
+  const mirrorBefore = '{"schemaVersion":1,"selection":{"global":"choice","categories":{}}}\n';
+  writeFileSync(mirrorPath, mirrorBefore);
   const sourceDb = new HiveDatabase(join(currentHome, "hive.db"));
   try {
     new RoutingPolicyStore(sourceDb).seedProvisionalBaseline(
@@ -163,6 +170,7 @@ test("promote refuses a provisional source without changing the default", async 
   } finally {
     targetDb.close();
   }
+  expect(readFileSync(mirrorPath, "utf8")).toBe(mirrorBefore);
 });
 
 test("promote refuses when the current home is already the machine default", async () => {
@@ -186,15 +194,17 @@ test("promote refuses when the current home is already the machine default", asy
   }
 });
 
-test("promote leaves policy unchanged when selection mirror replacement fails", async () => {
+test("promote reports a stale selection mirror after the policy succeeds", async () => {
   const { currentHome, defaultHome } = fixture();
-  writeCurrentPolicy(currentHome);
-  const targetPolicy = writeCurrentPolicy(defaultHome);
+  const source = writeCurrentPolicy(currentHome);
+  writeCurrentPolicy(defaultHome);
   const replace = spyOn(SelectionPreferenceStore.prototype, "replace")
     .mockRejectedValueOnce(new Error("selection mirror unavailable"));
   try {
     await expect(promoteDefaultModelControl({ currentHome, defaultHome, now: NOW }))
-      .rejects.toThrow("selection mirror unavailable");
+      .rejects.toThrow(
+        "Model Control was promoted, but the selection mirror is stale. Rerun `hive promote-default` to update ~/.hive/routing-selection.json.",
+      );
   } finally {
     replace.mockRestore();
   }
@@ -202,9 +212,9 @@ test("promote leaves policy unchanged when selection mirror replacement fails", 
   const targetDb = new HiveDatabase(join(defaultHome, "hive.db"));
   try {
     const target = new RoutingPolicyStore(targetDb);
-    expectCopied(target.read(NOW), targetPolicy);
+    expectCopied(target.read(NOW), source);
     expect(targetDb.database.query("SELECT COUNT(*) AS count FROM routing_policy_events").get())
-      .toEqual({ count: 3 });
+      .toEqual({ count: 4 });
   } finally {
     targetDb.close();
   }
