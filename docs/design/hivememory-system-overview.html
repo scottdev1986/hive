@@ -1,0 +1,326 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiveMemory — How Hive Remembers</title>
+<style>
+  :root {
+    --bg: #0d1117;
+    --panel: #161b22;
+    --panel-2: #1c2330;
+    --ink: #e6edf3;
+    --muted: #9aa7b4;
+    --accent: #f0b429;      /* honey */
+    --accent-2: #8b5cf6;    /* HiveMemory violet */
+    --green: #3fb950;
+    --blue: #58a6ff;
+    --red: #f47067;
+    --line: #2d3642;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body {
+    background: var(--bg);
+    color: var(--ink);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif;
+    line-height: 1.6;
+  }
+  .wrap { max-width: 1080px; margin: 0 auto; padding: 0 32px; }
+
+  header.hero {
+    padding: 96px 0 72px;
+    text-align: center;
+    background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(139,92,246,.18), transparent 70%);
+  }
+  .badge {
+    display: inline-block; font-size: 13px; letter-spacing: .18em; text-transform: uppercase;
+    color: var(--accent-2); border: 1px solid var(--accent-2); border-radius: 999px;
+    padding: 6px 18px; margin-bottom: 28px;
+  }
+  h1 { font-size: 56px; font-weight: 800; letter-spacing: -0.02em; }
+  h1 .hm { color: var(--accent-2); }
+  .tagline { font-size: 22px; color: var(--muted); margin-top: 18px; max-width: 720px; margin-left: auto; margin-right: auto; }
+
+  section { padding: 72px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 34px; font-weight: 750; letter-spacing: -0.01em; margin-bottom: 12px; }
+  h2 .num { color: var(--accent); font-weight: 400; margin-right: 12px; font-size: 22px; vertical-align: middle; }
+  .lede { color: var(--muted); font-size: 18px; max-width: 760px; margin-bottom: 40px; }
+
+  .grid { display: grid; gap: 20px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 860px) { .grid-3, .grid-2 { grid-template-columns: 1fr; } h1 { font-size: 40px; } }
+
+  .card {
+    background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px;
+  }
+  .card h3 { font-size: 20px; margin-bottom: 8px; }
+  .card p { color: var(--muted); font-size: 15px; }
+  .card .analogy { display: block; margin-top: 14px; font-size: 13px; color: var(--accent); font-style: italic; }
+  .icon { font-size: 30px; margin-bottom: 12px; display: block; }
+
+  .figure { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 32px; margin-top: 8px; }
+  .figure figcaption { color: var(--muted); font-size: 14px; text-align: center; margin-top: 18px; }
+  svg { display: block; margin: 0 auto; max-width: 100%; height: auto; }
+
+  .stat-row { display: grid; grid-template-columns: repeat(3,1fr); gap: 20px; margin-top: 36px; }
+  @media (max-width: 860px) { .stat-row { grid-template-columns: 1fr; } }
+  .stat { text-align: center; padding: 24px; background: var(--panel-2); border-radius: 14px; border: 1px solid var(--line); }
+  .stat .big { font-size: 40px; font-weight: 800; color: var(--accent); }
+  .stat .lbl { color: var(--muted); font-size: 14px; margin-top: 6px; }
+
+  .vs { display: grid; grid-template-columns: 1fr 1fr; gap: 20px; }
+  @media (max-width: 860px) { .vs { grid-template-columns: 1fr; } }
+  .vs .col { border-radius: 14px; padding: 28px; border: 1px solid var(--line); }
+  .vs .before { background: rgba(244,112,103,.06); border-color: rgba(244,112,103,.35); }
+  .vs .after { background: rgba(63,185,80,.06); border-color: rgba(63,185,80,.35); }
+  .vs h3 { font-size: 18px; margin-bottom: 14px; }
+  .vs .before h3 { color: var(--red); }
+  .vs .after h3 { color: var(--green); }
+  .vs ul { list-style: none; }
+  .vs li { padding: 8px 0 8px 26px; position: relative; color: var(--muted); font-size: 15px; }
+  .vs .before li::before { content: "✕"; position: absolute; left: 0; color: var(--red); }
+  .vs .after li::before { content: "✓"; position: absolute; left: 0; color: var(--green); }
+
+  .pillars li { margin-bottom: 4px; }
+  ul.plain { list-style: none; }
+  ul.plain li { padding: 10px 0 10px 30px; position: relative; color: var(--muted); font-size: 16px; }
+  ul.plain li::before { content: "◆"; position: absolute; left: 0; color: var(--accent-2); font-size: 12px; top: 14px; }
+  ul.plain li strong { color: var(--ink); }
+
+  footer { padding: 48px 0 64px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
+  footer code { background: var(--panel-2); padding: 2px 8px; border-radius: 6px; font-size: 12px; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge">Hive Design Brief</span>
+    <h1><span class="hm">HiveMemory</span></h1>
+    <p class="tagline">Hive's agents never start from zero. Every lesson, fact, and mistake is captured once — and remembered by the whole team, forever.</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">01</span>The problem: AI agents have amnesia</h2>
+    <p class="lede">Today's AI coding agents wake up every session with no idea what happened yesterday. The workaround a teammate found on Tuesday is gone by Wednesday. The same mistake gets made, diagnosed, and fixed — over and over, at full price every time.</p>
+    <div class="vs">
+      <div class="col before">
+        <h3>Without memory</h3>
+        <ul>
+          <li>Every session starts from a blank slate</li>
+          <li>Humans re-explain their own projects daily</li>
+          <li>The same bugs are rediscovered and re-fixed</li>
+          <li>Knowledge dies when a session ends</li>
+          <li>Each agent learns nothing from the others</li>
+        </ul>
+      </div>
+      <div class="col after">
+        <h3>With HiveMemory</h3>
+        <ul>
+          <li>Agents pick up exactly where the team left off</li>
+          <li>Facts are captured once, recalled forever</li>
+          <li>A mistake made once is never made twice</li>
+          <li>Knowledge compounds across sessions</li>
+          <li>Every agent benefits from every agent's work</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">02</span>Three kinds of memory, one system</h2>
+    <p class="lede">HiveMemory mirrors how a great human team actually remembers: a curated handbook, a detailed work log, and a wall of hard-won lessons. Each layer has a different job — together they cover everything an agent needs to know.</p>
+    <div class="grid grid-3">
+      <div class="card">
+        <span class="icon">📖</span>
+        <h3>The Handbook</h3>
+        <p>Curated, verified knowledge about the project — conventions, decisions, truths. Raw observations are compiled into articles that are checked, dated, and kept current. When something changes, the old belief is marked superseded, never silently deleted.</p>
+        <span class="analogy">Like a company wiki with an editor who checks facts.</span>
+      </div>
+      <div class="card">
+        <span class="icon">🎞️</span>
+        <h3>The Work Log</h3>
+        <p>A complete, searchable record of what every agent did — sessions, events, outcomes. Condensed into short briefings so "what happened last week?" costs seconds, not a reread of everything. Old entries age gracefully into archives, never clutter.</p>
+        <span class="analogy">Like security footage with a perfect index and highlight reels.</span>
+      </div>
+      <div class="card">
+        <span class="icon">🩹</span>
+        <h3>The Lesson Wall</h3>
+        <p>First-class memory for mistakes. When an approach fails, Hive extracts the lesson with proof of where it happened, files it for review, and hands it to the next agent <em>before</em> it repeats the error. Scar tissue, institutionalized.</p>
+        <span class="analogy">Like a pre-flight checklist written by every past crash.</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">03</span>How it fits inside Hive</h2>
+    <p class="lede">Hive coordinates a team of AI agents — from any vendor — through one central service. HiveMemory lives in that center, so every agent shares one brain regardless of who made it.</p>
+    <div class="figure">
+      <svg viewBox="0 0 960 460" role="img" aria-label="HiveMemory architecture diagram">
+        <defs>
+          <marker id="arr" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#9aa7b4"/>
+          </marker>
+        </defs>
+
+        <!-- agents -->
+        <g font-family="inherit" font-size="14" text-anchor="middle">
+          <rect x="30" y="30" rx="10" width="150" height="46" fill="#1c2330" stroke="#2d3642"/>
+          <text x="105" y="58" fill="#e6edf3">Claude Code</text>
+          <rect x="30" y="100" rx="10" width="150" height="46" fill="#1c2330" stroke="#2d3642"/>
+          <text x="105" y="128" fill="#e6edf3">Codex</text>
+          <rect x="30" y="170" rx="10" width="150" height="46" fill="#1c2330" stroke="#2d3642"/>
+          <text x="105" y="198" fill="#e6edf3">Kimi Code</text>
+          <rect x="30" y="240" rx="10" width="150" height="46" fill="#1c2330" stroke="#2d3642"/>
+          <text x="105" y="268" fill="#e6edf3">Grok CLI</text>
+          <rect x="30" y="310" rx="10" width="150" height="46" fill="#1c2330" stroke="#2d3642"/>
+          <text x="105" y="338" fill="#e6edf3">opencode</text>
+
+          <!-- queen -->
+          <rect x="30" y="395" rx="10" width="150" height="46" fill="#241a08" stroke="#f0b429"/>
+          <text x="105" y="423" fill="#f0b429">Queen (coordinator)</text>
+        </g>
+
+        <!-- arrows agents -> daemon -->
+        <g stroke="#9aa7b4" stroke-width="1.5" fill="none">
+          <line x1="180" y1="53"  x2="330" y2="180" marker-end="url(#arr)"/>
+          <line x1="180" y1="123" x2="330" y2="195" marker-end="url(#arr)"/>
+          <line x1="180" y1="193" x2="330" y2="210" marker-end="url(#arr)"/>
+          <line x1="180" y1="263" x2="330" y2="225" marker-end="url(#arr)"/>
+          <line x1="180" y1="333" x2="330" y2="240" marker-end="url(#arr)"/>
+          <line x1="180" y1="418" x2="330" y2="255" marker-end="url(#arr)"/>
+        </g>
+
+        <!-- daemon -->
+        <rect x="330" y="150" rx="16" width="300" height="150" fill="#161b22" stroke="#8b5cf6" stroke-width="2"/>
+        <text x="480" y="185" text-anchor="middle" font-size="18" font-weight="700" fill="#e6edf3">Hive</text>
+        <text x="480" y="208" text-anchor="middle" font-size="13" fill="#9aa7b4">secure gateway — every agent</text>
+        <text x="480" y="226" text-anchor="middle" font-size="13" fill="#9aa7b4">connects here, nothing direct</text>
+        <text x="480" y="262" text-anchor="middle" font-size="13" fill="#8b5cf6">permissions &amp; identity enforced</text>
+        <text x="480" y="282" text-anchor="middle" font-size="13" fill="#8b5cf6">per agent, per project</text>
+
+        <!-- arrows daemon -> memory -->
+        <g stroke="#9aa7b4" stroke-width="1.5" fill="none">
+          <line x1="630" y1="185" x2="730" y2="110" marker-end="url(#arr)"/>
+          <line x1="630" y1="225" x2="730" y2="225" marker-end="url(#arr)"/>
+          <line x1="630" y1="265" x2="730" y2="340" marker-end="url(#arr)"/>
+        </g>
+
+        <!-- memory layers -->
+        <g font-size="14" text-anchor="middle">
+          <rect x="730" y="70" rx="12" width="200" height="80" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+          <text x="830" y="103" fill="#58a6ff" font-weight="700">📖 Handbook</text>
+          <text x="830" y="126" fill="#9aa7b4" font-size="12">verified project truths</text>
+
+          <rect x="730" y="185" rx="12" width="200" height="80" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="830" y="218" fill="#3fb950" font-weight="700">🎞️ Work Log</text>
+          <text x="830" y="241" fill="#9aa7b4" font-size="12">searchable session history</text>
+
+          <rect x="730" y="300" rx="12" width="200" height="80" fill="#161b22" stroke="#f0b429" stroke-width="1.5"/>
+          <text x="830" y="333" fill="#f0b429" font-weight="700">🩹 Lesson Wall</text>
+          <text x="830" y="356" fill="#9aa7b4" font-size="12">mistakes, never repeated</text>
+        </g>
+
+        <text x="105" y="20" text-anchor="middle" font-size="13" fill="#9aa7b4">any vendor's agent</text>
+        <text x="830" y="50" text-anchor="middle" font-size="13" fill="#9aa7b4">one shared memory</text>
+      </svg>
+      <figcaption>Every agent — whatever company made it — reads and writes through Hive's single gateway. Memory is shared by the team, walled off between projects.</figcaption>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">04</span>The learning loop</h2>
+    <p class="lede">The critical design choice: agents are not asked to remember — Hive remembers <em>for</em> them. Research shows agents reliably save notes but never think to look them up. So Hive delivers the right memory at the right moment, automatically.</p>
+    <div class="figure">
+      <svg viewBox="0 0 960 300" role="img" aria-label="The learning loop: mistake, capture, verify, remind">
+        <defs>
+          <marker id="arr2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse">
+            <path d="M0,0 L10,5 L0,10 z" fill="#8b5cf6"/>
+          </marker>
+        </defs>
+        <g font-size="14" text-anchor="middle">
+          <!-- step 1 -->
+          <rect x="20" y="90" rx="14" width="190" height="110" fill="#1c2330" stroke="#f47067"/>
+          <text x="115" y="128" fill="#f47067" font-size="26">1</text>
+          <text x="115" y="152" fill="#e6edf3" font-weight="700">Something fails</text>
+          <text x="115" y="176" fill="#9aa7b4" font-size="12">an agent hits a wall</text>
+          <!-- step 2 -->
+          <rect x="270" y="90" rx="14" width="190" height="110" fill="#1c2330" stroke="#58a6ff"/>
+          <text x="365" y="128" fill="#58a6ff" font-size="26">2</text>
+          <text x="365" y="152" fill="#e6edf3" font-weight="700">Hive captures it</text>
+          <text x="365" y="176" fill="#9aa7b4" font-size="12">lesson + proof extracted</text>
+          <!-- step 3 -->
+          <rect x="520" y="90" rx="14" width="190" height="110" fill="#1c2330" stroke="#3fb950"/>
+          <text x="615" y="128" fill="#3fb950" font-size="26">3</text>
+          <text x="615" y="152" fill="#e6edf3" font-weight="700">Verified &amp; filed</text>
+          <text x="615" y="176" fill="#9aa7b4" font-size="12">reviewed before trusted</text>
+          <!-- step 4 -->
+          <rect x="770" y="90" rx="14" width="170" height="110" fill="#241a08" stroke="#f0b429"/>
+          <text x="855" y="128" fill="#f0b429" font-size="26">4</text>
+          <text x="855" y="152" fill="#e6edf3" font-weight="700">Next agent warned</text>
+          <text x="855" y="176" fill="#9aa7b4" font-size="12">before it repeats it</text>
+        </g>
+        <g stroke="#8b5cf6" stroke-width="2" fill="none">
+          <line x1="210" y1="145" x2="265" y2="145" marker-end="url(#arr2)"/>
+          <line x1="460" y1="145" x2="515" y2="145" marker-end="url(#arr2)"/>
+          <line x1="710" y1="145" x2="765" y2="145" marker-end="url(#arr2)"/>
+          <!-- loop back -->
+          <path d="M 855 200 C 855 265, 115 265, 115 205" stroke-dasharray="6 5" marker-end="url(#arr2)"/>
+        </g>
+        <text x="480" y="278" text-anchor="middle" font-size="12" fill="#8b5cf6">the loop compounds — every session makes every future session smarter</text>
+      </svg>
+      <figcaption>A mistake made by any agent becomes a warning delivered to every future agent — at the moment it matters, not buried in a file nobody opens.</figcaption>
+    </div>
+    <div class="stat-row">
+      <div class="stat"><div class="big">0</div><div class="lbl">re-explanations needed — agents start briefed, not blank</div></div>
+      <div class="stat"><div class="big">1×</div><div class="lbl">a lesson is paid for once — then it's free, forever</div></div>
+      <div class="stat"><div class="big">5</div><div class="lbl">agent vendors sharing one memory — no lock-in</div></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">05</span>Built to be trusted</h2>
+    <p class="lede">A memory system is only valuable if what it says is true and what it holds is safe. Trust is engineered in, not bolted on.</p>
+    <ul class="plain">
+      <li><strong>Proof, not vibes.</strong> Every memory carries a pointer to the evidence it came from — a specific session, event, or document. Anything unverified is labeled as a claim to check, never presented as fact.</li>
+      <li><strong>Yesterday can't silently steer today.</strong> Memories carry validity dates. A decision overturned five months ago is marked superseded and drops out of circulation — but remains auditable, like a versioned contract.</li>
+      <li><strong>Hard walls between projects.</strong> Each project's memory is isolated and provably cannot leak into another — tested by planting markers and proving they don't cross.</li>
+      <li><strong>Permission gates, not promises.</strong> Dangerous actions like deleting memory are blocked by the system itself for agents — not by instructions agents are merely asked to follow.</li>
+      <li><strong>No duplicate memories.</strong> The system checks every new fact against what it already holds and refuses to store the same thing twice — updates merge into the existing record instead of piling up copies.</li>
+      <li><strong>The system checks itself.</strong> Automated health tests plant known facts and prove every one can actually be recalled — because a dashboard that says "healthy" can lie.</li>
+    </ul>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">06</span>Why it matters</h2>
+    <p class="lede">Every AI tool on the market rents intelligence per session. HiveMemory turns that spend into an asset: a growing, proprietary body of knowledge about how <em>your</em> projects work — that no competitor's agent has, and that gets more valuable with every hour the team runs.</p>
+    <div class="grid grid-3">
+      <div class="card"><h3>Compounding value</h3><p>Knowledge accumulates instead of evaporating. Day 100 is cheaper and faster than day 10 — the opposite of token-rental economics.</p></div>
+      <div class="card"><h3>Vendor freedom</h3><p>Memory lives in Hive, not in any AI provider. Swap or mix Claude, Codex, Kimi, Grok, and opencode — the team's knowledge stays put.</p></div>
+      <div class="card"><h3>Mistake-proofing</h3><p>The Lesson Wall converts failures into permanent institutional protection — the asset human teams lose every time someone quits.</p></div>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>HiveMemory design brief · July 2026 · Technical plan: <code>planning/2026-07-22-hivememory-epic-rework.md</code> · Tracked on the board as the HiveMemory epic (#119–#123, #71, #72)</p>
+    <p style="margin-top:8px">Design findings informed by independent research on local-agent memory (XDA, July 2026).</p>
+  </div>
+</footer>
+
+</body>
+</html>
