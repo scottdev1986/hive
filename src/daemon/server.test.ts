@@ -482,14 +482,25 @@ test("visibility expiry audit follows sessiond kill evidence", async () => {
     expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
       .toBeUndefined();
 
-    // Sessiond's independent clock reaches the last verified lease, kills the
-    // host, and only the following daemon observation writes the audit.
+    // Once the lease passes, a still-live vendor is not enough evidence for an
+    // audit. The adapter synthesizes its non-expired visibility state from
+    // this running fixture even though the stored lease has elapsed.
+    clearTimeout(visibilityTimer);
     advanceClock(10_001);
-    expect(killed).toBe(true);
+    expect(killed).toBe(false);
     expect(Date.now()).toBe(clock);
     expect(Date.parse(
       db.getTerminalHostBindingByLocator(locator)!.createEvidence!.visibility.expiresAt,
     )).toBeLessThan(Date.now());
+    expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+    expect(events.slice(-2)).toEqual(["renewal-unknown", "live-observed"]);
+    expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
+      .toBeUndefined();
+
+    // Sessiond's independent clock then kills the host; only this following
+    // daemon observation writes the audit.
+    killed = true;
+    events.push("visibility-kill");
     expect(events.at(-1)).toBe("visibility-kill");
     expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
       .toBeUndefined();
