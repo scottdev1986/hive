@@ -5101,15 +5101,10 @@ const NeutralTerminalSource = struct {
             // order it is actually in so a caller retrying a revision the
             // terminal already holds can be reconciled instead of refused with
             // a number that is in force nowhere.
-            error.StaleResizeRevision => return .{ .superseded = self.current() },
+            error.StaleResizeRevision => return .{ .superseded = try self.current() },
             else => return err,
         };
-        try self.state.resize(.{
-            .columns = receipt.readback.columns,
-            .rows = receipt.readback.rows,
-            .cell_width_px_16_16 = cellFixed16_16(receipt.readback.width_px, receipt.readback.columns),
-            .cell_height_px_16_16 = cellFixed16_16(receipt.readback.height_px, receipt.readback.rows),
-        });
+        try self.followShadow(receipt.readback);
         return .{ .applied = .{
             .revision = receipt.revision,
             .orderedAt = receipt.ordered_at,
@@ -5117,12 +5112,29 @@ const NeutralTerminalSource = struct {
         } };
     }
 
-    fn current(self: *NeutralTerminalSource) neutral_control_plane.AppliedResize {
+    /// The mutation has two halves and the PTY half lands first, so a failure
+    /// in between leaves the shadow behind a terminal that has already moved.
+    /// Reporting the terminal's order without repairing the shadow would let a
+    /// retry be answered `applied` for a geometry the shadow does not hold, and
+    /// a checkpoint taken afterwards would restore at the wrong size. So the
+    /// shadow is brought into agreement here too, and if it cannot be, this
+    /// reports nothing applied at all.
+    fn current(self: *NeutralTerminalSource) !neutral_control_plane.AppliedResize {
+        try self.followShadow(self.pty.geometry);
         return .{
             .revision = self.pty.resizeRevision(),
             .orderedAt = self.pty.resizeOrderedAt(),
             .readback = neutralWindow(self.pty.geometry),
         };
+    }
+
+    fn followShadow(self: *NeutralTerminalSource, geometry: pty_host.Geometry) !void {
+        try self.state.resize(.{
+            .columns = geometry.columns,
+            .rows = geometry.rows,
+            .cell_width_px_16_16 = cellFixed16_16(geometry.width_px, geometry.columns),
+            .cell_height_px_16_16 = cellFixed16_16(geometry.height_px, geometry.rows),
+        });
     }
 
     fn neutralWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
@@ -8915,4 +8927,163 @@ comptime {
     _ = process_inspector;
     _ = protocol;
     _ = pty_host;
+}
+
+/// A shadow VT whose resize can be made to fail on demand. Everything else is
+/// inert: this case is about the two-part mutation's failure boundary, not
+/// about VT fidelity.
+const BrittleShadowEngine = struct {
+    allocator: std.mem.Allocator,
+    fail_resize: bool = false,
+    resizes: usize = 0,
+    columns: u32 = 0,
+    rows: u32 = 0,
+
+    fn create(allocator: std.mem.Allocator) !*BrittleShadowEngine {
+        const self = try allocator.create(BrittleShadowEngine);
+        self.* = .{ .allocator = allocator };
+        return self;
+    }
+
+    fn engine(self: *BrittleShadowEngine) terminal_state.VtEngine {
+        return .{
+            .context = self,
+            .deinitFn = deinitCb,
+            .writeFn = writeCb,
+            .exportFn = exportCb,
+            .importFn = importCb,
+            .digestFn = digestCb,
+            .effectsFn = effectsCb,
+            .resizeFn = resizeCb,
+        };
+    }
+
+    fn deinitCb(context: *anyopaque) void {
+        const self: *BrittleShadowEngine = @ptrCast(@alignCast(context));
+        self.allocator.destroy(self);
+    }
+
+    fn writeCb(_: *anyopaque, _: []const u8) anyerror!void {}
+
+    fn exportCb(_: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 {
+        return allocator.dupe(u8, "brittle-shadow");
+    }
+
+    fn importCb(_: *anyopaque, _: []const u8) anyerror!void {}
+
+    fn digestCb(_: *anyopaque) [32]u8 {
+        return @splat(7);
+    }
+
+    fn effectsCb(_: *anyopaque) []const u8 {
+        return "";
+    }
+
+    fn resizeCb(context: *anyopaque, columns: u32, rows: u32, _: u32, _: u32) anyerror!void {
+        const self: *BrittleShadowEngine = @ptrCast(@alignCast(context));
+        self.resizes += 1;
+        if (self.fail_resize) return error.ShadowResizeRefused;
+        self.columns = columns;
+        self.rows = rows;
+    }
+};
+
+fn brittleFactoryCreate(
+    _: *anyopaque,
+    allocator: std.mem.Allocator,
+    _: u32,
+    _: u32,
+) anyerror!terminal_state.VtEngine {
+    const created = try BrittleShadowEngine.create(allocator);
+    return created.engine();
+}
+
+var brittle_factory_context: u8 = 0;
+
+const BrittleClock = struct {
+    fn now(_: *anyopaque) u64 {
+        return 0;
+    }
+};
+
+test "neutral resize drives the production adapter across both representations" {
+    if (@import("builtin").os.tag != .macos) return error.SkipZigTest;
+    const allocator = std.testing.allocator;
+
+    // The REAL production adapter over a REAL pseudo-terminal and a REAL
+    // TerminalState. An earlier proof used a test-local terminal that held no
+    // shadow at all, so nothing executed NeutralTerminalSource and neither half
+    // of its two-part mutation was covered.
+    var pty = try pty_host.PtyHost.init(allocator);
+    defer pty.deinit();
+    _ = try pty.spawn(.{
+        .argv = &[_][]const u8{ "/bin/sh", "-c", "while :; do sleep 1; done" },
+        .cwd = "/",
+        .geometry = .{ .columns = 80, .rows = 24, .width_px = 800, .height_px = 480 },
+    });
+
+    const shadow = try BrittleShadowEngine.create(allocator);
+    var clock_context: u8 = 0;
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    var state = terminal_state.TerminalState.init(
+        allocator,
+        shadow.engine(),
+        .{ .context = @ptrCast(&brittle_factory_context), .createFn = brittleFactoryCreate },
+        .{ .context = &clock_context, .nowFn = BrittleClock.now },
+        &engine_build_id,
+        .{ .columns = 80, .rows = 24, .cell_width_px_16_16 = 10 << 16, .cell_height_px_16_16 = 20 << 16 },
+    );
+    defer state.deinit();
+
+    var source: NeutralTerminalSource = .{ .pty = &pty, .state = &state };
+    const provider = source.provider();
+    const window: neutral_host.WindowSize = .{
+        .columns = 100,
+        .rows = 30,
+        .widthPixels = 1000,
+        .heightPixels = 600,
+    };
+
+    // Both halves land on a healthy path.
+    switch (try provider.resize(window, 1)) {
+        .applied => |applied| {
+            try std.testing.expectEqual(@as(u64, 1), applied.revision);
+            try std.testing.expectEqual(@as(u32, 100), applied.readback.columns);
+        },
+        .superseded => return error.UnexpectedSupersession,
+    }
+    try std.testing.expectEqual(@as(u32, 100), shadow.columns);
+    try std.testing.expectEqual(@as(u32, 30), shadow.rows);
+
+    // Now fail the SHADOW half. The PTY moves, the shadow cannot follow, and
+    // the outcome must be a failure -- never an applied receipt for a geometry
+    // only half the terminal holds.
+    shadow.fail_resize = true;
+    const divergent: neutral_host.WindowSize = .{
+        .columns = 120,
+        .rows = 40,
+        .widthPixels = 1200,
+        .heightPixels = 800,
+    };
+    try std.testing.expectError(error.Internal, provider.resize(divergent, 2));
+    try std.testing.expectEqual(@as(u32, 120), pty.geometry.columns);
+    try std.testing.expectEqual(@as(u32, 100), shadow.columns);
+
+    // The retry finds the PTY already at revision 2. Reconciliation must NOT
+    // report applied while the shadow is still behind: repairing the registry
+    // for a checkpoint-divergent geometry is exactly the defect.
+    try std.testing.expectError(error.Internal, provider.resize(divergent, 2));
+
+    // Once the shadow can follow again, the retry reconciles BOTH and only then
+    // reports the revision as applied.
+    shadow.fail_resize = false;
+    switch (try provider.resize(divergent, 2)) {
+        .applied => return error.SupersessionExpectedAfterPtyAdvance,
+        .superseded => |current| {
+            try std.testing.expectEqual(@as(u64, 2), current.revision);
+            try std.testing.expectEqual(@as(u32, 120), current.readback.columns);
+        },
+    }
+    try std.testing.expectEqual(@as(u32, 120), shadow.columns);
+    try std.testing.expectEqual(@as(u32, 40), shadow.rows);
 }

@@ -250,18 +250,40 @@ fn proveResizeOverTheRealRoute(
     if (record.window.columns != window.columns or record.window.rows != window.rows)
         return error.ResizeWindowNotCommitted;
 
-    // Replaying the same revision is superseded, not applied twice.
-    const stale = try server.round(&controller, request);
-    defer allocator.free(stale);
-    try validateResizeResult(allocator, stale);
-    const Stale = struct { state: []const u8, currentRevision: []const u8 };
-    var stale_parsed = try std.json.parseFromSlice(Stale, allocator, stale, .{
+    // PARTIAL IDEMPOTENCY -- this records what the implementation does today,
+    // and deliberately does NOT certify it as the contract.
+    //
+    // The frozen request schema says a repeat of the same TRANSACTION replays
+    // its receipt rather than mutating twice. Replaying receipts needs durable
+    // per-session receipt storage (idempotency key + request digest + the
+    // applied receipt), which belongs to the single Record migration #108 owns;
+    // doing it here would mean migrating the same struct twice.
+    //
+    // So today an identical replay is answered `stale` naming the revision in
+    // force. That answer is TRUTHFUL -- revision 7 really is current, and no
+    // second mutation happened, which is the guarantee that actually protects
+    // the terminal. It is simply not yet the receipt replay §5 asks for. The
+    // assertion below pins the current behavior so a change is visible, and
+    // this comment is why it must not be read as the target.
+    const replayed = try server.round(&controller, request);
+    defer allocator.free(replayed);
+    try validateResizeResult(allocator, replayed);
+    const Replay = struct { state: []const u8, currentRevision: ?[]const u8 = null };
+    var replay_parsed = try std.json.parseFromSlice(Replay, allocator, replayed, .{
         .ignore_unknown_fields = true,
     });
-    defer stale_parsed.deinit();
-    if (!std.mem.eql(u8, stale_parsed.value.state, "stale")) return error.ResizeNotStale;
-    if (!std.mem.eql(u8, stale_parsed.value.currentRevision, "7"))
-        return error.ResizeStaleWrongRevision;
+    defer replay_parsed.deinit();
+    // The invariant that must hold either way: a replay never mutates again.
+    if (pty.resizeRevision() != 7) return error.ResizeReplayMutatedAgain;
+    if (std.mem.eql(u8, replay_parsed.value.state, "applied")) {
+        // Receipt replay landed (#108). That is the contract target, not a
+        // regression -- but it must be the SAME revision, not a new mutation.
+        return;
+    }
+    if (!std.mem.eql(u8, replay_parsed.value.state, "stale")) return error.ResizeReplayNotStale;
+    const current_revision = replay_parsed.value.currentRevision orelse
+        return error.ResizeStaleMissingRevision;
+    if (!std.mem.eql(u8, current_revision, "7")) return error.ResizeStaleWrongRevision;
 }
 
 fn validateResizeResult(allocator: std.mem.Allocator, payload: []const u8) !void {
