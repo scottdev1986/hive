@@ -167,6 +167,21 @@ class MemoryBindings implements TerminalHostBindingStore {
     return binding;
   }
 
+  releaseUncreatedTerminalHostSession(
+    locator: HiveTerminalBinding["locator"],
+  ): boolean {
+    const index = this.values.findIndex((binding) =>
+      binding.locator.instanceId === locator.instanceId &&
+      binding.locator.sessionId === locator.sessionId &&
+      binding.locator.generation === locator.generation &&
+      binding.createEvidence === undefined &&
+      binding.terminationAudit === undefined
+    );
+    if (index < 0) return false;
+    this.values.splice(index, 1);
+    return true;
+  }
+
   completeTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
     createEvidence: NonNullable<HiveTerminalBinding["createEvidence"]>,

@@ -1066,6 +1066,17 @@ export class HiveDatabase {
     });
   }
 
+  releaseUncreatedTerminalHostSession(
+    locator: HiveTerminalBinding["locator"],
+  ): boolean {
+    const value = HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+    return this.database.query(`
+      DELETE FROM terminal_host_bindings
+      WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
+        AND createEvidenceJson IS NULL AND terminationAuditJson IS NULL
+    `).run(value.instanceId, value.sessionId, value.generation).changes > 0;
+  }
+
   completeTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
     evidence: HiveTerminalCreateEvidence,
@@ -1295,6 +1306,35 @@ export class HiveDatabase {
 
   insertAgent(agent: AgentRecord): AgentRecord {
     return this.upsertAgent(agent);
+  }
+
+  /** Erase a launch after the caller supplies its measured terminal outcome.
+   * Intent/a termination audit is never accepted as proof of process state. */
+  discardFailedSpawn(
+    agentId: string,
+    terminalDisposition: "never-created" | "verified-stopped",
+  ): boolean {
+    return this.transaction(() => {
+      const current = this.getAgentById(agentId);
+      if (current === null) return true;
+      if (current.status !== "failed") return false;
+      const locator = current.sessionLocator;
+      if (locator?.hostKind === "sessiond") {
+        const binding = this.getTerminalHostBindingByLocator({
+          ...locator,
+          hostKind: "sessiond",
+        });
+        if (binding?.createEvidence !== undefined && terminalDisposition !== "verified-stopped") {
+          return false;
+        }
+        this.database.query(`
+          DELETE FROM terminal_host_bindings
+          WHERE locatorInstanceId = ? AND locatorSessionId = ? AND locatorGeneration = ?
+        `).run(locator.instanceId, locator.sessionId, locator.generation);
+      }
+      return this.database.query("DELETE FROM agents WHERE id = ?").run(agentId)
+        .changes > 0;
+    });
   }
 
   markAgentDead(

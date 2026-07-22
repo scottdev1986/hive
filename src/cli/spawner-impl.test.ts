@@ -44,6 +44,7 @@ import {
   CODING_GUIDELINES,
   HIVE_PROTOCOL_RULES,
   HiveSpawner,
+  SpawnFailedError,
   type HiveSpawnerDependencies,
   LANDING_MAX_ATTEMPTS,
   SEARCH_HYGIENE,
@@ -51,6 +52,7 @@ import {
   resolveAgentName,
   selectAgentName,
 } from "../daemon/spawner-impl";
+import { SessiondWireError } from "../daemon/session-host/sessiond-host";
 import { HiveDatabase } from "../daemon/db";
 import {
   policyModelEnablement,
@@ -388,6 +390,14 @@ class FakeStore {
       this.agents[index] = record;
     }
     return record;
+  }
+
+  discardFailedSpawn(agentId: string): boolean {
+    const index = this.agents.findIndex((candidate) => candidate.id === agentId);
+    if (index < 0) return true;
+    if (this.agents[index]?.status !== "failed") return false;
+    this.agents.splice(index, 1);
+    return true;
   }
 
 }
@@ -1129,6 +1139,94 @@ describe("HiveSpawner name pool", () => {
 });
 
 describe("HiveSpawner wiring", () => {
+  test("a typed sessiond capacity refusal atomically releases row, pane, name, and quota", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-sessiond-capacity-"));
+    tempRoots.push(root);
+    const quotaDb = new HiveDatabase(join(root, "quota.db"));
+    const quota = new QuotaService(
+      cataloguedQuotaLedger(quotaDb),
+      QuotaConfigSchema.parse({
+        discovery: false,
+        limits: [{
+          provider: "codex",
+          pool: "codex",
+          models: ["gpt-5.6-sol"],
+          fiveHourAllowance: 500,
+          weeklyAllowance: 500,
+        }],
+      }),
+      () => new Date(timestamp),
+    );
+    const store = new FakeStore();
+    let stopAttempts = 0;
+    let removals = 0;
+    const spawner = newTestSpawner({
+      isModelEnabled: async () => true,
+      db: store,
+      repoRoot: root,
+      port: 4317,
+      config: {},
+      readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+      tmux: new FakeTmux(),
+      stopSession: async () => {
+        stopAttempts += 1;
+        return { killed: [], survivors: [] };
+      },
+      createWorktree: async (_repoRoot, name, slug) => {
+        const path = join(root, name);
+        await mkdir(path, { recursive: true });
+        return { path, branch: `hive/${name}-${slug}` };
+      },
+      assessStrandedWork: async () => ({ dirtyFiles: [], unmergedCommits: 0 }),
+      removeWorktree: async () => {
+        removals += 1;
+      },
+      sessiond: {
+        prepare: async () => ({ engineBuildId: "engine-capacity" }),
+        admit: async () => ({
+          engineBuildId: "engine-capacity",
+          visibility: {
+            workspaceSessionId: "workspace-capacity",
+            workspacePid: 4100,
+            workspaceStartToken: "4100:123456",
+            openTerminalRevision: "1",
+          },
+        }),
+        terminalHost: {
+          create: async () => {
+            throw new SessiondWireError(
+              "CAPACITY_EXCEEDED",
+              "live session capacity exhausted",
+              null,
+            );
+          },
+          inspect: async () => {
+            throw new Error("never-created generation was inspected");
+          },
+        },
+      },
+      quota,
+      sleep: async () => {},
+    });
+
+    const failure = spawner.spawn({
+      task: "Capacity refusal must be atomic",
+      category: "simple_coding",
+    }).catch((error) => error);
+    await expect(failure).resolves.toBeInstanceOf(SpawnFailedError);
+    await expect(failure).resolves.toMatchObject({
+      code: "SPAWN_FAILED",
+      layer: "transport",
+      outcome: "failed",
+    });
+    expect(store.agents).toEqual([]);
+    expect(store.reservations.size).toBe(0);
+    expect(quota.ledger.activeReservations()).toEqual([]);
+    expect(stopAttempts).toBe(0);
+    expect(removals).toBe(1);
+    quotaDb.close();
+  });
+
   test("launches the interactive Codex TUI by default even when app-server is available", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-tui-default-"));
     tempRoots.push(root);
@@ -2493,13 +2591,13 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Fail at startup",
       category: "simple_coding",
-    });
+    }).catch((error) => error as SpawnFailedError);
 
-    expect(failed.status).toEqual("failed");
-    expect(failed.failureReason).toContain("Error: model not supported");
-    expect(failed.failureReason).not.toContain("startup line 1\n");
-    expect(failed.failedAt).toBeDefined();
-    expect(store.agents).toEqual([failed]);
+    if (!(failed instanceof SpawnFailedError)) throw new Error("spawn unexpectedly succeeded");
+    expect(failed.code).toEqual("SPAWN_FAILED");
+    expect(failed.detail).toContain("Error: model not supported");
+    expect(failed.detail).not.toContain("startup line 1\n");
+    expect(store.agents).toEqual([]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
     expect(removals).toEqual([[root, worktreePath]]);
   });
@@ -2800,13 +2898,14 @@ describe("HiveSpawner wiring", () => {
     const failed = await spawner.spawn({
       task: "Hang at launch forever",
       category: "simple_coding",
-    });
+    }).catch((error) => error as SpawnFailedError);
 
+    if (!(failed instanceof SpawnFailedError)) throw new Error("spawn unexpectedly succeeded");
     // Exhausting the poll budget with no positive signal is a failed launch,
     // not a silent success left in "spawning" forever.
-    expect(failed.status).toEqual("failed");
-    expect(failed.failureReason).toContain("no sign of life");
-    expect(failed.failedAt).toBeDefined();
+    expect(failed.code).toEqual("SPAWN_FAILED");
+    expect(failed.detail).toContain("no sign of life");
+    expect(store.agents).toEqual([]);
     expect(stopped).toEqual([agentTmuxSession("maya")]);
   });
 
@@ -2880,8 +2979,13 @@ describe("HiveSpawner wiring", () => {
       readCodexActivity: async () => null,
     });
 
-    const failed = await spawner.spawn({ task: "Hang at launch", category: "simple_coding" });
-    expect(failed.status).toEqual("failed");
+    const failed = await spawner.spawn({
+      task: "Hang at launch",
+      category: "simple_coding",
+    }).catch((error) => error as SpawnFailedError);
+    if (!(failed instanceof SpawnFailedError)) throw new Error("spawn unexpectedly succeeded");
+    expect(failed.code).toEqual("SPAWN_FAILED");
+    expect(store.agents).toEqual([]);
     expect(removed).toEqual(1);
   });
 

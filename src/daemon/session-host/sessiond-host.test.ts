@@ -166,6 +166,7 @@ const pendingBinding = {
 };
 const pendingBindings: TerminalHostBindingStore = {
   bindTerminalHostSession: (binding) => binding,
+  releaseUncreatedTerminalHostSession: () => false,
   completeTerminalHostSession: (_locator, createEvidence) => ({
     ...pendingBinding,
     createEvidence,
@@ -796,6 +797,37 @@ describe("SessiondHost landed frozen operations", () => {
       initialInput,
     }]);
     expect(broker.requests).toHaveLength(0);
+    expect(broker.closed).toBe(true);
+  });
+
+  test("releases the pending binding only on a typed pre-launch capacity refusal", async () => {
+    const released: unknown[] = [];
+    const bindings: TerminalHostBindingStore = {
+      ...pendingBindings,
+      releaseUncreatedTerminalHostSession: (candidate) => {
+        released.push(candidate);
+        return true;
+      },
+    };
+    const broker = new RecordingClient(
+      () => createdPayload,
+      () => {
+        throw new SessiondWireError(
+          "CAPACITY_EXCEEDED",
+          "live session capacity exhausted",
+          null,
+        );
+      },
+      brokerLocator.engineBuildId,
+    );
+    const host = new SessiondHost({
+      connectBroker: async () => broker,
+      pendingBindings: bindings,
+    });
+
+    await expect(host.create(sessionSpec, new Uint8Array()))
+      .rejects.toMatchObject({ code: "CAPACITY_EXCEEDED" });
+    expect(released).toEqual([brokerLocator]);
     expect(broker.closed).toBe(true);
   });
 

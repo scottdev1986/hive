@@ -39,6 +39,7 @@ import {
   type HiveTerminalHostAdapter,
   type HiveTerminalPolicy,
 } from "./session-host/hive-terminal-host";
+import { SessiondWireError } from "./session-host/sessiond-host";
 import type { SessionLocator, SessionSpec } from "./session-host/contract";
 import {
   modelVendor,
@@ -224,6 +225,7 @@ export const NAME_POOL = [
 
 type AgentStore = Pick<
   HiveDatabase,
+  | "discardFailedSpawn"
   | "getAgentById"
   | "getLiveAgentByName"
   | "insertAgent"
@@ -231,6 +233,24 @@ type AgentStore = Pick<
   | "releaseAgentName"
   | "reserveAgentName"
 >;
+
+export class SpawnFailedError extends Error {
+  readonly code: "SPAWN_FAILED" | "SPAWN_CLEANUP_UNVERIFIED";
+
+  constructor(
+    readonly agentName: string,
+    readonly layer: LaunchFailureLayer,
+    readonly outcome: "failed" | "stuck",
+    readonly detail: string,
+  ) {
+    const code = outcome === "failed"
+      ? "SPAWN_FAILED" as const
+      : "SPAWN_CLEANUP_UNVERIFIED" as const;
+    super(`${code}: Hive agent ${agentName} ${detail}`);
+    this.name = "SpawnFailedError";
+    this.code = code;
+  }
+}
 type WorktreeCreator = (
   repoRoot: string,
   agentName: string,
@@ -2458,6 +2478,7 @@ export class HiveSpawner implements Spawner {
         this.dependencies.quota?.markStarted(quotaReservationId);
       }
     } catch (error) {
+      if (error instanceof SpawnFailedError) throw error;
       // Nothing thrown here has been past the transport. Building the argv,
       // writing the config, and handing the command to tmux all happen on this
       // machine, before the model is contacted — so a throw is never evidence
@@ -2470,6 +2491,7 @@ export class HiveSpawner implements Spawner {
         worktree,
         reason,
         "transport",
+        error instanceof SessiondWireError && error.code === "CAPACITY_EXCEEDED",
       );
     }
 
@@ -2549,6 +2571,7 @@ export class HiveSpawner implements Spawner {
     worktree: CreatedWorktree,
     failureReason: string,
     layer: LaunchFailureLayer,
+    neverCreated = false,
   ): Promise<AgentRecord> {
     const current = this.dependencies.db.getAgentById(record.id);
     if (current !== null && current.status !== "spawning") {
@@ -2557,7 +2580,24 @@ export class HiveSpawner implements Spawner {
       }
       return current;
     }
-    return await this.failSpawn(record, worktree, failureReason, layer);
+    return await this.failSpawn(
+      record,
+      worktree,
+      failureReason,
+      layer,
+      neverCreated,
+    );
+  }
+
+  private spawnFailure(
+    record: AgentRecord,
+    layer: LaunchFailureLayer,
+  ): SpawnFailedError {
+    const outcome = record.status === "stuck" ? "stuck" : "failed";
+    const detail = outcome === "stuck"
+      ? `could not verify cleanup after spawn: ${record.failureReason ?? "unknown launch failure"}`
+      : `failed to spawn: ${record.failureReason ?? "unknown launch failure"}`;
+    return new SpawnFailedError(record.name, layer, outcome, detail);
   }
 
   private async failSpawn(
@@ -2565,12 +2605,24 @@ export class HiveSpawner implements Spawner {
     worktree: CreatedWorktree,
     failureReason: string,
     layer: LaunchFailureLayer,
+    neverCreated = false,
   ): Promise<AgentRecord> {
+    let failed: AgentRecord;
     try {
-      return await this.failSpawnAndCleanup(record, worktree, failureReason, layer);
+      failed = await this.failSpawnAndCleanup(
+        record,
+        worktree,
+        failureReason,
+        layer,
+        neverCreated,
+      );
     } finally {
       this.dependencies.assignments?.close(record.id, new Date().toISOString());
     }
+    if (this.dependencies.db.getAgentById(record.id) === null) {
+      throw this.spawnFailure(failed, layer);
+    }
+    return failed;
   }
 
   private async failSpawnAndCleanup(
@@ -2578,18 +2630,21 @@ export class HiveSpawner implements Spawner {
     worktree: CreatedWorktree,
     failureReason: string,
     layer: LaunchFailureLayer,
+    neverCreated: boolean,
   ): Promise<AgentRecord> {
     const stopping = this.preserveStuck(
       record,
       `${failureReason}\nTeardown is pending verification.`,
     );
-    try {
-      await this.stopVerifiedSession(
-        stopping,
-        `Spawn failure for ${record.name}: ${failureReason}`,
-      );
-    } catch {
-      return this.dependencies.db.getAgentById(record.id) ?? stopping;
+    if (!neverCreated) {
+      try {
+        await this.stopVerifiedSession(
+          stopping,
+          `Spawn failure for ${record.name}: ${failureReason}`,
+        );
+      } catch {
+        return this.dependencies.db.getAgentById(record.id) ?? stopping;
+      }
     }
     if (record.quotaReservationId !== undefined) {
       try {
@@ -2636,7 +2691,10 @@ export class HiveSpawner implements Spawner {
     // An empty worktree is still cleaned up: a genuinely dead launch wrote
     // nothing, and leaving debris behind for every failed spawn would be its own
     // bug. Only work survives.
-    if (!(this.dependencies.keepWorktreeOnFailure ?? false)) {
+    if (this.dependencies.keepWorktreeOnFailure ?? false) {
+      preserved =
+        `Kept the worktree at ${worktree.path} (branch ${worktree.branch}) by configuration.`;
+    } else {
       const stranded = await this.assessStranded(
         this.dependencies.repoRoot,
         worktree.path,
@@ -2683,6 +2741,14 @@ export class HiveSpawner implements Spawner {
         ...failed,
         failureReason: `${failureReason}\n${notes.join("\n")}`,
       });
+    } else if (!this.dependencies.db.discardFailedSpawn(
+      record.id,
+      neverCreated ? "never-created" : "verified-stopped",
+    )) {
+      return this.preserveStuck(
+        failed,
+        `${failureReason}\nAtomic failed-spawn cleanup could not erase the durable generation.`,
+      );
     }
     return failed;
   }

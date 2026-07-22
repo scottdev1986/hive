@@ -2009,9 +2009,16 @@ pub const Registry = struct {
     /// until the broker restarts (the same lifecycle as enumeration_complete).
     dropped_quarantines: usize = 0,
 
+    fn occupiedSlots(self: *const Registry) usize {
+        var count: usize = 0;
+        for (&self.entries) |slot| if (slot != null and slot.?.record.state != .exited) {
+            count += 1;
+        };
+        return count;
+    }
+
     pub fn hasCapacity(self: *const Registry) bool {
-        for (&self.entries) |slot| if (slot == null) return true;
-        return false;
+        return self.occupiedSlots() < self.entries.len;
     }
 
     pub fn register(self: *Registry, record: HostRecord, host: HostControl) ?protocol.Failure {
@@ -2034,7 +2041,7 @@ pub const Registry = struct {
             .entry => return .{ .code = .already_exists, .close_connection = false },
             .failure => |failure| if (failure.code != .not_found) return failure,
         };
-        for (&self.entries) |*slot| if (slot.* == null) {
+        for (&self.entries) |*slot| if (slot.* == null or slot.*.?.record.state == .exited) {
             slot.* = .{
                 .record = record,
                 .host = host,
@@ -2199,6 +2206,11 @@ pub const Registry = struct {
             entry.record.state = .unknown;
             return .unknown;
         }
+        // Preserve the exited tombstone for honest inspection. Capacity is the
+        // count of live/in-doubt generations, not a lifetime launch counter;
+        // registerWithOwnership may reuse this slot. Only complete
+        // zero-survivor readback reaches exited, while unknown teardown stays
+        // fail-closed and occupied.
         entry.record.state = .exited;
         return .terminated;
     }
@@ -4992,6 +5004,136 @@ test "quarantine overflow stays fail-closed and flags operator attention" {
     try std.testing.expectEqual(@as(usize, 0), packed_registry.dropped_quarantines);
     _ = packed_registry.quarantine(record, .{ .code = .unauthenticated, .close_connection = true });
     try std.testing.expectEqual(@as(usize, 1), packed_registry.dropped_quarantines);
+}
+
+test "verified spawn and terminate cycles return live-session capacity to baseline" {
+    const FakeHost = struct {
+        verified: bool,
+
+        fn control(self: *@This()) HostControl {
+            return .{
+                .context = self,
+                .adopt_fn = adopt,
+                .register_grant_fn = registerGrant,
+                .renew_visibility_fn = renewVisibility,
+                .discard_orphan_fn = discardOrphan,
+                .terminate_fn = terminate,
+            };
+        }
+
+        fn adopt(_: *anyopaque, _: Locator, _: [32]u8, _: u64) ?AdoptionReadback {
+            return null;
+        }
+
+        fn registerGrant(_: *anyopaque, _: Locator, _: GrantRegistration) HostGrantResult {
+            return .registered;
+        }
+
+        fn renewVisibility(_: *anyopaque, _: Locator, _: []const u8) HostRenewalResult {
+            return .{ .failure = .{ .code = .not_found, .close_connection = false } };
+        }
+
+        fn discardOrphan(_: *anyopaque, _: Locator, _: []const u8) HostRenewalResult {
+            return .{ .failure = .{ .code = .not_found, .close_connection = false } };
+        }
+
+        fn terminate(
+            context: *anyopaque,
+            _: Locator,
+            _: TerminationCommand,
+            _: HostProcessOwnership,
+        ) TerminationReadback {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return .{
+                .pty_closed = self.verified,
+                .host_exited = self.verified,
+                .verification_complete = self.verified,
+                .survivor_count = 0,
+            };
+        }
+
+        fn record(locator: Locator) HostRecord {
+            return .{
+                .locator = locator,
+                .host_pid = 10,
+                .host_start_token = "1:1",
+                .process_root = .{ .pid = 11, .start_token = "1:2", .process_group_id = 11 },
+                .expected_executable = "/bin/test",
+                .executable_build_hash = "build",
+                .engine_build_id = "engine",
+                .protocol_major = generated.protocol_major,
+                .protocol_minor = generated.protocol_minor,
+                .geometry = .{
+                    .columns = 80,
+                    .rows = 24,
+                    .width_px = 800,
+                    .height_px = 480,
+                    .cell_width_px = 10,
+                    .cell_height_px = 20,
+                },
+                .state = .live,
+                .visibility = .{
+                    .state = .visible,
+                    .workspace_session_id = "workspace",
+                    .open_terminal_revision = 1,
+                    .expires_mono_ns = 10_000,
+                },
+                .output_seq = 0,
+                .checkpoint_seq = 0,
+            };
+        }
+    };
+
+    var registry: Registry = .{};
+    var host: FakeHost = .{ .verified = true };
+    const cycles = generated.limits.live_sessions_per_hive_home * 2;
+    var session_storage: [cycles][64]u8 = undefined;
+    for (0..cycles) |index| {
+        const session_id = try std.fmt.bufPrint(
+            &session_storage[index],
+            "ses_capacity_cycle_{d}",
+            .{index},
+        );
+        const locator: Locator = .{
+            .instance_id = "instance",
+            .session_id = session_id,
+            .generation = 1,
+            .subject = .{ .agent = "agent" },
+            .engine_build_id = "engine",
+        };
+        try std.testing.expectEqual(@as(?protocol.Failure, null), registry.registerCreatedHost(
+            FakeHost.record(locator),
+            host.control(),
+        ));
+        try std.testing.expectEqual(@as(usize, 1), registry.occupiedSlots());
+        try std.testing.expectEqual(TerminationState.terminated, registry.terminate(locator, .{
+            .mode = "immediate",
+            .reason = "capacity cycle",
+            .request_id = "req_capacity_cycle",
+        }));
+        try std.testing.expectEqual(@as(usize, 0), registry.occupiedSlots());
+        try std.testing.expect(registry.hasCapacity());
+    }
+
+    // Positive control: absence was not verified, so the slot remains held.
+    host.verified = false;
+    const unknown_locator: Locator = .{
+        .instance_id = "instance",
+        .session_id = "ses_capacity_unknown",
+        .generation = 1,
+        .subject = .{ .agent = "agent" },
+        .engine_build_id = "engine",
+    };
+    try std.testing.expectEqual(@as(?protocol.Failure, null), registry.registerCreatedHost(
+        FakeHost.record(unknown_locator),
+        host.control(),
+    ));
+    try std.testing.expectEqual(TerminationState.unknown, registry.terminate(unknown_locator, .{
+        .mode = "immediate",
+        .reason = "unverified capacity cycle",
+        .request_id = "req_capacity_unknown",
+    }));
+    try std.testing.expectEqual(@as(usize, 1), registry.occupiedSlots());
 }
 
 test "rollback idempotency fallback stays unique under a broken clock" {

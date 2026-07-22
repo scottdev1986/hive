@@ -107,6 +107,18 @@ describe("HiveDatabase", () => {
       expect(db.bindTerminalHostSession(binding)).toEqual(binding);
       expect(db.completeTerminalHostSession(binding.locator, createEvidence))
         .toEqual({ ...binding, createEvidence });
+      expect(db.releaseUncreatedTerminalHostSession(binding.locator)).toBe(false);
+      db.insertAgent(agent({
+        id: binding.locator.subject.kind === "agent"
+          ? binding.locator.subject.agentId
+          : "agent-maya",
+        status: "failed",
+        sessionLocator: binding.locator,
+        failedAt: timestamp,
+      }));
+      expect(db.discardFailedSpawn("agent-maya", "never-created")).toBe(false);
+      expect(db.getAgentById("agent-maya")).not.toBeNull();
+      expect(deleteAgentRow(db, "agent-maya")).toBe(true);
       expect(db.recordTerminalHostTermination(binding.locator, terminationAudit))
         .toEqual({ ...binding, createEvidence, terminationAudit });
     } finally {
@@ -128,6 +140,44 @@ describe("HiveDatabase", () => {
         ...binding,
         visibility: { ...binding.visibility, openTerminalRevision: "8" },
       })).toThrow(TerminalHostBindingConflictError);
+    } finally {
+      db.close();
+    }
+  });
+
+  test("releases only never-created bindings and atomically erases a failed spawn", () => {
+    const db = new HiveDatabase(join(home, "atomic-failed-spawn.db"));
+    const locator = {
+      schemaVersion: 1 as const,
+      instanceId: "hive-atomic",
+      subject: { kind: "agent" as const, agentId: "agent-maya" },
+      generation: 1,
+      sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000120",
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-atomic",
+    };
+    const visibility = {
+      workspaceSessionId: "workspace-atomic",
+      workspacePid: 4100,
+      workspaceStartToken: "4100:123456",
+      openTerminalRevision: "1",
+    };
+    try {
+      db.bindTerminalHostSession({ locator, visibility });
+      expect(db.releaseUncreatedTerminalHostSession(locator)).toBe(true);
+      expect(db.getTerminalHostBindingByLocator(locator)).toBeNull();
+
+      db.bindTerminalHostSession({ locator, visibility });
+      db.insertAgent(agent({
+        id: locator.subject.agentId,
+        status: "failed",
+        sessionLocator: locator,
+        failureReason: "typed capacity refusal",
+        failedAt: timestamp,
+      }));
+      expect(db.discardFailedSpawn(locator.subject.agentId, "never-created")).toBe(true);
+      expect(db.getAgentById(locator.subject.agentId)).toBeNull();
+      expect(db.getTerminalHostBindingByLocator(locator)).toBeNull();
     } finally {
       db.close();
     }

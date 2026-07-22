@@ -709,11 +709,21 @@ export class SessiondHost implements LandedTerminalHost {
           "sessiond broker engine build changed before create",
         );
       }
-      const { schemaVersion: _, ...result } = await broker.createTransaction(
-        payload,
-        initialInput,
-      );
-      return result;
+      try {
+        const { schemaVersion: _, ...result } = await broker.createTransaction(
+          payload,
+          initialInput,
+        );
+        return result;
+      } catch (error) {
+        // launchHost rejects capacity before it opens a host directory or
+        // launches a process. That typed receipt is positive never-created
+        // evidence, so the pending product binding must not survive as a pane.
+        if (error instanceof SessiondWireError && error.code === "CAPACITY_EXCEEDED") {
+          this.pendingBindings.releaseUncreatedTerminalHostSession(locator);
+        }
+        throw error;
+      }
     } finally {
       broker.close();
     }

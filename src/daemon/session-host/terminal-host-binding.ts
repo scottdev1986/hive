@@ -49,6 +49,11 @@ export type HiveTerminalBinding = z.infer<typeof HiveTerminalBindingSchema>;
 
 export interface TerminalHostBindingStore {
   bindTerminalHostSession(binding: HiveTerminalBinding): HiveTerminalBinding;
+  /** Remove only a binding that never acquired create evidence. Used when the
+   * host returns a typed pre-launch refusal, so a failed spawn is atomic. */
+  releaseUncreatedTerminalHostSession(
+    locator: HiveTerminalBinding["locator"],
+  ): boolean;
   completeTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
     evidence: HiveTerminalCreateEvidence,
