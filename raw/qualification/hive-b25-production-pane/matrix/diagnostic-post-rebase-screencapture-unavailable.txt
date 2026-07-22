@@ -1,0 +1,18 @@
+2026-07-21 post-5cb43400 capture diagnostic — NOT GREEN EVIDENCE
+
+Both isolated attempts ran the rebuilt release pinned at
+5ca587f6bfd2f0bd8a7c98c0eced4ee709353905 with the worktree's explicit
+HIVE_INSTALL_ROOT. Each measured sessionLockState=unlocked and activeDisplays=1,
+set and read back dangerous autonomy before the unattended Codex spawn, then
+failed closed when `/usr/sbin/screencapture -x -m` reported
+`could not create image from display`.
+
+attempt 1: home=/tmp/hb25-pane-3d8df1 port=43147
+attempt 2: home=/tmp/hb25-pane-33b7b4 port=43148
+
+Both attempts completed hive_kill and verified the exact root session and
+captured vendor processes absent. Direct `screencapture -x -m`,
+`screencapture -x`, and a `caffeinate -u` wake followed by `-x -m` failed with
+the same error. No screenshot or journal from either failed attempt is accepted
+as evidence. The digest-pinned pre-late-rebase GREEN capture remains current;
+the production-pane proof must be recaptured after the Hive instance restart.
