@@ -5,13 +5,16 @@ import {
   TERMINAL_HOST_CONTRACT_VERSION,
   type CreateRequest,
   type SessionRef,
+  type TerminalEvent,
   type WindowSize,
 } from "../../src/daemon/session-host/terminal-host-contract";
 import {
   NEUTRAL_FIXTURE_VERSION,
   NeutralTerminalHostFixture,
   StaleIncarnationError,
+  SubscriptionGapError,
   fixtureLimits,
+  fixtureSubscriptionLimits,
 } from "./neutral-fixture";
 
 const encoder = new TextEncoder();
@@ -53,6 +56,16 @@ function request(
     },
     initialWindow,
   };
+}
+
+async function drain(
+  host: NeutralTerminalHostFixture,
+  session: SessionRef,
+  subscriptionId: string,
+): Promise<readonly TerminalEvent[]> {
+  const delivered: TerminalEvent[] = [];
+  for await (const event of host.events({ session, subscriptionId })) delivered.push(event);
+  return delivered;
 }
 
 async function createRunning(host: NeutralTerminalHostFixture, spec: CreateRequest): Promise<SessionRef> {
@@ -344,6 +357,110 @@ async function assertJ(host: NeutralTerminalHostFixture): Promise<void> {
   }]);
 }
 
+/** §11 row U. A subscription is a resumable cursor: it negotiates, resumes at a
+ * host-reported position, delivers every retained event in host order exactly
+ * once, releases retention by acknowledgement, reports a position outside
+ * retention as an explicit gap, and keeps subscribers independent — including
+ * through the incarnation's final, separately ordered facts. */
+async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
+  const session = await createRunning(host, request("freeze-u"));
+  const subscribed = await host.subscribe({
+    session,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
+  });
+  if (subscribed.state !== "subscribed") throw new Error(`expected subscribed, got ${subscribed.state}`);
+  expect(subscribed.limits).toEqual(fixtureSubscriptionLimits);
+  expect(subscribed.resumeFrom.eventSequence).toBe("1");
+
+  host.appendOutput(session, encoder.encode("alpha"));
+  host.appendOutput(session, encoder.encode("beta"));
+
+  // Exactly once: draining twice never repeats a delivered event, and the
+  // second drain sees only what arrived after the first.
+  const first = await drain(host, session, subscribed.subscriptionId);
+  expect(first.map((event) => event.eventSequence)).toEqual(["1", "2"]);
+  expect(await drain(host, session, subscribed.subscriptionId)).toEqual([]);
+  host.appendOutput(session, encoder.encode("gamma"));
+  const second = await drain(host, session, subscribed.subscriptionId);
+  expect(second.map((event) => event.eventSequence)).toEqual(["3"]);
+
+  // Independent subscribers: a second subscription starting at the current end
+  // sees only what follows it, and draining it does not move the first.
+  const tail = await host.subscribe({
+    session,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "end" },
+  });
+  if (tail.state !== "subscribed") throw new Error(`expected subscribed, got ${tail.state}`);
+  expect(tail.resumeFrom.eventSequence).toBe("4");
+  expect(tail.subscriptionId).not.toBe(subscribed.subscriptionId);
+  host.appendOutput(session, encoder.encode("delta"));
+  expect((await drain(host, session, tail.subscriptionId)).map((event) => event.eventSequence))
+    .toEqual(["4"]);
+  expect((await drain(host, session, subscribed.subscriptionId)).map((event) => event.eventSequence))
+    .toEqual(["4"]);
+
+  // Acknowledgement releases retention: credit is consumed by unacknowledged
+  // events and restored by the acknowledgement that names this subscription.
+  host.appendOutput(session, encoder.encode("epsilon"));
+  const beforeAck = await host.acknowledgeEvents({
+    session,
+    subscriptionId: subscribed.subscriptionId,
+    through: { eventSequence: "4", outputOffset: "0" },
+  });
+  expect(beforeAck.subscriptionId).toBe(subscribed.subscriptionId);
+  expect(beforeAck.availableEventCredit)
+    .toBe(fixtureSubscriptionLimits.unacknowledgedEventHighWater - 1);
+  const afterAck = await host.acknowledgeEvents({
+    session,
+    subscriptionId: subscribed.subscriptionId,
+    through: { eventSequence: "5", outputOffset: "0" },
+  });
+  expect(afterAck.through.eventSequence).toBe("5");
+  expect(afterAck.availableEventCredit)
+    .toBe(fixtureSubscriptionLimits.unacknowledgedEventHighWater);
+
+  // Gap: a position below what retention still holds is reported explicitly,
+  // with the missing range and a fresh-inspection requirement.
+  for (let index = 0; index < fixtureSubscriptionLimits.retainedEventCount; index += 1) {
+    host.appendOutput(session, encoder.encode(`overflow-${index}`));
+  }
+  const stale = await host.subscribe({
+    session,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
+  });
+  if (stale.state !== "gap") throw new Error(`expected gap, got ${stale.state}`);
+  expect(stale.missing.start).toBe("1");
+  expect(Number(stale.missing.endExclusive)).toBeGreaterThan(1);
+  expect(stale.freshInspection).toBe("required");
+
+  // The evicted-past subscriber loses its position as a typed failure naming
+  // the missing range — never as a silent jump forward, and never by
+  // fabricating an event.
+  await expect(drain(host, session, subscribed.subscriptionId)).rejects
+    .toBeInstanceOf(SubscriptionGapError);
+
+  // Final events: an in-retention subscription receives the incarnation's
+  // closing facts, separately ordered, with the authoritative reap last.
+  const survivor = await host.subscribe({
+    session,
+    capabilities: { protocolVersions: ["1.0.0"] },
+    limits: fixtureSubscriptionLimits,
+    from: { position: "end" },
+  });
+  if (survivor.state !== "subscribed") throw new Error(`expected subscribed, got ${survivor.state}`);
+  host.completeWithTail(session, encoder.encode("tail"), null);
+  const final = await drain(host, session, survivor.subscriptionId);
+  expect(final.map((event) => event.kind))
+    .toEqual(["output", "process-exited", "output-closed", "process-reaped"]);
+  expect(await drain(host, session, survivor.subscriptionId)).toEqual([]);
+}
+
 async function assertK(host: NeutralTerminalHostFixture): Promise<void> {
   const canonical = await createRunning(host, request("freeze-k-canonical", {}, "canonical"));
   const canonicalClaim = await claim(host, canonical, "canonical-human");
@@ -393,7 +510,7 @@ describe("terminal-host v1 shape freeze", () => {
   });
 });
 
-describe("neutral fixture freeze A–K with mutation controls", () => {
+describe("neutral fixture freeze A–K and U with mutation controls", () => {
   const cases = [
     ["A", assertA],
     ["B", assertB],
@@ -406,6 +523,7 @@ describe("neutral fixture freeze A–K with mutation controls", () => {
     ["I", assertI],
     ["J", assertJ],
     ["K", assertK],
+    ["U", assertU],
   ] as const;
 
   for (const [id, assertion] of cases) {

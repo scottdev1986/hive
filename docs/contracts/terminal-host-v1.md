@@ -1,8 +1,8 @@
 # Terminal host contract v1.0.0
 
-Status: **shape frozen**. This is the project-neutral target boundary for terminal-session adapters. The neutral qualification fixture passes A–K and T.
+Status: **shape frozen**. This is the project-neutral target boundary for terminal-session adapters. The neutral qualification fixture passes A–K and U.
 
-Real-session verification has two halves and exactly one is done. The real-host discriminators are DONE: the three rows that were pending A1 (B, C, D) now pass, and the named real discriminators THV1-REAL-B/D/E/F/K live in `native/sessiond/test/pending-a1-contract.zig`, which runs green inside the ordinary native suite. A project-neutral real-sessiond adapter is PENDING — none is verified present on main, and this status becomes **frozen** only once one exists and this boundary is implemented over the qualified host (A2; see Deferred boundary work). The half-open state is deliberate: the previous closure of this contract was reversed precisely because a status claimed more than its evidence.
+Real-session verification has two halves: one is done and the other is partial. The real-host discriminators are DONE — the three rows that were pending A1 (B, C, D) now pass, and the named real discriminators THV1-REAL-B/D/E/F/K run green inside the ordinary native suite. A project-neutral real-sessiond adapter is PARTIAL: a neutral controller over real sessions is verified present on main and serves creation, listing, inspection, and termination against real processes with measured reap evidence, but resumable attachment, ordered resize, ordered event subscription, and visibility renewal still have no neutral handler. This status becomes **frozen** only once that adapter is complete and this boundary is implemented over the qualified host (A2; see Deferred boundary work). The half-open state is deliberate: the previous closure of this contract was reversed precisely because a status claimed more than its evidence.
 
 The host accepts an opaque session key, a command, a terminal profile, and an initial window. It owns terminal I/O and reports evidence. Product identity, agent identity, provider choice, authorization, repository/worktree concepts, and product lifecycle policy are exclusively adapter concerns above this boundary. A consumer whose creation authority depends on a live external representation adopts the separately versioned [terminal-host visibility extension](terminal-host-visibility-v1.md); UI policy still terminates in its adapter.
 
@@ -81,9 +81,9 @@ Events carry the facts inspection reports, ordered rather than sampled: lifecycl
 
 This operation set is semantic. Implementations may combine transport messages or use different internal process/terminal primitives while preserving every observable guarantee.
 
-## Freeze qualification A–K and T
+## Freeze qualification A–K and U
 
-Row letters are unique across the contract family rather than per document: A–K are defined here, L–S in the [visibility extension](terminal-host-visibility-v1.md), and section 11's row continues that shared sequence at T.
+Row letters are unique across the contract family rather than per document: A–K are defined here, L–S in the [visibility extension](terminal-host-visibility-v1.md) whose neutral fixture also owns T, and section 11's row continues that shared sequence at U.
 
 | ID | Required observation | Shape status |
 |---|---|---|
@@ -98,7 +98,7 @@ Row letters are unique across the contract family rather than per document: A–
 | I | Concurrent human and automation writes obey claim fencing, transaction idempotency, and non-interleaving. | Neutral green; real candidate baseline green |
 | J | Immediate process-tree termination either removes an escaped descendant or reports it as a survivor. | Neutral green; real candidate baseline green |
 | K | Canonical end-of-file, the same byte in literal mode, and terminal hangup have distinct results. | Neutral green; real candidate baseline green |
-| T | A subscription resumes from a caller-supplied event position or the current end, delivers every retained event in host order exactly once, bounds retained events by negotiated limits released by acknowledgement, and reports a cursor outside retention as an explicit gap carrying the missing event range and a fresh-inspection requirement. | Neutral green |
+| U | A subscription resumes from a caller-supplied event position or the current end, delivers every retained event in host order exactly once, keeps subscribers independent, bounds retained events by negotiated limits released by acknowledgement, reports a position outside retention as an explicit gap carrying the missing event range and a fresh-inspection requirement, and delivers the incarnation's closing facts separately ordered with the authoritative reap last. | Neutral green |
 
 Every neutral case has a mutation control: injecting that case's semantic violation makes the corresponding assertion fail. The real-host discriminators are no longer expected failures — `pending-a1-contract` runs inside the ordinary native suite and is green, and it includes a live arbitrary-descriptor-leak probe. Its rows carry their own mutation controls too: inverting D's final observed geometry or F's retained tail bytes turns exactly those two rows red.
 
@@ -106,7 +106,7 @@ Qualification versions: contract `1.0.0`; neutral fixture `1.0.0`; audited sessi
 
 ## Deferred boundary work
 
-There is no project-neutral real-sessiond adapter before A2. A1 qualifies and repairs the candidate primitives against the pending discriminators. A2 implements this frozen target over the qualified host. Real-session verification is complete only after both are present; shape freeze does not claim otherwise.
+The project-neutral real-sessiond adapter is incomplete before A2: it serves creation, listing, inspection, and termination today, and does not yet serve attachment, resize, subscription, or visibility renewal. A1 qualifies and repairs the candidate primitives against the pending discriminators and finishes those remaining neutral operations. A2 implements this frozen target over the qualified host. Real-session verification is complete only after both are present; shape freeze does not claim otherwise.
 
 ## Visibility-backed creation profile
 

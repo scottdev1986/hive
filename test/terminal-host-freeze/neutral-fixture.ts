@@ -16,6 +16,12 @@ import {
   type ResizeResult,
   type SessionInspection,
   type SessionRef,
+  type SubscribeResult,
+  type SubscriptionCapabilities,
+  type SubscriptionCursor,
+  type SubscriptionLimits,
+  type SubscriptionStart,
+  type EventAcknowledgement,
   type TerminalEvent,
   type TerminalHost,
   type TerminationResult,
@@ -23,7 +29,7 @@ import {
 } from "../../src/daemon/session-host/terminal-host-contract";
 
 export const NEUTRAL_FIXTURE_VERSION = "1.0.0" as const;
-export type FreezeCase = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K";
+export type FreezeCase = "A" | "B" | "C" | "D" | "E" | "F" | "G" | "H" | "I" | "J" | "K" | "U";
 
 const AT = "2026-07-17T12:00:00.000Z";
 const FAR_FUTURE = "2099-01-01T00:00:00.000Z";
@@ -35,6 +41,30 @@ export const fixtureLimits: HostLimits = {
   outputLowWaterBytes: 256 * 1024,
   outputHighWaterBytes: 512 * 1024,
   outputRetentionBytes: 1024 * 1024,
+};
+
+/** §11 retention is deliberately small here so bounded retention and the gap
+ * it produces for a subscriber that never acknowledges are both reachable. */
+export const fixtureSubscriptionLimits: SubscriptionLimits = {
+  maxEventFrameBytes: 64 * 1024,
+  retainedEventCount: 8,
+  unacknowledgedEventLowWater: 2,
+  unacknowledgedEventHighWater: 4,
+};
+
+/** §11 a subscription ends on a typed failure, and a broken subscription is
+ * never evidence that the session itself changed — so falling out of retention
+ * raises this, naming the missing range, and fabricates no event. */
+export class SubscriptionGapError extends Error {
+  constructor(readonly missing: Readonly<{ start: string; endExclusive: string }>) {
+    super(`subscription fell out of retention: ${missing.start}..${missing.endExclusive}`);
+  }
+}
+
+type SubscriptionState = {
+  id: string;
+  nextSequence: number;
+  acknowledgedThrough: number;
 };
 
 type OutputChunk = Readonly<{ start: number; endExclusive: number; bytes: Uint8Array }>;
@@ -50,6 +80,8 @@ type RecordState = {
   eventSequence: number;
   mutationSequence: number;
   events: TerminalEvent[];
+  retainedEventStart: number;
+  subscriptions: Map<string, SubscriptionState>;
   outputChunks: OutputChunk[];
   outputEnd: number;
   retainedStart: number;
@@ -342,15 +374,100 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     return [...this.records.values()].map((record) => this.inspection(record));
   }
 
-  async *subscribe(request: Readonly<{
+  /** §11 negotiate, then resume. `resumeFrom` is where delivery WILL begin,
+   * reported by the host rather than echoed from the request, and a position
+   * below what retention still holds is a gap naming the missing range — never
+   * a silent jump forward. */
+  async subscribe(request: Readonly<{
     session: SessionRef;
-    afterEventSequence: string;
+    capabilities: SubscriptionCapabilities;
+    limits: SubscriptionLimits;
+    from: SubscriptionStart;
+  }>): Promise<SubscribeResult> {
+    const record = this.record(request.session);
+    if (!request.capabilities.protocolVersions.includes("1.0.0")) {
+      return { state: "unknown", diagnostic: "no compatible protocol" };
+    }
+    const from = request.from.position === "end"
+      ? record.eventSequence + 1
+      : Number(request.from.cursor.eventSequence);
+    if (from < record.retainedEventStart) {
+      return {
+        state: "gap",
+        missing: {
+          start: String(from),
+          endExclusive: String(record.retainedEventStart),
+        },
+        freshInspection: "required",
+      };
+    }
+    const id = `subscription-${record.subscriptions.size + 1}-${record.ref.incarnation}`;
+    record.subscriptions.set(id, { id, nextSequence: from, acknowledgedThrough: from - 1 });
+    return {
+      state: "subscribed",
+      subscriptionId: id,
+      negotiatedProtocol: "1.0.0",
+      // The host selects the limits it will honour; it does not adopt what it
+      // was offered, which is what makes this negotiated rather than assumed.
+      limits: fixtureSubscriptionLimits,
+      resumeFrom: {
+        eventSequence: String(from),
+        outputOffset: String(this.outputOffsetAt(record, from)),
+      },
+    };
+  }
+
+  /** §11 delivery for ONE subscription. Each subscription owns its own
+   * position, so a subscription that is never drained neither delays nor
+   * reorders another's events, and never stalls the session. */
+  async *events(request: Readonly<{
+    session: SessionRef;
+    subscriptionId: string;
   }>): AsyncIterable<TerminalEvent> {
     const record = this.record(request.session);
-    const after = Number(request.afterEventSequence);
-    for (const event of record.events) {
-      if (Number(event.eventSequence) > after) yield event;
+    const subscription = record.subscriptions.get(request.subscriptionId);
+    if (!subscription) throw new Error(`unknown subscription ${request.subscriptionId}`);
+    if (subscription.nextSequence < record.retainedEventStart) {
+      throw new SubscriptionGapError({
+        start: String(subscription.nextSequence),
+        endExclusive: String(record.retainedEventStart),
+      });
     }
+    const end = record.eventSequence;
+    for (let sequence = subscription.nextSequence; sequence <= end; sequence += 1) {
+      yield record.events[sequence - 1]!;
+      subscription.nextSequence = sequence + 1;
+    }
+    if (this.fault === "U") subscription.nextSequence = end;
+  }
+
+  /** §11 retained events are released by acknowledgement on the same terms as
+   * output. The release names its subscription, so one subscriber's
+   * acknowledgement never releases what another has not been delivered. */
+  async acknowledgeEvents(request: Readonly<{
+    session: SessionRef;
+    subscriptionId: string;
+    through: SubscriptionCursor;
+  }>): Promise<EventAcknowledgement> {
+    const record = this.record(request.session);
+    const subscription = record.subscriptions.get(request.subscriptionId);
+    if (!subscription) throw new Error(`unknown subscription ${request.subscriptionId}`);
+    subscription.acknowledgedThrough = Math.max(
+      subscription.acknowledgedThrough,
+      Number(request.through.eventSequence),
+    );
+    const unacknowledged = record.eventSequence - subscription.acknowledgedThrough;
+    return {
+      subscriptionId: subscription.id,
+      through: {
+        eventSequence: String(subscription.acknowledgedThrough),
+        outputOffset: String(this.outputOffsetAt(record, subscription.acknowledgedThrough + 1)),
+      },
+      availableEventCredit: Math.max(
+        0,
+        fixtureSubscriptionLimits.unacknowledgedEventHighWater - unacknowledged,
+      ),
+    };
   }
 
   async terminate(request: Readonly<{
@@ -588,6 +705,8 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       eventSequence: 0,
       mutationSequence: 0,
       events: [],
+      retainedEventStart: 1,
+      subscriptions: new Map(),
       outputChunks: [],
       outputEnd: 0,
       retainedStart: 0,
@@ -660,6 +779,26 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       eventSequence: String(record.eventSequence),
       occurredAt: AT,
     } as TerminalEvent);
+    // Retention is bounded and the session never stalls for a subscriber, so
+    // an unacknowledged laggard is evicted past rather than blocking the
+    // producer. It loses its position explicitly (SubscriptionGapError), never
+    // silently.
+    const retained = record.eventSequence - record.retainedEventStart + 1;
+    if (retained > fixtureSubscriptionLimits.retainedEventCount) {
+      record.retainedEventStart = record.eventSequence
+        - fixtureSubscriptionLimits.retainedEventCount + 1;
+    }
+  }
+
+  /** The output offset standing beside an event position, so a delivered event
+   * and the output around it are comparable without a second clock. */
+  private outputOffsetAt(record: RecordState, sequence: number): number {
+    let offset = 0;
+    for (const event of record.events) {
+      if (Number(event.eventSequence) >= sequence) break;
+      if (event.kind === "output") offset = Number(event.outputRange.endExclusive);
+    }
+    return offset;
   }
 
   private closeOutput(record: RecordState, reason: string): void {

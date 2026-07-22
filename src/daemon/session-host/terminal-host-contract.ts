@@ -272,6 +272,51 @@ export type OutputAcknowledgement = Readonly<{
   availableCreditBytes: number;
 }>;
 
+export type SubscriptionCapabilities = Readonly<{
+  protocolVersions: readonly string[];
+}>;
+
+/** §11 retained events are bounded and released by acknowledgement. Events are
+ * counted rather than measured, so every bound but the frame cap is a count. */
+export type SubscriptionLimits = Readonly<{
+  maxEventFrameBytes: number;
+  retainedEventCount: number;
+  unacknowledgedEventLowWater: number;
+  unacknowledgedEventHighWater: number;
+}>;
+
+/** §11 both positions in the one session order, so a delivered event and the
+ * output around it are comparable without a second clock. */
+export type SubscriptionCursor = Readonly<{
+  eventSequence: Sequence;
+  outputOffset: Sequence;
+}>;
+
+export type SubscriptionStart =
+  | Readonly<{ position: "at"; cursor: SubscriptionCursor }>
+  | Readonly<{ position: "end" }>;
+
+export type SubscribeResult =
+  | Readonly<{
+      state: "subscribed";
+      subscriptionId: string;
+      negotiatedProtocol: string;
+      limits: SubscriptionLimits;
+      resumeFrom: SubscriptionCursor;
+    }>
+  | Readonly<{
+      state: "gap";
+      missing: Readonly<{ start: Sequence; endExclusive: Sequence }>;
+      freshInspection: "required";
+    }>
+  | Readonly<{ state: "unknown"; diagnostic: string }>;
+
+export type EventAcknowledgement = Readonly<{
+  subscriptionId: string;
+  through: SubscriptionCursor;
+  availableEventCredit: number;
+}>;
+
 export type TerminationResult = Readonly<{
   state: "terminated" | "survivors" | "unknown";
   exit: ExitStatus | null;
@@ -321,10 +366,29 @@ export interface TerminalHost {
   }>): Promise<OutputAcknowledgement>;
   inspect(session: SessionRef): Promise<SessionInspection>;
   list(): Promise<readonly SessionInspection[]>;
+  /** §11 a subscription is a resumable cursor, not a boolean: it negotiates
+   * capabilities and event flow-control limits and begins at a caller-supplied
+   * event position or at the current end. A position outside retention is a
+   * gap, never silent loss. */
   subscribe(request: Readonly<{
     session: SessionRef;
-    afterEventSequence: Sequence;
+    capabilities: SubscriptionCapabilities;
+    limits: SubscriptionLimits;
+    from: SubscriptionStart;
+  }>): Promise<SubscribeResult>;
+  /** §11 delivery for one subscription. Subscribers are independent, so this
+   * is keyed by subscription and never by session alone. */
+  events(request: Readonly<{
+    session: SessionRef;
+    subscriptionId: string;
   }>): AsyncIterable<TerminalEvent>;
+  /** §11 retained events are released by acknowledgement on the same terms as
+   * output; the release names WHICH subscription it releases. */
+  acknowledgeEvents(request: Readonly<{
+    session: SessionRef;
+    subscriptionId: string;
+    through: SubscriptionCursor;
+  }>): Promise<EventAcknowledgement>;
   terminate(request: Readonly<{
     session: SessionRef;
     mode: "graceful" | "immediate";

@@ -35,7 +35,9 @@ WHAT THIS DOES NOT CERTIFY
   considered and ruled out of M1 scope by queen on 2026-07-21; this artifact
   records the in-tree generic-consumer proof instead. The fork was deliberate.
 - It says nothing about the A2 project-neutral real-sessiond adapter, which
-  remains PENDING (see docs/contracts/terminal-host-v1.md status).
+  remains PARTIAL: creation, listing, inspection and termination are served
+  neutrally; attachment, resize, subscription and visibility renewal are not
+  (see docs/contracts/terminal-host-v1.md status).
 - The Zig proof prints nothing on success, so the capture's evidence is its
   echoed exit code under `set -eu`, not per-assertion output. The assertions
   named above live in the cited code, and each fails the run if violated.
