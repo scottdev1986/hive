@@ -23,6 +23,9 @@
   ],
   "autonomy": "dangerous",
   "orchestrator": {
-    "status": "working"
+    "status": "working",
+    "host": "tmux",
+    "hostState": null,
+    "sessionLocator": null
   }
 }

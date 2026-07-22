@@ -28,6 +28,12 @@
 import type { AgentRecord } from "../schemas";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import type { OrchestratorStatus } from "../daemon/orchestrator-status";
+import {
+  RootSessiondLocatorSchema,
+  type OrchestratorHostKind,
+  type RootSessiondLocator,
+} from "../daemon/orchestrator-host";
+import type { OrchestratorSessiondSnapshot } from "../daemon/orchestrator-sessiond";
 import { macProcessIdentity } from "../daemon/lifecycle";
 import {
   WorkspaceVisibilityInventoryInputSchema,
@@ -56,16 +62,24 @@ export const FEED_VISIBILITY_PUBLISH_TIMEOUT_MS = 5_000;
  * afterwards, as a gap between recorded lease deadlines. */
 export const FEED_VISIBILITY_PUBLISH_SLOW_MS = 1_000;
 
+export interface WorkspaceOrchestratorSnapshot {
+  readonly status: OrchestratorStatus | null;
+  readonly host: OrchestratorHostKind;
+  readonly hostState: OrchestratorSessiondSnapshot["state"] | null;
+  readonly sessionLocator: RootSessiondLocator | null;
+}
+
 export interface WorkspaceFeedDeps {
   readonly fetchStatus?: (port: number) => Promise<AgentRecord[]>;
   /** Reads the daemon's live autonomy dial for the app's Agents menu. Errors
    * degrade to null (field omitted) — the menu goes unknown, the agent list
    * must not. */
   readonly fetchAutonomy?: (port: number) => Promise<Autonomy | null>;
-  /** Reads what the root is doing, for the orchestrator pane's dot. Errors and
-   * un-knowable states alike degrade to null (field omitted): the root's dot
-   * goes gray/unknown, which is the truth, rather than a fabricated word. */
-  readonly fetchOrchestrator?: (port: number) => Promise<OrchestratorStatus | null>;
+  /** Reads the root's independent turn status and terminal lifecycle. Errors
+   * degrade to null; an unknowable turn can still carry a sessiond locator. */
+  readonly fetchOrchestrator?: (
+    port: number,
+  ) => Promise<WorkspaceOrchestratorSnapshot | null>;
   readonly write?: (line: string) => void;
   readonly sleep?: (milliseconds: number, signal?: AbortSignal) => Promise<void>;
   readonly now?: () => number;
@@ -278,22 +292,43 @@ async function getAutonomy(port: number): Promise<Autonomy | null> {
   return isAutonomy(body?.autonomy) ? body.autonomy : null;
 }
 
-/** `GET /orchestrator-status` with the operator credential: what the root is
- * doing, derived by the daemon from the root's own turn boundaries. Null when
- * it cannot be honestly known — the field is then omitted from the line, and
- * the app's dot stays gray (unknown). Errors degrade to null for the same
- * reason: a status we could not read is not a status we may invent. */
+/** `GET /orchestrator-status` with the operator credential: independently
+ * measured root turn state and terminal lifecycle. A null turn status stays
+ * null; a pending sessiond locator must still reach Workspace for admission. */
 async function getOrchestratorStatus(
   port: number,
-): Promise<OrchestratorStatus | null> {
+): Promise<WorkspaceOrchestratorSnapshot | null> {
   const response = await operatorFetch(
     `http://127.0.0.1:${port}/orchestrator-status`,
   );
   if (!response.ok) return null;
-  const body = await response.json().catch(() => null) as
-    | { status?: unknown }
-    | null;
-  return parseOrchestratorStatus(body?.status);
+  return parseWorkspaceOrchestratorSnapshot(
+    await response.json().catch(() => null),
+  );
+}
+
+/** The root's turn status and terminal lifecycle are independent. In
+ * particular, a fresh sessiond root has a pending locator before it has any
+ * turn boundary. Preserve that locator so Workspace can publish visibility;
+ * dropping the whole object on a null status deadlocks host creation. */
+export function parseWorkspaceOrchestratorSnapshot(
+  value: unknown,
+): WorkspaceOrchestratorSnapshot | null {
+  if (typeof value !== "object" || value === null) return null;
+  const body = value as Record<string, unknown>;
+  const status = parseOrchestratorStatus(body.status);
+  const host = body.host === "sessiond" ? "sessiond"
+    : body.host === "tmux" ? "tmux"
+    : null;
+  const hostState = body.hostState === "awaiting-visibility" ||
+      body.hostState === "running" || body.hostState === "exited" ||
+      body.hostState === "failed"
+    ? body.hostState
+    : null;
+  const locator = RootSessiondLocatorSchema.safeParse(body.sessionLocator);
+  const sessionLocator = locator.success ? locator.data : null;
+  if (host === null || (status === null && sessionLocator === null)) return null;
+  return { status, host, hostState, sessionLocator };
 }
 
 /** Keep the feed and daemon lifecycle vocabularies identical. Dropping a
@@ -376,10 +411,9 @@ export async function runWorkspaceFeed(
       // dial. Best-effort by design: its failure must never take the agent
       // list down with it.
       const autonomy = await fetchAutonomy(port).catch(() => null);
-      // The root's own status rides the same line. Best-effort like autonomy —
-      // and omitted, never defaulted, when the daemon cannot honestly say: the
-      // Workspace renders a missing status as unknown/gray, which is exactly
-      // what it should show when nobody knows.
+      // Root turn status and terminal lifecycle ride the same line. Best-effort
+      // like autonomy: no turn evidence stays null, while an independently
+      // measured pending locator still reaches Workspace for visibility.
       const orchestrator = await fetchOrchestrator(port).catch(() => null);
       const snapshot = JSON.stringify({ agents, autonomy, orchestrator });
       const heartbeatDue = lastEmitAt === null ||
@@ -391,7 +425,7 @@ export async function runWorkspaceFeed(
           v: FEED_VERSION,
           agents,
           ...(autonomy === null ? {} : { autonomy }),
-          ...(orchestrator === null ? {} : { orchestrator: { status: orchestrator } }),
+          ...(orchestrator === null ? {} : { orchestrator }),
         }));
         lastSnapshot = snapshot;
         lastEmitAt = now();

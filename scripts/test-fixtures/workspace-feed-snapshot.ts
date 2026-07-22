@@ -2,7 +2,10 @@
 /** Regenerate with `bun run scripts/test-fixtures/workspace-feed-snapshot.ts`. */
 import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, resolve } from "node:path";
-import { runWorkspaceFeed } from "../../src/cli/workspace-feed";
+import {
+  runWorkspaceFeed,
+  type WorkspaceOrchestratorSnapshot,
+} from "../../src/cli/workspace-feed";
 import type { AgentRecord } from "../../src/schemas";
 
 const OBSERVED_AT = "2026-07-13T12:00:00.000Z";
@@ -46,7 +49,12 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
       return [workspaceFeedAgentFixture];
     },
     fetchAutonomy: async () => "dangerous",
-    fetchOrchestrator: async () => "working",
+    fetchOrchestrator: async (): Promise<WorkspaceOrchestratorSnapshot> => ({
+      status: "working",
+      host: "tmux",
+      hostState: null,
+      sessionLocator: null,
+    }),
     write: (line) => lines.push(line),
   });
   if (exitCode !== 0 || lines.length !== 1 || lines[0] === undefined) {

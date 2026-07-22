@@ -12,7 +12,12 @@ describe("the shared Workspace feed wire fixture", () => {
     expect(fixture).toEqual(generated);
     expect(fixture.v).toBe(1);
     expect(fixture.autonomy).toBe("dangerous");
-    expect(fixture.orchestrator).toEqual({ status: "working" });
+    expect(fixture.orchestrator).toEqual({
+      status: "working",
+      host: "tmux",
+      hostState: null,
+      sessionLocator: null,
+    });
     expect(fixture.agents[0]).toMatchObject({
       name: "indexer",
       tool: "codex",

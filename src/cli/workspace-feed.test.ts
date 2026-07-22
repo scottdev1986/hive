@@ -11,12 +11,13 @@ import {
   FEED_POLL_MS,
   FEED_RETRY_MAX_MS,
   parseOrchestratorStatus,
+  parseWorkspaceOrchestratorSnapshot,
   publishWorkspaceVisibility,
   runWorkspaceFeed,
+  type WorkspaceOrchestratorSnapshot,
   WorkspaceVisibilityPublisher,
   WorkspaceVisibilityPublishTimeoutError,
 } from "./workspace-feed";
-import type { OrchestratorStatus } from "../daemon/orchestrator-status";
 
 const timestamp = "2026-07-10T12:00:00.000Z";
 
@@ -61,7 +62,8 @@ async function runScript(
   steps: Step[],
   fetchAutonomy: () => Promise<"sandboxed" | "dangerous" | null> = async () =>
     null,
-  fetchOrchestrator: () => Promise<OrchestratorStatus | null> = async () => null,
+  fetchOrchestrator: () => Promise<WorkspaceOrchestratorSnapshot | null> =
+    async () => null,
 ): Promise<FeedRun> {
   const controller = new AbortController();
   const lines: Array<Record<string, unknown>> = [];
@@ -104,6 +106,27 @@ const last = (step: Step): Step => (abort) => {
 const lastFailure = (message: string): Step => (abort) => {
   abort();
   throw new Error(message);
+};
+
+const orchestrator = (
+  status: WorkspaceOrchestratorSnapshot["status"],
+  overrides: Partial<WorkspaceOrchestratorSnapshot> = {},
+): WorkspaceOrchestratorSnapshot => ({
+  status,
+  host: "tmux",
+  hostState: null,
+  sessionLocator: null,
+  ...overrides,
+});
+
+const rootLocator = {
+  schemaVersion: 1 as const,
+  instanceId: "instance",
+  subject: { kind: "root" as const },
+  generation: 1,
+  sessionId: "ses_0198a8f0-0000-7000-8000-000000000001",
+  hostKind: "sessiond" as const,
+  engineBuildId: "engine",
 };
 
 describe("runWorkspaceFeed", () => {
@@ -306,6 +329,25 @@ describe("runWorkspaceFeed", () => {
     expect(parseOrchestratorStatus(undefined)).toEqual(null);
   });
 
+  test("preserves a pending root locator before any turn status exists", () => {
+    expect(parseWorkspaceOrchestratorSnapshot({
+      status: null,
+      host: "sessiond",
+      hostState: "awaiting-visibility",
+      sessionLocator: rootLocator,
+    })).toEqual(orchestrator(null, {
+      host: "sessiond",
+      hostState: "awaiting-visibility",
+      sessionLocator: rootLocator,
+    }));
+    expect(parseWorkspaceOrchestratorSnapshot({
+      status: null,
+      host: "tmux",
+      hostState: null,
+      sessionLocator: null,
+    })).toBeNull();
+  });
+
   test("emits the shared wire snapshot, stays silent while unchanged, heartbeats at 5s", async () => {
     const run = await runScript(
       [
@@ -317,7 +359,7 @@ describe("runWorkspaceFeed", () => {
         last(snapshot(workspaceFeedAgentFixture)), // t=5s: heartbeat
       ],
       async () => "dangerous",
-      async () => "working",
+      async () => orchestrator("working"),
     );
     const fixture = await Bun.file(WORKSPACE_FEED_SNAPSHOT_FIXTURE).json();
     expect(run.exitCode).toEqual(0);
@@ -433,9 +475,9 @@ describe("runWorkspaceFeed", () => {
     const run = await runScript(
       [last(snapshot(agent("maya")))],
       async () => null,
-      async () => "working",
+      async () => orchestrator("working"),
     );
-    expect(run.lines[0]?.orchestrator).toEqual({ status: "working" });
+    expect(run.lines[0]?.orchestrator).toEqual(orchestrator("working"));
     // Beside, never inside: the root has no AgentRecord, and inventing one
     // would break the no-row invariant the daemon relies on in four places.
     expect(run.lines[0]?.agents).toHaveLength(1);
@@ -462,6 +504,20 @@ describe("runWorkspaceFeed", () => {
     // The agent list must still arrive: an unknowable root never takes the
     // rest of the snapshot down with it.
     expect(run.lines[0]?.agents).toHaveLength(1);
+  });
+
+  test("carries a pending sessiond root locator when turn status is unknown", async () => {
+    const pending = orchestrator(null, {
+      host: "sessiond",
+      hostState: "awaiting-visibility",
+      sessionLocator: rootLocator,
+    });
+    const run = await runScript(
+      [last(snapshot(agent("maya")))],
+      async () => null,
+      async () => pending,
+    );
+    expect(run.lines[0]?.orchestrator).toEqual(pending);
   });
 
   test("a root-status read that throws degrades to omission, not to a guess", async () => {
