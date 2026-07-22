@@ -13122,7 +13122,6 @@
         "retainedCheckpoints": 2,
         "checkpointBytes": 67108864,
         "terminalDiskBytesPerHiveHome": 2147483648,
-        "scrollbackLogicalLines": 50000,
         "nonImageCheckpointBytes": 50331648,
         "terminalCellsPerDimensionMin": 1,
         "terminalCellsPerDimensionMax": 1000,

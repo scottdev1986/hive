@@ -50,7 +50,6 @@ export const TERMINAL_LIMITS = {
   retainedCheckpoints: 2,
   checkpointBytes: 64 * 1024 * 1024,
   terminalDiskBytesPerHiveHome: 2 * 1024 * 1024 * 1024,
-  scrollbackLogicalLines: 50_000,
   nonImageCheckpointBytes: 48 * 1024 * 1024,
   terminalCellsPerDimensionMin: 1,
   terminalCellsPerDimensionMax: 1_000,

@@ -182,11 +182,7 @@ pub const RealVtEngine = struct {
         const self = try allocator.create(RealVtEngine);
         errdefer allocator.destroy(self);
         var terminal: ghostty_c.GhosttyTerminal = null;
-        const options: ghostty_c.GhosttyTerminalOptions = .{
-            .cols = @intCast(columns),
-            .rows = @intCast(rows),
-            .max_scrollback = canonical_scrollback_bytes,
-        };
+        const options = terminalOptions(columns, rows);
         if (ghostty_c.ghostty_terminal_new(null, &terminal, options) != ghostty_c.GHOSTTY_SUCCESS)
             return error.EngineCreateFailed;
         errdefer ghostty_c.ghostty_terminal_free(terminal);
@@ -263,6 +259,14 @@ pub const RealVtEngine = struct {
         }
         try self.updateDigest();
         return self;
+    }
+
+    fn terminalOptions(columns: u32, rows: u32) ghostty_c.GhosttyTerminalOptions {
+        return .{
+            .cols = @intCast(columns),
+            .rows = @intCast(rows),
+            .max_scrollback = canonical_scrollback_bytes,
+        };
     }
 
     pub fn engine(self: *RealVtEngine) terminal_state.VtEngine {
@@ -5975,7 +5979,10 @@ test "live VT effects use only the bounded PTY sink with an audit control" {
 }
 
 test "real libghostty-vt export is copied and TerminalState is sole engine owner" {
-    try std.testing.expectEqual(@as(usize, 48 * 1024 * 1024), canonical_scrollback_bytes);
+    // Assert the exact options object handed to ghostty_terminal_new. A
+    // literal 50_000 at the constructor call site must make this test red.
+    const options = RealVtEngine.terminalOptions(80, 24);
+    try std.testing.expectEqual(canonical_scrollback_bytes, options.max_scrollback);
     const TestClock = struct {
         fn now(_: *anyopaque) u64 {
             return 1;

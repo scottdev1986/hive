@@ -82,11 +82,20 @@ describe("WorkspaceVisibilityAuthority", () => {
     const host = authority();
     const repeated = snapshot("1").terminals[0]!;
     expect(host.value.publish(snapshot("1", {
-      terminals: [repeated, repeated],
+      terminals: [
+        repeated,
+        {
+          ...repeated,
+          locator: {
+            ...repeated.locator,
+            generation: repeated.locator.generation + 1,
+          },
+        },
+      ],
     }))).toMatchObject({ state: "rejected", reason: "duplicate-terminal" });
-    expect(() => host.value.publish(snapshot("1", {
+    expect(host.value.publish(snapshot("1", {
       terminals: [{ ...repeated, agentId: "wrong-agent" }],
-    }))).toThrow();
+    }))).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
   });
 
   test("admission re-reads source liveness, engine build, state, and revision", async () => {
@@ -144,14 +153,14 @@ describe("WorkspaceVisibilityAuthority", () => {
 
   test("rejects a root locator presented as an agent pane", () => {
     const host = authority();
-    expect(() => host.value.publish(snapshot("1", {
+    expect(host.value.publish(snapshot("1", {
       terminals: [{
         agentId: "agent-1",
         agentName: "visible-agent",
         locator: rootLocator(),
         state: "pending",
       }],
-    }))).toThrow();
+    }))).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
   });
 
   test("a dead prior source may be replaced, but a live one is exclusive", () => {

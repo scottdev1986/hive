@@ -31,13 +31,7 @@ export const WorkspaceVisibleTerminalSchema = z.strictObject({
     hostKind: z.literal("sessiond"),
   }).readonly(),
   state: WorkspaceTerminalStateSchema,
-}).readonly().refine(
-  (terminal) => terminal.locator.subject.kind === "agent"
-    ? terminal.locator.subject.agentId === terminal.agentId
-    : terminal.agentId === ROOT_VISIBILITY_ID &&
-      terminal.agentName === ORCHESTRATOR_NAME,
-  "workspace visibility records must bind their exact agent or root subject",
-);
+}).readonly();
 export type WorkspaceVisibleTerminal = z.infer<typeof WorkspaceVisibleTerminalSchema>;
 
 export const WorkspaceVisibilitySnapshotSchema = z.strictObject({

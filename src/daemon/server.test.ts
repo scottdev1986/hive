@@ -258,6 +258,23 @@ test("only the operator may publish a live advancing Workspace inventory", async
       "http://hive/workspace-visibility",
       request("1"),
     )).status).toBe(409);
+    const mismatch = await actingAs(daemon, "operator")(
+      "http://hive/workspace-visibility",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({
+          ...body,
+          inventoryRevision: "2",
+          terminals: [{ ...body.terminals[0], agentId: "wrong-agent" }],
+        }),
+      },
+    );
+    expect(mismatch.status).toBe(409);
+    expect(await mismatch.json()).toMatchObject({
+      state: "rejected",
+      reason: "locator-mismatch",
+    });
     await expect(daemon.admitSessiondSpawn({ agentId, agentName: "visible" }))
       .resolves.toMatchObject({
         engineBuildId: "engine-visible",
