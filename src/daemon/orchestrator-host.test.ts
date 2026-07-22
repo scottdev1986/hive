@@ -4,15 +4,17 @@ import { mintAgentTmuxSessionLocator } from "./session-host/tmux-host";
 import {
   configuredOrchestratorHost,
   mintRootSessiondLocator,
+  RootSessiondLocatorSchema,
   rootSessionIdForLaunchRequest,
 } from "./orchestrator-host";
 import type { HiveTerminalBinding } from "./session-host/terminal-host-binding";
 
 describe("orchestrator host selection", () => {
-  test("sessiond is the product default and tmux remains an explicit fallback", () => {
-    expect(configuredOrchestratorHost({})).toBe("sessiond");
-    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "" })).toBe("sessiond");
+  test("tmux remains the default while #114 gates the explicit sessiond opt-in", () => {
+    expect(configuredOrchestratorHost({})).toBe("tmux");
+    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "" })).toBe("tmux");
     expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "tmux" })).toBe("tmux");
+    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "sessiond" })).toBe("sessiond");
     expect(() => configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "other" }))
       .toThrow("must be sessiond or tmux");
   });
@@ -34,6 +36,8 @@ describe("root sessiond locator", () => {
       hostKind: "sessiond",
       engineBuildId: "engine-a",
     });
+    expect(() => RootSessiondLocatorSchema.parse({ ...first, hostKind: "tmux" }))
+      .toThrow();
     const binding: HiveTerminalBinding = {
       locator: first,
       visibility: {

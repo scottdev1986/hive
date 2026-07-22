@@ -1,5 +1,6 @@
 import { describe, expect, test } from "bun:test";
 import type { AgentRecord } from "../../schemas";
+import type { SessionLocator } from "../../schemas/session-protocol";
 import { SessiondViewerAgentInput } from "./sessiond-agent-input";
 import type { OrphanDiscardMode, OrphanDiscardResult } from "./sessiond-host";
 import type { SessiondViewerAttachClient } from "./sessiond-viewer-attach";
@@ -58,6 +59,16 @@ const receipt: InputReceipt = {
   consumedByProcess: "not-claimed",
   completeness: "complete",
   diagnostic: null,
+};
+
+const rootLocator: SessionLocator = {
+  schemaVersion: 1,
+  instanceId: "hive-fixture",
+  subject: { kind: "root" },
+  generation: 1,
+  sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000401",
+  hostKind: "sessiond",
+  engineBuildId: "engine-fixture",
 };
 
 /** A running session whose inspection reports the orphan as owner of record. */
@@ -212,6 +223,27 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     expect(recovered.outcome === "injected" && recovered.recovery)
       .toContain("held human claim (owner workspace-pane) preempted for delivery; retrying");
     expect(wire.attempts).toEqual(["message-1", "message-1"]);
+  });
+
+  test("the root wake retains and retries when a human draft wins the claim race", async () => {
+    const wire = new HumanClaimArbiterWire("HumanOwned");
+    const modes: OrphanDiscardMode[] = [];
+    const recovered = await injector(wire, async (mode) => {
+      modes.push(mode);
+      wire.discarded = true;
+      return {
+        state: "preempted",
+        priorOwnerViewerId: "workspace-root-pane",
+        priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
+        orphanAgeMilliseconds: null,
+        diagnostic: "held human claim preempted for delivery",
+      };
+    }).injectRoot(rootLocator, "wake queen", { messageId: "message-1" });
+
+    expect(recovered.outcome).toBe("injected");
+    expect(modes).toEqual(["held"]);
+    expect(wire.attempts).toEqual(["message-1", "message-1"]);
+    expect(recovered.outcome === "injected" && recovered.receipt).toEqual(receipt);
   });
 
   test("a host refusal is recorded, not retried", async () => {

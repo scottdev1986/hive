@@ -6039,6 +6039,38 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
     // deferred deinit is the single destruction path.
 }
 
+test "real VT constructor retains tmux-equivalent scrollback from its actual budget" {
+    const allocator = std.testing.allocator;
+    const real_engine = try RealVtEngine.create(allocator, 80, 24, null);
+    defer real_engine.engine().deinit();
+
+    const line_count = 60_000;
+    const columns = 79;
+    const stride = columns + 2;
+    const history = try allocator.alloc(u8, line_count * stride);
+    defer allocator.free(history);
+    for (0..line_count) |line| {
+        const start = line * stride;
+        @memset(history[start..][0..columns], 'x');
+        history[start + columns] = '\r';
+        history[start + columns + 1] = '\n';
+    }
+    try real_engine.engine().write(history);
+
+    var scrollback_rows: usize = 0;
+    try std.testing.expectEqual(
+        ghostty_c.GHOSTTY_SUCCESS,
+        ghostty_c.ghostty_terminal_get(
+            real_engine.terminal,
+            ghostty_c.GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+            &scrollback_rows,
+        ),
+    );
+    // Replacing the constructor's actual option with 50_000 bytes retains
+    // about 800 rows and makes this direct behavioral proof fail.
+    try std.testing.expect(scrollback_rows >= 50_000);
+}
+
 /// Reads every byte already buffered on `stream` without blocking.
 fn drainReadable(stream: std.net.Stream, sink: *std.ArrayList(u8)) !void {
     var buf: [4096]u8 = undefined;

@@ -9,6 +9,7 @@ import { join } from "node:path";
 import { createWorktree } from "../adapters/worktrees";
 import {
   AgentMessageSchema,
+  ORCHESTRATOR_NAME,
   QuotaConfigSchema,
   type AgentRecord,
   type HookEvent,
@@ -34,14 +35,21 @@ import { fetchAgentStatus } from "../cli/mcp";
 import { actingAs, listAuditEntries, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
-import { agentTmuxSession, orchestratorTmuxSession } from "./tmux-sessions";
+import {
+  agentTmuxSession,
+  hiveInstanceSuffix,
+  orchestratorTmuxSession,
+} from "./tmux-sessions";
 import {
   MachineMutationCoordinator,
   type ProcessIdentityState,
 } from "./mutation-lease";
 import { mintAgentTmuxSessionLocator } from "./session-host/tmux-host";
 import { mintSessionRequestId } from "./session-host/locators";
-import { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
+import {
+  ROOT_VISIBILITY_ID,
+  WorkspaceVisibilityAuthority,
+} from "./session-host/workspace-visibility";
 import {
   SessiondBrokerUnavailableError,
   type LandedTerminalHost,
@@ -280,6 +288,126 @@ test("only the operator may publish a live advancing Workspace inventory", async
         engineBuildId: "engine-visible",
         visibility: { openTerminalRevision: "1" },
       });
+  } finally {
+    db.close();
+  }
+});
+
+test("the sessiond queen endpoint publishes one exact root generation before create", async () => {
+  const db = new HiveDatabase(":memory:");
+  const instanceId = hiveInstanceSuffix();
+  const engineBuildId = "engine-root-endpoint";
+  const workspace = {
+    workspaceSessionId: "workspace-root-endpoint",
+    workspacePid: 7302,
+    workspaceStartToken: "7302:100",
+    openTerminalRevision: "1",
+  };
+  const visibility = new WorkspaceVisibilityAuthority({
+    expectedInstanceId: instanceId,
+    observeProcess: (pid) => pid === workspace.workspacePid
+      ? { startToken: workspace.workspaceStartToken }
+      : null,
+    discoverEngineBuildId: async () => engineBuildId,
+  });
+  const events: string[] = [];
+  const unsupported = async (): Promise<never> => {
+    throw new Error("unexpected terminal-host operation");
+  };
+  const terminalHost: LandedTerminalHost = {
+    create: async () => {
+      events.push("create");
+      throw new Error("fixture stops after proving admitted create");
+    },
+    claimInput: unsupported,
+    submitInput: unsupported,
+    resize: unsupported,
+    inspect: unsupported,
+    list: async () => [],
+    terminate: unsupported,
+    issueAttach: unsupported,
+    renewVisibility: unsupported,
+  };
+  const daemon = new HiveDaemon({
+    statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+    db,
+    spawner: new StubSpawner(),
+    orchestratorHost: "sessiond",
+    terminalHost,
+    workspaceVisibility: visibility,
+  });
+  const operator = actingAs(daemon, "operator");
+  const launch = {
+    requestId: mintSessionRequestId(1_750_000_000_000),
+    provider: "codex",
+    cwd: "/repo",
+    argv: ["codex", "--no-alt-screen"],
+    environment: {},
+    expectedExecutable: "codex",
+  };
+  try {
+    const started = await operator("http://hive/orchestrator-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(launch),
+    });
+    expect(started.status).toBe(202);
+    const pending = await started.json() as {
+      locator: Parameters<LandedTerminalHost["renewVisibility"]>[0];
+    };
+    expect(pending.locator).toMatchObject({
+      instanceId,
+      subject: { kind: "root" },
+      hostKind: "sessiond",
+      engineBuildId,
+    });
+    expect(events).toEqual([]);
+
+    const published = await operator("http://hive/workspace-visibility", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        schemaVersion: 1,
+        source: {
+          sessionId: workspace.workspaceSessionId,
+          process: {
+            processId: workspace.workspacePid,
+            startToken: workspace.workspaceStartToken,
+          },
+        },
+        inventoryRevision: workspace.openTerminalRevision,
+        terminals: [{
+          agentId: ROOT_VISIBILITY_ID,
+          agentName: ORCHESTRATOR_NAME,
+          locator: pending.locator,
+          state: "pending",
+        }],
+      }),
+    });
+    expect(published.status).toBe(200);
+
+    for (let attempt = 0; attempt < 20 && events.length === 0; attempt += 1) {
+      await Bun.sleep(10);
+    }
+    expect(events).toEqual(["create"]);
+    const observed = await operator(
+      `http://hive/orchestrator-session?requestId=${launch.requestId}`,
+    );
+    expect(observed.status).toBe(200);
+    expect(await observed.json()).toMatchObject({
+      requestId: launch.requestId,
+      locator: pending.locator,
+      state: "failed",
+      diagnostic: "fixture stops after proving admitted create",
+    });
+
+    const retry = await operator("http://hive/orchestrator-session", {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify(launch),
+    });
+    expect(retry.status).toBe(200);
+    expect(events).toEqual(["create"]);
   } finally {
     db.close();
   }

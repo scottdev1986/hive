@@ -1,6 +1,9 @@
 import type { AgentRecord } from "../../schemas";
-import type { TerminalGeometry } from "../../schemas/session-protocol";
-import { requireSessiondAgentLocator } from "./hive-terminal-host";
+import type { SessionLocator, TerminalGeometry } from "../../schemas/session-protocol";
+import {
+  requireSessiondAgentLocator,
+  requireSessiondRootLocator,
+} from "./hive-terminal-host";
 import type { SessionHost } from "./contract";
 import type { OrphanDiscardMode, OrphanDiscardResult } from "./sessiond-host";
 import type { SessionInspection, WindowSize, InputReceipt } from "./terminal-host-contract";
@@ -61,17 +64,25 @@ export interface SessiondAgentInput {
   ): Promise<SessiondInjectResult>;
 }
 
+export interface SessiondRootInput {
+  injectRoot(
+    locator: SessionLocator,
+    text: string,
+    options: Readonly<{ messageId: string }>,
+  ): Promise<SessiondInjectResult>;
+}
+
 /** The broker RPCs this injector needs. */
 type BrokerFacade = Pick<SessionHost, "issueAttach"> & Pick<TerminalHost, "list">;
 
 /** §22 orphan discard, absent on hosts that predate it — an injector built
  * without it keeps the pre-fix behaviour: decline and stay queued. */
 type OrphanDiscarder = (
-  locator: ReturnType<typeof requireSessiondAgentLocator>,
+  locator: ReturnType<typeof requireSessiondRootLocator>,
   mode: OrphanDiscardMode,
 ) => Promise<OrphanDiscardResult>;
 
-export class SessiondViewerAgentInput implements SessiondAgentInput {
+export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRootInput {
   constructor(
     private readonly broker: BrokerFacade,
     private readonly viewerId: string,
@@ -93,7 +104,21 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     options: Readonly<{ messageId: string }>,
   ): Promise<SessiondInjectResult> {
     return this.submit(
-      agent,
+      requireSessiondAgentLocator(agent),
+      new TextEncoder().encode(
+        BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
+      ),
+      options.messageId,
+    );
+  }
+
+  async injectRoot(
+    locator: SessionLocator,
+    text: string,
+    options: Readonly<{ messageId: string }>,
+  ): Promise<SessiondInjectResult> {
+    return this.submit(
+      requireSessiondRootLocator(locator),
       new TextEncoder().encode(
         BRACKETED_PASTE_START + text + BRACKETED_PASTE_END + SUBMIT,
       ),
@@ -110,7 +135,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     }>,
   ): Promise<SessiondInjectResult> {
     return this.submit(
-      agent,
+      requireSessiondAgentLocator(agent),
       new TextEncoder().encode(keys),
       options.transactionId,
       options.isPromptPending,
@@ -118,12 +143,11 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
   }
 
   private async submit(
-    agent: AgentRecord,
+    locator: ReturnType<typeof requireSessiondRootLocator>,
     bytes: Uint8Array,
     transactionId: string,
     isPromptPending?: () => boolean,
   ): Promise<SessiondInjectResult> {
-    const locator = requireSessiondAgentLocator(agent);
     // TWO SessionRef incarnation semantics meet here, and confusing them is
     // exactly how the #68 live proof failed silently on every tick:
     //   - BROKER RPCs (list/inspect) address sessions by the ENGINE-assigned

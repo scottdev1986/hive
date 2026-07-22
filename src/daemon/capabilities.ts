@@ -115,7 +115,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
   },
   orchestrator: {
     actions: [
-      "status:read", "quota:read", "quota:write", "token-usage:read",
+      "status:read", "terminal:observe", "quota:read", "quota:write", "token-usage:read",
       "agent:spawn", "agent:kill",
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
       "message:send", "message:ack", "message:read", "inbox:read",

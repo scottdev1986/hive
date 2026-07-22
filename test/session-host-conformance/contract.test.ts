@@ -5,6 +5,7 @@ import {
   CHECKPOINT_HEADER,
   FRAME_HEADER,
   FRAME_TYPES,
+  TERMINAL_LIMITS,
 } from "../../src/schemas/session-protocol";
 import { buildWireCorpus } from "./fixtures";
 import {
@@ -43,6 +44,18 @@ describe("terminal foundation WP0 contracts", () => {
     for (const [path, expected] of Object.entries(rendered)) {
       expect(await readFile(path, "utf8")).toBe(expected);
     }
+  });
+
+  test("the native scrollback budget stays pinned to the cross-language contract", async () => {
+    const host = await readFile(
+      resolve(import.meta.dir, "../../native/sessiond/src/session_host.zig"),
+      "utf8",
+    );
+    expect(host).toContain(
+      `pub const canonical_scrollback_bytes: usize = ${
+        TERMINAL_LIMITS.nonImageCheckpointBytes / (1024 * 1024)
+      } * 1024 * 1024;`,
+    );
   });
 
   test("the shared corpus covers every generated wire schema", () => {

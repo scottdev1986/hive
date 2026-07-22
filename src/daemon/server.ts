@@ -21,6 +21,7 @@ import {
 import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
+  requireSessiondRootLocator,
   sessiondVendorProcessIsDead,
 } from "./session-host/hive-terminal-host";
 import {
@@ -30,8 +31,10 @@ import {
 import {
   SessiondViewerAgentInput,
   type SessiondAgentInput,
+  type SessiondRootInput,
 } from "./session-host/sessiond-agent-input";
 import {
+  ROOT_VISIBILITY_ID,
   WorkspaceVisibilityAuthority,
   WorkspaceVisibilitySnapshotSchema,
   type WorkspaceVisibilityAdmission,
@@ -126,7 +129,18 @@ import {
   type RootProtocolDeliverer,
   type TmuxSender,
 } from "./delivery";
-import { OrchestratorRootDelivery } from "./orchestrator-root-delivery";
+import {
+  OrchestratorRootDelivery,
+  SessiondOrchestratorRootDelivery,
+} from "./orchestrator-root-delivery";
+import {
+  configuredOrchestratorHost,
+  type OrchestratorHostKind,
+} from "./orchestrator-host";
+import {
+  OrchestratorSessiondController,
+  OrchestratorSessiondLaunchSchema,
+} from "./orchestrator-sessiond";
 import { readLiveGrokModel } from "../adapters/tools/grok";
 import { CODEX_TUI_APPROVAL_KEYS } from "../adapters/tools/codex";
 import {
@@ -477,6 +491,8 @@ export interface HiveDaemonOptions {
   terminalHost?: LandedTerminalHost;
   /** Live Workspace-owned full inventory. Absent keeps sessiond admission closed. */
   workspaceVisibility?: WorkspaceVisibilityAuthority;
+  /** #114 gates the default flip; sessiond is an explicit restart-proof opt-in. */
+  orchestratorHost?: OrchestratorHostKind;
   resolveSessionLocator?: (
     sessionId: string,
     generation: number,
@@ -647,6 +663,8 @@ export class HiveDaemon {
   private readonly tmux: TmuxSessionHost;
   private readonly terminalHost: HiveTerminalHostAdapter;
   private readonly workspaceVisibility: WorkspaceVisibilityAuthority | null;
+  private readonly orchestratorHost: OrchestratorHostKind;
+  private readonly orchestratorSessiond: OrchestratorSessiondController | null;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
   private readonly readClaudeTelemetry: ClaudeTelemetryReader;
@@ -683,7 +701,7 @@ export class HiveDaemon {
   /** The same daemon→session input wire delivery uses, kept here because an
    * approval decision for a TUI-hosted vendor session is a keystroke, not a
    * message (#102). */
-  private readonly sessiondInput: SessiondAgentInput;
+  private readonly sessiondInput: SessiondAgentInput & Partial<SessiondRootInput>;
   /** Approval ids currently crossing an awaited vendor delivery boundary. */
   private readonly resolvingApprovals = new Set<string>();
   private readonly autonomy: AutonomyControl | undefined;
@@ -788,6 +806,7 @@ export class HiveDaemon {
       hiveInstanceSuffix(),
     );
     this.workspaceVisibility = options.workspaceVisibility ?? null;
+    this.orchestratorHost = options.orchestratorHost ?? configuredOrchestratorHost();
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
@@ -803,6 +822,18 @@ export class HiveDaemon {
           ? (locator, mode) => landedTerminalHost.discardInputOrphan(locator, mode)
           : undefined,
       );
+    this.orchestratorSessiond =
+      this.orchestratorHost === "sessiond" && this.workspaceVisibility !== null
+        ? new OrchestratorSessiondController({
+          terminalHost: this.terminalHost,
+          bindings: this.db,
+          visibility: this.workspaceVisibility,
+          instanceId: hiveInstanceSuffix(),
+          onRunning: async () => {
+            await this.delivery.wakeOrchestrator();
+          },
+        })
+        : null;
     this.autonomy = options.autonomy;
     this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
@@ -883,9 +914,20 @@ export class HiveDaemon {
       // All visible roots use their instance-scoped terminal. Delivery holds
       // the composer lease so a report cannot overwrite human input.
       options.rootProtocol ??
-        new OrchestratorRootDelivery({
-          tmux: tmuxSender,
-        }),
+        (this.orchestratorHost === "sessiond"
+          ? new SessiondOrchestratorRootDelivery({
+            current: () => this.orchestratorSessiond?.snapshot() ?? null,
+            input: {
+              injectRoot: async (locator, text, message) =>
+                this.sessiondInput.injectRoot === undefined
+                  ? {
+                    outcome: "declined" as const,
+                    reason: "sessiond root input is not wired on this host",
+                  }
+                  : await this.sessiondInput.injectRoot(locator, text, message),
+            },
+          })
+          : new OrchestratorRootDelivery({ tmux: tmuxSender })),
       {},
       (agent) => this.agentProcessState(agent),
       undefined,
@@ -1331,14 +1373,45 @@ export class HiveDaemon {
     );
     // No team, no wake to protect — and nobody to tell.
     if (live.length > 0) {
-      const rootSession = orchestratorTmuxSession();
-      const root = await this.tmux.inspectLegacyTmuxSession(rootSession)
-        .catch(() => ({ presence: "unknown" as const }));
-      if (root.presence !== "present") {
-        faults.push(
-          `the root wake path is ${root.presence}: this daemon cannot see tmux session ` +
-            `${rootSession}, so no agent report can reach queen (#68)`,
-        );
+      if (this.orchestratorHost === "sessiond") {
+        const root = this.orchestratorSessiond?.snapshot() ?? null;
+        if (root === null) {
+          faults.push("the sessiond root wake path has no queen generation");
+        } else if (root.state !== "running") {
+          faults.push(
+            `the sessiond root wake path is ${root.state}` +
+              (root.diagnostic === null ? "" : `: ${root.diagnostic}`),
+          );
+        } else {
+          try {
+            const inspection = await this.terminalHost.inspect(
+              requireSessiondRootLocator(root.locator),
+            );
+            if (sessiondVendorProcessIsDead(inspection)) {
+              faults.push("the sessiond queen vendor process is confirmed dead");
+            } else if (inspection.presence !== "present") {
+              faults.push(
+                `the sessiond queen presence is ${inspection.presence}, not present`,
+              );
+            }
+          } catch (error) {
+            faults.push(
+              `the sessiond queen cannot be inspected (${
+                error instanceof Error ? error.message : "unknown error"
+              })`,
+            );
+          }
+        }
+      } else {
+        const rootSession = orchestratorTmuxSession();
+        const root = await this.tmux.inspectLegacyTmuxSession(rootSession)
+          .catch(() => ({ presence: "unknown" as const }));
+        if (root.presence !== "present") {
+          faults.push(
+            `the root wake path is ${root.presence}: this daemon cannot see tmux session ` +
+              `${rootSession}, so no agent report can reach queen (#68)`,
+          );
+        }
       }
       // A locator exists before sessiond finishes registering it. The broker
       // cannot list that in-flight create yet, so absence is not death until
@@ -2399,12 +2472,35 @@ export class HiveDaemon {
     if (this.manageLifecycle) {
       try {
         await this.killAllAgents();
-        const session = orchestratorTmuxSession();
-        const reaped = await this.stopTmuxProcesses(session);
-        if (reaped.survivors.length > 0) {
-          throw new Error(
-            `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,
-          );
+        if (this.orchestratorHost === "sessiond") {
+          const root = this.orchestratorSessiond?.snapshot() ?? null;
+          if (
+            root !== null &&
+            this.db.getTerminalHostBindingByLocator(root.locator)?.createEvidence !==
+              undefined
+          ) {
+            const terminated = await this.terminalHost.terminate(
+              requireSessiondRootLocator(root.locator),
+              {
+                mode: "immediate",
+                reason: "Hive daemon shutdown",
+                requestId: mintSessionRequestId(),
+              },
+            );
+            if (terminated.state !== "terminated" || terminated.survivors.length > 0) {
+              throw new Error(
+                `Hive refused shutdown because the sessiond queen termination is ${terminated.state} with ${terminated.survivors.length} survivor(s)`,
+              );
+            }
+          }
+        } else {
+          const session = orchestratorTmuxSession();
+          const reaped = await this.stopTmuxProcesses(session);
+          if (reaped.survivors.length > 0) {
+            throw new Error(
+              `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,
+            );
+          }
         }
       } catch (error) {
         refusal = error;
@@ -2858,6 +2954,12 @@ export class HiveDaemon {
     ) {
       return this.routingPolicyEndpoint(request);
     }
+    if (
+      url.pathname === "/orchestrator-session" &&
+      (request.method === "GET" || request.method === "POST")
+    ) {
+      return this.orchestratorSessionEndpoint(url, request);
+    }
     if (url.pathname === "/orchestrator-status" && request.method === "GET") {
       return this.orchestratorStatusEndpoint(request);
     }
@@ -3202,6 +3304,56 @@ export class HiveDaemon {
     return live;
   }
 
+  /** Starts or observes the exact sessiond root generation owned by the
+   * Workspace supervisor. The stable request id makes POST retry-safe across a
+   * daemon restart; the returned locator is publishable before create so the
+   * visibility authority can admit the session without a circular wait. */
+  private async orchestratorSessionEndpoint(
+    url: URL,
+    request: Request,
+  ): Promise<Response> {
+    const route = "/orchestrator-session";
+    const authenticated = this.authenticate(request, route);
+    if (!authenticated.ok) return this.denied(authenticated);
+    const decision = this.authorize(
+      authenticated.capability,
+      route,
+      request.method === "POST" ? "agent:spawn" : "status:read",
+      undefined,
+      request.method === "POST",
+    );
+    if (!decision.ok) return this.denied(decision);
+    if (this.orchestratorHost !== "sessiond" || this.orchestratorSessiond === null) {
+      return json(
+        { error: "the sessiond queen host is unavailable" },
+        { status: 503 },
+      );
+    }
+    if (request.method === "GET") {
+      const snapshot = this.orchestratorSessiond.snapshot();
+      const requestId = url.searchParams.get("requestId");
+      if (snapshot === null || (requestId !== null && snapshot.requestId !== requestId)) {
+        return json({ error: "queen session generation not found" }, { status: 404 });
+      }
+      return json(snapshot);
+    }
+    const parsed = OrchestratorSessiondLaunchSchema.safeParse(
+      await request.json().catch(() => null),
+    );
+    if (!parsed.success) return json({ error: parsed.error.message }, { status: 400 });
+    try {
+      const snapshot = await this.orchestratorSessiond.start(parsed.data);
+      return json(snapshot, {
+        status: snapshot.state === "awaiting-visibility" ? 202 : 200,
+      });
+    } catch (error) {
+      return json(
+        { error: error instanceof Error ? error.message : "queen launch failed" },
+        { status: 409 },
+      );
+    }
+  }
+
   /**
    * `GET /orchestrator-status` — what the root is doing, for the Workspace dot.
    *
@@ -3227,10 +3379,14 @@ export class HiveDaemon {
       false,
     );
     if (!decision.ok) return this.denied(decision);
+    const host = this.orchestratorSessiond?.snapshot() ?? null;
     return json({
       status: deriveOrchestratorStatus(
         this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
       ),
+      host: this.orchestratorHost,
+      hostState: host?.state ?? null,
+      sessionLocator: host?.locator ?? null,
     });
   }
 
@@ -3980,10 +4136,6 @@ export class HiveDaemon {
       name,
     );
     if (!decision.ok) return this.denied(decision);
-    const agent = this.db.getAgentByName(name);
-    if (agent === null) {
-      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
-    }
     let body: unknown;
     try {
       body = await request.json();
@@ -4002,6 +4154,39 @@ export class HiveDaemon {
         reason: "invalid-attach-request",
         error: "Attach requires the pane's exact sessionLocator, viewer, and geometry",
       }, { status: 400 });
+    }
+    if (isOrchestratorName(name)) {
+      const current = this.orchestratorSessiond?.snapshot() ?? null;
+      if (
+        current === null ||
+        !sameSessionLocator(current.locator, parsed.data.sessionLocator)
+      ) {
+        return json({
+          state: "rejected",
+          reason: "session-locator-mismatch",
+          error: "Hive refused to attach queen: its session generation changed",
+        }, { status: 409 });
+      }
+      try {
+        const grant = await this.terminalHost.issueAttach(
+          requireSessiondRootLocator(current.locator),
+          {
+            viewerId: parsed.data.viewerId,
+            geometry: parsed.data.geometry,
+            operations: parsed.data.operations,
+          },
+        );
+        return json({ state: "granted", grant });
+      } catch (error) {
+        return json(
+          { error: error instanceof Error ? error.message : "Attach failed" },
+          { status: 500 },
+        );
+      }
+    }
+    const agent = this.db.getAgentByName(name);
+    if (agent === null) {
+      return json({ error: `Hive agent not found: ${name}` }, { status: 404 });
     }
     if (
       agent.sessionLocator === undefined ||
@@ -4454,24 +4639,41 @@ export class HiveDaemon {
       if (
         locator === null || locator.sessionId !== input.sessionId ||
         locator.generation !== input.generation ||
-        locator.instanceId !== this.status.instanceId ||
-        locator.subject.kind !== "agent"
+        locator.instanceId !== this.status.instanceId
       ) {
         throw new Error("No exact terminal generation matches the observation request");
       }
-      const target = this.db.getAgentById(locator.subject.agentId);
-      if (target === null) throw new Error("Terminal subject is unknown");
+      const target = locator.subject.kind === "agent"
+        ? this.db.getAgentById(locator.subject.agentId)
+        : null;
+      const targetSubjectId = locator.subject.kind === "agent"
+        ? locator.subject.agentId
+        : ROOT_VISIBILITY_ID;
+      const targetName = locator.subject.kind === "agent"
+        ? target?.name ?? null
+        : ORCHESTRATOR_NAME;
+      const rootBinding = locator.subject.kind === "root"
+        ? this.db.getTerminalHostBindingByLocator(requireSessiondRootLocator(locator))
+        : null;
+      if (
+        targetName === null ||
+        (locator.subject.kind === "root" && rootBinding?.createEvidence === undefined)
+      ) {
+        throw new Error("Terminal subject is unknown");
+      }
       this.authorizeTool(
         capability,
         "hive_terminal_observe",
         "terminal:observe",
-        target.name,
+        targetName,
       );
-      const readerAgentId = this.db.getLiveAgentByName(capability.subject)?.id ?? null;
+      const readerAgentId = isOrchestratorName(capability.subject)
+        ? ROOT_VISIBILITY_ID
+        : this.db.getLiveAgentByName(capability.subject)?.id ?? null;
       if (!permitsTerminalObservation(
         capability,
         readerAgentId,
-        locator.subject.agentId,
+        targetSubjectId,
         input.include,
       )) {
         throw new Error("Terminal observation scope was not granted");
@@ -4491,7 +4693,7 @@ export class HiveDaemon {
         auditEventSeq = this.status.appendObservationAudit({
           reader: capability.subject,
           readerRole: capability.role,
-          subjectAgentId: locator.subject.agentId,
+          subjectAgentId: targetSubjectId,
           subjectGeneration: locator.generation,
           rowCount,
           reason: `capability:${capability.id}`,

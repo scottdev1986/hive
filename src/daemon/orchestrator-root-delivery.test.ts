@@ -1,6 +1,11 @@
 import { describe, expect, test } from "bun:test";
-import { OrchestratorRootDelivery } from "./orchestrator-root-delivery";
+import {
+  OrchestratorRootDelivery,
+  SessiondOrchestratorRootDelivery,
+} from "./orchestrator-root-delivery";
 import { orchestratorTmuxSession } from "./orchestrator-lifecycle";
+import type { OrchestratorSessiondSnapshot } from "./orchestrator-sessiond";
+import type { InputReceipt } from "./session-host/terminal-host-contract";
 
 function tmux() {
   return {
@@ -25,4 +30,76 @@ describe("OrchestratorRootDelivery", () => {
       expect(delivery.isLive()).toEqual(true);
     });
   }
+});
+
+const sessiondRoot: OrchestratorSessiondSnapshot = {
+  requestId: "req_018f1e90-7b5a-7cc0-8000-000000000411",
+  locator: {
+    schemaVersion: 1,
+    instanceId: "hive-fixture",
+    subject: { kind: "root" },
+    generation: 2,
+    sessionId: "ses_018f1e90-7b5a-7cc0-8000-000000000411",
+    hostKind: "sessiond",
+    engineBuildId: "engine-fixture",
+  },
+  state: "running",
+  exitCode: null,
+  diagnostic: null,
+};
+
+const inputReceipt: InputReceipt = {
+  transactionId: "message-1",
+  stage: "written-to-terminal",
+  byteRange: { start: "0", endExclusive: "10" },
+  orderedAt: "10",
+  availableCreditBytes: 4096,
+  consumedByProcess: "not-claimed",
+  completeness: "complete",
+  diagnostic: null,
+};
+
+describe("SessiondOrchestratorRootDelivery", () => {
+  test("confirms injection only from the root INPUT_SUBMIT receipt", async () => {
+    const calls: unknown[] = [];
+    const delivery = new SessiondOrchestratorRootDelivery({
+      current: () => sessiondRoot,
+      input: {
+        async injectRoot(locator, content, options) {
+          calls.push({ locator, content, options });
+          return { outcome: "injected", receipt: inputReceipt };
+        },
+      },
+    });
+
+    expect(delivery.isLive()).toBe(true);
+    expect(await delivery.deliverMessage("agent report", { message_id: "message-1" }))
+      .toBe(true);
+    expect(calls).toEqual([{
+      locator: sessiondRoot.locator,
+      content: "agent report",
+      options: { messageId: "message-1" },
+    }]);
+  });
+
+  test("keeps delivery unconfirmed when the host declines input", async () => {
+    const delivery = new SessiondOrchestratorRootDelivery({
+      current: () => sessiondRoot,
+      input: {
+        async injectRoot() {
+          return { outcome: "declined", reason: "claim denied" };
+        },
+      },
+    });
+    await expect(delivery.deliverMessage("agent report", { message_id: "message-1" }))
+      .rejects.toThrow("claim denied");
+  });
+
+  test("is not live before the root host is running", () => {
+    const delivery = new SessiondOrchestratorRootDelivery({
+      current: () => ({ ...sessiondRoot, state: "awaiting-visibility" }),
+      input: { injectRoot: async () => ({ outcome: "injected", receipt: inputReceipt }) },
+    });
+    expect(delivery.isLive()).toBe(false);
+  });
 });

@@ -6,8 +6,11 @@ import { dirname, join } from "node:path";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import {
   hiveTmuxSocketName,
+  hiveInstanceSuffix,
   orchestratorTmuxSession,
 } from "../daemon/tmux-sessions";
+import { rootSessionIdForLaunchRequest } from "../daemon/orchestrator-host";
+import type { OrchestratorSessiondControl } from "./orchestrator-sessiond";
 import {
   buildOrchestratorCommand,
   buildOrchestratorLaunchCommand,
@@ -252,6 +255,71 @@ describe("orchestrator brief", () => {
     expect(command[command.indexOf(";") - 1]).not.toContain(
       "mcp_servers.hive.enabled=false",
     );
+  });
+
+  test("launches the opt-in queen through sessiond without touching tmux", async () => {
+    const launches: Parameters<OrchestratorSessiondControl["start"]>[0][] = [];
+    const control: OrchestratorSessiondControl = {
+      start: async (request) => {
+        launches.push(request);
+        return {
+          requestId: request.requestId,
+          locator: {
+            schemaVersion: 1,
+            instanceId: hiveInstanceSuffix(),
+            subject: { kind: "root" },
+            sessionId: rootSessionIdForLaunchRequest(request.requestId),
+            generation: 1,
+            hostKind: "sessiond",
+            engineBuildId: "engine-fixture",
+          },
+          state: "exited",
+          exitCode: 17,
+          diagnostic: null,
+        };
+      },
+      inspect: async () => {
+        throw new Error("an exited launch must not be polled");
+      },
+    };
+    const tmuxMustNotBeTouched = {
+      hasSession: async () => {
+        throw new Error("sessiond launch must not inspect tmux");
+      },
+      listClientTtys: async () => {
+        throw new Error("sessiond launch must not inspect tmux clients");
+      },
+      killSession: async () => {
+        throw new Error("sessiond launch must not kill tmux");
+      },
+    };
+
+    const exitCode = await launchOrchestrator(
+      "claude",
+      4317,
+      process.cwd(),
+      () => {
+        throw new Error("sessiond launch must not spawn a tmux client");
+      },
+      async () => "2.1.80",
+      () => ({ path: "/opt/claude", version: "2.1.80" }),
+      tmuxMustNotBeTouched,
+      "recovery fixture",
+      undefined,
+      undefined,
+      { host: "sessiond", sessiondControl: control },
+    );
+
+    expect(exitCode).toBe(17);
+    expect(launches[0]).toMatchObject({
+      provider: "claude",
+      cwd: process.cwd(),
+      expectedExecutable: "claude",
+      environment: {},
+    });
+    expect(launches[0]?.argv[0]).toBe("/opt/claude");
+    expect(launches[0]?.argv.some((argument) => argument.includes("recovery fixture")))
+      .toBe(true);
   });
 
   test("kills an unattached stale root before launch", async () => {

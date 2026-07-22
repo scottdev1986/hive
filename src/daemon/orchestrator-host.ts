@@ -1,6 +1,7 @@
 import {
   domainUuidV7Schema,
 } from "../schemas/session-protocol";
+import { z } from "zod";
 import {
   HiveTerminalBindingSchema,
   type HiveTerminalBinding,
@@ -10,13 +11,21 @@ export type OrchestratorHostKind = "sessiond" | "tmux";
 
 export const ORCHESTRATOR_HOST_ENV = "HIVE_ORCHESTRATOR_HOST";
 
-/** sessiond is the product default; tmux remains the explicit cutover fallback. */
+export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
+  .shape.locator.unwrap().extend({
+    subject: z.strictObject({ kind: z.literal("root") }).readonly(),
+    hostKind: z.literal("sessiond"),
+    engineBuildId: z.string().min(1),
+  }).readonly();
+export type RootSessiondLocator = z.infer<typeof RootSessiondLocatorSchema>;
+
+/** #114 gates the default flip. sessiond remains an explicit restart-proof opt-in. */
 export function configuredOrchestratorHost(
   environment: Readonly<Record<string, string | undefined>> = process.env,
 ): OrchestratorHostKind {
   const value = environment[ORCHESTRATOR_HOST_ENV];
-  if (value === undefined || value === "" || value === "sessiond") return "sessiond";
-  if (value === "tmux") return "tmux";
+  if (value === undefined || value === "" || value === "tmux") return "tmux";
+  if (value === "sessiond") return "sessiond";
   throw new Error(
     `${ORCHESTRATOR_HOST_ENV} must be sessiond or tmux (received ${JSON.stringify(value)})`,
   );
@@ -35,20 +44,20 @@ export function mintRootSessiondLocator(input: Readonly<{
   instanceId: string;
   engineBuildId: string;
   bindings: readonly HiveTerminalBinding[];
-}>): HiveTerminalBinding["locator"] {
+}>): RootSessiondLocator {
   const sessionId = rootSessionIdForLaunchRequest(input.requestId);
   const existing = input.bindings.find((binding) =>
     binding.locator.subject.kind === "root" &&
     binding.locator.sessionId === sessionId
   );
-  if (existing !== undefined) return existing.locator;
+  if (existing !== undefined) return RootSessiondLocatorSchema.parse(existing.locator);
   const generation = input.bindings.reduce(
     (highest, binding) => binding.locator.subject.kind === "root"
       ? Math.max(highest, binding.locator.generation)
       : highest,
     0,
   ) + 1;
-  return HiveTerminalBindingSchema.unwrap().shape.locator.parse({
+  return RootSessiondLocatorSchema.parse({
     schemaVersion: 1,
     instanceId: input.instanceId,
     subject: { kind: "root" },

@@ -35,6 +35,18 @@ import {
 import { CODEX_CAPABILITY_TOKEN_ENV } from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
+import {
+  configuredOrchestratorHost,
+  type OrchestratorHostKind,
+} from "../daemon/orchestrator-host";
+import { mintSessionRequestId } from "../daemon/session-host/locators";
+import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
+import { processCommandName } from "../daemon/resources";
+import {
+  daemonOrchestratorSessiondControl,
+  runOrchestratorSessiondLaunch,
+  type OrchestratorSessiondControl,
+} from "./orchestrator-sessiond";
 
 export type OrchestratorTool = CapabilityProvider;
 
@@ -420,6 +432,12 @@ export function buildOrchestratorLaunchCommand(
   }
 }
 
+export interface LaunchOrchestratorOptions {
+  host?: OrchestratorHostKind;
+  sessiondControl?: OrchestratorSessiondControl;
+  sessiondSleep?: (milliseconds: number) => Promise<void>;
+}
+
 export async function launchOrchestrator(
   tool: OrchestratorTool,
   port: number,
@@ -432,8 +450,10 @@ export async function launchOrchestrator(
   listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
   provisionCodexToken: (port: number) => Promise<string | null> =
     provisionCodexRootToken,
+  options: LaunchOrchestratorOptions = {},
 ): Promise<number> {
   const sessions = orchestratorSessionHost(input);
+  const host = options.host ?? configuredOrchestratorHost();
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
   let claudePath = "claude";
@@ -463,7 +483,7 @@ export async function launchOrchestrator(
     default:
       unknownVendor(tool, "orchestrator launch");
   }
-  await prepareFreshOrchestratorSession(sessions);
+  if (host === "tmux") await prepareFreshOrchestratorSession(sessions);
   await prepareOrchestratorConfig(tool, port, cwd);
   let codexTokenFile = "";
   let codexMcpExclusionArgs: string[] = [];
@@ -497,6 +517,75 @@ export async function launchOrchestrator(
     buildMemoryIndex(cwd).catch(() => ""),
     buildOrchestratorDocGuidance(cwd).catch(() => ""),
   ]);
+  if (host === "sessiond") {
+    let argv: string[];
+    let environment: Record<string, string> = {};
+    let expectedExecutable: string;
+    switch (tool) {
+      case "claude":
+        argv = buildOrchestratorCommand(
+          tool,
+          port,
+          memoryIndex,
+          docGuidance,
+          claudePath,
+          "",
+          recoveryBrief,
+        );
+        expectedExecutable = processCommandName(claudePath);
+        break;
+      case "codex": {
+        const codexCommand = buildOrchestratorCommand(
+          tool,
+          port,
+          memoryIndex,
+          docGuidance,
+          "claude",
+          codexTokenFile,
+          recoveryBrief,
+          codexMcpExclusionArgs,
+        );
+        argv = buildCodexRootAuthorityCommand(
+          undefined,
+          codexCommand.slice(1),
+          codexTokenFile,
+        );
+        expectedExecutable = "codex";
+        break;
+      }
+      case "grok":
+        argv = buildOrchestratorCommand(
+          tool,
+          port,
+          memoryIndex,
+          docGuidance,
+          "claude",
+          "",
+          recoveryBrief,
+        );
+        environment = {
+          GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
+          ...GROK_COMPATIBILITY_ENV,
+        };
+        expectedExecutable = "grok";
+        break;
+      default:
+        return unknownVendor(tool, "sessiond orchestrator launch");
+    }
+    const launch = OrchestratorSessiondLaunchSchema.parse({
+      requestId: mintSessionRequestId(),
+      provider: tool,
+      cwd,
+      argv,
+      environment,
+      expectedExecutable,
+    });
+    return await runOrchestratorSessiondLaunch(
+      launch,
+      options.sessiondControl ?? daemonOrchestratorSessiondControl(port),
+      options.sessiondSleep,
+    );
+  }
   const child = spawn(
     buildOrchestratorLaunchCommand(
       tool,
