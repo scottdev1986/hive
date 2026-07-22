@@ -5024,12 +5024,9 @@ export class HiveDaemon {
             current.lastEventAt >= agent.lastEventAt
           ? current
           : this.db.upsertAgent(agent);
-        if (persisted.status === "failed" || persisted.status === "stuck") {
-          const outcome = persisted.status === "stuck"
-            ? "could not verify cleanup after spawn"
-            : "failed to spawn";
+        if (persisted.status === "stuck") {
           throw new Error(
-            `Hive agent ${persisted.name} ${outcome}: ${
+            `Hive agent ${persisted.name} could not verify cleanup after spawn: ${
               persisted.failureReason ?? "unknown launch failure"
             }`,
           );

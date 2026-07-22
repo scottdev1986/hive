@@ -2041,14 +2041,22 @@ pub const Registry = struct {
             .entry => return .{ .code = .already_exists, .close_connection = false },
             .failure => |failure| if (failure.code != .not_found) return failure,
         };
-        for (&self.entries) |*slot| if (slot.* == null or slot.*.?.record.state == .exited) {
+        var reusable: ?*?Entry = null;
+        for (&self.entries) |*slot| {
+            if (slot.* == null) {
+                reusable = slot;
+                break;
+            }
+            if (slot.*.?.record.state == .exited and reusable == null) reusable = slot;
+        }
+        if (reusable) |slot| {
             slot.* = .{
                 .record = record,
                 .host = host,
                 .host_process_ownership = ownership,
             };
             return null;
-        };
+        }
         return .{ .code = .capacity_exceeded, .close_connection = false };
     }
 
@@ -2278,7 +2286,7 @@ pub const Registry = struct {
 
     fn quarantine(self: *Registry, record: HostRecord, failure: protocol.Failure) protocol.Failure {
         self.enumeration_complete = false;
-        for (&self.entries) |*slot| if (slot.* == null) {
+        for (&self.entries) |*slot| if (slot.* == null or slot.*.?.record.state == .exited) {
             var unknown = record;
             unknown.state = .unknown;
             slot.* = .{ .record = unknown, .host = null, .quarantined = true };
@@ -5004,11 +5012,28 @@ test "quarantine overflow stays fail-closed and flags operator attention" {
     try std.testing.expectEqual(@as(usize, 0), packed_registry.dropped_quarantines);
     _ = packed_registry.quarantine(record, .{ .code = .unauthenticated, .close_connection = true });
     try std.testing.expectEqual(@as(usize, 1), packed_registry.dropped_quarantines);
+
+    // Capacity counts exited entries as reusable, so quarantine must agree:
+    // 32 tombstones are not a full table and must not drop new evidence.
+    var tombstoned_registry: Registry = .{};
+    var exited = record;
+    exited.state = .exited;
+    for (&tombstoned_registry.entries) |*slot|
+        slot.* = .{ .record = exited, .host = null };
+    try std.testing.expect(tombstoned_registry.hasCapacity());
+    _ = tombstoned_registry.quarantine(
+        record,
+        .{ .code = .unauthenticated, .close_connection = true },
+    );
+    try std.testing.expectEqual(@as(usize, 0), tombstoned_registry.dropped_quarantines);
+    try std.testing.expectEqual(@as(usize, 1), tombstoned_registry.occupiedSlots());
+    try std.testing.expect(tombstoned_registry.entries[0].?.quarantined);
 }
 
 test "verified spawn and terminate cycles return live-session capacity to baseline" {
     const FakeHost = struct {
         verified: bool,
+        survivor_count: usize = 0,
 
         fn control(self: *@This()) HostControl {
             return .{
@@ -5048,7 +5073,7 @@ test "verified spawn and terminate cycles return live-session capacity to baseli
                 .pty_closed = self.verified,
                 .host_exited = self.verified,
                 .verification_complete = self.verified,
-                .survivor_count = 0,
+                .survivor_count = self.survivor_count,
             };
         }
 
@@ -5115,6 +5140,30 @@ test "verified spawn and terminate cycles return live-session capacity to baseli
         try std.testing.expect(registry.hasCapacity());
     }
 
+    // With both an exited tombstone and an empty slot available, admission
+    // consumes the empty slot and preserves the tombstone for inspection.
+    var preference_registry: Registry = .{};
+    preference_registry.entries[0] = registry.entries[0];
+    const preference_locator: Locator = .{
+        .instance_id = "instance",
+        .session_id = "ses_capacity_prefer_empty",
+        .generation = 1,
+        .subject = .{ .agent = "agent" },
+        .engine_build_id = "engine",
+    };
+    try std.testing.expectEqual(@as(?protocol.Failure, null), preference_registry.registerCreatedHost(
+        FakeHost.record(preference_locator),
+        host.control(),
+    ));
+    try std.testing.expectEqualStrings(
+        registry.entries[0].?.record.locator.session_id,
+        preference_registry.entries[0].?.record.locator.session_id,
+    );
+    try std.testing.expectEqualStrings(
+        preference_locator.session_id,
+        preference_registry.entries[1].?.record.locator.session_id,
+    );
+
     // Positive control: absence was not verified, so the slot remains held.
     host.verified = false;
     const unknown_locator: Locator = .{
@@ -5134,6 +5183,31 @@ test "verified spawn and terminate cycles return live-session capacity to baseli
         .request_id = "req_capacity_unknown",
     }));
     try std.testing.expectEqual(@as(usize, 1), registry.occupiedSlots());
+
+    // A survivor is positive evidence that teardown is incomplete and holds
+    // capacity exactly like an unknown readback; it is never rounded to exit.
+    var survivor_registry: Registry = .{};
+    var survivor_host: FakeHost = .{ .verified = true, .survivor_count = 1 };
+    const survivor_locator: Locator = .{
+        .instance_id = "instance",
+        .session_id = "ses_capacity_survivor",
+        .generation = 1,
+        .subject = .{ .agent = "agent" },
+        .engine_build_id = "engine",
+    };
+    try std.testing.expectEqual(@as(?protocol.Failure, null), survivor_registry.registerCreatedHost(
+        FakeHost.record(survivor_locator),
+        survivor_host.control(),
+    ));
+    try std.testing.expectEqual(TerminationState.survivors, survivor_registry.terminate(
+        survivor_locator,
+        .{
+            .mode = "immediate",
+            .reason = "survivor capacity cycle",
+            .request_id = "req_capacity_survivor",
+        },
+    ));
+    try std.testing.expectEqual(@as(usize, 1), survivor_registry.occupiedSlots());
 }
 
 test "rollback idempotency fallback stays unique under a broken clock" {

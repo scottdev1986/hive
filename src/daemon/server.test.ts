@@ -35,6 +35,7 @@ import { fetchAgentStatus } from "../cli/mcp";
 import { actingAs, listAuditEntries, submitPaste } from "./testing";
 import type { BuildFreshness } from "./build-freshness";
 import type { SpawnRequest, Spawner } from "./spawner";
+import { SpawnFailedError } from "./spawner-impl";
 import {
   agentTmuxSession,
   hiveInstanceSuffix,
@@ -1569,14 +1570,13 @@ class StubSpawner implements Spawner {
 }
 
 class FailedSpawner implements Spawner {
-  async spawn(request: SpawnRequest): Promise<AgentRecord> {
-    return agent({
-      status: "failed",
-      category: request.category,
-      taskDescription: request.task,
-      failureReason: "Error: model not supported",
-      failedAt: timestamp,
-    });
+  async spawn(_request: SpawnRequest): Promise<AgentRecord> {
+    throw new SpawnFailedError(
+      "maya",
+      "model",
+      "failed",
+      "failed to spawn: Error: model not supported",
+    );
   }
 }
 
@@ -4196,7 +4196,7 @@ describe("HiveDaemon HTTP server", () => {
     }
   });
 
-  test("hive_spawn returns a tool error for a failed verdict", async () => {
+  test("hive_spawn preserves the typed atomic failure and leaves no ghost row", async () => {
     const db = new HiveDatabase(join(home, "failed-spawn.db"));
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
@@ -4223,17 +4223,12 @@ describe("HiveDaemon HTTP server", () => {
 
       expect(result.isError).toEqual(true);
       expect(content[0]?.text).toContain("Error: model not supported");
-      expect(db.getAgentByName("maya")).toMatchObject({
-        status: "failed",
-        failureReason: "Error: model not supported",
-      });
+      expect(db.getAgentByName("maya")).toBeNull();
       const statuses = textValue(await client.callTool({
         name: "hive_status",
         arguments: { detail: "full", history: true },
       })) as AgentRecord[];
-      expect(statuses[0]?.failureReason).toEqual(
-        "Error: model not supported",
-      );
+      expect(statuses).toEqual([]);
     } finally {
       await client.close();
       await daemon.stop();

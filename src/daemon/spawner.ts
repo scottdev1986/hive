@@ -37,6 +37,8 @@ export const SpawnRequestSchema = z.strictObject({
 export type SpawnRequest = z.infer<typeof SpawnRequestSchema>;
 
 export interface Spawner {
+  /** Resolves with an admitted or cleanup-stuck generation. A failed admission
+   * is atomic and throws; it never returns a persisted `failed` row. */
   spawn(req: SpawnRequest): Promise<AgentRecord>;
   authorizeLaunch?(identity: ExecutionIdentity): Promise<AuthorizedLaunch>;
   restartForControl?(
