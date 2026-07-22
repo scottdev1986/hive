@@ -5080,6 +5080,7 @@ fn queueInitialInput(
 const NeutralTerminalSource = struct {
     pty: *pty_host.PtyHost,
     state: *terminal_state.TerminalState,
+    test_resize_columns_adjustment: u32 = 0,
 
     fn provider(self: *NeutralTerminalSource) neutral_control_plane.TerminalProvider {
         return .{ .context = self, .resizeFn = resize };
@@ -5091,8 +5092,10 @@ const NeutralTerminalSource = struct {
         revision: u64,
     ) anyerror!neutral_control_plane.TerminalResize {
         const self: *NeutralTerminalSource = @ptrCast(@alignCast(context));
+        const columns = std.math.add(u32, window.columns, self.test_resize_columns_adjustment) catch
+            return error.InvalidGeometry;
         const receipt = self.pty.resize(.{
-            .columns = window.columns,
+            .columns = columns,
             .rows = window.rows,
             .width_px = window.widthPixels,
             .height_px = window.heightPixels,
@@ -9035,7 +9038,11 @@ test "neutral resize drives the production adapter across both representations" 
     );
     defer state.deinit();
 
-    var source: NeutralTerminalSource = .{ .pty = &pty, .state = &state };
+    var source: NeutralTerminalSource = .{
+        .pty = &pty,
+        .state = &state,
+        .test_resize_columns_adjustment = 1,
+    };
     const provider = source.provider();
     const window: neutral_host.WindowSize = .{
         .columns = 100,
@@ -9048,12 +9055,13 @@ test "neutral resize drives the production adapter across both representations" 
     switch (try provider.resize(window, 1)) {
         .applied => |applied| {
             try std.testing.expectEqual(@as(u64, 1), applied.revision);
-            try std.testing.expectEqual(@as(u32, 100), applied.readback.columns);
+            try std.testing.expectEqual(@as(u32, 101), applied.readback.columns);
         },
         .superseded => return error.UnexpectedSupersession,
     }
-    try std.testing.expectEqual(@as(u32, 100), shadow.columns);
+    try std.testing.expectEqual(@as(u32, 101), shadow.columns);
     try std.testing.expectEqual(@as(u32, 30), shadow.rows);
+    source.test_resize_columns_adjustment = 0;
 
     // Now fail the SHADOW half. The PTY moves, the shadow cannot follow, and
     // the outcome must be a failure -- never an applied receipt for a geometry
@@ -9067,7 +9075,7 @@ test "neutral resize drives the production adapter across both representations" 
     };
     try std.testing.expectError(error.Internal, provider.resize(divergent, 2));
     try std.testing.expectEqual(@as(u32, 120), pty.geometry.columns);
-    try std.testing.expectEqual(@as(u32, 100), shadow.columns);
+    try std.testing.expectEqual(@as(u32, 101), shadow.columns);
 
     // The retry finds the PTY already at revision 2. Reconciliation must NOT
     // report applied while the shadow is still behind: repairing the registry

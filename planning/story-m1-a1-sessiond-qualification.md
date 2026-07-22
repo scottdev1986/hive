@@ -16,7 +16,7 @@ Resize idempotency is PARTIAL and deliberately so. §5 says a repeated transacti
 - The production broker dispatches inventory, exact-locator inspection, and termination instead of collapsing those defined operations to not-found. Inventory preserves enumeration completeness; registry-only inspection marks unavailable host-owned arbiter and checkpoint facts as partial rather than inventing them; termination reports success only after the registry receives positive host and process-tree readback.
 - The production host wire validates strict frozen claim, input-receipt, and resize-receipt projections after an authenticated exact-locator attachment. A domain transaction ID controls input idempotency independently of the transport request ID, and the advertised decoded-input cap is enforced before any PTY effect.
 - Input claims distinguish a grant, a denial with the real current owner, and an unavailable arbiter without fabricating ownership. Bytes receive an applied receipt only after ordered PTY write and drain; an identical retry replays that receipt without writing twice. Canonical EOF is accepted only when the live terminal attributes make the configured EOF byte meaningful, while hangup closes the real PTY endpoint.
-- Wire resize applies the requested revision through the PTY owner and returns the actual post-`TIOCSWINSZ` `TIOCGWINSZ` readback. An identical transaction replays its receipt without another mutation.
+- Wire resize applies the requested revision through the PTY owner and returns the actual post-`TIOCSWINSZ` `TIOCGWINSZ` readback. An identical transaction never causes a second mutation; receipt replay remains pending issue #108.
 
 ## Live conformance evidence
 
