@@ -861,6 +861,62 @@ export class TokenUsageStore {
     };
   }
 
+  /** Maintained per-subject spend totals for the L0 token-spend projection
+   * (HiveMemory HM-1 WP2): one grouped query over the subjects/events tables
+   * with no provider refresh — projection reads must stay cheap. Only
+   * subjects with at least one measured event are returned. */
+  spendTotals(filter: { agentId?: string; since?: string } = {}): Array<{
+    agentId: string | null;
+    name: string;
+    role: string;
+    provider: string;
+    inputTokens: number;
+    outputTokens: number;
+    totalTokens: number;
+    lastObservedAt: string | null;
+  }> {
+    const clauses: string[] = [];
+    const params: string[] = [];
+    let joinCondition = "event.subjectId = subject.id";
+    if (filter.since !== undefined) {
+      joinCondition += " AND event.observedAt >= ?";
+      params.push(filter.since);
+    }
+    if (filter.agentId !== undefined) {
+      clauses.push("subject.agentId = ?");
+      params.push(filter.agentId);
+    }
+    const where = clauses.length === 0 ? "" : ` WHERE ${clauses.join(" AND ")}`;
+    const rows = this.database.query(`
+      SELECT subject.agentId AS agentId, subject.name AS name,
+        subject.role AS role, subject.provider AS provider,
+        COALESCE(SUM(event.inputTokens), 0) AS inputTokens,
+        COALESCE(SUM(event.outputTokens), 0) AS outputTokens,
+        MAX(event.observedAt) AS lastObservedAt,
+        COUNT(event.eventKey) AS eventCount
+      FROM token_usage_subjects AS subject
+      LEFT JOIN token_usage_events AS event ON ${joinCondition}
+      ${where}
+      GROUP BY subject.id
+      ORDER BY inputTokens + outputTokens DESC, subject.startedAt
+    `).all(...params);
+    return z.object({
+      agentId: z.string().nullable(),
+      name: z.string(),
+      role: z.string(),
+      provider: z.string(),
+      inputTokens: z.number(),
+      outputTokens: z.number(),
+      lastObservedAt: z.string().nullable(),
+      eventCount: z.number(),
+    }).array().parse(rows)
+      .filter((row) => row.eventCount > 0)
+      .map(({ eventCount: _eventCount, ...row }) => ({
+        ...row,
+        totalTokens: row.inputTokens + row.outputTokens,
+      }));
+  }
+
   async snapshot(repoRoot?: string, limit = 20): Promise<TokenUsageSnapshot> {
     await this.refreshCurrent(repoRoot);
     const rows = z.object({ id: z.string() }).array().parse(

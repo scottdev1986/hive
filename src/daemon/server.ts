@@ -107,6 +107,10 @@ import {
 } from "./capabilities";
 import { StatusStore } from "./status-store";
 import type { EpisodicStore } from "./episodic-store";
+import {
+  MemoryQueryInputSchema,
+  runMemoryQuery,
+} from "./episodic-projections";
 import type { WorkspaceEventV2 } from "../schemas/status-envelope";
 import {
   StatusIncarnationUnavailableError,
@@ -5425,6 +5429,29 @@ export class HiveDaemon {
     }, async () => {
       this.authorizeTool(capability, "memory_reindex", "memory:write");
       return toolResult(await this.rebuildMemoryIndex(), "result");
+    });
+
+    // The L0/L1 read side of the episodic store (HiveMemory HM-1 WP2). One
+    // tool, declared classes, server-enforced per-class token ceilings with
+    // loud in-band truncation, and scoping derived from the caller's
+    // capability identity and the daemon's own project — there is no project
+    // parameter at all.
+    server.registerTool("memory_query", {
+      title: "Query Hive episodic memory",
+      description:
+        "Answer bounded questions against this project's episodic memory: agent-now / agent-history (agent name), fleet-summary, what-landed (optional since), who-blocked, token-spend (optional agent/since), point-search (query: FTS over episodic events and facts, bounded snippets), my-history (your own event history — scoped to your identity, any agent field is ignored), pitfall-check (query: search pitfall-class wiki articles relevant to your current task). Every class has a server-enforced token ceiling; budget may only lower it. Over-budget results come back truncated with truncated:true and an omitted count. The envelope state distinguishes ok, empty (surface built, no matches), and absent (surface not built). Rows carry their own source and asOf freshness labels — treat them as leads to verify, not authority.",
+      inputSchema: MemoryQueryInputSchema,
+    }, async (input) => {
+      this.authorizeTool(capability, "memory_query", "memory:read", undefined, false);
+      const result = await runMemoryQuery({
+        episodic: this.episodic,
+        status: this.status,
+        tokenUsage: this.tokenUsage,
+        memory: this.memory,
+        repoRoot: this.repoRoot,
+        resolveAgentId: (name) => this.db.getAgentByName(name)?.id ?? null,
+      }, { subject: capability.subject }, input);
+      return toolResult(result, "result");
     });
 
     // The mid-task half of the graph-first mandate: the same locate the spawn

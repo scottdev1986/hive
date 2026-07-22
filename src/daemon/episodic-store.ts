@@ -298,6 +298,18 @@ export class EpisodicStore {
     return EpisodicEventSchema.parse(EventRowSchema.parse(row));
   }
 
+  /** Row counts per table, for cheap staleness checks by derived readers
+   * (the L1 search index rebuilds only when these move). */
+  rowCounts(): { events: number; facts: number } {
+    const events = z.object({ count: z.number() }).parse(
+      this.database.query("SELECT COUNT(*) AS count FROM events").get(),
+    ).count;
+    const facts = z.object({ count: z.number() }).parse(
+      this.database.query("SELECT COUNT(*) AS count FROM facts").get(),
+    ).count;
+    return { events, facts };
+  }
+
   eventsFor(filter: { agent?: string; since?: string } = {}): EpisodicEvent[] {
     const clauses: string[] = [];
     const params: string[] = [];
