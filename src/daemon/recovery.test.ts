@@ -472,7 +472,7 @@ describe("crash classification", () => {
     });
     expect(created[0]?.sessionLocator).toMatchObject({
       hostKind: "sessiond",
-      engineBuildId: "engine-fixture",
+      engineBuildId: sessionLocator.engineBuildId,
       generation: 2,
     });
     expect(h.tmux.created).toHaveLength(0);
@@ -688,7 +688,7 @@ describe("crash classification", () => {
     expect(h.db.getAgentByName("maya")?.status).not.toBe("dead");
     expect(created[0]?.sessionLocator).toMatchObject({
       hostKind: "sessiond",
-      engineBuildId: "engine-fixture",
+      engineBuildId: sessionLocator.engineBuildId,
       generation: 2,
     });
     expect(h.tmux.created).toEqual([]);
