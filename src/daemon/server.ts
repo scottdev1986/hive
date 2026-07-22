@@ -5355,7 +5355,7 @@ export class HiveDaemon {
         "Delete one compiled article and remove it from the index. Immutable raw observations remain as audit evidence.",
       inputSchema: MemoryFactRequestSchema,
     }, async ({ scope, id }) => {
-      this.authorizeTool(capability, "memory_delete", "memory:write");
+      this.authorizeTool(capability, "memory_delete", "memory:delete");
       return toolResult({ deleted: await this.deleteMemoryFact(scope, id) }, "result");
     });
 

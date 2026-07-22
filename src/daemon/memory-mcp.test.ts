@@ -388,6 +388,62 @@ describe("memory MCP tools", () => {
     }
   });
 
+  test("pitfall articles persist kind in frontmatter and the scope index", async () => {
+    await makeHome();
+    const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));
+    tempRoots.push(repoRoot);
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      spawner: new UnusedSpawner(),
+      db: new HiveDatabase(":memory:"),
+      tmux: new NoopTmux(),
+      repoRoot,
+    });
+    const client = await connectedClient(daemon);
+    try {
+      const written = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: validWrite({
+          id: "flaky-login-pitfall",
+          kind: "pitfall",
+          title: "A green login test run proves nothing",
+          body: "The test passes even while the session setup race is live.",
+        }),
+      })) as { id: string; path: string };
+      expect(await readFile(written.path, "utf8")).toContain("kind: pitfall");
+
+      const read = textValue(await client.callTool({
+        name: "memory_read",
+        arguments: { scope: "repo", id: written.id },
+      })) as { kind: string };
+      expect(read.kind).toEqual("pitfall");
+
+      const index = await readFile(
+        join(repoRoot, ".hive", "memory", "wiki", "index.md"),
+        "utf8",
+      );
+      expect(index).toContain(
+        "- [repo/testing] flaky-login-pitfall (2026-07-12) [verified] [pitfall]: " +
+          "A green login test run proves nothing",
+      );
+
+      // A plain write stays an article: no kind line on disk, article on read.
+      const plain = textValue(await client.callTool({
+        name: "memory_write",
+        arguments: validWrite({ id: "plain-article", title: "A plain article" }),
+      })) as { path: string };
+      expect(await readFile(plain.path, "utf8")).not.toContain("kind:");
+      const plainRead = textValue(await client.callTool({
+        name: "memory_read",
+        arguments: { scope: "repo", id: "plain-article" },
+      })) as { kind: string };
+      expect(plainRead.kind).toEqual("article");
+    } finally {
+      await client.close().catch(() => undefined);
+      await daemon.stop();
+    }
+  });
+
   test("memory_reindex rebuilds the search index from files edited outside the daemon", async () => {
     await makeHome();
     const repoRoot = await mkdtemp(join(tmpdir(), "hive-memory-mcp-repo-"));

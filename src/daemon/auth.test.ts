@@ -244,6 +244,36 @@ describe("a foreign agent cannot act on another tenant", () => {
     await daemon.stop();
   });
 
+  test("a writer can compile memory but never delete it", async () => {
+    const { daemon, db } = harness();
+    db.upsertAgent(agentRecord());
+    const { token } = daemon.capabilities.mint("maya", "writer");
+
+    const denied = await callTool(daemon, token, "memory_delete", {
+      scope: "repo",
+      id: "any",
+    });
+    expect(denied.ok).toBe(false);
+    expect(denied.error).toContain("may not memory:delete");
+    expect(denials(daemon)).toContain("capability.forbidden-action");
+
+    // The roots keep the right: the operator and the orchestrator delete.
+    for (const [subject, role] of [
+      ["operator", "operator"],
+      ["queen", "orchestrator"],
+    ] as const) {
+      const root = daemon.capabilities.mint(subject, role).token;
+      // The article does not exist, but the call is authorized and answers.
+      expect(
+        (await callTool(daemon, root, "memory_delete", {
+          scope: "repo",
+          id: "any",
+        })).ok,
+      ).toBe(true);
+    }
+    await daemon.stop();
+  });
+
   test("a foreign agent cannot report events as another agent", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());

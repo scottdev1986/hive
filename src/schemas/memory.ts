@@ -29,6 +29,9 @@ export type MemoryVerificationStatus = z.infer<
   typeof MemoryVerificationStatusSchema
 >;
 
+export const MemoryKindSchema = z.enum(["article", "pitfall"]);
+export type MemoryKind = z.infer<typeof MemoryKindSchema>;
+
 const IsoDateSchema = z.iso.date();
 
 const verificationDateError = (input: {
@@ -68,6 +71,7 @@ export const MemoryFactSchema = z.strictObject({
   source: MemorySourceSchema,
   evidence: z.string().min(1),
   status: MemoryVerificationStatusSchema,
+  kind: MemoryKindSchema.default("article"),
   supersedes: z.array(z.string()),
   raw: z.array(z.string()),
   verified: IsoDateSchema.optional(),
@@ -101,6 +105,7 @@ export const MemoryWriteInputSchema = z.strictObject({
   source: MemoryWriterSourceSchema,
   evidence: z.string().min(1),
   status: MemoryVerificationStatusSchema,
+  kind: MemoryKindSchema.default("article"),
   supersedes: z.array(z.string()),
   verified: IsoDateSchema.optional(),
 }).superRefine((input, context) => {
@@ -120,7 +125,7 @@ export const MemoryWriteInputSchema = z.strictObject({
     });
   }
 });
-export type MemoryWriteInput = z.infer<typeof MemoryWriteInputSchema>;
+export type MemoryWriteInput = z.input<typeof MemoryWriteInputSchema>;
 
 export const MemoryWriteResultSchema = z.strictObject({
   id: z.string().min(1),

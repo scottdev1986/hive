@@ -43,6 +43,7 @@ function input(
     source: "agent",
     evidence: "Measured in the integration suite with seed 42",
     status: "verified",
+    kind: "article",
     supersedes: [],
     verified: "2026-07-12",
     date: "2026-07-12",

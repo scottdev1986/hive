@@ -102,6 +102,7 @@ export function serializeMemoryFile(
     | "source"
     | "evidence"
     | "status"
+    | "kind"
     | "supersedes"
     | "raw"
     | "tags"
@@ -116,6 +117,9 @@ export function serializeMemoryFile(
     `source: ${fact.source}`,
     `status: ${fact.status}`,
   ];
+  // "article" is the default and stays implicit, keeping plain articles free
+  // of a frontmatter line that carries no information.
+  if (fact.kind === "pitfall") lines.push(`kind: ${fact.kind}`);
   if (fact.verified !== undefined) lines.push(`verified: ${fact.verified}`);
   lines.push(
     `evidence: ${oneLine(fact.evidence)}`,
@@ -162,6 +166,7 @@ export function parseMemoryFile(
     source: source.success ? source.data : undefined,
     evidence: fields.get("evidence"),
     status: fields.get("status"),
+    kind: fields.get("kind"),
     supersedes: parseList(fields.get("supersedes") ?? "[]"),
     raw: parseList(fields.get("raw") ?? "[]"),
     verified: ISO_DATE.test(fields.get("verified") ?? "")
@@ -323,7 +328,8 @@ async function rebuildScopeIndex(
   const rows = [...facts]
     .sort((a, b) => b.date.localeCompare(a.date) || a.id.localeCompare(b.id))
     .map((fact) =>
-      `- [${scope}/${fact.topic}] ${fact.id} (${fact.date}) [${fact.status}]: ${fact.title}`
+      `- [${scope}/${fact.topic}] ${fact.id} (${fact.date}) [${fact.status}]` +
+      `${fact.kind === "pitfall" ? " [pitfall]" : ""}: ${fact.title}`
     );
   await writeFile(
     join(directory, "index.md"),
@@ -402,6 +408,7 @@ export async function writeMemoryFact(
     source: input.source,
     evidence: oneLine(input.evidence),
     status: input.status,
+    kind: input.kind,
     supersedes: [...new Set([...(existing?.supersedes ?? []), ...input.supersedes])],
     raw: [...new Set([
       ...(existing?.raw ?? []),

@@ -55,6 +55,7 @@ Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrat
 | `branch:land` | **O W** | **epoch-checked; one-shot for W** |
 | `memory:read` | O R W r | |
 | `memory:write` | O R W | blocked when `writeRevoked` |
+| `memory:delete` | O R | blocked when `writeRevoked`; writers compile, only roots remove |
 | `event:report` | O R W r | |
 | `telemetry:report` | O R W r | |
 | `root-token:mint` | O | the one minting carve-out |
@@ -94,7 +95,7 @@ Two protocol facts constrain the shape of the grant, both verified against the i
 
 #### The sandbox is not the only way out, so the gate is not only in the broker
 
-An MCP tool call leaves the Codex sandbox entirely: it is not a sandboxed exec, so no approval request is brokered for it, and it arrives here as an ordinary authorized HTTP request. Hive's own MCP server is attached to every Codex session, and `memory:write` is in the writer role's action set and mutates real files under `<repo>/.hive/memory` and `~/.hive/memory`. So `memory_write`, `memory_delete`, and `memory_reindex` route through the same `codex:mutate` decision when the calling credential belongs to a Codex writer. The rule generalizes: **any daemon-side tool that writes the filesystem and is reachable by a writer credential needs this gate**, because "the sandbox contains it" is only true of things that run in the sandbox.
+An MCP tool call leaves the Codex sandbox entirely: it is not a sandboxed exec, so no approval request is brokered for it, and it arrives here as an ordinary authorized HTTP request. Hive's own MCP server is attached to every Codex session, and `memory:write` is in the writer role's action set and mutates real files under `<repo>/.hive/memory` and `~/.hive/memory`. So `memory_write` and `memory_reindex` route through the same `codex:mutate` decision when the calling credential belongs to a Codex writer (`memory_delete` needs no gate: writers hold no `memory:delete` at all). The rule generalizes: **any daemon-side tool that writes the filesystem and is reachable by a writer credential needs this gate**, because "the sandbox contains it" is only true of things that run in the sandbox.
 
 Two related exposures are deliberately *not* closed here, and both are pre-existing and vendor-agnostic rather than anything Codex writers introduce. `listInheritedCodexMcpServers` returns an empty list when the user's `~/.codex/config.toml` is missing or unreadable, and `buildCodexMcpExclusionArgs` leaves servers whose names `-c` cannot address attached. Both mean "unreadable local config ⇒ attach by default", which is the wrong default for a writer: an inherited third-party MCP server is an unbrokered mutation path exactly like Hive's own would be without the gate above. Closing it means failing the spawn closed on an unreadable inventory. It is a local-config concern, tracked separately, and it is a real gap — not one this document is claiming is covered.
 
@@ -137,7 +138,8 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `hive_read_message` | `message:read` | — | no | `src/daemon/server.ts:3750-3757` |
 | `hive_land` | `branch:land` | self | yes, **epoch + once** | `src/daemon/server.ts:3918-3927` |
 | `memory_search`, `memory_read` | `memory:read` | — | no | `src/daemon/server.ts:3981-3988`, `:4005-4012` |
-| `memory_write`, `memory_delete`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3991-3998`, `:4019-4026`, `:4029-4036` |
+| `memory_write`, `memory_reindex` | `memory:write` | — | yes | `src/daemon/server.ts:3991-3998`, `:4029-4036` |
+| `memory_delete` | `memory:delete` | — | yes | `src/daemon/server.ts:4019-4026` |
 
 `POST /stop` (#70) is the fleet shutdown `hive stop` sends: it authorizes `agent:kill` with no subject as the fleet gate, then re-authorizes (and audits) `agent:kill` per agent as it kills. Beyond the capability check it applies daemon-side *invoker* gates — a caller reporting (or provably running from) an agent worktree is refused with an audited deny, as is a stop over unlanded work without explicit confirmation. Those gates are accident prevention on top of authorization, not a substitute for it: the invoker identity is client-reported.
 
@@ -171,7 +173,7 @@ What is deliberately *not* claimed is that the suite is green. The daemon cannot
 
 Only `branch:land` and `message:ack` check it (`EPOCH_CHECKED`, `src/daemon/capabilities.ts:135-142`). This is a deliberate narrowing, not an oversight: epoch checks exist to stop *stale authority*, so only the actions that **commit** carry one — merging a branch, and confirming a control instruction landed. Gating reads on the epoch would fail every status poll during a rotation and buy nothing. The operator is exempt because it has no agent row (`src/daemon/credentials.ts:26-27`, `src/daemon/capabilities.ts:329-345`) — the same invariant [orchestrator-status.md](orchestrator-status.md) depends on for the root.
 
-Separately, `WRITE_ACTIONS = {branch:land, memory:write}` (`src/daemon/capabilities.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
+Separately, `WRITE_ACTIONS = {branch:land, memory:write, memory:delete}` (`src/daemon/capabilities.ts:144-148`) are refused for a `writeRevoked` agent even at a current epoch.
 
 **Expiry is absolute, not sliding.** A token dies at `expiresAt` regardless of use (default 24h, `src/daemon/capabilities.ts:201-202`). A sliding window was rejected because it lets a stolen credential keep itself alive forever simply by being used — exactly the credential we most want to expire.
 

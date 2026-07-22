@@ -18,6 +18,7 @@ const verifiedFact: MemoryFact = {
   source: "agent",
   evidence: "Measured against a live recipient",
   status: "verified",
+  kind: "article",
   supersedes: [],
   raw: ["../../raw/delivery/2026-07-13-delivery-boundary.md"],
   verified: "2026-07-13",

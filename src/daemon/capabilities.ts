@@ -48,6 +48,7 @@ export type Action =
   | "branch:land"
   | "memory:read"
   | "memory:write"
+  | "memory:delete"
   | "event:report"
   | "telemetry:report"
   | "root-token:mint"
@@ -79,7 +80,7 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   "token-usage:write", "agent:spawn", "agent:kill",
   "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
   "message:send", "message:ack", "message:read", "inbox:read",
-  "branch:land", "memory:read", "memory:write", "event:report",
+  "branch:land", "memory:read", "memory:write", "memory:delete", "event:report",
   "telemetry:report",
   // Autonomy is the human's dial: only the operator credential (the user's
   // own CLI and the Workspace acting for them) may write it. Agents observing
@@ -119,7 +120,7 @@ export const ROLE_GRANTS: Readonly<Record<Role, RoleGrant>> = {
       "agent:spawn", "agent:kill",
       "agent:mark-dead", "agent:recover", "approval:read", "approval:decide",
       "message:send", "message:ack", "message:read", "inbox:read",
-      "memory:read", "memory:write", "event:report", "telemetry:report",
+      "memory:read", "memory:write", "memory:delete", "event:report", "telemetry:report",
       "autonomy:read",
     ],
     anySubject: AGENT_DIRECTED,
@@ -160,6 +161,7 @@ const EPOCH_CHECKED: ReadonlySet<Action> = new Set<Action>([
 const WRITE_ACTIONS: ReadonlySet<Action> = new Set<Action>([
   "branch:land",
   "memory:write",
+  "memory:delete",
 ]);
 
 export interface Capability {
