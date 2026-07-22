@@ -87,3 +87,47 @@ test("make build propagates a compile failure and removes the previous artifact"
     rmSync(fixture, { recursive: true, force: true });
   }
 });
+
+test("make run surfaces an immediately exiting daemon's lock failure", () => {
+  const fixture = mkdtempSync(join(tmpdir(), "hive-make-run-lock-"));
+  const binary = join(fixture, "hive");
+  const project = join(fixture, "project");
+  const dev = join(fixture, "dev");
+  try {
+    mkdirSync(join(project, ".git"), { recursive: true });
+    writeFileSync(binary, [
+      "#!/bin/sh",
+      'if [ "$1" = "init" ]; then exit 0; fi',
+      'if [ "$1" = "daemon" ]; then',
+      '  echo "hive: Could not acquire Hive daemon lock at /tmp/planted.lock" >&2',
+      "  exit 1",
+      "fi",
+      "exit 99",
+      "",
+    ].join("\n"));
+    chmodSync(binary, 0o755);
+
+    const startedAt = Date.now();
+    const result = Bun.spawnSync([
+      "make",
+      "run",
+      `HIVE_BIN=${binary}`,
+      `PROJECT=${project}`,
+      `DEV=${dev}`,
+      `DEV_HOME=${join(fixture, "home")}`,
+      `INSTALL_ROOT=${join(fixture, "root")}`,
+      `DAEMON_STARTUP_LOG=${join(dev, "daemon-startup.log")}`,
+    ], {
+      cwd: root,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    const output = result.stdout.toString() + result.stderr.toString();
+    expect(result.exitCode).not.toBe(0);
+    expect(output).toContain("Could not acquire Hive daemon lock at /tmp/planted.lock");
+    expect(output).not.toContain("did not observe the daemon startup announcement");
+    expect(Date.now() - startedAt).toBeLessThan(2_000);
+  } finally {
+    rmSync(fixture, { recursive: true, force: true });
+  }
+});

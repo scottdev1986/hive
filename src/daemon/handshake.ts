@@ -38,6 +38,18 @@ async function sourceFiles(directory: string): Promise<string[]> {
   return files.flat();
 }
 
+export async function sourceBuildHash(sourceRoot: string): Promise<string> {
+  const files = (await sourceFiles(sourceRoot)).sort();
+  const hash = createHash("sha256");
+  for (const file of files) {
+    hash.update(relative(sourceRoot, file));
+    hash.update("\0");
+    hash.update(await readFile(file));
+    hash.update("\0");
+  }
+  return hash.digest("hex");
+}
+
 /**
  * Content address the executable, rather than its marketing version.
  *
@@ -49,16 +61,7 @@ async function sourceFiles(directory: string): Promise<string[]> {
  */
 export async function currentBuildHash(): Promise<string> {
   if (HIVE_BUILD_HASH !== null) return HIVE_BUILD_HASH;
-  const sourceRoot = resolveSourceRoot();
-  const files = (await sourceFiles(sourceRoot)).sort();
-  const hash = createHash("sha256");
-  for (const file of files) {
-    hash.update(relative(sourceRoot, file));
-    hash.update("\0");
-    hash.update(await readFile(file));
-    hash.update("\0");
-  }
-  return hash.digest("hex");
+  return sourceBuildHash(resolveSourceRoot());
 }
 
 function resolveSourceRoot(): string {

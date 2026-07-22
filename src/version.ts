@@ -37,6 +37,9 @@ export const HIVE_BUILD_DATE = defined(process.env.HIVE_BUILD_DATE) ?? "unknown"
  */
 export const HIVE_BUILD_HASH = defined(process.env.HIVE_BUILD_HASH);
 
+/** Hash of the TypeScript source inputs compiled into this release. */
+export const HIVE_SOURCE_HASH = defined(process.env.HIVE_SOURCE_HASH);
+
 /**
  * Base64 SPKI DER of the offline Ed25519 release key — or several, comma-
  * separated, which is how a key is rotated without a flag day (see

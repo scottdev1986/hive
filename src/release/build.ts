@@ -141,6 +141,7 @@ interface CliBuild {
 async function compileCli(
   options: Options,
   target: (typeof TARGETS)[number],
+  sourceHash: string,
   buildHash: string,
   signed: boolean,
 ): Promise<CliBuild> {
@@ -150,6 +151,7 @@ async function compileCli(
     ["HIVE_BUILD_COMMIT", options.commit],
     ["HIVE_BUILD_DATE", options.buildDate],
     ["HIVE_BUILD_HASH", buildHash],
+    ["HIVE_SOURCE_HASH", sourceHash],
     ...(options.publicKey === null
       ? []
       : [["HIVE_RELEASE_PUBLIC_KEY", options.publicKey]]),
@@ -353,6 +355,7 @@ export async function build(options: Options): Promise<ReleaseManifest> {
       await compileCli(
         options,
         target,
+        sourceHash,
         buildHashFor(sourceHash, options, target.bunTarget),
         signing !== null,
       ),

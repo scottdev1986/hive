@@ -75,6 +75,23 @@ import {
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
 import { getHiveHome } from "../daemon/db";
 import { formatDaemonStartupAnnouncement } from "../daemon/startup-announcement";
+import { currentBuildHash } from "../daemon/handshake";
+import { HIVE_SOURCE_HASH } from "../version";
+
+export async function startBrokerAndDiscoverEngineBuildId(
+  dependencies: Readonly<{
+    startBroker: () => Promise<void>;
+    discoverEngineBuildId: () => Promise<string>;
+    onBrokerStartFailure: (error: unknown) => Promise<never>;
+  }>,
+): Promise<string> {
+  try {
+    await dependencies.startBroker();
+  } catch (error) {
+    return await dependencies.onBrokerStartFailure(error);
+  }
+  return dependencies.discoverEngineBuildId();
+}
 
 export function stopSpawnSession(
   agent: AgentRecord,
@@ -329,33 +346,36 @@ export async function runDaemon(): Promise<void> {
     }
     throw new Error("daemon failed to bind a listening port before sessiond broker start");
   }
-  try {
-    await sessiondBroker.start();
-    console.log(formatDaemonStartupAnnouncement({
-      engineBuildId: await sessiond.discoverEngineBuildId(),
-      binaryPath: resolve(process.execPath),
-    }));
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    console.error(`sessiond broker failed to start: ${message}`);
-    try {
-      await sessiondBroker.stop();
-    } catch {
-      // ignore
-    }
-    try {
-      await daemon.stop();
-    } catch {
-      // stop may refuse on unrelated teardown; still drop lifecycle below
-    }
-    try {
-      cleanupLifecycleFiles();
-    } catch {
-      // stop() with manageLifecycle already cleaned; belt-and-braces
-    }
-    // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
-    process.exit(1);
-  }
+  const engineBuildId = await startBrokerAndDiscoverEngineBuildId({
+    startBroker: () => sessiondBroker.start(),
+    discoverEngineBuildId: () => sessiond.discoverEngineBuildId(),
+    onBrokerStartFailure: async (error): Promise<never> => {
+      const message = error instanceof Error ? error.message : String(error);
+      console.error(`sessiond broker failed to start: ${message}`);
+      try {
+        await sessiondBroker.stop();
+      } catch {
+        // ignore
+      }
+      try {
+        await daemon.stop();
+      } catch {
+        // stop may refuse on unrelated teardown; still drop lifecycle below
+      }
+      try {
+        cleanupLifecycleFiles();
+      } catch {
+        // stop() with manageLifecycle already cleaned; belt-and-braces
+      }
+      // Non-zero exit with nothing advertised — do not leave Bun.serve half-alive.
+      process.exit(1);
+    },
+  });
+  console.log(formatDaemonStartupAnnouncement({
+    engineBuildId,
+    binaryPath: resolve(process.execPath),
+    sourceHash: HIVE_SOURCE_HASH ?? await currentBuildHash(),
+  }));
 
   let stopping = false;
   const stop = async (): Promise<void> => {

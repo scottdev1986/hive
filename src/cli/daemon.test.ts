@@ -2,7 +2,39 @@ import { expect, test } from "bun:test";
 import type { AgentRecord } from "../schemas";
 import type { SessionInspection } from "../daemon/session-host/contract";
 import type { TmuxSessionHost } from "../daemon/session-host/tmux-host";
-import { stopSpawnSession } from "./daemon";
+import { startBrokerAndDiscoverEngineBuildId, stopSpawnSession } from "./daemon";
+
+test("engine discovery failures are not classified as broker-start failures", async () => {
+  let brokerFailureHandled = false;
+  await expect(startBrokerAndDiscoverEngineBuildId({
+    startBroker: async () => {},
+    discoverEngineBuildId: async () => {
+      throw new Error("planted engine discovery failure");
+    },
+    onBrokerStartFailure: async () => {
+      brokerFailureHandled = true;
+      throw new Error("misclassified broker failure");
+    },
+  })).rejects.toThrow("planted engine discovery failure");
+  expect(brokerFailureHandled).toBe(false);
+});
+
+test("positive control: broker-start failures still take the fatal handler", async () => {
+  let discoveryAttempted = false;
+  await expect(startBrokerAndDiscoverEngineBuildId({
+    startBroker: async () => {
+      throw new Error("planted broker start failure");
+    },
+    discoverEngineBuildId: async () => {
+      discoveryAttempted = true;
+      return "unreachable";
+    },
+    onBrokerStartFailure: async (error) => {
+      throw new Error(`handled: ${(error as Error).message}`);
+    },
+  })).rejects.toThrow("handled: planted broker start failure");
+  expect(discoveryAttempted).toBe(false);
+});
 
 test("spawn cleanup dispatches a sessiond row by its exact locator", async () => {
   const locator = {

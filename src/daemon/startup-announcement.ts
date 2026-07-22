@@ -5,6 +5,7 @@ export const DAEMON_STARTUP_PREFIX = "Hive daemon ready: ";
 export interface DaemonStartupAnnouncement {
   readonly engineBuildId: string;
   readonly binaryPath: string;
+  readonly sourceHash: string;
 }
 
 export function formatDaemonStartupAnnouncement(
@@ -25,11 +26,14 @@ export function parseDaemonStartupAnnouncement(
       typeof announcement.engineBuildId !== "string" ||
       !/^[0-9a-f]{64}$/.test(announcement.engineBuildId) ||
       typeof announcement.binaryPath !== "string" ||
-      !isAbsolute(announcement.binaryPath)
+      !isAbsolute(announcement.binaryPath) ||
+      typeof announcement.sourceHash !== "string" ||
+      !/^[0-9a-f]{64}$/.test(announcement.sourceHash)
     ) return null;
     return {
       engineBuildId: announcement.engineBuildId,
       binaryPath: announcement.binaryPath,
+      sourceHash: announcement.sourceHash,
     };
   } catch {
     return null;

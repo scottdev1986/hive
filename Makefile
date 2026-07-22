@@ -269,7 +269,7 @@ run:
 	env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify; \
 	/bin/rm -f "$(DAEMON_STARTUP_LOG)"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" daemon >"$(DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
-	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)"; then \
+	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)" "$$daemon_pid"; then \
 	  kill "$$daemon_pid" 2>/dev/null || true; \
 	  wait "$$daemon_pid" 2>/dev/null || true; \
 	  exit 1; \

@@ -1,4 +1,6 @@
-import { readFile, realpath, stat } from "node:fs/promises";
+import { readFile, realpath } from "node:fs/promises";
+import { join } from "node:path";
+import { sourceBuildHash } from "../src/daemon/handshake";
 import {
   DAEMON_STARTUP_PREFIX,
   formatDaemonStartupAnnouncement,
@@ -6,24 +8,42 @@ import {
   type DaemonStartupAnnouncement,
 } from "../src/daemon/startup-announcement";
 
-const timestamp = (milliseconds: number): string =>
-  new Date(milliseconds).toISOString();
-
 export function assertBinaryFreshness(
   binaryPath: string,
-  binaryMtimeMs: number,
-  headCommitTimeMs: number,
+  builtSourceHash: string,
+  currentSourceHash: string,
 ): void {
-  if (binaryMtimeMs >= headCommitTimeMs) return;
+  if (builtSourceHash === currentSourceHash) return;
   throw new Error(
-    `make run: stale running binary ${binaryPath}: binary mtime ` +
-      `${timestamp(binaryMtimeMs)} predates HEAD commit time ` +
-      `${timestamp(headCommitTimeMs)}`,
+    `make run: stale running binary ${binaryPath}: built from source ` +
+      `${builtSourceHash.slice(0, 8)}, current source is ${currentSourceHash.slice(0, 8)}`,
   );
 }
 
-async function observeAnnouncement(
+function daemonIsRunning(pid: number): boolean {
+  try {
+    process.kill(pid, 0);
+    return true;
+  } catch (error) {
+    const code = (error as NodeJS.ErrnoException).code;
+    if (code === "ESRCH") return false;
+    if (code === "EPERM") return true;
+    throw error;
+  }
+}
+
+function exitedDaemonError(logPath: string, contents: string): Error {
+  const detail = contents.trim().split("\n").filter(Boolean).at(-1);
+  return new Error(
+    detail === undefined
+      ? `make run: daemon exited before startup; ${logPath} is empty`
+      : `make run: daemon exited before startup: ${detail}`,
+  );
+}
+
+export async function observeAnnouncement(
   logPath: string,
+  daemonPid: number,
   timeoutMs = 10_000,
 ): Promise<DaemonStartupAnnouncement> {
   const deadline = Date.now() + timeoutMs;
@@ -42,6 +62,9 @@ async function observeAnnouncement(
       }
       return announcement;
     }
+    if (!daemonIsRunning(daemonPid)) {
+      throw exitedDaemonError(logPath, contents);
+    }
     await Bun.sleep(25);
   }
   throw new Error(
@@ -49,62 +72,46 @@ async function observeAnnouncement(
   );
 }
 
-async function headCommitTime(repoRoot: string): Promise<number> {
-  const child = Bun.spawn(["git", "show", "-s", "--format=%ct", "HEAD"], {
-    cwd: repoRoot,
-    stdout: "pipe",
-    stderr: "pipe",
-  });
-  const [stdout, stderr, exitCode] = await Promise.all([
-    new Response(child.stdout).text(),
-    new Response(child.stderr).text(),
-    child.exited,
-  ]);
-  const seconds = Number(stdout.trim());
-  if (exitCode !== 0 || !Number.isSafeInteger(seconds) || seconds < 0) {
-    throw new Error(
-      `make run: could not read HEAD commit time${
-        stderr.trim().length === 0 ? "" : `: ${stderr.trim()}`
-      }`,
-    );
-  }
-  return seconds * 1_000;
-}
-
 export async function verifyDevRun(
   logPath: string,
   expectedBinary: string,
   repoRoot: string,
+  daemonPid: number,
 ): Promise<void> {
-  const announcement = await observeAnnouncement(logPath);
-  const [runningBinary, stagedBinary, headTime] = await Promise.all([
+  const announcement = await observeAnnouncement(logPath, daemonPid);
+  const [runningBinary, stagedBinary, currentSourceHash] = await Promise.all([
     realpath(announcement.binaryPath),
     realpath(expectedBinary),
-    headCommitTime(repoRoot),
+    sourceBuildHash(join(repoRoot, "src")),
   ]);
   if (runningBinary !== stagedBinary) {
     throw new Error(
       `make run: daemon announced binary ${runningBinary}, expected staged binary ${stagedBinary}`,
     );
   }
-  const binaryMtime = (await stat(runningBinary)).mtimeMs;
-  assertBinaryFreshness(runningBinary, binaryMtime, headTime);
+  assertBinaryFreshness(runningBinary, announcement.sourceHash, currentSourceHash);
   console.log(formatDaemonStartupAnnouncement({
     ...announcement,
     binaryPath: runningBinary,
   }));
   console.log(
-    `make run: binary mtime ${timestamp(binaryMtime)}; HEAD commit time ${timestamp(headTime)}`,
+    `make run: staged source ${currentSourceHash.slice(0, 8)} matches the running binary`,
   );
 }
 
 if (import.meta.main) {
-  const [logPath, expectedBinary, repoRoot] = process.argv.slice(2);
-  if (logPath === undefined || expectedBinary === undefined || repoRoot === undefined) {
-    console.error("usage: verify-dev-run <startup-log> <expected-binary> <repo-root>");
+  const [logPath, expectedBinary, repoRoot, daemonPidRaw] = process.argv.slice(2);
+  const daemonPid = Number(daemonPidRaw);
+  if (
+    logPath === undefined || expectedBinary === undefined || repoRoot === undefined ||
+    !Number.isSafeInteger(daemonPid) || daemonPid <= 0
+  ) {
+    console.error(
+      "usage: verify-dev-run <startup-log> <expected-binary> <repo-root> <daemon-pid>",
+    );
     process.exitCode = 2;
   } else {
-    await verifyDevRun(logPath, expectedBinary, repoRoot).catch((error: unknown) => {
+    await verifyDevRun(logPath, expectedBinary, repoRoot, daemonPid).catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     });
