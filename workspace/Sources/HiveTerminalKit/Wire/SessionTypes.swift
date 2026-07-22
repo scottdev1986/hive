@@ -255,12 +255,6 @@ public enum InputSubmissionState: Equatable, Sendable {
     case pending(transactionId: String)
     case applied(transactionId: String, stage: String)
     case refused(code: String, evidence: String)
-    /// A host answer to a CLAIM_ACQUIRE that a later request can reverse — the
-    /// arbiter is busy with automation, holds an orphaned human claim, or has
-    /// no current visibility lease. The write path stays armed and the next
-    /// keystroke re-acquires, so human input is never lost for the life of the
-    /// attach (#87).
-    case retryableRefusal(code: String, evidence: String)
     case unknown(evidence: String)
 
     /// Evidence for a refusal the viewer cannot recover from on its own. This
@@ -270,14 +264,6 @@ public enum InputSubmissionState: Equatable, Sendable {
         switch self {
         case .refused(let code, let evidence): return "\(code): \(evidence)"
         case .unknown(let evidence): return evidence
-        default: return nil
-        }
-    }
-
-    /// Evidence for a refusal that clears itself as soon as input flows again.
-    public var retryableEvidence: String? {
-        switch self {
-        case .retryableRefusal(let code, let evidence): return "\(code): \(evidence)"
         default: return nil
         }
     }

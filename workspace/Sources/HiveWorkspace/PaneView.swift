@@ -37,17 +37,12 @@ final class PaneView: NSView {
     /// attached. Terminal once set: §26 give-up never un-gives-up.
     private(set) var terminalFailure: (detail: String, badge: String, evidence: String)?
 
-    /// A host refusal the next keystroke can reverse (#87). Unlike
-    /// `terminalFailure` this is not a give-up: it clears as soon as input
-    /// flows again, so a pane never reads frozen while typing still works.
-    private var retryableInputRefusal: String?
-
     /// The renderer is past its escalating retry budget but still reconnecting
-    /// (#90). Transient for the same reason.
+    /// (#90). It clears when recovery succeeds instead of latching give-up.
     private var rendererRecovering: String?
 
-    /// Last header text the feed wrote, so a cleared retryable refusal restores
-    /// it without waiting for the next feed tick.
+    /// Last header text the feed wrote, so a recovered renderer restores it
+    /// without waiting for the next feed tick.
     private var feedHeaderDescription = ""
 
     /// Installs the sessiond renderer over the content area. The tmux content
@@ -62,9 +57,8 @@ final class PaneView: NSView {
             sessiondTerminal = terminal
             // §26 bounded recovery: surface a visible failure on the pane
             // instead of a silently frozen frame (fires on the main thread from
-            // the recovery timer). #90 splits it the way #87 split the input
-            // refusals — a renderer that is still reconnecting says so
-            // transiently, and only a loss retrying cannot fix latches.
+            // the recovery timer). A renderer that is still reconnecting says
+            // so transiently, and only a loss retrying cannot fix latches.
             terminal.onDegraded = { [weak self] evidence in
                 self?.showRendererRecovering(evidence)
             }
@@ -292,49 +286,35 @@ final class PaneView: NSView {
         detailLabel.toolTip = terminalFailure.evidence
     }
 
-    /// #87: the two input refusals render differently on purpose. A refusal the
-    /// viewer cannot recover from latches the give-up badge; a retryable one —
-    /// the host is busy with automation, or holds this human's orphaned claim —
-    /// leaves the write path armed, so it must clear itself the moment input
-    /// flows again rather than leaving the pane reading frozen forever.
-    /// Module-internal so the split is testable without a live GPU surface.
+    /// #87: recoverable host arbitration remains `waitingForClaim` and never
+    /// reaches this failure path. Only an input failure the viewer cannot
+    /// recover from may latch the pane's give-up badge.
     func applyInputSubmissionState(_ state: InputSubmissionState) {
-        if let evidence = state.failureEvidence {
-            showTerminalFailure(
-                detail: "input refused",
-                badge: "Terminal input refused",
-                evidence: evidence)
-            return
-        }
-        retryableInputRefusal = state.retryableEvidence
-        applyTerminalFailure()
+        guard let evidence = state.failureEvidence else { return }
+        showTerminalFailure(
+            detail: "input refused",
+            badge: "Terminal input refused",
+            evidence: evidence)
     }
 
     /// #90: the renderer is past its escalating budget but still reconnecting.
-    /// Transient like a retryable input refusal — nil clears it, and it never
-    /// touches the sticky give-up, which would leave a dead-looking pane that
-    /// is in fact recovering.
+    /// nil clears it, and it never touches the sticky give-up, which would
+    /// leave a dead-looking pane that is in fact recovering.
     func showRendererRecovering(_ evidence: String?) {
         rendererRecovering = evidence
         applyTerminalFailure()
     }
 
-    /// Shows whichever transient condition holds over the feed text, and puts
-    /// the feed text back when none does. Never touches the failure badge.
-    /// A renderer that is not painting outranks an input path that is refused.
+    /// Shows renderer recovery over the feed text, and puts the feed text back
+    /// when it clears. Never touches the failure badge.
     private func applyTransientNotice() {
         if let rendererRecovering {
             detailLabel.stringValue = "renderer reconnecting…"
             detailLabel.toolTip = rendererRecovering
             return
         }
-        guard let retryableInputRefusal else {
-            detailLabel.stringValue = feedHeaderDescription
-            detailLabel.toolTip = feedHeaderDescription
-            return
-        }
-        detailLabel.stringValue = "input refused — type to retry"
-        detailLabel.toolTip = retryableInputRefusal
+        detailLabel.stringValue = feedHeaderDescription
+        detailLabel.toolTip = feedHeaderDescription
     }
 
     func update(state: PaneState) {

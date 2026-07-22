@@ -23,10 +23,6 @@ public final class AttachReplayClient {
     private struct PendingInputBatch {
         let binding: SurfaceBinding
         let bytes: Data
-        /// Set when the batch is re-queued after an "input claim expired"
-        /// rejection — a second expiry means the host will not honor a fresh
-        /// claim, so the retry happens at most once per batch.
-        var retriedAfterExpiry = false
     }
 
     private struct PendingInputRequest {
@@ -35,7 +31,6 @@ public final class AttachReplayClient {
         /// Retained so a transient rejection (expired claim) can be resubmitted
         /// under a fresh claim instead of dropping the user's keystrokes.
         let bytes: Data
-        var retriedAfterExpiry = false
     }
 
     private struct PendingResizeRequest {
@@ -61,6 +56,7 @@ public final class AttachReplayClient {
     private var activeClaimToken: String?
     private var claimRequestId: UInt64?
     private var claimIdempotencyKey: String?
+    private var claimRetryScheduled = false
     private var pendingInputBatches: [PendingInputBatch] = []
     private var pendingInputRequests: [UInt64: PendingInputRequest] = [:]
     private var releaseAfterPendingInputRequested = false
@@ -80,6 +76,7 @@ public final class AttachReplayClient {
     public var streamIdleTimeout: TimeInterval = 0.15
 
     public static let resizeQuiescenceNanos: UInt64 = 100_000_000
+    private static let claimRetryDelay: TimeInterval = 0.05
 
     init(viewerId: String, engine: ManualSurfaceEngine) {
         self.viewerId = viewerId
@@ -274,12 +271,13 @@ public final class AttachReplayClient {
     /// claim, then submitted through the frozen INPUT_SUBMIT JSON operation.
     public func handleEncodedWrite(_ bytes: Data) {
         guard !bytes.isEmpty, !inputFenced, let binding, transport != nil else { return }
-        guard bytes.count <= FrameCodec.inputTransactionMaxBytes else {
-            refuseInput(
-                code: "PAYLOAD_TOO_LARGE",
-                evidence: "encoded input is \(bytes.count) bytes; limit is \(FrameCodec.inputTransactionMaxBytes)",
-                fence: false
-            )
+        if bytes.count > FrameCodec.inputTransactionMaxBytes {
+            var offset = 0
+            while offset < bytes.count {
+                let end = min(offset + FrameCodec.inputTransactionMaxBytes, bytes.count)
+                handleEncodedWrite(bytes.subdata(in: offset..<end))
+                offset = end
+            }
             return
         }
         let batch = PendingInputBatch(binding: binding, bytes: bytes)
@@ -322,10 +320,8 @@ public final class AttachReplayClient {
     public func noteOrphaned(claimId: String) {
         activeClaimToken = nil
         claimPresentation = .humanOrphaned(viewerId: viewerId, claimId: claimId)
-        setInputSubmissionState(.retryableRefusal(
-            code: "HUMAN_ORPHANED",
-            evidence: "human input claim is orphaned"
-        ))
+        setInputSubmissionState(pendingInputBatches.isEmpty ? .idle : .waitingForClaim)
+        scheduleClaimRetry()
     }
 
     /// Frozen RESIZE request after geometry quiescence (M10).
@@ -518,6 +514,7 @@ public final class AttachReplayClient {
             if claimState == "granted",
                let claim = result["claim"] as? [String: Any],
                let token = claim["token"] as? String {
+                claimRetryScheduled = false
                 activeClaimToken = token
                 claimPresentation = .humanOwned(viewerId: viewerId, claimId: token)
                 NSLog("hive claim: granted token=%@ viewer=%@", token, viewerId)
@@ -528,24 +525,18 @@ public final class AttachReplayClient {
                 }
             } else if claimState == "denied" {
                 activeClaimToken = nil
-                pendingInputBatches.removeAll()
                 claimPresentation = .free
                 let diagnostic = result["diagnostic"] as? String ?? "human input is owned elsewhere"
                 NSLog("hive claim: denied viewer=%@ diagnostic=%@", viewerId, diagnostic)
-                setInputSubmissionState(.retryableRefusal(
-                    code: "CLAIM_DENIED",
-                    evidence: diagnostic
-                ))
+                setInputSubmissionState(.waitingForClaim)
+                scheduleClaimRetry()
             } else {
                 activeClaimToken = nil
-                pendingInputBatches.removeAll()
                 claimPresentation = .free
                 let diagnostic = result["diagnostic"] as? String ?? "human input claim is unknown"
                 NSLog("hive claim: unknown viewer=%@ diagnostic=%@", viewerId, diagnostic)
-                setInputSubmissionState(.retryableRefusal(
-                    code: "CLAIM_UNKNOWN",
-                    evidence: diagnostic
-                ))
+                setInputSubmissionState(.waitingForClaim)
+                scheduleClaimRetry()
             }
             releaseClaimIfInputQuiescent()
             return .continueReplay
@@ -603,17 +594,19 @@ public final class AttachReplayClient {
             pendingInputRequests.removeValue(forKey: frame.requestId)
             if stage == "rejected" {
                 let diagnostic = receipt["diagnostic"] as? String ?? "host rejected terminal input"
-                // An expired claim is transient: the host drops it and lets a
-                // returning human re-claim (orphan→resume), so re-acquire and
-                // resubmit the held bytes once instead of fencing input
-                // permanently. Any other rejection stays terminal.
-                if diagnostic == "input claim expired", !pending.retriedAfterExpiry {
-                    NSLog("hive claim: expired; re-acquiring and resubmitting viewer=%@", viewerId)
+                // Host claim races are complete rejections, not unknown acts:
+                // retain the bytes and submit them under a fresh claim. The
+                // host still arbitrates every re-acquire, so this never steals.
+                if [
+                    "input claim unavailable",
+                    "input claim expired",
+                    "input claim fenced",
+                ].contains(diagnostic) {
+                    NSLog("hive claim: %@; re-acquiring and resubmitting viewer=%@", diagnostic, viewerId)
                     activeClaimToken = nil
                     pendingInputBatches.append(PendingInputBatch(
                         binding: pending.binding,
-                        bytes: pending.bytes,
-                        retriedAfterExpiry: true
+                        bytes: pending.bytes
                     ))
                     do {
                         try beginClaimAcquire()
@@ -687,8 +680,7 @@ public final class AttachReplayClient {
             pendingInputRequests[requestId] = PendingInputRequest(
                 binding: binding,
                 transactionId: transactionId,
-                bytes: batch.bytes,
-                retriedAfterExpiry: batch.retriedAfterExpiry
+                bytes: batch.bytes
             )
             nextRequestId += 1
             setInputSubmissionState(.pending(transactionId: transactionId))
@@ -709,6 +701,7 @@ public final class AttachReplayClient {
         activeClaimToken = nil
         claimRequestId = nil
         claimIdempotencyKey = nil
+        claimRetryScheduled = false
         pendingInputBatches.removeAll()
         pendingInputRequests.removeAll()
         releaseAfterPendingInputRequested = false
@@ -719,9 +712,35 @@ public final class AttachReplayClient {
         lastResizeResult = nil
     }
 
-    private func refuseInput(code: String, evidence: String, fence: Bool = true) {
-        if fence { inputFenced = true }
+    private func refuseInput(code: String, evidence: String) {
+        inputFenced = true
         setInputSubmissionState(.refused(code: code, evidence: evidence))
+    }
+
+    /// A claim can be denied while an automation transaction is between BEGIN
+    /// and COMMIT. Keep the original human bytes queued and re-ask after that
+    /// short exclusive window instead of requiring another keystroke. The
+    /// binding check prevents a delayed retry from crossing a reattach.
+    private func scheduleClaimRetry() {
+        guard !claimRetryScheduled,
+              !inputFenced,
+              !pendingInputBatches.isEmpty,
+              activeClaimToken == nil,
+              claimRequestId == nil,
+              let retryBinding = binding,
+              transport != nil else { return }
+        claimRetryScheduled = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.claimRetryDelay) { [weak self] in
+            guard let self,
+                  self.claimRetryScheduled,
+                  self.binding == retryBinding else { return }
+            self.claimRetryScheduled = false
+            do {
+                try self.beginClaimAcquire()
+            } catch {
+                self.refuseInput(code: "CLAIM_FAILED", evidence: String(describing: error))
+            }
+        }
     }
 
     private func releaseClaimIfInputQuiescent() {

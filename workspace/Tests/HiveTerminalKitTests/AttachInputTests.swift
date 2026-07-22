@@ -166,8 +166,9 @@ final class AttachInputTests: XCTestCase {
             Data("second-command\n".utf8)
         )
 
-        // A second expiry for the same bytes means the host will not honor a
-        // fresh claim — the retry happens once, then the refusal is terminal.
+        // Even a second expiry is a completed rejection, not an unknown act.
+        // Keep the same bytes buffered and claim again instead of refusing the
+        // user's input.
         let resubmittedTransactionId = try XCTUnwrap(resubmittedObject["transactionId"] as? String)
         view.pumpHostFrame(
             WireFrame(
@@ -181,10 +182,13 @@ final class AttachInputTests: XCTestCase {
             ),
             frameBinding: binding
         )
-        guard case .refused(let code, _) = view.inputSubmissionState else {
-            return XCTFail("repeated claim expiry must fence input")
+        try host.harvestViewerFrames()
+        if case .refused(let code, _) = view.inputSubmissionState {
+            XCTFail("repeated claim expiry must not refuse input, got \(code)")
         }
-        XCTAssertEqual(code, "INPUT_REJECTED")
+        let thirdClaim = try XCTUnwrap(
+            host.receivedFromViewer.last { $0.type == .claimAcquire })
+        XCTAssertNotEqual(thirdClaim.requestId, reclaim.requestId)
     }
 
     private func claimGrantedPayload(token: String) throws -> Data {
@@ -372,22 +376,39 @@ final class AttachInputTests: XCTestCase {
         XCTAssertEqual(view.claimPresentation, .free)
     }
 
-    func testOversizeEncodedInputIsTypedRefusalAndSendsZeroInputFrames() throws {
+    func testOversizeEncodedInputIsChunkedWithoutRefusal() throws {
         let host = FakeHost(connectionId: "input-oversize")
         let engine = FakeManualSurface()
         let view = try attachView(host: host, engine: engine)
+        let binding = try XCTUnwrap(view.binding)
+        let bytes = Data(repeating: 0x61, count: FrameCodec.inputTransactionMaxBytes + 1)
 
-        view.attachClient?.handleEncodedWrite(
-            Data(repeating: 0x61, count: FrameCodec.inputTransactionMaxBytes + 1)
+        view.attachClient?.handleEncodedWrite(bytes)
+        try host.harvestViewerFrames()
+        let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        view.pumpHostFrame(
+            WireFrame(
+                type: .claimResult,
+                flags: [.response, .final],
+                requestId: claim.requestId,
+                payload: try claimGrantedPayload(token: "claim-chunked-input")
+            ),
+            frameBinding: binding
         )
         try host.harvestViewerFrames()
 
-        guard case .refused(let code, _) = view.inputSubmissionState else {
-            return XCTFail("oversize input did not produce a typed refusal")
+        if case .refused(let code, _) = view.inputSubmissionState {
+            XCTFail("chunkable input must not be refused, got \(code)")
         }
-        XCTAssertEqual(code, "PAYLOAD_TOO_LARGE")
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .claimAcquire })
-        XCTAssertFalse(host.receivedFromViewer.contains { $0.type == .inputSubmit })
+        let submits = host.receivedFromViewer.filter { $0.type == .inputSubmit }
+        XCTAssertEqual(submits.count, 2)
+        let submittedBytes = try submits.reduce(into: Data()) { result, submit in
+            let object = try FrameCodec.parseJSONObject(submit.payload)
+            let operation = try XCTUnwrap(object["operation"] as? [String: Any])
+            result.append(try XCTUnwrap(
+                Data(base64Encoded: try XCTUnwrap(operation["bytes"] as? String))))
+        }
+        XCTAssertEqual(submittedBytes, bytes)
     }
 
     func testSubsequentResizeUsesFrozenExactSessionPayload() throws {
