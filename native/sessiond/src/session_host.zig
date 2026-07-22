@@ -4638,6 +4638,13 @@ fn pushRetainedOutput(
         offset += take;
     }
     seq.* += @as(u64, @intCast(slice.len));
+    // #91: the host loop feeds PTY output BEFORE it pumps, and a checkpoint
+    // fires from inside feedOutput and evicts the journal it just covered.
+    // Publishing the delivered high-water here — the one place a viewer's
+    // sent_seq advances, on both the attach replay and the pump — keeps that
+    // eviction behind the viewer instead of detaching a healthy pane every
+    // checkpoint interval.
+    state.setViewerFloor(seq.*);
 }
 
 /// §20 attach stream for an authorized viewer: when the requested cursor is
@@ -4750,6 +4757,7 @@ fn detachAttachedViewer(
     allocator: std.mem.Allocator,
     core: *HostCore,
     viewer_slot: *?AttachedViewer,
+    state: *terminal_state.TerminalState,
     now_ns: u64,
 ) void {
     if (viewer_slot.*) |*viewer| {
@@ -4757,6 +4765,8 @@ fn detachAttachedViewer(
         core.onViewerDetached(viewer.authorization.viewer_id, now_ns);
         viewer.close(allocator);
         viewer_slot.* = null;
+        // #91: a viewer that is gone must never pin journal retention.
+        state.setViewerFloor(null);
     }
 }
 
@@ -4778,7 +4788,7 @@ fn pumpAttachedViewer(
             viewer.sent_seq - viewer.acked_seq < generated.limits.viewer_queue_bytes)
         {
             pushRetainedOutput(viewer.stream, state, &viewer.sent_seq) catch {
-                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
+                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
                 return;
             };
         }
@@ -4792,7 +4802,7 @@ fn pumpAttachedViewer(
             const ready = std.posix.poll(&fds, 0) catch 0;
             if (ready == 0 or fds[0].revents == 0) return;
             var frame = readConnectionFrame(allocator, viewer.stream, &deadline) catch {
-                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
+                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
                 return;
             };
             defer {
@@ -4809,7 +4819,7 @@ fn pumpAttachedViewer(
                         continue;
                     }
                 }
-                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
+                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
                 return;
             }
             handleViewerFrame(
@@ -4821,7 +4831,7 @@ fn pumpAttachedViewer(
                 &frame,
                 timer.read(),
             ) catch {
-                detachAttachedViewer(allocator, core, viewer_slot, timer.read());
+                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
                 return;
             };
         }
@@ -5907,6 +5917,117 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
     try std.testing.expectEqual(first_checkpoint.ino, unchanged_checkpoint.ino);
     // No real_engine.deinit(): TerminalState owns the injected engine and its
     // deferred deinit is the single destruction path.
+}
+
+/// Reads every byte already buffered on `stream` without blocking.
+fn drainReadable(stream: std.net.Stream, sink: *std.ArrayList(u8)) !void {
+    var buf: [4096]u8 = undefined;
+    while (true) {
+        var fds = [_]std.posix.pollfd{.{
+            .fd = stream.handle,
+            .events = std.posix.POLL.IN,
+            .revents = 0,
+        }};
+        const ready = std.posix.poll(&fds, 0) catch 0;
+        if (ready == 0 or fds[0].revents == 0) return;
+        const read = try std.posix.read(stream.handle, &buf);
+        if (read == 0) return;
+        try sink.appendSlice(std.testing.allocator, buf[0..read]);
+    }
+}
+
+// #91 regression: the host loop feeds PTY output and THEN pumps the attached
+// viewer, so a checkpoint firing inside feedOutput evicted the journal ahead of
+// the viewer's sent_seq; the pump's push then read an evicted range and the host
+// detached a live pane every checkpoint interval. Drives the loop's exact order.
+test "a checkpoint inside feedOutput never detaches the attached viewer" {
+    const AdvancingClock = struct {
+        nanos: u64 = 0,
+        fn now(context: *anyopaque) u64 {
+            const self: *@This() = @ptrCast(@alignCast(context));
+            return self.nanos;
+        }
+    };
+    var clock: AdvancingClock = .{};
+
+    const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    var state = terminal_state.TerminalState.init(
+        std.testing.allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &clock, .nowFn = AdvancingClock.now },
+        &engine_build_id,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .cell_width_px_16_16 = 10 << 16,
+            .cell_height_px_16_16 = 20 << 16,
+        },
+    );
+    defer state.deinit();
+
+    const secret: [32]u8 = @splat(0x3c);
+    var core = try HostCore.init(
+        std.testing.allocator,
+        fixtureRegistration(),
+        secret,
+        "/tmp/hive-sessiond",
+        "host-build-a",
+        0,
+    );
+    defer core.deinit();
+    var timer = try std.time.Timer.start();
+
+    const sockets = try socketPair();
+    var peer_open = true;
+    defer if (peer_open) sockets[1].close();
+    var attached: ?AttachedViewer = .{
+        .stream = sockets[0],
+        .authorization = .{
+            .viewer_id = try std.testing.allocator.dupe(u8, "viewer-a"),
+            .operations = .{ .view = true },
+            .geometry = fixtureRegistration().record.geometry,
+            .after_seq = 0,
+        },
+        .sent_seq = 0,
+        .acked_seq = 0,
+    };
+    defer if (attached) |*viewer| viewer.close(std.testing.allocator);
+
+    var received: std.ArrayList(u8) = .{};
+    defer received.deinit(std.testing.allocator);
+
+    // Loop iteration one: feed, then pump. The pump's push publishes the
+    // delivered high-water as the retention floor (production does the same on
+    // the attach replay, from beginViewerStream).
+    try state.feedOutput("first");
+    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expect(attached != null);
+    try std.testing.expectEqual(@as(u64, 5), attached.?.sent_seq);
+    try drainReadable(sockets[1], &received);
+    try std.testing.expect(std.mem.indexOf(u8, received.items, "first") != null);
+
+    // Loop iteration two: the 30s interval has elapsed, so feedOutput
+    // checkpoints and evicts before the pump ever runs.
+    clock.nanos += terminal_state.checkpoint_interval_ns;
+    try state.feedOutput("second");
+    try std.testing.expect(state.checkpointSeq() > 0);
+
+    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expect(attached != null);
+    try std.testing.expectEqual(@as(u64, 11), attached.?.sent_seq);
+    try std.testing.expect(state.retainedOutputStart() <= 5);
+    try drainReadable(sockets[1], &received);
+    try std.testing.expect(std.mem.indexOf(u8, received.items, "second") != null);
+
+    // A viewer that is gone must release the floor, or retention would grow to
+    // the journal bound behind a pane nobody is watching.
+    peer_open = false;
+    sockets[1].close();
+    pumpAttachedViewer(std.testing.allocator, &attached, &core, &state, &timer);
+    try std.testing.expect(attached == null);
+    try std.testing.expect(state.viewer_floor_seq == null);
 }
 
 test "real input encoder uses terminal paste mode and separate Ghostty keys" {

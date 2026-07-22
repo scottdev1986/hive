@@ -531,6 +531,9 @@ pub const TerminalState = struct {
     last_journal_persist_mono: u64 = 0,
     /// When true, reconnect must surface CHECKPOINT_UNAVAILABLE (no silent approx).
     reconnect_available: bool = true,
+    /// Exclusive journal offset a live attached viewer has already been sent
+    /// (§20 sent_seq); `null` when no viewer is attached. See setViewerFloor.
+    viewer_floor_seq: ?u64 = null,
     closed: bool = false,
 
     pub fn init(
@@ -588,6 +591,18 @@ pub const TerminalState = struct {
 
     pub fn retainedOutputStart(self: *const TerminalState) u64 {
         return self.journal.start_seq;
+    }
+
+    /// Publish the live attached viewer's delivered high-water, or `null` when
+    /// no viewer is attached. A checkpoint fires from inside feedOutput and
+    /// evicts the journal it just covered; without this floor that eviction can
+    /// pass bytes an attached viewer has not been sent, and its next push reads
+    /// an evicted range and the host detaches a healthy pane (#91).
+    /// The journal-pressure path in feedChunk deliberately ignores the floor: a
+    /// viewer a whole journal behind is dropped rather than growing retention
+    /// without bound.
+    pub fn setViewerFloor(self: *TerminalState, seq: ?u64) void {
+        self.viewer_floor_seq = seq;
     }
 
     pub fn outputClosed(self: *const TerminalState) bool {
@@ -795,8 +810,13 @@ pub const TerminalState = struct {
         self.last_checkpoint_mono = created;
         self.reconnect_available = true;
 
-        // Evict journal bytes covered by the verified checkpoint.
-        try self.journal.evictThrough(through_seq);
+        // Evict journal bytes covered by the verified checkpoint, but never
+        // past what a live attached viewer has already been sent (#91).
+        const evict_through = if (self.viewer_floor_seq) |floor|
+            @min(through_seq, floor)
+        else
+            through_seq;
+        try self.journal.evictThrough(evict_through);
         self.journal_dirty = true;
     }
 
@@ -1497,6 +1517,37 @@ test "checkpoint interval triggers after 2 MiB new output" {
     try s.ts.feedOutput(&buf);
     try testing.expect(s.ts.checkpointSeq() > 0);
     try testing.expect(s.ts.checkpointAvailable());
+}
+
+// #91: the checkpoint fires from INSIDE feedOutput, i.e. before the host loop
+// pumps the attached viewer. Evicting the covered prefix therefore raced ahead
+// of the viewer's sent_seq on the 30s cadence, its next push read an evicted
+// range, and the host detached a healthy pane.
+test "an interval checkpoint never evicts past a live viewer floor" {
+    var s = try makeState();
+    defer s.deinit();
+
+    // A viewer is attached and has been sent everything journaled so far.
+    try s.ts.feedOutput("delivered");
+    s.ts.setViewerFloor(s.ts.outputSeq());
+
+    // The interval elapses, so the next feed checkpoints and evicts inside
+    // feedOutput while "undelivered" has not reached the viewer.
+    s.clock.nanos += checkpoint_interval_ns;
+    try s.ts.feedOutput("undelivered");
+    try testing.expect(s.ts.checkpointSeq() > 0);
+
+    // The viewer's next push starts at the floor and must still be servable.
+    try testing.expectEqual(@as(u64, 9), s.ts.journal.start_seq);
+    try testing.expectEqualStrings("undelivered", try s.ts.journal.sliceFrom(9));
+
+    // Positive control: with no attached viewer the same sequence DOES evict
+    // the whole covered prefix, so the assertions above are not vacuous.
+    s.ts.setViewerFloor(null);
+    s.clock.nanos += checkpoint_interval_ns;
+    try s.ts.feedOutput("tail");
+    try testing.expectEqual(s.ts.outputSeq(), s.ts.journal.start_seq);
+    try testing.expectError(error.CheckpointUnavailable, s.ts.journal.sliceFrom(9));
 }
 
 // F3: This is PLUMBING-ONLY. MockEngine state is plain byte concatenation and
