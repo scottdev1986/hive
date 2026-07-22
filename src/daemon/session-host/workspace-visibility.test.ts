@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
-import { mintAgentTmuxSessionLocator } from "./tmux-host";
+import { mintAgentTmuxSessionLocator, mintRootTmuxSessionLocator } from "./tmux-host";
 import {
+  ROOT_VISIBILITY_ID,
   WorkspaceVisibilityAuthority,
   type WorkspaceVisibilitySnapshot,
 } from "./workspace-visibility";
@@ -12,6 +13,14 @@ const process = { processId: 7101, startToken: "7101:100" };
 function locator(agentId: string) {
   return {
     ...mintAgentTmuxSessionLocator(agentId),
+    hostKind: "sessiond" as const,
+    engineBuildId,
+  };
+}
+
+function rootLocator() {
+  return {
+    ...mintRootTmuxSessionLocator(),
     hostKind: "sessiond" as const,
     engineBuildId,
   };
@@ -73,11 +82,11 @@ describe("WorkspaceVisibilityAuthority", () => {
     const host = authority();
     const repeated = snapshot("1").terminals[0]!;
     expect(host.value.publish(snapshot("1", {
-      terminals: [repeated, { ...repeated, locator: locator("agent-2") }],
+      terminals: [repeated, repeated],
     }))).toMatchObject({ state: "rejected", reason: "duplicate-terminal" });
-    expect(host.value.publish(snapshot("1", {
+    expect(() => host.value.publish(snapshot("1", {
       terminals: [{ ...repeated, agentId: "wrong-agent" }],
-    }))).toMatchObject({ state: "rejected", reason: "locator-mismatch" });
+    }))).toThrow();
   });
 
   test("admission re-reads source liveness, engine build, state, and revision", async () => {
@@ -108,6 +117,41 @@ describe("WorkspaceVisibilityAuthority", () => {
     host.replaceProcess({ processId: 7101, startToken: "7101:200" });
     await expect(host.value.admit({ agentId: "agent-1", agentName: "visible-agent" }))
       .resolves.toBeNull();
+  });
+
+  test("admits the exact root pane without synthesizing an agent identity", async () => {
+    const host = authority();
+    const root = rootLocator();
+    expect(host.value.publish(snapshot("1", {
+      terminals: [{
+        agentId: ROOT_VISIBILITY_ID,
+        agentName: "queen",
+        locator: root,
+        state: "pending",
+      }],
+    }))).toMatchObject({ state: "accepted" });
+    await expect(host.value.admit({
+      agentId: ROOT_VISIBILITY_ID,
+      agentName: "queen",
+    })).resolves.toMatchObject({
+      engineBuildId,
+      visibility: { openTerminalRevision: "1" },
+    });
+    expect(host.value.currentSnapshot()?.terminals[0]?.locator.subject).toEqual({
+      kind: "root",
+    });
+  });
+
+  test("rejects a root locator presented as an agent pane", () => {
+    const host = authority();
+    expect(() => host.value.publish(snapshot("1", {
+      terminals: [{
+        agentId: "agent-1",
+        agentName: "visible-agent",
+        locator: rootLocator(),
+        state: "pending",
+      }],
+    }))).toThrow();
   });
 
   test("a dead prior source may be replaced, but a live one is exclusive", () => {

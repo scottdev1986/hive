@@ -6,8 +6,12 @@ import {
 } from "../../schemas/session-protocol";
 import type { HiveTerminalPolicy } from "./hive-terminal-host";
 import type { VisibilitySourceIdentity } from "./terminal-host-visibility-contract";
+import { ORCHESTRATOR_NAME } from "../../schemas";
 
 const PositiveRevisionSchema = z.string().regex(/^[1-9][0-9]*$/);
+
+/** Visibility-only identity for the root pane. This never creates an agents row. */
+export const ROOT_VISIBILITY_ID = "root";
 
 export const WorkspaceTerminalStateSchema = z.enum([
   "pending",
@@ -25,12 +29,15 @@ export const WorkspaceVisibleTerminalSchema = z.strictObject({
   agentName: z.string().min(1),
   locator: SessionLocatorSchema.unwrap().extend({
     hostKind: z.literal("sessiond"),
-  }).readonly().refine(
-    (locator) => locator.subject.kind === "agent",
-    "workspace visibility records require an agent sessiond locator",
-  ),
+  }).readonly(),
   state: WorkspaceTerminalStateSchema,
-}).readonly();
+}).readonly().refine(
+  (terminal) => terminal.locator.subject.kind === "agent"
+    ? terminal.locator.subject.agentId === terminal.agentId
+    : terminal.agentId === ROOT_VISIBILITY_ID &&
+      terminal.agentName === ORCHESTRATOR_NAME,
+  "workspace visibility records must bind their exact agent or root subject",
+);
 export type WorkspaceVisibleTerminal = z.infer<typeof WorkspaceVisibleTerminalSchema>;
 
 export const WorkspaceVisibilitySnapshotSchema = z.strictObject({
@@ -151,8 +158,10 @@ export class WorkspaceVisibilityAuthority {
       }
       if (
         terminal.locator.instanceId !== this.dependencies.expectedInstanceId ||
-        terminal.locator.subject.kind !== "agent" ||
-        terminal.locator.subject.agentId !== terminal.agentId ||
+        (terminal.locator.subject.kind === "agent"
+          ? terminal.locator.subject.agentId !== terminal.agentId
+          : terminal.agentId !== ROOT_VISIBILITY_ID ||
+            terminal.agentName !== ORCHESTRATOR_NAME) ||
         terminal.locator.engineBuildId === null
       ) {
         return this.rejected(
@@ -190,10 +199,12 @@ export class WorkspaceVisibilityAuthority {
     if (matches.length !== 1) return null;
     const terminal = matches[0]!;
     if (!ADMITTING_STATES.has(terminal.state)) return null;
+    if (terminal.locator.engineBuildId === null) return null;
     if (
-      terminal.locator.subject.kind !== "agent" ||
-      terminal.locator.subject.agentId !== candidate.agentId ||
-      terminal.locator.engineBuildId === null
+      terminal.locator.subject.kind === "agent"
+        ? terminal.locator.subject.agentId !== candidate.agentId
+        : candidate.agentId !== ROOT_VISIBILITY_ID ||
+          candidate.agentName !== ORCHESTRATOR_NAME
     ) return null;
 
     let engineBuildId: string;

@@ -15,6 +15,7 @@ import type {
 } from "./terminal-host-binding";
 import {
   HiveTerminalHostAdapter,
+  requireSessiondRootLocator,
   TerminalHostBindingIncompleteError,
   TerminalHostBindingMismatchError,
   TerminalHostBindingNotFoundError,
@@ -613,5 +614,15 @@ describe("HiveTerminalHostAdapter", () => {
     );
     await expect(incomplete.inspect(locator))
       .rejects.toBeInstanceOf(TerminalHostBindingIncompleteError);
+  });
+});
+
+describe("requireSessiondRootLocator", () => {
+  test("accepts only a sessiond root subject", () => {
+    const root = { ...locator, subject: { kind: "root" as const } };
+    expect(requireSessiondRootLocator(root)).toEqual(root);
+    expect(() => requireSessiondRootLocator(locator)).toThrow("Queen has a mismatched");
+    expect(() => requireSessiondRootLocator({ ...root, hostKind: "tmux" }))
+      .toThrow("Queen has a mismatched");
   });
 });

@@ -18,6 +18,11 @@ const neutral_control_plane = @import("neutral_control_plane");
 /// shipped constants instead of restating them.
 pub const terminal_state = @import("terminal_state");
 
+/// Hive's canonical non-image terminal-state budget. Ghostty's
+/// `max_scrollback` is bytes (terminal/Screen.zig), despite the public C
+/// header calling it lines. Passing 50_000 here retained only about 800 rows.
+pub const canonical_scrollback_bytes: usize = 48 * 1024 * 1024;
+
 const c = @cImport({
     @cInclude("fcntl.h");
     @cInclude("signal.h");
@@ -180,7 +185,7 @@ pub const RealVtEngine = struct {
         const options: ghostty_c.GhosttyTerminalOptions = .{
             .cols = @intCast(columns),
             .rows = @intCast(rows),
-            .max_scrollback = 50_000,
+            .max_scrollback = canonical_scrollback_bytes,
         };
         if (ghostty_c.ghostty_terminal_new(null, &terminal, options) != ghostty_c.GHOSTTY_SUCCESS)
             return error.EngineCreateFailed;
@@ -5970,6 +5975,7 @@ test "live VT effects use only the bounded PTY sink with an audit control" {
 }
 
 test "real libghostty-vt export is copied and TerminalState is sole engine owner" {
+    try std.testing.expectEqual(@as(usize, 48 * 1024 * 1024), canonical_scrollback_bytes);
     const TestClock = struct {
         fn now(_: *anyopaque) u64 {
             return 1;

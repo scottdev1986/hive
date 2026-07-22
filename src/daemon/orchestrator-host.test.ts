@@ -1,0 +1,84 @@
+import { describe, expect, test } from "bun:test";
+import { mintSessionRequestId } from "./session-host/locators";
+import { mintAgentTmuxSessionLocator } from "./session-host/tmux-host";
+import {
+  configuredOrchestratorHost,
+  mintRootSessiondLocator,
+  rootSessionIdForLaunchRequest,
+} from "./orchestrator-host";
+import type { HiveTerminalBinding } from "./session-host/terminal-host-binding";
+
+describe("orchestrator host selection", () => {
+  test("sessiond is the product default and tmux remains an explicit fallback", () => {
+    expect(configuredOrchestratorHost({})).toBe("sessiond");
+    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "" })).toBe("sessiond");
+    expect(configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "tmux" })).toBe("tmux");
+    expect(() => configuredOrchestratorHost({ HIVE_ORCHESTRATOR_HOST: "other" }))
+      .toThrow("must be sessiond or tmux");
+  });
+});
+
+describe("root sessiond locator", () => {
+  test("is stable across launch retries and advances only for a new request", () => {
+    const requestId = mintSessionRequestId(1_750_000_000_000);
+    const first = mintRootSessiondLocator({
+      requestId,
+      instanceId: "instance-a",
+      engineBuildId: "engine-a",
+      bindings: [],
+    });
+    expect(first).toMatchObject({
+      subject: { kind: "root" },
+      generation: 1,
+      sessionId: rootSessionIdForLaunchRequest(requestId),
+      hostKind: "sessiond",
+      engineBuildId: "engine-a",
+    });
+    const binding: HiveTerminalBinding = {
+      locator: first,
+      visibility: {
+        workspaceSessionId: "workspace-a",
+        workspacePid: 123,
+        workspaceStartToken: "123:1",
+        openTerminalRevision: "1",
+      },
+    };
+    expect(mintRootSessiondLocator({
+      requestId,
+      instanceId: "instance-a",
+      engineBuildId: "engine-b",
+      bindings: [binding],
+    })).toEqual(first);
+    const second = mintRootSessiondLocator({
+      requestId: mintSessionRequestId(1_750_000_000_001),
+      instanceId: "instance-a",
+      engineBuildId: "engine-b",
+      bindings: [binding],
+    });
+    expect(second.generation).toBe(2);
+    expect(second.sessionId).not.toBe(first.sessionId);
+  });
+
+  test("ignores agent generations when allocating the root generation", () => {
+    const agent = {
+      ...mintAgentTmuxSessionLocator("agent-1", 17),
+      hostKind: "sessiond" as const,
+      engineBuildId: "engine-a",
+    };
+    const binding: HiveTerminalBinding = {
+      locator: agent,
+      visibility: {
+        workspaceSessionId: "workspace-a",
+        workspacePid: 123,
+        workspaceStartToken: "123:1",
+        openTerminalRevision: "1",
+      },
+    };
+    expect(mintRootSessiondLocator({
+      requestId: mintSessionRequestId(1_750_000_000_002),
+      instanceId: agent.instanceId,
+      engineBuildId: "engine-a",
+      bindings: [binding],
+    }).generation).toBe(1);
+  });
+});

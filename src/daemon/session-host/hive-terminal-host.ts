@@ -59,6 +59,18 @@ export function requireSessiondAgentLocator(
   return HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
 }
 
+export function requireSessiondRootLocator(
+  locator: SessionLocator | undefined,
+): HiveTerminalBinding["locator"] {
+  if (
+    locator === undefined || locator.hostKind !== "sessiond" ||
+    locator.subject.kind !== "root"
+  ) {
+    throw new Error("Queen has a mismatched sessiond SessionLocator");
+  }
+  return HiveTerminalBindingSchema.unwrap().shape.locator.parse(locator);
+}
+
 type TerminalLifecycleHost = Pick<
   TerminalHost,
   | "claimInput"
