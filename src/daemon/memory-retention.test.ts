@@ -65,7 +65,8 @@ function openStore(path: string): EpisodicStore {
   return new EpisodicStore(path);
 }
 
-/** Digests have no write API until WP4, so tests seed them directly. */
+/** Seeds a digest row directly (bypassing WP4's compiler) so the sweep is
+ * tested against provenance shapes it must recognize, not compiler output. */
 function seedDigest(
   storePath: string,
   provenance: string,

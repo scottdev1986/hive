@@ -75,6 +75,18 @@ export const NewEpisodicEventSchema = z.object({
 });
 export type NewEpisodicEvent = z.input<typeof NewEpisodicEventSchema>;
 
+export const EpisodicDigestSchema = z.object({
+  id: z.number().int().positive(),
+  agent: z.string().min(1).nullable(),
+  sessionId: z.string().min(1).nullable(),
+  compiledAt: IsoTimestampSchema,
+  body: z.string(),
+  /** JSON: `{ eventIds: [...], sessionId, agent }` — the exact rows the digest
+   * was folded from, in the WP3 retention reference-check shape. */
+  provenance: z.string(),
+});
+export type EpisodicDigest = z.infer<typeof EpisodicDigestSchema>;
+
 const FactRowSchema = z.object({
   id: z.string(),
   kind: z.string(),
@@ -99,6 +111,15 @@ const EventRowSchema = z.object({
   provenance: z.string(),
 });
 
+const DigestRowSchema = z.object({
+  id: z.number(),
+  agent: z.string().nullable(),
+  session_id: z.string().nullable(),
+  compiled_at: z.string(),
+  body: z.string(),
+  provenance: z.string(),
+});
+
 function parseFactRow(row: unknown): EpisodicFact {
   const stored = FactRowSchema.parse(row);
   return EpisodicFactSchema.parse({
@@ -114,6 +135,18 @@ function parseFactRow(row: unknown): EpisodicFact {
     invalidAt: stored.invalid_at,
     expiredAt: stored.expired_at,
     supersedesId: stored.supersedes_id,
+  });
+}
+
+function parseDigestRow(row: unknown): EpisodicDigest {
+  const stored = DigestRowSchema.parse(row);
+  return EpisodicDigestSchema.parse({
+    id: stored.id,
+    agent: stored.agent,
+    sessionId: stored.session_id,
+    compiledAt: stored.compiled_at,
+    body: stored.body,
+    provenance: stored.provenance,
   });
 }
 
@@ -171,8 +204,10 @@ export class EpisodicStore {
         provenance TEXT NOT NULL
       );
       CREATE INDEX IF NOT EXISTS events_agent_ts ON events(agent, ts);
-      -- Placeholder for WP4's session digests: the table exists now so later
-      -- work adds rows, not schema.
+      -- Session digests (HiveMemory HM-2 WP4): one row per agent+session,
+      -- replaced on every rolling re-synthesis. Digests and facts are never
+      -- swept; the retention sweep reads provenance to spare referenced
+      -- events.
       CREATE TABLE IF NOT EXISTS digests (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
         agent TEXT,
@@ -336,6 +371,76 @@ export class EpisodicStore {
     return this.database.query("SELECT provenance FROM digests ORDER BY id")
       .all()
       .map((row) => z.object({ provenance: z.string() }).parse(row).provenance);
+  }
+
+  /** Write a compiled digest (HiveMemory HM-2 WP4). Rolling re-synthesis is
+   * replace, not merge: any existing row for the same agent+session is
+   * deleted first, so naive-merge drift is impossible by construction and
+   * there is at most one digest per agent+session. */
+  upsertDigest(input: {
+    agent: string | null;
+    sessionId: string | null;
+    compiledAt?: string;
+    body: string;
+    provenance: Record<string, unknown>;
+  }): EpisodicDigest {
+    const compiledAt = input.compiledAt ?? new Date().toISOString();
+    IsoTimestampSchema.parse(compiledAt);
+    this.database.transaction(() => {
+      this.database.query(
+        "DELETE FROM digests WHERE agent IS ? AND session_id IS ?",
+      ).run(input.agent, input.sessionId);
+      this.database.query(`
+        INSERT INTO digests (agent, session_id, compiled_at, body, provenance)
+        VALUES (?, ?, ?, ?, ?)
+      `).run(
+        input.agent,
+        input.sessionId,
+        compiledAt,
+        input.body,
+        JSON.stringify(input.provenance),
+      );
+    })();
+    const row = this.database.query(`
+      SELECT * FROM digests WHERE id = last_insert_rowid()
+    `).get();
+    return parseDigestRow(row);
+  }
+
+  digestById(id: number): EpisodicDigest | null {
+    const row = this.database.query("SELECT * FROM digests WHERE id = ?")
+      .get(id);
+    return row === null ? null : parseDigestRow(row);
+  }
+
+  /** The newest digest for an agent, optionally pinned to one session. */
+  digestFor(filter: { agent: string; sessionId?: string }): EpisodicDigest | null {
+    const row = filter.sessionId === undefined
+      ? this.database.query(`
+          SELECT * FROM digests WHERE agent = ? ORDER BY id DESC LIMIT 1
+        `).get(filter.agent)
+      : this.database.query(`
+          SELECT * FROM digests WHERE agent = ? AND session_id IS ?
+          ORDER BY id DESC LIMIT 1
+        `).get(filter.agent, filter.sessionId);
+    return row === null ? null : parseDigestRow(row);
+  }
+
+  /** The exact source rows behind a digest's event-id pointers, in pointer
+   * order — the drill-down (hint-to-authority) half of the digest contract. */
+  eventsByIds(ids: readonly number[]): EpisodicEvent[] {
+    if (ids.length === 0) return [];
+    const placeholders = ids.map(() => "?").join(", ");
+    const rows = this.database.query(
+      `SELECT * FROM events WHERE id IN (${placeholders})`,
+    ).all(...ids).map((row) =>
+      EpisodicEventSchema.parse(EventRowSchema.parse(row))
+    );
+    const byId = new Map(rows.map((event) => [event.id, event]));
+    return ids.flatMap((id) => {
+      const event = byId.get(id);
+      return event === undefined ? [] : [event];
+    });
   }
 
   /** Delete `events` rows older than `cutoff` (ISO timestamp; the column's

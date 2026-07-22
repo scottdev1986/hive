@@ -111,6 +111,12 @@ import {
   MemoryQueryInputSchema,
   runMemoryQuery,
 } from "./episodic-projections";
+import {
+  compileDigest,
+  isDigestBoundaryEvent,
+  MemoryDigestInputSchema,
+  runMemoryDigest,
+} from "./episodic-digest";
 import type { WorkspaceEventV2 } from "../schemas/status-envelope";
 import {
   StatusIncarnationUnavailableError,
@@ -2355,7 +2361,7 @@ export class HiveDaemon {
       throw new Error(`Hive agent not found: ${agent.name}`);
     }
     this.recovery.clearDeliberateKill(agent.id);
-    this.status.closeAssignment(agent.id, timestamp);
+    const closedAssignment = this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
     const cleaned: {
@@ -2471,6 +2477,18 @@ export class HiveDaemon {
     // top of that is how a kill that obeyed reads as a kill that refused.
     await this.reportKill(agent, reaped, preserved, stranded);
 
+    // A session end is a digest activity boundary (HiveMemory HM-2 WP4;
+    // S3.7 DoD 1-2): re-synthesize the agent's session digest from the typed
+    // record BEFORE the retention sweep runs, so the digest's provenance
+    // pins its drill-down events against the hot-tier cutoff. Failure-isolated
+    // like the sweep — a compile failure must never add failure modes to a
+    // kill.
+    this.compileSessionDigest(
+      agent.id,
+      closedAssignment?.assignmentId ?? null,
+      "agent session end",
+    );
+
     // A session end is a retention lifecycle boundary (S3.7 DoD 5): the sweep
     // rides it. Fire-and-forget — retention is maintenance and must never add
     // failure modes to a kill.
@@ -2569,13 +2587,14 @@ export class HiveDaemon {
       const summary = typeof event.data.summary === "string"
         ? event.data.summary
         : event.kind;
+      const agentId = event.entity.kind === "agent"
+        ? event.entity.id
+        : typeof event.data.agentId === "string"
+        ? event.data.agentId
+        : null;
       this.episodic.appendEvent({
         ts: event.occurredAt,
-        agent: event.entity.kind === "agent"
-          ? event.entity.id
-          : typeof event.data.agentId === "string"
-          ? event.data.agentId
-          : null,
+        agent: agentId,
         type: event.kind,
         summary: summary.slice(0, 500),
         provenance: {
@@ -2585,6 +2604,17 @@ export class HiveDaemon {
           source: event.source,
         },
       });
+      // A landing/completion event is a digest activity boundary (S3.7
+      // DoD 2): re-synthesize the agent's rolling digest from the typed
+      // record. Failure-isolated separately so a compile failure is never
+      // reported as an ingest failure.
+      if (agentId !== null && isDigestBoundaryEvent(event.kind, event.data)) {
+        this.compileSessionDigest(
+          agentId,
+          this.status.currentAssignment(agentId)?.assignmentId ?? null,
+          `landing/completion event ${event.kind}`,
+        );
+      }
     } catch (error) {
       console.error(
         `Hive episodic ingest failed for ${event.kind} (${event.eventId}): ${
@@ -2757,6 +2787,30 @@ export class HiveDaemon {
         }`,
       );
     });
+  }
+
+  /** Rolling digest re-synthesis at an activity boundary (HiveMemory HM-2
+   * WP4; S3.7 DoD 1-2): agent session end/kill and landing/completion
+   * events. The compiler is a deterministic fold over the typed episodic
+   * record — daemon code, never the session's own agent, never an LLM on
+   * the hot path — and it REPLACES the agent+session digest row rather than
+   * merging. Failure-isolated like the other memory projections: a compile
+   * failure logs and never breaks the lifecycle path that triggered it. */
+  private compileSessionDigest(
+    agentId: string,
+    sessionId: string | null,
+    reason: string,
+  ): void {
+    if (this.episodic === null) return;
+    try {
+      compileDigest(this.episodic, { agent: agentId, sessionId });
+    } catch (error) {
+      console.error(
+        `Hive session digest compile (${reason}) failed for ${agentId}: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    }
   }
 
   /**
@@ -5556,6 +5610,24 @@ export class HiveDaemon {
         repoRoot: this.repoRoot,
         resolveAgentId: (name) => this.db.getAgentByName(name)?.id ?? null,
       }, { subject: capability.subject }, input);
+      return toolResult(result, "result");
+    });
+
+    // The L2 read side of the episodic store (HiveMemory HM-2 WP4): session
+    // digests with drill-down. The digest is a hint-not-authority navigation
+    // aid compiled deterministically from the typed record; the eventId
+    // drill-down is the hint-to-authority path to the exact source rows.
+    server.registerTool("memory_digest", {
+      title: "Read a Hive session digest",
+      description:
+        "Read a compiled session digest from this project's episodic memory: by digestId, or by agent name (optionally pinned to a sessionId; the newest digest wins). The digest is a navigation aid labeled hint-not-authority — every load-bearing line carries an [eN] event-id pointer, and exact values (SHAs, paths, error strings, exit codes) sit in a typed side table. Pass eventId to drill down to the exact source event row(s) behind a pointer before acting on any claim. The envelope state distinguishes ok, empty (store open, no match), and absent (episodic store not open). Server-enforced token ceiling: budget may only lower it; an over-budget body is cut with a loud truncation marker.",
+      inputSchema: MemoryDigestInputSchema,
+    }, async (input) => {
+      this.authorizeTool(capability, "memory_digest", "memory:read", undefined, false);
+      const result = runMemoryDigest({
+        episodic: this.episodic,
+        resolveAgentId: (name) => this.db.getAgentByName(name)?.id ?? null,
+      }, input);
       return toolResult(result, "result");
     });
 
