@@ -435,8 +435,18 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     }
     const end = record.eventSequence;
     for (let sequence = subscription.nextSequence; sequence <= end; sequence += 1) {
-      yield record.events[sequence - 1]!;
+      // Delivery is bounded by credit: a subscription may hold at most
+      // `unacknowledgedEventHighWater` delivered-but-unacknowledged events.
+      // Reaching the bound stops THIS subscription, never the session.
+      const unacknowledged = sequence - 1 - subscription.acknowledgedThrough;
+      if (unacknowledged >= fixtureSubscriptionLimits.unacknowledgedEventHighWater) return;
+      const event = record.events[sequence - record.retainedEventStart]!;
+      // The cursor commits at the delivery boundary, BEFORE the event is handed
+      // over. Committing after the consumer asks for the next item would leave
+      // a subscriber that cancels mid-drain positioned on an event it has
+      // already received, and resume would redeliver it.
       subscription.nextSequence = sequence + 1;
+      yield event;
     }
     if (this.fault === "U") subscription.nextSequence = end;
   }
@@ -452,22 +462,32 @@ export class NeutralTerminalHostFixture implements TerminalHost {
     const record = this.record(request.session);
     const subscription = record.subscriptions.get(request.subscriptionId);
     if (!subscription) throw new Error(`unknown subscription ${request.subscriptionId}`);
-    subscription.acknowledgedThrough = Math.max(
-      subscription.acknowledgedThrough,
-      Number(request.through.eventSequence),
+    subscription.acknowledgedThrough = Math.min(
+      subscription.nextSequence - 1,
+      Math.max(subscription.acknowledgedThrough, Number(request.through.eventSequence)),
     );
-    const unacknowledged = record.eventSequence - subscription.acknowledgedThrough;
+    const through = {
+      eventSequence: String(subscription.acknowledgedThrough),
+      outputOffset: String(this.outputOffsetAt(record, subscription.acknowledgedThrough + 1)),
+    };
+    // Acknowledgement RELEASES retention, it does not merely score it: storage
+    // an acknowledgement makes unreachable is dropped here.
+    this.releaseRetention(record);
+    const unacknowledged = subscription.nextSequence - 1 - subscription.acknowledgedThrough;
     return {
       subscriptionId: subscription.id,
-      through: {
-        eventSequence: String(subscription.acknowledgedThrough),
-        outputOffset: String(this.outputOffsetAt(record, subscription.acknowledgedThrough + 1)),
-      },
+      through,
       availableEventCredit: Math.max(
         0,
         fixtureSubscriptionLimits.unacknowledgedEventHighWater - unacknowledged,
       ),
     };
+  }
+
+  /** Events actually held for replay right now — the observable that separates
+   * bounded retention from a number that merely says it is bounded. */
+  retainedEvents(session: SessionRef): number {
+    return this.record(session).events.length;
   }
 
   async terminate(request: Readonly<{
@@ -779,15 +799,33 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       eventSequence: String(record.eventSequence),
       occurredAt: AT,
     } as TerminalEvent);
-    // Retention is bounded and the session never stalls for a subscriber, so
-    // an unacknowledged laggard is evicted past rather than blocking the
-    // producer. It loses its position explicitly (SubscriptionGapError), never
-    // silently.
-    const retained = record.eventSequence - record.retainedEventStart + 1;
-    if (retained > fixtureSubscriptionLimits.retainedEventCount) {
-      record.retainedEventStart = record.eventSequence
-        - fixtureSubscriptionLimits.retainedEventCount + 1;
+    this.releaseRetention(record);
+  }
+
+  /** §11 retained events are bounded by negotiated limits and released by
+   * acknowledgement. Both happen to STORAGE here, not to a counter: an event
+   * that is no longer retained is gone, and a subscriber positioned on it
+   * learns so explicitly. */
+  private releaseRetention(record: RecordState): void {
+    // Released by acknowledgement: an event every live subscription has
+    // acknowledged is retained for nobody.
+    const live = [...record.subscriptions.values()];
+    if (live.length > 0) {
+      this.evictThrough(record, Math.min(...live.map((entry) => entry.acknowledgedThrough)));
     }
+    // Bounded by negotiated limits: the hard cap is the backstop that stops a
+    // subscriber which never acknowledges from stalling the session. It is
+    // evicted past rather than blocking the producer, and loses its position
+    // explicitly (SubscriptionGapError), never silently.
+    const overflow = record.events.length - fixtureSubscriptionLimits.retainedEventCount;
+    if (overflow > 0) this.evictThrough(record, record.retainedEventStart + overflow - 1);
+  }
+
+  private evictThrough(record: RecordState, throughSequence: number): void {
+    const drop = throughSequence - record.retainedEventStart + 1;
+    if (drop <= 0) return;
+    record.events.splice(0, drop);
+    record.retainedEventStart += drop;
   }
 
   /** The output offset standing beside an event position, so a delivered event
@@ -798,6 +836,9 @@ export class NeutralTerminalHostFixture implements TerminalHost {
       if (Number(event.eventSequence) >= sequence) break;
       if (event.kind === "output") offset = Number(event.outputRange.endExclusive);
     }
+    // Events evicted from retention took their offsets with them, so a position
+    // at or below the retained start reports the retained start's offset rather
+    // than a reconstructed zero.
     return offset;
   }
 

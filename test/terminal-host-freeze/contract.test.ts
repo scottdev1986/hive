@@ -68,6 +68,8 @@ async function drain(
   return delivered;
 }
 
+const sequenceOf = (event: TerminalEvent): string => event.eventSequence;
+
 async function createRunning(host: NeutralTerminalHostFixture, spec: CreateRequest): Promise<SessionRef> {
   const created = await host.create(spec);
   expect(created.outcome.state).toBe("running");
@@ -364,30 +366,47 @@ async function assertJ(host: NeutralTerminalHostFixture): Promise<void> {
  * through the incarnation's final, separately ordered facts. */
 async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   const session = await createRunning(host, request("freeze-u"));
-  const subscribed = await host.subscribe({
+  const { retainedEventCount, unacknowledgedEventHighWater } = fixtureSubscriptionLimits;
+  const reader = await host.subscribe({
     session,
     capabilities: { protocolVersions: ["1.0.0"] },
     limits: fixtureSubscriptionLimits,
     from: { position: "at", cursor: { eventSequence: "1", outputOffset: "0" } },
   });
-  if (subscribed.state !== "subscribed") throw new Error(`expected subscribed, got ${subscribed.state}`);
-  expect(subscribed.limits).toEqual(fixtureSubscriptionLimits);
-  expect(subscribed.resumeFrom.eventSequence).toBe("1");
+  if (reader.state !== "subscribed") throw new Error(`expected subscribed, got ${reader.state}`);
+  // The host reports the limits it will honour rather than echoing the offer.
+  expect(reader.limits).toEqual(fixtureSubscriptionLimits);
+  expect(reader.resumeFrom.eventSequence).toBe("1");
 
+  // Exactly once: draining twice never repeats a delivered event, and a later
+  // drain sees only what arrived after the previous one.
   host.appendOutput(session, encoder.encode("alpha"));
   host.appendOutput(session, encoder.encode("beta"));
-
-  // Exactly once: draining twice never repeats a delivered event, and the
-  // second drain sees only what arrived after the first.
-  const first = await drain(host, session, subscribed.subscriptionId);
-  expect(first.map((event) => event.eventSequence)).toEqual(["1", "2"]);
-  expect(await drain(host, session, subscribed.subscriptionId)).toEqual([]);
+  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["1", "2"]);
+  expect(await drain(host, session, reader.subscriptionId)).toEqual([]);
   host.appendOutput(session, encoder.encode("gamma"));
-  const second = await drain(host, session, subscribed.subscriptionId);
-  expect(second.map((event) => event.eventSequence)).toEqual(["3"]);
+  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["3"]);
+  await host.acknowledgeEvents({
+    session,
+    subscriptionId: reader.subscriptionId,
+    through: { eventSequence: "3", outputOffset: "0" },
+  });
+
+  // Exactly once at the INTERRUPTION boundary, which a full drain cannot see:
+  // a subscriber that receives one event and abandons the stream before asking
+  // for the next must not be redelivered that event when it resumes.
+  host.appendOutput(session, encoder.encode("delta-1"));
+  host.appendOutput(session, encoder.encode("delta-2"));
+  const interrupted: string[] = [];
+  for await (const event of host.events({ session, subscriptionId: reader.subscriptionId })) {
+    interrupted.push(event.eventSequence);
+    break;
+  }
+  expect(interrupted).toEqual(["4"]);
+  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["5"]);
 
   // Independent subscribers: a second subscription starting at the current end
-  // sees only what follows it, and draining it does not move the first.
+  // sees only what follows it, and draining either never moves the other.
   const tail = await host.subscribe({
     session,
     capabilities: { protocolVersions: ["1.0.0"] },
@@ -395,39 +414,53 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
     from: { position: "end" },
   });
   if (tail.state !== "subscribed") throw new Error(`expected subscribed, got ${tail.state}`);
-  expect(tail.resumeFrom.eventSequence).toBe("4");
-  expect(tail.subscriptionId).not.toBe(subscribed.subscriptionId);
-  host.appendOutput(session, encoder.encode("delta"));
-  expect((await drain(host, session, tail.subscriptionId)).map((event) => event.eventSequence))
-    .toEqual(["4"]);
-  expect((await drain(host, session, subscribed.subscriptionId)).map((event) => event.eventSequence))
-    .toEqual(["4"]);
-
-  // Acknowledgement releases retention: credit is consumed by unacknowledged
-  // events and restored by the acknowledgement that names this subscription.
+  expect(tail.resumeFrom.eventSequence).toBe("6");
+  expect(tail.subscriptionId).not.toBe(reader.subscriptionId);
   host.appendOutput(session, encoder.encode("epsilon"));
-  const beforeAck = await host.acknowledgeEvents({
-    session,
-    subscriptionId: subscribed.subscriptionId,
-    through: { eventSequence: "4", outputOffset: "0" },
-  });
-  expect(beforeAck.subscriptionId).toBe(subscribed.subscriptionId);
-  expect(beforeAck.availableEventCredit)
-    .toBe(fixtureSubscriptionLimits.unacknowledgedEventHighWater - 1);
-  const afterAck = await host.acknowledgeEvents({
-    session,
-    subscriptionId: subscribed.subscriptionId,
-    through: { eventSequence: "5", outputOffset: "0" },
-  });
-  expect(afterAck.through.eventSequence).toBe("5");
-  expect(afterAck.availableEventCredit)
-    .toBe(fixtureSubscriptionLimits.unacknowledgedEventHighWater);
+  expect((await drain(host, session, tail.subscriptionId)).map(sequenceOf)).toEqual(["6"]);
+  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["6"]);
 
-  // Gap: a position below what retention still holds is reported explicitly,
-  // with the missing range and a fresh-inspection requirement.
-  for (let index = 0; index < fixtureSubscriptionLimits.retainedEventCount; index += 1) {
+  // Delivery is bounded by negotiated credit, observed as behavior: once this
+  // subscription holds high-water events delivered and unacknowledged, its own
+  // drain yields nothing even though events are waiting...
+  host.appendOutput(session, encoder.encode("zeta"));
+  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["7"]);
+  host.appendOutput(session, encoder.encode("eta"));
+  expect(await drain(host, session, reader.subscriptionId)).toEqual([]);
+  // ...and the session is not stalled by it: the other subscriber still moves.
+  expect((await drain(host, session, tail.subscriptionId)).map(sequenceOf)).toEqual(["7", "8"]);
+
+  // Acknowledgement RELEASES: it restores this subscription's credit, frees
+  // retained storage, and lets delivery resume.
+  const retainedBeforeAck = host.retainedEvents(session);
+  const released = await host.acknowledgeEvents({
+    session,
+    subscriptionId: reader.subscriptionId,
+    through: { eventSequence: "7", outputOffset: "0" },
+  });
+  expect(released.subscriptionId).toBe(reader.subscriptionId);
+  expect(released.through.eventSequence).toBe("7");
+  expect(released.availableEventCredit).toBe(unacknowledgedEventHighWater);
+  expect(host.retainedEvents(session)).toBeLessThan(retainedBeforeAck);
+  expect((await drain(host, session, reader.subscriptionId)).map(sequenceOf)).toEqual(["8"]);
+
+  // An acknowledgement can never reach past what was delivered: a subscription
+  // cannot release events it was never given.
+  const overreach = await host.acknowledgeEvents({
+    session,
+    subscriptionId: tail.subscriptionId,
+    through: { eventSequence: "9999", outputOffset: "0" },
+  });
+  expect(overreach.through.eventSequence).toBe("8");
+
+  // Retention is a real bound on STORAGE, not a number that says it is bounded.
+  for (let index = 0; index < retainedEventCount * 2; index += 1) {
     host.appendOutput(session, encoder.encode(`overflow-${index}`));
   }
+  expect(host.retainedEvents(session)).toBeLessThanOrEqual(retainedEventCount);
+
+  // A position below what retention still holds is reported explicitly, with
+  // the missing range and a fresh-inspection requirement.
   const stale = await host.subscribe({
     session,
     capabilities: { protocolVersions: ["1.0.0"] },
@@ -439,10 +472,10 @@ async function assertU(host: NeutralTerminalHostFixture): Promise<void> {
   expect(Number(stale.missing.endExclusive)).toBeGreaterThan(1);
   expect(stale.freshInspection).toBe("required");
 
-  // The evicted-past subscriber loses its position as a typed failure naming
-  // the missing range — never as a silent jump forward, and never by
+  // The subscriber that was evicted past loses its position as a typed failure
+  // naming the missing range — never as a silent jump forward, and never by
   // fabricating an event.
-  await expect(drain(host, session, subscribed.subscriptionId)).rejects
+  await expect(drain(host, session, reader.subscriptionId)).rejects
     .toBeInstanceOf(SubscriptionGapError);
 
   // Final events: an in-retention subscription receives the incarnation's
