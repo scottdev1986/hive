@@ -9,6 +9,7 @@ import {
   type MemoryFact,
   type MemoryScope,
   type MemorySearchResult,
+  type MemorySimilarCandidate,
 } from "../schemas";
 
 function toFtsQuery(query: string): string | null {
@@ -17,6 +18,24 @@ function toFtsQuery(query: string): string | null {
     return null;
   }
   return tokens.map((token) => `"${token}"`).join(" AND ");
+}
+
+// Dedup layer 2 (HiveMemory plan D1): advisory FTS bm25 candidates over the
+// index the caller has just upserted the written fact into, so the freshly
+// written article is searchable here. The write already succeeded —
+// candidates only tell the calling agent what to resolve with a follow-up
+// update. Pure query helper shared by the daemon's memory_write tool and the
+// memory self-test, so both exercise the exact same candidate logic.
+export function findSimilarMemoryCandidates(
+  index: MemoryIndex,
+  written: Pick<MemoryFact, "scope" | "id" | "title">,
+): MemorySimilarCandidate[] {
+  return index.search(written.title, { limit: 4 })
+    .filter((result) =>
+      !(result.scope === written.scope && result.id === written.id)
+    )
+    .slice(0, 3)
+    .map(({ scope, id, title }) => ({ scope, id, title }));
 }
 
 // A disposable SQLite FTS5 search index over the compiled Markdown articles

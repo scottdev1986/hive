@@ -120,7 +120,7 @@ import {
   RoutingPolicyStore,
 } from "./routing-policy-store";
 import type { SelectionPreferenceControl } from "./selection-preferences";
-import { MemoryIndex } from "./memory-index";
+import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
 import {
   BunTmuxSender,
   CoexistingSessionSender,
@@ -5329,16 +5329,9 @@ export class HiveDaemon {
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
       const written = await this.writeMemoryFact(input);
-      // Dedup layer 2 (HiveMemory plan D1): advisory FTS bm25 candidates over
-      // the index writeMemoryFact just upserted, so the freshly written
-      // article is searchable here. The write already succeeded — candidates
-      // only tell the calling agent what to resolve with a follow-up update.
-      const similarCandidates = this.memory.search(written.title, { limit: 4 })
-        .filter((result) =>
-          !(result.scope === written.scope && result.id === written.id)
-        )
-        .slice(0, 3)
-        .map(({ scope, id, title }) => ({ scope, id, title }));
+      // Dedup layer 2 (HiveMemory plan D1): advisory candidates over the
+      // index writeMemoryFact just upserted.
+      const similarCandidates = findSimilarMemoryCandidates(this.memory, written);
       return toolResult(
         compactMemoryWriteResult(written, written.rawPath, similarCandidates),
         "fact",

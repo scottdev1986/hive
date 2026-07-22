@@ -32,6 +32,7 @@ import {
   runGraphifyStatus,
 } from "./cli/graphify";
 import { runInitCli } from "./cli/init";
+import { memorySelfTestCli } from "./cli/memory-self-test";
 import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting } from "./cli/routing";
 import { promoteDefaultModelControl } from "./cli/promote-default";
@@ -741,6 +742,15 @@ export function createProgram(): Command {
       "Rebuild the memory search index from the Markdown files on disk",
     )
     .action(reindexMemoryCli);
+
+  memory.command("self-test")
+    .description(
+      "Golden-canary recall probe: plants canary memories in a throwaway " +
+        "fixture and proves search, read-back, dedup, and delete-guard work",
+    )
+    .action(async () => {
+      process.exitCode = await memorySelfTestCli();
+    });
 
   program
     .command("stop")
