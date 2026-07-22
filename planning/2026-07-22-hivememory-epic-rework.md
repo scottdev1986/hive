@@ -77,3 +77,31 @@ Research: Mem0 (arXiv:2504.19413), Zep/Graphiti (arXiv:2501.13956), Letta, LangM
 - **D4 — Embeddings: local-only fastembed-js + sqlite-vec, manual API override.** bge-small-en-v1.5 (~67 MB, 384-dim) or all-MiniLM-L6-v2; ~100–300 MB RSS warm, single-digit-ms per short record — trivial on the 16 GB floor, so NO automatic fallback machinery (build it only if telemetry says otherwise). `embedding_provider: local | api` is a manual config knob (CI/low-spec escape hatch). The Haiku-class API knob belongs to the offline consolidation/dedup decision where model quality actually matters, not to embedding. Hybrid FTS+vector is the target — embeddings buy paraphrase-level dedup and recall, not correctness.
 - **D5 — Slotting: HiveMemory runs as its own track.** HM-0/HM-6 contracts (capability split, dedup layers 1–2, self-test harness) start immediately against the current substrate; HM-1 sequences after M3-C0A (#18) lands; HM-2→HM-3→HM-4 follow; HM-5 builds only when HM-1's measured gate opens.
 - **D6 — Wake recall budget: 300-token default, named config** (from the original §7 proposal; tunable, changes loud).
+
+## 8. Implementation record (2026-07-22, all on main, not pushed)
+
+User directive overrode D5 slotting: everything built immediately on the daemon's current data sources, not gated on #18. Commits in order:
+
+- `bd8ee599` HM-0: `memory:delete` capability split; `kind: pitfall` article class.
+- `8488eb8e` HM-6: reference-checked delete (supersedes-dangle; WorkManifest check TODO(#18)); dedup layers 1–2.
+- `9104f525` HM-6: golden-canary `hive memory self-test` + CI wiring.
+- `1c24dc70` HM-3: relevance-ranked spawn injection.
+- `4cc0a414` HM-1 WP1: per-project episodic store (`~/.hive/projects/<hiveUuid>/episodic.db`), bi-temporal facts, failure-isolated ingestion.
+- `dd51eb11` HM-1 WP2: L0 projections + `memory_query` (9 classes, server-enforced budgets, identity-derived scoping, two-way nonce isolation suite).
+- `b76d22a4` HM-2 WP3: tiered retention sweeps, `[memory.retention]` named config, stale-demotion, digest-provenance reference check.
+- `ab299bff` HM-2 WP4: **deterministic** session digests (rolling re-synthesis, exact-value side tables, drift audit) + `memory_digest` with drill-down.
+- `a6cb2dc3` HM-2 WP5: pitfall harvest pipeline (failure clusters → unverified provenance-bearing candidates; dedup-aware updates) + `memory_pitfall`.
+- `8678cc89` HM-3 WP6: wake-delta injection (per-agent high-water marks, `[memory] wake_budget_tokens` default 300, send-lane + resume delivery, no vendor hooks).
+- `805b6d23` HM-3 WP7: `recall:`/`note this:`/`document this:` trigger protocol (queen/operator only, enforced at daemon).
+- `55557440` fix: spawn index reads the primary checkout (`.hive/memory` is gitignored — worktrees never had it; production bug found during WP6).
+- `c5075d41` + `de4fd022` HM-4/§5: `memory_note`, `memory_recall`, `memory_promote` (redaction-checked, operator/queen tier) + static vendor conformance suite (claude/codex/grok).
+
+**Deviations from the phase plan, ratified by build:**
+
+1. **HM-1 built on current stores** (status-store events, observation audit, token-usage) rather than #18's envelope substrate. When #18 lands, ingestion gains envelope/journal sources; the store schema and query surface are unaffected.
+2. **Digests are deterministic structured folds**, not LLM summaries (recorded in `episodic-digest.ts` header). Stronger on provenance and drift-audit; the 7–8B distiller remains a measured upgrade, not a replacement assumption.
+3. **High-water marks are per-scope log-entry counts**, not timestamps — wiki log entries are day-granular, so timestamps can't sequence same-day writes.
+4. **HM-4 shipped as a static conformance matrix**; live-agent proofs stay environment-gated (`HIVE_LIVE_MEMORY_CONFORMANCE=1`), and kimi/opencode rows join with #63.
+5. **Not built, by design:** HM-5 embeddings (measured gate unopened — HM-1's measured token-cost ACs are themselves still pending live measurement); LLM distiller; cheap-reader escalation and local reranker from the S3.6 sketch (queen-scale infrastructure, needs live queen workloads to measure against).
+
+**Outstanding ACs before cards can close:** measured token-cost numbers per query class (needs a scripted session corpus run), live per-vendor proofs (HM-3/HM-4), WorkManifest reference-check (#18), docs reconciliation (HM-exit → #75).
