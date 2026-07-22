@@ -1,5 +1,5 @@
 import { homedir } from "node:os";
-import { join } from "node:path";
+import { join, resolve } from "node:path";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
@@ -74,6 +74,7 @@ import {
 } from "../daemon/session-host/hive-terminal-host";
 import { WorkspaceVisibilityAuthority } from "../daemon/session-host/workspace-visibility";
 import { getHiveHome } from "../daemon/db";
+import { formatDaemonStartupAnnouncement } from "../daemon/startup-announcement";
 
 export function stopSpawnSession(
   agent: AgentRecord,
@@ -330,6 +331,10 @@ export async function runDaemon(): Promise<void> {
   }
   try {
     await sessiondBroker.start();
+    console.log(formatDaemonStartupAnnouncement({
+      engineBuildId: await sessiond.discoverEngineBuildId(),
+      binaryPath: resolve(process.execPath),
+    }));
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     console.error(`sessiond broker failed to start: ${message}`);

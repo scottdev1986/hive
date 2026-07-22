@@ -28,6 +28,7 @@ DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
+DAEMON_STARTUP_LOG := $(DEV)/daemon-startup.log
 # Short per-checkout home: sessiond's canonical host socket path must fit macOS's
 # 103-char sun_path (this spelling costs 100). Do not lengthen it. clean hashes
 # the same literal string for its tmux socket token.
@@ -236,7 +237,9 @@ $(SESSIOND_RELEASE_BIN): $(SESSIOND_INPUTS) $(GHOSTTY_ARTIFACT_STAMP) | toolchai
 
 # The real installer's pipeline (src/release/build.ts), unsigned for want of a
 # Developer ID, staged in the exact layout install.sh produces.
-build: toolchain vendor-verify $(GHOSTTYKIT_INFO) sessiond
+build:
+	/bin/rm -f "$(HIVE_BIN)"
+	$(MAKE) toolchain vendor-verify "$(GHOSTTYKIT_INFO)" sessiond
 	bun install --frozen-lockfile
 	bun run src/release/build.ts --version $(DEV_VERSION) \
 	  --commit $$(git rev-parse --short HEAD) --out "$(DIST)"
@@ -262,7 +265,16 @@ run:
 	fi; \
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
-	cd "$$proj" && env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify && exec env $(DEV_ENV) "$(HIVE_BIN)"
+	cd "$$proj"; \
+	env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify; \
+	/bin/rm -f "$(DAEMON_STARTUP_LOG)"; \
+	env $(DEV_ENV) "$(HIVE_BIN)" daemon >"$(DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
+	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)"; then \
+	  kill "$$daemon_pid" 2>/dev/null || true; \
+	  wait "$$daemon_pid" 2>/dev/null || true; \
+	  exit 1; \
+	fi; \
+	env $(DEV_ENV) "$(HIVE_BIN)"
 
 # No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already
 # inside `bun run test` and self-skips unless HIVE_E2E=1; opting in is
