@@ -87,6 +87,26 @@ export const EpisodicDigestSchema = z.object({
 });
 export type EpisodicDigest = z.infer<typeof EpisodicDigestSchema>;
 
+/**
+ * Wake-delta high-water mark (HiveMemory HM-3 WP6): how much of each scope's
+ * wiki ingest log an agent has already been shown, persisted in the meta
+ * table so it survives daemon restart.
+ *
+ * Counts, not a `last_memory_seen_at` timestamp: log entries are day-granular
+ * (`## [YYYY-MM-DD] op | title`), so a timestamp cannot separate two writes
+ * on one day — the exact case the wake-delta contract is tested on. Entry
+ * counts are exact for an append-only log.
+ */
+export interface MemoryHighWater {
+  repo: number;
+  global: number;
+}
+
+const MemoryHighWaterSchema = z.object({
+  repo: z.number().int().nonnegative(),
+  global: z.number().int().nonnegative(),
+});
+
 const FactRowSchema = z.object({
   id: z.string(),
   kind: z.string(),
@@ -460,6 +480,37 @@ export class EpisodicStore {
       `DELETE FROM events WHERE id IN (${placeholders})`,
     ).run(...deletable);
     return deletable.length;
+  }
+
+  /**
+   * The agent's wake-delta high-water mark (HiveMemory HM-3 WP6), or null
+   * when none was ever seeded — a fresh agent whose spawn-time baseline was
+   * not recorded. A corrupt mark also reads as null: re-baselining silently
+   * is the safe degradation, because the alternative is flooding every
+   * future wake with the whole log.
+   */
+  memoryHighWater(agent: string): MemoryHighWater | null {
+    const row = this.database.query("SELECT value FROM meta WHERE key = ?")
+      .get(`memoryHighWater:${agent}`);
+    if (row === null) return null;
+    try {
+      return MemoryHighWaterSchema.parse(
+        JSON.parse(z.object({ value: z.string() }).parse(row).value),
+      );
+    } catch {
+      return null;
+    }
+  }
+
+  /** Persist the agent's wake-delta high-water mark after a delta was
+   * actually delivered — never before, or a failed delivery would silently
+   * skip the changes it carried. */
+  advanceMemoryHighWater(agent: string, mark: MemoryHighWater): void {
+    const value = JSON.stringify(MemoryHighWaterSchema.parse(mark));
+    this.database.query(`
+      INSERT INTO meta (key, value) VALUES (?, ?)
+      ON CONFLICT(key) DO UPDATE SET value = excluded.value
+    `).run(`memoryHighWater:${agent}`, value);
   }
 
   close(): void {

@@ -83,6 +83,11 @@ export const HiveConfigSchema = z.strictObject({
   lifecycle: LifecycleConfigSchema.prefault({}),
   memory: z.strictObject({
     retention: MemoryRetentionConfigSchema.prefault({}),
+    // HiveMemory HM-3 WP6 (plan D6): the hard token ceiling for the memory
+    // delta injected over the send lane when an agent wakes (message
+    // delivery or resume). 300 is the ratified default; changes are loud —
+    // the daemon logs the effective budget at start.
+    wake_budget_tokens: z.number().int().positive().default(300),
   }).prefault({}),
 });
 

@@ -40,6 +40,10 @@ function agentSessionLockKey(agent: AgentRecord): string {
 }
 import type { PaneProcessState } from "./resources";
 import { HiveDatabase } from "./db";
+import type {
+  ComposedMemoryDelta,
+  WakeDeltaProvider,
+} from "./memory-delta";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
@@ -343,6 +347,12 @@ export class MessageDelivery {
      * interim, #68). Absent → sessiond recipients stay durably queued, the
      * pre-wire behaviour. */
     private readonly sessiondInput?: SessiondAgentInput,
+    /** Wake-delta memory injection (HiveMemory HM-3 WP6): when present, a
+     * delivered message carries the bounded memory delta since the
+     * recipient's high-water mark, so recall is summoned on every wake over
+     * the send lane — no vendor hook required (Grok has none). Absent
+     * (embedded daemons, tests), delivery is byte-identical to before. */
+    private readonly wakeDelta?: WakeDeltaProvider,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -895,11 +905,61 @@ export class MessageDelivery {
     return this.markInjected(message);
   }
 
+  /**
+   * Compose the recipient's wake-delta block (HiveMemory HM-3 WP6). A delta
+   * failure must never block message delivery — the plain message goes out
+   * and the failure is logged, the same failure-isolation posture as every
+   * other memory maintenance path.
+   */
+  private async composeWakeDelta(
+    recipient: AgentRecord,
+  ): Promise<ComposedMemoryDelta | null> {
+    if (this.wakeDelta === undefined) return null;
+    try {
+      return await this.wakeDelta.compose(recipient);
+    } catch (error) {
+      console.error(
+        `Hive memory wake-delta for ${recipient.name} failed; delivering without it: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+      return null;
+    }
+  }
+
+  /** Advance the recipient's high-water mark — called only after the delta
+   * actually landed, so a failed delivery never silently skips the changes
+   * its delta carried. A failure here is safe: the next wake simply re-shows
+   * the same delta. */
+  private advanceWakeDelta(
+    recipient: AgentRecord,
+    delta: ComposedMemoryDelta | null,
+  ): void {
+    if (delta === null || this.wakeDelta === undefined) return;
+    try {
+      this.wakeDelta.advance(recipient, delta.advanceTo);
+    } catch (error) {
+      console.error(
+        `Hive could not advance ${recipient.name}'s memory high-water mark: ${
+          error instanceof Error ? error.message : "unknown error"
+        }`,
+      );
+    }
+  }
+
   private async deliver(
     message: AgentMessage,
     recipient: AgentRecord,
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
+    // Wake-delta injection (HiveMemory HM-3 WP6): the delta rides whatever
+    // text this delivery sends, visibly labeled as system-injected memory so
+    // it can never be mistaken for the sender's words. Composed once per
+    // attempt; the high-water mark advances only after the delivery lands.
+    const delta = await this.composeWakeDelta(recipient);
+    const text = delta === null
+      ? this.formatAgentMessage(message)
+      : `${this.formatAgentMessage(message)}\n\n${delta.block}`;
     // A sessiond-hosted pane has no tmux paste target: the tmux path below
     // cannot address it (reaching it once bounced hive_send with a false
     // "mismatched SessionLocator", and thrown from the flush loops it silently
@@ -921,7 +981,7 @@ export class MessageDelivery {
       try {
         result = await this.sessiondInput.injectIdle(
           recipient,
-          this.formatAgentMessage(message),
+          text,
           { messageId: message.id },
         );
       } catch (error) {
@@ -946,6 +1006,7 @@ export class MessageDelivery {
         return this.getStoredMessage(message.id);
       }
       const injected = this.markInjected(message);
+      this.advanceWakeDelta(recipient, delta);
       // A recovery destroyed somebody's unsubmitted draft to get this message
       // through. markInjected clears the row's failure diagnostic, so the audit
       // is written after it — a delivered row carrying its recovery note, which
@@ -959,7 +1020,6 @@ export class MessageDelivery {
       }
       return injected;
     }
-    const text = this.formatAgentMessage(message);
     const boundaryBefore = this.turnBoundaryAt(message.to);
     // A previous attempt that pasted without submitting left this message's
     // text sitting in the recipient's composer (2026-07-21 acceptance
@@ -1048,6 +1108,7 @@ export class MessageDelivery {
     if (delivered === null) {
       throw new Error(`Message disappeared during delivery: ${message.id}`);
     }
+    this.advanceWakeDelta(recipient, delta);
     return delivered;
   }
 
@@ -1077,7 +1138,10 @@ export class MessageDelivery {
     agent: AgentRecord,
   ): Promise<AgentMessage> {
     if (this.composerActive(message.to)) return this.getStoredMessage(message.id);
-    const text = this.formatAgentMessage(message);
+    const delta = await this.composeWakeDelta(agent);
+    const text = delta === null
+      ? this.formatAgentMessage(message)
+      : `${this.formatAgentMessage(message)}\n\n${delta.block}`;
     await this.nativeControl!.deliver(agent, text, {
       interrupt: message.priority === "urgent",
     });
@@ -1085,6 +1149,7 @@ export class MessageDelivery {
     if (delivered === null) {
       throw new Error(`Message disappeared during native delivery: ${message.id}`);
     }
+    this.advanceWakeDelta(agent, delta);
     return delivered;
   }
 

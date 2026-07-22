@@ -134,6 +134,7 @@ import {
 } from "./routing-policy-store";
 import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
+import { createWakeDeltaProvider } from "./memory-delta";
 import { harvestPitfalls } from "./pitfall-harvest";
 import {
   runRetentionSweep,
@@ -638,6 +639,11 @@ export interface HiveDaemonOptions {
    * WP3); stays off when omitted so embedded daemons never age out memory
    * state unasked. Also inert without an episodic store. */
   retention?: MemoryRetentionConfig;
+  /** Wake-delta memory injection budget (config `[memory]
+   * wake_budget_tokens`, HiveMemory HM-3 WP6, plan D6). The delta rides the
+   * send lane only when a budget AND an episodic store (the high-water
+   * marks) are both present, so embedded daemons never inject unasked. */
+  wakeBudgetTokens?: number;
   /** Test seams for the resource sweep's process interrogation. */
   resourceRunners?: {
     ps?: CommandOutput;
@@ -765,6 +771,7 @@ export class HiveDaemon {
   private readonly retentionConfig: MemoryRetentionConfig | null;
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
   private retentionRunning = false;
+  private readonly wakeBudgetTokens: number | null;
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
   private readonly panePids: (session: string) => Promise<number[]>;
@@ -1002,6 +1009,19 @@ export class HiveDaemon {
       // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
       // the viewer wire is the interim addition.
       this.sessiondInput,
+      // Wake-delta memory injection (HiveMemory HM-3 WP6): every delivery to
+      // an agent — an ordinary message, a queued flush, or the resume wake —
+      // carries the bounded delta since the agent's high-water mark, over the
+      // send lane so no vendor hook is required. repoRoot is read lazily
+      // because it is assigned later in this constructor.
+      this.episodic !== null && options.wakeBudgetTokens !== undefined
+        ? createWakeDeltaProvider({
+          repoRoot: () => this.repoRoot,
+          store: this.episodic,
+          memory: this.memory,
+          budgetTokens: options.wakeBudgetTokens,
+        })
+        : undefined,
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -1011,6 +1031,7 @@ export class HiveDaemon {
     this.resources = options.resources ?? null;
     this.lifecycleConfig = options.lifecycle ?? null;
     this.retentionConfig = options.retention ?? null;
+    this.wakeBudgetTokens = options.wakeBudgetTokens ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
     this.panePids = options.resourceRunners?.panePids ??
@@ -1363,6 +1384,16 @@ export class HiveDaemon {
       }, retention.sweep_interval_hours * 3_600_000);
       this.retentionTimer.unref?.();
       this.triggerMemoryRetentionSweep("startup");
+    }
+    // Wake-delta injection (HiveMemory HM-3 WP6, plan D6): the effective
+    // budget is logged every start — recall-budget changes are loud, the
+    // same posture as the retention config.
+    if (this.wakeBudgetTokens !== null && this.episodic !== null) {
+      console.log(
+        `Hive memory wake deltas: ${this.wakeBudgetTokens}-token budget, ` +
+          "injected over the send lane on message delivery and resume " +
+          "([memory] wake_budget_tokens)",
+      );
     }
     void this.runMaintenance().catch((error) => {
       console.error(

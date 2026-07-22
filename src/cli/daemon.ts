@@ -20,6 +20,7 @@ import {
 } from "../daemon/lifecycle";
 import { HiveDaemon } from "../daemon/server";
 import { EpisodicStore } from "../daemon/episodic-store";
+import { readWikiLog } from "../daemon/memory-delta";
 import {
   resolveSessiondBinary,
   SessiondBrokerSupervisor,
@@ -364,6 +365,14 @@ export async function runDaemon(): Promise<void> {
       prepare: () => daemon.prepareSessiondSpawn(),
       admit: (candidate) => daemon.admitSessiondSpawn(candidate),
     },
+    // HiveMemory HM-3 WP6: baseline the agent's wake-delta high-water mark
+    // at the memory state its spawn index just showed, so the first wake
+    // delta covers only post-spawn changes.
+    seedMemoryHighWater: async (agentName) => {
+      if (episodicStore === undefined) return;
+      const { totals } = await readWikiLog(repoRoot);
+      episodicStore.advanceMemoryHighWater(agentName, totals);
+    },
   });
   daemon = new HiveDaemon({
     ...terminalComposition.daemonDependencies,
@@ -388,6 +397,7 @@ export async function runDaemon(): Promise<void> {
     resources: config.resources,
     lifecycle: config.lifecycle,
     retention: config.memory.retention,
+    wakeBudgetTokens: config.memory.wake_budget_tokens,
     // One source of truth for autonomy: this very `config` object, which the
     // spawner also reads at each spawn. Persist first, mutate second — if the
     // disk write fails, the live value never diverges from the file.

@@ -50,6 +50,7 @@ describe("HiveConfigSchema", () => {
           stale_after_days: 90,
           sweep_interval_hours: 24,
         },
+        wake_budget_tokens: 300,
       },
     });
   });

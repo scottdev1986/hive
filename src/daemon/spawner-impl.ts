@@ -406,6 +406,14 @@ export interface HiveSpawnerDependencies {
     worktreePath: string,
     toolSessionId: string,
   ) => Promise<string | null>;
+  /**
+   * HiveMemory HM-3 WP6: seeds the wake-delta high-water mark for a freshly
+   * spawned agent to the current end of the wiki ingest log — the memory
+   * state its spawn index just showed it — so the agent's first wake delta
+   * covers only what changed after spawn. Absent (tests, unwired
+   * embedders), the wake path re-baselines silently on first delivery.
+   */
+  seedMemoryHighWater?: (agentName: string) => Promise<void>;
 }
 
 const AGENT_NAME_PATTERN = /^[a-z][a-z0-9-]{1,20}$/;
@@ -2213,6 +2221,20 @@ export class HiveSpawner implements Spawner {
           },
         ),
     ]);
+    // HiveMemory HM-3 WP6: the memory index this spawn just received is the
+    // agent's recall baseline — seed its wake-delta high-water mark to the
+    // current end of the wiki ingest log so its first wake delta covers only
+    // what changed after this moment. A seeding failure is logged, never a
+    // failed spawn: the wake path re-baselines silently when no mark exists.
+    await this.dependencies.seedMemoryHighWater?.(name).catch(
+      (error: unknown) => {
+        console.error(
+          `Hive could not seed ${name}'s memory high-water mark: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      },
+    );
     const timestamp = new Date().toISOString();
     // Grok's session id is named by Hive, not discovered afterwards. Claude and
     // Codex report theirs on hook traffic; Grok has no lifecycle hooks, so
