@@ -357,9 +357,12 @@ describe("a vendor TUI parked on an approval prompt", () => {
         return { outcome: "declined", reason: "not used in this test" };
       },
       async injectKeys(_agent, sent, options): Promise<SessiondInjectResult> {
-        keys.push(sent);
         started.resolve();
         await release.promise;
+        if (!options.isPromptPending()) {
+          return { outcome: "declined", reason: "approval prompt is stale" };
+        }
+        keys.push(sent);
         return { outcome: "injected", receipt: receipt(options.transactionId) };
       },
     };
@@ -390,8 +393,9 @@ describe("a vendor TUI parked on an approval prompt", () => {
       const pending = db.listApprovals("pending");
       expect(pending).toHaveLength(1);
       expect(pending[0]?.description).toEqual("Bash: command B");
+      expect(db.getApproval(oldId)?.status).toEqual("stale");
       expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
-      expect(keys).toEqual(["\u001b"]);
+      expect(keys).toEqual([]);
     });
   });
 
