@@ -324,7 +324,7 @@ test("visibility expiry audit follows sessiond kill evidence", async () => {
   db.bindTerminalHostSession({ locator, visibility: initialVisibility });
   db.completeTerminalHostSession(locator, {
     expectedExecutable: "/bin/sh",
-    executableVerified: true,
+    executableVerified: false,
     verifiedProviderRoot: null,
     geometry: {
       columns: 80,
@@ -351,6 +351,7 @@ test("visibility expiry audit follows sessiond kill evidence", async () => {
   let sourceObservation: "live" | "throw" = "live";
   let brokerAvailable = true;
   let killed = false;
+  let lifecycle: "creating" | "running" | "exited" = "running";
   let leaseExpiry = "2026-07-18T12:00:15.000Z";
   let visibilityTimer: ReturnType<typeof setTimeout> | undefined;
   const unsupported = async (): Promise<never> => {
@@ -367,7 +368,7 @@ test("visibility expiry audit follows sessiond kill evidence", async () => {
     const exit = killed ? { code: null, signal: 15, observedAt } : null;
     return {
       session,
-      lifecycle: killed ? "exited" : "running",
+      lifecycle,
       completeness: "complete",
       host: null,
       child: null,
@@ -497,9 +498,17 @@ test("visibility expiry audit follows sessiond kill evidence", async () => {
     expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
       .toBeUndefined();
 
+    // An in-progress session makes the adapter synthesize expiry, but its
+    // present vendor is still not evidence for a termination audit.
+    lifecycle = "creating";
+    expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+    expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
+      .toBeUndefined();
+
     // Sessiond's independent clock then kills the host; only this following
     // daemon observation writes the audit.
     killed = true;
+    lifecycle = "exited";
     events.push("visibility-kill");
     expect(events.at(-1)).toBe("visibility-kill");
     expect(db.getTerminalHostBindingByLocator(locator)?.terminationAudit)
