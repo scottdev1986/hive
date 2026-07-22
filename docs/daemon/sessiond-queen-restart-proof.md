@@ -111,7 +111,9 @@ SQL
 The preflight passes only when the returned locator has the manifest's exact
 `instanceId`, `subject.kind: "root"`, `hostKind: "sessiond"`, generation 1,
 a nonempty `engineBuildId`, non-null `createEvidence`, and a null termination
-audit. Record its session id and generation as `R0`. From queen, call
+audit. A separate read-only query must return zero agents rows named queen or
+orchestrator: the root has a terminal binding and turn events, never an
+assignment/landing record. Record its session id and generation as `R0`. From queen, call
 `hive_terminal_observe` for that exact session id and generation with
 `include: "metadata"` and `maxRows: 1`. Require the same locator, positive
 geometry, a decimal output sequence, `text: null`, and no scope or subject
