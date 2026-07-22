@@ -275,6 +275,8 @@ pub const RealVtEngine = struct {
             .deinitFn = deinitCb,
             .writeFn = writeCb,
             .exportFn = exportCb,
+            .exportStreamFn = exportStreamCb,
+            .cloneFn = cloneCb,
             .importFn = importCb,
             .digestFn = digestCb,
             .effectsFn = effectsCb,
@@ -324,6 +326,72 @@ pub const RealVtEngine = struct {
         return copy;
     }
 
+    fn exportStreamCb(
+        context: *anyopaque,
+        sink: terminal_state.OpaqueStreamSink,
+    ) anyerror!usize {
+        const self: *RealVtEngine = @ptrCast(@alignCast(context));
+        const Stream = struct {
+            sink: terminal_state.OpaqueStreamSink,
+            sha: std.crypto.hash.sha2.Sha256 = .init(.{}),
+            callback_error: ?anyerror = null,
+
+            fn write(
+                userdata: ?*anyopaque,
+                bytes: [*c]const u8,
+                length: usize,
+            ) callconv(.c) bridge_c.ghostty_result_e {
+                const state: *@This() = @ptrCast(@alignCast(userdata orelse
+                    return bridge_c.GHOSTTY_INVALID_VALUE));
+                if (length == 0 or bytes == null) return bridge_c.GHOSTTY_INVALID_VALUE;
+                const chunk = bytes[0..length];
+                state.sink.write(chunk) catch |err| {
+                    state.callback_error = err;
+                    return bridge_c.GHOSTTY_INVALID_VALUE;
+                };
+                state.sha.update(chunk);
+                return bridge_c.GHOSTTY_SUCCESS;
+            }
+        };
+        var stream: Stream = .{ .sink = sink };
+        var length: usize = 0;
+        self.bridge_exports += 1;
+        const result = bridge_c.hive_ghostty_terminal_checkpoint_export_stream_v1(
+            @ptrCast(self.terminal),
+            &Stream.write,
+            &stream,
+            &length,
+        );
+        if (stream.callback_error) |err| return err;
+        if (result != bridge_c.GHOSTTY_SUCCESS) return switch (result) {
+            bridge_c.GHOSTTY_OUT_OF_MEMORY => error.OutOfMemory,
+            bridge_c.GHOSTTY_OUT_OF_SPACE => error.PayloadTooLarge,
+            else => error.CheckpointExportFailed,
+        };
+        if (length == 0) return error.CheckpointExportFailed;
+        stream.sha.final(&self.digest_value);
+        self.digest_dirty = false;
+        return length;
+    }
+
+    fn cloneCb(context: *anyopaque, allocator: std.mem.Allocator) anyerror!terminal_state.VtEngine {
+        const self: *RealVtEngine = @ptrCast(@alignCast(context));
+        const clone = try RealVtEngine.create(
+            allocator,
+            self.columns,
+            self.rows,
+            self.effect_sink,
+        );
+        errdefer clone.engine().deinit();
+        try clone.resize(
+            self.columns,
+            self.rows,
+            self.cell_width_px,
+            self.cell_height_px,
+        );
+        return clone.engine();
+    }
+
     fn importCb(context: *anyopaque, payload: []const u8) anyerror!void {
         const self: *RealVtEngine = @ptrCast(@alignCast(context));
         if (bridge_c.hive_ghostty_terminal_checkpoint_import_v1(
@@ -331,7 +399,7 @@ pub const RealVtEngine = struct {
             payload.ptr,
             payload.len,
         ) != bridge_c.GHOSTTY_SUCCESS) return error.CheckpointImportFailed;
-        try self.updateDigest();
+        self.digest_dirty = true;
     }
 
     fn digestCb(context: *anyopaque) [32]u8 {
@@ -415,7 +483,7 @@ pub const RealVtEngine = struct {
         self.rows = rows;
         self.cell_width_px = cell_width_px;
         self.cell_height_px = cell_height_px;
-        try self.updateDigest();
+        self.digest_dirty = true;
     }
 
     fn resizeCb(
@@ -503,13 +571,11 @@ pub const RealVtEngine = struct {
     }
 
     fn updateDigest(self: *RealVtEngine) !void {
-        const bridge_bytes = try self.exportBridge();
-        defer c.free(bridge_bytes.pointer);
-        std.crypto.hash.sha2.Sha256.hash(
-            bridge_bytes.pointer[0..bridge_bytes.length],
-            &self.digest_value,
-            .{},
-        );
+        const Discard = struct {
+            fn write(_: *anyopaque, _: []const u8) anyerror!void {}
+        };
+        var discard: u8 = 0;
+        _ = try exportStreamCb(self, .{ .context = &discard, .writeFn = Discard.write });
     }
 
     fn factoryCreate(
@@ -3380,29 +3446,37 @@ pub const HostCore = struct {
             .width_px = request.window.widthPixels,
             .height_px = request.window.heightPixels,
         };
+        var prepared = state.prepareResize(.{
+            .columns = geometry.columns,
+            .rows = geometry.rows,
+            .cell_width_px_16_16 = cellFixed16_16(geometry.width_px, geometry.columns),
+            .cell_height_px_16_16 = cellFixed16_16(geometry.height_px, geometry.rows),
+        }) catch |err| {
+            replay.result = .{ .unknown = @errorName(err) };
+            return self.encodeResizeApplied(replay.result.?);
+        };
+        defer prepared.deinit();
+        state.applyPreparedResize(&prepared) catch |err| {
+            replay.result = .{ .unknown = @errorName(err) };
+            return self.encodeResizeApplied(replay.result.?);
+        };
         const receipt = binding.pty.resize(geometry, revision) catch |err| {
+            state.rollbackPreparedResize(&prepared) catch {
+                state.reconnect_available = false;
+                replay.result = .{ .unknown = "CheckpointUnavailable" };
+                return self.encodeResizeApplied(replay.result.?);
+            };
             replay.result = if (err == error.StaleResizeRevision)
                 .{ .stale = binding.pty.resizeRevision() }
             else
                 .{ .unknown = @errorName(err) };
             return self.encodeResizeApplied(replay.result.?);
         };
+        state.finalizePreparedResize(&prepared);
         self.registration.record.geometry.columns = @intCast(receipt.readback.columns);
         self.registration.record.geometry.rows = @intCast(receipt.readback.rows);
         self.registration.record.geometry.width_px = receipt.readback.width_px;
         self.registration.record.geometry.height_px = receipt.readback.height_px;
-        // The shadow VT follows the applied window so future checkpoints carry
-        // the real geometry (§23: a checkpoint restore renders at the live
-        // size, not the create-time 80x24).
-        state.resize(.{
-            .columns = receipt.readback.columns,
-            .rows = receipt.readback.rows,
-            .cell_width_px_16_16 = cellFixed16_16(receipt.readback.width_px, receipt.readback.columns),
-            .cell_height_px_16_16 = cellFixed16_16(receipt.readback.height_px, receipt.readback.rows),
-        }) catch |err| {
-            replay.result = .{ .unknown = @errorName(err) };
-            return self.encodeResizeApplied(replay.result.?);
-        };
         replay.result = .{ .applied = receipt };
         return self.encodeResizeApplied(replay.result.?);
     }
@@ -4690,11 +4764,11 @@ fn beginViewerStream(
             try writeHostFailure(allocator, stream, attach_header, .checkpoint_unavailable);
             return error.CheckpointUnavailable;
         }
-        const file = checkpoint.file;
+        var buffer: [terminal_state.checkpoint_stream_chunk_bytes]u8 = undefined;
         var offset: usize = 0;
-        while (offset < file.len) {
-            const take = @min(generated.limits.stream_chunk_bytes, file.len - offset);
-            const final_flag: u16 = if (offset + take == file.len)
+        while (offset < checkpoint.totalBytes()) {
+            const take = try checkpoint.readAt(&buffer, offset);
+            const final_flag: u16 = if (offset + take == checkpoint.totalBytes())
                 generated.frame_flag.final
             else
                 0;
@@ -4705,7 +4779,7 @@ fn beginViewerStream(
                 .payload_length = @intCast(take),
                 .request_id = authorized.attach_request_id,
                 .stream_seq = @intCast(offset),
-            }, file[offset..][0..take]);
+            }, buffer[0..take]);
             offset += take;
         }
         base = through_seq;
@@ -5103,20 +5177,30 @@ const NeutralTerminalSource = struct {
         const self: *NeutralTerminalSource = @ptrCast(@alignCast(context));
         const columns = std.math.add(u32, window.columns, self.test_resize_columns_adjustment) catch
             return error.InvalidGeometry;
+        var prepared = try self.state.prepareResize(.{
+            .columns = columns,
+            .rows = window.rows,
+            .cell_width_px_16_16 = cellFixed16_16(window.widthPixels, columns),
+            .cell_height_px_16_16 = cellFixed16_16(window.heightPixels, window.rows),
+        });
+        defer prepared.deinit();
+        try self.state.applyPreparedResize(&prepared);
         const receipt = self.pty.resize(.{
             .columns = columns,
             .rows = window.rows,
             .width_px = window.widthPixels,
             .height_px = window.heightPixels,
         }, revision) catch |err| switch (err) {
-            // The PTY is the authority on its own revision order. Report the
-            // order it is actually in so a caller retrying a revision the
-            // terminal already holds can be reconciled instead of refused with
-            // a number that is in force nowhere.
-            error.StaleResizeRevision => return .{ .superseded = try self.current() },
-            else => return err,
+            error.StaleResizeRevision => {
+                try self.state.rollbackPreparedResize(&prepared);
+                return .{ .superseded = try self.current() };
+            },
+            else => {
+                try self.state.rollbackPreparedResize(&prepared);
+                return err;
+            },
         };
-        try self.followShadow(receipt.readback);
+        self.state.finalizePreparedResize(&prepared);
         return .{ .applied = .{
             .revision = receipt.revision,
             .orderedAt = receipt.ordered_at,
@@ -5132,21 +5216,26 @@ const NeutralTerminalSource = struct {
     /// shadow is brought into agreement here too, and if it cannot be, this
     /// reports nothing applied at all.
     fn current(self: *NeutralTerminalSource) !neutral_control_plane.AppliedResize {
-        try self.followShadow(self.pty.geometry);
+        var prepared = try self.state.prepareResize(.{
+            .columns = self.pty.geometry.columns,
+            .rows = self.pty.geometry.rows,
+            .cell_width_px_16_16 = cellFixed16_16(
+                self.pty.geometry.width_px,
+                self.pty.geometry.columns,
+            ),
+            .cell_height_px_16_16 = cellFixed16_16(
+                self.pty.geometry.height_px,
+                self.pty.geometry.rows,
+            ),
+        });
+        defer prepared.deinit();
+        try self.state.applyPreparedResize(&prepared);
+        self.state.finalizePreparedResize(&prepared);
         return .{
             .revision = self.pty.resizeRevision(),
             .orderedAt = self.pty.resizeOrderedAt(),
             .readback = neutralWindow(self.pty.geometry),
         };
-    }
-
-    fn followShadow(self: *NeutralTerminalSource, geometry: pty_host.Geometry) !void {
-        try self.state.resize(.{
-            .columns = geometry.columns,
-            .rows = geometry.rows,
-            .cell_width_px_16_16 = cellFixed16_16(geometry.width_px, geometry.columns),
-            .cell_height_px_16_16 = cellFixed16_16(geometry.height_px, geometry.rows),
-        });
     }
 
     fn neutralWindow(geometry: pty_host.Geometry) neutral_host.WindowSize {
@@ -5175,14 +5264,27 @@ const NeutralLiveEvidenceSource = struct {
         const self: *NeutralLiveEvidenceSource = @ptrCast(@alignCast(context));
         var diagnostics: std.ArrayList([]const u8) = .{};
         const foreground_process_group_id: ?i32 = self.pty.foregroundProcessGroupId() catch null;
-        const newest_checkpoint: ?neutral_control_plane.CheckpointSnapshot =
-            if (self.state.newestCheckpoint()) |checkpoint| .{
-                .contentType = "application/vnd.hive.terminal-checkpoint",
-                .schemaVersion = "HVTCP001",
-                .throughEventSequence = checkpoint.header.through_seq,
-                .throughOutputOffset = checkpoint.header.through_seq,
-                .opaqueBytes = checkpoint.opaquePayload(),
-            } else null;
+        var newest_checkpoint: ?neutral_control_plane.CheckpointSnapshot = null;
+        if (self.state.newestCheckpoint()) |checkpoint| {
+            const encoded_size = std.base64.standard.Encoder.calcSize(
+                checkpoint.header.payload_length,
+            );
+            if (encoded_size > generated.limits.control_json_bytes) {
+                try diagnostics.append(allocator, "checkpoint-body-exceeds-control-frame");
+                try diagnostics.append(
+                    allocator,
+                    "checkpoint-body-omitted-from-bounded-control-projection",
+                );
+            } else {
+                newest_checkpoint = .{
+                    .contentType = "application/vnd.hive.terminal-checkpoint",
+                    .schemaVersion = "HVTCP001",
+                    .throughEventSequence = checkpoint.header.through_seq,
+                    .throughOutputOffset = checkpoint.header.through_seq,
+                    .opaqueBytes = try checkpoint.readOpaqueAlloc(allocator),
+                };
+            }
+        }
         var input_owner: ?neutral_control_plane.WireInputClaim = null;
         // Active claim first; otherwise the retained orphan still names the
         // input owner of record while the arbiter holds HUMAN_ORPHANED (#40).
@@ -5565,6 +5667,7 @@ pub fn runHostRole(
             .cell_width_px_16_16 = try geometryFixed16_16(spec.value.geometry.cellWidthPx),
             .cell_height_px_16_16 = try geometryFixed16_16(spec.value.geometry.cellHeightPx),
         },
+        runtime.directory,
     );
     defer state.deinit();
     const real_encoder = try RealInputEncoder.create(allocator, real_engine);
@@ -6000,6 +6103,8 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
     try std.testing.expect(real_engine.last_bridge_address != real_engine.last_copy_address);
 
     const engine_build_id = try RealVtEngine.engineBuildId();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
     var state = terminal_state.TerminalState.init(
         std.testing.allocator,
         engine,
@@ -6012,14 +6117,13 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
             .cell_width_px_16_16 = 10 << 16,
             .cell_height_px_16_16 = 20 << 16,
         },
+        temporary.dir,
     );
     defer state.deinit();
     try state.feedOutput("checkpoint-me");
     try state.tryCheckpoint();
     try std.testing.expect(state.checkpointAvailable());
     try std.testing.expect(checkpointWireSeq(&state) == state.outputSeq());
-    var temporary = std.testing.tmpDir(.{});
-    defer temporary.cleanup();
     var cursor: PersistenceCursor = .{};
     try persistTerminalState(&state, temporary.dir, &cursor, .forced);
     const first_checkpoint = try std.posix.fstatat(
@@ -6039,12 +6143,22 @@ test "real libghostty-vt export is copied and TerminalState is sole engine owner
     // deferred deinit is the single destruction path.
 }
 
-test "real VT constructor retains tmux-equivalent scrollback from its actual budget" {
+test "48 MiB scrollback survives 500x500 streamed checkpoint and real lib-vt restore" {
     const allocator = std.testing.allocator;
     const real_engine = try RealVtEngine.create(allocator, 80, 24, null);
-    defer real_engine.engine().deinit();
 
-    const line_count = 60_000;
+    var image_limit: u64 = 0;
+    try std.testing.expectEqual(
+        ghostty_c.GHOSTTY_SUCCESS,
+        ghostty_c.ghostty_terminal_get(
+            real_engine.terminal,
+            ghostty_c.GHOSTTY_TERMINAL_DATA_KITTY_IMAGE_STORAGE_LIMIT,
+            &image_limit,
+        ),
+    );
+    try std.testing.expectEqual(@as(u64, 16 * 1024 * 1024), image_limit);
+
+    const line_count = 80_000;
     const columns = 79;
     const stride = columns + 2;
     const history = try allocator.alloc(u8, line_count * stride);
@@ -6057,18 +6171,106 @@ test "real VT constructor retains tmux-equivalent scrollback from its actual bud
     }
     try real_engine.engine().write(history);
 
-    var scrollback_rows: usize = 0;
+    var total_rows_before: usize = 0;
+    var scrollback_rows_before: usize = 0;
+    try std.testing.expectEqual(
+        ghostty_c.GHOSTTY_SUCCESS,
+        ghostty_c.ghostty_terminal_get(
+            real_engine.terminal,
+            ghostty_c.GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
+            &total_rows_before,
+        ),
+    );
     try std.testing.expectEqual(
         ghostty_c.GHOSTTY_SUCCESS,
         ghostty_c.ghostty_terminal_get(
             real_engine.terminal,
             ghostty_c.GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
-            &scrollback_rows,
+            &scrollback_rows_before,
         ),
     );
     // Replacing the constructor's actual option with 50_000 bytes retains
     // about 800 rows and makes this direct behavioral proof fail.
-    try std.testing.expect(scrollback_rows >= 50_000);
+    try std.testing.expectEqual(@as(usize, 71_727), total_rows_before);
+    try std.testing.expectEqual(@as(usize, 71_703), scrollback_rows_before);
+
+    const TestClock = struct {
+        fn now(_: *anyopaque) u64 {
+            return 1;
+        }
+    };
+    var clock_context: u8 = 0;
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const engine_build_id = try RealVtEngine.engineBuildId();
+    var state = terminal_state.TerminalState.init(
+        allocator,
+        real_engine.engine(),
+        RealVtEngine.factory(),
+        .{ .context = &clock_context, .nowFn = TestClock.now },
+        &engine_build_id,
+        .{
+            .columns = 80,
+            .rows = 24,
+            .cell_width_px_16_16 = 8 << 16,
+            .cell_height_px_16_16 = 16 << 16,
+        },
+        temporary.dir,
+    );
+    defer state.deinit();
+    try state.resize(.{
+        .columns = 500,
+        .rows = 500,
+        .cell_width_px_16_16 = 8 << 16,
+        .cell_height_px_16_16 = 16 << 16,
+    });
+
+    const checkpoint = state.newestCheckpoint() orelse return error.TestUnexpectedResult;
+    // Mutation control: restoring the old 64 MiB allocating producer makes
+    // this exact test fail before a checkpoint can be retained.
+    try std.testing.expect(checkpoint.header.payload_length >
+        terminal_state.checkpoint_contiguous_max_bytes);
+    try std.testing.expectEqual(@as(u32, 309_929_873), checkpoint.header.payload_length);
+    try std.testing.expect(checkpoint.header.payload_length <=
+        terminal_state.checkpoint_max_bytes);
+    try std.testing.expect(state.checkpointAvailable());
+
+    const restored = try RealVtEngine.create(allocator, 80, 24, null);
+    defer restored.engine().deinit();
+    _ = try state.restoreInto(restored.engine());
+    const live_digest = state.engine.digest();
+    const restored_digest = restored.engine().digest();
+    try std.testing.expectEqualSlices(u8, &live_digest, &restored_digest);
+
+    var live_total_rows: usize = 0;
+    var live_scrollback_rows: usize = 0;
+    var restored_total_rows: usize = 0;
+    var restored_scrollback_rows: usize = 0;
+    for ([_]struct { terminal: ghostty_c.GhosttyTerminal, total: *usize, scrollback: *usize }{
+        .{ .terminal = real_engine.terminal, .total = &live_total_rows, .scrollback = &live_scrollback_rows },
+        .{ .terminal = restored.terminal, .total = &restored_total_rows, .scrollback = &restored_scrollback_rows },
+    }) |measurement| {
+        try std.testing.expectEqual(
+            ghostty_c.GHOSTTY_SUCCESS,
+            ghostty_c.ghostty_terminal_get(
+                measurement.terminal,
+                ghostty_c.GHOSTTY_TERMINAL_DATA_TOTAL_ROWS,
+                measurement.total,
+            ),
+        );
+        try std.testing.expectEqual(
+            ghostty_c.GHOSTTY_SUCCESS,
+            ghostty_c.ghostty_terminal_get(
+                measurement.terminal,
+                ghostty_c.GHOSTTY_TERMINAL_DATA_SCROLLBACK_ROWS,
+                measurement.scrollback,
+            ),
+        );
+    }
+    try std.testing.expectEqual(live_total_rows, restored_total_rows);
+    try std.testing.expectEqual(live_scrollback_rows, restored_scrollback_rows);
+    try std.testing.expectEqual(@as(usize, 71_727), live_total_rows);
+    try std.testing.expectEqual(@as(usize, 71_227), live_scrollback_rows);
 }
 
 /// Reads every byte already buffered on `stream` without blocking.
@@ -6104,6 +6306,8 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
 
     const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     const engine_build_id = try RealVtEngine.engineBuildId();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
     var state = terminal_state.TerminalState.init(
         std.testing.allocator,
         real_engine.engine(),
@@ -6116,6 +6320,7 @@ test "a checkpoint inside feedOutput never detaches the attached viewer" {
             .cell_width_px_16_16 = 10 << 16,
             .cell_height_px_16_16 = 20 << 16,
         },
+        temporary.dir,
     );
     defer state.deinit();
 
@@ -6197,6 +6402,8 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
 
     const real_engine = try RealVtEngine.create(std.testing.allocator, 80, 24, null);
     const engine_build_id = try RealVtEngine.engineBuildId();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
     var state = terminal_state.TerminalState.init(
         std.testing.allocator,
         real_engine.engine(),
@@ -6204,6 +6411,7 @@ test "retention loss detaches a viewer whose unacknowledged window is full" {
         .{ .context = &clock_context, .nowFn = StoppedClock.now },
         &engine_build_id,
         .{ .columns = 80, .rows = 24 },
+        temporary.dir,
     );
     defer state.deinit();
 
@@ -7517,6 +7725,7 @@ test "freeze E: 100 MiB producer bounds retention, keeps byte integrity, and gap
             .cell_width_px_16_16 = 8 << 16,
             .cell_height_px_16_16 = 16 << 16,
         },
+        tmp.dir,
     );
     defer state.deinit();
 
@@ -8982,7 +9191,8 @@ comptime {
 /// about VT fidelity.
 const BrittleShadowEngine = struct {
     allocator: std.mem.Allocator,
-    fail_resize: bool = false,
+    fail_export: bool = false,
+    fail_clone_export: bool = false,
     resizes: usize = 0,
     columns: u32 = 0,
     rows: u32 = 0,
@@ -8999,6 +9209,7 @@ const BrittleShadowEngine = struct {
             .deinitFn = deinitCb,
             .writeFn = writeCb,
             .exportFn = exportCb,
+            .cloneFn = cloneCb,
             .importFn = importCb,
             .digestFn = digestCb,
             .effectsFn = effectsCb,
@@ -9013,8 +9224,20 @@ const BrittleShadowEngine = struct {
 
     fn writeCb(_: *anyopaque, _: []const u8) anyerror!void {}
 
-    fn exportCb(_: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 {
+    fn exportCb(context: *anyopaque, allocator: std.mem.Allocator) anyerror![]u8 {
+        const self: *BrittleShadowEngine = @ptrCast(@alignCast(context));
+        if (self.fail_export) return error.CheckpointExportFailed;
         return allocator.dupe(u8, "brittle-shadow");
+    }
+
+    fn cloneCb(context: *anyopaque, allocator: std.mem.Allocator) anyerror!terminal_state.VtEngine {
+        const self: *BrittleShadowEngine = @ptrCast(@alignCast(context));
+        const clone = try BrittleShadowEngine.create(allocator);
+        clone.fail_export = self.fail_clone_export;
+        clone.fail_clone_export = self.fail_clone_export;
+        clone.columns = self.columns;
+        clone.rows = self.rows;
+        return clone.engine();
     }
 
     fn importCb(_: *anyopaque, _: []const u8) anyerror!void {}
@@ -9030,7 +9253,6 @@ const BrittleShadowEngine = struct {
     fn resizeCb(context: *anyopaque, columns: u32, rows: u32, _: u32, _: u32) anyerror!void {
         const self: *BrittleShadowEngine = @ptrCast(@alignCast(context));
         self.resizes += 1;
-        if (self.fail_resize) return error.ShadowResizeRefused;
         self.columns = columns;
         self.rows = rows;
     }
@@ -9073,6 +9295,8 @@ test "neutral resize drives the production adapter across both representations" 
     const shadow = try BrittleShadowEngine.create(allocator);
     var clock_context: u8 = 0;
     const engine_build_id = try RealVtEngine.engineBuildId();
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
     var state = terminal_state.TerminalState.init(
         allocator,
         shadow.engine(),
@@ -9080,6 +9304,7 @@ test "neutral resize drives the production adapter across both representations" 
         .{ .context = &clock_context, .nowFn = BrittleClock.now },
         &engine_build_id,
         .{ .columns = 80, .rows = 24, .cell_width_px_16_16 = 10 << 16, .cell_height_px_16_16 = 20 << 16 },
+        temporary.dir,
     );
     defer state.deinit();
 
@@ -9104,39 +9329,37 @@ test "neutral resize drives the production adapter across both representations" 
         },
         .superseded => return error.UnexpectedSupersession,
     }
-    try std.testing.expectEqual(@as(u32, 101), shadow.columns);
-    try std.testing.expectEqual(@as(u32, 30), shadow.rows);
+    var live_shadow: *BrittleShadowEngine = @ptrCast(@alignCast(state.engine.context));
+    try std.testing.expectEqual(@as(u32, 101), live_shadow.columns);
+    try std.testing.expectEqual(@as(u32, 30), live_shadow.rows);
     source.test_resize_columns_adjustment = 0;
 
-    // Now fail the SHADOW half. The PTY moves, the shadow cannot follow, and
-    // the outcome must be a failure -- never an applied receipt for a geometry
-    // only half the terminal holds.
-    shadow.fail_resize = true;
+    // Mutation control for the old PTY-first ordering: fail the candidate's
+    // post-resize export. Neither the PTY nor live renderer may move, and the
+    // already verified base checkpoint must keep reattachability observable.
+    live_shadow.fail_clone_export = true;
     const divergent: neutral_host.WindowSize = .{
         .columns = 120,
         .rows = 40,
         .widthPixels = 1200,
         .heightPixels = 800,
     };
-    try std.testing.expectError(error.Internal, provider.resize(divergent, 2));
-    try std.testing.expectEqual(@as(u32, 120), pty.geometry.columns);
-    try std.testing.expectEqual(@as(u32, 101), shadow.columns);
+    try std.testing.expectError(error.CheckpointUnavailable, provider.resize(divergent, 2));
+    try std.testing.expectEqual(@as(u32, 101), pty.geometry.columns);
+    live_shadow = @ptrCast(@alignCast(state.engine.context));
+    try std.testing.expectEqual(@as(u32, 101), live_shadow.columns);
+    try std.testing.expect(state.checkpointAvailable());
 
-    // The retry finds the PTY already at revision 2. Reconciliation must NOT
-    // report applied while the shadow is still behind: repairing the registry
-    // for a checkpoint-divergent geometry is exactly the defect.
-    try std.testing.expectError(error.Internal, provider.resize(divergent, 2));
-
-    // Once the shadow can follow again, the retry reconciles BOTH and only then
-    // reports the revision as applied.
-    shadow.fail_resize = false;
+    // Once export succeeds, the same revision commits both representations.
+    live_shadow.fail_clone_export = false;
     switch (try provider.resize(divergent, 2)) {
-        .applied => return error.SupersessionExpectedAfterPtyAdvance,
-        .superseded => |current| {
-            try std.testing.expectEqual(@as(u64, 2), current.revision);
-            try std.testing.expectEqual(@as(u32, 120), current.readback.columns);
+        .applied => |applied| {
+            try std.testing.expectEqual(@as(u64, 2), applied.revision);
+            try std.testing.expectEqual(@as(u32, 120), applied.readback.columns);
         },
+        .superseded => return error.UnexpectedSupersession,
     }
-    try std.testing.expectEqual(@as(u32, 120), shadow.columns);
-    try std.testing.expectEqual(@as(u32, 40), shadow.rows);
+    live_shadow = @ptrCast(@alignCast(state.engine.context));
+    try std.testing.expectEqual(@as(u32, 120), live_shadow.columns);
+    try std.testing.expectEqual(@as(u32, 40), live_shadow.rows);
 }

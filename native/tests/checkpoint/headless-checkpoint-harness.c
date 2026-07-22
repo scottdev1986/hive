@@ -14,7 +14,8 @@
  * version u16(2) + engine build id (self-hashing identity string starting
  * at offset 10: pinned commit + zig toolchain shas + the patch sources
  * themselves) + structural terminal/handler/pending state, bounded at
- * max_payload_bytes (64 MiB). decode() validates magic, version, build
+ * max_payload_bytes (512 MiB; legacy allocating export stays at 64 MiB).
+ * decode() validates magic, version, build
  * id, structural completeness (r.done()), and the size bound. It has NO
  * body integrity digest BY DESIGN: at-rest/in-flight integrity is the
  * HOST transport envelope's job (HVTCP001, which carries a payload
@@ -39,6 +40,11 @@ extern GhosttyResult hive_ghostty_terminal_checkpoint_export_v1(
     GhosttyTerminal terminal,
     void *(*alloc_fn)(void *context, size_t length, size_t alignment),
     void *context, uint8_t **payload, size_t *length);
+typedef GhosttyResult (*hive_checkpoint_write_fn)(
+    void *context, const uint8_t *bytes, size_t length);
+extern GhosttyResult hive_ghostty_terminal_checkpoint_export_stream_v1(
+    GhosttyTerminal terminal, hive_checkpoint_write_fn write_fn, void *context,
+    size_t *length);
 extern GhosttyResult hive_ghostty_terminal_checkpoint_import_v1(
     GhosttyTerminal terminal, const uint8_t *payload, size_t length);
 
@@ -193,6 +199,77 @@ static void write_corpus_fixtures(const char *out_dir, const char *build_id) {
   }
 }
 
+struct file_sink {
+  FILE *file;
+  size_t max_chunk;
+};
+
+static GhosttyResult write_checkpoint_chunk(
+    void *context, const uint8_t *bytes, size_t length) {
+  struct file_sink *sink = context;
+  if (sink == NULL || sink->file == NULL || bytes == NULL || length == 0 ||
+      length > 64U * 1024U)
+    return GHOSTTY_INVALID_VALUE;
+  if (length > sink->max_chunk) sink->max_chunk = length;
+  return fwrite(bytes, 1, length, sink->file) == length
+             ? GHOSTTY_SUCCESS
+             : GHOSTTY_OUT_OF_SPACE;
+}
+
+static void write_deep_scrollback_fixture(const char *out_dir) {
+  GhosttyTerminal terminal = NULL;
+  GhosttyTerminalOptions opts;
+  memset(&opts, 0, sizeof(opts));
+  opts.cols = 80;
+  opts.rows = 24;
+  opts.max_scrollback = 48U * 1024U * 1024U;
+  CHECK(ghostty_terminal_new(NULL, &terminal, opts) == GHOSTTY_SUCCESS,
+        "deep terminal created");
+  if (terminal == NULL) return;
+
+  uint64_t image_limit = 16U * 1024U * 1024U;
+  CHECK(ghostty_terminal_set(
+            terminal, GHOSTTY_TERMINAL_OPT_KITTY_IMAGE_STORAGE_LIMIT,
+            &image_limit) == GHOSTTY_SUCCESS,
+        "deep terminal image cap applied");
+  uint8_t line[81];
+  memset(line, 'x', 79);
+  line[79] = '\r';
+  line[80] = '\n';
+  for (size_t index = 0; index < 80000; index++)
+    ghostty_terminal_vt_write(terminal, line, sizeof(line));
+
+  CHECK(ghostty_terminal_resize(terminal, 500, 500, 8, 16) == GHOSTTY_SUCCESS,
+        "deep terminal resized to 500x500");
+
+  char path[4096];
+  const int path_length = snprintf(
+      path, sizeof(path), "%s/deep-500x500.hvgcp", out_dir);
+  CHECK(path_length > 0 && (size_t)path_length < sizeof(path),
+        "deep fixture path fits");
+  if (path_length <= 0 || (size_t)path_length >= sizeof(path)) {
+    ghostty_terminal_free(terminal);
+    return;
+  }
+  FILE *file = fopen(path, "wb");
+  CHECK(file != NULL, "deep fixture opened");
+  if (file != NULL) {
+    struct file_sink sink = {.file = file, .max_chunk = 0};
+    size_t length = 0;
+    CHECK(hive_ghostty_terminal_checkpoint_export_stream_v1(
+              terminal, write_checkpoint_chunk, &sink, &length) ==
+              GHOSTTY_SUCCESS,
+          "deep checkpoint streamed");
+    CHECK(length > 64U * 1024U * 1024U,
+          "deep checkpoint crosses legacy contiguous cap");
+    CHECK(length <= 512U * 1024U * 1024U,
+          "deep checkpoint stays within semantic cap");
+    CHECK(sink.max_chunk <= 64U * 1024U, "deep checkpoint chunks bounded");
+    CHECK(fclose(file) == 0, "deep fixture closed");
+  }
+  ghostty_terminal_free(terminal);
+}
+
 /* Deterministic PRNG — no time/random seeding, reproducible corpus. */
 static uint64_t rng_state = 0x9e3779b97f4a7c15ULL;
 static uint64_t rng_next(void) {
@@ -340,6 +417,7 @@ int main(int argc, char **argv) {
    * the real embedded surface. The manifest lets Swift prove that it is
    * consuming this exact C-authored corpus rather than a duplicated fake. */
   if (out_dir != NULL) write_corpus_fixtures(out_dir, build_id);
+  if (out_dir != NULL) write_deep_scrollback_fixture(out_dir);
 
   free(pay1);
   ghostty_terminal_free(author);

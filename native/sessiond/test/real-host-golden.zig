@@ -391,8 +391,13 @@ fn runGolden(allocator: std.mem.Allocator) !void {
         return error.NeutralHostControlUnavailable;
     if (std.mem.indexOf(u8, inspected, "live-evidence-provider-unavailable") != null)
         return error.LiveEvidenceProviderUnavailable;
+    const bounded_checkpoint_projection =
+        std.mem.indexOf(u8, inspected, "checkpoint-body-exceeds-control-frame") != null and
+        std.mem.indexOf(u8, inspected, "checkpoint-body-omitted-from-bounded-control-projection") != null;
     if (!std.mem.eql(u8, parsed_inspected.value.lifecycle, "running") or
-        !std.mem.eql(u8, parsed_inspected.value.completeness, "complete") or
+        (!std.mem.eql(u8, parsed_inspected.value.completeness, "complete") and
+            !(bounded_checkpoint_projection and
+                std.mem.eql(u8, parsed_inspected.value.completeness, "partial"))) or
         parsed_inspected.value.jobControl == null or
         parsed_inspected.value.jobControl.?.foregroundProcessGroupId <= 0 or
         !std.mem.eql(u8, parsed_inspected.value.jobControl.?.completeness, "complete") or

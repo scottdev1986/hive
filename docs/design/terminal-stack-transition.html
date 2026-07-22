@@ -902,9 +902,9 @@ test/terminal-corpus/                   # VT traces + provider workflows</pre>
               <tr><td>Automated message</td><td><strong>1 MiB aggregate UTF-8 bytes</strong></td><td><code>PAYLOAD_TOO_LARGE</code>; no partial PTY write.</td></tr>
               <tr><td>Viewer queue</td><td><strong>8 MiB unacknowledged output</strong></td><td>Viewer receives <code>REBASE_REQUIRED</code>; if it does not reattach within 5 seconds, host detaches it.</td></tr>
               <tr><td>Replay journal</td><td><strong>64 MiB per generation</strong></td><td>Create a checkpoint before eviction. If no valid checkpoint can be made, mark reconnect unavailable but continue draining the PTY.</td></tr>
-              <tr><td>Checkpoints</td><td><strong>2 retained · 64 MiB each</strong></td><td>Newest valid plus previous valid are retained. Oversize/failure emits <code>CHECKPOINT_UNAVAILABLE</code>; required replay bytes are not silently discarded.</td></tr>
+              <tr><td>Checkpoints</td><td><strong>2 retained · 512 MiB semantic ceiling each</strong></td><td>Newest valid plus previous valid are file-backed and streamed in 64 KiB chunks. The legacy allocating producer remains capped at 64 MiB. Oversize/failure emits <code>CHECKPOINT_UNAVAILABLE</code>; required replay bytes are not silently discarded.</td></tr>
               <tr><td>Terminal disk</td><td><strong>2 GiB per HIVE_HOME</strong></td><td>Stop admitting sessions and images; preserve live PTYs and surface operator attention.</td></tr>
-              <tr><td>Scrollback</td><td><strong>48 MiB terminal-state scrollback budget</strong><span>Retained row count depends on content and geometry.</span></td><td>Ghostty interprets <code>max_scrollback</code> as bytes, not logical lines. The current 48 MiB plus 16 MiB image caps leave zero checkpoint headroom; #112 must preserve reattachability before making sessiond the root default.</td></tr>
+              <tr><td>Scrollback</td><td><strong>48 MiB terminal-state scrollback budget</strong><span>Retained row count depends on content and geometry.</span></td><td>Ghostty interprets <code>max_scrollback</code> as bytes, not logical lines. The measured 500×500 checkpoint plus the separate 16 MiB image allowance leaves 200.428 MiB beneath the streamed semantic ceiling; #112 still gates the root-default lifecycle flip.</td></tr>
               <tr><td>Terminal geometry</td><td><strong>1–1000 cells per dimension · 250,000 active cells maximum</strong></td><td>Resize outside either bound is refused and the last valid PTY geometry remains active.</td></tr>
               <tr><td>Kitty images</td><td><strong>16 MiB decoded storage per generation</strong></td><td>Reject new image payloads with a terminal diagnostic; PTY remains live.</td></tr>
               <tr><td>Timeouts</td><td><strong>10 s control RPC · 30 s attach · 5 s visibility renewal · 15 s visibility expiry</strong></td><td>A request timeout does not invent lifecycle state. A generation may run without an idle deadline while its lease is current; lease expiry starts verified graceful termination.</td></tr>
@@ -1435,7 +1435,7 @@ ghostty_result_e hive_ghostty_terminal_checkpoint_import_v1(
               <tr><td>columns / rows</td><td>4 / 4</td><td>Canonical terminal cell geometry.</td></tr>
               <tr><td>cellWidthPx / cellHeightPx</td><td>4 / 4</td><td>Unsigned fixed-point 16.16 values; zero when no viewer has established pixels.</td></tr>
               <tr><td>engineBuildId</td><td>32</td><td>Raw SHA-256 of the exact engine source+patch+toolchain identity.</td></tr>
-              <tr><td>payloadLength</td><td>4</td><td>Opaque uncompressed payload length, maximum 64 MiB.</td></tr>
+              <tr><td>payloadLength</td><td>4</td><td>Opaque uncompressed payload length, maximum 512 MiB; producer chunks are at most 64 KiB and the legacy allocating export remains capped at 64 MiB.</td></tr>
               <tr><td>payloadSha256</td><td>32</td><td>Digest of payload bytes only. Total fixed header: 116 bytes.</td></tr>
             </tbody>
           </table>

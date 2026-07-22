@@ -1303,7 +1303,7 @@ const HiveManual = struct {
         const alloc = self.surface.app.core_app.alloc;
         var snapshot = hive_checkpoint.decode(alloc, payload) catch |err| return switch (err) {
             error.OutOfMemory => .out_of_memory,
-            error.CheckpointTooLarge, error.InvalidCheckpoint => .invalid_value,
+            error.CheckpointTooLarge, error.InvalidCheckpoint, error.WriteFailed => .invalid_value,
         };
         var snapshot_owned = true;
         defer if (snapshot_owned) snapshot.deinit(alloc);

@@ -338,4 +338,26 @@ final class Gate6SurfaceRestoreTests: XCTestCase {
         }
         XCTAssertEqual(fixtureCount, 187, "full pinned byte-split corpus")
     }
+
+    func testDeepScrollbackCheckpointRestoresIntoRealSurface() throws {
+        let directory = try fixtureDirectory()
+        let url = directory.appendingPathComponent("deep-500x500.hvgcp")
+        let attributes = try FileManager.default.attributesOfItem(atPath: url.path)
+        let length = try XCTUnwrap(attributes[.size] as? NSNumber).uint64Value
+        XCTAssertGreaterThan(length, 64 * 1024 * 1024, "mutation control: old ceiling")
+        XCTAssertLessThanOrEqual(length, 512 * 1024 * 1024, "semantic import ceiling")
+
+        let payload = try Data(contentsOf: url, options: .mappedIfSafe)
+        XCTAssertEqual(checkpointEngineId(payload), GhosttyManualSurface.engineBuildId())
+        let restored = try makeSurface()
+        defer { restored.free() }
+        XCTAssertEqual(
+            restored.restoreCheckpoint(payload: payload, throughSeq: 0),
+            .success,
+            "80k lines at 48 MiB scrollback and 500x500 must restore"
+        )
+        pumpMainQueue()
+        XCTAssertEqual(restored.throughSeq, 0)
+        XCTAssertTrue(readScreenText(restored).contains("x"), "restored surface rendered content")
+    }
 }

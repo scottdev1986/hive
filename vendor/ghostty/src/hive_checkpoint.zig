@@ -841,6 +841,11 @@ test "legacy pre-stream checkpoint fixture remains readable" {
     try std.testing.expectError(error.InvalidCheckpoint, decode(std.testing.allocator, payload.items));
 }
 
+test "legacy build id is rejected outside its exact production configuration" {
+    if (!build_options.c_abi or build_options.slow_runtime_safety)
+        try std.testing.expect(!acceptsBuildId(&legacy_build_id));
+}
+
 fn writeTerminal(w: *Writer, t: *const Terminal) Error!void {
     try w.plain(t.status_display);
     try w.plain(t.rows);
@@ -1247,7 +1252,7 @@ fn readPageList(r: *Reader, alloc: Allocator) Error!PageList {
     // Reject a count the remaining payload cannot possibly back BEFORE it
     // sizes any allocation: MemoryPool.init preheats count *
     // Page.layout(std_capacity) (~512 KiB each), so an unbounded count
-    // within the 64 MiB byte cap would otherwise drive a multi-terabyte
+    // within the 512 MiB byte cap would otherwise drive a multi-terabyte
     // preheat before a single page is validated.
     if (count > (r.bytes.len -| r.offset) / std.heap.page_size_min)
         return error.InvalidCheckpoint;
@@ -1256,7 +1261,7 @@ fn readPageList(r: *Reader, alloc: Allocator) Error!PageList {
     // demand; page memory is allocated per-page below rather than drawn from
     // the preheated page buffers. Cap the up-front reservation so even a
     // structurally-valid large count cannot force a huge preheat — a valid
-    // 64 MiB payload holds at most this many std-capacity pages.
+    // maximum-size payload holds at most this many std-capacity pages.
     const max_preheat_pages = max_payload_bytes / Page.layout(pagepkg.std_capacity).total_size;
     var pool = try PageList.MemoryPool.init(
         alloc,
@@ -2127,7 +2132,7 @@ test "readPageList rejects a page-count bomb before any preheat" {
     // Regression: readPageList validated count only against remaining
     // payload SIZE (count <= remaining bytes), then MemoryPool.init
     // preheated count * Page.layout(std_capacity) (~512 KiB each) BEFORE any
-    // page was validated. A crafted count within the 64 MiB byte cap drove a
+    // page was validated. A crafted count within the 512 MiB byte cap drove a
     // multi-terabyte preheat. The fix rejects an impossible count up front.
     //
     // A failing allocator that errors on its FIRST allocation proves the

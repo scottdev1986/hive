@@ -48,7 +48,7 @@ export const TERMINAL_LIMITS = {
   viewerReattachAfterRebaseMilliseconds: 5_000,
   replayJournalBytesPerGeneration: 64 * 1024 * 1024,
   retainedCheckpoints: 2,
-  checkpointBytes: 64 * 1024 * 1024,
+  checkpointBytes: 512 * 1024 * 1024,
   terminalDiskBytesPerHiveHome: 2 * 1024 * 1024 * 1024,
   nonImageCheckpointBytes: 48 * 1024 * 1024,
   terminalCellsPerDimensionMin: 1,

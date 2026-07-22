@@ -53,6 +53,9 @@ pub const legacy_engine_build_id: [32]u8 = switch (builtin.target.cpu.arch) {
 };
 
 pub fn acceptsEngineBuildId(candidate: *const [32]u8, current: *const [32]u8) bool {
+    // DELIBERATELY coarse outer-envelope gate: sessiond does not know the
+    // engine's c_abi/runtime-safety build configuration. The inner HVGCP001
+    // decoder applies that precise second gate before reading engine state.
     if (std.mem.eql(u8, candidate, current)) return true;
     return switch (builtin.target.cpu.arch) {
         .aarch64, .x86_64 => std.mem.eql(u8, candidate, &legacy_engine_build_id),
@@ -101,6 +104,8 @@ const off = struct {
 };
 
 comptime {
+    if (checkpoint_max_bytes != generated.limits.checkpoint_bytes)
+        @compileError("checkpoint payload limit drifted from generated protocol");
     if (header_bytes != 116) @compileError("CHECKPOINT_HEADER.bytes must be 116");
     if (magic.len != 8) @compileError("CHECKPOINT_HEADER.magic must be 8 ASCII bytes");
     if (engine_build_id_bytes != 32) @compileError("engineBuildId must be 32 bytes");
@@ -219,6 +224,9 @@ pub const VtEngine = struct {
     /// Null keeps old engine doubles/source compatibility and falls back to
     /// exportFn, still writing the result in bounded chunks.
     exportStreamFn: ?*const fn (context: *anyopaque, sink: OpaqueStreamSink) anyerror!usize = null,
+    /// Fresh engine with the same live callbacks/effect sink. Resize uses this
+    /// to prepare a candidate without mutating the attached terminal.
+    cloneFn: ?*const fn (context: *anyopaque, allocator: std.mem.Allocator) anyerror!VtEngine = null,
     importFn: *const fn (context: *anyopaque, payload: []const u8) anyerror!void,
     digestFn: *const fn (context: *anyopaque) [32]u8,
     /// Snapshot of PTY-bound effect bytes collected since create/import (for TG2 stream compare).
@@ -265,6 +273,11 @@ pub const VtEngine = struct {
 
     pub fn importOpaque(self: VtEngine, payload: []const u8) anyerror!void {
         return self.importFn(self.context, payload);
+    }
+
+    pub fn clone(self: VtEngine, allocator: std.mem.Allocator) anyerror!VtEngine {
+        const clone_fn = self.cloneFn orelse return error.CheckpointUnavailable;
+        return clone_fn(self.context, allocator);
     }
 
     pub fn digest(self: VtEngine) [32]u8 {
@@ -443,8 +456,11 @@ pub fn verifyPayload(header: CheckpointHeader, payload: []const u8) EnvelopeErro
 
 /// Write HVTCP001 directly to a caller-owned spool. A zero header is reserved,
 /// the opaque payload is hashed while the engine streams it, then the complete
-/// header is patched at offset zero and the file is synced. A failed export
-/// never leaves a header that could be mistaken for a complete checkpoint.
+/// header is patched at offset zero and the file is synced. HVTCP001's payload
+/// SHA-256 detects a torn/out-of-order patch after recovery; the inner
+/// HVGCP001 payload has no body digest and relies on this outer integrity
+/// layer. A failed export never leaves a header that could be mistaken for a
+/// complete checkpoint.
 pub fn writeEnvelopeStream(
     allocator: std.mem.Allocator,
     engine: VtEngine,
@@ -506,6 +522,38 @@ pub fn writeEnvelopeStream(
     file.writeAll(&header_buffer) catch return error.IoFailed;
     file.sync() catch return error.IoFailed;
     return header;
+}
+
+fn createAnonymousSpool(dir: std.fs.Dir) Error!std.fs.File {
+    var name_buffer: [64]u8 = undefined;
+    var attempts: usize = 0;
+    while (attempts < 16) : (attempts += 1) {
+        const name = std.fmt.bufPrint(&name_buffer, ".checkpoint-spool-{x:0>16}", .{
+            std.crypto.random.int(u64),
+        }) catch return error.Internal;
+        const fd = std.posix.openat(dir.fd, name, .{
+            .ACCMODE = .RDWR,
+            .CREAT = true,
+            .EXCL = true,
+            .NOFOLLOW = true,
+            .CLOEXEC = true,
+        }, 0o600) catch |err| switch (err) {
+            error.PathAlreadyExists => continue,
+            else => return error.IoFailed,
+        };
+        const file: std.fs.File = .{ .handle = fd };
+        file.chmod(0o600) catch {
+            file.close();
+            dir.deleteFile(name) catch {};
+            return error.IoFailed;
+        };
+        dir.deleteFile(name) catch {
+            file.close();
+            return error.IoFailed;
+        };
+        return file;
+    }
+    return error.IoFailed;
 }
 
 // ── In-memory journal (file persistence is host composition / disk layer) ───
@@ -578,32 +626,106 @@ pub const Journal = struct {
 // ── Dual-retained checkpoint store ──────────────────────────────────────────
 
 pub const StoredCheckpoint = struct {
-    /// Assembled file image (header + opaque payload). Owned.
-    file: []u8,
+    /// Anonymous spool containing header + opaque payload. Owned.
+    file: std.fs.File,
     header: CheckpointHeader,
 
-    pub fn deinit(self: *StoredCheckpoint, allocator: std.mem.Allocator) void {
-        allocator.free(self.file);
+    pub fn deinit(self: *StoredCheckpoint) void {
+        self.file.close();
         self.* = undefined;
     }
 
-    pub fn opaquePayload(self: *const StoredCheckpoint) []const u8 {
-        return self.file[header_bytes..][0..self.header.payload_length];
+    pub fn totalBytes(self: *const StoredCheckpoint) usize {
+        return header_bytes + @as(usize, self.header.payload_length);
+    }
+
+    pub fn readAt(self: *const StoredCheckpoint, buffer: []u8, offset: usize) Error!usize {
+        if (offset >= self.totalBytes()) return 0;
+        const bounded = buffer[0..@min(buffer.len, self.totalBytes() - offset)];
+        const read = self.file.preadAll(bounded, offset) catch return error.IoFailed;
+        if (read != bounded.len) return error.IoFailed;
+        return read;
+    }
+
+    /// Legacy contiguous consumer adapter. Checkpoint creation and retention
+    /// never use this; callers that still require one import slice pay for it
+    /// only at consumption time.
+    pub fn readOpaqueAlloc(
+        self: *const StoredCheckpoint,
+        allocator: std.mem.Allocator,
+    ) Error![]u8 {
+        const payload = try allocator.alloc(u8, self.header.payload_length);
+        errdefer allocator.free(payload);
+        const read = self.file.preadAll(payload, header_bytes) catch return error.IoFailed;
+        if (read != payload.len) return error.IoFailed;
+        return payload;
+    }
+
+    pub fn verify(self: *const StoredCheckpoint) Error!CheckpointHeader {
+        var header_bytes_buffer: [header_bytes]u8 = undefined;
+        if (try self.readAt(&header_bytes_buffer, 0) != header_bytes)
+            return error.Truncated;
+        const parsed = try decodeHeader(&header_bytes_buffer);
+        if (parsed.payload_length > checkpoint_max_bytes) return error.PayloadTooLarge;
+        if (header_bytes + @as(usize, parsed.payload_length) != self.totalBytes())
+            return error.PayloadLengthMismatch;
+
+        var sha = std.crypto.hash.sha2.Sha256.init(.{});
+        var buffer: [checkpoint_stream_chunk_bytes]u8 = undefined;
+        var offset: usize = header_bytes;
+        while (offset < self.totalBytes()) {
+            const read = try self.readAt(&buffer, offset);
+            if (read == 0) return error.Truncated;
+            sha.update(buffer[0..read]);
+            offset += read;
+        }
+        var digest: [payload_sha256_bytes]u8 = undefined;
+        sha.final(&digest);
+        if (!std.mem.eql(u8, &digest, &parsed.payload_sha256))
+            return error.PayloadSha256Mismatch;
+        return parsed;
+    }
+
+    pub const Mapping = struct {
+        bytes: []align(std.heap.page_size_min) u8,
+
+        pub fn deinit(self: *Mapping) void {
+            std.posix.munmap(self.bytes);
+            self.* = undefined;
+        }
+
+        pub fn opaquePayload(self: *const Mapping, header: CheckpointHeader) []const u8 {
+            return self.bytes[header_bytes..][0..header.payload_length];
+        }
+    };
+
+    pub fn map(self: *const StoredCheckpoint) Error!Mapping {
+        const bytes = std.posix.mmap(
+            null,
+            self.totalBytes(),
+            std.posix.PROT.READ,
+            .{ .TYPE = .PRIVATE },
+            self.file.handle,
+            0,
+        ) catch |err| return switch (err) {
+            error.OutOfMemory => error.OutOfMemory,
+            else => error.IoFailed,
+        };
+        return .{ .bytes = bytes };
     }
 };
 
 /// Newest at index 0, previous at index 1. Both must be import-verified.
 pub const CheckpointStore = struct {
-    allocator: std.mem.Allocator,
     slots: [retained_checkpoints]?StoredCheckpoint = .{ null, null },
 
-    pub fn init(allocator: std.mem.Allocator) CheckpointStore {
-        return .{ .allocator = allocator };
+    pub fn init() CheckpointStore {
+        return .{};
     }
 
     pub fn deinit(self: *CheckpointStore) void {
         for (&self.slots) |*slot| {
-            if (slot.*) |*cp| cp.deinit(self.allocator);
+            if (slot.*) |*cp| cp.deinit();
             slot.* = null;
         }
         self.* = undefined;
@@ -619,12 +741,12 @@ pub const CheckpointStore = struct {
         return null;
     }
 
-    /// Push a newly verified checkpoint as newest; demote previous newest;
-    /// drop oldest. Takes ownership of `file`.
-    pub fn pushVerified(self: *CheckpointStore, file: []u8, header: CheckpointHeader) void {
-        if (self.slots[1]) |*old| old.deinit(self.allocator);
+    /// Push a newly verified checkpoint as newest; demote previous newest and
+    /// drop oldest. Takes ownership of the spool file.
+    pub fn pushVerified(self: *CheckpointStore, checkpoint: StoredCheckpoint) void {
+        if (self.slots[1]) |*old| old.deinit();
         self.slots[1] = self.slots[0];
-        self.slots[0] = .{ .file = file, .header = header };
+        self.slots[0] = checkpoint;
     }
 };
 
@@ -642,6 +764,9 @@ pub const TerminalState = struct {
     engine: VtEngine,
     factory: VtEngineFactory,
     clock: Clock,
+    /// Borrowed secure directory in which checkpoint spools are created and
+    /// immediately unlinked. It must outlive this state.
+    checkpoint_spool_dir: std.fs.Dir,
     /// Raw 32-byte engine build id embedded in every envelope (from bridge; do not compute).
     engine_build_id: [32]u8,
 
@@ -675,6 +800,7 @@ pub const TerminalState = struct {
         clock: Clock,
         engine_build_id: *const [32]u8,
         geometry: Geometry,
+        checkpoint_spool_dir: std.fs.Dir,
     ) TerminalState {
         const now = clock.now();
         var state: TerminalState = .{
@@ -682,10 +808,11 @@ pub const TerminalState = struct {
             .engine = engine,
             .factory = factory,
             .clock = clock,
+            .checkpoint_spool_dir = checkpoint_spool_dir,
             .engine_build_id = engine_build_id.*,
             .geometry = geometry,
             .journal = Journal.init(allocator),
-            .checkpoints = CheckpointStore.init(allocator),
+            .checkpoints = CheckpointStore.init(),
             .last_checkpoint_mono = now,
             .last_journal_persist_mono = now,
         };
@@ -758,23 +885,142 @@ pub const TerminalState = struct {
     /// next verified checkpoint carries the live geometry — envelope fields
     /// AND opaque payload agree, so restoreInto renders at the real size
     /// instead of the create-time 80x24.
-    pub fn resize(self: *TerminalState, geometry: Geometry) Error!void {
+    pub const PreparedResize = struct {
+        base: StoredCheckpoint,
+        resized: StoredCheckpoint,
+        previous_geometry: Geometry,
+        geometry: Geometry,
+        owned: bool = true,
+
+        pub fn deinit(self: *PreparedResize) void {
+            if (!self.owned) return;
+            self.base.deinit();
+            self.resized.deinit();
+            self.* = undefined;
+        }
+    };
+
+    /// Prepare and verify a resized clone without mutating either live
+    /// representation. The host imports this verified state into the live VT,
+    /// applies the PTY resize, and rolls the VT back if that second step fails.
+    pub fn prepareResize(self: *TerminalState, geometry: Geometry) Error!PreparedResize {
         if (self.closed) return error.Closed;
         if (geometry.columns == 0 or geometry.rows == 0 or
             geometry.columns > std.math.maxInt(u16) or
             geometry.rows > std.math.maxInt(u16)) return error.Internal;
-        self.engine.resize(
+
+        // First capture the unmodified terminal. If any later preflight step
+        // fails, this verified checkpoint keeps the existing live geometry
+        // reattachable and the live engine is never resized.
+        var base = self.buildVerifiedCheckpoint(self.engine, self.geometry) catch |err| {
+            self.noteCheckpointFailure();
+            return err;
+        };
+        var base_owned = true;
+        defer if (base_owned) base.deinit();
+
+        var candidate = self.engine.clone(self.allocator) catch {
+            self.retainCheckpoint(base);
+            base_owned = false;
+            return error.CheckpointUnavailable;
+        };
+        defer candidate.deinit();
+
+        var base_mapping = base.map() catch |err| {
+            self.retainCheckpoint(base);
+            base_owned = false;
+            return err;
+        };
+        defer base_mapping.deinit();
+        candidate.importOpaque(base_mapping.opaquePayload(base.header)) catch {
+            self.retainCheckpoint(base);
+            base_owned = false;
+            return error.CheckpointUnavailable;
+        };
+        candidate.resize(
             geometry.columns,
             geometry.rows,
             geometry.cell_width_px_16_16 >> 16,
             geometry.cell_height_px_16_16 >> 16,
         ) catch {
-            // A VT that cannot take the new geometry would checkpoint/restore
-            // divergent geometry — never claim a clean restore from here.
-            self.reconnect_available = false;
+            self.retainCheckpoint(base);
+            base_owned = false;
             return error.Internal;
         };
-        self.geometry = geometry;
+
+        const resized = self.buildVerifiedCheckpoint(candidate, geometry) catch |err| {
+            self.retainCheckpoint(base);
+            base_owned = false;
+            return err;
+        };
+        base_owned = false;
+        return .{
+            .base = base,
+            .resized = resized,
+            .previous_geometry = self.geometry,
+            .geometry = geometry,
+        };
+    }
+
+    /// Apply the already-export-verified state to the live renderer. The
+    /// import contract leaves the destination unchanged on failure, so the
+    /// host can still decline the PTY resize.
+    pub fn applyPreparedResize(self: *TerminalState, prepared: *PreparedResize) Error!void {
+        std.debug.assert(prepared.owned);
+        var mapping = try prepared.resized.map();
+        defer mapping.deinit();
+        self.engine.importOpaque(mapping.opaquePayload(prepared.resized.header)) catch
+            return error.CheckpointUnavailable;
+        self.engine.resize(
+            prepared.geometry.columns,
+            prepared.geometry.rows,
+            prepared.geometry.cell_width_px_16_16 >> 16,
+            prepared.geometry.cell_height_px_16_16 >> 16,
+        ) catch {
+            self.rollbackPreparedResize(prepared) catch {
+                self.reconnect_available = false;
+            };
+            return error.Internal;
+        };
+        self.geometry = prepared.geometry;
+    }
+
+    pub fn rollbackPreparedResize(
+        self: *TerminalState,
+        prepared: *PreparedResize,
+    ) Error!void {
+        std.debug.assert(prepared.owned);
+        var mapping = try prepared.base.map();
+        defer mapping.deinit();
+        self.engine.importOpaque(mapping.opaquePayload(prepared.base.header)) catch
+            return error.CheckpointUnavailable;
+        self.engine.resize(
+            prepared.previous_geometry.columns,
+            prepared.previous_geometry.rows,
+            prepared.previous_geometry.cell_width_px_16_16 >> 16,
+            prepared.previous_geometry.cell_height_px_16_16 >> 16,
+        ) catch return error.Internal;
+        self.geometry = prepared.previous_geometry;
+    }
+
+    /// Retain the verified before/after checkpoints after both live
+    /// representations have committed.
+    pub fn finalizePreparedResize(self: *TerminalState, prepared: *PreparedResize) void {
+        std.debug.assert(prepared.owned);
+        self.checkpoints.pushVerified(prepared.base);
+        const resized_header = prepared.resized.header;
+        self.checkpoints.pushVerified(prepared.resized);
+        // Resize must establish a restorable geometry, but it is not a journal
+        // pressure event. Keep the replay window intact for attached viewers.
+        self.finishCheckpoint(resized_header, false);
+        prepared.owned = false;
+    }
+
+    pub fn resize(self: *TerminalState, geometry: Geometry) Error!void {
+        var prepared = try self.prepareResize(geometry);
+        defer prepared.deinit();
+        try self.applyPreparedResize(&prepared);
+        self.finalizePreparedResize(&prepared);
     }
 
     /// Feed PTY output: journal first (durability), then VT. On journal pressure,
@@ -859,97 +1105,90 @@ pub const TerminalState = struct {
         return false;
     }
 
-    /// Create a verified checkpoint: export opaque → assemble envelope → import
-    /// into a FRESH terminal + digest compare → retain. Failure yields
-    /// CHECKPOINT_UNAVAILABLE (and leaves store unchanged).
+    /// Create a verified checkpoint through an anonymous spool, import it into
+    /// a FRESH terminal, compare semantic digests, then retain the spool.
     pub fn tryCheckpoint(self: *TerminalState) Error!void {
         if (self.closed) return error.Closed;
-
-        // Export opaque payload from the live engine (bridge / double).
-        const opaque_payload = self.engine.exportOpaque(self.allocator) catch |err| {
-            self.reconnect_available = false;
-            return switch (err) {
-                error.OutOfMemory => error.OutOfMemory,
-                else => error.CheckpointUnavailable,
-            };
-        };
-        defer self.allocator.free(opaque_payload);
-
-        if (opaque_payload.len == 0) {
-            // Empty opaque is never a valid complete checkpoint (§23 / A2).
-            self.reconnect_available = false;
-            return error.CheckpointUnavailable;
-        }
-        if (opaque_payload.len > checkpoint_contiguous_max_bytes) {
-            self.reconnect_available = false;
-            return error.PayloadTooLarge;
-        }
-
-        const through_seq = self.output_seq;
-        const created = self.clock.now();
-        const file = assembleEnvelope(self.allocator, .{
-            .through_seq = through_seq,
-            .created_mono_nanos = created,
-            .columns = self.geometry.columns,
-            .rows = self.geometry.rows,
-            .cell_width_px_16_16 = self.geometry.cell_width_px_16_16,
-            .cell_height_px_16_16 = self.geometry.cell_height_px_16_16,
-            .engine_build_id = &self.engine_build_id,
-        }, opaque_payload) catch |err| {
-            self.reconnect_available = false;
+        const checkpoint = self.buildVerifiedCheckpoint(self.engine, self.geometry) catch |err| {
+            self.noteCheckpointFailure();
             return err;
         };
-        // Ownership: free on every failure path; transfer to store only after verify.
-        var retained = false;
-        defer if (!retained) self.allocator.free(file);
+        const header = checkpoint.header;
+        self.checkpoints.pushVerified(checkpoint);
+        self.finishCheckpoint(header, true);
+    }
 
-        // Parse/verify self-consistency of the assembled file.
-        const header = parseEnvelope(file) catch {
-            self.reconnect_available = false;
-            return error.CheckpointUnavailable;
-        };
+    fn noteCheckpointFailure(self: *TerminalState) void {
+        // A failed refresh does not invalidate a checkpoint whose replay tail
+        // is still retained. The journal-pressure path separately marks the
+        // state unavailable if it must discard uncovered bytes.
+        if (self.checkpoints.newest() == null) self.reconnect_available = false;
+    }
 
-        // Import-verify into a FRESH terminal + compare digests (§23).
-        const live_digest = self.engine.digest();
+    fn buildVerifiedCheckpoint(
+        self: *TerminalState,
+        engine: VtEngine,
+        geometry: Geometry,
+    ) Error!StoredCheckpoint {
+        var file = try createAnonymousSpool(self.checkpoint_spool_dir);
+        var file_owned = true;
+        errdefer if (file_owned) file.close();
+        const header = try writeEnvelopeStream(self.allocator, engine, &file, .{
+            .through_seq = self.output_seq,
+            .created_mono_nanos = self.clock.now(),
+            .columns = geometry.columns,
+            .rows = geometry.rows,
+            .cell_width_px_16_16 = geometry.cell_width_px_16_16,
+            .cell_height_px_16_16 = geometry.cell_height_px_16_16,
+            .engine_build_id = &self.engine_build_id,
+        });
+        var checkpoint: StoredCheckpoint = .{ .file = file, .header = header };
+        file_owned = false;
+        errdefer checkpoint.deinit();
+
+        const parsed = checkpoint.verify() catch return error.CheckpointUnavailable;
+        if (!std.meta.eql(parsed, header)) return error.CheckpointUnavailable;
+
+        const live_digest = engine.digest();
         var fresh = self.factory.create(
             self.allocator,
-            self.geometry.columns,
-            self.geometry.rows,
-        ) catch {
-            self.reconnect_available = false;
-            return error.CheckpointUnavailable;
-        };
+            geometry.columns,
+            geometry.rows,
+        ) catch return error.CheckpointUnavailable;
         defer fresh.deinit();
-
-        // Import leaves destination unchanged on failure (§23).
-        fresh.importOpaque(opaque_payload) catch {
-            self.reconnect_available = false;
+        var mapping = try checkpoint.map();
+        defer mapping.deinit();
+        fresh.importOpaque(mapping.opaquePayload(header)) catch
             return error.CheckpointUnavailable;
-        };
         const restored_digest = fresh.digest();
-        if (!std.mem.eql(u8, &live_digest, &restored_digest)) {
-            // Incomplete opaque payload (A2 / TG2): not a silent "mostly restored".
-            self.reconnect_available = false;
+        if (!std.mem.eql(u8, &live_digest, &restored_digest))
             return error.CheckpointUnavailable;
-        }
+        return checkpoint;
+    }
 
-        // Atomic retain (in-memory: push after verify). Disk layer would
-        // write temp → fsync → rename; that is host composition.
-        self.checkpoints.pushVerified(file, header);
-        retained = true;
-        self.checkpoint_seq = through_seq;
+    fn retainCheckpoint(self: *TerminalState, checkpoint: StoredCheckpoint) void {
+        const header = checkpoint.header;
+        self.checkpoints.pushVerified(checkpoint);
+        self.finishCheckpoint(header, false);
+    }
+
+    fn finishCheckpoint(
+        self: *TerminalState,
+        header: CheckpointHeader,
+        evict_covered_journal: bool,
+    ) void {
+        self.checkpoint_seq = header.through_seq;
         self.bytes_since_checkpoint = 0;
-        self.last_checkpoint_mono = created;
+        self.last_checkpoint_mono = header.created_mono_nanos;
         self.reconnect_available = true;
-
-        // Evict journal bytes covered by the verified checkpoint, but never
-        // past what a live attached viewer has already been sent (#91).
-        const evict_through = if (self.viewer_floor_seq) |floor|
-            @min(through_seq, floor)
-        else
-            through_seq;
-        try self.journal.evictThrough(evict_through);
-        self.journal_dirty = true;
+        if (evict_covered_journal) {
+            const evict_through = if (self.viewer_floor_seq) |floor|
+                @min(header.through_seq, floor)
+            else
+                header.through_seq;
+            self.journal.evictThrough(evict_through) catch unreachable;
+            self.journal_dirty = true;
+        }
     }
 
     /// Restore path for attach: import newest verified checkpoint into `dest`,
@@ -964,11 +1203,14 @@ pub const TerminalState = struct {
             return error.EngineMismatch;
         }
 
-        // Re-verify envelope integrity before import. parseEnvelope already
-        // checks length + payload SHA-256 — do not re-hash (F6) or leak raw
-        // EnvelopeError (no wire code for sha/length mismatch).
-        const header = parseEnvelope(cp.file) catch return error.CheckpointUnavailable;
-        const payload = cp.opaquePayload();
+        // Re-verify envelope integrity before import. StoredCheckpoint.verify
+        // checks length + payload SHA-256 without assembling a contiguous
+        // file image; do not leak raw EnvelopeError (there is no wire code for
+        // a SHA/length mismatch).
+        const header = cp.verify() catch return error.CheckpointUnavailable;
+        var mapping = try cp.map();
+        defer mapping.deinit();
+        const payload = mapping.opaquePayload(header);
 
         dest.importOpaque(payload) catch return error.CheckpointUnavailable;
 
@@ -985,10 +1227,10 @@ pub const TerminalState = struct {
     /// rename.
     pub fn persistCheckpoints(self: *const TerminalState, dir: std.fs.Dir) Error!void {
         if (self.checkpoints.newest()) |cp| {
-            try writeAtomic(dir, "checkpoint-0.bin", cp.file);
+            try writeAtomicCheckpoint(dir, "checkpoint-0.bin", cp);
         }
         if (self.checkpoints.previous()) |cp| {
-            try writeAtomic(dir, "checkpoint-1.bin", cp.file);
+            try writeAtomicCheckpoint(dir, "checkpoint-1.bin", cp);
         }
     }
 
@@ -1043,6 +1285,46 @@ fn writeAtomic(dir: std.fs.Dir, name: []const u8, bytes: []const u8) Error!void 
     }) catch return error.Internal;
 
     try writeAtomicTmp(dir, name, tmp_name, bytes);
+}
+
+fn writeAtomicCheckpoint(
+    dir: std.fs.Dir,
+    name: []const u8,
+    checkpoint: *const StoredCheckpoint,
+) Error!void {
+    const stat = std.posix.fstat(dir.fd) catch return error.IoFailed;
+    if (stat.uid != std.posix.getuid() or stat.mode & std.posix.S.IFMT != std.posix.S.IFDIR or
+        stat.mode & 0o022 != 0) return error.IoFailed;
+
+    var tmp_buf: [64]u8 = undefined;
+    const tmp_name = std.fmt.bufPrint(&tmp_buf, "{s}.{x:0>16}.tmp", .{
+        name,
+        std.crypto.random.int(u64),
+    }) catch return error.Internal;
+    const fd = std.posix.openat(dir.fd, tmp_name, .{
+        .ACCMODE = .WRONLY,
+        .CREAT = true,
+        .TRUNC = true,
+        .NOFOLLOW = true,
+        .CLOEXEC = true,
+    }, 0o600) catch return error.IoFailed;
+    const file: std.fs.File = .{ .handle = fd };
+    defer file.close();
+    errdefer dir.deleteFile(tmp_name) catch {};
+    file.chmod(0o600) catch return error.IoFailed;
+
+    var buffer: [checkpoint_stream_chunk_bytes]u8 = undefined;
+    var offset: usize = 0;
+    while (offset < checkpoint.totalBytes()) {
+        const read = try checkpoint.readAt(&buffer, offset);
+        if (read == 0) return error.IoFailed;
+        file.writeAll(buffer[0..read]) catch return error.IoFailed;
+        offset += read;
+    }
+    file.sync() catch return error.IoFailed;
+    dir.rename(tmp_name, name) catch return error.IoFailed;
+    const dir_file: std.fs.File = .{ .handle = dir.fd };
+    dir_file.sync() catch return error.IoFailed;
 }
 
 /// Core of writeAtomic with an explicit temp name, so tests can exercise
@@ -1278,6 +1560,7 @@ const MockEngine = struct {
             .writeFn = writeCb,
             .exportFn = exportCb,
             .exportStreamFn = exportStreamCb,
+            .cloneFn = cloneCb,
             .importFn = importCb,
             .digestFn = digestCb,
             .effectsFn = effectsCb,
@@ -1298,6 +1581,11 @@ const MockEngine = struct {
         self.cell_width_px = cell_width_px;
         self.cell_height_px = cell_height_px;
         self.resize_calls += 1;
+    }
+
+    fn cloneCb(ctx: *anyopaque, allocator: std.mem.Allocator) anyerror!VtEngine {
+        _ = ctx;
+        return (try MockEngine.create(allocator)).engine();
     }
 
     fn deinitCb(ctx: *anyopaque) void {
@@ -1440,9 +1728,11 @@ const TestState = struct {
     factory: *MockFactory,
     clock: *MockClock,
     engine_ptr: *MockEngine,
+    tmp: std.testing.TmpDir,
 
     fn deinit(self: *TestState) void {
         self.ts.deinit();
+        self.tmp.cleanup();
         testing.allocator.destroy(self.factory);
         testing.allocator.destroy(self.clock);
     }
@@ -1456,6 +1746,8 @@ fn makeState() !TestState {
     clock.* = .{};
     const eng = try MockEngine.create(allocator);
     const id = testBuildId();
+    var tmp = testing.tmpDir(.{});
+    errdefer tmp.cleanup();
     const ts = TerminalState.init(
         allocator,
         eng.engine(),
@@ -1463,8 +1755,9 @@ fn makeState() !TestState {
         clock.clock(),
         &id,
         .{ .columns = 80, .rows = 24 },
+        tmp.dir,
     );
-    return .{ .ts = ts, .factory = factory, .clock = clock, .engine_ptr = eng };
+    return .{ .ts = ts, .factory = factory, .clock = clock, .engine_ptr = eng, .tmp = tmp };
 }
 
 test "streamed HVTCP001 producer crosses legacy cap with bounded writes and SHA-256" {
@@ -1600,7 +1893,9 @@ test "tryCheckpoint verifies import+digest then retains; journal evicts throughS
     const cp = s.ts.checkpoints.newest().?;
     try testing.expectEqual(@as(u64, 8), cp.header.through_seq);
     // Envelope magic
-    try testing.expectEqualStrings(magic, cp.file[0..8]);
+    var checkpoint_magic: [8]u8 = undefined;
+    try testing.expectEqual(@as(usize, 8), try cp.readAt(&checkpoint_magic, 0));
+    try testing.expectEqualStrings(magic, &checkpoint_magic);
 }
 
 test "incomplete export yields CHECKPOINT_UNAVAILABLE (A2); no silent mostly-restored" {
@@ -1620,13 +1915,10 @@ test "incomplete export yields CHECKPOINT_UNAVAILABLE (A2); no silent mostly-res
     try s.ts.feedOutput("more");
     s.engine_ptr.incomplete_export = true;
     try testing.expectError(error.CheckpointUnavailable, s.ts.tryCheckpoint());
-    // Store still holds the previous verified checkpoint on disk/slots, but
-    // restoreInto requires reconnect_available (now false) and only serves
-    // newest() — the previous slot is retained for dual-retain durability /
-    // host-composition fallback (§18), not wired as an automatic restore
-    // fallback in this module (F7). Newest throughSeq does not advance.
+    // The previous verified checkpoint plus its retained replay tail remains a
+    // valid reattach path. A failed refresh must not silently disable it.
     try testing.expectEqual(seq_after_good, s.ts.checkpointSeq());
-    try testing.expectEqual(false, s.ts.reconnect_available);
+    try testing.expect(s.ts.reconnect_available);
     try testing.expect(s.ts.checkpoints.newest() != null);
 }
 
@@ -1656,7 +1948,9 @@ test "corrupt one opaque byte → import fails / destination unchanged" {
     try s.ts.tryCheckpoint();
 
     const cp = s.ts.checkpoints.newest().?;
-    var corrupt = try testing.allocator.dupe(u8, cp.opaquePayload());
+    const payload = try cp.readOpaqueAlloc(testing.allocator);
+    defer testing.allocator.free(payload);
+    var corrupt = try testing.allocator.dupe(u8, payload);
     defer testing.allocator.free(corrupt);
     // Flip a byte inside the mock body (past MOCKCP01 magic).
     try testing.expect(corrupt.len > 8);
@@ -1677,7 +1971,7 @@ test "corrupt one opaque byte → import fails / destination unchanged" {
     try testing.expectEqualStrings(before, fresh.state.items);
 
     // Positive control: good payload imports and changes state.
-    try eng.importOpaque(cp.opaquePayload());
+    try eng.importOpaque(payload);
     try testing.expectEqualStrings("stable-state", fresh.state.items);
 }
 
