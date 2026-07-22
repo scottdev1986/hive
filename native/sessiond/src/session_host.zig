@@ -5657,7 +5657,7 @@ pub fn runHostRole(
     // Bound at construction: without a terminal the neutral resize handler has
     // nothing to set and every resize the shipped host receives is `unknown`.
     var neutral_terminal: NeutralTerminalSource = .{ .pty = &pty, .state = &state };
-    var neutral_operations = try neutral_control_plane.HostOperations.init(
+    var neutral_operations = try neutral_control_plane.HostOperations.initServingTerminal(
         allocator,
         &neutral_registry,
         neutral_endpoint.session,

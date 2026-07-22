@@ -932,11 +932,16 @@ pub const HostOperations = struct {
     clock: EvidenceClock,
     scratch: std.heap.ArenaAllocator,
     /// Only `resize` mutates the terminal, so operations assembled purely to
-    /// inspect or terminate may legitimately carry none. It is a REQUIRED
-    /// init parameter rather than a defaulted field because a defaulted one is
-    /// silently forgettable: the production host omitted it once and every
-    /// resize it served answered `unknown` with nothing red to show for it.
-    /// Passing null is now a visible choice a reviewer can see.
+    /// inspect or terminate may legitimately carry none -- which is why this
+    /// stays optional. It is a REQUIRED init parameter rather than a defaulted
+    /// field because a defaulted one is silently forgettable: the production
+    /// host omitted it once and every resize it served answered `unknown` with
+    /// nothing red to show for it.
+    ///
+    /// A required OPTIONAL parameter only prevents omission, not an explicit
+    /// null. A host that must serve resize therefore builds through
+    /// `initServingTerminal`, whose terminal is not optional, so null cannot
+    /// reach it without changing which constructor is called.
     terminal: ?TerminalProvider,
 
     pub fn init(
@@ -963,6 +968,22 @@ pub const HostOperations = struct {
             .scratch = std.heap.ArenaAllocator.init(allocator),
             .terminal = terminal,
         };
+    }
+
+    /// Construction for a host that MUST serve resize. The terminal is not
+    /// optional here, so the mistake this guards -- a resize-serving host
+    /// answering `unknown` because nothing was bound -- cannot be made by
+    /// passing null at the call site.
+    pub fn initServingTerminal(
+        allocator: std.mem.Allocator,
+        registry: *neutral_host.Registry,
+        session: neutral_host.SessionRef,
+        platform: process_inspector.Platform,
+        evidence: EvidenceProvider,
+        clock: EvidenceClock,
+        terminal: TerminalProvider,
+    ) !HostOperations {
+        return init(allocator, registry, session, platform, evidence, clock, terminal);
     }
 
     pub fn deinit(self: *HostOperations) void {
