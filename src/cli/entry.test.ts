@@ -18,6 +18,13 @@ describe("CLI command descriptions", () => {
       "unset leaves the model unconfigured even when its provider is enabled",
     );
   });
+
+  test("routing exposes the explicit machine-default promotion command", () => {
+    const routing = createProgram().commands.find((command) => command.name() === "routing");
+    const promote = routing?.commands.find((command) => command.name() === "promote-default");
+
+    expect(promote?.description()).toContain("machine default");
+  });
 });
 
 describe("removed flags", () => {

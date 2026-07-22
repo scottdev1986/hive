@@ -306,6 +306,36 @@ export class RoutingPolicyStore {
     })();
   }
 
+  /**
+   * Copy a complete policy from another instance while preserving this
+   * database's own revision history. The caller reads the target revision
+   * before invoking this method; a change in between is a conflict, never a
+   * clobber. This is deliberately separate from `importDefaultPolicy`, whose
+   * one-way ownership rules are for first boot rather than an explicit human
+   * promotion.
+   */
+  promote(
+    source: RoutingPolicy,
+    expectedRevision: number,
+    actor: string,
+    now: Date = new Date(),
+  ): RoutingPolicy {
+    const validated = RoutingPolicySchema.parse(source);
+    return this.db.database.transaction(() => {
+      const current = this.read(now);
+      if (expectedRevision !== current.revision) {
+        throw new RoutingPolicyConflictError(current.revision);
+      }
+      const next = RoutingPolicySchema.parse({
+        ...validated,
+        revision: current.revision + 1,
+        updatedAt: now.toISOString(),
+      });
+      this.write(next, current, "promote-instance-model-control", actor, now);
+      return next;
+    })();
+  }
+
   /** Whether any policy has ever been written. Callers use this to decide
    * whether first-boot seeding (and its billing probes) are worth running. */
   isEmpty(): boolean {

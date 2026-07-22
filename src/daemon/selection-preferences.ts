@@ -41,6 +41,18 @@ async function readSelectionPreferenceAsync(
   return StoredSelectionPreferenceSchema.parse(JSON.parse(source)).selection;
 }
 
+async function writeSelectionPreference(
+  path: string,
+  selection: SelectionPolicy,
+): Promise<void> {
+  const temp = `${path}.tmp-${process.pid}-${crypto.randomUUID()}`;
+  await Bun.write(
+    temp,
+    `${JSON.stringify({ schemaVersion: 1, selection }, null, 2)}\n`,
+  );
+  await rename(temp, path);
+}
+
 function applySelectionMutation(
   selection: SelectionPolicy,
   mutation: SelectionMutation,
@@ -81,9 +93,20 @@ export class SelectionPreferenceStore implements SelectionPreferenceControl {
       const next = current === null
         ? SelectionPolicySchema.parse(fallback)
         : applySelectionMutation(current, mutation);
-      const temp = `${this.path}.tmp-${process.pid}-${crypto.randomUUID()}`;
-      await Bun.write(temp, `${JSON.stringify({ schemaVersion: 1, selection: next }, null, 2)}\n`);
-      await rename(temp, this.path);
+      await writeSelectionPreference(this.path, next);
+      return next;
+    });
+  }
+
+  /** Replace the machine preference as one locked, atomic document write. */
+  async replace(selection: SelectionPolicy): Promise<SelectionPolicy> {
+    const next = SelectionPolicySchema.parse(selection);
+    await mkdir(dirname(this.path), { recursive: true });
+    return withFileLock(`${this.path}.lock`, async () => {
+      // Keep the same corrupt-file boundary as apply(): a bad existing
+      // preference must be surfaced, not silently replaced.
+      await readSelectionPreferenceAsync(this.path);
+      await writeSelectionPreference(this.path, next);
       return next;
     });
   }

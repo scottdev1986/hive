@@ -34,6 +34,7 @@ import {
 import { runInitCli } from "./cli/init";
 import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting } from "./cli/routing";
+import { promoteDefaultModelControl } from "./cli/promote-default";
 import {
   exportRoutingPolicy,
   printRoutingPolicy,
@@ -382,6 +383,17 @@ export function createProgram(): Command {
         options.port === undefined ? undefined : parsePort(options.port),
       )
     );
+  routing
+    .command("promote-default")
+    .description(
+      "Copy this instance's Model Control policy and selection modes to the machine default",
+    )
+    .action(async () => {
+      const result = await promoteDefaultModelControl();
+      console.log(
+        `Promoted Model Control revision ${result.sourceRevision} to machine default revision ${result.targetRevision}.`,
+      );
+    });
   routing
     .command("set-provider <provider> <state>")
     .description(
