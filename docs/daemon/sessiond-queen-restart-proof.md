@@ -37,9 +37,15 @@ fixed-width corpus exceeds tmux's configured 50,000-logical-line history, but
 any live root that restores materially less than that tmux baseline fails the
 default-swap gate. See
 [sessiond scrollback measurement](../terminal/sessiond-scrollback-measurement.md)
-for the reproducible corpus and checkpoint evidence. Issue #114 owns the
-checkpoint producer/consumer ceiling and must be green before the default
-changes.
+for the reproducible corpus and checkpoint evidence.
+
+The production root `session_host` uses the 512 MiB streaming checkpoint
+producer, not the 64 MiB legacy contiguous producer. At the worst measured
+500x500 geometry, its 309,929,873-byte terminal payload plus the 16,777,216-byte
+image allowance totals 326,707,089 bytes, leaving 210,163,823 bytes
+(200.428 MiB) beneath the 536,870,912-byte ceiling. That checkpoint restored
+71,727 total rows and 71,227 history rows; the equivalent arm64 real-renderer
+fixture produced 309,923,825 bytes and restored successfully.
 
 ## Test-owned restart setup
 
@@ -414,7 +420,7 @@ This ledger separates code-closed work from restart evidence and deferrals.
 | Declined/non-running root delivery | Code closed as retryable false, not a thrown or injected result. |
 | Cross-instance root generation reuse | Code closed; only bindings with the current instance id contribute. |
 | Session capacity leak and failed-spawn ghosts (#115) | Code closed with atomic failed spawn and more-than-32 spawn/kill baseline coverage. Pre-fix never-bound ghost rows already held by an old daemon are not hot-repairable; restarting into the fixed binary clears them. |
-| Checkpoint/resize invariant and aggregate terminal disk budget (#114) | Deferred and default-gating. This proof consumes #114's landed bounds; it does not silently choose a smaller root history. |
+| Checkpoint/resize invariant and aggregate terminal disk budget (#114) | Code closed. The production root uses the 512 MiB streaming producer: 309,929,873-byte maximum-geometry terminal payload + 16,777,216-byte image allowance = 326,707,089 bytes, leaving 210,163,823 bytes (200.428 MiB) of measured headroom. |
 | Swift/TypeScript duplicate constants | Deferred to the separately filed pin-work; exercised, not compile-time proved, here. |
 | Tmux removal | Deferred to #1/#2. The fallback remains required. |
 | Launch-watch failures (#111) | Pre-existing and untouched; no `src/daemon/launch-watch*` file is part of this migration. |
