@@ -1,6 +1,6 @@
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
-import { existsSync, readFileSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
@@ -259,6 +259,11 @@ describe("orchestrator brief", () => {
   });
 
   test("launches the default queen through sessiond without touching tmux", async () => {
+    const claudeTarget = join(hiveHomeSandbox, "claude-2.1.80");
+    const claudeLink = join(hiveHomeSandbox, "claude");
+    await writeFile(claudeTarget, "fixture");
+    await symlink(claudeTarget, claudeLink);
+    const resolvedClaudeTarget = realpathSync.native(claudeTarget);
     const launches: Parameters<OrchestratorSessiondControl["start"]>[0][] = [];
     const control: OrchestratorSessiondControl = {
       start: async (request) => {
@@ -303,7 +308,7 @@ describe("orchestrator brief", () => {
         throw new Error("sessiond launch must not spawn a tmux client");
       },
       async () => "2.1.80",
-      () => ({ path: "/opt/claude", version: "2.1.80" }),
+      () => ({ path: claudeLink, version: "2.1.80" }),
       tmuxMustNotBeTouched,
       "recovery fixture",
       undefined,
@@ -315,10 +320,10 @@ describe("orchestrator brief", () => {
     expect(launches[0]).toMatchObject({
       provider: "claude",
       cwd: process.cwd(),
-      expectedExecutable: "claude",
+      expectedExecutable: resolvedClaudeTarget,
       environment: {},
     });
-    expect(launches[0]?.argv[0]).toBe("/opt/claude");
+    expect(launches[0]?.argv[0]).toBe(resolvedClaudeTarget);
     expect(launches[0]?.argv.some((argument) => argument.includes("recovery fixture")))
       .toBe(true);
   });

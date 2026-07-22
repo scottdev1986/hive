@@ -55,7 +55,6 @@ public final class AttachReplayClient {
     private var snapshotStarted = false
     private var activeClaimToken: String?
     private var claimRequestId: UInt64?
-    private var claimIdempotencyKey: String?
     private var claimRetryScheduled = false
     private var pendingInputBatches: [PendingInputBatch] = []
     private var pendingInputRequests: [UInt64: PendingInputRequest] = [:]
@@ -298,15 +297,13 @@ public final class AttachReplayClient {
         guard let binding, transport != nil else { throw WireError.notConnected }
         guard activeClaimToken == nil, claimRequestId == nil else { return }
         let requestId = nextRequestId
-        let idempotencyKey = claimIdempotencyKey ?? "claim-\(UUID().uuidString)"
-        claimIdempotencyKey = idempotencyKey
         let payload: [String: Any] = [
             "schemaVersion": 1,
             "session": sessionReference(binding.locator),
             "writer": viewerId,
             "kind": "human",
             "leaseMilliseconds": 60_000,
-            "idempotencyKey": idempotencyKey,
+            "idempotencyKey": "claim-\(UUID().uuidString)",
         ]
         try sendJSON(.claimAcquire, object: payload, requestId: requestId)
         claimRequestId = requestId
@@ -700,7 +697,6 @@ public final class AttachReplayClient {
     private func resetInputState() {
         activeClaimToken = nil
         claimRequestId = nil
-        claimIdempotencyKey = nil
         claimRetryScheduled = false
         pendingInputBatches.removeAll()
         pendingInputRequests.removeAll()

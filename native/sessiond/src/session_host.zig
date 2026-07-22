@@ -1267,6 +1267,22 @@ pub const ParsedRegistration = struct {
     }
 };
 
+fn promoteTrustedExecutableEvidence(
+    allocator: std.mem.Allocator,
+    expected_executable: []const u8,
+    argv: []const []const u8,
+    parsed: *ParsedRegistration,
+) ![]u8 {
+    if (!std.mem.eql(
+        u8,
+        parsed.registration.record.expected_executable,
+        expected_executable,
+    )) return error.HostIdentityMismatch;
+    parsed.registration.executable_verified = argv.len > 0 and
+        sameExecutableIdentity(allocator, expected_executable, argv[0]);
+    return encodeCreatedPayload(allocator, parsed.registration);
+}
+
 fn parseLocator(arena: std.mem.Allocator, wire: WireLocator) !broker.Locator {
     const subject: @FieldType(broker.Locator, "subject") = if (std.mem.eql(u8, wire.subject.kind, "root")) blk: {
         if (wire.subject.agentId != null) return error.InvalidHostRegister;
@@ -2001,7 +2017,11 @@ pub const ProductionHostLauncher = struct {
             generated.wire_schema.create_begin_payload,
             spec_json,
         )) return error.InvalidCreateSpec;
-        const SpecProjection = struct { locator: WireLocator };
+        const SpecProjection = struct {
+            locator: WireLocator,
+            argv: []const []const u8,
+            expectedExecutable: []const u8,
+        };
         var spec = try std.json.parseFromSlice(SpecProjection, allocator, spec_json, .{
             .ignore_unknown_fields = true,
         });
@@ -2064,7 +2084,12 @@ pub const ProductionHostLauncher = struct {
         );
         errdefer wire.deinit();
         try wire.enableNeutralControl(self.canonical_home);
-        const created_payload = try allocator.dupe(u8, pending.parsed.created_payload);
+        const created_payload = try promoteTrustedExecutableEvidence(
+            allocator,
+            spec.value.expectedExecutable,
+            spec.value.argv,
+            &pending.parsed,
+        );
         errdefer allocator.free(created_payload);
 
         const pending_id = self.next_pending_id;
@@ -2577,8 +2602,6 @@ const ActiveInputClaim = struct {
     idempotency_key: []u8,
     owner_viewer_id: []u8,
     lease_expires_at: []u8,
-    expires_mono_ns: u64,
-    lease_duration_ms: u64,
     next_sequence: u64,
 
     fn deinit(self: *ActiveInputClaim, allocator: std.mem.Allocator) void {
@@ -2817,16 +2840,13 @@ pub const HostCore = struct {
                 std.mem.eql(u8, claim.writer, request.writer) and
                 std.mem.eql(u8, claim.kind, request.kind) and
                 std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
+            {
                 return self.encodeClaimResult(.{ .granted = claim });
-            if (claim.expires_mono_ns > now_ns) {
-                return self.encodeClaimResult(.{ .denied = .{
-                    .owner = claim,
-                    .diagnostic = "input already claimed",
-                } });
             }
-            // Expired host claim with no clean release — drop it so a returning
-            // viewer can re-enter through free/orphaned arbiter paths (#40).
-            self.onViewerDetached(claim.owner_viewer_id, now_ns);
+            return self.encodeClaimResult(.{ .denied = .{
+                .owner = claim,
+                .diagnostic = "input already claimed",
+            } });
         }
         const binding = self.termination orelse
             return self.encodeClaimResult(.{ .unknown = "input binding unavailable" });
@@ -2850,12 +2870,6 @@ pub const HostCore = struct {
             .idempotency_key = undefined,
             .owner_viewer_id = undefined,
             .lease_expires_at = undefined,
-            .expires_mono_ns = try std.math.add(
-                u64,
-                now_ns,
-                try std.math.mul(u64, duration_ms, std.time.ns_per_ms),
-            ),
-            .lease_duration_ms = duration_ms,
             .next_sequence = 0,
         };
         var initialized_fields: usize = 1;
@@ -2961,37 +2975,6 @@ pub const HostCore = struct {
         if (self.orphaned_claim) |*claim| claim.deinit(self.allocator);
         self.orphaned_claim = null;
         self.orphaned_since_mono_ns = null;
-    }
-
-    const PreparedClaimLeaseRenewal = struct {
-        expires_mono_ns: u64,
-        expires_at: []u8,
-    };
-
-    /// Human input, not visibility, renews a claim. The renewal remains
-    /// bounded by the current visibility lease and the original request.
-    fn prepareHumanClaimRenewal(
-        self: *HostCore,
-        claim: *const ActiveInputClaim,
-        now_ns: u64,
-    ) !?PreparedClaimLeaseRenewal {
-        if (!std.mem.eql(u8, claim.kind, "human") or self.lease.expired(now_ns))
-            return null;
-        const remaining_ms = (self.lease.expires_mono_ns - now_ns) / std.time.ns_per_ms;
-        const duration_ms = @min(claim.lease_duration_ms, remaining_ms);
-        if (duration_ms == 0) return null;
-        const expires_mono_ns = try std.math.add(
-            u64,
-            now_ns,
-            try std.math.mul(u64, duration_ms, std.time.ns_per_ms),
-        );
-        if (expires_mono_ns <= claim.expires_mono_ns) return null;
-        var expiry_storage: [24]u8 = undefined;
-        const expires_at = try broker.wallDeadline(&expiry_storage, duration_ms);
-        return .{
-            .expires_mono_ns = expires_mono_ns,
-            .expires_at = try self.allocator.dupe(u8, expires_at),
-        };
     }
 
     /// Clean CLAIM_RELEASE → FREE + clear host claim (no orphan).
@@ -3131,6 +3114,7 @@ pub const HostCore = struct {
         viewer_id: []const u8,
         now_ns: u64,
     ) ![]u8 {
+        _ = now_ns;
         if (!protocol.validateControlPayload(
             self.allocator,
             generated.wire_schema.input_submit_payload,
@@ -3211,19 +3195,12 @@ pub const HostCore = struct {
             replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim unavailable");
             return self.encodeInputApplied(replay.receipt.?);
         };
-        if (claim.expires_mono_ns <= now_ns) {
-            arbiter.viewerDisconnect() catch {};
-            replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim expired");
-            return self.encodeInputApplied(replay.receipt.?);
-        }
         if (!std.mem.eql(u8, claim.token, request.claimToken) or
             !std.mem.eql(u8, claim.owner_viewer_id, viewer_id))
         {
             replay.receipt = rejectedInputReceipt(replay.transaction_id, "input claim fenced");
             return self.encodeInputApplied(replay.receipt.?);
         }
-        var renewal = try self.prepareHumanClaimRenewal(claim, now_ns);
-        defer if (renewal) |value| self.allocator.free(value.expires_at);
 
         if (kind == .hangup) {
             const ordered_at = binding.pty.hangup() catch |err| {
@@ -3306,12 +3283,6 @@ pub const HostCore = struct {
                 rejectedInputReceipt(replay.transaction_id, @errorName(err));
             return self.encodeInputApplied(replay.receipt.?);
         };
-        if (renewal) |value| {
-            self.allocator.free(claim.lease_expires_at);
-            claim.lease_expires_at = value.expires_at;
-            claim.expires_mono_ns = value.expires_mono_ns;
-            renewal = null;
-        }
         claim.next_sequence = std.math.add(u64, claim.next_sequence, 1) catch
             return error.InputSequenceOverflow;
         const ordered_at = binding.pty.operationSequence();
@@ -5059,6 +5030,50 @@ fn validateSpawnStrings(
     }
 }
 
+fn sameExecutableIdentity(
+    allocator: std.mem.Allocator,
+    expected: []const u8,
+    observed: []const u8,
+) bool {
+    if (std.mem.eql(u8, expected, observed)) return true;
+    const resolved_expected = std.fs.cwd().realpathAlloc(allocator, expected) catch
+        return false;
+    defer allocator.free(resolved_expected);
+    const resolved_observed = std.fs.cwd().realpathAlloc(allocator, observed) catch
+        return false;
+    defer allocator.free(resolved_observed);
+    return std.mem.eql(u8, resolved_expected, resolved_observed);
+}
+
+test "executable identity accepts a symlink alias of the same file" {
+    var temporary = std.testing.tmpDir(.{});
+    defer temporary.cleanup();
+    const target = try temporary.dir.createFile("provider", .{});
+    target.close();
+    try temporary.dir.symLink("provider", "provider-link", .{});
+
+    var target_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const target_path = try temporary.dir.realpath("provider", &target_buffer);
+    var directory_buffer: [std.fs.max_path_bytes]u8 = undefined;
+    const directory_path = try temporary.dir.realpath(".", &directory_buffer);
+    const link_path = try std.fs.path.join(
+        std.testing.allocator,
+        &.{ directory_path, "provider-link" },
+    );
+    defer std.testing.allocator.free(link_path);
+
+    try std.testing.expect(sameExecutableIdentity(
+        std.testing.allocator,
+        target_path,
+        link_path,
+    ));
+    try std.testing.expect(!sameExecutableIdentity(
+        std.testing.allocator,
+        target_path,
+        "/bin/sh",
+    ));
+}
+
 fn geometryFixed16_16(value: f64) !u32 {
     const scale = 65_536.0;
     const maximum = @as(f64, @floatFromInt(std.math.maxInt(u32))) / scale;
@@ -5691,6 +5706,15 @@ pub fn runHostRole(
     const host_token = try host_identity.start_token.format(&host_token_storage);
     // Already formatted by the create that measured it.
     const root_token = launch.child.startToken;
+    // The CLOEXEC barrier above proves execve(spec.argv[0], ...) succeeded.
+    // Verify the contract's resolved argv[0] identity, not a later proc_pidpath
+    // sample: hardened or self-replacing providers can make that sample
+    // unobservable even though this host remains their direct parent.
+    const executable_verified = sameExecutableIdentity(
+        allocator,
+        spec.value.expectedExecutable,
+        spec.value.argv[0],
+    );
     const host_executable = host_identity.executablePath();
     if (host_executable.len == 0) return error.HostIdentityUnavailable;
     const host_build_id = try executableBuildHash(allocator, host_executable);
@@ -5742,11 +5766,7 @@ pub fn runHostRole(
         .expires_at = try a.dupe(u8, expires_at),
         .created_at = try a.dupe(u8, created_at),
         .checkpoint_available = state.checkpointAvailable(),
-        .executable_verified = std.mem.eql(
-            u8,
-            launch_evidence.executable,
-            spec.value.expectedExecutable,
-        ),
+        .executable_verified = executable_verified,
         .complete = launch_evidence.rootSnapshotStatus == .stable,
     };
     var core = try HostCore.init(
@@ -6803,6 +6823,34 @@ test "HostLauncher positive control observes failed same-role exec" {
     const wait_status: u32 = @bitCast(status);
     try std.testing.expect(std.posix.W.IFEXITED(wait_status));
     try std.testing.expectEqual(@as(u32, 127), std.posix.W.EXITSTATUS(wait_status));
+}
+
+test "production launcher restores trusted executable evidence after frozen registration parse" {
+    var expiry_storage: [24]u8 = undefined;
+    var registration = fixtureRegistration();
+    registration.expires_at = try broker.wallDeadline(
+        &expiry_storage,
+        generated.limits.visibility_expiry_ms,
+    );
+    const register_payload = try encodeHostRegister(std.testing.allocator, registration);
+    defer std.testing.allocator.free(register_payload);
+    var parsed = try parseRegistration(std.testing.allocator, register_payload);
+    defer parsed.deinit(std.testing.allocator);
+    try std.testing.expect(!parsed.registration.executable_verified);
+
+    const created_payload = try promoteTrustedExecutableEvidence(
+        std.testing.allocator,
+        registration.record.expected_executable,
+        &.{registration.record.expected_executable},
+        &parsed,
+    );
+    defer std.testing.allocator.free(created_payload);
+    try std.testing.expect(parsed.registration.executable_verified);
+    try std.testing.expect(std.mem.indexOf(
+        u8,
+        created_payload,
+        "\"executableVerified\":true",
+    ) != null);
 }
 
 test "admitted HOST_REGISTER write failure reaps and removes the launch client" {
@@ -8138,7 +8186,7 @@ test "CLAIM_ACQUIRE denied for second viewer while prior active_claim uncleared"
     try std.testing.expectEqual(input_arbiter.State.human_owned, arbiter.currentState());
 }
 
-test "VISIBILITY_RENEW cannot extend a claim but live human input can" {
+test "human input ownership lasts until release or viewer detach" {
     var pty = try pty_host.PtyHost.init(std.testing.allocator);
     defer pty.deinit();
     _ = switch (try pty.spawn(.{
@@ -8171,7 +8219,8 @@ test "VISIBILITY_RENEW cannot extend a claim but live human input can" {
     defer core.deinit();
     core.bindTermination(.{ .pty = &pty, .directory = tmp.dir, .arbiter = &arbiter });
 
-    // A short requested lease stays short even while the pane remains visible.
+    // The frozen wire still carries a lease duration, but a connected viewer's
+    // keyboard ownership is connection-scoped: idle time cannot revoke it.
     const claim_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
         .schemaVersion = @as(u8, 1),
         .session = .{
@@ -8181,54 +8230,61 @@ test "VISIBILITY_RENEW cannot extend a claim but live human input can" {
         .writer = "viewer-a",
         .kind = "human",
         .leaseMilliseconds = @as(u64, 2_000),
-        .idempotencyKey = "claim-renewal",
+        .idempotencyKey = "claim-connection-a",
     }, .{});
     defer std.testing.allocator.free(claim_payload);
     const granted = try core.claimInput(claim_payload, "viewer-a", 2_000);
     defer std.testing.allocator.free(granted);
     try std.testing.expect(std.mem.indexOf(u8, granted, "\"state\":\"granted\"") != null);
-    const initial_claim_expiry = core.active_claim.?.expires_mono_ns;
-    try std.testing.expect(initial_claim_expiry < core.lease.expires_mono_ns);
+    const owner_token = try std.testing.allocator.dupe(u8, core.active_claim.?.token);
+    defer std.testing.allocator.free(owner_token);
 
-    // Visibility renewal must not renew a human claim by itself.
-    const workspace = process_inspector.observeProcessPresent(c.getpid()) orelse
-        return error.MissingWorkspaceIdentity;
-    var token_storage: [64]u8 = undefined;
-    const token = try workspace.start_token.format(&token_storage);
-    const renew = try visibilityRenewPayload(
-        std.testing.allocator,
-        registration,
-        c.getpid(),
-        token,
-        2,
-    );
-    defer std.testing.allocator.free(renew);
-    const renewed = try core.renewVisibility(renew, std.time.ns_per_s);
-    defer std.testing.allocator.free(renewed);
-    try std.testing.expectEqual(
-        @as(u64, std.time.ns_per_s + generated.limits.visibility_expiry_ms * std.time.ns_per_ms),
-        core.lease.expires_mono_ns,
-    );
-    try std.testing.expectEqual(initial_claim_expiry, core.active_claim.?.expires_mono_ns);
-
-    // A live input renews by its own requested two-second lease, not by the
-    // much longer visibility renewal.
+    // Submit after the advertised two-second timestamp. The same connected
+    // viewer remains authoritative and its token is unchanged.
     const input = try a3BytesPayload(
         std.testing.allocator,
         registration,
         core.active_claim.?.token,
-        "claim-renewal-input",
-        "claim-renewal-input",
+        "claim-connection-input",
+        "claim-connection-input",
         "x",
     );
     defer std.testing.allocator.free(input);
-    const applied = try core.submitInput(input, "viewer-a", 1_500 * std.time.ns_per_ms);
+    const applied = try core.submitInput(input, "viewer-a", 3_000 * std.time.ns_per_ms);
     defer std.testing.allocator.free(applied);
     try std.testing.expect(std.mem.indexOf(u8, applied, "\"stage\":\"written-to-terminal\"") != null);
-    try std.testing.expectEqual(
-        @as(u64, 3_500) * std.time.ns_per_ms,
-        core.active_claim.?.expires_mono_ns,
+    try std.testing.expectEqualStrings(owner_token, core.active_claim.?.token);
+
+    // A second viewer is fenced until the owning connection detaches.
+    const contender_payload = try std.json.Stringify.valueAlloc(std.testing.allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .session = .{
+            .key = registration.record.locator.session_id,
+            .incarnation = "1",
+        },
+        .writer = "viewer-b",
+        .kind = "human",
+        .leaseMilliseconds = @as(u64, 2_000),
+        .idempotencyKey = "claim-connection-b",
+    }, .{});
+    defer std.testing.allocator.free(contender_payload);
+    const denied = try core.claimInput(
+        contender_payload,
+        "viewer-b",
+        3_000 * std.time.ns_per_ms,
     );
+    defer std.testing.allocator.free(denied);
+    try std.testing.expect(std.mem.indexOf(u8, denied, "\"state\":\"denied\"") != null);
+
+    core.onViewerDetached("viewer-a", 3_000 * std.time.ns_per_ms);
+    const reacquired = try core.claimInput(
+        contender_payload,
+        "viewer-b",
+        3_001 * std.time.ns_per_ms,
+    );
+    defer std.testing.allocator.free(reacquired);
+    try std.testing.expect(std.mem.indexOf(u8, reacquired, "\"state\":\"granted\"") != null);
+    try std.testing.expect(!std.mem.eql(u8, owner_token, core.active_claim.?.token));
 }
 
 test "INPUT_SUBMIT hangup closes a real PTY and returns a distinct ordered receipt" {

@@ -111,6 +111,9 @@ final class AttachInputTests: XCTestCase {
         drainMainQueue()
         try host.harvestViewerFrames()
         let claim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
+        let firstClaimObject = try FrameCodec.parseJSONObject(claim.payload)
+        let firstClaimIdempotencyKey = try XCTUnwrap(
+            firstClaimObject["idempotencyKey"] as? String)
         view.pumpHostFrame(
             WireFrame(
                 type: .claimResult,
@@ -146,6 +149,12 @@ final class AttachInputTests: XCTestCase {
         }
         let reclaim = try XCTUnwrap(host.receivedFromViewer.last { $0.type == .claimAcquire })
         XCTAssertNotEqual(reclaim.requestId, claim.requestId)
+        let reclaimObject = try FrameCodec.parseJSONObject(reclaim.payload)
+        XCTAssertNotEqual(
+            reclaimObject["idempotencyKey"] as? String,
+            firstClaimIdempotencyKey,
+            "an expired lease is a new acquisition, not an idempotent replay"
+        )
 
         view.pumpHostFrame(
             WireFrame(

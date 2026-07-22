@@ -1,3 +1,4 @@
+import { realpathSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
@@ -38,7 +39,6 @@ import { IS_RELEASE_BUILD } from "../version";
 import { type OrchestratorHostKind } from "../daemon/orchestrator-host";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
 import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
-import { processCommandName } from "../daemon/resources";
 import {
   daemonOrchestratorSessiondControl,
   runOrchestratorSessiondLaunch,
@@ -458,7 +458,6 @@ async function launchOrchestratorOnHost(
   switch (tool) {
     case "claude": {
       const claude = resolveExecutable();
-      claudePath = claude.path;
       const version = await (detectVersion ?? (async () => claude.version))();
       if (version === null) {
         throw new Error(
@@ -466,6 +465,7 @@ async function launchOrchestratorOnHost(
             "Fix: repair or install Claude Code, then retry",
         );
       }
+      claudePath = realpathSync.native(claude.path);
       break;
     }
     case "codex":
@@ -530,7 +530,7 @@ async function launchOrchestratorOnHost(
           "",
           recoveryBrief,
         );
-        expectedExecutable = processCommandName(claudePath);
+        expectedExecutable = claudePath;
         break;
       case "codex": {
         const codexCommand = buildOrchestratorCommand(

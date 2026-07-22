@@ -2636,7 +2636,11 @@ pub fn launchHost(
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.create_begin_payload, spec_json))
         return .{ .failure = .{ .code = .malformed_frame, .close_connection = false }, .created_payload = null };
     const VisibilityBinding = struct { workspaceSessionId: []const u8, openTerminalRevision: []const u8 };
-    const SpecProjection = struct { locator: DiskLocator, visibility: VisibilityBinding };
+    const SpecProjection = struct {
+        locator: DiskLocator,
+        visibility: VisibilityBinding,
+        expectedExecutable: []const u8,
+    };
     var spec = std.json.parseFromSlice(SpecProjection, allocator, spec_json, .{
         .ignore_unknown_fields = true,
     }) catch return .{
@@ -2700,6 +2704,11 @@ pub fn launchHost(
     );
     const lease_remaining_ns = readback.record.visibility.expires_mono_ns;
     if (readback.record.state != .live or readback.record.visibility.state != .attaching or
+        !std.mem.eql(
+            u8,
+            readback.record.expected_executable,
+            spec.value.expectedExecutable,
+        ) or
         !std.mem.eql(
             u8,
             readback.record.visibility.workspace_session_id,
@@ -3398,30 +3407,6 @@ pub const ProductionBackend = struct {
         defer std.crypto.secureZero(u8, &token_hash);
         std.crypto.hash.sha2.Sha256.hash(&token_hex, &token_hash, .{});
 
-        if (self.registry.registerGrant(
-            locator,
-            token_hash,
-            parsed.value.viewerId,
-            parsed.value.operations,
-            .{
-                .columns = parsed.value.geometry.columns,
-                .rows = parsed.value.geometry.rows,
-                .width_px = parsed.value.geometry.widthPx,
-                .height_px = parsed.value.geometry.heightPx,
-                .cell_width_px = parsed.value.geometry.cellWidthPx,
-                .cell_height_px = parsed.value.geometry.cellHeightPx,
-            },
-            now_ns,
-        )) |register_failure| return .{ .failure = register_failure };
-
-        // The broker's per-generation grant slots are an issuance-capacity
-        // mirror only — the HOST owns one-use validation and removes the grant
-        // on the viewer's attach. Release the mirror slot as soon as the grant
-        // is handed to the viewer so reconnect churn (a pane repeatedly losing
-        // its transport and re-attaching) cannot exhaust the four slots and
-        // refuse a fresh viewer while spent grants sit until their 15s expiry.
-        _ = self.registry.consumeGrant(locator, &token_hex, now_ns);
-
         const lookup = self.registry.lookup(locator) orelse return failure(.not_found);
         const entry = switch (lookup) {
             .failure => |lookup_failure| return .{ .failure = lookup_failure },
@@ -3454,9 +3439,18 @@ pub const ProductionBackend = struct {
             .{entry.record.checkpoint_seq},
         ) catch return failure(.internal);
 
+        // DiskSubject has an optional agentId so it can parse both subject
+        // variants. Re-serializing parsed.value.locator would emit
+        // `agentId:null` for a root subject, which violates the strict locator
+        // wire schema and makes dispatchFrame reject our ATTACH_GRANT as
+        // INTERNAL after the host has already accepted the grant.
+        var locator_arena = std.heap.ArenaAllocator.init(allocator);
+        defer locator_arena.deinit();
+        const response_locator = locatorJsonValue(locator_arena.allocator(), locator) catch
+            return failure(.internal);
         const response = std.json.Stringify.valueAlloc(allocator, .{
             .schemaVersion = @as(u8, 1),
-            .locator = parsed.value.locator,
+            .locator = response_locator,
             .endpoint = endpoint,
             .token = @as([]const u8, &token_hex),
             .expiresAt = expires_at,
@@ -3465,6 +3459,44 @@ pub const ProductionBackend = struct {
             .outputSeq = output_seq,
             .operations = parsed.value.operations,
         }, .{}) catch return failure(.resource_exhausted);
+
+        // Finish and validate the response before changing host state. A Hive
+        // serialization defect must not consume a host grant and turn a local
+        // implementation failure into capacity pressure on later retries.
+        if (!protocol.validateControlPayload(
+            allocator,
+            generated.wire_schema.attach_grant_payload,
+            response,
+        )) {
+            allocator.free(response);
+            return failure(.internal);
+        }
+        if (self.registry.registerGrant(
+            locator,
+            token_hash,
+            parsed.value.viewerId,
+            parsed.value.operations,
+            .{
+                .columns = parsed.value.geometry.columns,
+                .rows = parsed.value.geometry.rows,
+                .width_px = parsed.value.geometry.widthPx,
+                .height_px = parsed.value.geometry.heightPx,
+                .cell_width_px = parsed.value.geometry.cellWidthPx,
+                .cell_height_px = parsed.value.geometry.cellHeightPx,
+            },
+            now_ns,
+        )) |register_failure| {
+            allocator.free(response);
+            return .{ .failure = register_failure };
+        }
+
+        // The broker's per-generation grant slots are an issuance-capacity
+        // mirror only — the HOST owns one-use validation and removes the grant
+        // on the viewer's attach. Release the mirror slot as soon as the grant
+        // is handed to the viewer so reconnect churn (a pane repeatedly losing
+        // its transport and re-attaching) cannot exhaust the four slots and
+        // refuse a fresh viewer while spent grants sit until their 15s expiry.
+        _ = self.registry.consumeGrant(locator, &token_hex, now_ns);
         return .{ .response = response };
     }
 
@@ -4926,7 +4958,7 @@ test "visibility renewal kernel-verifies the claimed workspace identity" {
     }
 }
 
-test "locator JSON fails closed on a generation beyond the wire integer range" {
+test "canonical locator JSON omits variant fields and rejects out-of-range generations" {
     var arena = std.heap.ArenaAllocator.init(std.testing.allocator);
     defer arena.deinit();
     const out_of_range: Locator = .{
@@ -4939,14 +4971,39 @@ test "locator JSON fails closed on a generation beyond the wire integer range" {
         locatorJsonValue(arena.allocator(), out_of_range),
     );
 
-    // Positive control: an in-range generation still serializes.
-    const in_range: Locator = .{
-        .instance_id = "inst",
-        .session_id = "ses_generation_range",
-        .generation = 7,
-    };
-    const value = try locatorJsonValue(arena.allocator(), in_range);
+    // Exercise the production root-locator path: DiskSubject must accept both
+    // variants while the canonical encoder emits only the selected variant.
+    const root_wire =
+        "{\"schemaVersion\":1,\"instanceId\":\"inst\",\"subject\":{\"kind\":\"root\"}," ++
+        "\"generation\":7,\"sessionId\":\"ses_018f1e90-7b5a-7cc0-8000-000000000004\",\"hostKind\":\"sessiond\"," ++
+        "\"engineBuildId\":\"engine\"}";
+    var parsed = try std.json.parseFromSlice(DiskLocator, arena.allocator(), root_wire, .{});
+    defer parsed.deinit();
+    const value = try locatorJsonValue(
+        arena.allocator(),
+        try locatorFromDisk(parsed.value),
+    );
     try std.testing.expectEqual(@as(i64, 7), value.object.get("generation").?.integer);
+    const subject = value.object.get("subject").?.object;
+    try std.testing.expectEqualStrings("root", subject.get("kind").?.string);
+    try std.testing.expect(subject.get("agentId") == null);
+
+    const grant = try std.json.Stringify.valueAlloc(arena.allocator(), .{
+        .schemaVersion = @as(u8, 1),
+        .locator = value,
+        .endpoint = "/tmp/host.sock",
+        .token = "token",
+        .expiresAt = "2026-07-22T22:00:00.000Z",
+        .engineBuildId = "engine",
+        .checkpointSeq = "0",
+        .outputSeq = "0",
+        .operations = [_][]const u8{"view"},
+    }, .{});
+    try std.testing.expect(protocol.validateControlPayload(
+        arena.allocator(),
+        generated.wire_schema.attach_grant_payload,
+        grant,
+    ));
 }
 
 test "quarantine overflow stays fail-closed and flags operator attention" {

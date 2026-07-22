@@ -31,17 +31,7 @@ final class SessiondPaneTerminal {
     private var geometryWaitStarted: Date?
     private(set) var waitingForGeometry = false
 
-    /// §26 bounded recovery: consecutive failed attach attempts. Reset to 0 on
-    /// each first-correct-frame so a later transient loss gets a fresh budget.
-    private var failedAttempts = 0
-    /// Ticks that actually reached the grant request. A tick that skipped —
-    /// geometry not usable, or an attach still in flight — still spends the
-    /// budget, so without this the evidence line can claim attempts the pane
-    /// never made, which is what made a live disconnect unreadable (#91).
-    private var attemptedAttaches = 0
-    /// #90: the escalating budget is exhausted, so recovery has slowed to the
-    /// capped backoff — but it is still retrying, and a renderer or host that
-    /// comes back is picked up automatically. Visible, never terminal.
+    private var reconnectFailures = 0
     private(set) var degraded = false
     /// Reserved for conditions retrying cannot fix. A recoverable loss must
     /// never land here: a resting "renderer disconnected" pane is the defect
@@ -49,26 +39,10 @@ final class SessiondPaneTerminal {
     private(set) var gaveUp = false
     /// The current failure reason while degraded or given up (nil while live).
     private(set) var lastFailure: String?
-    /// Every attach refusal this pane has seen, monotonic across recoveries,
-    /// plus the most recent one. `beginRecovery` early-returns while a recovery
-    /// is already running, so each later refusal used to be dropped and the
-    /// evidence line quoted only the FIRST one — which is why a window full of
-    /// refusals and a window of pure silence read identically (#91).
-    private(set) var totalAttachRefusals = 0
-    private(set) var lastAttachRefusal: String?
-    let maxAttachAttempts = 6
-    let baseRetryDelay: TimeInterval = 0.5
-    let maxRetryDelay: TimeInterval = 8.0
-    /// A single self-rescheduling recovery driver: each one-shot tick advances
-    /// the budget and reschedules the next tick at an EXPONENTIAL delay —
-    /// independent of the attach outcome, so a raced/stalled attempt can never
-    /// strand the pane before the degraded state becomes visible.
+    let failuresBeforeDegraded = 6
+    let reconnectDelay: TimeInterval = 1.0
     private var recoveryTimer: Timer?
-    /// Test seam: a fixed tick delay so the degraded path runs without the
-    /// exponential wall-clock. Production leaves this nil (real backoff).
-    var recoveryIntervalOverride: TimeInterval?
-    /// Fired once when the escalating budget is exhausted and recovery drops to
-    /// the capped backoff. Retrying continues — this is a status, not an end.
+    /// Fired once after repeated completed failures. Retrying continues.
     var onDegraded: ((String) -> Void)?
     /// Fired when an attach goes live again after a degraded stretch.
     var onRecovered: (() -> Void)?
@@ -204,13 +178,11 @@ final class SessiondPaneTerminal {
     private func beginAttach(afterSeq: UInt64) {
         guard !detached, !attachInFlight, !gaveUp else { return }
         guard let geometry = view?.reportedGeometry, geometry.isUsable else {
-            // Silent here is how a recovery stretch became unreadable: the
-            // budget kept spending while nothing was ever requested (#91).
             NSLog("sessiond attach for %@ skipped: no usable geometry yet", agentName)
+            scheduleReconnect()
             return
         }
         attachInFlight = true
-        attemptedAttaches += 1
         let geometryJSON = Self.encodeGeometry(geometry)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
             guard let self else { return }
@@ -235,8 +207,7 @@ final class SessiondPaneTerminal {
                 NSLog("sessiond attach for %@ failed: %@", self.agentName, "\(error)")
                 DispatchQueue.main.async {
                     self.attachInFlight = false
-                    self.noteAttachRefusal("\(error)")
-                    self.beginRecovery("\(error)")
+                    self.recordRecoverableFailure("\(error)")
                 }
             }
         }
@@ -265,14 +236,13 @@ final class SessiondPaneTerminal {
             if case .failed(let state) = outcome {
                 transport.close()
                 NSLog("sessiond surface attach for %@ failed: %@", agentName, "\(state)")
-                noteAttachRefusal("attach failed: \(state)")
                 if case .incompatibleEngine(let evidence) = state {
                     // The app's engine build id cannot change while the app
                     // runs, so no number of retries can make this grant match.
                     failAttach("incompatible engine: \(evidence)")
                     return
                 }
-                beginRecovery("attach failed: \(state)")
+                recordRecoverableFailure("attach failed: \(state)")
                 return
             }
             noteLiveAttach()
@@ -283,8 +253,7 @@ final class SessiondPaneTerminal {
         } catch {
             NSLog("sessiond surface attach for %@ refused: %@", agentName, "\(error)")
             transport.close()
-            noteAttachRefusal("\(error)")
-            beginRecovery("\(error)")
+            recordRecoverableFailure("\(error)")
         }
     }
 
@@ -333,55 +302,38 @@ final class SessiondPaneTerminal {
             transport.close()
             DispatchQueue.main.async {
                 guard !self.detached, self.transport === transport else { return }
-                self.beginRecovery("host transport lost")
+                self.recordRecoverableFailure("host transport lost")
             }
         }
         thread.name = "sessiond-pump-\(agentName)"
         thread.start()
     }
 
-    /// Registers a failed attach attempt and reports whether another retry is
-    /// authorized. After `maxAttachAttempts` consecutive failures the pane goes
-    /// visibly degraded — but retrying continues at the capped backoff (#90):
-    /// stopping here left a dead pane on screen for a condition the host can
-    /// recover from. Not silent (the degraded state is surfaced and logged),
-    /// not terminal. Only `failAttach` stops for good.
-    func registerFailedAttemptAndShouldRetry(_ evidence: String) -> Bool {
-        guard !gaveUp, !detached else { return false }
-        failedAttempts += 1
-        if failedAttempts > maxAttachAttempts { enterDegraded(evidence) }
-        return true
-    }
-
-    /// Records one real attach refusal. Kept outside `beginRecovery` so a
-    /// refusal that arrives while recovery is already running is still counted.
-    private func noteAttachRefusal(_ evidence: String) {
-        totalAttachRefusals += 1
-        lastAttachRefusal = evidence
-    }
-
-    /// The escalating budget is spent. Say so once, keep trying. The line
-    /// carries what the loop actually did — ticks, requests that reached the
-    /// daemon, refusals seen, and the LAST refusal rather than the first — so
-    /// budget-exhausted-on-refusals and budget-exhausted-on-silence are
-    /// distinguishable in the log.
-    private func enterDegraded(_ evidence: String) {
+    private func recordRecoverableFailure(_ evidence: String) {
+        guard !gaveUp, !detached else { return }
+        reconnectFailures += 1
         lastFailure = evidence
-        guard !degraded else { return }
-        degraded = true
-        NSLog("sessiond pane %@ degraded: %d recovery ticks, %d reached a grant request, "
-                + "%d refusals (last: %@); entered recovery for: %@; still retrying every %.0fs",
-              agentName, failedAttempts, attemptedAttaches, totalAttachRefusals,
-              lastAttachRefusal ?? "none", evidence, maxRetryDelay)
-        onDegraded?(evidence)
+        if reconnectFailures >= failuresBeforeDegraded, !degraded {
+            degraded = true
+            NSLog(
+                "sessiond pane %@ degraded after %d failed attaches: %@; retrying every %.0fs",
+                agentName, reconnectFailures, evidence, reconnectDelay
+            )
+            onDegraded?(evidence)
+        }
+        scheduleReconnect()
+    }
+
+    /// Test seam for the small recovery state machine.
+    func recordReconnectFailureForTesting(_ evidence: String) {
+        recordRecoverableFailure(evidence)
     }
 
     /// An attach went live. Clears the budget so a later transient loss starts
     /// fresh, and lifts a degraded pane back to healthy.
     func noteLiveAttach() {
         stopRecovery()
-        failedAttempts = 0
-        attemptedAttaches = 0
+        reconnectFailures = 0
         lastFailure = nil
         guard degraded else { return }
         degraded = false
@@ -400,50 +352,21 @@ final class SessiondPaneTerminal {
         onFailure?(evidence)
     }
 
-    /// Starts (or keeps) the single repeating recovery driver. Each tick counts
-    /// one attempt toward the budget and, when nothing is already in flight,
-    /// kicks a fresh attach. Because the timer ticks independently of the
-    /// attach chain, a stalled/raced individual attempt can never strand the
-    /// pane — the budget still runs out and the degraded state becomes visible.
-    /// Exponential backoff for the given zero-based attempt index (0.5, 1, 2,
-    /// 4, 8, 8, …), capped at `maxRetryDelay`. Extracted so the escalating
-    /// shape is deterministically unit-testable — a flat/fixed interval
-    /// (the regression) fails the timing test.
-    func retryDelay(forAttempt attempt: Int) -> TimeInterval {
-        let scaled = baseRetryDelay * pow(2, Double(max(0, attempt)))
-        return min(scaled, maxRetryDelay)
-    }
-
-    /// Test seam: drive recovery directly (no live attach needed).
-    func startRecoveryForTesting(_ evidence: String) { beginRecovery(evidence) }
-
-    private func beginRecovery(_ evidence: String) {
+    /// One completed failure schedules one fresh-grant reconnect. The attempt
+    /// itself schedules the next retry only if it fails, so there is no second
+    /// timer-driven state machine racing the attach chain.
+    private func scheduleReconnect() {
         guard !detached, !gaveUp, recoveryTimer == nil else { return }
-        // The only record that a live pane lost its transport: without it the
-        // episode leaves nothing but a give-up line seconds later (#91).
-        NSLog("sessiond pane %@ entering recovery: %@", agentName, evidence)
-        scheduleRecoveryTick(evidence)
-    }
-
-    private func scheduleRecoveryTick(_ evidence: String) {
-        guard !detached, !gaveUp else { return }
-        let delay = recoveryIntervalOverride ?? retryDelay(forAttempt: failedAttempts)
-        let timer = Timer(timeInterval: delay, repeats: false) { [weak self] _ in
+        let timer = Timer(timeInterval: reconnectDelay, repeats: false) { [weak self] _ in
             guard let self, !self.detached, !self.gaveUp else {
                 self?.recoveryTimer = nil
                 return
             }
-            guard self.registerFailedAttemptAndShouldRetry(evidence) else {
-                self.recoveryTimer = nil
-                return // gave up — visible failure fired
-            }
+            self.recoveryTimer = nil
             if !self.attachInFlight {
                 self.view?.prepareThemeBeforeAttach()
                 self.beginAttach(afterSeq: self.view?.highWater ?? 0)
             }
-            // Always reschedule the next tick, independent of the attach
-            // outcome, at the escalating backoff for the next attempt.
-            self.scheduleRecoveryTick(evidence)
         }
         recoveryTimer = timer
         RunLoop.main.add(timer, forMode: .common)
