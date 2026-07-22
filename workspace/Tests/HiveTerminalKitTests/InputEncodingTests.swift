@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import XCTest
 import HiveGhosttyC
 @testable import HiveTerminalKit
@@ -401,6 +402,35 @@ final class InputEncodingTests: XCTestCase {
             "navigate_search:previous",
             "end_search",
         ])
+    }
+
+    func testShiftNavigationKeysScrollLocallyAndUnmodifiedKeysStayWithProvider() {
+        let engine = FakeManualSurface()
+        let terminal = makeTerminal(engine)
+        let bindings: [(Int, String)] = [
+            (kVK_PageUp, "scroll_page_up"),
+            (kVK_PageDown, "scroll_page_down"),
+            (kVK_Home, "scroll_to_top"),
+            (kVK_End, "scroll_to_bottom"),
+        ]
+
+        for (keyCode, _) in bindings {
+            terminal.keyDown(with: makeKeyEvent(
+                characters: "",
+                modifierFlags: [.shift],
+                keyCode: UInt16(keyCode)))
+        }
+
+        XCTAssertEqual(engine.bindingActions, bindings.map(\.1))
+        XCTAssertTrue(engine.keysSentDetail.isEmpty,
+                      "viewer history keys must neither claim nor reach the provider")
+        XCTAssertFalse(terminal.handleViewerScrollKey(makeKeyEvent(
+            characters: "", keyCode: UInt16(kVK_PageUp))))
+        XCTAssertFalse(terminal.handleViewerScrollKey(makeKeyEvent(
+            characters: "", modifierFlags: [.shift, .control],
+            keyCode: UInt16(kVK_End))))
+        XCTAssertEqual(engine.bindingActions, bindings.map(\.1),
+                       "only the exact Shift chord is viewer-local")
     }
 
     func testFirstResponderHandoffMirrorsFocusIntoTheSurface() {

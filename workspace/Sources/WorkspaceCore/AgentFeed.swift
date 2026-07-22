@@ -134,15 +134,21 @@ public struct WorkspaceVisibilityInventory: Equatable, Encodable {
 /// turn-boundary events. The root is not a spawned agent and has no AgentRecord,
 /// so it travels beside the `agents` array rather than inside it.
 ///
-/// Its ABSENCE is meaningful and must stay meaningful: the daemon omits this
-/// whenever it cannot honestly say (no turn events, or a record that contradicts
-/// itself because the root's hooks are not reaching it). Absent is unknown —
-/// never a default, and never a flattering guess.
+/// A nil `status` is meaningful and must stay meaningful: no turn events, or a
+/// contradictory record, is unknown rather than a fabricated idle word. The
+/// object may still carry an independently measured sessiond host locator.
 public struct OrchestratorSnapshot: Equatable, Decodable {
-    public let status: String
+    public let status: String?
+    public let host: String?
+    public let hostState: String?
+    public let sessionLocator: AgentSessionLocator?
 
-    public init(status: String) {
+    public init(status: String?, host: String? = nil, hostState: String? = nil,
+                sessionLocator: AgentSessionLocator? = nil) {
         self.status = status
+        self.host = host
+        self.hostState = hostState
+        self.sessionLocator = sessionLocator
     }
 }
 
@@ -155,7 +161,7 @@ public struct FeedLine: Decodable {
     /// "sandboxed" or "dangerous"; nil when the daemon didn't report it
     /// (older feed, or no autonomy control configured).
     public let autonomy: String?
-    /// nil when the daemon reported no trustworthy status for the root.
+    /// nil only when neither trustworthy turn status nor root host exists.
     public let orchestrator: OrchestratorSnapshot?
     public let error: String?
 

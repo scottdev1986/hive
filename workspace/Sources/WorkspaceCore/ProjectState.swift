@@ -20,6 +20,7 @@ public struct PaneState: Equatable {
     public var contextPct: Double?
     public var agentID: String?
     public var sessionLocator: AgentSessionLocator?
+    public var terminalHostState: String?
     /// True once the feed reported `closedAt` (or dropped the agent): the pane
     /// is in its grace window and the UI will close it shortly.
     public var closePending: Bool
@@ -29,6 +30,7 @@ public struct PaneState: Equatable {
                 taskDescription: String? = nil, tmuxSession: String? = nil,
                 contextPct: Double? = nil, agentID: String? = nil,
                 sessionLocator: AgentSessionLocator? = nil,
+                terminalHostState: String? = nil,
                 closePending: Bool = false) {
         self.id = id
         self.kind = kind
@@ -42,6 +44,7 @@ public struct PaneState: Equatable {
         self.contextPct = contextPct
         self.agentID = agentID
         self.sessionLocator = sessionLocator
+        self.terminalHostState = terminalHostState
         self.closePending = closePending
     }
 
@@ -138,6 +141,8 @@ public final class ProjectState {
     }
 
     public static let orchestratorPaneID = PaneID("orchestrator")
+    public static let orchestratorVisibilityID = "root"
+    public static let orchestratorRecipient = "queen"
 
     // MARK: Orchestrator pane (local, not feed-driven)
 
@@ -262,15 +267,33 @@ public final class ProjectState {
      revision, including unchanged heartbeat re-attestations after reconnect. */
     public func visibilityInventory() -> WorkspaceVisibilityInventory {
         let terminals = panes.values.compactMap { pane -> WorkspaceVisibleTerminal? in
-            guard pane.kind == .agent,
-                  let agentID = pane.agentID,
-                  let locator = pane.sessionLocator,
+            guard let locator = pane.sessionLocator,
                   locator.hostKind == "sessiond",
-                  locator.subject.kind == "agent",
-                  locator.subject.agentId == agentID,
                   locator.engineBuildId != nil else { return nil }
+            let agentID: String
+            let agentName: String
+            switch pane.kind {
+            case .agent:
+                guard let paneAgentID = pane.agentID,
+                      locator.subject.kind == "agent",
+                      locator.subject.agentId == paneAgentID else { return nil }
+                agentID = paneAgentID
+                agentName = pane.title
+            case .orchestrator:
+                guard locator.subject.kind == "root",
+                      locator.subject.agentId == nil else { return nil }
+                agentID = ProjectState.orchestratorVisibilityID
+                agentName = ProjectState.orchestratorRecipient
+            }
             let visibilityState: WorkspaceTerminalVisibilityState
-            if pane.closePending {
+            if pane.kind == .orchestrator {
+                switch pane.terminalHostState {
+                case "running": visibilityState = .live
+                case "exited": visibilityState = .exited
+                case "failed": visibilityState = .failed
+                default: visibilityState = .pending
+                }
+            } else if pane.closePending {
                 visibilityState = .closing
             } else if pane.feedStatus == "spawning" {
                 visibilityState = .pending
@@ -285,7 +308,7 @@ public final class ProjectState {
             }
             return WorkspaceVisibleTerminal(
                 agentId: agentID,
-                agentName: pane.title,
+                agentName: agentName,
                 locator: locator,
                 state: visibilityState)
         }.sorted { left, right in
@@ -305,15 +328,21 @@ public final class ProjectState {
     /// that means the root's hooks are not reaching it) — so the pane reverts to
     /// "unknown" and its dot goes gray. Reverting matters: holding the last known
     /// word would turn a lost signal into a confident stale claim, which is the
-    /// exact failure this whole change exists to remove.
+    /// exact failure this whole change exists to remove. It does not clear an
+    /// already measured terminal locator; missing turn state is not host exit.
     private func applyOrchestrator(_ snapshot: OrchestratorSnapshot?) -> [StateChange] {
         let paneID = ProjectState.orchestratorPaneID
         guard var pane = panes[paneID] else { return [] }
         guard !orchestratorChildExited else { return [] }
         let word = snapshot?.status ?? "unknown"
-        guard pane.feedStatus != word else { return [] }
+        let previous = pane
         pane.feedStatus = word
         pane.status = FeedStatusMap.paneStatus(for: word)
+        if let host = snapshot?.host {
+            pane.sessionLocator = host == "sessiond" ? snapshot?.sessionLocator : nil
+            pane.terminalHostState = host == "sessiond" ? snapshot?.hostState : nil
+        }
+        guard pane != previous else { return [] }
         panes[paneID] = pane
         return [.statusChanged(paneID)]
     }

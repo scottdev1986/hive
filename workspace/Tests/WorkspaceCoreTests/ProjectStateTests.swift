@@ -337,6 +337,53 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(closing.terminals.first?.state, .closing)
     }
 
+    func testRootLocatorPublishesVisibilityBeforeTurnStatusAndTracksGeneration() throws {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        state.addOrchestrator()
+        func locator(generation: Int) -> AgentSessionLocator {
+            AgentSessionLocator(
+                instanceId: "instance",
+                subject: AgentSessionSubject(kind: "root"),
+                generation: generation,
+                sessionId: "ses_0198a8f0-0000-7000-8000-00000000000\(generation)",
+                hostKind: "sessiond",
+                engineBuildId: "engine")
+        }
+
+        let first = locator(generation: 1)
+        XCTAssertEqual(state.apply(
+            feed: [],
+            orchestrator: OrchestratorSnapshot(
+                status: nil,
+                host: "sessiond",
+                hostState: "awaiting-visibility",
+                sessionLocator: first)), [.statusChanged(ProjectState.orchestratorPaneID)])
+        XCTAssertEqual(state.visibilityInventory(), WorkspaceVisibilityInventory(
+            inventoryRevision: "1",
+            terminals: [WorkspaceVisibleTerminal(
+                agentId: ProjectState.orchestratorVisibilityID,
+                agentName: ProjectState.orchestratorRecipient,
+                locator: first,
+                state: .pending)]))
+
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(
+            status: "idle", host: "sessiond", hostState: "running",
+            sessionLocator: first))
+        XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .live)
+
+        let second = locator(generation: 2)
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(
+            status: "idle", host: "sessiond", hostState: "running",
+            sessionLocator: second))
+        XCTAssertEqual(
+            state.panes[ProjectState.orchestratorPaneID]?.sessionLocator,
+            second,
+            "a supervisor relaunch must replace the exact root generation")
+        state.apply(feed: [], orchestrator: nil)
+        XCTAssertEqual(state.panes[ProjectState.orchestratorPaneID]?.sessionLocator, second,
+                       "unknown turn state is not evidence that the terminal vanished")
+    }
+
     func testPromoteAndReturnOrchestrator() {
         let state = drivenState()
         let migrator = ProjectState.paneID(forAgent: "migrator")
@@ -416,6 +463,16 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertEqual(decoded.agents, [AgentSnapshot(name: "good")])
         XCTAssertNil(decoded.autonomy)
         XCTAssertNil(decoded.orchestrator)
+    }
+
+    func testFeedLineDecodesRootLocatorWithNullTurnStatus() throws {
+        let line = #"{"v":1,"agents":[],"orchestrator":{"status":null,"host":"sessiond","hostState":"awaiting-visibility","sessionLocator":{"schemaVersion":1,"instanceId":"instance","subject":{"kind":"root"},"generation":1,"sessionId":"ses_0198a8f0-0000-7000-8000-000000000001","hostKind":"sessiond","engineBuildId":"engine"}}}"#
+
+        let snapshot = try XCTUnwrap(FeedLine.parse(line)?.orchestrator)
+        XCTAssertNil(snapshot.status)
+        XCTAssertEqual(snapshot.host, "sessiond")
+        XCTAssertEqual(snapshot.hostState, "awaiting-visibility")
+        XCTAssertEqual(snapshot.sessionLocator?.subject, AgentSessionSubject(kind: "root"))
     }
 
     func testUnknownAutonomyDoesNotEnableKnownControls() throws {

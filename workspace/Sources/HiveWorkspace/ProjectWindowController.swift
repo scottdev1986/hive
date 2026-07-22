@@ -184,6 +184,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             case .statusChanged(let paneID):
                 if let pane = state.panes[paneID] {
                     paneViews[paneID]?.update(state: pane)
+                    installSessiondTerminalIfNeeded(for: paneID)
                 }
             case .attentionChanged:
                 attentionCenter.refresh()
@@ -211,22 +212,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         view.update(state: pane)
         // Preferred root address is queen; daemon also accepts the synonym
         // "orchestrator" for lease checks during the rename window.
-        let recipient = pane.kind == .orchestrator ? "queen" : pane.title
+        let recipient = pane.kind == .orchestrator
+            ? ProjectState.orchestratorRecipient : pane.title
         view.contentView.onComposerInput = { [weak self] action in
             self?.onComposerInput?(recipient, action)
         }
-        if pane.kind == .agent,
-           let locator = pane.sessionLocator,
-           locator.hostKind == "sessiond" {
-            // B2.2: a sessiond-backed pane renders through the exact-locator
-            // HiveTerminalView; no tmux client is spawned for it.
-            view.installSessiondTerminal(SessiondPaneTerminal(
-                agentName: pane.title,
-                locator: locator,
-                hivePath: hivePath,
-                daemonPort: daemonPort,
-                instanceHome: instanceHome))
-        } else {
+        let isSessiondAgent = pane.kind == .agent &&
+            pane.sessionLocator?.hostKind == "sessiond"
+        if !isSessiondAgent {
             view.contentView.schedule(
                 command: terminalCommand(for: pane),
                 workingDirectory: projectDirectory)
@@ -238,12 +231,30 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             }
         }
         paneViews[paneID] = view
+        installSessiondTerminalIfNeeded(for: paneID)
         container.addSubview(view)
         // New panes appear at their final slot's center and grow into place;
         // creation must be visible but never steal focus.
         if let target = state.frames(in: container.bounds)[paneID] {
             view.frame = CGRect(x: target.midX, y: target.midY, width: 0, height: 0)
         }
+    }
+
+    private func installSessiondTerminalIfNeeded(for paneID: PaneID) {
+        guard let pane = state.panes[paneID],
+              let view = paneViews[paneID],
+              let locator = pane.sessionLocator,
+              locator.hostKind == "sessiond" else { return }
+        // Worker panes begin with their locator. The root is different: its
+        // local supervisor must start first, then the feed delivers the exact
+        // pending generation that Workspace admits and renders here.
+        view.installSessiondTerminal(SessiondPaneTerminal(
+            agentName: pane.kind == .orchestrator
+                ? ProjectState.orchestratorRecipient : pane.title,
+            locator: locator,
+            hivePath: hivePath,
+            daemonPort: daemonPort,
+            instanceHome: instanceHome))
     }
 
     /// What runs inside a pane's pty:

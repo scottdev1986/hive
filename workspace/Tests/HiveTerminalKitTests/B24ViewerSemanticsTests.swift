@@ -1,4 +1,5 @@
 import AppKit
+import Carbon
 import CoreImage
 import Darwin
 import HiveGhosttyC
@@ -77,6 +78,21 @@ final class B24ViewerSemanticsTests: XCTestCase {
             charactersIgnoringModifiers: key,
             isARepeat: false,
             keyCode: 0
+        )!
+    }
+
+    private func navigationKey(_ keyCode: Int) -> NSEvent {
+        NSEvent.keyEvent(
+            with: .keyDown,
+            location: .zero,
+            modifierFlags: [.shift],
+            timestamp: 0,
+            windowNumber: 0,
+            context: nil,
+            characters: "",
+            charactersIgnoringModifiers: "",
+            isARepeat: false,
+            keyCode: UInt16(keyCode)
         )!
     }
 
@@ -336,7 +352,7 @@ final class B24ViewerSemanticsTests: XCTestCase {
         XCTAssertFalse(local.semanticSnapshot()?.viewport.followsBottom ?? true)
         XCTAssertEqual(localTerminal.newOutputIndicatorForTesting?.title, "New output ↓")
 
-        localTerminal.scrollToBottom(nil)
+        localTerminal.keyDown(with: navigationKey(kVK_End))
         drainMain(until: { localTerminal.scrollState.followsBottom })
         XCTAssertTrue(local.semanticSnapshot()?.viewport.followsBottom ?? false)
         XCTAssertFalse(localTerminal.scrollState.hasUnseenOutput)

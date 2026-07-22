@@ -6,6 +6,56 @@ import WorkspaceCore
 
 @MainActor
 final class SessiondPaneInputFocusTests: XCTestCase {
+    func testRootFeedInstallsAndReplacesExactSessiondGeneration() throws {
+        _ = NSApplication.shared
+        let buildID = HiveTerminalEngineIdentity.current.buildId
+        let state = ProjectState(projectID: "project", displayName: "Project")
+        let controller = ProjectWindowController(
+            state: state,
+            attentionCenter: AttentionCenter(),
+            projectDirectory: "/tmp",
+            hivePath: "/usr/bin/false",
+            daemonPort: 1,
+            orchestrator: "claude",
+            orchestratorSession: nil,
+            instanceID: "instance",
+            instanceHome: "/tmp")
+        controller.window?.isReleasedWhenClosed = false
+        defer { controller.close() }
+        controller.bootstrapOrchestrator()
+        func locator(generation: Int) -> AgentSessionLocator {
+            AgentSessionLocator(
+                instanceId: "instance",
+                subject: AgentSessionSubject(kind: "root"),
+                generation: generation,
+                sessionId: "ses_0198a8f0-0000-7000-8000-00000000000\(generation)",
+                hostKind: "sessiond",
+                engineBuildId: buildID)
+        }
+
+        let first = locator(generation: 1)
+        controller.applyFeed([], orchestrator: OrchestratorSnapshot(
+            status: nil, host: "sessiond", hostState: "awaiting-visibility",
+            sessionLocator: first))
+        let firstView = try XCTUnwrap(controller.sessiondTerminalView(
+            pane: ProjectState.orchestratorPaneID))
+
+        controller.applyFeed([], orchestrator: OrchestratorSnapshot(
+            status: nil, host: "sessiond", hostState: "awaiting-visibility",
+            sessionLocator: first))
+        XCTAssertTrue(controller.sessiondTerminalView(
+            pane: ProjectState.orchestratorPaneID) === firstView)
+
+        controller.applyFeed([], orchestrator: OrchestratorSnapshot(
+            status: "idle", host: "sessiond", hostState: "running",
+            sessionLocator: locator(generation: 2)))
+        let secondView = try XCTUnwrap(controller.sessiondTerminalView(
+            pane: ProjectState.orchestratorPaneID))
+        XCTAssertFalse(secondView === firstView)
+        XCTAssertNil(firstView.superview,
+                     "a relaunched root must detach the stale generation renderer")
+    }
+
     func testFocusedSessiondPaneRoutesRealKeyEventThroughClaimAndOutput() throws {
         _ = NSApplication.shared
         let buildID = HiveTerminalEngineIdentity.current.buildId

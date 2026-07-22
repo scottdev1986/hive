@@ -45,11 +45,16 @@ final class PaneView: NSView {
     /// without waiting for the next feed tick.
     private var feedHeaderDescription = ""
 
-    /// Installs the sessiond renderer over the content area. The tmux content
-    /// view must not have been scheduled; close/kill authority is untouched
-    /// (the renderer is a disposable viewer, §26).
+    /// Installs the sessiond renderer over the content area. Worker panes leave
+    /// the underlying pty unscheduled; the root keeps its local supervisor
+    /// there while this exact-generation renderer is disposable (§26).
     func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
-        guard sessiondTerminal == nil else { return }
+        if let current = sessiondTerminal {
+            guard current.paneLocator != terminal.paneLocator else { return }
+            current.detach()
+            current.view?.removeFromSuperview()
+            sessiondTerminal = nil
+        }
         do {
             let terminalView = try terminal.makeView()
             terminalView.frame = contentView.bounds

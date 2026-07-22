@@ -156,10 +156,35 @@ extension HiveTerminalView {
     }
 
     public override func keyDown(with event: NSEvent) {
+        if handleViewerScrollKey(event) { return }
         if activeClaimNeeded(for: event) {
             try? attachClient?.beginClaimAcquire()
         }
         handleKeyDown(event) { self.interpretKeyEvents([$0]) }
+    }
+
+    /// Hive clears every provider keybind, so the root pane needs explicit,
+    /// viewer-local history navigation. Modifier-only chords preserve ordinary
+    /// Home/End/Page keys for the provider and never acquire an input claim.
+    func handleViewerScrollKey(_ event: NSEvent) -> Bool {
+        let authoringModifiers: NSEvent.ModifierFlags = [
+            .shift, .control, .option, .command,
+        ]
+        guard event.modifierFlags.intersection(authoringModifiers) == .shift else {
+            return false
+        }
+        switch Int(event.keyCode) {
+        case kVK_PageUp:
+            return engine.performBindingAction("scroll_page_up")
+        case kVK_PageDown:
+            return engine.performBindingAction("scroll_page_down")
+        case kVK_Home:
+            return engine.performBindingAction("scroll_to_top")
+        case kVK_End:
+            return performScrollToBottom()
+        default:
+            return false
+        }
     }
 
     /// Deterministic seam for the AppKit `interpretKeyEvents` callback cycle.

@@ -132,9 +132,15 @@ extension HiveTerminalView {
 
     @IBAction public func scrollToBottom(_ sender: Any?) {
         _ = sender
-        guard engine.performBindingAction("scroll_to_bottom") else { return }
+        _ = performScrollToBottom()
+    }
+
+    @discardableResult
+    func performScrollToBottom() -> Bool {
+        guard engine.performBindingAction("scroll_to_bottom") else { return false }
         scrollStateStorage.hasUnseenOutput = false
         dismissNewOutputIndicator()
+        return true
     }
 
     func handleTerminalActionNotification(_ note: HiveTerminalActionNotification) {
