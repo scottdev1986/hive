@@ -4,6 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultInitDeps,
+  ensureHiveMemoryGitignored,
+  HIVE_MEMORY_GITIGNORE_ENTRY,
   initStampPath,
   isRepoInitialized,
   readSeedFactsFile,
@@ -240,6 +242,71 @@ describe("runInit", () => {
       expect(report).not.toContain("Seeded and indexed");
       expect(report).toContain("daemon refused reindex");
       expect(report).toContain("hive memory reindex");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("runInit — gitignoring .hive/memory/ (board issue #78)", () => {
+  test("creates a missing .gitignore with exactly the .hive/memory/ entry", async () => {
+    const root = await tsRepo();
+    try {
+      const result = await runInit(root, {}, testDeps());
+      const gitignore = await readFile(join(root, ".gitignore"), "utf8");
+      expect(gitignore).toBe(`# Hive memory\n${HIVE_MEMORY_GITIGNORE_ENTRY}\n`);
+      expect(gitignore).toContain(".hive/memory/\n");
+      // The #78 ruling: never a bare parent-dir entry.
+      expect(gitignore).not.toContain("\n.hive/\n");
+      expect(result.messages.some((m) => m.includes("Created .gitignore"))).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("appends under a header without rewriting existing content, and is idempotent", async () => {
+    const root = await tsRepo();
+    try {
+      await writeFile(join(root, ".gitignore"), "node_modules/\n# theirs\nout");
+      const first = await runInit(root, {}, testDeps());
+      expect(first.messages.some((m) => m.includes("Appended `.hive/memory/`"))).toBe(true);
+      const after = await readFile(join(root, ".gitignore"), "utf8");
+      expect(after).toBe(
+        "node_modules/\n# theirs\nout\n\n# Hive memory\n.hive/memory/\n",
+      );
+
+      const second = await runInit(root, {}, testDeps());
+      expect(second.messages.some((m) => m.includes("already covers `.hive/memory/`"))).toBe(true);
+      expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(after);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("any covering entry (.hive/memory, .hive/, .hive/*) leaves the file untouched", async () => {
+    for (const entry of [".hive/memory", "/.hive/memory/", ".hive/", ".hive/*"]) {
+      const root = await tsRepo();
+      try {
+        const original = `node_modules/\n${entry}\n`;
+        await writeFile(join(root, ".gitignore"), original);
+        const result = await runInit(root, {}, testDeps());
+        expect(result.messages.some((m) => m.includes("already covers"))).toBe(true);
+        expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(original);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    }
+  });
+
+  test("a negation or comment mentioning the path does not count as covering", async () => {
+    const root = await tsRepo();
+    try {
+      await writeFile(join(root, ".gitignore"), "# ignore .hive/memory/ later\n");
+      const message = await ensureHiveMemoryGitignored(root);
+      expect(message).toContain("Appended");
+      expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(
+        "# ignore .hive/memory/ later\n\n# Hive memory\n.hive/memory/\n",
+      );
     } finally {
       await rm(root, { recursive: true, force: true });
     }

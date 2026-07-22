@@ -2518,6 +2518,66 @@ describe("HiveSpawner wiring", () => {
     }
   });
 
+  test("the primary checkout's memory wins over a stale tracked copy in the worktree", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-spawner-memory-stale-"));
+    tempRoots.push(root);
+    const globalHome = await mkdtemp(join(tmpdir(), "hive-spawner-memory-stale-home-"));
+    tempRoots.push(globalHome);
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = globalHome;
+    try {
+      const worktreePath = join(root, "maya");
+      // When a project does NOT gitignore .hive/memory, an agent worktree can
+      // carry a stale tracked copy of it. All daemon writes land in the primary
+      // checkout (repoRoot), so the spawn prompt must be built from there —
+      // never from whatever the worktree happens to contain.
+      const worktreeMemory = join(worktreePath, ".hive", "memory");
+      await mkdir(worktreeMemory, { recursive: true });
+      await Bun.write(
+        join(worktreeMemory, "stale-worktree-copy.md"),
+        "---\ntitle: STALE worktree copy — do not inject\ndate: 2026-01-01\ntags: [testing]\n---\n\nLeftover tracked copy.\n",
+      );
+      const repoMemory = join(root, ".hive", "memory");
+      await mkdir(repoMemory, { recursive: true });
+      await Bun.write(
+        join(repoMemory, "fresh-primary-article.md"),
+        "---\ntitle: The fresh primary checkout article\ndate: 2026-07-22\ntags: [testing]\n---\n\nWritten by the daemon into the primary checkout.\n",
+      );
+
+      const store = new FakeStore();
+      const tmux = new FakeTmux();
+      const spawner = newTestSpawner({
+        isModelEnabled: async () => true,
+        db: store,
+        repoRoot: root,
+        port: 4317,
+        config: {},
+        readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
+        tmux,
+        createWorktree: async () => ({
+          path: worktreePath,
+          branch: "hive/maya-stale-memory",
+        }),
+        sleep: signalReadiness(store),
+      });
+
+      await spawner.spawn({ task: "Fix the flaky test", category: "simple_coding" });
+
+      const launched = await deliveredPrompt(tmux.sessions[0]?.[2] ?? "");
+      expect(launched).toContain(
+        "[repo/testing] fresh-primary-article (2026-07-22) [unverified]: The fresh primary checkout article",
+      );
+      expect(launched).not.toContain("STALE worktree copy");
+      expect(launched).not.toContain("stale-worktree-copy");
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HIVE_HOME;
+      } else {
+        process.env.HIVE_HOME = previousHome;
+      }
+    }
+  });
+
   test("short-circuits readiness when the persisted status leaves spawning", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-ready-"));
     tempRoots.push(root);

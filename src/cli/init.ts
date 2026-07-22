@@ -9,6 +9,9 @@
  *   - Seed a small set of narrative memory articles with `source: "init"` and a
  *     `verified` date (decision 5's provenance), derived and re-derivable —
  *     distinct from the earned facts an agent learns.
+ *   - Ensure `.gitignore` covers `.hive/memory/` (user ruling 2026-07-22, board
+ *     issue #78): repo memory is daemon-written derived state, never committed.
+ *     The entry is exactly `.hive/memory/` — never a bare `.hive/` entry.
  *
  * Running the command is the authorization, and every action it takes is
  * printed. Seeded facts are indexed immediately when a daemon is available;
@@ -112,6 +115,7 @@ export interface InitDeps {
   ) => Promise<{ id: string }>;
   listMemoryFacts: (root: string) => Promise<Array<{ id: string; scope: string }>>;
   fileExists: (path: string) => Promise<boolean>;
+  readFile: (path: string) => Promise<string>;
   writeFile: (path: string, contents: string) => Promise<void>;
   /** The next daemon rebuilds the index when no daemon is available yet. */
   reindexMemory: (root: string) => Promise<"indexed" | "deferred">;
@@ -156,6 +160,7 @@ export const defaultInitDeps: InitDeps = {
   writeFile: async (path, contents) => {
     await writeFile(path, contents);
   },
+  readFile: (path) => readFile(path, "utf8"),
   reindexMemory: async (root) => {
     const daemon = await probeDaemonReuse(await expectedDaemonHandshake(root));
     if (daemon.state !== "authorized") return "deferred";
@@ -234,6 +239,51 @@ export async function seedInitFacts(
     seeded.push(written.id);
   }
   return seeded;
+}
+
+/** The exact entry board issue #78 settled on. Never a bare `.hive/` — a
+ * parent-dir entry caused a worktree-deletion incident. */
+export const HIVE_MEMORY_GITIGNORE_ENTRY = ".hive/memory/";
+
+/** Does this .gitignore line already cover `.hive/memory/`? Exact forms (with
+ * or without a leading/trailing slash) and the broader `.hive/` / `.hive/*`
+ * entries all count; negations and comments do not. */
+function gitignoreCoversHiveMemory(line: string): boolean {
+  const trimmed = line.trim();
+  if (trimmed === "" || trimmed.startsWith("#") || trimmed.startsWith("!")) {
+    return false;
+  }
+  const normalized = trimmed.replace(/^\//, "").replace(/\/+$/, "");
+  return normalized === ".hive/memory" ||
+    normalized === ".hive" ||
+    normalized === ".hive/*";
+}
+
+/**
+ * Ensure the project's `.gitignore` ignores `.hive/memory/`. Idempotent: any
+ * existing covering entry leaves the file byte-for-byte untouched; otherwise the
+ * entry is appended under a `# Hive memory` header without rewriting or
+ * reordering existing content; a missing `.gitignore` is created.
+ */
+export async function ensureHiveMemoryGitignored(
+  cwd: string,
+  deps: Pick<InitDeps, "fileExists" | "readFile" | "writeFile"> = defaultInitDeps,
+): Promise<string> {
+  const path = join(cwd, ".gitignore");
+  if (!(await deps.fileExists(path))) {
+    await deps.writeFile(path, `# Hive memory\n${HIVE_MEMORY_GITIGNORE_ENTRY}\n`);
+    return "Created .gitignore with a `.hive/memory/` entry (Hive memory is derived state, never committed).";
+  }
+  const existing = await deps.readFile(path);
+  if (existing.split(/\r?\n/).some(gitignoreCoversHiveMemory)) {
+    return ".gitignore already covers `.hive/memory/`; left untouched.";
+  }
+  const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
+  await deps.writeFile(
+    path,
+    `${existing}${separator}\n# Hive memory\n${HIVE_MEMORY_GITIGNORE_ENTRY}\n`,
+  );
+  return "Appended `.hive/memory/` to .gitignore (Hive memory is derived state, never committed).";
 }
 
 /** A minimal starter `AGENTS.md` — a starting point a human refines (every
@@ -361,7 +411,14 @@ export async function runInit(
     }
   }
 
-  // 3. Seed narrative facts (source: init): genuinely narrative knowledge an
+  // 3. .gitignore: `.hive/memory/` is daemon-written derived state and must
+  //    never be committed. The entry is exactly `.hive/memory/` — never a bare
+  //    `.hive/` entry (a parent-dir entry caused a worktree-deletion incident;
+  //    board issue #78). Idempotent: any line that already covers the directory
+  //    counts, and an existing .gitignore is only ever appended to.
+  messages.push(await ensureHiveMemoryGitignored(cwd, deps));
+
+  // 4. Seed narrative facts (source: init): genuinely narrative knowledge an
   //    agent should start with, distinct from the facts an agent earns.
   const facts = options.facts ?? [];
   const factsSeeded = facts.length === 0
@@ -387,7 +444,7 @@ export async function runInit(
     }
   }
 
-  // 4. Graphify. The choice is the human's, and init is where it gets made:
+  // 5. Graphify. The choice is the human's, and init is where it gets made:
   //    flags always win and never prompt; a TTY without a flag is asked once
   //    (recommended, default yes); non-interactive without a flag safely
   //    declines for this run and says how to enable. An enable failure is
