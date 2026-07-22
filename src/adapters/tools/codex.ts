@@ -219,7 +219,9 @@ function buildCodexConfigArgs(
     // hive_approvals stays empty, no tool boundary is ever reached, and every
     // control surface is a dead end at once (#102). Measured against codex-cli
     // 0.145.0: the hook fires the moment the popup renders and its stdin
-    // carries the tool and command being decided.
+    // carries the tool and command being decided. Residual: if a future vendor
+    // popup raises no PermissionRequest hook, it remains silent to Hive; pixels
+    // are deliberately not used as status truth or an approval source.
     hookOverride("PermissionRequest", `${notifyPath} approval-request`),
     "-c",
     hookOverride("PostToolUse", `${notifyPath} tool-boundary`),

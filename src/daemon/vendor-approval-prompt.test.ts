@@ -148,6 +148,58 @@ function pendingApprovalId(db: HiveDatabase): string {
   return pending[0]!.id;
 }
 
+function deferred(): {
+  promise: Promise<void>;
+  resolve: () => void;
+} {
+  let resolve!: () => void;
+  const promise = new Promise<void>((done) => {
+    resolve = done;
+  });
+  return { promise, resolve };
+}
+
+async function expectFailedInjectionPreserved(
+  fixture: string,
+  injectKeys: NonNullable<SessiondAgentInput["injectKeys"]>,
+): Promise<void> {
+  const input: SessiondAgentInput = {
+    async injectIdle(): Promise<SessiondInjectResult> {
+      return { outcome: "declined", reason: "not used in this test" };
+    },
+    injectKeys,
+  };
+  await withDaemon(fixture, input, async ({ db, daemon, client }) => {
+    db.insertAgent(blockedCodexAgent());
+    await daemon.processEvent({
+      kind: "approval-request",
+      agentName: "sam",
+      timestamp: "2026-07-21T12:01:00.000Z",
+      description: "Bash: git push",
+    });
+    const approvalId = pendingApprovalId(db);
+    const queued = await daemon.delivery.send(
+      "queen",
+      "sam",
+      "Read this after the prompt is really gone.",
+    );
+    expect(queued.state).toEqual("queued");
+
+    const result = textValue(await client.callTool({
+      name: "hive_approve",
+      arguments: { id: approvalId, decision: "approve" },
+    })) as { outcome: string; status: string };
+
+    expect(result).toMatchObject({ outcome: "delivery-failed", status: "pending" });
+    expect(db.getApproval(approvalId)?.status).toEqual("pending");
+    expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
+    expect(db.getMessage(queued.id)).toMatchObject({
+      state: "queued",
+      deliveredAt: null,
+    });
+  });
+}
+
 describe("a vendor TUI parked on an approval prompt", () => {
   test("surfaces through hive_approvals, and approving it presses the key that advances the popup", async () => {
     const input = recordingInput();
@@ -206,6 +258,140 @@ describe("a vendor TUI parked on an approval prompt", () => {
       });
 
       expect(input.keys).toEqual([{ name: "sam", keys: "\u001b" }]);
+    });
+  });
+
+  test("a manually answered prompt makes its approval STALE before a later popup can reuse it", async () => {
+    const input = recordingInput();
+    await withDaemon("stale-prompt", input, async ({ db, daemon, client }) => {
+      db.insertAgent(blockedCodexAgent());
+      await daemon.processEvent({
+        kind: "approval-request",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:01:00.000Z",
+        description: "Bash: command A",
+      });
+      const staleId = pendingApprovalId(db);
+
+      // A tool boundary proves the person at the pane already answered A.
+      await daemon.processEvent({
+        kind: "tool-boundary",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:02:00.000Z",
+      });
+      await daemon.processEvent({
+        kind: "approval-request",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:03:00.000Z",
+        description: "Bash: command B",
+      });
+      const currentId = pendingApprovalId(db);
+      expect(currentId).not.toEqual(staleId);
+
+      const result = textValue(await client.callTool({
+        name: "hive_approve",
+        arguments: { id: staleId, decision: "approve" },
+      })) as { outcome: string; status: string };
+
+      expect(result).toMatchObject({ outcome: "stale", status: "stale" });
+      expect(input.keys).toEqual([]);
+      expect(db.getApproval(currentId)?.status).toEqual("pending");
+      expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
+    });
+  });
+
+  test("rechecks prompt identity after awaited injection setup", async () => {
+    const started = deferred();
+    const release = deferred();
+    const keys: string[] = [];
+    const input: SessiondAgentInput = {
+      async injectIdle(): Promise<SessiondInjectResult> {
+        return { outcome: "declined", reason: "not used in this test" };
+      },
+      async injectKeys(_agent, sent, options): Promise<SessiondInjectResult> {
+        started.resolve();
+        await release.promise;
+        if (!options.isPromptPending()) {
+          return { outcome: "declined", reason: "approval prompt is stale" };
+        }
+        keys.push(sent);
+        return { outcome: "injected", receipt: receipt(options.transactionId) };
+      },
+    };
+    await withDaemon("injection-race", input, async ({ db, daemon, client }) => {
+      db.insertAgent(blockedCodexAgent());
+      await daemon.processEvent({
+        kind: "approval-request",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:01:00.000Z",
+        description: "Bash: command A",
+      });
+      const approvalId = pendingApprovalId(db);
+      const resolving = client.callTool({
+        name: "hive_approve",
+        arguments: { id: approvalId, decision: "approve" },
+      });
+      await started.promise;
+
+      // The popup is answered manually while broker/attach/input work awaits.
+      await daemon.processEvent({
+        kind: "tool-boundary",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:02:00.000Z",
+      });
+      release.resolve();
+      const result = textValue(await resolving) as { outcome: string };
+
+      expect(result.outcome).toEqual("stale");
+      expect(keys).toEqual([]);
+      expect(db.getAgentByName("sam")?.status).toEqual("working");
+    });
+  });
+
+  test("an old denial completing cannot overwrite one fresh prompt or answer it again", async () => {
+    const started = deferred();
+    const release = deferred();
+    const keys: string[] = [];
+    const input: SessiondAgentInput = {
+      async injectIdle(): Promise<SessiondInjectResult> {
+        return { outcome: "declined", reason: "not used in this test" };
+      },
+      async injectKeys(_agent, sent, options): Promise<SessiondInjectResult> {
+        keys.push(sent);
+        started.resolve();
+        await release.promise;
+        return { outcome: "injected", receipt: receipt(options.transactionId) };
+      },
+    };
+    await withDaemon("fresh-after-denial", input, async ({ db, daemon, client }) => {
+      db.insertAgent(blockedCodexAgent());
+      await daemon.processEvent({
+        kind: "approval-request",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:01:00.000Z",
+        description: "Bash: command A",
+      });
+      const oldId = pendingApprovalId(db);
+      const denying = client.callTool({
+        name: "hive_approve",
+        arguments: { id: oldId, decision: "deny" },
+      });
+      await started.promise;
+
+      await daemon.processEvent({
+        kind: "approval-request",
+        agentName: "sam",
+        timestamp: "2026-07-21T12:02:00.000Z",
+        description: "Bash: command B",
+      });
+      release.resolve();
+      await denying;
+
+      const pending = db.listApprovals("pending");
+      expect(pending).toHaveLength(1);
+      expect(pending[0]?.description).toEqual("Bash: command B");
+      expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
+      expect(keys).toEqual(["\u001b"]);
     });
   });
 
@@ -286,7 +472,7 @@ describe("a vendor TUI parked on an approval prompt", () => {
     });
   });
 
-  test("reports honestly when the host has no key channel rather than claiming the prompt was answered", async () => {
+  test("keeps the approval pending when the host has no key channel", async () => {
     const withoutKeys: SessiondAgentInput = {
       async injectIdle(): Promise<SessiondInjectResult> {
         return { outcome: "declined", reason: "not used in this test" };
@@ -304,9 +490,21 @@ describe("a vendor TUI parked on an approval prompt", () => {
         name: "hive_approve",
         arguments: { id: pendingApprovalId(db), decision: "approve" },
       });
-      // Undelivered is never reported as delivered: the agent is not claimed to
-      // be back at work when nothing pressed its key.
-      expect(db.getAgentByName("sam")?.status).toEqual("idle");
+      expect(db.getAgentByName("sam")?.status).toEqual("awaiting-approval");
+      expect(db.listApprovals("pending")).toHaveLength(1);
+    });
+  });
+
+  test("keeps approval and queued mail when key injection is declined", async () => {
+    await expectFailedInjectionPreserved(
+      "declined-keys",
+      async () => ({ outcome: "declined", reason: "viewer claim refused" }),
+    );
+  });
+
+  test("keeps approval and queued mail when key injection throws", async () => {
+    await expectFailedInjectionPreserved("throwing-keys", async () => {
+      throw new Error("viewer wire broke");
     });
   });
 });

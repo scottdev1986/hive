@@ -51,7 +51,9 @@ export function readCostConsent(
 ): ConsentState {
   const approval: Approval | null = db.getApproval(consentId(subject));
   if (approval === null) return "none";
-  return approval.status;
+  // Only tool-permission rows are invalidated as stale. If a malformed or
+  // manually edited cost row carries it, fail closed instead of granting.
+  return approval.status === "stale" ? "denied" : approval.status;
 }
 
 /**

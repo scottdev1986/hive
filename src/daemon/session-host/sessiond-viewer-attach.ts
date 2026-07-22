@@ -239,9 +239,11 @@ export class SessiondViewerAttachClient {
     idempotencyKey: string;
     bytes: Uint8Array;
     leaseMilliseconds: number;
+    isPromptPending?: () => boolean;
   }>): Promise<
     | Readonly<{ kind: "receipt"; receipt: InputReceipt }>
     | Readonly<{ kind: "claim-declined"; detail: string }>
+    | Readonly<{ kind: "stale" }>
   > {
     if (request.bytes.byteLength > this.maxInputTransactionBytes) {
       throw new SessiondWireError(
@@ -276,6 +278,11 @@ export class SessiondViewerAttachClient {
     }
     this.activeClaimToken = claimResult.claim.token;
     this.activeClaimSession = request.session;
+
+    // CLAIM_ACQUIRE is awaited above. Re-check the exact prompt generation
+    // after that wait and immediately before INPUT_SUBMIT, so a person or a
+    // replacement hook cannot turn an old decision into input for a new popup.
+    if (request.isPromptPending?.() === false) return { kind: "stale" };
 
     const submitPayload = InputSubmitPayloadSchema.parse({
       schemaVersion: 1,

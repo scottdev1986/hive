@@ -291,6 +291,32 @@ test("declines with the arbiter's reason and never submits when the claim is den
   expect(types).not.toContain("CLAIM_RELEASE");
 });
 
+test("rechecks prompt identity after claim acquisition and before input submit", async () => {
+  const { host, client } = await attachTo();
+  let checks = 0;
+  const result = await client.injectAutomated({
+    session: { key: locator.sessionId, incarnation: "1" },
+    writer: "hive-daemon:fixture",
+    transactionId: "approval:stale",
+    idempotencyKey: "approval:stale",
+    bytes: textEncoder.encode("y"),
+    leaseMilliseconds: 60_000,
+    isPromptPending: () => {
+      checks += 1;
+      return false;
+    },
+  });
+  client.close();
+  await settle();
+
+  expect(result).toEqual({ kind: "stale" });
+  expect(checks).toBe(1);
+  const types = host.received.map((frame) => frame.type);
+  expect(types).toContain("CLAIM_ACQUIRE");
+  expect(types).not.toContain("INPUT_SUBMIT");
+  expect(types).toContain("CLAIM_RELEASE");
+});
+
 test("acknowledges a streamed OUTPUT frame with the APPLIED high-water so the host does not backpressure", async () => {
   const output = textEncoder.encode("agent output line\n");
   const { host, client } = await attachTo({ streamOutput: output });

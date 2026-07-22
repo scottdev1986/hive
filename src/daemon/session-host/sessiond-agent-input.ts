@@ -54,7 +54,10 @@ export interface SessiondAgentInput {
   injectKeys?(
     agent: AgentRecord,
     keys: string,
-    options: Readonly<{ transactionId: string }>,
+    options: Readonly<{
+      transactionId: string;
+      isPromptPending: () => boolean;
+    }>,
   ): Promise<SessiondInjectResult>;
 }
 
@@ -101,12 +104,16 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
   async injectKeys(
     agent: AgentRecord,
     keys: string,
-    options: Readonly<{ transactionId: string }>,
+    options: Readonly<{
+      transactionId: string;
+      isPromptPending: () => boolean;
+    }>,
   ): Promise<SessiondInjectResult> {
     return this.submit(
       agent,
       new TextEncoder().encode(keys),
       options.transactionId,
+      options.isPromptPending,
     );
   }
 
@@ -114,6 +121,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     agent: AgentRecord,
     bytes: Uint8Array,
     transactionId: string,
+    isPromptPending?: () => boolean,
   ): Promise<SessiondInjectResult> {
     const locator = requireSessiondAgentLocator(agent);
     // TWO SessionRef incarnation semantics meet here, and confusing them is
@@ -146,7 +154,13 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
         reason: `session lifecycle is ${inspection.lifecycle}, not running`,
       };
     }
-    const first = await this.submitOnce(locator, inspection, bytes, transactionId);
+    const first = await this.submitOnce(
+      locator,
+      inspection,
+      bytes,
+      transactionId,
+      isPromptPending,
+    );
     if (first.outcome !== "declined") return first;
     const mode = first.reason.includes(HUMAN_ORPHANED)
       ? "orphaned"
@@ -161,6 +175,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
       transactionId,
       first.reason,
       mode,
+      isPromptPending,
     );
   }
 
@@ -177,6 +192,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     transactionId: string,
     declineReason: string,
     mode: OrphanDiscardMode,
+    isPromptPending?: () => boolean,
   ): Promise<SessiondInjectResult> {
     let discard;
     try {
@@ -197,7 +213,13 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     const recovery = discard.state === "discarded"
       ? `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`
       : `held human claim (owner ${discard.priorOwnerViewerId}) preempted for delivery; retrying`;
-    const retried = await this.submitOnce(locator, inspection, bytes, transactionId);
+    const retried = await this.submitOnce(
+      locator,
+      inspection,
+      bytes,
+      transactionId,
+      isPromptPending,
+    );
     if (retried.outcome === "declined") {
       return { outcome: "declined", reason: `${recovery}; retry declined: ${retried.reason}` };
     }
@@ -210,6 +232,7 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
     inspection: SessionInspection,
     bytes: Uint8Array,
     transactionId: string,
+    isPromptPending?: () => boolean,
   ): Promise<SessiondInjectResult> {
     const session = {
       key: locator.sessionId,
@@ -232,7 +255,11 @@ export class SessiondViewerAgentInput implements SessiondAgentInput {
         idempotencyKey: transactionId,
         bytes,
         leaseMilliseconds: CLAIM_LEASE_MS,
+        isPromptPending,
       });
+      if (result.kind === "stale") {
+        return { outcome: "declined", reason: "approval prompt is stale" };
+      }
       if (result.kind === "claim-declined") {
         return { outcome: "declined", reason: result.detail };
       }

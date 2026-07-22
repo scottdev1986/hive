@@ -120,7 +120,9 @@ export const ApprovalSchema = z.object({
   agentName: z.string().min(1),
   kind: ApprovalKindSchema.catch("tool-permission").default("tool-permission"),
   description: z.string(),
-  status: z.enum(["pending", "approved", "denied"]),
+  // A stale tool approval belongs to a provider prompt generation that was
+  // superseded or observably answered outside Hive. It is audit history only.
+  status: z.enum(["pending", "approved", "denied", "stale"]),
   createdAt: z.iso.datetime({ offset: true }),
   resolvedAt: z.iso.datetime({ offset: true }).nullable(),
 });
@@ -1984,6 +1986,21 @@ export class HiveDatabase {
       WHERE id = ? AND status = 'pending'
     `).run(status, resolvedAt, id);
     return result.changes === 0 ? null : this.getApproval(id);
+  }
+
+  staleApproval(id: string, resolvedAt: string): Approval | null {
+    const result = this.database.query(`
+      UPDATE approvals SET status = 'stale', resolvedAt = ?
+      WHERE id = ? AND status = 'pending'
+    `).run(resolvedAt, id);
+    return result.changes === 0 ? null : this.getApproval(id);
+  }
+
+  stalePendingToolApprovals(agentName: string, resolvedAt: string): number {
+    return this.database.query(`
+      UPDATE approvals SET status = 'stale', resolvedAt = ?
+      WHERE agentName = ? AND kind = 'tool-permission' AND status = 'pending'
+    `).run(resolvedAt, agentName).changes;
   }
 
   /**

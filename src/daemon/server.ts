@@ -684,6 +684,8 @@ export class HiveDaemon {
    * approval decision for a TUI-hosted vendor session is a keystroke, not a
    * message (#102). */
   private readonly sessiondInput: SessiondAgentInput;
+  /** Approval ids currently crossing an awaited vendor delivery boundary. */
+  private readonly resolvingApprovals = new Set<string>();
   private readonly autonomy: AutonomyControl | undefined;
   private readonly selectionPreferences: SelectionPreferenceControl | undefined;
   private readonly graphify: GraphifyService | undefined;
@@ -2697,49 +2699,68 @@ export class HiveDaemon {
   private async answerVendorPrompt(
     approval: Approval,
     approved: boolean,
-  ): Promise<boolean> {
+  ): Promise<
+    | { outcome: "answered" | "not-applicable" | "stale" }
+    | { outcome: "delivery-failed"; reason: string }
+  > {
     // Only the vendor's own tool prompt is answerable this way; cost-consent
     // and land-rearm are Hive's own approvals, with nothing waiting at a pane.
-    if (approval.kind !== "tool-permission") return false;
+    if (approval.kind !== "tool-permission") return { outcome: "not-applicable" };
     const agent = this.db.getAgentByName(approval.agentName);
-    if (agent === null || agent.tool !== "codex") return false;
+    if (agent === null || agent.tool !== "codex") return { outcome: "not-applicable" };
+    if (this.db.getApproval(approval.id)?.status !== "pending") {
+      return { outcome: "stale" };
+    }
     // A human can answer the popup at the pane, and the following tool
     // boundary is what proves it: that observation moves the agent out of
     // awaiting-approval. Pressing a key after it would type into a composer
     // the model is using.
-    if (agent.status !== "awaiting-approval") return false;
+    if (agent.status !== "awaiting-approval") return { outcome: "stale" };
     // The app-server driver answers over its own protocol; sending a keystroke
     // as well would answer the NEXT prompt too.
-    if (this.codexControl?.hasAgent(agent.name) === true) return false;
-    if (agent.sessionLocator?.hostKind !== "sessiond") return false;
+    if (this.codexControl?.hasAgent(agent.name) === true) {
+      return { outcome: "not-applicable" };
+    }
+    if (agent.sessionLocator?.hostKind !== "sessiond") {
+      return { outcome: "not-applicable" };
+    }
     const keys = approved
       ? CODEX_TUI_APPROVAL_KEYS.approve
       : CODEX_TUI_APPROVAL_KEYS.deny;
     if (this.sessiondInput.injectKeys === undefined) {
+      const reason = "this session host cannot send keys";
       console.error(
-        `Hive resolved approval ${approval.id} but this session host cannot ` +
-          `send keys, so ${agent.name} is still waiting at its vendor prompt`,
+        `Hive could not deliver approval ${approval.id}: this session host ` +
+          `cannot send keys, so ${agent.name}'s approval remains pending`,
       );
-      return false;
+      return { outcome: "delivery-failed", reason };
     }
     try {
       const result = await this.sessiondInput.injectKeys(agent, keys, {
         transactionId: `approval:${approval.id}`,
+        isPromptPending: () =>
+          this.db.getApproval(approval.id)?.status === "pending" &&
+          this.db.getAgentByName(agent.name)?.status === "awaiting-approval",
       });
       if (result.outcome === "declined") {
+        if (
+          this.db.getApproval(approval.id)?.status !== "pending" ||
+          this.db.getAgentByName(agent.name)?.status !== "awaiting-approval"
+        ) {
+          return { outcome: "stale" };
+        }
         console.error(
           `Hive could not answer ${agent.name}'s vendor approval prompt: ${result.reason}`,
         );
-        return false;
+        return { outcome: "delivery-failed", reason: result.reason };
       }
-      return true;
+      return { outcome: "answered" };
     } catch (error) {
+      const reason = error instanceof Error ? error.message : "unknown error";
       console.error(
-        `Hive failed to answer ${agent.name}'s vendor approval prompt: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
+        `Hive failed to answer ${agent.name}'s vendor approval prompt: ${reason}`,
       );
-      return false;
+      return { outcome: "delivery-failed", reason };
     }
   }
 
@@ -2750,6 +2771,7 @@ export class HiveDaemon {
     const id = crypto.randomUUID();
     const createdAt = new Date().toISOString();
     this.db.transaction(() => {
+      this.db.stalePendingToolApprovals(agentName, createdAt);
       this.db.insertApproval({
         id,
         agentName,
@@ -4072,19 +4094,26 @@ export class HiveDaemon {
         agent !== null && agent.status !== "dead" &&
         agent.status !== "done" && agent.status !== "failed"
       ) {
-        this.db.upsertAgent({
-          ...agent,
-          lastEventAt: new Date(value.timestamp).toISOString(),
-          // A tool ran to completion, so any native permission dialog that was
-          // holding this agent has been answered. This is the only honest way
-          // back out of `awaiting-approval` for a vendor-raised dialog: Hive
-          // cannot answer that dialog, so it must wait to OBSERVE it gone
-          // rather than assume. Left alone, a reader that a human unblocked at
-          // the pane would keep reporting "blocked" for the rest of its turn.
-          ...(agent.status === "awaiting-approval" ? { status: "working" } : {}),
-          ...(value.toolSessionId === undefined
-            ? {}
-            : { toolSessionId: value.toolSessionId }),
+        const observedAt = new Date(value.timestamp).toISOString();
+        this.db.transaction(() => {
+          // The boundary proves the popup was answered at the pane. Its exact
+          // approval generation is no longer eligible to inject into whatever
+          // prompt the vendor may render next.
+          this.db.stalePendingToolApprovals(value.agentName, observedAt);
+          this.db.upsertAgent({
+            ...agent,
+            lastEventAt: observedAt,
+            // A tool ran to completion, so any native permission dialog that was
+            // holding this agent has been answered. This is the only honest way
+            // back out of `awaiting-approval` for a vendor-raised dialog: Hive
+            // cannot answer that dialog, so it must wait to OBSERVE it gone
+            // rather than assume. Left alone, a reader that a human unblocked at
+            // the pane would keep reporting "blocked" for the rest of its turn.
+            ...(agent.status === "awaiting-approval" ? { status: "working" } : {}),
+            ...(value.toolSessionId === undefined
+              ? {}
+              : { toolSessionId: value.toolSessionId }),
+          });
         });
         this.delivery.confirmSteerAtToolBoundary(value.agentName, value.timestamp);
         await this.delivery.flushUrgent(value.agentName);
@@ -4150,6 +4179,9 @@ export class HiveDaemon {
       }
 
       if (value.kind === "approval-request") {
+        // One hook is one prompt generation. Superseded rows remain durable as
+        // STALE audit history but can never authorize this fresh popup.
+        this.db.stalePendingToolApprovals(value.agentName, value.timestamp);
         this.db.insertApproval({
           id: crypto.randomUUID(),
           agentName: value.agentName,
@@ -4835,76 +4867,129 @@ export class HiveDaemon {
 
     server.registerTool("hive_approve", {
       title: "Resolve agent approval",
-      description: "Approve or deny a pending Hive agent approval request.",
+      description:
+        "Approve or deny a pending Hive agent approval request. Returns a " +
+        "typed resolved, stale, in-progress, or delivery-failed outcome.",
       inputSchema: ApprovalDecisionSchema,
     }, async ({ id, decision }) => {
       // The approval names an agent only indirectly, through its id, so the
       // subject is resolved from the record before it is authorized against.
-      const pending = this.db.getApproval(id);
+      const stored = this.db.getApproval(id);
       this.authorizeTool(
         capability,
         "hive_approve",
         "approval:decide",
-        pending?.agentName,
+        stored?.agentName,
       );
-      const approval = this.db.resolveApproval(
-        id,
-        decision === "approve" ? "approved" : "denied",
-        new Date().toISOString(),
-      );
-      if (approval === null) {
+      if (stored === null) {
         throw new Error(`Pending approval not found: ${id}`);
       }
-      if (
-        decision === "approve" &&
-        approval.description.startsWith(LAND_REARM_PREFIX)
-      ) {
-        this.capabilities.rearmOneShot(approval.agentName, "branch:land");
+      if (stored.status !== "pending") {
+        return toolResult({ ...stored, outcome: "stale" as const }, "approval");
       }
-      await this.codexControl?.resolveApproval(
-        approval.id,
-        decision === "approve",
-      );
-      const answered = await this.answerVendorPrompt(
-        approval,
-        decision === "approve",
-      );
-      const agent = this.db.getAgentByName(approval.agentName);
-      if (agent?.status === "awaiting-approval") {
-        this.db.upsertAgent({
-          ...agent,
-          // An answered vendor prompt hands the turn straight back to the
-          // model, so the agent is working, not idle: calling it idle invites
-          // the wake loop to paste queued mail into a busy pane.
-          status: answered || this.codexControl?.isTurnActive(approval.agentName)
-            ? "working"
-            : "idle",
-        });
-        await this.delivery.flushQueued(approval.agentName);
+      if (this.resolvingApprovals.has(stored.id)) {
+        return toolResult({ ...stored, outcome: "in-progress" as const }, "approval");
       }
-      // A resolution the requesting agent is never told about is a resolution
-      // it cannot act on: an agent whose land-rearm approval was silently
-      // granted has no reason to retry hive_land, so it just sits idle until a
-      // human notices and prods it with an urgent message. Every resolution —
-      // approve or deny — gets an explicit envelope naming the approval and
-      // the outcome, independent of whatever status-flush path
-      // above already applies.
-      const resolutionBody = decision === "approve"
-        ? approval.description.startsWith(LAND_REARM_PREFIX)
-          ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
-          : `Your approval request "${approval.description}" was approved.`
-        : `Your approval request "${approval.description}" was denied — do not retry it; report back with the blocker instead.`;
-      // Not awaited: delivery may wait for a terminal turn boundary, and
-      // hive_approve's response must not hang on that. The message row itself
-      // is written synchronously before send() reaches its first await, so it
-      // is durable the instant this call is made.
-      void this.delivery.send(
-        "hive-approvals",
-        approval.agentName,
-        resolutionBody,
-        { idempotencyKey: `approval-resolved:${approval.id}` },
-      ).catch(logAlertDeliveryFailure);
-      return toolResult(approval, "approval");
+      this.resolvingApprovals.add(stored.id);
+      try {
+        const approved = decision === "approve";
+        const appServerAnswered =
+          await this.codexControl?.resolveApproval(stored.id, approved) ?? false;
+        const vendorAnswer = appServerAnswered
+          ? { outcome: "not-applicable" as const }
+          : await this.answerVendorPrompt(stored, approved);
+
+        if (vendorAnswer.outcome === "stale") {
+          const stale = this.db.staleApproval(stored.id, new Date().toISOString()) ??
+            this.db.getApproval(stored.id) ?? stored;
+          return toolResult({ ...stale, outcome: "stale" as const }, "approval");
+        }
+        if (vendorAnswer.outcome === "delivery-failed") {
+          const current = this.db.getApproval(stored.id);
+          if (current?.status !== "pending") {
+            return toolResult(
+              { ...(current ?? stored), outcome: "stale" as const },
+              "approval",
+            );
+          }
+          const agent = this.db.getAgentByName(stored.agentName);
+          if (
+            agent !== null && agent.status !== "dead" && agent.status !== "done" &&
+            agent.status !== "failed"
+          ) {
+            this.db.upsertAgent({
+              ...agent,
+              status: agent.writeRevoked ? "control-paused" : "awaiting-approval",
+            });
+          }
+          return toolResult(
+            {
+              ...current,
+              outcome: "delivery-failed" as const,
+              reason: vendorAnswer.reason,
+            },
+            "approval",
+          );
+        }
+
+        const approval = this.db.resolveApproval(
+          stored.id,
+          approved ? "approved" : "denied",
+          new Date().toISOString(),
+        );
+        if (approval === null) {
+          const stale = this.db.getApproval(stored.id) ?? stored;
+          return toolResult({ ...stale, outcome: "stale" as const }, "approval");
+        }
+        if (
+          approved &&
+          approval.description.startsWith(LAND_REARM_PREFIX)
+        ) {
+          this.capabilities.rearmOneShot(approval.agentName, "branch:land");
+        }
+        const agent = this.db.getAgentByName(approval.agentName);
+        const stillAwaitingApproval = this.db.listApprovals("pending").some(
+          (candidate) => candidate.agentName === approval.agentName,
+        );
+        if (agent?.status === "awaiting-approval" && !stillAwaitingApproval) {
+          this.db.upsertAgent({
+            ...agent,
+            // An answered vendor prompt hands the turn straight back to the
+            // model, so the agent is working, not idle: calling it idle invites
+            // the wake loop to paste queued mail into a busy pane.
+            status: vendorAnswer.outcome === "answered" ||
+                this.codexControl?.isTurnActive(approval.agentName)
+              ? "working"
+              : "idle",
+          });
+          await this.delivery.flushQueued(approval.agentName);
+        }
+        // A resolution the requesting agent is never told about is a resolution
+        // it cannot act on: an agent whose land-rearm approval was silently
+        // granted has no reason to retry hive_land, so it just sits idle until a
+        // human notices and prods it with an urgent message. Every resolution —
+        // approve or deny — gets an explicit envelope naming the approval and
+        // the outcome, independent of whatever status-flush path
+        // above already applies.
+        const resolutionBody = decision === "approve"
+          ? approval.description.startsWith(LAND_REARM_PREFIX)
+            ? `Your approval request "${approval.description}" was approved — re-arm granted, retry hive_land now.`
+            : `Your approval request "${approval.description}" was approved.`
+          : `Your approval request "${approval.description}" was denied — do not retry it; report back with the blocker instead.`;
+        // Not awaited: delivery may wait for a terminal turn boundary, and
+        // hive_approve's response must not hang on that. The message row itself
+        // is written synchronously before send() reaches its first await, so it
+        // is durable the instant this call is made.
+        void this.delivery.send(
+          "hive-approvals",
+          approval.agentName,
+          resolutionBody,
+          { idempotencyKey: `approval-resolved:${approval.id}` },
+        ).catch(logAlertDeliveryFailure);
+        return toolResult({ ...approval, outcome: "resolved" as const }, "approval");
+      } finally {
+        this.resolvingApprovals.delete(stored.id);
+      }
     });
 
     server.registerTool("hive_land", {
