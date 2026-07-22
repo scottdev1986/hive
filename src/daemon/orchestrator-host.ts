@@ -47,12 +47,15 @@ export function mintRootSessiondLocator(input: Readonly<{
 }>): RootSessiondLocator {
   const sessionId = rootSessionIdForLaunchRequest(input.requestId);
   const existing = input.bindings.find((binding) =>
+    binding.locator.instanceId === input.instanceId &&
     binding.locator.subject.kind === "root" &&
     binding.locator.sessionId === sessionId
   );
   if (existing !== undefined) return RootSessiondLocatorSchema.parse(existing.locator);
   const generation = input.bindings.reduce(
-    (highest, binding) => binding.locator.subject.kind === "root"
+    (highest, binding) =>
+      binding.locator.instanceId === input.instanceId &&
+        binding.locator.subject.kind === "root"
       ? Math.max(highest, binding.locator.generation)
       : highest,
     0,

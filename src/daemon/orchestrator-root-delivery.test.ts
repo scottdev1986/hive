@@ -91,8 +91,10 @@ describe("SessiondOrchestratorRootDelivery", () => {
         },
       },
     });
-    await expect(delivery.deliverMessage("agent report", { message_id: "message-1" }))
-      .rejects.toThrow("claim denied");
+    await expect(delivery.deliverMessage(
+      "agent report",
+      { message_id: "message-1" },
+    )).resolves.toBe(false);
   });
 
   test("is not live before the root host is running", () => {

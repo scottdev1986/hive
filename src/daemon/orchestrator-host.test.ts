@@ -85,4 +85,34 @@ describe("root sessiond locator", () => {
       bindings: [binding],
     }).generation).toBe(1);
   });
+
+  test("never reuses or counts a binding from another Hive instance", () => {
+    const requestId = mintSessionRequestId(1_750_000_000_003);
+    const foreign = mintRootSessiondLocator({
+      requestId,
+      instanceId: "instance-foreign",
+      engineBuildId: "engine-a",
+      bindings: [],
+    });
+    const binding: HiveTerminalBinding = {
+      locator: foreign,
+      visibility: {
+        workspaceSessionId: "workspace-foreign",
+        workspacePid: 123,
+        workspaceStartToken: "123:1",
+        openTerminalRevision: "1",
+      },
+    };
+
+    expect(mintRootSessiondLocator({
+      requestId,
+      instanceId: "instance-local",
+      engineBuildId: "engine-b",
+      bindings: [binding],
+    })).toMatchObject({
+      instanceId: "instance-local",
+      generation: 1,
+      engineBuildId: "engine-b",
+    });
+  });
 });

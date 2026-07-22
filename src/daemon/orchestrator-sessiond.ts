@@ -64,7 +64,7 @@ const INSPECTION_RETRY_MS = 250;
  * durable. Retrying after a daemon restart therefore resumes the exact create. */
 export class OrchestratorSessiondController {
   private current: OrchestratorSessiondSnapshot | null = null;
-  private launch: Promise<void> | null = null;
+  private abort: AbortController | null = null;
   private readonly sleep: (milliseconds: number) => Promise<void>;
 
   constructor(private readonly dependencies: OrchestratorSessiondDependencies) {
@@ -98,10 +98,11 @@ export class OrchestratorSessiondController {
       exitCode: null,
       diagnostic: null,
     };
-    this.launch = this.run(input, locator).finally(() => {
-      this.launch = null;
+    const abort = new AbortController();
+    this.abort = abort;
+    void this.run(input, locator, abort.signal).finally(() => {
+      if (this.abort === abort) this.abort = null;
     });
-    void this.launch;
     return this.current;
   }
 
@@ -109,19 +110,40 @@ export class OrchestratorSessiondController {
     return this.current;
   }
 
+  /** Ends admission/inspection waits when their daemon owner is stopping.
+   * The host itself is terminated separately by the daemon's verified
+   * teardown; this only prevents a detached controller task from waiting
+   * forever after its authority is gone. */
+  cancel(reason: string): void {
+    const current = this.current;
+    if (current === null ||
+        (current.state !== "awaiting-visibility" && current.state !== "running")) {
+      return;
+    }
+    this.abort?.abort(reason);
+    this.current = {
+      ...current,
+      state: "failed",
+      exitCode: null,
+      diagnostic: `queen sessiond controller canceled: ${reason}`,
+    };
+  }
+
   private async run(
     input: OrchestratorSessiondLaunch,
     locator: OrchestratorSessiondSnapshot["locator"],
+    signal: AbortSignal,
   ): Promise<void> {
     try {
       let admission = null;
-      while (admission === null) {
+      while (admission === null && !signal.aborted) {
         admission = await this.dependencies.visibility.admit({
           agentId: ROOT_VISIBILITY_ID,
           agentName: ORCHESTRATOR_NAME,
         });
-        if (admission === null) await this.sleep(VISIBILITY_RETRY_MS);
+        if (admission === null) await this.wait(VISIBILITY_RETRY_MS, signal);
       }
+      if (signal.aborted || admission === null) return;
       if (admission.engineBuildId !== locator.engineBuildId) {
         throw new Error("queen sessiond engine admission changed");
       }
@@ -133,6 +155,7 @@ export class OrchestratorSessiondController {
           { locator, visibility: admission.visibility },
         );
       }
+      if (signal.aborted) return;
       // The Workspace's first publish can race ahead of create evidence, so
       // the generic renewal sweep correctly skips it. Renew explicitly only
       // after create is durably bound; otherwise the initial 15-second lease
@@ -141,6 +164,7 @@ export class OrchestratorSessiondController {
         locator,
         admission.visibility,
       );
+      if (signal.aborted) return;
       this.current = {
         requestId: input.requestId,
         locator,
@@ -149,8 +173,10 @@ export class OrchestratorSessiondController {
         diagnostic: null,
       };
       await this.dependencies.onRunning?.();
-      await this.monitor(input.requestId, locator);
+      if (signal.aborted) return;
+      await this.monitor(input.requestId, locator, signal);
     } catch (error) {
+      if (signal.aborted) return;
       this.current = {
         requestId: input.requestId,
         locator,
@@ -164,17 +190,20 @@ export class OrchestratorSessiondController {
   private async monitor(
     requestId: string,
     locator: OrchestratorSessiondSnapshot["locator"],
+    signal: AbortSignal,
   ): Promise<void> {
-    while (true) {
+    while (!signal.aborted) {
       let inspection: SessionInspection;
       try {
         inspection = await this.dependencies.terminalHost.inspect(locator);
       } catch {
-        await this.sleep(INSPECTION_RETRY_MS);
+        if (signal.aborted) return;
+        await this.wait(INSPECTION_RETRY_MS, signal);
         continue;
       }
+      if (signal.aborted) return;
       if (inspection.presence === "present" || inspection.presence === "unknown") {
-        await this.sleep(INSPECTION_RETRY_MS);
+        await this.wait(INSPECTION_RETRY_MS, signal);
         continue;
       }
       this.current = {
@@ -188,6 +217,28 @@ export class OrchestratorSessiondController {
       };
       return;
     }
+  }
+
+  private async wait(milliseconds: number, signal: AbortSignal): Promise<void> {
+    if (signal.aborted) return;
+    await new Promise<void>((resolve, reject) => {
+      const cleanup = (): void => signal.removeEventListener("abort", onAbort);
+      const onAbort = (): void => {
+        cleanup();
+        resolve();
+      };
+      signal.addEventListener("abort", onAbort, { once: true });
+      this.sleep(milliseconds).then(
+        () => {
+          cleanup();
+          resolve();
+        },
+        (error: unknown) => {
+          cleanup();
+          reject(error);
+        },
+      );
+    });
   }
 
   private sessionSpec(

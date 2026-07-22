@@ -2469,6 +2469,7 @@ export class HiveDaemon {
     // reach it. The daemon's own resources are released either way; the error is
     // rethrown at the end so a failed teardown is still a failed quit.
     let refusal: unknown;
+    this.orchestratorSessiond?.cancel("Hive daemon shutdown");
     if (this.manageLifecycle) {
       try {
         await this.killAllAgents();

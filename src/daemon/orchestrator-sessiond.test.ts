@@ -218,6 +218,72 @@ describe("OrchestratorSessiondController", () => {
     });
   });
 
+  test("daemon cancellation escapes both visibility and monitor waits", async () => {
+    const waiting = new OrchestratorSessiondController({
+      bindings: new MemoryBindings(),
+      instanceId: "instance-a",
+      visibility: {
+        prepare: async () => ({ engineBuildId: "engine-a" }),
+        admit: async () => null,
+      },
+      terminalHost: {
+        create: async () => { throw new Error("not reached"); },
+        renewVisibility: async () => { throw new Error("not reached"); },
+        inspect: async () => { throw new Error("not reached"); },
+      },
+      sleep: async () => await new Promise<void>(() => {}),
+    });
+    await waiting.start(launch);
+    await settle();
+    waiting.cancel("test shutdown during admission");
+    await settle();
+    expect(waiting.snapshot()).toMatchObject({
+      state: "failed",
+      diagnostic: "queen sessiond controller canceled: test shutdown during admission",
+    });
+
+    const bindings = new MemoryBindings();
+    const monitoring = new OrchestratorSessiondController({
+      bindings,
+      instanceId: "instance-a",
+      visibility: {
+        prepare: async () => ({ engineBuildId: "engine-a" }),
+        admit: async () => ({ engineBuildId: "engine-a", visibility }),
+      },
+      terminalHost: {
+        create: async (spec, _input, policy) => {
+          bindings.bindTerminalHostSession(policy);
+          completeBinding(bindings, policy.locator);
+          return {
+            locator: spec.locator,
+            inspection: inspection(policy.locator, "present"),
+            created: true,
+          };
+        },
+        renewVisibility: async (value) => ({
+          locator: value,
+          state: "active" as const,
+          expiresAt: "2026-07-22T12:00:15.000Z",
+          openTerminalRevision: "1",
+        }),
+        inspect: async (value) => inspection(value, "present"),
+      },
+      sleep: async () => await new Promise<void>(() => {}),
+    });
+    await monitoring.start({
+      ...launch,
+      requestId: mintSessionRequestId(1_750_000_000_100),
+    });
+    await settle();
+    expect(monitoring.snapshot()?.state).toBe("running");
+    monitoring.cancel("test shutdown during monitor");
+    await settle();
+    expect(monitoring.snapshot()).toMatchObject({
+      state: "failed",
+      diagnostic: "queen sessiond controller canceled: test shutdown during monitor",
+    });
+  });
+
   test("a daemon restart resumes the same durable root binding without a second create", async () => {
     const bindings = new MemoryBindings();
     let creates = 0;

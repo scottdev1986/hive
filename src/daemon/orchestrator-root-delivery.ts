@@ -42,7 +42,10 @@ export interface SessiondOrchestratorRootDeliveryDependencies {
 
 /** The host receipt returned by INPUT_SUBMIT is the only success boundary.
  * Preparing a locator, acquiring a claim, or enqueueing a message is never
- * enough to advance the durable queued/injected ladder. */
+ * enough to advance the durable queued/injected ladder. A host that is not
+ * running and a host that declines input both return false: adjacent expected
+ * non-delivery states share one retain-and-retry contract. Throws are reserved
+ * for malformed messages or transport failures. */
 export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
   constructor(
     private readonly dependencies: SessiondOrchestratorRootDeliveryDependencies,
@@ -65,7 +68,6 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
       content,
       { messageId },
     );
-    if (result.outcome === "declined") throw new Error(result.reason);
-    return true;
+    return result.outcome === "injected";
   }
 }
