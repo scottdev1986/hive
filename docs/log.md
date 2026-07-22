@@ -1,5 +1,21 @@
 # Wiki Log
 
+## [2026-07-22] change | Add the sessiond queen restart gate
+
+The sessiond-hosted root remains an explicit `HIVE_ORCHESTRATOR_HOST=sessiond`
+restart opt-in while issue #114 gates the default flip. The restart proof now binds
+the six communication lanes to durable message/approval ids and provider boundaries,
+adds active-draft and orphan recovery, separates a stalled feed from a dead Workspace
+visibility source, and requires both automatic provider-crash relaunch and loud
+fail-closed visibility expiry with queued-mail recovery.
+
+The gate also adds physical wheel/momentum and keyboard paging on the root before
+cutover. It states the measured 48 MiB post-restore boundary honestly: 71,703 history
+rows for the fixed 80,000-line 80×24 corpus, with content-dependent row count and no
+claim that journal replay adds another visible-history tier. Swift/TypeScript
+duplicates for the scrollback budget and root/queen identity are recorded as separate
+pin debt rather than treated as live-proof substitutes.
+
 ## [2026-07-16] change | Hide Codex bootstrap and pin Grok launch context
 
 Codex bootstrap is now partitioned by message role: durable Hive setup travels as
