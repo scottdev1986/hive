@@ -45,10 +45,10 @@ each imports this backend:
 
 | Clause | Module | Test | Imports sessiond-host |
 |---|---|---|---|
-| server | `src/daemon/server.ts:28` | `src/daemon/server.test.ts:41` | yes |
-| delivery | `src/daemon/delivery.ts:22` | `src/daemon/delivery.test.ts:19` | yes |
-| teardown | `src/daemon/teardown.ts:40` | `src/daemon/teardown.test.ts:12` | yes |
-| recovery | `src/daemon/recovery.ts` | `src/daemon/recovery.test.ts` | sessiond-aware via `requireSessiondAgentLocator:47,:239` |
+| server | `src/daemon/server.ts:28` | `test/daemon/server.test.ts:41` | yes |
+| delivery | `src/daemon/delivery.ts:22` | `test/daemon/delivery.test.ts:19` | yes |
+| teardown | `src/daemon/teardown.ts:40` | `test/daemon/teardown.test.ts:12` | yes |
+| recovery | `src/daemon/recovery.ts` | `test/daemon/recovery.test.ts` | sessiond-aware via `requireSessiondAgentLocator:47,:239` |
 
 `recovery` is the one clause whose module does not import a `Sessiond*` symbol
 by that name; it reaches the backend through `requireSessiondAgentLocator`

@@ -90,7 +90,7 @@ or later attachment can expose it.
 
 ### Outdated assumption
 
-`src/cli/spawner-impl.test.ts:3139` says that Codex has no
+`test/cli/spawner-impl.test.ts:3139` says that Codex has no
 `--append-system-prompt` and therefore the prompt must carry all rules. The first
 half remains true, but the conclusion is obsolete. Codex now provides explicit
 developer-instruction channels; Hive does not need a Claude-shaped flag to solve

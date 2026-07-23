@@ -5,7 +5,7 @@ import XCTest
 /// decoder. `Fixtures/token-usage-wire.json` is a document the daemon may
 /// legitimately emit today: it carries every subject role in `TOKEN_USAGE_ROLES`
 /// (src/schemas/token-usage.ts). The daemon-side twin of this test
-/// (src/schemas/token-usage.wire-contract.test.ts) proves the fixture is
+/// (test/schemas/token-usage.wire-contract.test.ts) proves the fixture is
 /// schema-valid AND that it still covers every role — so a kind added on the
 /// daemon side fails there and lands here before it can reach a user.
 ///

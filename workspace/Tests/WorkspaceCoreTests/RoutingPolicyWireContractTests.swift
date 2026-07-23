@@ -6,7 +6,7 @@ import XCTest
 /// legitimately emit today: it carries every effort mode in
 /// `EffortTargetSchema` and every selection mode in `SelectionModeSchema`
 /// (src/schemas/routing-policy.ts). The daemon-side twin of this test
-/// (src/schemas/routing-policy.wire-contract.test.ts) proves the fixture is
+/// (test/schemas/routing-policy.wire-contract.test.ts) proves the fixture is
 /// schema-valid AND that it still covers every enum value — so a mode added
 /// on the daemon side fails there and lands here before it can reach a user.
 ///

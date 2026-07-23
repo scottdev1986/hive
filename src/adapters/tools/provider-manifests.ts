@@ -31,7 +31,7 @@ export const CLAUDE_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.pars
     versionProbeArgv: ["claude", "--version"],
     sourceCitations: [
       "src/adapters/tools/claude.ts:99-125 (probeClaudeVersion)",
-      "src/adapters/tools/claude.test.ts:214-218,814-818 (measured 2.1.206)",
+      "test/adapters/tools/claude.test.ts:214-218,814-818 (measured 2.1.206)",
       "src/schemas/event.ts:43-47 (notification_type measured against claude 2.1.207)",
       "docs/design/terminal-stack-transition.html §25 version-support panel",
     ],
@@ -180,7 +180,7 @@ export const CODEX_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse
     versionProbeArgv: ["codex", "--version"],
     sourceCitations: [
       "src/adapters/tools/codex.ts:82,157 (verified against codex 0.144.1)",
-      "src/adapters/tools/codex.test.ts:134,157,633 (0.144.0 / 0.144.1)",
+      "test/adapters/tools/codex.test.ts:134,157,633 (0.144.0 / 0.144.1)",
       "docs/design/terminal-stack-transition.html §25 version-support panel",
     ],
   },
@@ -496,7 +496,7 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
     versionProbeArgv: ["grok", "--version"],
     sourceCitations: [
       "src/adapters/tools/grok.ts:58-88 (GROK_VERSION_PATTERN / probeGrokCliVersion)",
-      "src/adapters/tools/grok.test.ts:97-127 (measured 0.2.101)",
+      "test/adapters/tools/grok.test.ts:97-127 (measured 0.2.101)",
       "docs/design/terminal-stack-transition.html §25 version-support panel",
     ],
   },

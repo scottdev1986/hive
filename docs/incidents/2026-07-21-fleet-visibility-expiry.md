@@ -108,7 +108,7 @@ instance is `http://127.0.0.1:57506/mcp`
 (`$HIVE_HOME/runtime/orchestrator/.mcp.json`), and nothing listens on 64342.
 64342 is the JetBrains `idea` MCP server: `~/.claude.json` has
 `"idea": {"type":"sse","url":"http://127.0.0.1:64342/sse"}`, and
-`src/adapters/tools/mcp-scope.test.ts:31` carries the exact string nina
+`test/adapters/tools/mcp-scope.test.ts:31` carries the exact string nina
 reported, `url = "http://127.0.0.1:64342/stream"`. nina's `MCP startup
 incomplete (failed: hive, idea)` named two servers; the URL shown belonged to
 `idea`, not to hive. No endpoint moved and no daemon-adjacent component

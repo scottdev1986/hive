@@ -84,7 +84,7 @@ Those four Grok "unknown" cells are real unknowns, not zeroes: `token_usage_subj
 
 | Defect (as briefed) | Commit | Landed | Substance |
 |---|---|---|---|
-| spawn cleanup mis-routed through tmux | `5925dec2` `fix(sessiond): route spawn cleanup by locator host` | ✅ in main | **real code + tests**: `src/cli/daemon.ts`, `src/daemon/server.ts`, `src/cli/daemon.test.ts` — 97 insertions |
+| spawn cleanup mis-routed through tmux | `5925dec2` `fix(sessiond): route spawn cleanup by locator host` | ✅ in main | **real code + tests**: `src/cli/daemon.ts`, `src/daemon/server.ts`, `test/cli/daemon.test.ts` — 97 insertions |
 | locator no-binding | `5925dec2` (same fix) | ✅ in main | as above |
 | error masking | `9669dbcd` `test(b2.5): surface spawn refusal before pane wait` | ✅ in main | refusal surfaced instead of swallowed |
 | display-asleep host precondition | `d99f1b14` `test(b2.5): require an active production display` | ✅ in main | precondition now enforced |

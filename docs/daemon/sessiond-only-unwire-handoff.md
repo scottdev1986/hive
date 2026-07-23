@@ -67,7 +67,7 @@ downgraded to tmux.
    Remove the `TmuxSessionHost` dependency and the `--orchestrator-session` /
    `--tmux-socket` arguments. The Workspace already receives project, port,
    instance id/home, Hive binary, and optional orchestrator; its feed carries
-   the root locator. Update `src/cli/workspace.test.ts:94-155` to assert the
+   the root locator. Update `test/cli/workspace.test.ts:94-155` to assert the
    exact tmux-free argv. Swift may keep parsing the old flags as dead
    compatibility code until #1/#2.
 
@@ -146,7 +146,7 @@ or source-text assertion.
 
 ## Deliberate dead-path skips
 
-In `src/daemon/launch-watch.test.ts:155-170`, mark both generated cases skipped
+In `test/daemon/launch-watch.test.ts:155-170`, mark both generated cases skipped
 with this in-test rationale:
 
 > Skipped after #112: this fixture launches Claude directly inside tmux, which

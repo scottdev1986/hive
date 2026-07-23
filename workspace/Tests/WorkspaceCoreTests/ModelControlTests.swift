@@ -101,7 +101,7 @@ final class ModelControlTests: XCTestCase {
 
     /// Codex's `prolite` plan, as captured off the wire on 2026-07-13: ONE
     /// weekly window at 31%, and no five-hour window at all (`secondary` is null
-    /// in the payload). See src/daemon/fixtures/codex-rate-limits-prolite.json.
+    /// in the payload). See test/daemon/fixtures/codex-rate-limits-prolite.json.
     private func codexProlitePool() -> QuotaEntry {
         .pool(QuotaPool(
             provider: "codex", pool: "codex", origin: "discovered",
@@ -177,7 +177,7 @@ final class ModelControlTests: XCTestCase {
     // THE POSITIVE CONTROL. These bytes were not typed by hand and were not
     // copied from a description — they are what the daemon's own code (ac0979f)
     // emitted when run over the real captured Codex payload
-    // (src/daemon/fixtures/codex-rate-limits-prolite.json).
+    // (test/daemon/fixtures/codex-rate-limits-prolite.json).
     //
     // The first assertion is the whole point of the test: my reader must SEE
     // availability. A misspelled key would decode to nil, the derivation would
