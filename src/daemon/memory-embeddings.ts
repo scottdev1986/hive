@@ -17,6 +17,20 @@
 // daemons that never see a recall never load it. Models cache under the
 // Hive-owned models dir (~/.hive/models, HIVE_HOME-respecting), not any
 // global default cache.
+//
+// Where the fastembed runtime itself comes from (defect D1): the deployed
+// daemon is a single-file `bun build --compile` binary, and a compiled binary
+// cannot resolve a package's bare-specifier dependency graph from a real
+// node_modules directory — fastembed's own `import "onnxruntime-node"` fails,
+// and the onnxruntime .node/.dylib natives cannot ride inside the single
+// file. What a compiled binary CAN do (spiked 2026-07-22) is dynamic-import a
+// pre-bundled single ESM file by absolute path, whose internal runtime
+// `require()` of relative native assets then loads fine. So the runtime ships
+// as an EXTERNAL bundle under ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME
+// override), provisioned and probe-verified by `hive embeddings install`;
+// the repo's node_modules stays the dev fallback. Each failure mode —
+// runtime missing, bundle broken, native lib unloadable — is a DISTINCT
+// labeled state, never one generic "unavailable".
 import { homedir } from "node:os";
 import { join } from "node:path";
 import type { MemoryEmbeddingModel } from "../schemas";
@@ -52,6 +66,85 @@ export function memoryModelsDir(): string {
   return join(home, "models");
 }
 
+/** The env override for the external embedding runtime dir. */
+export const EMBEDDINGS_RUNTIME_HOME_ENV = "HIVE_EMBEDDINGS_HOME";
+
+/** The bundle (relative to the runtime dir) `hive embeddings install`
+ * produces: one pre-bundled ESM file plus its native assets alongside. */
+export const EMBEDDINGS_RUNTIME_BUNDLE = join("dist", "entry.js");
+
+/** Where the external embedding runtime (bundled fastembed + onnxruntime
+ * native libs) lives. Machine-level, like the graphify tool install;
+ * HIVE_EMBEDDINGS_HOME wins, then HIVE_HOME's tools dir. */
+export function embeddingsRuntimeDir(): string {
+  const override = Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
+  if (override !== undefined) return override;
+  const home = Bun.env.HIVE_HOME ?? join(homedir(), ".hive");
+  return join(home, "tools", "embeddings");
+}
+
+/** The slice of the fastembed module surface the daemon uses, structurally
+ * typed so the external bundle and the package import both satisfy it. */
+interface FastembedRuntime {
+  FlagEmbedding: {
+    init(options: {
+      model: unknown;
+      cacheDir: string;
+      showDownloadProgress: boolean;
+    }): Promise<{
+      embed(texts: string[]): AsyncIterable<number[][]>;
+      queryEmbed(text: string): Promise<number[]>;
+    }>;
+  };
+  EmbeddingModel: {
+    BGESmallENV15: unknown;
+    AllMiniLML6V2: unknown;
+  };
+}
+
+const errorDetail = (error: unknown): string =>
+  error instanceof Error ? error.message : String(error);
+
+/** Resolve the fastembed module: the external runtime bundle first (the only
+ * path that works in the compiled daemon), then the repo's node_modules (the
+ * dev path under plain `bun`). Every failure is thrown with a DISTINCT label
+ * so the daemon's unavailable state says exactly which leg broke. */
+async function importFastembedRuntime(): Promise<{
+  runtime: FastembedRuntime;
+  origin: string;
+}> {
+  const bundlePath = join(embeddingsRuntimeDir(), EMBEDDINGS_RUNTIME_BUNDLE);
+  if (await Bun.file(bundlePath).exists()) {
+    try {
+      return {
+        runtime: await import(bundlePath) as FastembedRuntime,
+        origin: bundlePath,
+      };
+    } catch (error) {
+      const message = errorDetail(error);
+      const label = /\.node|\.dylib|dlopen/i.test(message)
+        ? "embedding-native-unloadable"
+        : "embedding-runtime-broken";
+      throw new Error(
+        `${label}: the external embedding runtime bundle at ${bundlePath} ` +
+          `failed to load: ${message} — reinstall with \`hive embeddings install\``,
+      );
+    }
+  }
+  try {
+    return {
+      runtime: await import("fastembed") as FastembedRuntime,
+      origin: "fastembed from node_modules (repo dev path)",
+    };
+  } catch (error) {
+    throw new Error(
+      `embedding-runtime-missing: no external runtime bundle at ${bundlePath} ` +
+        `and the fastembed package is not resolvable (${errorDetail(error)}) — ` +
+        "run `hive embeddings install`",
+    );
+  }
+}
+
 /** Expected output dimension per supported model, asserted at load: a model
  * that loads but embeds at the wrong width is a drift bug, so the surface
  * goes unavailable rather than mixing widths in the vector store. */
@@ -60,13 +153,16 @@ const EXPECTED_DIMENSIONS: Record<MemoryEmbeddingModel, number> = {
   "all-MiniLM-L6-v2": 384,
 };
 
-/** Load a local fastembed model. Imported dynamically so nothing pays the
- * module (or the ~90 MB model download) until the first real embed. */
-async function loadLocalEmbedder(
+/** Build the embedder from a resolved fastembed module: init the session and
+ * assert the width at load (D4) — one warm-up probe doubles as the check. A
+ * model that loads but embeds at the wrong width is a drift bug, so the
+ * surface goes unavailable rather than mixing widths in the vector store. */
+async function embedderFromRuntime(
+  runtime: FastembedRuntime,
   model: MemoryEmbeddingModel,
   cacheDir: string,
 ): Promise<MemoryEmbedder> {
-  const { FlagEmbedding, EmbeddingModel } = await import("fastembed");
+  const { FlagEmbedding, EmbeddingModel } = runtime;
   const fastembedModel = model === "bge-small-en-v1.5"
     ? EmbeddingModel.BGESmallENV15
     : EmbeddingModel.AllMiniLML6V2;
@@ -82,7 +178,6 @@ async function loadLocalEmbedder(
     }
     return vectors;
   };
-  // Assert the width at load (D4): one warm-up probe doubles as the check.
   const probe = await collect(["hive memory embedding dimension probe"]);
   const dimensions = probe[0]?.length ?? 0;
   const expected = EXPECTED_DIMENSIONS[model];
@@ -97,6 +192,42 @@ async function loadLocalEmbedder(
     dimensions,
     embed: collect,
     embedQuery: (text) => session.queryEmbed(text),
+  };
+}
+
+/** Load a local fastembed model. The runtime resolves dynamically (external
+ * bundle, then repo node_modules — see the header) so nothing pays the module
+ * (or the ~90 MB model download) until the first real embed. */
+async function loadLocalEmbedder(
+  model: MemoryEmbeddingModel,
+  cacheDir: string,
+): Promise<MemoryEmbedder> {
+  const { runtime } = await importFastembedRuntime();
+  return embedderFromRuntime(runtime, model, cacheDir);
+}
+
+/** The strict post-install probe `hive embeddings install` runs: load the
+ * bundle at `runtimeDir` — and ONLY that bundle, never the node_modules
+ * fallback, so a broken install can never be masked by a checkout's dev
+ * path — and embed a probe string, asserting the model width. Install is
+ * only "done" when this passes. Throws on any failure. */
+export async function probeExternalRuntime(
+  runtimeDir: string,
+  model: MemoryEmbeddingModel,
+  cacheDir: string,
+): Promise<{ bundlePath: string; model: string; dimensions: number }> {
+  const bundlePath = join(runtimeDir, EMBEDDINGS_RUNTIME_BUNDLE);
+  if (!(await Bun.file(bundlePath).exists())) {
+    throw new Error(
+      `embedding-runtime-missing: no runtime bundle at ${bundlePath}`,
+    );
+  }
+  const runtime = await import(bundlePath) as FastembedRuntime;
+  const embedder = await embedderFromRuntime(runtime, model, cacheDir);
+  return {
+    bundlePath,
+    model: embedder.model,
+    dimensions: embedder.dimensions,
   };
 }
 

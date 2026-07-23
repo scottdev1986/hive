@@ -6,7 +6,7 @@
 // HIVE_LIVE_MEMORY_EMBEDDINGS=1.
 import { afterEach, beforeEach, describe, expect, test } from "bun:test";
 import { Database } from "bun:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeMemoryFact } from "../adapters/memory";
@@ -15,9 +15,13 @@ import { HiveDatabase } from "./db";
 import { EpisodicStore } from "./episodic-store";
 import {
   cosineSimilarity,
+  EMBEDDINGS_RUNTIME_BUNDLE,
+  EMBEDDINGS_RUNTIME_HOME_ENV,
+  embeddingsRuntimeDir,
   MEMORY_EMBEDDING_API_KEY_ENV,
   MemoryEmbeddingIndex,
   MemoryEmbeddingService,
+  probeExternalRuntime,
   type MemoryEmbedder,
 } from "./memory-embeddings";
 import { MemoryIndex } from "./memory-index";
@@ -29,10 +33,12 @@ import type { AgentRecord } from "../schemas";
 const tempRoots: string[] = [];
 let previousHiveHome: string | undefined;
 let previousApiKey: string | undefined;
+let previousEmbeddingsHome: string | undefined;
 
 beforeEach(() => {
   previousHiveHome = Bun.env.HIVE_HOME;
   previousApiKey = Bun.env[MEMORY_EMBEDDING_API_KEY_ENV];
+  previousEmbeddingsHome = Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
 });
 
 afterEach(async () => {
@@ -40,6 +46,8 @@ afterEach(async () => {
   else Bun.env.HIVE_HOME = previousHiveHome;
   if (previousApiKey === undefined) delete Bun.env[MEMORY_EMBEDDING_API_KEY_ENV];
   else Bun.env[MEMORY_EMBEDDING_API_KEY_ENV] = previousApiKey;
+  if (previousEmbeddingsHome === undefined) delete Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
+  else Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV] = previousEmbeddingsHome;
   await Promise.all(
     tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
@@ -300,6 +308,58 @@ describe("MemoryEmbeddingService", () => {
     expect(status.state).toBe("unavailable");
     expect((status as { detail: string }).detail).toContain("local-only");
     expect(await service.embedder()).toBeNull();
+  });
+});
+
+describe("external embedding runtime resolution (defect D1)", () => {
+  async function plantBundle(body: string): Promise<string> {
+    const runtimeDir = await makeTempDir("hive-hm5-runtime-");
+    await mkdir(join(runtimeDir, "dist"), { recursive: true });
+    await writeFile(join(runtimeDir, EMBEDDINGS_RUNTIME_BUNDLE), body);
+    Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV] = runtimeDir;
+    return runtimeDir;
+  }
+
+  test("runtime dir: HIVE_EMBEDDINGS_HOME wins, then HIVE_HOME's tools dir", async () => {
+    Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV] = "/override/runtime";
+    expect(embeddingsRuntimeDir()).toBe("/override/runtime");
+    delete Bun.env[EMBEDDINGS_RUNTIME_HOME_ENV];
+    Bun.env.HIVE_HOME = "/tmp/hive-test-home";
+    expect(embeddingsRuntimeDir())
+      .toBe(join("/tmp/hive-test-home", "tools", "embeddings"));
+  });
+
+  test("a broken bundle is a DISTINCT labeled state, never a generic failure", async () => {
+    await plantBundle('throw new Error("bundle syntax exploded");\n');
+    const service = new MemoryEmbeddingService({
+      provider: "local",
+      model: "bge-small-en-v1.5",
+    });
+    expect(await service.embedder()).toBeNull();
+    const status = service.status();
+    expect(status.state).toBe("unavailable");
+    const detail = (status as { detail: string }).detail;
+    expect(detail).toContain("embedding-runtime-broken");
+    expect(detail).toContain("bundle syntax exploded");
+  });
+
+  test("a native load failure is labeled embedding-native-unloadable", async () => {
+    await plantBundle(
+      'throw new Error("Cannot find module onnxruntime_binding.node");\n',
+    );
+    const service = new MemoryEmbeddingService({
+      provider: "local",
+      model: "bge-small-en-v1.5",
+    });
+    expect(await service.embedder()).toBeNull();
+    const detail = (service.status() as { detail: string }).detail;
+    expect(detail).toContain("embedding-native-unloadable");
+  });
+
+  test("the install probe refuses a runtime dir with no bundle", async () => {
+    const runtimeDir = await makeTempDir("hive-hm5-runtime-");
+    await expect(probeExternalRuntime(runtimeDir, "bge-small-en-v1.5", "/tmp"))
+      .rejects.toThrow("embedding-runtime-missing");
   });
 });
 

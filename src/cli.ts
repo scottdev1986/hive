@@ -31,6 +31,7 @@ import {
   runGraphifyEnable,
   runGraphifyStatus,
 } from "./cli/graphify";
+import { runEmbeddingsInstall } from "./cli/embeddings";
 import { runInitCli } from "./cli/init";
 import { memorySelfTestCli } from "./cli/memory-self-test";
 import { memoryConsolidateCli } from "./cli/memory-consolidate";
@@ -645,6 +646,30 @@ export function createProgram(): Command {
     .description("Show pin, install state, and graph freshness for this repo")
     .action(async () => {
       process.exitCode = await runGraphifyStatus(projectRootOrCwd());
+    });
+
+  const embeddings = program
+    .command("embeddings")
+    .description(
+      "Local semantic-memory embedding runtime (HM-5; external to the single-file binary)",
+    );
+
+  embeddings.command("install")
+    .description(
+      "Install the embedding runtime into ~/.hive/tools/embeddings " +
+        "(HIVE_EMBEDDINGS_HOME override) from a checkout's node_modules, " +
+        "then load it and embed a probe string — install is only done when " +
+        "the probe passes at dimensions=384",
+    )
+    .option(
+      "--from <path>",
+      "repo root or node_modules dir to copy fastembed + deps from " +
+        "(default: walk up from the current directory)",
+    )
+    .action(async (options: { from?: string }) => {
+      process.exitCode = await runEmbeddingsInstall({
+        ...(options.from === undefined ? {} : { from: options.from }),
+      });
     });
 
   const memory = program
