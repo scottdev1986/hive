@@ -124,6 +124,21 @@ pub fn build(b: *std.Build) void {
     });
     daemon_identity_module.addImport("session_protocol_generated", generated);
     daemon_identity_module.addImport("protocol", test_module);
+    const broker_transport_module = b.createModule(.{
+        .root_source_file = b.path("src/broker_transport.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    broker_transport_module.addImport("session_protocol_generated", generated);
+    const broker_record_module = b.createModule(.{
+        .root_source_file = b.path("src/broker_record.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    broker_record_module.addImport("daemon_identity", daemon_identity_module);
+    broker_record_module.addImport("session_protocol_generated", generated);
+    broker_record_module.addImport("protocol", test_module);
     const broker_module = b.createModule(.{
         .root_source_file = b.path("src/broker.zig"),
         .target = target,
@@ -134,6 +149,8 @@ pub fn build(b: *std.Build) void {
     broker_module.addImport("protocol", test_module);
     broker_module.addImport("boot_envelope", boot_envelope_module);
     broker_module.addImport("daemon_identity", daemon_identity_module);
+    broker_module.addImport("broker_transport", broker_transport_module);
+    broker_module.addImport("broker_record", broker_record_module);
     broker_module.addImport("wall_clock", wall_clock_module);
     const broker_tests = addTest(b, test_step, broker_module);
     broker_tests.linkLibrary(ghostty_vt);
@@ -239,6 +256,21 @@ pub fn build(b: *std.Build) void {
     neutral_host_module.addImport("neutral_contract", neutral_contract_module);
     neutral_host_module.addImport("neutral_runtime", neutral_runtime_module);
     _ = addTest(b, test_step, neutral_host_module);
+    const broker_host_client_module = b.createModule(.{
+        .root_source_file = b.path("src/broker_host_client.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    broker_host_client_module.addImport("broker_record", broker_record_module);
+    broker_host_client_module.addImport("broker_transport", broker_transport_module);
+    broker_host_client_module.addImport("daemon_identity", daemon_identity_module);
+    broker_host_client_module.addImport("neutral_host", neutral_host_module);
+    broker_host_client_module.addImport("process_inspector", process_inspector_module);
+    broker_host_client_module.addImport("session_protocol_generated", generated);
+    broker_host_client_module.addImport("protocol", test_module);
+    broker_host_client_module.addImport("wall_clock", wall_clock_module);
+    broker_module.addImport("broker_host_client", broker_host_client_module);
     const neutral_host_golden_module = b.createModule(.{
         .root_source_file = b.path("test/neutral-host-golden.zig"),
         .target = target,
@@ -294,6 +326,7 @@ pub fn build(b: *std.Build) void {
     neutral_control_plane_module.addImport("wall_clock", wall_clock_module);
     neutral_control_plane_module.addImport("neutral_evidence", neutral_evidence_module);
     neutral_control_plane_module.addImport("neutral_operations", neutral_operations_module);
+    broker_host_client_module.addImport("neutral_control_plane", neutral_control_plane_module);
     broker_module.addImport("neutral_control_plane", neutral_control_plane_module);
     broker_module.addImport("neutral_host", neutral_host_module);
     broker_module.addImport("process_inspector", process_inspector_module);
