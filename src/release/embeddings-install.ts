@@ -163,13 +163,18 @@ export async function installEmbeddingsFromRelease(
   }
 }
 
-/** The production dep set: this binary's version, key, and arch. */
+/** The production dep set: this binary's version, key, and arch. `hive update`
+ * passes an explicit `version` — the one it just activated — so the runtime is
+ * pinned to the new binary, not the old one still executing the update. */
 export function defaultReleaseInstallDeps(options: {
   runtimeDir: string;
   probe: (runtimeDir: string) => Promise<EmbeddingsProbeResult>;
+  /** Defaults to this binary's own version (the `hive init` /
+   * `hive embeddings install` pin). */
+  version?: string;
 }): EmbeddingsReleaseInstallDeps {
   return {
-    version: HIVE_VERSION,
+    version: options.version ?? HIVE_VERSION,
     arch: HIVE_ARCH === "arm64" ? "arm64" : "x64",
     publicKey: HIVE_RELEASE_PUBLIC_KEY,
     source: (version) => githubReleaseSource(version),

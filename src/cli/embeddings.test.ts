@@ -8,11 +8,13 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   collectFastembedClosure,
+  ensureEmbeddingsRuntimeForRelease,
   findSourceNodeModules,
   provisionEmbeddingsRuntime,
   runEmbeddingsInstall,
   type EmbeddingsProvisionDeps,
 } from "./embeddings";
+import { HIVE_VERSION } from "../version";
 
 const tempRoots: string[] = [];
 
@@ -258,5 +260,64 @@ describe("provisionEmbeddingsRuntime — dev checkout first, release download se
 
     expect(outcome.ok).toBe(true);
     expect(calls).toEqual([`checkout:${nm}`]);
+  });
+});
+
+describe("ensureEmbeddingsRuntimeForRelease — hive update's step, keyed to the new version", () => {
+  async function withRuntimeHome<T>(
+    run: (runtimeDir: string) => Promise<T>,
+  ): Promise<T> {
+    const runtimeDir = await makeTempDir("hive-embed-release-");
+    const previous = process.env.HIVE_EMBEDDINGS_HOME;
+    process.env.HIVE_EMBEDDINGS_HOME = runtimeDir;
+    try {
+      return await run(runtimeDir);
+    } finally {
+      if (previous === undefined) delete process.env.HIVE_EMBEDDINGS_HOME;
+      else process.env.HIVE_EMBEDDINGS_HOME = previous;
+    }
+  }
+
+  test("a version bump re-provisions from the new release — a healthy old install does not skip", async () => {
+    await withRuntimeHome(async (runtimeDir) => {
+      // A healthy install of the OLD version: the pin moved, so it is replaced.
+      await mkdir(join(runtimeDir, "dist"), { recursive: true });
+      await writeFile(join(runtimeDir, "dist", "entry.js"), "// old bundle\n");
+      const calls: Array<[string, string]> = [];
+      let probes = 0;
+
+      const outcome = await ensureEmbeddingsRuntimeForRelease("9.9.9", {
+        probe: async () => {
+          probes += 1;
+          return { model: "bge-small-en-v1.5", dimensions: 384 };
+        },
+        installFromRelease: async (dir, version) => {
+          calls.push([dir, version]);
+          return { ok: true, detail: `runtime from hive ${version} installed` };
+        },
+      });
+
+      expect(outcome).toEqual({ ok: true, detail: "runtime from hive 9.9.9 installed" });
+      expect(calls).toEqual([[runtimeDir, "9.9.9"]]);
+      // No skip-path probe: a version bump never trusts the old install.
+      expect(probes).toBe(0);
+    });
+  });
+
+  test("the same version skips fast on a healthy probe-verified install", async () => {
+    await withRuntimeHome(async (runtimeDir) => {
+      await mkdir(join(runtimeDir, "dist"), { recursive: true });
+      await writeFile(join(runtimeDir, "dist", "entry.js"), "// bundle\n");
+
+      const outcome = await ensureEmbeddingsRuntimeForRelease(HIVE_VERSION, {
+        probe: async () => ({ model: "bge-small-en-v1.5", dimensions: 384 }),
+        installFromRelease: async () => {
+          throw new Error("release path must not run for the same version");
+        },
+      });
+
+      expect(outcome.ok).toBe(true);
+      if (outcome.ok) expect(outcome.detail).toContain("already installed");
+    });
   });
 });

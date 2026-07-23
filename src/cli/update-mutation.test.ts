@@ -20,6 +20,7 @@ const blocker = {
 describe("machine mutation leases in update commands", () => {
   test("update holds its lease from the final checks through activation", async () => {
     const order: string[] = [];
+    const lines: string[] = [];
     let held = false;
 
     await activateStagedUpdate("0.0.8", {
@@ -56,7 +57,13 @@ describe("machine mutation leases in update commands", () => {
         expect(held).toBe(true);
         order.push("stop-daemon");
       },
-      log: () => {},
+      provisionEmbeddings: async (version) => {
+        expect(held).toBe(true);
+        order.push("embeddings");
+        expect(version).toBe("0.0.8");
+        return { ok: true, detail: "embedding runtime from hive 0.0.8 installed" };
+      },
+      log: (line) => lines.push(line),
     });
 
     expect(order).toEqual([
@@ -66,8 +73,13 @@ describe("machine mutation leases in update commands", () => {
       "activate",
       "bin-link",
       "stop-daemon",
+      "embeddings",
       "release",
     ]);
+    expect(lines.join("\n")).toContain("hive 0.0.8 active");
+    expect(lines.join("\n")).toContain(
+      "Embeddings: embedding runtime from hive 0.0.8 installed.",
+    );
   });
 
   test("a real landing operation that wins the race prevents every update mutation", async () => {
@@ -99,6 +111,9 @@ describe("machine mutation leases in update commands", () => {
           mutated = true;
         },
         stopStaleDaemon: async () => {},
+        provisionEmbeddings: async () => {
+          throw new Error("embeddings must not run");
+        },
         log: () => {},
       })).rejects.toThrow(/landing .* in progress/);
       expect(mutated).toBe(false);
@@ -129,6 +144,9 @@ describe("machine mutation leases in update commands", () => {
         throw new Error("bin link must not change");
       },
       stopStaleDaemon: async () => {},
+      provisionEmbeddings: async () => {
+        throw new Error("embeddings must not run");
+      },
       log: (line) => lines.push(line),
     });
 
@@ -149,9 +167,58 @@ describe("machine mutation leases in update commands", () => {
       },
       ensureBinLink: async () => {},
       stopStaleDaemon: async () => {},
+      provisionEmbeddings: async () => {
+        throw new Error("embeddings must not run");
+      },
       log: () => {},
     })).rejects.toThrow("rename failed");
     expect(order).toEqual(["release"]);
+  });
+
+  test("a failed embeddings install is a loud warning; the update still stands", async () => {
+    const lines: string[] = [];
+    await activateStagedUpdate("0.0.8", {
+      acquireLease: async () => ({ release: () => {} }),
+      blockers: async () => [],
+      inspectDaemon: async () => ({ state: "absent" }),
+      activate: async () => ({ activated: true, version: "0.0.8", previous: "0.0.7" }),
+      ensureBinLink: async () => {},
+      stopStaleDaemon: async () => {},
+      provisionEmbeddings: async () => ({
+        ok: false,
+        reason: "could not read the hive 0.0.8 release: network unreachable",
+      }),
+      log: (line) => lines.push(line),
+    });
+
+    const report = lines.join("\n");
+    expect(report).toContain("hive 0.0.8 active");
+    expect(report).toContain("EMBEDDINGS NOT INSTALLED");
+    expect(report).toContain("DEGRADED");
+    expect(report).toContain("FTS-only");
+    expect(report).toContain("network unreachable");
+    expect(report).toContain("hive embeddings install");
+  });
+
+  test("a throwing embeddings install is the same loud warning, never a failed update", async () => {
+    const lines: string[] = [];
+    await activateStagedUpdate("0.0.8", {
+      acquireLease: async () => ({ release: () => {} }),
+      blockers: async () => [],
+      inspectDaemon: async () => ({ state: "absent" }),
+      activate: async () => ({ activated: true, version: "0.0.8", previous: "0.0.7" }),
+      ensureBinLink: async () => {},
+      stopStaleDaemon: async () => {},
+      provisionEmbeddings: async () => {
+        throw new Error("disk full");
+      },
+      log: (line) => lines.push(line),
+    });
+
+    const report = lines.join("\n");
+    expect(report).toContain("EMBEDDINGS NOT INSTALLED");
+    expect(report).toContain("disk full");
+    expect(report).toContain("hive embeddings install");
   });
 
   test("rollback performs its final team check and activation under the lease", async () => {

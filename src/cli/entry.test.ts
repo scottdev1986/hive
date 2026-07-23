@@ -39,4 +39,13 @@ describe("removed flags", () => {
       createProgram().parseAsync(["node", "hive", "init", "--refresh"]),
     ).rejects.toThrow(/unknown option.*--refresh/);
   });
+
+  test("hive init rejects the removed --no-embeddings flag", async () => {
+    // Embeddings are a required component (user ruling 2026-07-22): init
+    // always provisions the runtime and there is no opt-out. Same
+    // `exitOverride()` trick as --refresh above.
+    await expect(
+      createProgram().parseAsync(["node", "hive", "init", "--no-embeddings"]),
+    ).rejects.toThrow(/unknown option.*--no-embeddings/);
+  });
 });

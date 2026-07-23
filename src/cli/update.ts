@@ -8,6 +8,12 @@
  * user who genuinely wants that has an honest spelling already: `hive stop &&
  * hive update`. Making destruction a deliberate two-command act rather than a
  * flag is the point.
+ *
+ * A successful activation also re-provisions the embedding runtime pinned to
+ * the new version: embeddings are a required memory component (user ruling
+ * 2026-07-22), so the runtime updates with the binary. That step failing is a
+ * loud degraded-state warning naming `hive embeddings install` — never a
+ * reason to roll back a healthy binary.
  */
 import { spawn } from "node:child_process";
 import { cliPath, currentLink, detectInstallMethod, installRoot } from "../update/paths";
@@ -37,6 +43,10 @@ import {
 } from "../update/daemon";
 import { startDownload } from "../update/progress";
 import { releaseKeys } from "../release/manifest";
+import {
+  ensureEmbeddingsRuntimeForRelease,
+  type EmbeddingsInstallOutcome,
+} from "./embeddings";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { isRunning } from "../daemon/lifecycle";
 import {
@@ -279,6 +289,10 @@ export interface StagedUpdateActivationDeps {
   activate: () => Promise<ActivationOutcome>;
   ensureBinLink: () => Promise<void>;
   stopStaleDaemon: () => Promise<void>;
+  /** Provision the embedding runtime for the newly activated version.
+   * Embeddings are a required memory component (user ruling 2026-07-22), so a
+   * binary update re-provisions the runtime pinned to the new version. */
+  provisionEmbeddings: (version: string) => Promise<EmbeddingsInstallOutcome>;
   log: (line: string) => void;
 }
 
@@ -311,9 +325,36 @@ export async function activateStagedUpdate(
     }
     deps.log(`hive ${outcome.version} active`);
     await deps.stopStaleDaemon();
+    deps.log(await embeddingsUpdateLine(outcome.version, deps));
   } finally {
     lease.release();
   }
+}
+
+/**
+ * The embeddings half of an update. A good binary is never rolled back over a
+ * runtime download: a failure is a loud degraded-state warning naming the
+ * consequence and the repair command, and the update still stands.
+ */
+async function embeddingsUpdateLine(
+  version: string,
+  deps: StagedUpdateActivationDeps,
+): Promise<string> {
+  let outcome: EmbeddingsInstallOutcome;
+  try {
+    outcome = await deps.provisionEmbeddings(version);
+  } catch (error) {
+    outcome = {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (outcome.ok) return `Embeddings: ${outcome.detail}.`;
+  return [
+    `⚠ EMBEDDINGS NOT INSTALLED — hive ${version} is active but memory is`,
+    `DEGRADED: semantic recall is unavailable (FTS-only) (${outcome.reason}).`,
+    "Fix: run `hive embeddings install`.",
+  ].join("\n");
 }
 
 export async function runUpdate(requested?: string): Promise<void> {
@@ -355,6 +396,7 @@ export async function runUpdate(requested?: string): Promise<void> {
     activate: () => activateWithHealthCheck(version, { root, healthCheck }),
     ensureBinLink: () => ensureBinLink(root),
     stopStaleDaemon: stopStaleDaemonAfterActivation,
+    provisionEmbeddings: ensureEmbeddingsRuntimeForRelease,
     log: console.log,
   });
 }

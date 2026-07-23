@@ -37,6 +37,7 @@ import {
   findSourceNodeModules,
   stageEmbeddingRuntime,
 } from "../release/embeddings-runtime";
+import { HIVE_VERSION } from "../version";
 
 // The bundling pipeline moved to src/release/embeddings-runtime.ts (shared
 // with the release build); these re-exports keep the existing import sites
@@ -196,11 +197,47 @@ export async function runEmbeddingsInstall(options: {
  * Init's auto-provisioning: a runtime that is already on disk and probes
  * healthy is kept (a re-init never re-downloads); anything else gets the full
  * provisioning flow. The outcome is reported, never thrown — init degrades to
- * an honest "not installed" line rather than failing.
+ * a loud "not installed" error rather than failing. The probe is injectable
+ * so `bun test` never downloads a model.
  */
-export async function ensureEmbeddingsRuntime(): Promise<EmbeddingsInstallOutcome> {
-  const deps = defaultProvisionDeps(defaultProbe);
-  const existing = await probeExisting(deps.runtimeDir, defaultProbe);
+export async function ensureEmbeddingsRuntime(
+  probe: EmbeddingsProbe = defaultProbe,
+): Promise<EmbeddingsInstallOutcome> {
+  const deps = defaultProvisionDeps(probe);
+  const existing = await probeExisting(deps.runtimeDir, probe);
   if (existing !== null) return existing;
   return provisionEmbeddingsRuntime({}, deps);
+}
+
+export interface EnsureForReleaseDeps {
+  /** Injectable probe; `bun test` never downloads a model. */
+  probe?: EmbeddingsProbe;
+  /** The version-pinned release install; injectable so tests never touch the
+   * network. */
+  installFromRelease?: (
+    runtimeDir: string,
+    version: string,
+  ) => Promise<EmbeddingsInstallOutcome>;
+}
+
+/**
+ * `hive update`'s step, keyed to the version it just activated. Embeddings
+ * are a required component (user ruling 2026-07-22), so an update that moves
+ * the binary re-provisions the runtime from that version's release — the
+ * runtime on disk was pinned to the old one. Updating *to* the version this
+ * binary already is means the runtime pin did not move either, so the healthy
+ * probe-verified install skips fast, exactly like init.
+ */
+export async function ensureEmbeddingsRuntimeForRelease(
+  version: string,
+  deps: EnsureForReleaseDeps = {},
+): Promise<EmbeddingsInstallOutcome> {
+  const probe = deps.probe ?? defaultProbe;
+  if (version === HIVE_VERSION) return ensureEmbeddingsRuntime(probe);
+  const install = deps.installFromRelease ??
+    ((runtimeDir: string, pinned: string) =>
+      installEmbeddingsFromRelease(
+        defaultReleaseInstallDeps({ runtimeDir, probe, version: pinned }),
+      ));
+  return install(embeddingsRuntimeDir(), version);
 }

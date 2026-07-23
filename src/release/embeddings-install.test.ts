@@ -11,12 +11,14 @@ import { mkdir, mkdtemp, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
+  defaultReleaseInstallDeps,
   installEmbeddingsFromRelease,
   type EmbeddingsReleaseInstallDeps,
 } from "./embeddings-install";
 import { EMBEDDINGS_RUNTIME_ASSET } from "./embeddings-runtime";
 import type { ReleaseManifest } from "./manifest";
 import type { ReleaseSource } from "../update/source";
+import { HIVE_VERSION } from "../version";
 
 const tempRoots: string[] = [];
 
@@ -257,5 +259,21 @@ describe("installEmbeddingsFromRelease", () => {
     expect(await Bun.file(join(fixture.runtimeDir, "kept")).text()).toBe("working\n");
     const siblings = await readdir(join(fixture.root, "tools"));
     expect(siblings.filter((name) => name.includes("staging"))).toEqual([]);
+  });
+});
+
+describe("defaultReleaseInstallDeps — the version pin", () => {
+  const base = {
+    runtimeDir: "/unused",
+    probe: async () => ({ model: "bge-small-en-v1.5", dimensions: 384 }),
+  };
+
+  test("defaults to the running binary's own version", () => {
+    expect(defaultReleaseInstallDeps(base).version).toBe(HIVE_VERSION);
+  });
+
+  test("an explicit version wins — hive update pins to the version it activated", () => {
+    expect(defaultReleaseInstallDeps({ ...base, version: "9.9.9" }).version)
+      .toBe("9.9.9");
   });
 });

@@ -697,7 +697,7 @@ describe("the embeddings step in init", () => {
     };
   }
 
-  test("installs by default and reports the outcome", async () => {
+  test("always installs (no opt-out) and reports the outcome", async () => {
     const root = await tsRepo();
     try {
       const { deps, calls } = embeddingsProbe(async () => ({
@@ -714,7 +714,7 @@ describe("the embeddings step in init", () => {
     }
   });
 
-  test("an install failure (offline) is the honest deferred state, and init still completes", async () => {
+  test("an install failure (offline) is a loud deferred state, and init still completes", async () => {
     const root = await tsRepo();
     try {
       const { deps, calls } = embeddingsProbe(async () => ({
@@ -724,7 +724,8 @@ describe("the embeddings step in init", () => {
       const result = await runInit(root, { graphify: false }, deps);
       expect(calls).toHaveLength(1);
       const report = result.messages.join("\n");
-      expect(report).toContain("Embeddings: not installed");
+      expect(report).toContain("EMBEDDINGS NOT INSTALLED");
+      expect(report).toContain("DEGRADED");
       expect(report).toContain("network unreachable");
       expect(report).toContain("FTS-only");
       expect(report).toContain("hive embeddings install");
@@ -735,21 +736,20 @@ describe("the embeddings step in init", () => {
     }
   });
 
-  test("--no-embeddings skips the install entirely and says so", async () => {
+  test("there is no skip path: init always attempts the install", async () => {
+    // Embeddings are a required component (user ruling 2026-07-22) — the
+    // --no-embeddings opt-out is gone and InitOptions has no flag left to
+    // smuggle one through, so any init runs the install. The removed CLI flag
+    // itself is asserted in src/cli/entry.test.ts.
     const root = await tsRepo();
     try {
-      const { deps, calls } = embeddingsProbe(async () => {
-        throw new Error("must not be called");
-      });
-      const result = await runInit(
-        root,
-        { graphify: false, embeddings: false },
-        deps,
-      );
-      expect(calls).toHaveLength(0);
-      const report = result.messages.join("\n");
-      expect(report).toContain("Embeddings: skipped (--no-embeddings)");
-      expect(report).toContain("hive embeddings install");
+      const { deps, calls } = embeddingsProbe(async () => ({
+        ok: true,
+        detail: "test runtime already installed",
+      }));
+      const result = await runInit(root, { graphify: false }, deps);
+      expect(calls).toHaveLength(1);
+      expect(result.messages.join("\n")).not.toContain("skipped");
       expect(isRepoInitialized(root)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });

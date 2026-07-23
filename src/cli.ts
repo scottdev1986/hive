@@ -273,16 +273,11 @@ export function createProgram(): Command {
     )
     .option("--graphify", "enable graphify without asking (recommended default)")
     .option("--no-graphify", "skip graphify without asking")
-    .option(
-      "--no-embeddings",
-      "skip the semantic-memory embedding runtime install (on by default)",
-    )
     .action(async (options: {
       scaffoldAgents?: boolean;
       seedFacts?: string;
       force?: boolean;
       graphify?: boolean;
-      embeddings?: boolean;
     }) => {
       const root = projectRootOrCwd();
       await runInitCli({
@@ -295,7 +290,6 @@ export function createProgram(): Command {
           : { seedFacts: options.seedFacts }),
         ...(options.force === undefined ? {} : { force: options.force }),
         ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
-        ...(options.embeddings === undefined ? {} : { embeddings: options.embeddings }),
       });
     });
 
@@ -658,13 +652,15 @@ export function createProgram(): Command {
   const embeddings = program
     .command("embeddings")
     .description(
-      "Local semantic-memory embedding runtime (HM-5; external to the single-file binary)",
+      "Local semantic-memory embedding runtime (required, external to the single-file binary)",
     );
 
   embeddings.command("install")
     .description(
       "Install the embedding runtime into ~/.hive/tools/embeddings " +
-        "(HIVE_EMBEDDINGS_HOME override): from a checkout's node_modules when " +
+        "(HIVE_EMBEDDINGS_HOME override). A required memory component that " +
+        "`hive init` and `hive update` provision automatically — this command " +
+        "repairs a failed or deferred install: from a checkout's node_modules when " +
         "one is in reach, otherwise downloaded from this binary's own Hive " +
         "release and verified against its signed manifest — then loaded and " +
         "probe-verified (dimensions=384); install is only done when the probe passes",

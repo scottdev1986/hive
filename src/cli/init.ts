@@ -22,11 +22,12 @@
  * a TTY is asked once (recommended, default yes) and a non-TTY safely declines
  * for the run with one line naming the enable command — so `hive init` stays
  * scriptable while a human at a terminal gets the recommended choice.
- * The embedding runtime is different: it is core to memory, not a decision, so
- * init installs it by default (probe-verified, machine-level under
- * ~/.hive/tools/embeddings) with only a `--no-embeddings` opt-out. A machine
- * with no network gets the honest deferred line — semantic memory is
- * unavailable, recall stays FTS-only — and init still completes.
+ * The embedding runtime is different: it is a required component of memory,
+ * not a decision (user ruling 2026-07-22), so init always installs it —
+ * probe-verified, machine-level under ~/.hive/tools/embeddings — with no
+ * opt-out. A machine with no network gets a loud deferred-state error —
+ * semantic memory is unavailable, recall stays FTS-only, and the fix is
+ * `hive embeddings install` — and init still completes.
  * Model-authored narrative is supplied by the caller — hive's models are its
  * agents, not this CLI — and written through the same seeding path.
  */
@@ -98,10 +99,6 @@ export interface InitOptions {
    * win and never prompt; undefined means undecided, which prompts on a TTY
    * and safely declines (with one line saying how to enable) everywhere else. */
   graphify?: boolean;
-  /** The embedding runtime install, from `--no-embeddings`. Core to memory,
-   * so anything but an explicit false installs it; false skips it for the run
-   * (nothing is persisted — the next init installs it). */
-  embeddings?: boolean;
   /** Injected for tests; defaults to today. */
   today?: string;
 }
@@ -459,11 +456,12 @@ export async function runInit(
     }
   }
 
-  // 5. Embedding runtime. Core to memory, not a human decision: it installs
-  //    by default and only `--no-embeddings` skips it. A failure — no network,
-  //    no checkout, a refused download — is reported as the honest deferred
-  //    state and init continues; recall stays FTS-only until it succeeds.
-  messages.push(await provisionEmbeddings(options.embeddings, deps));
+  // 5. Embedding runtime. A required memory component, not a human decision:
+  //    init always installs it, and there is no flag to skip it. A failure —
+  //    no network, no checkout, a refused download — is a loud deferred-state
+  //    error naming `hive embeddings install`, and init continues; recall
+  //    stays FTS-only until the install succeeds.
+  messages.push(await provisionEmbeddings(deps));
 
   // 6. Graphify. The choice is the human's, and init is where it gets made:
   //    flags always win and never prompt; a TTY without a flag is asked once
@@ -477,19 +475,9 @@ export async function runInit(
   return { agentsScaffolded, factsSeeded, skills, messages };
 }
 
-const EMBEDDINGS_LATER_HINT =
-  "`hive embeddings install` provisions it any time.";
+const EMBEDDINGS_FIX_HINT = "run `hive embeddings install`";
 
-async function provisionEmbeddings(
-  flag: boolean | undefined,
-  deps: InitDeps,
-): Promise<string> {
-  if (flag === false) {
-    return (
-      "Embeddings: skipped (--no-embeddings); semantic memory stays FTS-only. " +
-      EMBEDDINGS_LATER_HINT
-    );
-  }
+async function provisionEmbeddings(deps: InitDeps): Promise<string> {
   let outcome: EmbeddingsInstallOutcome;
   try {
     outcome = await deps.installEmbeddings();
@@ -500,11 +488,14 @@ async function provisionEmbeddings(
     };
   }
   if (outcome.ok) return `Embeddings: ${outcome.detail}.`;
-  return (
-    `Embeddings: not installed — ${outcome.reason}. Semantic memory is ` +
-    "unavailable (recall stays FTS-only) until it is; everything else is " +
-    `ready. ${EMBEDDINGS_LATER_HINT}`
-  );
+  // Embeddings are a required component — this is a degraded product, so the
+  // failure is an alarm, not a quiet note. Init still completes: the runtime
+  // is machine-level and recoverable, unlike the repo state above.
+  return [
+    "⚠ EMBEDDINGS NOT INSTALLED — Hive memory is DEGRADED: semantic recall is",
+    `unavailable and search is FTS-only until the runtime lands (${outcome.reason}).`,
+    `This is not a supported end state; ${EMBEDDINGS_FIX_HINT}.`,
+  ].join("\n");
 }
 
 const GRAPHIFY_ENABLED_LINE =
@@ -595,7 +586,6 @@ export async function runInitCli(options: {
   seedFacts?: string;
   force?: boolean;
   graphify?: boolean;
-  embeddings?: boolean;
 }): Promise<void> {
   const root = options.cwd ?? projectRootOrCwd();
   const repaired = await repairLeakedProjectConfig(root);
@@ -611,9 +601,6 @@ export async function runInitCli(options: {
       : { scaffoldAgents: options.scaffoldAgents }),
     ...(options.force === true ? { force: true } : {}),
     ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
-    ...(options.embeddings === undefined
-      ? {}
-      : { embeddings: options.embeddings }),
     facts,
   });
   for (const line of result.messages) console.log(line);
