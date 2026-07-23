@@ -9,19 +9,16 @@
  *   - Seed a small set of narrative memory articles with `source: "init"` and a
  *     `verified` date (decision 5's provenance), derived and re-derivable —
  *     distinct from the earned facts an agent learns.
- *   - Ensure `.gitignore` covers `.hive/memory/` (user ruling 2026-07-22, board
- *     issue #78): repo memory is daemon-written derived state, never committed.
- *     The entry is exactly `.hive/memory/` — never a bare `.hive/` entry.
+ *   - Ensure `.gitignore` covers Hive's exact derived-state paths (board issue
+ *     #78), never the `.hive/` parent because that also contains user-authored
+ *     project skills.
  *
  * Running the command is the authorization, and every action it takes is
  * printed. Seeded facts are indexed immediately when a daemon is available;
  * otherwise the report names the startup rebuild instead of claiming the index
  * already changed.
- * Graphify is the one decision that is the human's, and init is where it gets
- * made: `--graphify`/`--no-graphify` always win and never prompt; with no flag
- * a TTY is asked once (recommended, default yes) and a non-TTY safely declines
- * for the run with one line naming the enable command — so `hive init` stays
- * scriptable while a human at a terminal gets the recommended choice.
+ * Graphify is required and provisioned on every run. A failed download or
+ * build is reported as a loud deferred state; it never turns into an opt-out.
  * The embedding runtime is different: it is a required component of memory,
  * not a decision (user ruling 2026-07-22), so init always installs it —
  * probe-verified, machine-level under ~/.hive/tools/embeddings — with no
@@ -44,14 +41,6 @@ import {
   writeMemoryFact,
   type MemoryWriteFileInput,
 } from "../adapters/memory";
-import {
-  graphifyDecisionRecorded,
-  graphifyPin,
-  readGraphifyState,
-  writeGraphifyState,
-  type GraphifyState,
-} from "../adapters/graphify";
-import { graphifyArtifact } from "../adapters/graphify-artifacts";
 import { probeDaemonReuse } from "../daemon/lifecycle";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { reindexMemory } from "./mcp";
@@ -64,7 +53,6 @@ import { CAPABILITY_PROVIDERS } from "../schemas";
 import { ensureEmbeddingsRuntime } from "./embeddings";
 import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 import { runGraphifyEnable } from "./graphify";
-import { confirmOnTty, type ConfirmFn } from "./prompt";
 import { projectRootOrCwd } from "./project-root";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 
@@ -95,10 +83,6 @@ export interface InitOptions {
   /** Replace a skill the user has edited with Hive's shipped version. Without
    * it, an edited skill is reported as drifted and left exactly as it is. */
   force?: boolean;
-  /** The graphify decision, from `--graphify` / `--no-graphify`. Flags always
-   * win and never prompt; undefined means undecided, which prompts on a TTY
-   * and safely declines (with one line saying how to enable) everywhere else. */
-  graphify?: boolean;
   /** Injected for tests; defaults to today. */
   today?: string;
 }
@@ -135,19 +119,8 @@ export interface InitDeps {
     tool: SkillTool,
     options: { force?: boolean; coresidentVendors?: readonly SkillTool[] },
   ) => Promise<SkillInstallReport>;
-  /** Where the opt-in graphify decision stands, so init can report it. */
-  readGraphifyState: (root: string) => Promise<GraphifyState>;
-  /** Whether a decision (either way) was ever recorded, so init asks once. */
-  graphifyDecisionRecorded: (root: string) => boolean;
-  /** Whether this Hive build ships a graphify bundle for this platform. When
-   * it does not, there is nothing to ask: init prints one line instead. */
-  graphifyAvailable: () => boolean;
-  /** Ask on a TTY; null means there is no terminal to ask. */
-  confirm: ConfirmFn;
-  /** The scriptable enable everything resolves to (`hive graphify enable`). */
-  enableGraphify: (root: string) => Promise<number>;
-  /** Persist an explicit "no" so the question is not re-asked forever. */
-  writeGraphifyState: (root: string, state: GraphifyState) => Promise<void>;
+  /** Install or re-prove the required Graphify runtime and build this repo. */
+  provisionGraphify: (root: string) => Promise<number>;
   /** Record that init completed here, so bare `hive` stops offering to init. */
   writeInitStamp: (root: string) => Promise<void>;
   /** Install (or re-prove) the machine-level embedding runtime. The outcome
@@ -180,12 +153,7 @@ export const defaultInitDeps: InitDeps = {
   },
   hasCli: (command) => Bun.which(command) !== null,
   installShippedSkills,
-  readGraphifyState,
-  graphifyDecisionRecorded,
-  graphifyAvailable: () => graphifyArtifact() !== null,
-  confirm: confirmOnTty,
-  enableGraphify: (root) => runGraphifyEnable(root),
-  writeGraphifyState,
+  provisionGraphify: (root) => runGraphifyEnable(root),
   writeInitStamp: async (root) => {
     const path = initStampPath(root);
     await mkdir(dirname(path), { recursive: true });
@@ -253,49 +221,57 @@ export async function seedInitFacts(
   return seeded;
 }
 
-/** The exact entry board issue #78 settled on. Never a bare `.hive/` — a
- * parent-dir entry caused a worktree-deletion incident. */
-export const HIVE_MEMORY_GITIGNORE_ENTRY = ".hive/memory/";
+/** The exact derived-state entries board issue #78 settled on. Never collapse
+ * the first two into `.hive/`: that directory also contains project skills. */
+export const HIVE_GITIGNORE_ENTRIES = [
+  ".hive/memory/",
+  ".hive/worktrees/",
+  "graphify-out/",
+  ".graphifyignore",
+] as const;
 
-/** Does this .gitignore line already cover `.hive/memory/`? Exact forms (with
- * or without a leading/trailing slash) and the broader `.hive/` / `.hive/*`
- * entries all count; negations and comments do not. */
-function gitignoreCoversHiveMemory(line: string): boolean {
+function normalizedGitignoreLine(line: string): string | null {
   const trimmed = line.trim();
   if (trimmed === "" || trimmed.startsWith("#") || trimmed.startsWith("!")) {
-    return false;
+    return null;
   }
-  const normalized = trimmed.replace(/^\//, "").replace(/\/+$/, "");
-  return normalized === ".hive/memory" ||
-    normalized === ".hive" ||
-    normalized === ".hive/*";
+  return trimmed.replace(/^\//, "").replace(/\/+$/, "");
+}
+
+function gitignoreCovers(entry: string, lines: readonly string[]): boolean {
+  const wanted = entry.replace(/\/+$/, "");
+  return lines.some((line) => {
+    const normalized = normalizedGitignoreLine(line);
+    if (normalized === null) return false;
+    if (normalized === wanted) return true;
+    return wanted.startsWith(".hive/") &&
+      (normalized === ".hive" || normalized === ".hive/*");
+  });
 }
 
 /**
- * Ensure the project's `.gitignore` ignores `.hive/memory/`. Idempotent: any
- * existing covering entry leaves the file byte-for-byte untouched; otherwise the
- * entry is appended under a `# Hive memory` header without rewriting or
- * reordering existing content; a missing `.gitignore` is created.
+ * Ensure the project's `.gitignore` contains every Hive derived-state entry.
+ * Existing content is never reordered or rewritten; only missing entries are
+ * appended.
  */
-export async function ensureHiveMemoryGitignored(
+export async function ensureHiveStateGitignored(
   cwd: string,
   deps: Pick<InitDeps, "fileExists" | "readFile" | "writeFile"> = defaultInitDeps,
 ): Promise<string> {
   const path = join(cwd, ".gitignore");
-  if (!(await deps.fileExists(path))) {
-    await deps.writeFile(path, `# Hive memory\n${HIVE_MEMORY_GITIGNORE_ENTRY}\n`);
-    return "Created .gitignore with a `.hive/memory/` entry (Hive memory is derived state, never committed).";
-  }
-  const existing = await deps.readFile(path);
-  if (existing.split(/\r?\n/).some(gitignoreCoversHiveMemory)) {
-    return ".gitignore already covers `.hive/memory/`; left untouched.";
-  }
+  const exists = await deps.fileExists(path);
+  const existing = exists ? await deps.readFile(path) : "";
+  const lines = existing.split(/\r?\n/);
+  const missing = HIVE_GITIGNORE_ENTRIES.filter((entry) =>
+    !gitignoreCovers(entry, lines)
+  );
+  if (missing.length === 0) return ".gitignore already covers Hive's local state.";
   const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
   await deps.writeFile(
     path,
-    `${existing}${separator}\n# Hive memory\n${HIVE_MEMORY_GITIGNORE_ENTRY}\n`,
+    `${existing}${separator}${existing === "" ? "" : "\n"}# Hive local state\n${missing.join("\n")}\n`,
   );
-  return "Appended `.hive/memory/` to .gitignore (Hive memory is derived state, never committed).";
+  return `${exists ? "Updated" : "Created"} .gitignore with Hive's local derived-state entries.`;
 }
 
 /** A minimal starter `AGENTS.md` — a starting point a human refines (every

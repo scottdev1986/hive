@@ -1,5 +1,5 @@
 /**
- * Graphify: an opt-in, repo-local code knowledge graph agents can query.
+ * Graphify: Hive's required repo-local code knowledge graph.
  * Design: docs/graphify/integration.md — the hard rules live
  * there and are enforced here:
  *
@@ -15,14 +15,12 @@
  *   - Invocation is by absolute path into Hive's own bundle dir; nothing
  *     lands on PATH and upstream's `graphify install` (which writes the
  *     user's global assistant configs) is never run.
- *   - `graphify-out/` is kept out of git via `.git/info/exclude` — Hive does
- *     not edit the repo's tracked `.gitignore` — and the exclusion is
- *     verified with `check-ignore --no-index`, because plain `check-ignore`
- *     consults the index and cannot prove anything.
+ *   - `hive init` keeps graphify's generated files out of git through the
+ *     repository's tracked `.gitignore`.
  */
 import { existsSync } from "node:fs";
 import { copyFile, mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, isAbsolute, join, resolve } from "node:path";
+import { dirname, join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { machineHiveHome } from "../daemon/instances";
 import {
@@ -32,7 +30,6 @@ import {
   type GraphifyArtifact,
 } from "./graphify-artifacts";
 import { projectStateDir } from "../daemon/project-state";
-import { withFileLock } from "./file-lock";
 
 /** The exact version the embedded lock pins. The lock is the single source of
  * truth; a lock that stops naming graphifyy is a build error, not a fallback. */
@@ -129,79 +126,10 @@ export const runCommand: CommandRunner = async (argv, options) => {
   }
 };
 
-export interface GraphifyState {
-  enabled: boolean;
-  /** The pin installed when this repo was enabled; null when never enabled. */
-  pin: string | null;
-}
-
-export function graphifyStatePath(root: string): string {
-  return join(projectStateDir(root), "graphify.toml");
-}
-
-/** Whether a human ever recorded a graphify decision for this repo (enable OR
- * decline). Absent state reads as disabled either way; this exists so consent
- * surfaces (the init question) ask once and then respect the answer. */
-export function graphifyDecisionRecorded(root: string): boolean {
-  return existsSync(graphifyStatePath(root));
-}
-
-/** Absent or malformed both read as disabled — but only because `enable`
- * writes a positive record first; a repo that was never enabled and one whose
- * state file was deleted degrade identically, to off. */
-export async function readGraphifyState(root: string): Promise<GraphifyState> {
-  let source: string;
-  try {
-    source = await readFile(graphifyStatePath(root), "utf8");
-  } catch {
-    return { enabled: false, pin: null };
-  }
-  let raw: unknown;
-  try {
-    raw = Bun.TOML.parse(source);
-  } catch {
-    return { enabled: false, pin: null };
-  }
-  if (typeof raw !== "object" || raw === null || Array.isArray(raw)) {
-    throw new Error(`Invalid graphify state at ${graphifyStatePath(root)}`);
-  }
-  const record = raw as Record<string, unknown>;
-  const unknownKeys = Object.keys(record).filter((key) =>
-    key !== "enabled" && key !== "pin"
-  );
-  if (
-    typeof record.enabled !== "boolean" || unknownKeys.length > 0 ||
-    (record.pin !== undefined && typeof record.pin !== "string")
-  ) {
-    throw new Error(`Invalid graphify state at ${graphifyStatePath(root)}`);
-  }
-  return {
-    enabled: record.enabled,
-    pin: typeof record.pin === "string" ? record.pin : null,
-  };
-}
-
-export async function writeGraphifyState(
-  root: string,
-  state: GraphifyState,
-): Promise<void> {
-  const path = graphifyStatePath(root);
-  const lines = [
-    "# Managed by `hive graphify enable|disable`.",
-    `enabled = ${state.enabled}`,
-    ...(state.pin === null ? [] : [`pin = ${JSON.stringify(state.pin)}`]),
-    "",
-  ];
-  await mkdir(dirname(path), { recursive: true });
-  const temporary = `${path}.${process.pid}.tmp`;
-  await writeFile(temporary, lines.join("\n"));
-  await rename(temporary, path);
-}
-
 export function noArtifactMessage(platformKey: string): string {
   return (
     `this Hive build ships no graphify bundle for ${platformKey}; ` +
-    "everything else in Hive works identically, and a future Hive release adds it."
+    "Graphify is unavailable until a Hive build with that required bundle is installed."
   );
 }
 
@@ -710,13 +638,6 @@ export async function graphLocate(
   root: string,
   question: string,
 ): Promise<GraphLocateResult> {
-  const state = await readGraphifyState(root);
-  if (!state.enabled) {
-    return {
-      available: false,
-      answer: "Graphify is not enabled for this repo; use grep/rg/Glob.",
-    };
-  }
   const candidates = [servingGraphPath(root), graphJsonPath(root)];
   const path = candidates.find((p) => existsSync(p));
   if (path === undefined) {
@@ -828,8 +749,8 @@ export function selectGraphBrief(output: string): string {
  * the subprocess query path handles the outliers. */
 const TARGETED_BRIEF_MAX_GRAPH_BYTES = 50 * 1024 * 1024;
 
-/** The task-scoped spawn digest. Repos without graphify stay silent; opted-in
- * failures are explicit so absence cannot masquerade as an empty graph.
+/** The task-scoped spawn digest. Failures are explicit so absence cannot
+ * masquerade as an empty graph.
  * Hive locates from explicit seed nodes because the binary query cannot accept
  * them; its bounded query remains the oversized or matchless fallback. */
 export async function buildGraphBrief(
@@ -837,8 +758,6 @@ export async function buildGraphBrief(
   task: string,
   run: CommandRunner = runCommand,
 ): Promise<string | null> {
-  const state = await readGraphifyState(root);
-  if (!state.enabled) return null;
   if (!existsSync(graphifyBin()) || !existsSync(graphJsonPath(root))) {
     return "Graph context: unavailable (graph not built yet); proceeding without it.";
   }
@@ -917,109 +836,10 @@ export async function snapshotGraphForServing(
   return { ok: true, detail: target };
 }
 
-const EXCLUDE_COMMENT = "# hive graphify: local knowledge graph, never committed";
-/** Both are Hive-written, machine-local state: the graph output dir and the
- * generated ignore file below. Excluding them here — never in the tracked
- * `.gitignore` — is what keeps enablement from mutating the user's repo. */
-const EXCLUDE_ENTRIES = ["graphify-out/", ".graphifyignore"];
-
-/** Append Hive's graphify entries to the repo's `.git/info/exclude` (the
- * common dir, so one entry covers every linked worktree) and prove they took:
- * check-ignore without `--no-index` answers from the index and would happily
- * say "ignored" about nothing. */
-export async function ensureGraphifyIgnored(
-  root: string,
-  run: CommandRunner = runCommand,
-): Promise<GraphifyOutcome> {
-  const commonDir = await run(
-    ["git", "rev-parse", "--git-common-dir"],
-    { cwd: root, timeoutMs: 10_000 },
-  );
-  if (commonDir.exitCode !== 0) {
-    return { ok: false, reason: `not a git repo: ${commonDir.stderr.trim()}` };
-  }
-  const gitDir = commonDir.stdout.trim();
-  const excludePath = join(
-    isAbsolute(gitDir) ? gitDir : resolve(root, gitDir),
-    "info",
-    "exclude",
-  );
-
-  await mkdir(dirname(excludePath), { recursive: true });
-  await withFileLock(`${excludePath}.hive.lock`, async () => {
-    let existing = "";
-    try {
-      existing = await readFile(excludePath, "utf8");
-    } catch {
-      // No exclude file yet; git treats it as optional and so do we.
-    }
-    const lines = existing.split("\n").map((line) => line.trim());
-    const missing = EXCLUDE_ENTRIES.filter((entry) => !lines.includes(entry));
-    if (missing.length > 0) {
-      const lead = existing.length === 0 || existing.endsWith("\n") ? "" : "\n";
-      await writeFile(
-        excludePath,
-        `${existing}${lead}${EXCLUDE_COMMENT}\n${missing.join("\n")}\n`,
-      );
-    }
-  });
-
-  const verify = await run(
-    ["git", "check-ignore", "--no-index", "graphify-out/probe", ".graphifyignore"],
-    { cwd: root, timeoutMs: 10_000 },
-  );
-  // check-ignore exits 0 when ANY path is ignored; both must be, so count the
-  // echoed matches instead of trusting the exit code.
-  if (
-    verify.exitCode !== 0 ||
-    verify.stdout.trim().split("\n").length !== EXCLUDE_ENTRIES.length
-  ) {
-    return {
-      ok: false,
-      reason: "wrote .git/info/exclude but check-ignore --no-index does not confirm it",
-    };
-  }
-  return { ok: true, detail: excludePath };
-}
-
-/** Remove exactly the exclude lines `ensureGraphifyIgnored` appended (the
- * comment and the entry), leaving every other line byte-identical. Uninstall
- * calls this; it is a no-op on a repo Hive never touched. */
-export async function removeGraphifyExcludeEntry(
-  root: string,
-  run: CommandRunner = runCommand,
-): Promise<boolean> {
-  const commonDir = await run(
-    ["git", "rev-parse", "--git-common-dir"],
-    { cwd: root, timeoutMs: 10_000 },
-  );
-  if (commonDir.exitCode !== 0) return false;
-  const gitDir = commonDir.stdout.trim();
-  const excludePath = join(
-    isAbsolute(gitDir) ? gitDir : resolve(root, gitDir),
-    "info",
-    "exclude",
-  );
-  let existing: string;
-  try {
-    existing = await readFile(excludePath, "utf8");
-  } catch {
-    return false;
-  }
-  const kept = existing
-    .split("\n")
-    .filter((line) =>
-      !EXCLUDE_ENTRIES.includes(line.trim()) && line !== EXCLUDE_COMMENT
-    );
-  if (kept.length === existing.split("\n").length) return false;
-  await writeFile(excludePath, kept.join("\n"));
-  return true;
-}
-
 /** First line of a Hive-generated `.graphifyignore`. A file without it is the
  * user's own and is never rewritten or removed. */
 export const GRAPHIFY_IGNORE_MARKER =
-  "# Generated by Hive from this repo's own gitignore rules; excluded from git via .git/info/exclude.";
+  "# Generated by Hive from this repo's own gitignore rules.";
 
 /** Vendored-dependency dirs that are commonly *committed*, so no gitignore
  * rule ever names them. Everything gitignored is handled by the derived
@@ -1106,31 +926,4 @@ export async function writeGraphifyIgnore(
     detail: `excluding ${VENDORED_DIR_FLOOR.length} common vendored patterns` +
       `${capped.length > 0 ? ` and ${capped.length} git-ignored dirs (${capped.slice(0, 5).join(" ")}${capped.length > 5 ? " …" : ""})` : ""}`,
   };
-}
-
-/** Remove durable graphify state. Spawn hooks are derived, fail-open worktree
- * files removed by cleanup or the next graphless config write. */
-export async function purgeGraphify(root: string): Promise<string[]> {
-  const removed: string[] = [];
-  for (const path of [graphifyToolsDir(), graphOutDir(root), dirname(servingGraphPath(root))]) {
-    try {
-      await rm(path, { recursive: true, force: true });
-      removed.push(path);
-    } catch {
-      // force:true means the only failures are exotic (permissions); the
-      // caller prints what was removed, and what wasn't stays visible.
-    }
-  }
-  // The generated ignore file goes too — but only Hive's: a user-authored
-  // .graphifyignore (no marker) is their file, not our uninstall's.
-  const ignorePath = join(root, ".graphifyignore");
-  try {
-    if ((await readFile(ignorePath, "utf8")).startsWith(GRAPHIFY_IGNORE_MARKER)) {
-      await rm(ignorePath, { force: true });
-      removed.push(ignorePath);
-    }
-  } catch {
-    // Absent or unreadable: nothing of Hive's to remove.
-  }
-  return removed;
 }

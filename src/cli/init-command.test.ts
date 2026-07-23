@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, test } from "bun:test";
 import { existsSync } from "node:fs";
-import { mkdtemp, rm, writeFile } from "node:fs/promises";
+import { chmod, mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { graphifyPin } from "../adapters/graphify";
 
 const CLI = join(import.meta.dir, "../cli.ts");
 const roots: string[] = [];
@@ -28,8 +29,27 @@ function git(root: string, args: string[]): void {
   if (result.exitCode !== 0) throw new Error(`git ${args.join(" ")} failed`);
 }
 
+async function installFakeGraphify(home: string): Promise<void> {
+  const directory = join(home, "tools", "graphify", graphifyPin());
+  await mkdir(directory, { recursive: true });
+  const source = [
+    `#!${process.execPath}`,
+    'if (process.argv[2] === "--help") process.exit(0);',
+    'if (process.argv[2] !== "extract") process.exit(2);',
+    'const root = process.argv[3];',
+    'await Bun.write(`${root}/graphify-out/graph.json`, \'{"nodes":[],"links":[]}\\n\');',
+    'console.log("[graphify extract] wrote graphify-out/graph.json: 0 nodes, 0 edges, 0 communities");',
+    "",
+  ].join("\n");
+  for (const name of ["graphify", "graphify-mcp"]) {
+    const path = join(directory, name);
+    await writeFile(path, source);
+    await chmod(path, 0o755);
+  }
+}
+
 describe("hive init command boundary", () => {
-  test("initializes repository state without starting a daemon", async () => {
+  test("initializes required Graphify and repository state without starting a daemon", async () => {
     const repo = await mkdtemp(join(tmpdir(), "hive-init-command-repo-"));
     const home = await mkdtemp(join(tmpdir(), "hive-init-command-home-"));
     roots.push(repo, home);
@@ -37,6 +57,8 @@ describe("hive init command boundary", () => {
     await writeFile(join(repo, "README.md"), "# Empty test repository\n");
     git(repo, ["add", "-A"]);
     git(repo, ["commit", "-m", "init", "--no-gpg-sign"]);
+    const defaultHome = join(home, ".hive");
+    await installFakeGraphify(defaultHome);
 
     const commandEnv: Record<string, string | undefined> = {
       ...process.env,
@@ -44,7 +66,7 @@ describe("hive init command boundary", () => {
     };
     delete commandEnv["HIVE_HOME"];
     const child = Bun.spawn(
-      [process.execPath, CLI, "init", "--no-graphify"],
+      [process.execPath, CLI, "init"],
       {
         cwd: repo,
         env: commandEnv,
@@ -58,10 +80,36 @@ describe("hive init command boundary", () => {
     ]);
     expect(exitCode).toBe(0);
     expect(stderr).toBe("");
-    const defaultHome = join(home, ".hive");
     expect(existsSync(join(defaultHome, "daemon.lock"))).toBe(false);
     expect(existsSync(join(defaultHome, "daemon.pid"))).toBe(false);
     expect(existsSync(join(defaultHome, "daemon.port"))).toBe(false);
+    expect(existsSync(join(repo, "graphify-out", "graph.json"))).toBe(true);
+
+    const gitignore = await readFile(join(repo, ".gitignore"), "utf8");
+    for (const entry of [
+      ".hive/memory/",
+      ".hive/worktrees/",
+      "graphify-out/",
+      ".graphifyignore",
+    ]) {
+      expect(gitignore).toContain(entry);
+    }
+    const ignored = Bun.spawnSync([
+      "git",
+      "-C",
+      repo,
+      "check-ignore",
+      "--no-index",
+      ".hive/memory/probe",
+      ".hive/worktrees/probe",
+      "graphify-out/probe",
+      ".graphifyignore",
+    ]);
+    expect(ignored.exitCode).toBe(0);
+    expect(ignored.stdout.toString().trim().split("\n")).toHaveLength(4);
+    const exclude = await readFile(join(repo, ".git", "info", "exclude"), "utf8");
+    expect(exclude).not.toContain("graphify-out/");
+    expect(exclude).not.toContain(".graphifyignore");
 
     const startModule = join(import.meta.dir, "start.ts");
     const initModule = join(import.meta.dir, "init.ts");
