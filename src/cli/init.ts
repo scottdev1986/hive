@@ -22,6 +22,11 @@
  * a TTY is asked once (recommended, default yes) and a non-TTY safely declines
  * for the run with one line naming the enable command — so `hive init` stays
  * scriptable while a human at a terminal gets the recommended choice.
+ * The embedding runtime is different: it is core to memory, not a decision, so
+ * init installs it by default (probe-verified, machine-level under
+ * ~/.hive/tools/embeddings) with only a `--no-embeddings` opt-out. A machine
+ * with no network gets the honest deferred line — semantic memory is
+ * unavailable, recall stays FTS-only — and init still completes.
  * Model-authored narrative is supplied by the caller — hive's models are its
  * agents, not this CLI — and written through the same seeding path.
  */
@@ -55,6 +60,8 @@ import {
   type SkillTool,
 } from "../adapters/skills";
 import { CAPABILITY_PROVIDERS } from "../schemas";
+import { ensureEmbeddingsRuntime } from "./embeddings";
+import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 import { runGraphifyEnable } from "./graphify";
 import { confirmOnTty, type ConfirmFn } from "./prompt";
 import { projectRootOrCwd } from "./project-root";
@@ -91,6 +98,10 @@ export interface InitOptions {
    * win and never prompt; undefined means undecided, which prompts on a TTY
    * and safely declines (with one line saying how to enable) everywhere else. */
   graphify?: boolean;
+  /** The embedding runtime install, from `--no-embeddings`. Core to memory,
+   * so anything but an explicit false installs it; false skips it for the run
+   * (nothing is persisted — the next init installs it). */
+  embeddings?: boolean;
   /** Injected for tests; defaults to today. */
   today?: string;
 }
@@ -142,6 +153,9 @@ export interface InitDeps {
   writeGraphifyState: (root: string, state: GraphifyState) => Promise<void>;
   /** Record that init completed here, so bare `hive` stops offering to init. */
   writeInitStamp: (root: string) => Promise<void>;
+  /** Install (or re-prove) the machine-level embedding runtime. The outcome
+   * is reported; a failure defers semantic memory, it does not fail init. */
+  installEmbeddings: () => Promise<EmbeddingsInstallOutcome>;
   today: () => string;
 }
 
@@ -180,6 +194,7 @@ export const defaultInitDeps: InitDeps = {
     await mkdir(dirname(path), { recursive: true });
     await writeFile(path, `# Written by \`hive init\`; bare \`hive\` checks it.\n`);
   },
+  installEmbeddings: ensureEmbeddingsRuntime,
   today: () => new Date().toISOString().slice(0, 10),
 };
 
@@ -444,7 +459,13 @@ export async function runInit(
     }
   }
 
-  // 5. Graphify. The choice is the human's, and init is where it gets made:
+  // 5. Embedding runtime. Core to memory, not a human decision: it installs
+  //    by default and only `--no-embeddings` skips it. A failure — no network,
+  //    no checkout, a refused download — is reported as the honest deferred
+  //    state and init continues; recall stays FTS-only until it succeeds.
+  messages.push(await provisionEmbeddings(options.embeddings, deps));
+
+  // 6. Graphify. The choice is the human's, and init is where it gets made:
   //    flags always win and never prompt; a TTY without a flag is asked once
   //    (recommended, default yes); non-interactive without a flag safely
   //    declines for this run and says how to enable. An enable failure is
@@ -454,6 +475,36 @@ export async function runInit(
   await deps.writeInitStamp(cwd);
 
   return { agentsScaffolded, factsSeeded, skills, messages };
+}
+
+const EMBEDDINGS_LATER_HINT =
+  "`hive embeddings install` provisions it any time.";
+
+async function provisionEmbeddings(
+  flag: boolean | undefined,
+  deps: InitDeps,
+): Promise<string> {
+  if (flag === false) {
+    return (
+      "Embeddings: skipped (--no-embeddings); semantic memory stays FTS-only. " +
+      EMBEDDINGS_LATER_HINT
+    );
+  }
+  let outcome: EmbeddingsInstallOutcome;
+  try {
+    outcome = await deps.installEmbeddings();
+  } catch (error) {
+    outcome = {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (outcome.ok) return `Embeddings: ${outcome.detail}.`;
+  return (
+    `Embeddings: not installed — ${outcome.reason}. Semantic memory is ` +
+    "unavailable (recall stays FTS-only) until it is; everything else is " +
+    `ready. ${EMBEDDINGS_LATER_HINT}`
+  );
 }
 
 const GRAPHIFY_ENABLED_LINE =
@@ -544,6 +595,7 @@ export async function runInitCli(options: {
   seedFacts?: string;
   force?: boolean;
   graphify?: boolean;
+  embeddings?: boolean;
 }): Promise<void> {
   const root = options.cwd ?? projectRootOrCwd();
   const repaired = await repairLeakedProjectConfig(root);
@@ -559,6 +611,9 @@ export async function runInitCli(options: {
       : { scaffoldAgents: options.scaffoldAgents }),
     ...(options.force === true ? { force: true } : {}),
     ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
+    ...(options.embeddings === undefined
+      ? {}
+      : { embeddings: options.embeddings }),
     facts,
   });
   for (const line of result.messages) console.log(line);

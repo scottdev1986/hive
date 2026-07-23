@@ -273,11 +273,16 @@ export function createProgram(): Command {
     )
     .option("--graphify", "enable graphify without asking (recommended default)")
     .option("--no-graphify", "skip graphify without asking")
+    .option(
+      "--no-embeddings",
+      "skip the semantic-memory embedding runtime install (on by default)",
+    )
     .action(async (options: {
       scaffoldAgents?: boolean;
       seedFacts?: string;
       force?: boolean;
       graphify?: boolean;
+      embeddings?: boolean;
     }) => {
       const root = projectRootOrCwd();
       await runInitCli({
@@ -290,6 +295,7 @@ export function createProgram(): Command {
           : { seedFacts: options.seedFacts }),
         ...(options.force === undefined ? {} : { force: options.force }),
         ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
+        ...(options.embeddings === undefined ? {} : { embeddings: options.embeddings }),
       });
     });
 
@@ -658,14 +664,16 @@ export function createProgram(): Command {
   embeddings.command("install")
     .description(
       "Install the embedding runtime into ~/.hive/tools/embeddings " +
-        "(HIVE_EMBEDDINGS_HOME override) from a checkout's node_modules, " +
-        "then load it and embed a probe string — install is only done when " +
-        "the probe passes at dimensions=384",
+        "(HIVE_EMBEDDINGS_HOME override): from a checkout's node_modules when " +
+        "one is in reach, otherwise downloaded from this binary's own Hive " +
+        "release and verified against its signed manifest — then loaded and " +
+        "probe-verified (dimensions=384); install is only done when the probe passes",
     )
     .option(
       "--from <path>",
       "repo root or node_modules dir to copy fastembed + deps from " +
-        "(default: walk up from the current directory)",
+        "(default: walk up from the current directory; falls back to the " +
+        "release download when no checkout is found)",
     )
     .action(async (options: { from?: string }) => {
       process.exitCode = await runEmbeddingsInstall({

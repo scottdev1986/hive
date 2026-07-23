@@ -36,10 +36,16 @@ afterAll(async () => {
   await rm(hiveHome, { recursive: true, force: true });
 });
 
-/** Init's real dependencies, minus the one that would talk to a daemon. */
+/** Init's real dependencies, minus the ones that would talk to a daemon or
+ * provision a real embedding runtime (a heavy download + probe — unit tests
+ * stub it; the embeddings step's own behavior is covered below). */
 const testDeps = (): typeof defaultInitDeps => ({
   ...defaultInitDeps,
   reindexMemory: async () => "indexed",
+  installEmbeddings: async () => ({
+    ok: true,
+    detail: "test runtime already installed",
+  }),
 });
 
 function git(root: string, args: string[]): void {
@@ -142,7 +148,7 @@ describe("runInit", () => {
         scaffoldAgents: true,
         facts: [{ title: "Flaky login test", body: "Races on the token clock." }],
         today: "2026-07-10",
-      });
+      }, testDeps());
       expect(result.agentsScaffolded).toBe(true);
       expect(result.factsSeeded).toEqual(["flaky-login-test"]);
       // AGENTS.md really written — a generic starter, not invented commands.
@@ -158,7 +164,7 @@ describe("runInit", () => {
     const root = await tsRepo();
     try {
       await writeFile(join(root, "AGENTS.md"), "# human instructions\nkeep me\n");
-      const result = await runInit(root, { scaffoldAgents: true });
+      const result = await runInit(root, { scaffoldAgents: true }, testDeps());
       expect(result.agentsScaffolded).toBe(false);
       expect(await readFile(join(root, "AGENTS.md"), "utf8")).toBe(
         "# human instructions\nkeep me\n",
@@ -171,8 +177,8 @@ describe("runInit", () => {
   test("a second init nags about nothing — no --refresh, no next command", async () => {
     const root = await tsRepo();
     try {
-      await runInit(root, {});
-      const result = await runInit(root, {});
+      await runInit(root, {}, testDeps());
+      const result = await runInit(root, {}, testDeps());
       // The old init ended with "pass --refresh to re-scan". There is no such
       // flag and no re-scan: init never names a next command.
       expect(result.messages.some((m) => m.includes("--refresh"))).toBe(false);
@@ -473,7 +479,7 @@ describe("runInit — installing the shipped skills", () => {
     try {
       // Bare `hive init` supplies no facts, so it seeds none. Hive's own
       // development memories live in Hive's repo and are never a source here.
-      const result = await runInit(root, {});
+      const result = await runInit(root, {}, testDeps());
       expect(result.factsSeeded).toEqual([]);
       expect(await discoverMemoryFacts(root, "repo")).toEqual([]);
     } finally {
@@ -668,6 +674,83 @@ describe("the graphify decision in init", () => {
       await runInit(root, {}, deps);
       expect(isRepoInitialized(root)).toBe(true);
       expect(await readFile(initStampPath(root), "utf8")).toContain("hive init");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});
+
+describe("the embeddings step in init", () => {
+  function embeddingsProbe(
+    installEmbeddings: (typeof defaultInitDeps)["installEmbeddings"],
+  ): { deps: typeof defaultInitDeps; calls: number[] } {
+    const calls: number[] = [];
+    return {
+      calls,
+      deps: {
+        ...testDeps(),
+        installEmbeddings: async () => {
+          calls.push(1);
+          return installEmbeddings();
+        },
+      },
+    };
+  }
+
+  test("installs by default and reports the outcome", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, calls } = embeddingsProbe(async () => ({
+        ok: true,
+        detail: "embedding runtime from hive 1.2.3 installed (sha256-verified against the release manifest) and probe-verified (bge-small-en-v1.5, dimensions=384)",
+      }));
+      const result = await runInit(root, { graphify: false }, deps);
+      expect(calls).toHaveLength(1);
+      const report = result.messages.join("\n");
+      expect(report).toContain("Embeddings: embedding runtime from hive 1.2.3");
+      expect(report).toContain("dimensions=384");
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("an install failure (offline) is the honest deferred state, and init still completes", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, calls } = embeddingsProbe(async () => ({
+        ok: false,
+        reason: "could not read the hive 1.2.3 release: network unreachable",
+      }));
+      const result = await runInit(root, { graphify: false }, deps);
+      expect(calls).toHaveLength(1);
+      const report = result.messages.join("\n");
+      expect(report).toContain("Embeddings: not installed");
+      expect(report).toContain("network unreachable");
+      expect(report).toContain("FTS-only");
+      expect(report).toContain("hive embeddings install");
+      // A deferred runtime is not a failed init: the stamp still lands.
+      expect(isRepoInitialized(root)).toBe(true);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("--no-embeddings skips the install entirely and says so", async () => {
+    const root = await tsRepo();
+    try {
+      const { deps, calls } = embeddingsProbe(async () => {
+        throw new Error("must not be called");
+      });
+      const result = await runInit(
+        root,
+        { graphify: false, embeddings: false },
+        deps,
+      );
+      expect(calls).toHaveLength(0);
+      const report = result.messages.join("\n");
+      expect(report).toContain("Embeddings: skipped (--no-embeddings)");
+      expect(report).toContain("hive embeddings install");
+      expect(isRepoInitialized(root)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
     }

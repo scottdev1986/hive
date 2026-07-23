@@ -94,4 +94,28 @@ if [ -f "$TARBALL" ]; then
   fi
 fi
 
+# The embedding runtime is not Developer-ID-signed (its Mach-Os are upstream
+# napi binaries, not ours to re-sign) — its trust anchor is the manifest
+# SHA-256, verified by `hive embeddings install` at download time. What this
+# gate proves is that the published tarball has the layout the installer and
+# the daemon's loader expect: the bundled ESM, INSTALL.json, and the native
+# onnxruntime bin/ for BOTH darwin slices (the asset is universal, listed for
+# arm64 and x64 in the manifest).
+RUNTIME_TARBALL="$DIST/embeddings-runtime.tar.gz"
+if [ -f "$RUNTIME_TARBALL" ]; then
+  RUNTIME_WORK="$(mktemp -d)"
+  trap 'rm -rf "$WORK" "$RUNTIME_WORK"' EXIT
+  tar -xzf "$RUNTIME_TARBALL" -C "$RUNTIME_WORK"
+  RUNTIME="$RUNTIME_WORK/embeddings-runtime"
+  [ -f "$RUNTIME/dist/entry.js" ] || fail "$RUNTIME_TARBALL did not contain dist/entry.js"
+  [ -f "$RUNTIME/INSTALL.json" ] || fail "$RUNTIME_TARBALL did not contain INSTALL.json"
+  for arch in arm64 x64; do
+    [ -f "$RUNTIME/bin/napi-v3/darwin/$arch/onnxruntime_binding.node" ] \
+      || fail "$RUNTIME_TARBALL has no darwin/$arch onnxruntime napi binding"
+    ls "$RUNTIME/bin/napi-v3/darwin/$arch/"libonnxruntime.*.dylib >/dev/null 2>&1 \
+      || fail "$RUNTIME_TARBALL has no darwin/$arch libonnxruntime dylib"
+  done
+  note "embeddings-runtime.tar.gz layout verified (bundle + INSTALL.json + darwin arm64/x64 natives)"
+fi
+
 note "all artifacts passed"

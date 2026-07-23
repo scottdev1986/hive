@@ -3,214 +3,204 @@
 // src/daemon/memory-embeddings.ts for why a single-file binary cannot carry
 // fastembed's native graph).
 //
-// The dev-root flow: copy fastembed and its full dependency closure from a
-// checkout's node_modules into ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME
-// override), bundle it into the single ESM file the daemon dynamic-imports,
-// place onnxruntime's native bin/ where the bundle's runtime require expects
-// it, and then — the strict check — load the bundle and embed a probe string,
-// asserting dimensions=384. Install is only "done" when the probe passes.
-// Release/bootstrap wiring (downloading a pinned runtime instead of copying
-// from a checkout) is a documented follow-up.
-import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
-import { dirname, join, resolve } from "node:path";
+// A runtime already on disk that probe-verifies is kept: install is a no-op
+// with the probe's detail, because re-staging (or re-downloading) over a
+// healthy install buys nothing. Anything else provisions, trying in order:
+//   1. DEV: copy fastembed and its full dependency closure from a checkout's
+//      node_modules (--from, or walking up from the cwd) into
+//      ~/.hive/tools/embeddings (HIVE_EMBEDDINGS_HOME override) and bundle it
+//      with `bun build`. The staging pipeline itself lives in
+//      src/release/embeddings-runtime.ts, shared with the release build so
+//      the shipped artifact is byte-for-byte the dev layout.
+//   2. PROD: a released binary with no checkout in reach downloads the pinned
+//      `embeddings-runtime.tar.gz` from its own release — the pin is the
+//      running binary's version, and the bytes are verified against the
+//      Ed25519-signed release manifest before anything is unpacked
+//      (src/release/embeddings-install.ts).
+//
+// Either way, install is only "done" when the strict probe passes: load the
+// installed bundle — never the node_modules fallback — and embed a probe
+// string at the model's width (dimensions=384).
+import { join } from "node:path";
 import {
   EMBEDDINGS_RUNTIME_BUNDLE,
   embeddingsRuntimeDir,
   memoryModelsDir,
   probeExternalRuntime,
 } from "../daemon/memory-embeddings";
+import {
+  defaultReleaseInstallDeps,
+  installEmbeddingsFromRelease,
+  type EmbeddingsInstallOutcome,
+} from "../release/embeddings-install";
+import {
+  findSourceNodeModules,
+  stageEmbeddingRuntime,
+} from "../release/embeddings-runtime";
+
+// The bundling pipeline moved to src/release/embeddings-runtime.ts (shared
+// with the release build); these re-exports keep the existing import sites
+// and unit tests working against one implementation.
+export {
+  collectFastembedClosure,
+  findSourceNodeModules,
+  stageEmbeddingRuntime,
+} from "../release/embeddings-runtime";
+export type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 
 const PROBE_MODEL = "bge-small-en-v1.5" as const;
 
-/** The bundle entry: exactly the surface memory-embeddings.ts consumes. */
-const RUNTIME_ENTRY =
-  'export { FlagEmbedding, EmbeddingModel } from "fastembed";\n';
+/** The strict check every install path ends in: load the bundle at the
+ * runtime dir — never the node_modules fallback — and embed a probe string
+ * at the model's width. A failed probe is a failed install, whatever the
+ * bytes looked like. Injectable so `bun test` never downloads a model. */
+export type EmbeddingsProbe = (
+  runtimeDir: string,
+) => Promise<{ model: string; dimensions: number }>;
 
-interface PackageJson {
-  name?: string;
-  version?: string;
-  dependencies?: Record<string, string>;
-  optionalDependencies?: Record<string, string>;
-}
+const defaultProbe: EmbeddingsProbe = (runtimeDir) =>
+  probeExternalRuntime(runtimeDir, PROBE_MODEL, memoryModelsDir());
 
-async function readPackageJson(dir: string): Promise<PackageJson | null> {
+/** A bundle on disk that probe-verifies is a completed install; a bundle
+ * that fails the probe is a broken one and falls through to a fresh install
+ * over it. Returns null in both "not done" cases. */
+async function probeExisting(
+  runtimeDir: string,
+  probe: EmbeddingsProbe,
+): Promise<{ ok: true; detail: string } | null> {
+  if (!(await Bun.file(join(runtimeDir, EMBEDDINGS_RUNTIME_BUNDLE)).exists())) {
+    return null;
+  }
   try {
-    return JSON.parse(await readFile(join(dir, "package.json"), "utf8")) as
-      PackageJson;
+    const result = await probe(runtimeDir);
+    return {
+      ok: true,
+      detail:
+        `embedding runtime already installed at ${runtimeDir} and ` +
+        `probe-verified (${result.model}, dimensions=${result.dimensions})`,
+    };
   } catch {
     return null;
   }
 }
 
-/** Walk up from `start` looking for a node_modules that contains fastembed;
- * `--from` may name the node_modules dir itself or its parent. */
-export async function findSourceNodeModules(
-  start: string,
-): Promise<string | null> {
-  let dir = resolve(start);
-  for (;;) {
-    const candidate = dir.endsWith("node_modules")
-      ? dir
-      : join(dir, "node_modules");
-    if ((await readPackageJson(join(candidate, "fastembed"))) !== null) {
-      return candidate;
-    }
-    const parent = dirname(dir);
-    if (parent === dir) return null;
-    dir = parent;
-  }
-}
-
-/** fastembed plus its transitive dependency closure, resolved against the
- * source node_modules (bun/npm layouts hoist, so a flat walk suffices; each
- * package is copied wholesale, nested node_modules included). Both
- * `dependencies` and `optionalDependencies` are walked — the napi native
- * bindings (@anush008/tokenizers-*) are optional deps, and without them the
- * bundle's loader has nothing to dlopen — but a missing optional dep is
- * skipped (that is what optional means; the other platforms' binaries are
- * never installed), while a missing hard dependency is an explicit error.
- * Returns package name → source directory, fastembed first. */
-export async function collectFastembedClosure(
-  sourceNodeModules: string,
-): Promise<Map<string, string>> {
-  const resolved = new Map<string, string>();
-  const queue: Array<{ name: string; optional: boolean }> = [
-    { name: "fastembed", optional: false },
-  ];
-  while (queue.length > 0) {
-    const { name, optional } = queue.shift()!;
-    if (resolved.has(name)) continue;
-    const dir = join(sourceNodeModules, name);
-    const manifest = await readPackageJson(dir);
-    if (manifest === null) {
-      if (optional) continue;
-      throw new Error(
-        `dependency ${name} is not installed under ${sourceNodeModules} — ` +
-          "run `bun install` in the source checkout first",
-      );
-    }
-    resolved.set(name, dir);
-    queue.push(
-      ...Object.keys(manifest.dependencies ?? {}).map((dep) => ({
-        name: dep,
-        optional: false,
-      })),
-      ...Object.keys(manifest.optionalDependencies ?? {})
-        .map((dep) => ({ name: dep, optional: true })),
-    );
-  }
-  return resolved;
-}
-
-/** Copy the closure into the runtime dir, write the bundle entry, build the
- * single-file bundle, and place the native bin/ the bundle's runtime require
- * resolves (`../bin/napi-v3/...` relative to dist/). Returns the bundle path. */
-export async function stageEmbeddingRuntime(
+/** The dev path: stage from a checkout's node_modules and probe. */
+async function installFromCheckout(
   sourceNodeModules: string,
   runtimeDir: string,
-): Promise<string> {
-  const closure = await collectFastembedClosure(sourceNodeModules);
-  const targetNodeModules = join(runtimeDir, "node_modules");
-  await rm(targetNodeModules, { recursive: true, force: true });
-  await mkdir(targetNodeModules, { recursive: true });
-  for (const [name, sourceDir] of closure) {
-    await mkdir(dirname(join(targetNodeModules, name)), { recursive: true });
-    await cp(sourceDir, join(targetNodeModules, name), { recursive: true });
+  probe: EmbeddingsProbe,
+): Promise<EmbeddingsInstallOutcome> {
+  try {
+    const bundlePath = await stageEmbeddingRuntime(sourceNodeModules, runtimeDir);
+    const result = await probe(runtimeDir);
+    return {
+      ok: true,
+      detail:
+        `embedding runtime staged from ${sourceNodeModules} (${bundlePath}) ` +
+        `and probe-verified (${result.model}, dimensions=${result.dimensions})`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
+}
 
-  const onnxBin = join(targetNodeModules, "onnxruntime-node", "bin");
-  if (!Bun.which("bun")) {
-    throw new Error(
-      "bun is not on PATH; the runtime bundle is built with `bun build`",
-    );
-  }
-  const nativeBin = await stat(join(onnxBin, "napi-v3")).catch(() => null);
-  if (nativeBin === null || !nativeBin.isDirectory()) {
-    throw new Error(
-      `onnxruntime-node under ${sourceNodeModules} ships no native bin/ — ` +
-        "the runtime would have nothing to load",
-    );
-  }
-  await rm(join(runtimeDir, "bin"), { recursive: true, force: true });
-  await cp(onnxBin, join(runtimeDir, "bin"), { recursive: true });
-
-  const entryPath = join(runtimeDir, "entry.ts");
-  await writeFile(entryPath, RUNTIME_ENTRY);
-  await rm(join(runtimeDir, "dist"), { recursive: true, force: true });
-  const build = Bun.spawn(
-    [
-      "bun", "build", entryPath,
-      "--target=bun",
-      "--packages=bundle",
-      "--outdir", join(runtimeDir, "dist"),
-    ],
-    { stdout: "inherit", stderr: "inherit" },
+/** The prod path: download the pinned runtime from this binary's own release,
+ * verify it against the signed manifest, and probe. */
+async function installFromRelease(
+  runtimeDir: string,
+  probe: EmbeddingsProbe,
+): Promise<EmbeddingsInstallOutcome> {
+  return installEmbeddingsFromRelease(
+    defaultReleaseInstallDeps({ runtimeDir, probe }),
   );
-  if ((await build.exited) !== 0) {
-    throw new Error("bun build of the embedding runtime bundle failed");
-  }
-  const bundlePath = join(runtimeDir, EMBEDDINGS_RUNTIME_BUNDLE);
-  if (!(await Bun.file(bundlePath).exists())) {
-    throw new Error(`bun build produced no runtime bundle at ${bundlePath}`);
-  }
+}
 
-  const fastembedVersion =
-    (await readPackageJson(join(targetNodeModules, "fastembed")))?.version ??
-      "unknown";
-  await writeFile(
-    join(runtimeDir, "INSTALL.json"),
-    `${JSON.stringify(
-      {
-        fastembed: fastembedVersion,
-        source: sourceNodeModules,
-        installedAt: new Date().toISOString(),
-        platform: process.platform,
-        arch: process.arch,
-      },
-      null,
-      2,
-    )}\n`,
-  );
-  return bundlePath;
+export interface EmbeddingsProvisionDeps {
+  runtimeDir: string;
+  /** Where the dev flow looks for a checkout's node_modules. */
+  cwd: string;
+  installFromCheckout: (
+    sourceNodeModules: string,
+    runtimeDir: string,
+  ) => Promise<EmbeddingsInstallOutcome>;
+  installFromRelease: (runtimeDir: string) => Promise<EmbeddingsInstallOutcome>;
+}
+
+/**
+ * The one provisioning flow both `hive embeddings install` and `hive init`
+ * use: a checkout copy when a checkout is in reach (dev), the release
+ * download when there is none (prod). An explicit `--from` is a promise —
+ * when it names no fastembed source that is a loud failure, never a silent
+ * fallback to the network.
+ */
+export async function provisionEmbeddingsRuntime(
+  options: { from?: string },
+  deps: EmbeddingsProvisionDeps,
+): Promise<EmbeddingsInstallOutcome> {
+  const source = await findSourceNodeModules(options.from ?? deps.cwd);
+  if (source !== null) {
+    return deps.installFromCheckout(source, deps.runtimeDir);
+  }
+  if (options.from !== undefined) {
+    return {
+      ok: false,
+      reason:
+        `no node_modules containing fastembed found from ${options.from} — ` +
+        "run this from a Hive checkout (or fix the --from path)",
+    };
+  }
+  return deps.installFromRelease(deps.runtimeDir);
+}
+
+function defaultProvisionDeps(probe: EmbeddingsProbe): EmbeddingsProvisionDeps {
+  return {
+    runtimeDir: embeddingsRuntimeDir(),
+    cwd: process.cwd(),
+    installFromCheckout: (source, runtimeDir) =>
+      installFromCheckout(source, runtimeDir, probe),
+    installFromRelease: (runtimeDir) => installFromRelease(runtimeDir, probe),
+  };
 }
 
 export async function runEmbeddingsInstall(options: {
   from?: string;
+  /** Injectable probe; `bun test` never downloads a model. */
+  probe?: EmbeddingsProbe;
 }): Promise<0 | 1> {
-  try {
-    const source = await findSourceNodeModules(options.from ?? process.cwd());
-    if (source === null) {
-      throw new Error(
-        "no node_modules containing fastembed found from " +
-          `${options.from ?? process.cwd()} — run this from a Hive checkout ` +
-          "(or pass --from <repo root>)",
-      );
-    }
-    const runtimeDir = embeddingsRuntimeDir();
-    console.log(`source:      ${source}`);
-    console.log(`runtime dir: ${runtimeDir}`);
-    const bundlePath = await stageEmbeddingRuntime(source, runtimeDir);
-    console.log(`bundle:      ${bundlePath}`);
+  const probe = options.probe ?? defaultProbe;
+  const deps = defaultProvisionDeps(probe);
+  console.log(`runtime dir: ${deps.runtimeDir}`);
 
-    // The strict check: load the bundle that was just installed — never the
-    // node_modules fallback — and embed a probe string at the model's width.
-    // A failed probe is a failed install, whatever the copies looked like.
-    const probe = await probeExternalRuntime(
-      runtimeDir,
-      PROBE_MODEL,
-      memoryModelsDir(),
-    );
-    console.log(
-      `probe:       OK (${probe.model}, dimensions=${probe.dimensions})`,
-    );
-    console.log("embedding runtime installed and probe-verified");
+  // A healthy install is left exactly as it is; a broken one is reinstalled
+  // over, and an absent one is provisioned.
+  const existing = await probeExisting(deps.runtimeDir, probe);
+  if (existing !== null) {
+    console.log(existing.detail);
     return 0;
-  } catch (error) {
-    console.error(
-      `hive embeddings install failed: ${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
+  }
+
+  const outcome = await provisionEmbeddingsRuntime(options, deps);
+  if (!outcome.ok) {
+    console.error(`hive embeddings install failed: ${outcome.reason}`);
     return 1;
   }
+  console.log(outcome.detail);
+  console.log("embedding runtime installed and probe-verified");
+  return 0;
+}
+
+/**
+ * Init's auto-provisioning: a runtime that is already on disk and probes
+ * healthy is kept (a re-init never re-downloads); anything else gets the full
+ * provisioning flow. The outcome is reported, never thrown — init degrades to
+ * an honest "not installed" line rather than failing.
+ */
+export async function ensureEmbeddingsRuntime(): Promise<EmbeddingsInstallOutcome> {
+  const deps = defaultProvisionDeps(defaultProbe);
+  const existing = await probeExisting(deps.runtimeDir, defaultProbe);
+  if (existing !== null) return existing;
+  return provisionEmbeddingsRuntime({}, deps);
 }

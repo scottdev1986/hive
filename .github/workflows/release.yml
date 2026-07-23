@@ -311,6 +311,7 @@ jobs:
             dist/hive-darwin-arm64
             dist/hive-darwin-x64
             dist/HiveWorkspace.tar.gz
+            dist/embeddings-runtime.tar.gz
             dist/hive-release.json
           )
           [ "$MANIFEST_SIGNED" = "true" ] && assets+=(dist/hive-release.json.sig)

@@ -5,7 +5,11 @@
  * `bun run src/release/build.ts --version 0.0.7 --commit abc1234 --out dist`
  *
  * Two CLI binaries (`darwin-arm64`, `darwin-x64`), two `hive-sessiond` broker
- * binaries (same arches), and one universal Workspace application. Sessiond is
+ * binaries (same arches), one universal Workspace application, and the
+ * universal embedding runtime tarball (`embeddings-runtime.tar.gz`) that
+ * `hive embeddings install` downloads on machines without a checkout — built
+ * through the same pipeline the CLI's dev install uses, so the shipped bytes
+ * are those bytes. Sessiond is
  * built ReleaseFast so its embedded Ghostty VT engine fingerprint matches the
  * Workspace release renderer — a Debug sessiond against a ReleaseFast renderer
  * fails the engine-build fence by design. The app is universal rather than
@@ -35,6 +39,11 @@ import { copyFile, mkdir, rm, writeFile } from "node:fs/promises";
 import { join, resolve } from "node:path";
 import { currentBuildHash } from "../daemon/handshake";
 import { DAEMON_SCHEMA_EPOCH, DAEMON_WIRE_PROTOCOL } from "../daemon/handshake";
+import {
+  buildEmbeddingsRuntimeArtifact,
+  EMBEDDINGS_RUNTIME_ASSET,
+  findSourceNodeModules,
+} from "./embeddings-runtime";
 import {
   MANIFEST_ASSET,
   parseReleaseManifest,
@@ -67,6 +76,7 @@ interface Options {
   securityCritical: boolean;
   skipWorkspace: boolean;
   skipSessiond: boolean;
+  skipEmbeddings: boolean;
 }
 
 function parseArgs(argv: string[]): Options {
@@ -87,6 +97,7 @@ function parseArgs(argv: string[]): Options {
     securityCritical: argv.includes("--security-critical"),
     skipWorkspace: argv.includes("--skip-workspace"),
     skipSessiond: argv.includes("--skip-sessiond"),
+    skipEmbeddings: argv.includes("--skip-embeddings"),
   };
 }
 
@@ -340,6 +351,42 @@ async function finalizeWorkspace(options: Options, bundle: string): Promise<Rele
   }));
 }
 
+/**
+ * The embedding runtime `hive embeddings install` downloads on machines
+ * without a checkout. Staged from this checkout's node_modules through the
+ * exact pipeline the CLI's own install uses (src/release/embeddings-runtime.ts),
+ * so the shipped bytes are the bytes the dev flow produces. The bundle is
+ * darwin-universal — onnxruntime-node ships both darwin slices in one package
+ * and the tokenizers binding is a universal napi binary — so, like the
+ * Workspace tarball, one asset is listed for both architectures. Nothing in
+ * it is Developer-ID-signed (they are upstream napi binaries); its trust
+ * anchor is the manifest SHA-256, exactly like every other artifact.
+ */
+async function buildEmbeddingsRuntime(options: Options): Promise<ReleaseArtifact[]> {
+  const source = await findSourceNodeModules(
+    join(options.repoRoot, "node_modules"),
+  );
+  if (source === null) {
+    throw new Error(
+      "no node_modules containing fastembed under the repo root — " +
+        "run `bun install` before building the release",
+    );
+  }
+  const artifact = await buildEmbeddingsRuntimeArtifact({
+    sourceNodeModules: source,
+    outDir: options.out,
+  });
+  return TARGETS.map((target) => ({
+    name: EMBEDDINGS_RUNTIME_ASSET,
+    kind: "embeddings" as const,
+    platform: "darwin" as const,
+    arch: target.arch,
+    buildHash: artifact.sha256,
+    sha256: artifact.sha256,
+    size: artifact.size,
+  }));
+}
+
 export async function build(options: Options): Promise<ReleaseManifest> {
   await mkdir(options.out, { recursive: true });
   const sourceHash = await currentBuildHash();
@@ -374,6 +421,11 @@ export async function build(options: Options): Promise<ReleaseManifest> {
     }
   }
   const appBundle = options.skipWorkspace ? null : await compileWorkspace(options);
+  // Not signed (upstream napi binaries, not ours to re-sign) — built here so
+  // it is digested alongside everything else below.
+  const embeddingsArtifacts = options.skipEmbeddings
+    ? null
+    : await buildEmbeddingsRuntime(options);
 
   // Sign, notarize, and staple in place. A no-op when no Developer ID is set.
   // Sessiond Mach-Os take the same Developer ID path as the CLI slices.
@@ -411,6 +463,9 @@ export async function build(options: Options): Promise<ReleaseManifest> {
   }
   if (appBundle !== null) {
     artifacts.push(...(await finalizeWorkspace(options, appBundle)));
+  }
+  if (embeddingsArtifacts !== null) {
+    artifacts.push(...embeddingsArtifacts);
   }
 
   const manifest = parseReleaseManifest({
