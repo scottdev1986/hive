@@ -98,6 +98,7 @@ test("make run surfaces an immediately exiting daemon's lock failure", () => {
     writeFileSync(binary, [
       "#!/bin/sh",
       'if [ "$1" = "init" ]; then exit 0; fi',
+      'if [ "$1" = "embeddings" ]; then exit 0; fi',
       'if [ "$1" = "daemon" ]; then',
       '  echo "hive: Could not acquire Hive daemon lock at /tmp/planted.lock" >&2',
       "  exit 1",

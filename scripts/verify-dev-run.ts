@@ -1,5 +1,11 @@
 import { readFile, realpath } from "node:fs/promises";
 import { sourceBuildHash } from "../src/daemon/handshake";
+import { readDaemonPort } from "../src/daemon/lifecycle";
+import {
+  fetchMemoryEmbeddingsStatus,
+  recallMemory,
+  type MemoryEmbeddingsStatus,
+} from "../src/cli/mcp";
 import {
   DAEMON_STARTUP_PREFIX,
   formatDaemonStartupAnnouncement,
@@ -76,6 +82,7 @@ export async function verifyDevRun(
   expectedBinary: string,
   repoRoot: string,
   daemonPid: number,
+  devHome?: string,
 ): Promise<void> {
   const announcement = await observeAnnouncement(logPath, daemonPid);
   const [runningBinary, stagedBinary, currentSourceHash] = await Promise.all([
@@ -96,21 +103,70 @@ export async function verifyDevRun(
   console.log(
     `make run: staged source ${currentSourceHash.slice(0, 8)} matches the running binary`,
   );
+  if (devHome !== undefined) {
+    await verifyMemoryLeg(devHome);
+  }
+}
+
+/**
+ * The D1 guard for `make run`: the dev daemon must come up with the FULL
+ * memory system, never silently FTS-only. The embedding service loads its
+ * model lazily, so a live `memory_recall` through the daemon is the probe —
+ * it dynamic-imports the external runtime bundle, loads the model, and
+ * embeds the query. Afterwards hive_status's memory.embeddings section must
+ * read "ready"; anything else (embedding-runtime-missing, disabled, …)
+ * fails the run with the daemon's own detail.
+ */
+export async function verifyMemoryLeg(devHome: string): Promise<void> {
+  // readDaemonPort and the operator credential both resolve per-HIVE_HOME.
+  process.env.HIVE_HOME = devHome;
+  const port = readDaemonPort();
+  if (port === null) {
+    throw new Error(`make run: no daemon port file under ${devHome}`);
+  }
+  const before = await fetchMemoryEmbeddingsStatus(port);
+  if (before.state === "disabled") {
+    throw new Error(
+      "make run: the dev daemon reports memory.embeddings state \"disabled\" — " +
+        (before.detail ?? "the semantic leg is not wired") +
+        "; refusing to run a dev daemon without the full memory system (defect D1)",
+    );
+  }
+  await recallMemory(port, "hive dev run semantic leg probe");
+  const after = await fetchMemoryEmbeddingsStatus(port);
+  if (after.state !== "ready") {
+    throw new Error(
+      `make run: memory.embeddings state is "${after.state}" after a live recall probe` +
+        (after.detail === undefined ? "" : `: ${after.detail}`) +
+        " — refusing to run a dev daemon without the semantic leg (defect D1)",
+    );
+  }
+  console.log(
+    "make run: memory.embeddings " + formatMemoryEmbeddingsStatus(after),
+  );
+}
+
+function formatMemoryEmbeddingsStatus(status: MemoryEmbeddingsStatus): string {
+  const vectors = status.vectors === undefined
+    ? "vectors unknown"
+    : `vectors=${status.vectors.total} (${status.vectors.articles} articles, ${status.vectors.facts} facts)`;
+  return `state=${status.state} provider=${status.provider ?? "?"} ` +
+    `model=${status.model ?? "?"} ${vectors}`;
 }
 
 if (import.meta.main) {
-  const [logPath, expectedBinary, repoRoot, daemonPidRaw] = process.argv.slice(2);
+  const [logPath, expectedBinary, repoRoot, daemonPidRaw, devHome] = process.argv.slice(2);
   const daemonPid = Number(daemonPidRaw);
   if (
     logPath === undefined || expectedBinary === undefined || repoRoot === undefined ||
     !Number.isSafeInteger(daemonPid) || daemonPid <= 0
   ) {
     console.error(
-      "usage: verify-dev-run <startup-log> <expected-binary> <repo-root> <daemon-pid>",
+      "usage: verify-dev-run <startup-log> <expected-binary> <repo-root> <daemon-pid> [dev-home]",
     );
     process.exitCode = 2;
   } else {
-    await verifyDevRun(logPath, expectedBinary, repoRoot, daemonPid).catch((error: unknown) => {
+    await verifyDevRun(logPath, expectedBinary, repoRoot, daemonPid, devHome).catch((error: unknown) => {
       console.error(error instanceof Error ? error.message : String(error));
       process.exitCode = 1;
     });

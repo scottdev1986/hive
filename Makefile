@@ -35,6 +35,14 @@ DAEMON_STARTUP_LOG := $(DEV)/daemon-startup.log
 ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
 DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
 DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
+# The dev home's memory state (memory/, projects/, project-registry.json,
+# models/) is SHARED with the real ~/.hive via symlinks that run's
+# scripts/dev-memory-setup.ts creates, so dev testing learns from live
+# lessons (user ruling 2026-07-23). Nothing in this Makefile may recursively
+# delete through those links: clean's rm -rf only ever receives the literal
+# $(DEV) / $(DEV_HOME) paths, and rm unlinks symlinks without following
+# them — keep it that way. Daemon runtime state (daemon.port, credentials,
+# runtime/, logs/, hive.db) stays per-home, never linked.
 LOCK := $(ROOT)/native/toolchain-lock.json
 # Shared per-user cache (#46): zig caches and lock-keyed Ghostty artifacts live
 # outside the checkout so worktrees share them. Correctness comes from content
@@ -265,11 +273,16 @@ run:
 	fi; \
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
 	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
+	bun run "$(ROOT)/scripts/dev-memory-setup.ts" "$(DEV_HOME)" "$(HOME)/.hive"; \
+	if ! env $(DEV_ENV) "$(HIVE_BIN)" embeddings install --from "$(ROOT)"; then \
+	  echo "make run: embedding runtime provisioning failed — refusing to start a dev daemon without the semantic leg (defect D1)" >&2; \
+	  exit 1; \
+	fi; \
 	cd "$$proj"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify; \
 	/bin/rm -f "$(DAEMON_STARTUP_LOG)"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" daemon >"$(DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
-	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)" "$$daemon_pid"; then \
+	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)" "$$daemon_pid" "$(DEV_HOME)"; then \
 	  kill "$$daemon_pid" 2>/dev/null || true; \
 	  wait "$$daemon_pid" 2>/dev/null || true; \
 	  exit 1; \
@@ -424,4 +437,14 @@ clean:
 	  fi; \
 	  echo "all dev processes confirmed stopped"; \
 	fi; \
+	# Deletion: only ever the literal $(DEV) and $$home paths, no trailing
+	# slash. $$home/memory, projects, project-registry.json and models are
+	# symlinks into the real ~/.hive (see DEV_HOME above); rm -rf unlinks a
+	# symlink at any depth without following it, so the real home is
+	# unreachable from this line — provided nothing ever resolves the links
+	# first. The physical-path spellings above (devp/homep) feed ONLY the
+	# process-binding checks, never rm. The -L guards refuse a top-level
+	# symlink outright, so no future edit can delete "through" a dev path.
+	[ ! -L "$(DEV)" ] || { echo "refusing: $(DEV) is a symlink; clean deletes literal dev paths only" >&2; exit 1; }; \
+	[ ! -L "$$home" ] || { echo "refusing: $$home is a symlink; clean deletes literal dev paths only" >&2; exit 1; }; \
 	rm -rf "$(DEV)" "$$home"
