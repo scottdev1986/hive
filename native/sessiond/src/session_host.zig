@@ -1065,8 +1065,6 @@ const WireWelcome = struct {
     engineBuildId: ?[]const u8,
 };
 
-const responseHeader = protocol.Header.response;
-
 fn readRequiredFrame(allocator: std.mem.Allocator, stream: std.net.Stream) !protocol.Frame {
     const file: std.fs.File = .{ .handle = stream.handle };
     return switch (try protocol.readFrame(allocator, file.deprecatedReader())) {
@@ -1114,7 +1112,7 @@ fn writeHostWelcome(
     )) return error.InvalidWelcome;
     try protocol.writeFrame(
         stream,
-        responseHeader(request, generated.frame_type.welcome, payload.len),
+        request.response(generated.frame_type.welcome, payload.len),
         payload,
     );
 }
@@ -1275,22 +1273,22 @@ fn promoteTrustedExecutableEvidence(
     return encodeCreatedPayload(allocator, parsed.registration);
 }
 
-fn parseLocator(arena: std.mem.Allocator, wire: WireLocator) !broker.Locator {
+fn parseLocator(allocator: std.mem.Allocator, wire: WireLocator) !broker.Locator {
     const subject: @FieldType(broker.Locator, "subject") = if (std.mem.eql(u8, wire.subject.kind, "root")) blk: {
         if (wire.subject.agentId != null) return error.InvalidHostRegister;
         break :blk .root;
     } else if (std.mem.eql(u8, wire.subject.kind, "agent"))
-        .{ .agent = try arena.dupe(u8, wire.subject.agentId orelse return error.InvalidHostRegister) }
+        .{ .agent = try allocator.dupe(u8, wire.subject.agentId orelse return error.InvalidHostRegister) }
     else
         return error.InvalidHostRegister;
     return .{
-        .instance_id = try arena.dupe(u8, wire.instanceId),
-        .session_id = try arena.dupe(u8, wire.sessionId),
+        .instance_id = try allocator.dupe(u8, wire.instanceId),
+        .session_id = try allocator.dupe(u8, wire.sessionId),
         .generation = wire.generation,
         .subject = subject,
         .host_kind = std.meta.stringToEnum(@FieldType(broker.Locator, "host_kind"), wire.hostKind) orelse
             return error.InvalidHostRegister,
-        .engine_build_id = if (wire.engineBuildId) |engine| try arena.dupe(u8, engine) else null,
+        .engine_build_id = if (wire.engineBuildId) |engine| try allocator.dupe(u8, engine) else null,
     };
 }
 
@@ -1466,7 +1464,7 @@ fn acceptPendingRegistration(
     const accepted = "{\"schemaVersion\":1,\"accepted\":true}";
     try protocol.writeFrame(
         stream,
-        responseHeader(request_header, generated.frame_type.host_register, accepted.len),
+        request_header.response(generated.frame_type.host_register, accepted.len),
         accepted,
     );
 }
@@ -3389,16 +3387,9 @@ pub const HostCore = struct {
             !std.mem.eql(u8, parsed.value.brokerBuildId, hello_build_id) or
             !std.mem.eql(u8, parsed.value.brokerBuildId, self.broker_build_id))
             return error.InvalidAdoption;
-        const locator = try parseLocator(self.allocator, parsed.value.expectedLocator);
-        defer {
-            self.allocator.free(locator.instance_id);
-            self.allocator.free(locator.session_id);
-            switch (locator.subject) {
-                .root => {},
-                .agent => |agent_id| self.allocator.free(agent_id),
-            }
-            if (locator.engine_build_id) |engine| self.allocator.free(engine);
-        }
+        var locator_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer locator_arena.deinit();
+        const locator = try parseLocator(locator_arena.allocator(), parsed.value.expectedLocator);
         if (!locator.eql(self.registration.record.locator))
             return error.InvalidAdoption;
         var secret: [32]u8 = undefined;
@@ -3570,16 +3561,9 @@ pub const HostCore = struct {
         });
         defer parsed.deinit();
         if (parsed.value.schemaVersion != 1) return error.InvalidHostAttach;
-        const locator = try parseLocator(self.allocator, parsed.value.locator);
-        defer {
-            self.allocator.free(locator.instance_id);
-            self.allocator.free(locator.session_id);
-            switch (locator.subject) {
-                .root => {},
-                .agent => |agent_id| self.allocator.free(agent_id),
-            }
-            if (locator.engine_build_id) |engine| self.allocator.free(engine);
-        }
+        var locator_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer locator_arena.deinit();
+        const locator = try parseLocator(locator_arena.allocator(), parsed.value.locator);
         if (!locator.eql(self.registration.record.locator))
             return error.AttachLocatorMismatch;
         const after_seq = try std.fmt.parseInt(u64, parsed.value.afterSeq, 10);
@@ -3626,16 +3610,9 @@ pub const HostCore = struct {
             .ignore_unknown_fields = true,
         });
         defer parsed.deinit();
-        const locator = try parseLocator(self.allocator, parsed.value.locator);
-        defer {
-            self.allocator.free(locator.instance_id);
-            self.allocator.free(locator.session_id);
-            switch (locator.subject) {
-                .root => {},
-                .agent => |agent_id| self.allocator.free(agent_id),
-            }
-            if (locator.engine_build_id) |engine| self.allocator.free(engine);
-        }
+        var locator_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer locator_arena.deinit();
+        const locator = try parseLocator(locator_arena.allocator(), parsed.value.locator);
         if (!locator.eql(self.registration.record.locator))
             return error.InvalidVisibilityRenewal;
         const workspace = switch (process_inspector.observeProcess(parsed.value.workspacePid)) {
@@ -3738,16 +3715,9 @@ pub const HostCore = struct {
         if (parsed.value.schemaVersion != 1) return error.InvalidOrphanDiscard;
         const mode = std.meta.stringToEnum(enum { orphaned, held }, parsed.value.mode) orelse
             return error.InvalidOrphanDiscard;
-        const locator = try parseLocator(self.allocator, parsed.value.locator);
-        defer {
-            self.allocator.free(locator.instance_id);
-            self.allocator.free(locator.session_id);
-            switch (locator.subject) {
-                .root => {},
-                .agent => |agent_id| self.allocator.free(agent_id),
-            }
-            if (locator.engine_build_id) |engine| self.allocator.free(engine);
-        }
+        var locator_arena = std.heap.ArenaAllocator.init(self.allocator);
+        defer locator_arena.deinit();
+        const locator = try parseLocator(locator_arena.allocator(), parsed.value.locator);
         if (!locator.eql(self.registration.record.locator))
             return error.InvalidOrphanDiscard;
 
@@ -4364,7 +4334,7 @@ fn serveBrokerRequest(
             defer core.allocator.free(response);
             try protocol.writeFrame(
                 stream,
-                responseHeader(request.header, generated.frame_type.host_adopt, response.len),
+                request.header.response(generated.frame_type.host_adopt, response.len),
                 response,
             );
         },
@@ -4385,7 +4355,7 @@ fn serveBrokerRequest(
             defer core.allocator.free(response);
             try protocol.writeFrame(
                 stream,
-                responseHeader(request.header, generated.frame_type.grant_register, response.len),
+                request.header.response(generated.frame_type.grant_register, response.len),
                 response,
             );
         },
@@ -4407,7 +4377,7 @@ fn serveBrokerRequest(
             defer core.allocator.free(response);
             try protocol.writeFrame(
                 stream,
-                responseHeader(request.header, generated.frame_type.renewed, response.len),
+                request.header.response(generated.frame_type.renewed, response.len),
                 response,
             );
         },
@@ -4419,7 +4389,7 @@ fn serveBrokerRequest(
             defer core.allocator.free(response);
             try protocol.writeFrame(
                 stream,
-                responseHeader(request.header, generated.frame_type.orphan_discarded, response.len),
+                request.header.response(generated.frame_type.orphan_discarded, response.len),
                 response,
             );
         },
@@ -4440,7 +4410,7 @@ fn serveBrokerRequest(
             defer core.allocator.free(response);
             try protocol.writeFrame(
                 stream,
-                responseHeader(request.header, generated.frame_type.terminated, response.len),
+                request.header.response(generated.frame_type.terminated, response.len),
                 response,
             );
         },
@@ -4561,7 +4531,7 @@ fn handleViewerFrame(
     defer core.allocator.free(response);
     try protocol.writeFrame(
         stream,
-        responseHeader(request.header, response_type, response.len),
+        request.header.response(response_type, response.len),
         response,
     );
 }

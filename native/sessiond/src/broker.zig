@@ -2780,8 +2780,6 @@ fn expectedResponseType(type_code: u16) ?u16 {
     };
 }
 
-const responseHeader = protocol.Header.response;
-
 /// Validates every daemon→broker v1 request against the generated strict
 /// projection before invoking lifecycle state. Raw CREATE_INPUT is the one
 /// broker request whose bytes intentionally bypass JSON parsing.
@@ -2803,7 +2801,7 @@ pub fn dispatchFrame(
         const payload = allocator.dupe(u8, encoded) catch
             return .{ .failure = .{ .code = .resource_exhausted, .close_connection = false } };
         return .{ .response = .{
-            .header = responseHeader(frame.header, generated.frame_type.pong, payload.len),
+            .header = frame.header.response(generated.frame_type.pong, payload.len),
             .payload = payload,
         } };
     }
@@ -2835,7 +2833,7 @@ pub fn dispatchFrame(
                 break :blk .{ .failure = .{ .code = .internal, .close_connection = false } };
             }
             break :blk .{ .response = .{
-                .header = responseHeader(frame.header, type_code, payload.len),
+                .header = frame.header.response(type_code, payload.len),
                 .payload = payload,
             } };
         },
@@ -2898,7 +2896,7 @@ fn buildWelcome(
     errdefer allocator.free(payload);
     if (!protocol.validateControlPayload(allocator, generated.wire_schema.welcome_payload, payload))
         return error.InvalidWelcome;
-    var header = responseHeader(request, generated.frame_type.welcome, payload.len);
+    var header = request.response(generated.frame_type.welcome, payload.len);
     header.minor = selected_minor;
     return .{ .header = header, .payload = payload };
 }

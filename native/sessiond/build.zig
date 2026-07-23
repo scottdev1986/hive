@@ -69,6 +69,14 @@ pub fn build(b: *std.Build) void {
     const test_step = b.step("test", "Run hive-sessiond tests");
     _ = addTest(b, test_step, boot_envelope_module);
     _ = addTest(b, test_step, test_module);
+    const protocol_api_module = b.createModule(.{
+        .root_source_file = b.path("test/protocol-api.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    protocol_api_module.addImport("protocol", test_module);
+    protocol_api_module.addImport("session_protocol_generated", generated);
+    _ = addTest(b, test_step, protocol_api_module);
 
     const broker_module = b.createModule(.{
         .root_source_file = b.path("src/broker.zig"),
@@ -82,6 +90,14 @@ pub fn build(b: *std.Build) void {
     broker_module.addImport("wall_clock", wall_clock_module);
     const broker_tests = addTest(b, test_step, broker_module);
     broker_tests.linkLibrary(ghostty_vt);
+    const broker_api_module = b.createModule(.{
+        .root_source_file = b.path("test/broker-api.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    broker_api_module.addImport("broker", broker_module);
+    const broker_api_tests = addTest(b, test_step, broker_api_module);
+    broker_api_tests.linkLibrary(ghostty_vt);
 
     // WP4 Part A: standalone input arbiter + process inspector (no broker/PTY).
     const input_arbiter_module = b.createModule(.{
