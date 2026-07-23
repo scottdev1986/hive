@@ -14,6 +14,7 @@ const protocol = @import("protocol");
 const pty_host = @import("pty_host");
 const neutral_host = @import("neutral_host");
 const neutral_control_plane = @import("neutral_control_plane");
+const wall_clock = @import("wall_clock");
 /// Re-exported so real-host tests can derive checkpoint thresholds from the
 /// shipped constants instead of restating them.
 pub const terminal_state = @import("terminal_state");
@@ -1064,16 +1065,7 @@ const WireWelcome = struct {
     engineBuildId: ?[]const u8,
 };
 
-fn responseHeader(request: protocol.Header, type_code: u16, payload_len: usize) protocol.Header {
-    return .{
-        .minor = request.minor,
-        .type_code = type_code,
-        .flags = generated.frame_flag.response | generated.frame_flag.final,
-        .payload_length = @intCast(payload_len),
-        .request_id = request.request_id,
-        .stream_seq = 0,
-    };
-}
+const responseHeader = protocol.Header.response;
 
 fn readRequiredFrame(allocator: std.mem.Allocator, stream: std.net.Stream) !protocol.Frame {
     const file: std.fs.File = .{ .handle = stream.handle };
@@ -2204,22 +2196,6 @@ pub const ProductionHostLauncher = struct {
     }
 };
 
-fn sameLocator(left: broker.Locator, right: broker.Locator) bool {
-    if (left.generation != right.generation or
-        !std.mem.eql(u8, left.instance_id, right.instance_id) or
-        !std.mem.eql(u8, left.session_id, right.session_id) or
-        left.host_kind != right.host_kind or
-        std.meta.activeTag(left.subject) != std.meta.activeTag(right.subject))
-        return false;
-    switch (left.subject) {
-        .root => {},
-        .agent => |agent_id| if (!std.mem.eql(u8, agent_id, right.subject.agent)) return false,
-    }
-    if (left.engine_build_id == null or right.engine_build_id == null)
-        return left.engine_build_id == null and right.engine_build_id == null;
-    return std.mem.eql(u8, left.engine_build_id.?, right.engine_build_id.?);
-}
-
 const WireHostAdoptChallenge = struct {
     schemaVersion: u8,
     adoptionSecretHex: []const u8,
@@ -2477,18 +2453,6 @@ fn deliverGracefulAction(binding: TerminationBinding) !void {
     }
 }
 
-fn parseStartToken(value: []const u8) !process_inspector.StartToken {
-    const colon = std.mem.indexOfScalar(u8, value, ':') orelse
-        return error.InvalidStartToken;
-    if (colon == 0 or colon + 1 >= value.len or
-        std.mem.indexOfScalarPos(u8, value, colon + 1, ':') != null)
-        return error.InvalidStartToken;
-    return .{
-        .seconds = try std.fmt.parseInt(u64, value[0..colon], 10),
-        .microseconds = try std.fmt.parseInt(u64, value[colon + 1 ..], 10),
-    };
-}
-
 fn terminateProvider(
     allocator: std.mem.Allocator,
     binding: TerminationBinding,
@@ -2523,7 +2487,7 @@ fn terminateProvider(
         termination_platform.platform(),
         allocator,
         root.pid,
-        try parseStartToken(root.start_token),
+        try process_inspector.StartToken.parse(root.start_token),
         mode,
     );
     errdefer tree.deinit(allocator);
@@ -2537,58 +2501,8 @@ fn terminateProvider(
     };
 }
 
-fn leapYearsThrough(year: u64) u64 {
-    return year / 4 - year / 100 + year / 400;
-}
-
-fn wallTimestampMillis(value: []const u8) !u64 {
-    if (value.len != 24 or value[4] != '-' or value[7] != '-' or value[10] != 'T' or
-        value[13] != ':' or value[16] != ':' or value[19] != '.' or value[23] != 'Z')
-        return error.InvalidTimestamp;
-    const year = try std.fmt.parseInt(u64, value[0..4], 10);
-    const month = try std.fmt.parseInt(u8, value[5..7], 10);
-    const day = try std.fmt.parseInt(u8, value[8..10], 10);
-    const hour = try std.fmt.parseInt(u8, value[11..13], 10);
-    const minute = try std.fmt.parseInt(u8, value[14..16], 10);
-    const second = try std.fmt.parseInt(u8, value[17..19], 10);
-    const millisecond = try std.fmt.parseInt(u16, value[20..23], 10);
-    if (year < 1970 or month == 0 or month > 12 or day == 0 or hour > 23 or
-        minute > 59 or second > 59)
-        return error.InvalidTimestamp;
-    const leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0);
-    const month_days = [_]u8{ 31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-    if (day > month_days[month - 1]) return error.InvalidTimestamp;
-    var days = (year - 1970) * 365 + leapYearsThrough(year - 1) - leapYearsThrough(1969);
-    for (month_days[0 .. month - 1]) |count| days += count;
-    days += day - 1;
-    const seconds = try std.math.add(
-        u64,
-        try std.math.mul(u64, days, std.time.s_per_day),
-        @as(u64, hour) * std.time.s_per_hour + @as(u64, minute) * std.time.s_per_min + second,
-    );
-    return std.math.add(
-        u64,
-        try std.math.mul(u64, seconds, std.time.ms_per_s),
-        millisecond,
-    );
-}
-
-fn wallExpiryToMonotonic(value: []const u8, now_ns: u64, maximum_ms: u64) !u64 {
-    const deadline_ms = try wallTimestampMillis(value);
-    const wall_now = std.time.milliTimestamp();
-    if (wall_now < 0 or deadline_ms <= @as(u64, @intCast(wall_now)))
-        return error.Expired;
-    const remaining_ms = deadline_ms - @as(u64, @intCast(wall_now));
-    if (remaining_ms > maximum_ms) return error.InvalidTimestamp;
-    return std.math.add(
-        u64,
-        now_ns,
-        try std.math.mul(u64, remaining_ms, std.time.ns_per_ms),
-    );
-}
-
 fn validatedHostLeaseRemaining(expires_at: []const u8) !u64 {
-    return wallExpiryToMonotonic(
+    return wall_clock.expiryToMonotonic(
         expires_at,
         0,
         generated.limits.visibility_expiry_ms,
@@ -3485,7 +3399,7 @@ pub const HostCore = struct {
             }
             if (locator.engine_build_id) |engine| self.allocator.free(engine);
         }
-        if (!sameLocator(locator, self.registration.record.locator))
+        if (!locator.eql(self.registration.record.locator))
             return error.InvalidAdoption;
         var secret: [32]u8 = undefined;
         _ = std.fmt.hexToBytes(&secret, parsed.value.adoptionSecretHex) catch
@@ -3584,7 +3498,7 @@ pub const HostCore = struct {
         _ = std.fmt.hexToBytes(&hash, parsed.value.grantTokenSha256["sha256:".len..]) catch
             return error.InvalidGrant;
         defer std.crypto.secureZero(u8, &hash);
-        const expires_mono_ns = try wallExpiryToMonotonic(
+        const expires_mono_ns = try wall_clock.expiryToMonotonic(
             parsed.value.expiresAt,
             now_ns,
             generated.limits.attach_grant_timeout_ms,
@@ -3666,7 +3580,7 @@ pub const HostCore = struct {
             }
             if (locator.engine_build_id) |engine| self.allocator.free(engine);
         }
-        if (!sameLocator(locator, self.registration.record.locator))
+        if (!locator.eql(self.registration.record.locator))
             return error.AttachLocatorMismatch;
         const after_seq = try std.fmt.parseInt(u64, parsed.value.afterSeq, 10);
         if (after_seq > self.registration.record.output_seq)
@@ -3722,7 +3636,7 @@ pub const HostCore = struct {
             }
             if (locator.engine_build_id) |engine| self.allocator.free(engine);
         }
-        if (!sameLocator(locator, self.registration.record.locator))
+        if (!locator.eql(self.registration.record.locator))
             return error.InvalidVisibilityRenewal;
         const workspace = switch (process_inspector.observeProcess(parsed.value.workspacePid)) {
             .present => |identity| identity,
@@ -3834,7 +3748,7 @@ pub const HostCore = struct {
             }
             if (locator.engine_build_id) |engine| self.allocator.free(engine);
         }
-        if (!sameLocator(locator, self.registration.record.locator))
+        if (!locator.eql(self.registration.record.locator))
             return error.InvalidOrphanDiscard;
 
         const binding = self.termination orelse
@@ -3846,8 +3760,7 @@ pub const HostCore = struct {
             .orphaned => {
                 if (state != .human_orphaned)
                     return self.encodeOrphanDiscarded(.refused, null, null, null, @tagName(state));
-                const claim = if (self.orphaned_claim) |*value| value else
-                    return self.encodeOrphanDiscarded(.refused, null, null, null, "orphan owner unavailable");
+                const claim = if (self.orphaned_claim) |*value| value else return self.encodeOrphanDiscarded(.refused, null, null, null, "orphan owner unavailable");
                 const age_ms = if (self.orphaned_since_mono_ns) |since|
                     (now_ns -| since) / std.time.ns_per_ms
                 else
@@ -3874,8 +3787,7 @@ pub const HostCore = struct {
             .held => {
                 if (state != .human_owned)
                     return self.encodeOrphanDiscarded(.refused, null, null, null, @tagName(state));
-                const claim = if (self.active_claim) |*value| value else
-                    return self.encodeOrphanDiscarded(.refused, null, null, null, "held owner unavailable");
+                const claim = if (self.active_claim) |*value| value else return self.encodeOrphanDiscarded(.refused, null, null, null, "held owner unavailable");
                 _ = arbiter.operatorPreempt() catch |err| {
                     return self.encodeOrphanDiscarded(
                         .refused,

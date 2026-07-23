@@ -20,6 +20,16 @@ comptime {
     ));
 }
 
+fn addTest(
+    b: *std.Build,
+    test_step: *std.Build.Step,
+    module: *std.Build.Module,
+) *std.Build.Step.Compile {
+    const artifact = b.addTest(.{ .root_module = module });
+    test_step.dependOn(&b.addRunArtifact(artifact).step);
+    return artifact;
+}
+
 pub fn build(b: *std.Build) void {
     const target = b.standardTargetOptions(.{});
     const optimize = b.standardOptimizeOption(.{});
@@ -33,6 +43,11 @@ pub fn build(b: *std.Build) void {
 
     const generated = b.createModule(.{
         .root_source_file = b.path("../../workspace/Tests/WorkspaceCoreTests/Fixtures/session_protocol.generated.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const wall_clock_module = b.createModule(.{
+        .root_source_file = b.path("src/wall_clock.zig"),
         .target = target,
         .optimize = optimize,
     });
@@ -52,12 +67,8 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("session_protocol_generated", generated);
 
     const test_step = b.step("test", "Run hive-sessiond tests");
-    const boot_envelope_tests = b.addTest(.{ .root_module = boot_envelope_module });
-    const run_boot_envelope_tests = b.addRunArtifact(boot_envelope_tests);
-    test_step.dependOn(&run_boot_envelope_tests.step);
-    const protocol_tests = b.addTest(.{ .root_module = test_module });
-    const run_protocol_tests = b.addRunArtifact(protocol_tests);
-    test_step.dependOn(&run_protocol_tests.step);
+    _ = addTest(b, test_step, boot_envelope_module);
+    _ = addTest(b, test_step, test_module);
 
     const broker_module = b.createModule(.{
         .root_source_file = b.path("src/broker.zig"),
@@ -68,10 +79,9 @@ pub fn build(b: *std.Build) void {
     broker_module.addImport("session_protocol_generated", generated);
     broker_module.addImport("protocol", test_module);
     broker_module.addImport("boot_envelope", boot_envelope_module);
-    const broker_tests = b.addTest(.{ .root_module = broker_module });
+    broker_module.addImport("wall_clock", wall_clock_module);
+    const broker_tests = addTest(b, test_step, broker_module);
     broker_tests.linkLibrary(ghostty_vt);
-    const run_broker_tests = b.addRunArtifact(broker_tests);
-    test_step.dependOn(&run_broker_tests.step);
 
     // WP4 Part A: standalone input arbiter + process inspector (no broker/PTY).
     const input_arbiter_module = b.createModule(.{
@@ -79,9 +89,7 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
-    const input_arbiter_tests = b.addTest(.{ .root_module = input_arbiter_module });
-    const run_input_arbiter_tests = b.addRunArtifact(input_arbiter_tests);
-    test_step.dependOn(&run_input_arbiter_tests.step);
+    _ = addTest(b, test_step, input_arbiter_module);
 
     const process_inspector_module = b.createModule(.{
         .root_source_file = b.path("src/process_inspector.zig"),
@@ -89,9 +97,14 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    const process_inspector_tests = b.addTest(.{ .root_module = process_inspector_module });
-    const run_process_inspector_tests = b.addRunArtifact(process_inspector_tests);
-    test_step.dependOn(&run_process_inspector_tests.step);
+    _ = addTest(b, test_step, process_inspector_module);
+    const process_inspector_api_module = b.createModule(.{
+        .root_source_file = b.path("test/process-inspector-api.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    process_inspector_api_module.addImport("process_inspector", process_inspector_module);
+    _ = addTest(b, test_step, process_inspector_api_module);
 
     // WP4-B Track γ: headless VT + journal/checkpoint (export-double testable pre-TG2).
     // Shared HVTCP001 fixture lives under native/tests/abi (C + Zig dual-source lock).
@@ -108,9 +121,7 @@ pub fn build(b: *std.Build) void {
     });
     terminal_state_module.addImport("session_protocol_generated", generated);
     terminal_state_module.addImport("hvtcp001_header", hvtcp001_fixture);
-    const terminal_state_tests = b.addTest(.{ .root_module = terminal_state_module });
-    const run_terminal_state_tests = b.addRunArtifact(terminal_state_tests);
-    test_step.dependOn(&run_terminal_state_tests.step);
+    _ = addTest(b, test_step, terminal_state_module);
 
     // WP4-B Track β: PTY host leaf (integrates process_inspector for spawn snapshot).
     const pty_host_module = b.createModule(.{
@@ -120,10 +131,7 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     pty_host_module.addImport("process_inspector", process_inspector_module);
-    const pty_host_tests = b.addTest(.{ .root_module = pty_host_module });
-    // util (openpty) needs -lutil on some platforms; on macOS it's in libSystem.
-    const run_pty_host_tests = b.addRunArtifact(pty_host_tests);
-    test_step.dependOn(&run_pty_host_tests.step);
+    _ = addTest(b, test_step, pty_host_module);
 
     const neutral_host_module = b.createModule(.{
         .root_source_file = b.path("src/neutral_host.zig"),
@@ -133,9 +141,7 @@ pub fn build(b: *std.Build) void {
     });
     neutral_host_module.addImport("pty_host", pty_host_module);
     neutral_host_module.addImport("process_inspector", process_inspector_module);
-    const neutral_host_tests = b.addTest(.{ .root_module = neutral_host_module });
-    const run_neutral_host_tests = b.addRunArtifact(neutral_host_tests);
-    test_step.dependOn(&run_neutral_host_tests.step);
+    _ = addTest(b, test_step, neutral_host_module);
     const neutral_host_golden_module = b.createModule(.{
         .root_source_file = b.path("test/neutral-host-golden.zig"),
         .target = target,
@@ -169,6 +175,7 @@ pub fn build(b: *std.Build) void {
     neutral_control_plane_module.addImport("neutral_host", neutral_host_module);
     neutral_control_plane_module.addImport("process_inspector", process_inspector_module);
     neutral_control_plane_module.addImport("session_protocol_generated", generated);
+    neutral_control_plane_module.addImport("wall_clock", wall_clock_module);
     broker_module.addImport("neutral_control_plane", neutral_control_plane_module);
     broker_module.addImport("neutral_host", neutral_host_module);
     broker_module.addImport("process_inspector", process_inspector_module);
@@ -211,9 +218,7 @@ pub fn build(b: *std.Build) void {
     });
     input_arbiter_pty_host_module.addImport("input_arbiter", input_arbiter_module);
     input_arbiter_pty_host_module.addImport("pty_host", pty_host_module);
-    const input_arbiter_pty_host_tests = b.addTest(.{ .root_module = input_arbiter_pty_host_module });
-    const run_input_arbiter_pty_host_tests = b.addRunArtifact(input_arbiter_pty_host_tests);
-    test_step.dependOn(&run_input_arbiter_pty_host_tests.step);
+    _ = addTest(b, test_step, input_arbiter_pty_host_module);
 
     const session_host_module = b.createModule(.{
         .root_source_file = b.path("src/session_host.zig"),
@@ -231,12 +236,11 @@ pub fn build(b: *std.Build) void {
     session_host_module.addImport("neutral_host", neutral_host_module);
     session_host_module.addImport("neutral_control_plane", neutral_control_plane_module);
     session_host_module.addImport("terminal_state", terminal_state_module);
+    session_host_module.addImport("wall_clock", wall_clock_module);
     session_host_module.addIncludePath(ghostty.path("include"));
     session_host_module.addIncludePath(b.path("../include"));
-    const session_host_tests = b.addTest(.{ .root_module = session_host_module });
+    const session_host_tests = addTest(b, test_step, session_host_module);
     session_host_tests.linkLibrary(ghostty_vt);
-    const run_session_host_tests = b.addRunArtifact(session_host_tests);
-    test_step.dependOn(&run_session_host_tests.step);
 
     const real_host_golden_module = b.createModule(.{
         .root_source_file = b.path("test/real-host-golden.zig"),
@@ -264,10 +268,16 @@ pub fn build(b: *std.Build) void {
         .link_libc = true,
     });
     stub_module.addImport("broker", broker_module);
-    const stub_tests = b.addTest(.{ .root_module = stub_module });
+    const stub_tests = addTest(b, test_step, stub_module);
     stub_tests.linkLibrary(ghostty_vt);
-    const run_stub_tests = b.addRunArtifact(stub_tests);
-    test_step.dependOn(&run_stub_tests.step);
+
+    const wall_clock_test_module = b.createModule(.{
+        .root_source_file = b.path("test/wall-clock.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    wall_clock_test_module.addImport("wall_clock", wall_clock_module);
+    _ = addTest(b, test_step, wall_clock_test_module);
 
     const probe_module = b.createModule(.{
         .root_source_file = b.path("src/identity_probe.zig"),

@@ -3,6 +3,7 @@ const builtin = @import("builtin");
 const neutral_control_plane = @import("neutral_control_plane");
 const neutral_host = @import("neutral_host");
 const process_inspector = @import("process_inspector");
+const wall_clock = @import("wall_clock");
 pub const protocol = @import("protocol");
 pub const generated = @import("session_protocol_generated");
 
@@ -737,20 +738,20 @@ pub const Locator = struct {
     } = .root,
     host_kind: enum { tmux, sessiond } = .sessiond,
     engine_build_id: ?[]const u8 = null,
-};
 
-fn sameLocator(left: Locator, right: Locator) bool {
-    return left.generation == right.generation and
-        std.mem.eql(u8, left.instance_id, right.instance_id) and
-        std.mem.eql(u8, left.session_id, right.session_id) and
-        std.meta.activeTag(left.subject) == std.meta.activeTag(right.subject) and
-        switch (left.subject) {
-            .root => true,
-            .agent => |agent_id| std.mem.eql(u8, agent_id, right.subject.agent),
-        } and
-        left.host_kind == right.host_kind and
-        equalOptionalString(left.engine_build_id, right.engine_build_id);
-}
+    pub fn eql(self: Locator, other: Locator) bool {
+        return self.generation == other.generation and
+            std.mem.eql(u8, self.instance_id, other.instance_id) and
+            std.mem.eql(u8, self.session_id, other.session_id) and
+            std.meta.activeTag(self.subject) == std.meta.activeTag(other.subject) and
+            switch (self.subject) {
+                .root => true,
+                .agent => |agent_id| std.mem.eql(u8, agent_id, other.subject.agent),
+            } and
+            self.host_kind == other.host_kind and
+            equalOptionalString(self.engine_build_id, other.engine_build_id);
+    }
+};
 
 pub const ProcessRoot = struct {
     pid: i32,
@@ -1132,66 +1133,7 @@ fn locatorJsonValue(allocator: std.mem.Allocator, locator: Locator) !std.json.Va
     return .{ .object = value };
 }
 
-pub fn wallDeadline(output: []u8, additional_ms: u64) ![]const u8 {
-    const now_ms = std.time.milliTimestamp();
-    if (now_ms < 0) return error.InvalidTimestamp;
-    const deadline_ms = std.math.add(u64, @intCast(now_ms), additional_ms) catch
-        return error.InvalidTimestamp;
-    const epoch_seconds: std.time.epoch.EpochSeconds = .{ .secs = deadline_ms / std.time.ms_per_s };
-    const year_day = epoch_seconds.getEpochDay().calculateYearDay();
-    const month_day = year_day.calculateMonthDay();
-    const day_seconds = epoch_seconds.getDaySeconds();
-    return std.fmt.bufPrint(output, "{d:0>4}-{d:0>2}-{d:0>2}T{d:0>2}:{d:0>2}:{d:0>2}.{d:0>3}Z", .{
-        year_day.year,
-        month_day.month.numeric(),
-        month_day.day_index + 1,
-        day_seconds.getHoursIntoDay(),
-        day_seconds.getMinutesIntoHour(),
-        day_seconds.getSecondsIntoMinute(),
-        deadline_ms % std.time.ms_per_s,
-    });
-}
-
-fn leapYearsThrough(year: u64) u64 {
-    return year / 4 - year / 100 + year / 400;
-}
-
-fn wallTimestampMillis(value: []const u8) !u64 {
-    if (value.len != 24 or value[4] != '-' or value[7] != '-' or value[10] != 'T' or
-        value[13] != ':' or value[16] != ':' or value[19] != '.' or value[23] != 'Z')
-        return error.InvalidTimestamp;
-    const year = try std.fmt.parseInt(u64, value[0..4], 10);
-    const month = try std.fmt.parseInt(u8, value[5..7], 10);
-    const day = try std.fmt.parseInt(u8, value[8..10], 10);
-    const hour = try std.fmt.parseInt(u8, value[11..13], 10);
-    const minute = try std.fmt.parseInt(u8, value[14..16], 10);
-    const second = try std.fmt.parseInt(u8, value[17..19], 10);
-    const millisecond = try std.fmt.parseInt(u16, value[20..23], 10);
-    if (year < 1970 or month == 0 or month > 12 or day == 0 or hour > 23 or
-        minute > 59 or second > 59)
-        return error.InvalidTimestamp;
-    const leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0);
-    const month_days = [_]u8{ 31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-    if (day > month_days[month - 1]) return error.InvalidTimestamp;
-    var days = (year - 1970) * 365 + leapYearsThrough(year - 1) - leapYearsThrough(1969);
-    for (month_days[0 .. month - 1]) |count| days += count;
-    days += day - 1;
-    const seconds = try std.math.add(
-        u64,
-        try std.math.mul(u64, days, std.time.s_per_day),
-        @as(u64, hour) * std.time.s_per_hour + @as(u64, minute) * std.time.s_per_min + second,
-    );
-    return try std.math.add(u64, try std.math.mul(u64, seconds, std.time.ms_per_s), millisecond);
-}
-
-fn wallExpiryToMonotonic(value: []const u8, now_ns: u64, maximum_ms: u64) !u64 {
-    const deadline_ms = try wallTimestampMillis(value);
-    const wall_now = std.time.milliTimestamp();
-    if (wall_now < 0 or deadline_ms <= @as(u64, @intCast(wall_now))) return error.Expired;
-    const remaining_ms = deadline_ms - @as(u64, @intCast(wall_now));
-    if (remaining_ms > maximum_ms) return error.InvalidTimestamp;
-    return try std.math.add(u64, now_ns, try std.math.mul(u64, remaining_ms, std.time.ns_per_ms));
-}
+pub const wallDeadline = wall_clock.deadline;
 
 /// Production broker-side implementation of the WP4 seam. Every operation
 /// reconnects and authenticates the exact recorded host before speaking v1 on
@@ -1390,7 +1332,7 @@ pub const WireHostClient = struct {
         secret: [32]u8,
         now_ns: u64,
     ) !AdoptionReadback {
-        if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
+        if (!locator.eql(self.expected_record.locator)) return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
         defer payload_arena.deinit();
         var secret_hex = std.fmt.bytesToHex(secret, .lower);
@@ -1447,7 +1389,7 @@ pub const WireHostClient = struct {
                     parsed.value.visibility.openTerminalRevision,
                     10,
                 ),
-                .expires_mono_ns = try wallExpiryToMonotonic(
+                .expires_mono_ns = try wall_clock.expiryToMonotonic(
                     parsed.value.visibility.expiresAt,
                     now_ns,
                     generated.limits.visibility_expiry_ms,
@@ -1457,7 +1399,7 @@ pub const WireHostClient = struct {
     }
 
     fn registerGrant(self: *WireHostClient, locator: Locator, grant: GrantRegistration) !bool {
-        if (!sameLocator(locator, self.expected_record.locator) or
+        if (!locator.eql(self.expected_record.locator) or
             grant.expires_mono_ns <= grant.registered_mono_ns)
             return error.InvalidHostRequest;
         var payload_arena = std.heap.ArenaAllocator.init(self.allocator);
@@ -1550,7 +1492,7 @@ pub const WireHostClient = struct {
         locator: Locator,
         payload: []const u8,
     ) !HostRenewalResult {
-        if (!sameLocator(locator, self.expected_record.locator) or
+        if (!locator.eql(self.expected_record.locator) or
             !protocol.validateControlPayload(
                 self.allocator,
                 generated.wire_schema.visibility_renew_payload,
@@ -1601,7 +1543,7 @@ pub const WireHostClient = struct {
         locator: Locator,
         payload: []const u8,
     ) !HostRenewalResult {
-        if (!sameLocator(locator, self.expected_record.locator) or
+        if (!locator.eql(self.expected_record.locator) or
             !protocol.validateControlPayload(
                 self.allocator,
                 generated.wire_schema.orphan_discard_payload,
@@ -1653,7 +1595,7 @@ pub const WireHostClient = struct {
         command: TerminationCommand,
         ownership: HostProcessOwnership,
     ) !TerminationReadback {
-        if (!sameLocator(locator, self.expected_record.locator)) return error.InvalidHostRequest;
+        if (!locator.eql(self.expected_record.locator)) return error.InvalidHostRequest;
         const hive_home = self.neutral_home orelse return error.NeutralControlUnavailable;
         var runtime = try neutral_host.Runtime.open(self.allocator, hive_home);
         defer runtime.deinit();
@@ -2067,7 +2009,7 @@ pub const Registry = struct {
                 return .{ .failure = .{ .code = .instance_mismatch, .close_connection = false } };
             if (entry.record.locator.generation != locator.generation)
                 return .{ .failure = .{ .code = .generation_mismatch, .close_connection = false } };
-            if (!sameLocator(entry.record.locator, locator))
+            if (!entry.record.locator.eql(locator))
                 return .{ .failure = .{ .code = .generation_mismatch, .close_connection = false } };
             if (entry.quarantined)
                 return .{ .failure = .{ .code = .verification_unknown, .close_connection = false } };
@@ -2589,7 +2531,7 @@ pub fn recordJsonMatches(allocator: std.mem.Allocator, record: HostRecord, json:
         value.geometry.widthPx == record.geometry.width_px and value.geometry.heightPx == record.geometry.height_px and
         value.geometry.cellWidthPx == record.geometry.cell_width_px and
         value.geometry.cellHeightPx == record.geometry.cell_height_px and
-        sameLocator(disk_locator, record.locator) and
+        disk_locator.eql(record.locator) and
         std.mem.eql(u8, value.hostStartToken, record.host_start_token) and
         std.mem.eql(u8, value.processRoot.startToken, record.process_root.start_token) and
         std.mem.eql(u8, value.expectedExecutable, record.expected_executable) and
@@ -2697,7 +2639,7 @@ pub fn launchHost(
     };
     var retain_created_payload = false;
     defer if (!retain_created_payload) allocator.free(readback.created_payload);
-    if (!sameLocator(readback.record.locator, expected_locator)) return rejectLaunchedHost(
+    if (!readback.record.locator.eql(expected_locator)) return rejectLaunchedHost(
         launcher,
         readback.pending,
         .{ .code = .generation_mismatch, .close_connection = false },
@@ -2838,16 +2780,7 @@ fn expectedResponseType(type_code: u16) ?u16 {
     };
 }
 
-fn responseHeader(request: protocol.Header, type_code: u16, payload_len: usize) protocol.Header {
-    return .{
-        .minor = request.minor,
-        .type_code = type_code,
-        .flags = generated.frame_flag.response | generated.frame_flag.final,
-        .payload_length = @intCast(payload_len),
-        .request_id = request.request_id,
-        .stream_seq = 0,
-    };
-}
+const responseHeader = protocol.Header.response;
 
 /// Validates every daemon→broker v1 request against the generated strict
 /// projection before invoking lifecycle state. Raw CREATE_INPUT is the one
@@ -3832,7 +3765,7 @@ pub fn serve(
 fn adoptionMatches(record: HostRecord, readback: AdoptionReadback, now_ns: u64) bool {
     var executable_storage: [c.PROC_PIDPATHINFO_MAXSIZE]u8 = undefined;
     const expected_executable = std.fs.selfExePath(&executable_storage) catch return false;
-    return sameLocator(record.locator, readback.locator) and
+    return record.locator.eql(readback.locator) and
         record.host_pid == readback.host_pid and
         std.mem.eql(u8, record.host_start_token, readback.host_start_token) and
         std.mem.eql(u8, expected_executable, readback.executable) and

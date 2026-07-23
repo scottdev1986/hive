@@ -20,6 +20,17 @@ pub const Header = struct {
     payload_length: u32,
     request_id: u64,
     stream_seq: u64,
+
+    pub fn response(self: Header, type_code: u16, payload_len: usize) Header {
+        return .{
+            .minor = self.minor,
+            .type_code = type_code,
+            .flags = generated.frame_flag.response | generated.frame_flag.final,
+            .payload_length = @intCast(payload_len),
+            .request_id = self.request_id,
+            .stream_seq = 0,
+        };
+    }
 };
 
 pub const HeaderResult = union(enum) {

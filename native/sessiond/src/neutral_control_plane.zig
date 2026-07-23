@@ -8,6 +8,7 @@ const std = @import("std");
 const generated = @import("session_protocol_generated");
 const neutral_host = @import("neutral_host");
 const process_inspector = @import("process_inspector");
+const wall_clock = @import("wall_clock");
 
 const c = @cImport({
     @cInclude("sys/wait.h");
@@ -344,55 +345,8 @@ fn wireReap(value: neutral_host.ReapEvidence) WireReapEvidence {
     };
 }
 
-fn parseStartToken(value: []const u8) !process_inspector.StartToken {
-    const separator = std.mem.indexOfScalar(u8, value, ':') orelse return error.InvalidStartToken;
-    if (separator == 0 or separator + 1 == value.len or
-        std.mem.indexOfScalarPos(u8, value, separator + 1, ':') != null)
-        return error.InvalidStartToken;
-    return .{
-        .seconds = try std.fmt.parseInt(u64, value[0..separator], 10),
-        .microseconds = try std.fmt.parseInt(u64, value[separator + 1 ..], 10),
-    };
-}
-
-fn leapYearsThrough(year: u64) u64 {
-    return year / 4 - year / 100 + year / 400;
-}
-
-fn wallTimestampMillis(value: []const u8) !u64 {
-    if (value.len != 24 or value[4] != '-' or value[7] != '-' or value[10] != 'T' or
-        value[13] != ':' or value[16] != ':' or value[19] != '.' or value[23] != 'Z')
-        return error.InvalidTimestamp;
-    const year = try std.fmt.parseInt(u64, value[0..4], 10);
-    const month = try std.fmt.parseInt(u8, value[5..7], 10);
-    const day = try std.fmt.parseInt(u8, value[8..10], 10);
-    const hour = try std.fmt.parseInt(u8, value[11..13], 10);
-    const minute = try std.fmt.parseInt(u8, value[14..16], 10);
-    const second = try std.fmt.parseInt(u8, value[17..19], 10);
-    const millisecond = try std.fmt.parseInt(u16, value[20..23], 10);
-    if (year < 1970 or month == 0 or month > 12 or day == 0 or hour > 23 or
-        minute > 59 or second > 59)
-        return error.InvalidTimestamp;
-    const leap = year % 4 == 0 and (year % 100 != 0 or year % 400 == 0);
-    const month_days = [_]u8{ 31, if (leap) 29 else 28, 31, 30, 31, 30, 31, 31, 30, 31, 30, 31 };
-    if (day > month_days[month - 1]) return error.InvalidTimestamp;
-    var days = (year - 1970) * 365 + leapYearsThrough(year - 1) - leapYearsThrough(1969);
-    for (month_days[0 .. month - 1]) |count| days += count;
-    days += day - 1;
-    const seconds = try std.math.add(
-        u64,
-        try std.math.mul(u64, days, std.time.s_per_day),
-        @as(u64, hour) * std.time.s_per_hour + @as(u64, minute) * std.time.s_per_min + second,
-    );
-    return std.math.add(
-        u64,
-        try std.math.mul(u64, seconds, std.time.ms_per_s),
-        millisecond,
-    );
-}
-
 fn monotonicDeadline(platform: process_inspector.Platform, value: []const u8) !?u64 {
-    const deadline_ms = try wallTimestampMillis(value);
+    const deadline_ms = try wall_clock.parseMillis(value);
     const wall_now = std.time.milliTimestamp();
     if (wall_now < 0) return error.InvalidTimestamp;
     const now_ms: u64 = @intCast(wall_now);
@@ -512,7 +466,7 @@ fn buildInspection(
     if (record.lifecycle == .create_failed)
         try appendDiagnostic(&diagnostics, allocator, "create-failed-before-live-host-registration");
     if (child) |child_identity| {
-        const token = parseStartToken(child_identity.startToken) catch null;
+        const token = process_inspector.StartToken.parse(child_identity.startToken) catch null;
         if (token) |expected| {
             var snapshot = process_inspector.snapshotTree(
                 platform,
@@ -1188,7 +1142,7 @@ pub const HostOperations = struct {
                 result,
             );
         }
-        const child_start_token = parseStartToken(child.startToken) catch {
+        const child_start_token = process_inspector.StartToken.parse(child.startToken) catch {
             const result = try durableTermination(
                 allocator,
                 record,
@@ -2815,4 +2769,3 @@ const FailOnceAllocator = struct {
         self.backing.rawFree(memory, alignment, ret_addr);
     }
 };
-

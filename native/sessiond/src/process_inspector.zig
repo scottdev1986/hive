@@ -42,6 +42,18 @@ pub const StartToken = struct {
     seconds: u64,
     microseconds: u64,
 
+    pub fn parse(value: []const u8) !StartToken {
+        const separator = std.mem.indexOfScalar(u8, value, ':') orelse
+            return error.InvalidStartToken;
+        if (separator == 0 or separator + 1 == value.len or
+            std.mem.indexOfScalarPos(u8, value, separator + 1, ':') != null)
+            return error.InvalidStartToken;
+        return .{
+            .seconds = try std.fmt.parseInt(u64, value[0..separator], 10),
+            .microseconds = try std.fmt.parseInt(u64, value[separator + 1 ..], 10),
+        };
+    }
+
     pub fn eql(self: StartToken, other: StartToken) bool {
         return self.seconds == other.seconds and self.microseconds == other.microseconds;
     }
