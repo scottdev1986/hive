@@ -51,6 +51,8 @@ describe("HiveConfigSchema", () => {
           sweep_interval_hours: 24,
         },
         wake_budget_tokens: 300,
+        embedding_provider: "local",
+        embedding_model: "bge-small-en-v1.5",
       },
     });
   });

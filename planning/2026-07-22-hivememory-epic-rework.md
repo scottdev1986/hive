@@ -95,6 +95,7 @@ User directive overrode D5 slotting: everything built immediately on the daemon'
 - `805b6d23` HM-3 WP7: `recall:`/`note this:`/`document this:` trigger protocol (queen/operator only, enforced at daemon).
 - `55557440` fix: spawn index reads the primary checkout (`.hive/memory` is gitignored — worktrees never had it; production bug found during WP6).
 - `c5075d41` + `de4fd022` HM-4/§5: `memory_note`, `memory_recall`, `memory_promote` (redaction-checked, operator/queen tier) + static vendor conformance suite (claude/codex/grok).
+- `7d61cd83` HM-5 core (gate waived by user directive): local fastembed embeddings (bge-small-en-v1.5 default, `[memory] embedding_provider`/`embedding_model` knobs, models cached under `~/.hive/models`), `memory_embeddings` vector store in the episodic DB (schema v2), RRF hybrid FTS+vector recall bundle, unavailable-degrades-to-FTS-only; live paraphrase-recall gate env-gated (`HIVE_LIVE_MEMORY_EMBEDDINGS=1`).
 
 **Deviations from the phase plan, ratified by build:**
 
@@ -102,6 +103,6 @@ User directive overrode D5 slotting: everything built immediately on the daemon'
 2. **Digests are deterministic structured folds**, not LLM summaries (recorded in `episodic-digest.ts` header). Stronger on provenance and drift-audit; the 7–8B distiller remains a measured upgrade, not a replacement assumption.
 3. **High-water marks are per-scope log-entry counts**, not timestamps — wiki log entries are day-granular, so timestamps can't sequence same-day writes.
 4. **HM-4 shipped as a static conformance matrix**; live-agent proofs stay environment-gated (`HIVE_LIVE_MEMORY_CONFORMANCE=1`), and kimi/opencode rows join with #63.
-5. **Not built, by design:** HM-5 embeddings (measured gate unopened — HM-1's measured token-cost ACs are themselves still pending live measurement); LLM distiller; cheap-reader escalation and local reranker from the S3.6 sketch (queen-scale infrastructure, needs live queen workloads to measure against).
+5. **HM-5 core built by directive, gate waived** (2026-07-22): the measured gate (HM-1 numbers proving an FTS-unanswerable question class) never formally opened — the user directed the build. Measured on this machine: ~360 MB warm RSS delta (above D4's 100–300 MB estimate, trivial on the 16 GB floor), ~39 ms per short-record embed, ~8 ms brute-force scan over 5k vectors (`scripts/memory-embedding-bench.ts`). sqlite-vec was dropped from the D4 stack — brute-force cosine in JS at these corpus sizes needs no native dep. Still deferred: the consolidation dedup pass (D1 layer 3) and the self-test extension — a separate later package. Also not built: LLM distiller; cheap-reader escalation and local reranker from the S3.6 sketch (queen-scale infrastructure, needs live queen workloads to measure against).
 
 **Outstanding ACs before cards can close:** measured token-cost numbers per query class (needs a scripted session corpus run), live per-vendor proofs (HM-3/HM-4), WorkManifest reference-check (#18), docs reconciliation (HM-exit → #75).

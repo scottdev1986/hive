@@ -15,7 +15,7 @@ import { dirname, join } from "node:path";
 import { z } from "zod";
 import { projectStateDir } from "./project-state";
 
-const SCHEMA_VERSION = "1";
+const SCHEMA_VERSION = "2";
 
 const IsoTimestampSchema = z.iso.datetime({ offset: true });
 
@@ -140,6 +140,49 @@ const DigestRowSchema = z.object({
   provenance: z.string(),
 });
 
+/** One row of the semantic leg's vector store (HiveMemory HM-5, board #122).
+ * The vector decodes from the BLOB as little-endian Float32 — the exact
+ * bytes the embedder produced, no re-normalization at rest. */
+export interface MemoryEmbeddingRow {
+  kind: "article" | "fact";
+  /** MemoryScope for articles; "" for facts (facts are project-local). */
+  scope: string;
+  /** Article id or fact id. */
+  sourceId: string;
+  model: string;
+  dimensions: number;
+  vector: Float32Array;
+  embeddedAt: string;
+}
+
+const EmbeddingRowSchema = z.object({
+  kind: z.enum(["article", "fact"]),
+  scope: z.string(),
+  source_id: z.string(),
+  model: z.string(),
+  dimensions: z.number().int().positive(),
+  vector: z.instanceof(Uint8Array),
+  embedded_at: z.string(),
+});
+
+function parseEmbeddingRow(row: unknown): MemoryEmbeddingRow {
+  const stored = EmbeddingRowSchema.parse(row);
+  const bytes = stored.vector;
+  return {
+    kind: stored.kind,
+    scope: stored.scope,
+    sourceId: stored.source_id,
+    model: stored.model,
+    dimensions: stored.dimensions,
+    vector: new Float32Array(
+      bytes.buffer,
+      bytes.byteOffset,
+      bytes.byteLength / 4,
+    ),
+    embeddedAt: stored.embedded_at,
+  };
+}
+
 function parseFactRow(row: unknown): EpisodicFact {
   const stored = FactRowSchema.parse(row);
   return EpisodicFactSchema.parse({
@@ -236,10 +279,32 @@ export class EpisodicStore {
         body TEXT NOT NULL,
         provenance TEXT NOT NULL
       );
+      -- The semantic recall leg's vector store (HiveMemory HM-5, board #122):
+      -- one row per embedded source — a wiki article (kind 'article', scope
+      -- repo/global) or an episodic fact (kind 'fact', scope ''). The vector
+      -- is the model's Float32 embedding as raw bytes; corpora are small, so
+      -- search is brute-force cosine in JS and no sqlite-vec native
+      -- dependency is taken. Rows are a disposable projection maintained on
+      -- the write paths and pruned when their source disappears.
+      CREATE TABLE IF NOT EXISTS memory_embeddings (
+        kind TEXT NOT NULL CHECK (kind IN ('article', 'fact')),
+        scope TEXT NOT NULL,
+        source_id TEXT NOT NULL,
+        model TEXT NOT NULL,
+        dimensions INTEGER NOT NULL,
+        vector BLOB NOT NULL,
+        embedded_at TEXT NOT NULL,
+        PRIMARY KEY (kind, scope, source_id)
+      );
     `);
     this.database.query(
       "INSERT OR IGNORE INTO meta (key, value) VALUES ('schemaVersion', ?)",
     ).run(SCHEMA_VERSION);
+    // v1 → v2: the memory_embeddings table above (CREATE IF NOT EXISTS is the
+    // whole migration — the table is a rebuildable projection, no data moves).
+    this.database.query(
+      "UPDATE meta SET value = ? WHERE key = 'schemaVersion' AND value != ?",
+    ).run(SCHEMA_VERSION, SCHEMA_VERSION);
   }
 
   recordFact(rawInput: NewEpisodicFact): EpisodicFact {
@@ -511,6 +576,91 @@ export class EpisodicStore {
       INSERT INTO meta (key, value) VALUES (?, ?)
       ON CONFLICT(key) DO UPDATE SET value = excluded.value
     `).run(`memoryHighWater:${agent}`, value);
+  }
+
+  // -------------------------------------------------------------------------
+  // Vector store (HiveMemory HM-5, board #122). These rows are a projection,
+  // never truth: maintained on the memory write paths and pruned when the
+  // source article/fact disappears.
+  // -------------------------------------------------------------------------
+
+  upsertMemoryEmbedding(input: {
+    kind: "article" | "fact";
+    scope: string;
+    sourceId: string;
+    model: string;
+    vector: Float32Array;
+    embeddedAt?: string;
+  }): void {
+    const embeddedAt = input.embeddedAt ?? new Date().toISOString();
+    IsoTimestampSchema.parse(embeddedAt);
+    this.database.query(`
+      INSERT INTO memory_embeddings (
+        kind, scope, source_id, model, dimensions, vector, embedded_at
+      ) VALUES (?, ?, ?, ?, ?, ?, ?)
+      ON CONFLICT(kind, scope, source_id) DO UPDATE SET
+        model = excluded.model,
+        dimensions = excluded.dimensions,
+        vector = excluded.vector,
+        embedded_at = excluded.embedded_at
+    `).run(
+      input.kind,
+      input.scope,
+      input.sourceId,
+      input.model,
+      input.vector.length,
+      new Uint8Array(
+        input.vector.buffer,
+        input.vector.byteOffset,
+        input.vector.byteLength,
+      ),
+      embeddedAt,
+    );
+  }
+
+  removeMemoryEmbedding(
+    kind: "article" | "fact",
+    scope: string,
+    sourceId: string,
+  ): void {
+    this.database.query(`
+      DELETE FROM memory_embeddings
+      WHERE kind = ? AND scope = ? AND source_id = ?
+    `).run(kind, scope, sourceId);
+  }
+
+  /** Every stored vector, optionally one kind only — the brute-force search
+   * corpus. Corpora are small (hundreds of articles, thousands of facts), so
+   * a full scan is the design, not a stopgap. */
+  memoryEmbeddings(filter: { kind?: "article" | "fact" } = {}): MemoryEmbeddingRow[] {
+    const rows = filter.kind === undefined
+      ? this.database.query(
+        "SELECT * FROM memory_embeddings ORDER BY kind, scope, source_id",
+      ).all()
+      : this.database.query(
+        "SELECT * FROM memory_embeddings WHERE kind = ? " +
+          "ORDER BY kind, scope, source_id",
+      ).all(filter.kind);
+    return rows.map(parseEmbeddingRow);
+  }
+
+  /** Delete vector rows whose source no longer exists: an article not in
+   * `keep.articles` ("scope:id" keys) or a fact not in `keep.facts` (ids of
+   * currently-believed facts — an invalidated fact's vector is stale too).
+   * Returns the number of rows deleted. */
+  pruneMemoryEmbeddings(keep: {
+    articles: ReadonlySet<string>;
+    facts: ReadonlySet<string>;
+  }): number {
+    const stale = this.memoryEmbeddings().filter((row) =>
+      row.kind === "article"
+        ? !keep.articles.has(`${row.scope}:${row.sourceId}`)
+        : !keep.facts.has(row.sourceId)
+    );
+    for (const row of stale) {
+      this.removeMemoryEmbedding(row.kind, row.scope, row.sourceId);
+    }
+    return stale.length;
   }
 
   close(): void {

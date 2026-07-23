@@ -398,6 +398,10 @@ export async function runDaemon(): Promise<void> {
     lifecycle: config.lifecycle,
     retention: config.memory.retention,
     wakeBudgetTokens: config.memory.wake_budget_tokens,
+    memoryEmbeddings: {
+      provider: config.memory.embedding_provider,
+      model: config.memory.embedding_model,
+    },
     // One source of truth for autonomy: this very `config` object, which the
     // spawner also reads at each spawn. Persist first, mutate second — if the
     // disk write fails, the live value never diverges from the file.

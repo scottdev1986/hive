@@ -89,6 +89,14 @@ export interface MemoryTriggerDeps {
   /** The daemon's FTS index over the wiki; null degrades recall to an honest
    * "surface absent" block (writes still execute). */
   memory: Pick<MemoryIndex, "search"> | null;
+  /** The semantic leg (HiveMemory HM-5, board #122): cosine top-k over the
+   * vector store, or null when embeddings are unavailable. Undefined degrades
+   * to the FTS-only bundle. */
+  semantic?: (query: string, limit: number) => Promise<Array<{
+    scope: string;
+    id: string;
+    score: number;
+  }> | null>;
   /** The daemon's serialized writeMemoryFact (file lock + FTS upsert). */
   write: (input: MemoryWriteInput) => Promise<MemoryWriteFileResult>;
   /** The audit sink; null skips the episodic `memory-trigger` event. */
@@ -158,35 +166,65 @@ export function formatMemoryRecallRow(row: MemoryRecallRow): string {
 }
 
 /**
+ * Reciprocal-rank fusion (HiveMemory HM-5, board #122): the blend between
+ * the FTS leg and the semantic leg. Fixed weights by design — no tuning
+ * knobs (plan D4: embeddings buy paraphrase recall, not correctness). Both
+ * legs weigh equally; k=60 is the standard RRF constant from Cormack et al.
+ * 2009, dampening head-of-list dominance so a leg's #1 does not swamp the
+ * other leg entirely.
+ */
+const RECALL_RRF_K = 60;
+
+/**
  * Search the wiki for `query` and partition the hits into the pitfall class
  * and ordinary articles, each row carrying its verification label. The FTS
  * row carries no kind, so kinds resolve from the on-disk articles (the same
  * pattern as memory_query pitfall-check).
+ *
+ * Hybrid retrieval (HM-5): when deps.semantic is wired AND answers (non-null),
+ * its cosine top-k is RRF-blended with the FTS ranking — a paraphrase the
+ * porter tokenizer cannot match still ranks. When the semantic leg is absent
+ * or unavailable (null), the bundle is BYTE-IDENTICAL to the FTS-only output
+ * — a test pins this.
  */
 export async function buildMemoryRecallBundle(
   query: string,
-  deps: Pick<MemoryTriggerDeps, "memory" | "repoRoot">,
+  deps: Pick<MemoryTriggerDeps, "memory" | "repoRoot" | "semantic">,
   limit = 8,
 ): Promise<MemoryRecallBundle> {
   if (deps.memory === null) {
     return { state: "absent", pitfalls: [], articles: [] };
   }
   const hits = deps.memory.search(query, { limit });
-  if (hits.length === 0) {
+  const semantic = deps.semantic === undefined
+    ? null
+    : await deps.semantic(query, limit);
+  if (semantic === null && hits.length === 0) {
     return { state: "empty", pitfalls: [], articles: [] };
   }
   const facts = await listMemoryFacts(deps.repoRoot());
-  const statusByKey = new Map(
+  const factByKey = new Map<string, (typeof facts)[number]>(
+    facts.map((fact) => [`${fact.scope}:${fact.id}`, fact]),
+  );
+  const statusByKey = new Map<string, string | null>(
     facts.map((fact) =>
       [`${fact.scope}:${fact.id}`, factVerificationFlag(fact)] as const
     ),
   );
-  const pitfallKeys = new Set(
+  const pitfallKeys = new Set<string>(
     facts.filter((fact) => fact.kind === "pitfall").map((fact) =>
       `${fact.scope}:${fact.id}`
     ),
   );
-  const rows = hits.map((hit): MemoryRecallRow => ({
+  const toRow = (hit: {
+    scope: string;
+    topic: string;
+    id: string;
+    date: string;
+    title: string;
+    snippet: string;
+    status: string;
+  }): MemoryRecallRow => ({
     scope: hit.scope,
     topic: hit.topic,
     id: hit.id,
@@ -197,7 +235,61 @@ export async function buildMemoryRecallBundle(
     flag: statusByKey.get(`${hit.scope}:${hit.id}`) ??
       (hit.status === "verified" ? null : hit.status),
     pitfall: pitfallKeys.has(`${hit.scope}:${hit.id}`),
-  }));
+  });
+  // FTS-only: the unavailable-degradation contract. This path is the exact
+  // pre-HM-5 behavior — same hits, same order, same rows.
+  if (semantic === null) {
+    const rows = hits.map(toRow);
+    return {
+      state: "ok",
+      pitfalls: rows.filter((row) => row.pitfall),
+      articles: rows.filter((row) => !row.pitfall),
+    };
+  }
+  // Hybrid: RRF over both ranked lists, capped back at `limit`.
+  const fused = new Map<string, { score: number; fts: number }>();
+  hits.forEach((hit, rank) => {
+    fused.set(`${hit.scope}:${hit.id}`, {
+      score: 1 / (RECALL_RRF_K + rank + 1),
+      fts: rank,
+    });
+  });
+  semantic.forEach((hit, rank) => {
+    const key = `${hit.scope}:${hit.id}`;
+    const entry = fused.get(key);
+    if (entry === undefined) {
+      fused.set(key, { score: 1 / (RECALL_RRF_K + rank + 1), fts: -1 });
+    } else {
+      entry.score += 1 / (RECALL_RRF_K + rank + 1);
+    }
+  });
+  const ordered = [...fused.entries()]
+    .sort((a, b) => b[1].score - a[1].score || a[0].localeCompare(b[0]))
+    .slice(0, limit);
+  if (ordered.length === 0) {
+    // Both legs answered and neither matched — the honest empty result, same
+    // as the FTS-only path reports.
+    return { state: "empty", pitfalls: [], articles: [] };
+  }
+  const rows = ordered.flatMap(([key, entry]): MemoryRecallRow[] => {
+    const ftsHit = entry.fts >= 0 ? hits[entry.fts] : undefined;
+    if (ftsHit !== undefined) {
+      return [toRow(ftsHit)];
+    }
+    // A semantic-only hit: hydrate the row from the on-disk article. Gone
+    // from disk (a stale vector row not yet pruned) means no row at all.
+    const fact = factByKey.get(key);
+    if (fact === undefined) return [];
+    return [toRow({
+      scope: fact.scope,
+      topic: fact.topic,
+      id: fact.id,
+      date: fact.date,
+      title: fact.title,
+      snippet: oneLine(fact.body).slice(0, 160),
+      status: fact.status,
+    })];
+  });
   return {
     state: "ok",
     pitfalls: rows.filter((row) => row.pitfall),

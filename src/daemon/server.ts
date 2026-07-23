@@ -138,6 +138,12 @@ import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
 import { createWakeDeltaProvider } from "./memory-delta";
 import {
+  MemoryEmbeddingIndex,
+  MemoryEmbeddingService,
+  type MemoryEmbedderLoad,
+  type MemoryEmbeddingConfig,
+} from "./memory-embeddings";
+import {
   buildMemoryRecallBundle,
   createMemoryTriggerExecutor,
   MEMORY_RECALL_HINT_NOTE,
@@ -686,6 +692,15 @@ export interface HiveDaemonOptions {
    * send lane only when a budget AND an episodic store (the high-water
    * marks) are both present, so embedded daemons never inject unasked. */
   wakeBudgetTokens?: number;
+  /** Semantic recall leg (config `[memory] embedding_provider` /
+   * `embedding_model`, HiveMemory HM-5, board #122). Active only with an
+   * episodic store (the vector table lives there); the model loads lazily on
+   * first use and a load failure degrades recall to the FTS-only bundle —
+   * it never crashes the daemon. */
+  memoryEmbeddings?: MemoryEmbeddingConfig;
+  /** Test seam: substitute the embedder factory so daemon-level tests never
+   * load a real model. */
+  memoryEmbeddingLoad?: MemoryEmbedderLoad;
   /** Test seams for the resource sweep's process interrogation. */
   resourceRunners?: {
     ps?: CommandOutput;
@@ -814,6 +829,8 @@ export class HiveDaemon {
   private retentionTimer: ReturnType<typeof setInterval> | null = null;
   private retentionRunning = false;
   private readonly wakeBudgetTokens: number | null;
+  private readonly embeddingService: MemoryEmbeddingService | null;
+  private readonly embeddingIndex: MemoryEmbeddingIndex | null;
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
   private readonly panePids: (session: string) => Promise<number[]>;
@@ -849,6 +866,24 @@ export class HiveDaemon {
     }
     this.memory = new MemoryIndex(this.db.database);
     this.episodic = options.episodicStore ?? null;
+    // The semantic leg (HiveMemory HM-5): wired only with an episodic store
+    // (its vector table lives there) and an embedding config. Lazy — nothing
+    // loads here; the surface reports itself at start and on first use.
+    this.embeddingService =
+      this.episodic !== null && options.memoryEmbeddings !== undefined
+        ? new MemoryEmbeddingService(options.memoryEmbeddings, {
+          ...(options.memoryEmbeddingLoad === undefined
+            ? {}
+            : { load: options.memoryEmbeddingLoad }),
+        })
+        : null;
+    this.embeddingIndex =
+      this.embeddingService !== null && this.episodic !== null
+        ? new MemoryEmbeddingIndex({
+          store: this.episodic,
+          service: this.embeddingService,
+        })
+        : null;
     // Every status-store write — agent reports, source events, and the
     // terminal observation audit — is also projected into episodic memory.
     // The listener runs synchronously on the status write path, so the
@@ -1073,6 +1108,7 @@ export class HiveDaemon {
         ? createMemoryTriggerExecutor({
           repoRoot: () => this.repoRoot,
           memory: this.memory,
+          semantic: this.semanticRecall(),
           write: (input) => this.writeMemoryFact(input),
           episodic: this.episodic,
         })
@@ -1454,6 +1490,21 @@ export class HiveDaemon {
           "([memory] wake_budget_tokens)",
       );
     }
+    // Semantic recall leg (HiveMemory HM-5, board #122): the effective
+    // provider+model is logged every start — same loud-change posture as the
+    // other memory config. The model itself loads lazily on first embed; an
+    // already-known unavailable state (the api knob) is reported here, a
+    // load failure is reported when it happens.
+    if (this.embeddingService !== null) {
+      const status = this.embeddingService.status();
+      console.log(
+        status.state === "unavailable"
+          ? `Hive memory embeddings: UNAVAILABLE — ${status.detail}`
+          : `Hive memory embeddings: provider=${this.embeddingService.provider} ` +
+            `model=${this.embeddingService.model} (loads lazily on first use; ` +
+            "[memory] embedding_provider / embedding_model)",
+      );
+    }
     void this.runMaintenance().catch((error) => {
       console.error(
         `Hive startup recovery failed: ${
@@ -1516,13 +1567,37 @@ export class HiveDaemon {
     return run;
   }
 
+  /** The semantic leg of the recall bundle (HiveMemory HM-5, board #122):
+   * undefined when the leg is unwired — buildMemoryRecallBundle then renders
+   * byte-identical FTS-only output. */
+  private semanticRecall():
+    | ((query: string, limit: number) => Promise<Array<{
+      scope: string;
+      id: string;
+      score: number;
+    }> | null>)
+    | undefined {
+    const index = this.embeddingIndex;
+    if (index === null) return undefined;
+    return (query, limit) => index.searchArticles(query, limit);
+  }
+
   async writeMemoryFact(input: MemoryWriteInput) {
     return this.serializeMemory(async () => {
       const written = await writeMemoryFactFile(this.repoRoot, input);
       for (const id of written.supersededIds) {
         this.memory.removeFact(input.scope, id);
+        this.embeddingIndex?.removeArticle(input.scope, id);
       }
       this.memory.upsertFact(written);
+      // Index maintenance for the semantic leg (HM-5): failure-isolated
+      // inside the index — the write above is the truth, the vector is a
+      // projection.
+      await this.embeddingIndex?.upsertArticle(
+        written.scope,
+        written.id,
+        MemoryEmbeddingIndex.articleText(written),
+      );
       return written;
     });
   }
@@ -1532,13 +1607,28 @@ export class HiveDaemon {
       const deleted = await deleteMemoryFactFile(this.repoRoot, scope, id);
       if (deleted) {
         this.memory.removeFact(scope, id);
+        this.embeddingIndex?.removeArticle(scope, id);
       }
       return deleted;
     });
   }
 
   async rebuildMemoryIndex() {
-    return this.serializeMemory(() => this.memory.rebuild(this.repoRoot));
+    return this.serializeMemory(async () => {
+      const result = await this.memory.rebuild(this.repoRoot);
+      if (this.embeddingIndex !== null && this.episodic !== null) {
+        // Stale-row maintenance (HM-5): vector rows are a projection, so any
+        // whose source disappeared — a deleted article, an invalidated or
+        // expired fact (only currently-believed facts stay indexed) — is
+        // pruned here, on the same rebuild boundary the FTS index uses.
+        const facts = await listMemoryFacts(this.repoRoot);
+        this.embeddingIndex.prune({
+          articles: new Set(facts.map((fact) => `${fact.scope}:${fact.id}`)),
+          facts: new Set(this.episodic.currentFacts().map((fact) => fact.id)),
+        });
+      }
+      return result;
+    });
   }
 
   /**
@@ -5882,6 +5972,13 @@ export class HiveDaemon {
           : { confidence: input.confidence }),
         ...(input.validAt === undefined ? {} : { validAt: input.validAt }),
       });
+      // Semantic-leg index maintenance (HM-5): failure-isolated, and a later
+      // invalidate is covered by the prune pass on the rebuild boundary —
+      // only currently-believed facts stay indexed.
+      await this.embeddingIndex?.upsertFact(
+        fact.id,
+        MemoryEmbeddingIndex.factText(fact),
+      );
       return toolResult(
         {
           state: "recorded",
@@ -5902,13 +5999,14 @@ export class HiveDaemon {
     server.registerTool("memory_recall", {
       title: "Recall ranked Hive memory for a query",
       description:
-        "The ranked recall bundle the trigger protocol produces, as a tool: full-text wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it; over-budget bundles are cut pitfalls-first with truncated:true and an omitted count. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
+        "The ranked recall bundle the trigger protocol produces, as a tool: wiki search partitioned into pitfalls (the highest-priority class) and articles, every row carrying its verification label. Retrieval is hybrid: full-text search blended (reciprocal-rank) with local embedding similarity when the daemon's semantic leg is available, FTS-only otherwise. The envelope state distinguishes ok, empty (searched, no matches), and absent (no wiki search index wired). Server-enforced token ceiling: budget may only lower it; over-budget bundles are cut pitfalls-first with truncated:true and an omitted count. Rows are leads to reconcile, not authority — pull the full article with memory_read(scope, id) before relying on one.",
       inputSchema: MemoryRecallRequestSchema,
     }, async ({ query, budget }) => {
       this.authorizeTool(capability, "memory_recall", "memory:read", undefined, false);
       const bundle = await buildMemoryRecallBundle(query, {
         memory: this.memory,
         repoRoot: () => this.repoRoot,
+        semantic: this.semanticRecall(),
       });
       const ceiling = MEMORY_RECALL_DEFAULT_BUDGET;
       const effective = Math.min(budget ?? ceiling, ceiling);

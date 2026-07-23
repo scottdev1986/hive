@@ -22,6 +22,15 @@ export const LifecycleConfigSchema = z.strictObject({
   idleReapMinutes: z.number().int().positive().default(10),
 });
 
+// HiveMemory HM-5 (board #122; plan 2026-07-22-hivememory-epic-rework.md D4):
+// the local embedding model behind the semantic recall leg. Local-only by
+// default — the models are fastembed-class ONNX (bge-small-en-v1.5 or
+// all-MiniLM-L6-v2, both 384-dim) running in the daemon process, no server.
+export const MemoryEmbeddingModelSchema = z.enum([
+  "bge-small-en-v1.5",
+  "all-MiniLM-L6-v2",
+]);
+
 // HiveMemory HM-2 WP3 (board #72; planning/story-m3-s37-digests-lifecycle.md
 // DoD 5): the per-tier retention constants the daemon's memory sweep runs on,
 // as the `[memory.retention]` section of ~/.hive/config.toml. The numbers are
@@ -88,10 +97,19 @@ export const HiveConfigSchema = z.strictObject({
     // delivery or resume). 300 is the ratified default; changes are loud —
     // the daemon logs the effective budget at start.
     wake_budget_tokens: z.number().int().positive().default(300),
+    // HiveMemory HM-5 (board #122, plan D4): the semantic recall leg. "local"
+    // (the default) runs a fastembed-class ONNX model in the daemon process,
+    // models cached under the Hive-owned models dir. "api" is a manual
+    // escape-hatch knob only — no API provider ships, and there is NO
+    // automatic fallback machinery: an unavailable semantic surface degrades
+    // recall to the FTS-only bundle, it never switches providers.
+    embedding_provider: z.enum(["local", "api"]).default("local"),
+    embedding_model: MemoryEmbeddingModelSchema.default("bge-small-en-v1.5"),
   }).prefault({}),
 });
 
 export type ResourceLimits = z.infer<typeof ResourceLimitsSchema>;
 export type LifecycleConfig = z.infer<typeof LifecycleConfigSchema>;
 export type MemoryRetentionConfig = z.output<typeof MemoryRetentionConfigSchema>;
+export type MemoryEmbeddingModel = z.infer<typeof MemoryEmbeddingModelSchema>;
 export type HiveConfig = z.infer<typeof HiveConfigSchema>;
