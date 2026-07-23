@@ -1,0 +1,377 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>HiveMemory — Architecture &amp; Operations</title>
+<style>
+  :root {
+    --bg: #0d1117; --panel: #161b22; --panel-2: #1c2330; --ink: #e6edf3;
+    --muted: #9aa7b4; --accent: #f0b429; --violet: #8b5cf6; --green: #3fb950;
+    --blue: #58a6ff; --red: #f47067; --line: #2d3642; --teal: #39d0d8;
+  }
+  * { margin: 0; padding: 0; box-sizing: border-box; }
+  body { background: var(--bg); color: var(--ink); font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Helvetica, Arial, sans-serif; line-height: 1.55; }
+  .wrap { max-width: 1180px; margin: 0 auto; padding: 0 32px; }
+  header.hero { padding: 72px 0 48px; background: radial-gradient(ellipse 70% 60% at 50% 0%, rgba(139,92,246,.16), transparent 70%); }
+  .badge { display: inline-block; font-size: 12px; letter-spacing: .16em; text-transform: uppercase; color: var(--violet); border: 1px solid var(--violet); border-radius: 999px; padding: 5px 16px; margin-bottom: 20px; }
+  h1 { font-size: 40px; font-weight: 800; letter-spacing: -0.02em; }
+  .sub { color: var(--muted); font-size: 17px; margin-top: 12px; max-width: 860px; }
+  section { padding: 56px 0; border-top: 1px solid var(--line); }
+  h2 { font-size: 27px; font-weight: 750; margin-bottom: 10px; }
+  h2 .num { color: var(--accent); font-weight: 400; font-size: 17px; margin-right: 10px; }
+  .lede { color: var(--muted); font-size: 16px; max-width: 900px; margin-bottom: 28px; }
+  code { background: var(--panel-2); padding: 1px 7px; border-radius: 5px; font-size: 13px; color: #ffd479; font-family: ui-monospace, "SF Mono", Menlo, monospace; }
+  pre { background: #0a0e14; border: 1px solid var(--line); border-radius: 10px; padding: 18px 20px; overflow-x: auto; font-size: 13px; line-height: 1.5; margin: 14px 0; }
+  pre code { background: none; padding: 0; color: #c9d4e0; }
+  pre .c { color: #5c6b7d; }
+  pre .ok { color: var(--green); }
+  .figure { background: var(--panel); border: 1px solid var(--line); border-radius: 14px; padding: 28px; overflow-x: auto; }
+  .figure figcaption { color: var(--muted); font-size: 13px; text-align: center; margin-top: 16px; }
+  svg { display: block; margin: 0 auto; min-width: 1060px; }
+  .grid { display: grid; gap: 16px; }
+  .grid-3 { grid-template-columns: repeat(3, 1fr); }
+  .grid-2 { grid-template-columns: repeat(2, 1fr); }
+  @media (max-width: 900px) { .grid-3, .grid-2 { grid-template-columns: 1fr; } }
+  .card { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 22px; }
+  .card h3 { font-size: 17px; margin-bottom: 8px; }
+  .card p, .card li { color: var(--muted); font-size: 14px; }
+  .card ul { padding-left: 18px; margin-top: 6px; }
+  .card li { margin-bottom: 4px; }
+  table { width: 100%; border-collapse: collapse; font-size: 13.5px; margin-top: 8px; }
+  th { text-align: left; color: var(--accent); font-weight: 600; padding: 9px 12px; border-bottom: 2px solid var(--line); white-space: nowrap; }
+  td { padding: 9px 12px; border-bottom: 1px solid var(--line); color: var(--muted); vertical-align: top; }
+  td:first-child { color: var(--ink); white-space: nowrap; font-weight: 600; }
+  tr:hover td { background: rgba(139,92,246,.05); }
+  .pill { display: inline-block; font-size: 11px; padding: 2px 9px; border-radius: 999px; font-weight: 700; }
+  .pill.cmd { background: rgba(88,166,255,.15); color: var(--blue); }
+  .pill.test { background: rgba(63,185,80,.15); color: var(--green); }
+  .pill.manual { background: rgba(240,180,41,.15); color: var(--accent); }
+  .note { border-left: 3px solid var(--accent); background: rgba(240,180,41,.07); padding: 14px 18px; border-radius: 0 10px 10px 0; color: var(--muted); font-size: 14px; margin: 18px 0; }
+  .note strong { color: var(--accent); }
+  ol.proof { counter-reset: step; padding-left: 0; list-style: none; }
+  ol.proof > li { counter-increment: step; background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 18px 22px 18px 64px; position: relative; margin-bottom: 12px; }
+  ol.proof > li::before { content: counter(step); position: absolute; left: 18px; top: 18px; width: 30px; height: 30px; border-radius: 50%; background: var(--violet); color: #fff; font-weight: 800; display: flex; align-items: center; justify-content: center; font-size: 15px; }
+  ol.proof h3 { font-size: 16px; margin-bottom: 6px; }
+  ol.proof p { color: var(--muted); font-size: 14px; }
+  .legend { display: flex; gap: 22px; flex-wrap: wrap; margin-top: 12px; font-size: 13px; color: var(--muted); }
+  .legend span::before { content: ""; display: inline-block; width: 22px; height: 3px; border-radius: 2px; margin-right: 7px; vertical-align: middle; }
+  .legend .w::before { background: var(--blue); }
+  .legend .r::before { background: var(--violet); }
+  .legend .b::before { background: var(--accent); }
+  footer { padding: 40px 0 56px; border-top: 1px solid var(--line); color: var(--muted); font-size: 13px; text-align: center; }
+</style>
+</head>
+<body>
+
+<header class="hero">
+  <div class="wrap">
+    <span class="badge">HiveMemory · Technical</span>
+    <h1>Architecture &amp; Operations</h1>
+    <p class="sub">The complete memory system as built on <code>main</code>: every layer, every recall path, every guardrail — plus operator instructions and a proof for every element. Companion to the investor overview (<code>hivememory-system-overview.html</code>).</p>
+  </div>
+</header>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">01</span>Full architecture</h2>
+    <p class="lede">Three memory layers behind one daemon. Writes flow down the blue paths; recall is summoned up the violet paths (spawn, wake, trigger) or pulled by agents through the MCP gateway. Nothing crosses project boundaries — isolation is structural, derived from the daemon's own identity.</p>
+    <div class="legend">
+      <span class="w">write / ingest path</span>
+      <span class="r">summoned recall path</span>
+      <span class="b">guardrail / lifecycle</span>
+    </div>
+    <div class="figure" style="margin-top:16px">
+      <svg viewBox="0 0 1120 720" role="img" aria-label="HiveMemory full architecture diagram">
+        <defs>
+          <marker id="aB" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#58a6ff"/></marker>
+          <marker id="aV" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#8b5cf6"/></marker>
+          <marker id="aA" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="6.5" markerHeight="6.5" orient="auto-start-reverse"><path d="M0,0 L10,5 L0,10 z" fill="#f0b429"/></marker>
+        </defs>
+
+        <!-- agents column -->
+        <g font-size="13" text-anchor="middle">
+          <text x="92" y="26" fill="#9aa7b4">agents (per-vendor MCP config)</text>
+          <rect x="20" y="40" rx="9" width="144" height="40" fill="#1c2330" stroke="#2d3642"/><text x="92" y="64" fill="#e6edf3">Claude Code</text>
+          <rect x="20" y="92" rx="9" width="144" height="40" fill="#1c2330" stroke="#2d3642"/><text x="92" y="116" fill="#e6edf3">Codex</text>
+          <rect x="20" y="144" rx="9" width="144" height="40" fill="#1c2330" stroke="#2d3642"/><text x="92" y="168" fill="#e6edf3">Grok CLI</text>
+          <rect x="20" y="196" rx="9" width="144" height="40" fill="#1c2330" stroke="#2d3642" stroke-dasharray="4 3"/><text x="92" y="220" fill="#9aa7b4">Kimi Code (#63)</text>
+          <rect x="20" y="248" rx="9" width="144" height="40" fill="#1c2330" stroke="#2d3642" stroke-dasharray="4 3"/><text x="92" y="272" fill="#9aa7b4">opencode (#63)</text>
+          <rect x="20" y="320" rx="9" width="144" height="40" fill="#241a08" stroke="#f0b429"/><text x="92" y="344" fill="#f0b429">queen / operator</text>
+        </g>
+
+        <!-- recall paths into agents -->
+        <g stroke="#8b5cf6" stroke-width="1.6" fill="none">
+          <path d="M 300 80 L 168 58" marker-end="url(#aV)"/>
+          <path d="M 300 120 L 168 110" marker-end="url(#aV)"/>
+          <path d="M 300 165 L 168 162" marker-end="url(#aV)"/>
+          <path d="M 300 340 L 168 340" marker-end="url(#aV)"/>
+        </g>
+        <text x="232" y="46" font-size="11" fill="#8b5cf6" text-anchor="middle">spawn index</text>
+        <text x="232" y="148" font-size="11" fill="#8b5cf6" text-anchor="middle">wake delta</text>
+
+        <!-- write path agents -> gateway -->
+        <g stroke="#58a6ff" stroke-width="1.6" fill="none">
+          <path d="M 164 76 L 300 200" marker-end="url(#aB)"/>
+          <path d="M 164 128 L 300 210" marker-end="url(#aB)"/>
+          <path d="M 164 180 L 300 224" marker-end="url(#aB)"/>
+          <path d="M 164 352 L 300 300" marker-end="url(#aB)"/>
+        </g>
+
+        <!-- daemon box -->
+        <rect x="300" y="40" rx="16" width="470" height="640" fill="#12161d" stroke="#3d4858" stroke-width="1.5"/>
+        <text x="535" y="66" text-anchor="middle" font-size="16" font-weight="700" fill="#e6edf3">Hive daemon</text>
+
+        <!-- MCP gateway -->
+        <rect x="320" y="80" rx="10" width="200" height="240" fill="#161b22" stroke="#58a6ff"/>
+        <text x="420" y="102" text-anchor="middle" font-size="13" font-weight="700" fill="#58a6ff">MCP gateway</text>
+        <text x="420" y="120" text-anchor="middle" font-size="11" fill="#9aa7b4">127.0.0.1 /mcp · Bearer</text>
+        <g font-size="11" fill="#c9d4e0">
+          <text x="332" y="144">memory_search · memory_read</text>
+          <text x="332" y="162">memory_write · memory_reindex</text>
+          <text x="332" y="180">memory_delete ‹memory:delete›</text>
+          <text x="332" y="198">memory_query (9 classes)</text>
+          <text x="332" y="216">memory_recall · memory_note</text>
+          <text x="332" y="234">memory_digest · memory_pitfall</text>
+          <text x="332" y="252">memory_promote ‹op/queen›</text>
+        </g>
+        <text x="420" y="276" text-anchor="middle" font-size="11" fill="#f0b429">capability-gated per role</text>
+        <text x="420" y="292" text-anchor="middle" font-size="11" fill="#f0b429">delete = queen/operator only</text>
+        <text x="420" y="308" text-anchor="middle" font-size="11" fill="#f0b429">dedup L1 reject + L2 advisory</text>
+
+        <!-- delivery lane -->
+        <rect x="320" y="340" rx="10" width="200" height="150" fill="#161b22" stroke="#8b5cf6"/>
+        <text x="420" y="362" text-anchor="middle" font-size="13" font-weight="700" fill="#8b5cf6">delivery lane</text>
+        <g font-size="11" fill="#c9d4e0">
+          <text x="332" y="386">wake-delta composer</text>
+          <text x="332" y="404">(300-token budget, high-</text>
+          <text x="332" y="420">water marks per agent)</text>
+          <text x="332" y="444">trigger protocol:</text>
+          <text x="332" y="462">recall: · note this: · document:</text>
+          <text x="332" y="480">(queen/operator only)</text>
+        </g>
+
+        <!-- ingestion + lifecycle -->
+        <rect x="540" y="80" rx="10" width="210" height="240" fill="#161b22" stroke="#39d0d8"/>
+        <text x="645" y="102" text-anchor="middle" font-size="13" font-weight="700" fill="#39d0d8">ingest &amp; compile</text>
+        <g font-size="11" fill="#c9d4e0">
+          <text x="552" y="126">status/audit event stream</text>
+          <text x="552" y="144">→ episodic events</text>
+          <text x="552" y="168">digest compiler (kill /</text>
+          <text x="552" y="184">landing) · deterministic,</text>
+          <text x="552" y="200">provenance pointers [eN]</text>
+          <text x="552" y="224">pitfall harvester: failure</text>
+          <text x="552" y="240">clusters → unverified</text>
+          <text x="552" y="256">candidates in wiki</text>
+          <text x="552" y="280">embedding indexer</text>
+          <text x="552" y="296">(fastembed bge-small)</text>
+        </g>
+
+        <rect x="540" y="340" rx="10" width="210" height="150" fill="#161b22" stroke="#f0b429"/>
+        <text x="645" y="362" text-anchor="middle" font-size="13" font-weight="700" fill="#f0b429">lifecycle</text>
+        <g font-size="11" fill="#c9d4e0">
+          <text x="552" y="386">retention sweep (startup /</text>
+          <text x="552" y="402">daily / kill): events age out</text>
+          <text x="552" y="418">30d · facts+digests forever</text>
+          <text x="552" y="440">stale-demotion (90d verified)</text>
+          <text x="552" y="462">consolidation candidates</text>
+          <text x="552" y="478">counted for CLI pass</text>
+        </g>
+
+        <!-- recall composition -->
+        <rect x="320" y="510" rx="10" width="430" height="150" fill="#161b22" stroke="#8b5cf6"/>
+        <text x="535" y="532" text-anchor="middle" font-size="13" font-weight="700" fill="#8b5cf6">recall composition</text>
+        <g font-size="11" fill="#c9d4e0">
+          <text x="332" y="556">spawn index: pitfalls → brief-match → newest (30 rows, primary checkout)</text>
+          <text x="332" y="574">wake delta: wiki log changes + task-matched pitfalls, 300 tokens</text>
+          <text x="332" y="592">recall bundle: FTS + vector RRF hybrid, pitfalls partitioned,</text>
+          <text x="332" y="608">verification labels, hint-not-authority, server token ceilings</text>
+          <text x="332" y="632">absent-vs-empty discriminators on every read surface</text>
+        </g>
+
+        <!-- flows inside daemon -->
+        <g stroke="#58a6ff" stroke-width="1.4" fill="none">
+          <line x1="520" y1="200" x2="540" y2="200" marker-end="url(#aB)"/>
+          <line x1="645" y1="320" x2="645" y2="340" marker-end="url(#aA)" stroke="#f0b429"/>
+        </g>
+        <g stroke="#8b5cf6" stroke-width="1.4" fill="none">
+          <line x1="420" y1="320" x2="420" y2="340" marker-end="url(#aV)"/>
+          <line x1="420" y1="490" x2="470" y2="510" marker-end="url(#aV)"/>
+          <line x1="600" y1="490" x2="570" y2="510" marker-end="url(#aV)"/>
+        </g>
+
+        <!-- stores column -->
+        <g font-size="13" text-anchor="middle">
+          <text x="950" y="26" fill="#9aa7b4">stores (per project, structurally isolated)</text>
+
+          <rect x="820" y="40" rx="12" width="260" height="130" fill="#161b22" stroke="#58a6ff" stroke-width="1.5"/>
+          <text x="950" y="64" fill="#58a6ff" font-weight="700">L-curated · memory wiki</text>
+          <text x="950" y="84" fill="#9aa7b4" font-size="11">.hive/memory/ (gitignored) + ~/.hive/memory/</text>
+          <text x="950" y="106" fill="#c9d4e0" font-size="11">raw/ immutable observations</text>
+          <text x="950" y="122" fill="#c9d4e0" font-size="11">wiki/ compiled articles · kind: pitfall</text>
+          <text x="950" y="138" fill="#c9d4e0" font-size="11">index.md (injected) · log.md (delta feed)</text>
+          <text x="950" y="156" fill="#f0b429" font-size="11">verified / stale / superseded / conflicted</text>
+
+          <rect x="820" y="200" rx="12" width="260" height="170" fill="#161b22" stroke="#3fb950" stroke-width="1.5"/>
+          <text x="950" y="224" fill="#3fb950" font-weight="700">L-episodic · episodic.db</text>
+          <text x="950" y="244" fill="#9aa7b4" font-size="11">~/.hive/projects/&lt;hiveUuid&gt;/</text>
+          <text x="950" y="266" fill="#c9d4e0" font-size="11">events — typed observation feed</text>
+          <text x="950" y="282" fill="#c9d4e0" font-size="11">facts — bi-temporal (valid_at/invalid_at…)</text>
+          <text x="950" y="298" fill="#c9d4e0" font-size="11">digests — session summaries + side tables</text>
+          <text x="950" y="314" fill="#c9d4e0" font-size="11">memory_embeddings — 384-dim vectors</text>
+          <text x="950" y="330" fill="#f0b429" font-size="11">invalidation, never deletion</text>
+          <text x="950" y="352" fill="#9aa7b4" font-size="11">high-water marks in meta</text>
+
+          <rect x="820" y="400" rx="12" width="260" height="90" fill="#161b22" stroke="#f0b429" stroke-width="1.5"/>
+          <text x="950" y="424" fill="#f0b429" font-weight="700">L-pitfall · lessons</text>
+          <text x="950" y="444" fill="#c9d4e0" font-size="11">wiki articles, kind: pitfall — harvested</text>
+          <text x="950" y="460" fill="#c9d4e0" font-size="11">unverified → queen/human promotes</text>
+          <text x="950" y="476" fill="#c9d4e0" font-size="11">memory_promote → global (redaction-checked)</text>
+
+          <rect x="820" y="520" rx="12" width="260" height="60" fill="#1c2330" stroke="#2d3642"/>
+          <text x="950" y="444" fill="#c9d4e0" font-size="11"></text>
+          <text x="950" y="545" fill="#9aa7b4" font-size="12">~/.hive/models/ — bge-small ONNX (~90 MB)</text>
+          <text x="950" y="563" fill="#9aa7b4" font-size="12">~/.hive/config.toml — [memory] [memory.retention]</text>
+        </g>
+
+        <!-- daemon <-> stores flows -->
+        <g stroke="#58a6ff" stroke-width="1.6" fill="none">
+          <line x1="750" y1="130" x2="816" y2="105" marker-end="url(#aB)"/>
+          <line x1="750" y1="200" x2="816" y2="260" marker-end="url(#aB)"/>
+          <line x1="750" y1="250" x2="816" y2="440" marker-end="url(#aB)"/>
+        </g>
+        <g stroke="#8b5cf6" stroke-width="1.6" fill="none">
+          <line x1="816" y1="130" x2="754" y2="540" marker-end="url(#aV)"/>
+          <line x1="816" y1="300" x2="754" y2="560" marker-end="url(#aV)"/>
+        </g>
+        <g stroke="#f0b429" stroke-width="1.4" fill="none" stroke-dasharray="5 4">
+          <line x1="816" y1="340" x2="754" y2="400" marker-end="url(#aA)"/>
+        </g>
+      </svg>
+      <figcaption>Writes (blue) enter through the capability-gated MCP gateway or the ingest stream. Recall (violet) is composed centrally and summoned to agents — spawn index, wake delta, trigger results — or pulled via tools. Lifecycle (amber) keeps the store clean without ever deleting facts or evidence.</figcaption>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">02</span>The recall model: summoned, never hoped-for</h2>
+    <p class="lede">The governing design finding (from external research, adopted as plan A1/A2): agents save voluntarily but never recall voluntarily, and prose instructions are recited then ignored. So every recall path is initiated by the system or the human — the agent's own search tools exist, but nothing depends on the agent choosing to use them.</p>
+    <div class="grid grid-2">
+      <div class="card"><h3>1 · Spawn injection (ranked)</h3><p>Every agent's first prompt ends with a 30-row memory index: <strong>pitfalls first</strong>, then articles sharing tokens with the assignment brief, then newest fill. Read from the <em>primary checkout</em> — <code>.hive/memory</code> is gitignored, so worktrees never have it (works identically if a project tracks it; primary wins over stale copies).</p></div>
+      <div class="card"><h3>2 · Wake deltas</h3><p>When a message is delivered or an agent resumes, a <strong>300-token</strong> block of what changed since that agent's high-water mark (wiki log diff + task-matched pitfalls) rides the send lane. No vendor hooks required — works on Grok. Per-agent marks persist in the episodic store meta table, surviving restarts.</p></div>
+      <div class="card"><h3>3 · Trigger protocol</h3><p>Queen/operator messages starting with <code>recall:</code>, <code>note this:</code>, <code>document this:</code> are executed by the daemon — search-and-inject, write an observation, scaffold an article — and the <em>labeled result</em> is delivered instead of the raw text. Agent senders can't trigger; the text passes through verbatim.</p></div>
+      <div class="card"><h3>4 · Agent-initiated tools</h3><p><code>memory_recall</code> (hybrid FTS+vector bundle), <code>memory_query</code> (9 classes, token ceilings), <code>memory_search</code>/<code>memory_read</code> (wiki), <code>memory_digest</code>, <code>memory_pitfall</code>. All server-ceilinged, all labeled with verification status — used for saves and explicit lookups, never relied on for recall.</p></div>
+    </div>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">03</span>Operator usage</h2>
+    <p class="lede">Everything below runs against the live daemon (or fixtures, where noted). CLI memory commands talk to the daemon over the same MCP endpoint agents use.</p>
+
+    <h3 style="font-size:18px;margin-bottom:8px">Talking to agents: triggers</h3>
+    <pre><code><span class="c"># sent as a normal hive_send message from queen/operator to any agent:</span>
+recall: quota reconciliation approach        <span class="c">→ agent receives a labeled memory bundle</span>
+note this: vendor X rejects empty arrays     <span class="c">→ wiki observation written [unverified], confirmation delivered</span>
+document this: checkpoint format decisions   <span class="c">→ curated article scaffolded [unverified], confirmation delivered</span></code></pre>
+
+    <h3 style="font-size:18px;margin:26px 0 8px">CLI</h3>
+    <pre><code>hive memory self-test                          <span class="c"># golden-canary probe — the one-command health proof</span>
+HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 hive memory self-test   <span class="c"># + real-model semantic assertions</span>
+hive memory consolidate                        <span class="c"># report duplicate/near-duplicate pairs (read-only)</span>
+hive memory consolidate --apply                <span class="c"># supersede ≥0.95 identicals (older into newer, raw kept)</span>
+hive memory search "quota" [--scope repo] [--limit 5]
+hive memory read repo &lt;id&gt;
+hive memory write "Title" --scope repo --topic routing --body "…" \
+  --source human --evidence "…" --status verified --supersedes "" [--verified 2026-07-22]
+hive memory delete repo &lt;id&gt;                  <span class="c"># operator/queen capability; reference-checked</span>
+hive memory reindex                            <span class="c"># rebuild FTS + index files after manual edits</span>
+bun scripts/memory-embedding-bench.ts          <span class="c"># RSS/latency floor measurement</span></code></pre>
+
+    <h3 style="font-size:18px;margin:26px 0 8px">Configuration — <code>~/.hive/config.toml</code></h3>
+    <table>
+      <tr><th>Key</th><th>Default</th><th>Meaning</th></tr>
+      <tr><td><code>memory.wake_budget_tokens</code></td><td>300</td><td>Max tokens of a wake-delta block; truncation is loud</td></tr>
+      <tr><td><code>memory.embedding_provider</code></td><td>local</td><td><code>local</code> = bundled fastembed; <code>api</code> = manual knob (no provider ships; honest error)</td></tr>
+      <tr><td><code>memory.embedding_model</code></td><td>bge-small-en-v1.5</td><td>ONNX model, cached in <code>~/.hive/models/</code></td></tr>
+      <tr><td><code>memory.retention.events_hot_days</code></td><td>30</td><td>Episodic events older than this are swept (digest-referenced rows survive)</td></tr>
+      <tr><td><code>memory.retention.stale_after_days</code></td><td>90</td><td>Verified wiki articles older than this demote to <code>stale</code> (never deleted)</td></tr>
+      <tr><td><code>memory.retention.sweep_interval_hours</code></td><td>24</td><td>Periodic sweep cadence (also runs at startup and agent kill)</td></tr>
+      <tr><td><code>memory.retention.facts_retention</code> / <code>digests_retention</code></td><td>forever</td><td>Invariants, not knobs — any other value is a config error</td></tr>
+    </table>
+
+    <h3 style="font-size:18px;margin:26px 0 8px">Agent-facing MCP surface</h3>
+    <table>
+      <tr><th>Tool</th><th>Capability</th><th>Purpose</th></tr>
+      <tr><td><code>memory_search</code> / <code>memory_read</code></td><td>memory:read</td><td>Wiki FTS + full article pull</td></tr>
+      <tr><td><code>memory_write</code> / <code>memory_reindex</code></td><td>memory:write</td><td>Wiki observation/article writes (dedup L1 reject + L2 advisory)</td></tr>
+      <tr><td><code>memory_recall</code></td><td>memory:read</td><td>Ranked hybrid bundle (pitfalls partitioned, budget-clamped)</td></tr>
+      <tr><td><code>memory_query</code></td><td>memory:read</td><td>9 classes: agent-now, agent-history, fleet-summary, what-landed, who-blocked, token-spend, point-search, my-history, pitfall-check</td></tr>
+      <tr><td><code>memory_note</code></td><td>memory:write</td><td>Episodic fact write; duplicate → refusal with existing record</td></tr>
+      <tr><td><code>memory_digest</code></td><td>memory:read</td><td>Session digest + drill-down to source events</td></tr>
+      <tr><td><code>memory_pitfall</code></td><td>memory:read</td><td>Search/list/get pitfall-kind articles only</td></tr>
+      <tr><td><code>memory_promote</code></td><td>memory:delete (op/queen)</td><td>Copy a repo pitfall to global scope after redaction scan</td></tr>
+      <tr><td><code>memory_delete</code></td><td>memory:delete (op/queen)</td><td>Article delete; refuses to dangle a supersedes pointer</td></tr>
+    </table>
+  </div>
+</section>
+
+<section>
+  <div class="wrap">
+    <h2><span class="num">04</span>Prove every element works</h2>
+    <p class="lede">Three tiers of proof: <span class="pill test">test</span> automated suite (run <code>bun test</code>), <span class="pill cmd">cmd</span> one command against fixtures or the live daemon, <span class="pill manual">manual</span> a live scenario. The suite is the CI gate; the commands are for convincing yourself on a real machine.</p>
+    <table>
+      <tr><th>Element</th><th>Proof</th><th>What success looks like</th></tr>
+      <tr><td>Whole system</td><td><span class="pill cmd">cmd</span> <code>hive memory self-test</code></td><td>6 PASS lines (recall@5 30/30, read-back, negative-control, dedup L1/L2, delete-guard), exit 0; +2 SKIP without model</td></tr>
+      <tr><td>Semantic recall</td><td><span class="pill cmd">cmd</span> <code>HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 hive memory self-test</code></td><td>8 PASS — paraphrase canary found with zero token overlap; consolidation pair bucketed</td></tr>
+      <tr><td>Probe can fail</td><td><span class="pill test">test</span> <code>test/memory-self-test.test.ts</code></td><td>Sabotaged fixture (5 canaries deleted) → recall@5/read-back FAIL, 25/30</td></tr>
+      <tr><td>Wiki write/read/search</td><td><span class="pill test">test</span> <code>src/daemon/memory-mcp.test.ts</code></td><td>Full round-trip through the real MCP path</td></tr>
+      <tr><td>Dedup L1 (exact)</td><td><span class="pill manual">manual</span> write same title twice</td><td>Second write rejected, error names existing id + update instructions</td></tr>
+      <tr><td>Dedup L2 (advisory)</td><td><span class="pill manual">manual</span> write a near-duplicate</td><td>Write succeeds; response carries <code>similarCandidates</code></td></tr>
+      <tr><td>Dedup L3 (semantic)</td><td><span class="pill cmd">cmd</span> <code>hive memory consolidate</code></td><td>Report buckets ≥0.95 identical / 0.85–0.95 similar; only <code>--apply</code> supersedes identicals</td></tr>
+      <tr><td>Delete gate</td><td><span class="pill test">test</span> <code>src/daemon/auth.test.ts</code></td><td>Writer-role <code>memory_delete</code> → <code>capability.forbidden-action</code>; operator allowed</td></tr>
+      <tr><td>Reference-checked delete</td><td><span class="pill test">test</span> <code>src/adapters/memory.test.ts</code></td><td>Delete of a supersedes-referenced article refused, blocker named</td></tr>
+      <tr><td>Ranked spawn injection</td><td><span class="pill test">test</span> <code>src/adapters/memory.test.ts</code> + <span class="pill manual">manual</span> spawn an agent whose task matches a 60-day-old pitfall</td><td>Pitfall is row 0 of the injected index — no search call made</td></tr>
+      <tr><td>Primary-checkout read</td><td><span class="pill test">test</span> <code>src/cli/spawner-impl.test.ts</code></td><td>Stale tracked worktree copy never reaches the prompt; primary's fresh article does</td></tr>
+      <tr><td>Wake delta</td><td><span class="pill manual">manual</span> write a memory, then <code>hive_send</code> to an agent</td><td>Delivered message ends with the 🧠 labeled delta block listing the change; second message has none</td></tr>
+      <tr><td>Trigger protocol</td><td><span class="pill manual">manual</span> queen sends <code>recall: …</code></td><td>Agent receives labeled bundle, not the raw text; an agent sending the same text passes verbatim</td></tr>
+      <tr><td>Episodic + bi-temporal</td><td><span class="pill test">test</span> <code>src/daemon/episodic-store.test.ts</code></td><td>Invalidated fact gone from current recall, present in as-of query; restart reads prior data</td></tr>
+      <tr><td>Project isolation</td><td><span class="pill test">test</span> <code>src/daemon/memory-query-mcp.test.ts</code></td><td>Two-way nonce suite: every class finds its own nonce, zero cross-project hits, storage asserted separately</td></tr>
+      <tr><td>Budgets &amp; scoping</td><td><span class="pill test">test</span> <code>src/daemon/episodic-projections.test.ts</code></td><td>Over-budget results truncate loudly; <code>my-history</code> ignores input agent, uses caller identity</td></tr>
+      <tr><td>Digests + drill-down</td><td><span class="pill manual">manual</span> kill a session, then <code>memory_digest</code></td><td>Digest has provenance pointers [eN]; drill-down returns the exact source events; tampered body fails drift audit</td></tr>
+      <tr><td>Mistake harvest</td><td><span class="pill manual">manual</span> run a session that fails, let it get killed</td><td>Unverified <code>Pitfall: …</code> candidate appears (<code>memory_pitfall</code> action search); verify it via <code>memory_write</code> supersedes → a second agent's pitfall-check finds it</td></tr>
+      <tr><td>Retention</td><td><span class="pill test">test</span> <code>src/daemon/memory-retention.test.ts</code></td><td>Aged events swept, digest-referenced kept, facts/digests untouched, old verified articles demoted to stale</td></tr>
+      <tr><td>Hybrid embeddings</td><td><span class="pill cmd">cmd</span> <code>HIVE_LIVE_MEMORY_EMBEDDINGS=1 bun test test/memory-embedding-live.test.ts</code> <em>(targeted, never in full suite)</em></td><td>FTS misses paraphrase canary; semantic ranks it #1; hybrid bundle contains it</td></tr>
+      <tr><td>Vendor conformance</td><td><span class="pill test">test</span> <code>test/memory-vendor-conformance.test.ts</code></td><td>Per vendor: MCP entry, auth channel, no token on argv, role grants, prompt injection — kimi/opencode rows join via #63</td></tr>
+      <tr><td>Floor performance</td><td><span class="pill cmd">cmd</span> <code>bun scripts/memory-embedding-bench.ts</code></td><td>~360 MB warm RSS, ~39 ms/embed, ~8 ms scan/5k (measured on the 16 GB floor)</td></tr>
+      <tr><td>Full regression</td><td><span class="pill cmd">cmd</span> <code>bun run typecheck &amp;&amp; bun test</code></td><td>2000+ pass, 0 fail (env-gated lives skip)</td></tr>
+    </table>
+
+    <h3 style="font-size:20px;margin:34px 0 14px">The 10-minute end-to-end proof (live, manual)</h3>
+    <ol class="proof">
+      <li><h3>Health</h3><p><code>hive memory self-test</code> → all PASS. This alone proves the store, search, read-back, dedup, and delete-guard on throwaway fixtures.</p></li>
+      <li><h3>Seed a lesson</h3><p><code>hive memory write "Vendor X quota resets at midnight UTC" --scope repo --topic quota --body "…" --source human --evidence "…" --status verified --supersedes ""</code></p></li>
+      <li><h3>Prove summoned recall at spawn</h3><p>Spawn an agent with task "reconcile the quota tables" → its first prompt's memory index ranks the quota article near the top (brief-match), above newer unrelated articles.</p></li>
+      <li><h3>Prove the wake delta</h3><p>While that agent is idle, write another memory, then <code>hive_send</code> it any message → the delivery carries the 🧠 delta block naming your new article. Send a second message → no block (high-water advanced).</p></li>
+      <li><h3>Prove triggers</h3><p>As queen/operator, send the agent <code>recall: quota</code> → it receives the labeled bundle. Then <code>note this: quota API rejects empty arrays</code> → confirmation comes back and the article exists as <code>[unverified]</code>.</p></li>
+      <li><h3>Prove dedup</h3><p>Repeat the same <code>note this:</code> → it becomes an <em>update</em> of the same article, not a duplicate.</p></li>
+      <li><h3>Prove the learning loop</h3><p>Run a session that hits a real failure; kill it. <code>memory_pitfall</code> (search) shows a new <code>[unverified]</code> candidate with event/digest provenance. Verify it (<code>hive memory write --id &lt;pitfall-id&gt; --status verified --supersedes &lt;pitfall-id&gt;</code>).</p></li>
+      <li><h3>Prove knowledge sharing</h3><p>Spawn a <em>different</em> agent on a matching task → the verified pitfall leads its spawn index. It never searched; Hive summoned it.</p></li>
+      <li><h3>Prove guardrails</h3><p>Ask a worker agent to call <code>memory_delete</code> → forbidden. As operator, delete an article another article supersedes → refused, blocker named.</p></li>
+      <li><h3>Prove digests &amp; drill-down</h3><p><code>memory_digest</code> for the killed session → sections with [eN] pointers; drill down one pointer → the exact source event rows that ground the claim.</p></li>
+    </ol>
+
+    <div class="note"><strong>Caveats.</strong> Real-model embedding tests SIGTRAP under <code>bun test</code> teardown (onnxruntime-node) — always run them targeted with the env flag, never in a flagged full-suite run. The memory corpus is fresh (per the 2026-07-22 fresh-start ruling), so consolidation and hybrid-recall quality get more meaningful as the corpus grows. Kimi Code and opencode join the conformance matrix with issue #63.</div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap">
+    <p>HiveMemory architecture &amp; operations · 2026-07-22 · Design authority: <code>planning/2026-07-22-hivememory-epic-rework.md</code> (§8 implementation record) · Board: epic #119</p>
+  </div>
+</footer>
+
+</body>
+</html>
