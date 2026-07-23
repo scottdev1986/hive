@@ -208,6 +208,19 @@ pub fn build(b: *std.Build) void {
     terminal_adapter_module.addIncludePath(ghostty.path("include"));
     terminal_adapter_module.addIncludePath(b.path("../include"));
 
+    const neutral_contract_module = b.createModule(.{
+        .root_source_file = b.path("src/neutral_contract.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    neutral_contract_module.addImport("pty_host", pty_host_module);
+    const neutral_runtime_module = b.createModule(.{
+        .root_source_file = b.path("src/neutral_runtime.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    neutral_runtime_module.addImport("neutral_contract", neutral_contract_module);
     const neutral_host_module = b.createModule(.{
         .root_source_file = b.path("src/neutral_host.zig"),
         .target = target,
@@ -216,6 +229,8 @@ pub fn build(b: *std.Build) void {
     });
     neutral_host_module.addImport("pty_host", pty_host_module);
     neutral_host_module.addImport("process_inspector", process_inspector_module);
+    neutral_host_module.addImport("neutral_contract", neutral_contract_module);
+    neutral_host_module.addImport("neutral_runtime", neutral_runtime_module);
     _ = addTest(b, test_step, neutral_host_module);
     const neutral_host_golden_module = b.createModule(.{
         .root_source_file = b.path("test/neutral-host-golden.zig"),
