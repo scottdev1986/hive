@@ -34,6 +34,7 @@ import {
 import { runEmbeddingsInstall } from "./cli/embeddings";
 import { runInitCli } from "./cli/init";
 import { memorySelfTestCli } from "./cli/memory-self-test";
+import { memoryLiveSelfTestCli } from "./cli/memory-self-test-live";
 import { memoryConsolidateCli } from "./cli/memory-consolidate";
 import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting } from "./cli/routing";
@@ -774,8 +775,20 @@ export function createProgram(): Command {
       "Golden-canary recall probe: plants canary memories in a throwaway " +
         "fixture and proves search, read-back, dedup, and delete-guard work",
     )
-    .action(async () => {
-      process.exitCode = await memorySelfTestCli();
+    .option(
+      "--live",
+      "also probe the RUNNING daemon over MCP — reported embedding state, " +
+        "write projections, paraphrase recall, FTS round-trip — so a " +
+        "degraded deployed binary fails instead of hiding behind the fixture",
+    )
+    .action(async (options: { live?: boolean }) => {
+      const fixtureCode = await memorySelfTestCli();
+      if (options.live !== true) {
+        process.exitCode = fixtureCode;
+        return;
+      }
+      const liveCode = await memoryLiveSelfTestCli();
+      process.exitCode = fixtureCode === 0 && liveCode === 0 ? 0 : 1;
     });
 
   memory.command("consolidate")
