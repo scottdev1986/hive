@@ -278,8 +278,11 @@ note this: vendor X rejects empty arrays     <span class="c">→ wiki observatio
 document this: checkpoint format decisions   <span class="c">→ curated article scaffolded [unverified], confirmation delivered</span></code></pre>
 
     <h3 style="font-size:18px;margin:26px 0 8px">CLI</h3>
-    <pre><code>hive memory self-test                          <span class="c"># golden-canary probe — the one-command health proof</span>
-HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 hive memory self-test   <span class="c"># + real-model semantic assertions</span>
+    <pre><code>hive memory self-test                          <span class="c"># golden-canary probe (in-process fixtures)</span>
+hive memory self-test --live                   <span class="c"># + prove the RUNNING deployed daemon over MCP</span>
+hive memory self-test --strict                 <span class="c"># any SKIP becomes a FAIL — the CI form</span>
+HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 hive memory self-test --strict   <span class="c"># CI: real model, zero skips</span>
+hive embeddings install                        <span class="c"># provision the embedding runtime (~/.hive/tools/embeddings), probe-verified</span>
 hive memory consolidate                        <span class="c"># report duplicate/near-duplicate pairs (read-only)</span>
 hive memory consolidate --apply                <span class="c"># supersede ≥0.95 identicals (older into newer, raw kept)</span>
 hive memory search "quota" [--scope repo] [--limit 5]
@@ -324,8 +327,10 @@ bun scripts/memory-embedding-bench.ts          <span class="c"># RSS/latency flo
     <p class="lede">Three tiers of proof: <span class="pill test">test</span> automated suite (run <code>bun test</code>), <span class="pill cmd">cmd</span> one command against fixtures or the live daemon, <span class="pill manual">manual</span> a live scenario. The suite is the CI gate; the commands are for convincing yourself on a real machine.</p>
     <table>
       <tr><th>Element</th><th>Proof</th><th>What success looks like</th></tr>
-      <tr><td>Whole system</td><td><span class="pill cmd">cmd</span> <code>hive memory self-test</code></td><td>6 PASS lines (recall@5 30/30, read-back, negative-control, dedup L1/L2, delete-guard), exit 0; +2 SKIP without model</td></tr>
-      <tr><td>Semantic recall</td><td><span class="pill cmd">cmd</span> <code>HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 hive memory self-test</code></td><td>8 PASS — paraphrase canary found with zero token overlap; consolidation pair bucketed</td></tr>
+      <tr><td>Whole system (fixtures)</td><td><span class="pill cmd">cmd</span> <code>hive memory self-test</code></td><td>6 PASS lines (recall@5 30/30, read-back, negative-control, dedup L1/L2, delete-guard), exit 0; +2 SKIP without model</td></tr>
+      <tr><td>Deployed daemon</td><td><span class="pill cmd">cmd</span> <code>hive memory self-test --live</code></td><td>10 <code>[live]</code> PASS lines against the RUNNING daemon: reported embedding state, write projections <code>indexed</code>, paraphrase recall with <code>semantic: hybrid</code>, FTS round-trip, cleanup. A degraded daemon FAILs naming the state</td></tr>
+      <tr><td>Degradation visibility</td><td><span class="pill cmd">cmd</span> <code>hive_status</code> + <code>~/.hive/logs/daemon.log</code></td><td>Status shows <code>memory.embeddings</code> (state, vector counts, runtimeDir); write responses carry <code>embedding: indexed|queued|unavailable:&lt;state&gt;</code>; degraded recall envelopes say <code>semantic: degraded:&lt;state&gt;</code> with an unclamplable ⚠ line; daemon warnings persist to the log file (5 MB rollover)</td></tr>
+      <tr><td>Semantic recall</td><td><span class="pill cmd">cmd</span> <code>HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 hive memory self-test --strict</code> <em>(the CI form — release.yml runs it on every push to main with a cached model)</em></td><td>8 PASS, zero SKIP — paraphrase canary found with zero token overlap; consolidation pair bucketed. Strict mode turns any SKIP into a FAIL, so an embedding regression cannot ship green</td></tr>
       <tr><td>Probe can fail</td><td><span class="pill test">test</span> <code>test/memory-self-test.test.ts</code></td><td>Sabotaged fixture (5 canaries deleted) → recall@5/read-back FAIL, 25/30</td></tr>
       <tr><td>Wiki write/read/search</td><td><span class="pill test">test</span> <code>src/daemon/memory-mcp.test.ts</code></td><td>Full round-trip through the real MCP path</td></tr>
       <tr><td>Dedup L1 (exact)</td><td><span class="pill manual">manual</span> write same title twice</td><td>Second write rejected, error names existing id + update instructions</td></tr>
@@ -351,7 +356,7 @@ bun scripts/memory-embedding-bench.ts          <span class="c"># RSS/latency flo
 
     <h3 style="font-size:20px;margin:34px 0 14px">The 10-minute end-to-end proof (live, manual)</h3>
     <ol class="proof">
-      <li><h3>Health</h3><p><code>hive memory self-test</code> → all PASS. This alone proves the store, search, read-back, dedup, and delete-guard on throwaway fixtures.</p></li>
+      <li><h3>Health</h3><p><code>hive memory self-test --live</code> → fixture PASS lines plus all <code>[live]</code> PASS lines. This proves the store, search, read-back, dedup, delete-guard — and that the <em>running daemon</em> really has working embeddings, not just the in-process fixtures.</p></li>
       <li><h3>Seed a lesson</h3><p><code>hive memory write "Vendor X quota resets at midnight UTC" --scope repo --topic quota --body "…" --source human --evidence "…" --status verified --supersedes ""</code></p></li>
       <li><h3>Prove summoned recall at spawn</h3><p>Spawn an agent with task "reconcile the quota tables" → its first prompt's memory index ranks the quota article near the top (brief-match), above newer unrelated articles.</p></li>
       <li><h3>Prove the wake delta</h3><p>While that agent is idle, write another memory, then <code>hive_send</code> it any message → the delivery carries the 🧠 delta block naming your new article. Send a second message → no block (high-water advanced).</p></li>
@@ -363,7 +368,7 @@ bun scripts/memory-embedding-bench.ts          <span class="c"># RSS/latency flo
       <li><h3>Prove digests &amp; drill-down</h3><p><code>memory_digest</code> for the killed session → sections with [eN] pointers; drill down one pointer → the exact source event rows that ground the claim.</p></li>
     </ol>
 
-    <div class="note"><strong>Caveats.</strong> Real-model embedding tests SIGTRAP under <code>bun test</code> teardown (onnxruntime-node) — always run them targeted with the env flag, never in a flagged full-suite run. The memory corpus is fresh (per the 2026-07-22 fresh-start ruling), so consolidation and hybrid-recall quality get more meaningful as the corpus grows. Kimi Code and opencode join the conformance matrix with issue #63.</div>
+    <div class="note"><strong>Caveats.</strong> The deployed single-file binary cannot carry onnxruntime — run <code>hive embeddings install</code> once per machine (probe-verified) so the daemon resolves the external runtime from <code>~/.hive/tools/embeddings/</code>; until then it degrades to keyword-only with a labeled state visible in <code>hive_status</code>. Real-model embedding tests SIGTRAP under <code>bun test</code> teardown (onnxruntime-node) — always run them targeted with the env flag, never in a flagged full-suite run. The memory corpus is fresh (per the 2026-07-22 fresh-start ruling), so consolidation and hybrid-recall quality get more meaningful as the corpus grows. Kimi Code and opencode join the conformance matrix with issue #63.</div>
   </div>
 </section>
 
