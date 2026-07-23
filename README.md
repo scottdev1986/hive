@@ -72,7 +72,8 @@ older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
 | `hive autonomy [sandboxed\|dangerous]` | Read or change writer-agent autonomy |
 | `hive routing ...` | Read and edit provider, model, effort, selection, and fallback-chain policy |
 | `hive quota` | Show provider capacity, reservations, provenance, and reset times |
-| `hive memory ...` | Search, read, write, delete, or reindex durable memory articles |
+| `hive memory ...` | Search, read, write, delete, reindex, self-test, or consolidate durable memory |
+| `hive embeddings install` | Install the local semantic-memory embedding runtime |
 | `hive graphify enable\|disable\|status` | Manage the optional local code graph for this repository |
 | `hive update [version]` | Install the latest or an exact release |
 | `hive update check\|status\|rollback\|skip` | Check, inspect, roll back, or skip an offered release |
@@ -102,6 +103,31 @@ For acceptance isolation outside `~/.hive`, set a test-owned `HIVE_HOME` directl
 Writer agents default to `sandboxed`: vendor permission controls remain active and risky operations enter Hive's approval path. `hive autonomy dangerous` removes those prompts for future spawns and resumes; it is equivalent to granting the underlying agent CLI broad access, so use it deliberately. queen (the orchestrator) remains read-only in either mode.
 
 Routing is explicit policy, not a compiled model ranking. The Model Control Center and `hive routing` keep provider consent, model consent, effort, automatic selection, exact selection, and ordered fallback chains as separate values. Hive uses provider quota readings when available and prints `unknown` when a meter cannot be read; it does not turn missing telemetry into zero.
+
+## Memory
+
+Hive remembers. Agents do not start blank: project knowledge, session history, and hard-won lessons persist across sessions and are shared by every agent on the project — Claude Code, Codex, and Grok today, with Kimi Code and opencode joining when their adapters land.
+
+Memory has three layers. The curated wiki holds verified project knowledge as Markdown under `.hive/memory` (gitignored automatically by `hive init`). The episodic store keeps a per-project typed history with time-travel semantics — a contradiction stamps a fact invalid rather than deleting it — under `~/.hive/projects/`. Pitfalls are mistakes harvested from failed sessions, verified, and then warned to every future agent.
+
+Recall is summoned, never left to agent goodwill. Every agent is briefed with a ranked memory index at spawn — pitfalls matching the assignment first — and receives a bounded delta of what changed when it wakes. queen or the operator can summon memory explicitly with message triggers the daemon executes: `recall: <question>` searches and injects the results, `note this: <fact>` records an observation, and `document this: <topic>` scaffolds a curated article.
+
+Semantic (meaning-based) recall runs locally on a bundled bge-small model (~360 MB RSS warm) and ships with Hive itself: it is installed and updated automatically, not optional. If the machine is offline at install time, recall is keyword-only until `hive embeddings install` succeeds.
+
+```sh
+hive memory search "quota"                 # full-text search compiled articles
+hive memory read repo <id>                 # print one article
+hive memory write "Title" --scope repo …   # record an observation (--help lists the required fields)
+hive memory delete repo <id>               # reference-checked delete
+hive memory reindex                        # rebuild the search index after manual edits
+hive memory self-test [--live] [--strict]  # golden-canary health proof
+hive memory consolidate [--apply]          # report, then merge, duplicate memories
+hive embeddings install                    # provision the embedding runtime
+```
+
+Memory behavior is tuned under `[memory]` and `[memory.retention]` in `~/.hive/config.toml`: the wake-delta budget defaults to 300 tokens, episodic events stay hot for 30 days, and verified articles demote to stale after 90 days.
+
+Isolation is structural: each project's memory is scoped by the daemon's own identity, and no agent reads a sibling project. Promotion to global memory is explicit, human-approved, and redaction-checked.
 
 ## Optional configuration
 
