@@ -176,6 +176,12 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const checkpoint_format_module = b.createModule(.{
+        .root_source_file = b.path("src/checkpoint_format.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    checkpoint_format_module.addImport("session_protocol_generated", generated);
     const terminal_state_module = b.createModule(.{
         .root_source_file = b.path("src/terminal_state.zig"),
         .target = target,
@@ -184,6 +190,7 @@ pub fn build(b: *std.Build) void {
     });
     terminal_state_module.addImport("session_protocol_generated", generated);
     terminal_state_module.addImport("hvtcp001_header", hvtcp001_fixture);
+    terminal_state_module.addImport("checkpoint_format", checkpoint_format_module);
     _ = addTest(b, test_step, terminal_state_module);
 
     // WP4-B Track β: PTY host leaf (integrates process_inspector for spawn snapshot).
