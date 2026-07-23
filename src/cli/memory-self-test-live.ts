@@ -13,9 +13,10 @@ import {
   searchMemory,
   writeMemory,
 } from "./mcp";
-import type {
-  MemorySelfTestReport,
-  SelfTestAssertion,
+import {
+  applyStrictMode,
+  type MemorySelfTestReport,
+  type SelfTestAssertion,
 } from "./memory-self-test";
 
 // HiveMemory defect D3: the fixture probe (memory-self-test.ts) runs
@@ -82,12 +83,19 @@ function skipped(name: string, detail: string): SelfTestAssertion {
   return { name, passed: false, skipped: true, detail };
 }
 
-function report(assertions: SelfTestAssertion[]): MemorySelfTestReport {
+// Renders the report; strict re-renders every SKIP as a FAIL (defect D4, see
+// applyStrictMode). Exported so the strict/live composition is unit-testable
+// without a running daemon.
+export function liveSelfTestReport(
+  assertions: SelfTestAssertion[],
+  strict = false,
+): MemorySelfTestReport {
+  const effective = applyStrictMode(assertions, strict);
   return {
-    ok: assertions.every((assertion) =>
+    ok: effective.every((assertion) =>
       assertion.passed || assertion.skipped === true
     ),
-    lines: assertions.map((assertion) =>
+    lines: effective.map((assertion) =>
       `[live] ${
         assertion.skipped === true ? "SKIP" : assertion.passed ? "PASS" : "FAIL"
       } ${assertion.name} — ` + assertion.detail
@@ -100,6 +108,8 @@ export interface LiveSelfTestOptions {
   settleBudgetMs?: number;
   /** Initial poll interval (doubles up to 1 s). */
   pollIntervalMs?: number;
+  /** Defect D4: treat every SKIP as a FAIL — the CI gate form. */
+  strict?: boolean;
 }
 
 export async function runMemoryLiveSelfTest(
@@ -107,6 +117,7 @@ export async function runMemoryLiveSelfTest(
 ): Promise<MemorySelfTestReport> {
   const settleBudgetMs = options.settleBudgetMs ?? DEFAULT_SETTLE_BUDGET_MS;
   const initialPollMs = options.pollIntervalMs ?? INITIAL_POLL_MS;
+  const strict = options.strict === true;
   const nonce = randomBytes(4).toString("hex");
   const articleId = `self-test-live-${nonce}`;
   const articleTitle = `${ARTICLE_TITLE_BASE} (self-test ${nonce})`;
@@ -115,14 +126,14 @@ export async function runMemoryLiveSelfTest(
   // command uses. No daemon is an honest failure, never a green run.
   const port = readDaemonPort();
   if (port === null || port <= 0 || port > 65_535) {
-    return report([{
+    return liveSelfTestReport([{
       name: "daemon-discovery",
       passed: false,
       detail:
         "no live daemon found (no daemon.port under HIVE_HOME) — start one " +
         "with `hive claude` or `hive codex`; the fixture probe alone cannot " +
         "see a degraded deployed daemon",
-    }]);
+    }], strict);
   }
 
   let embeddings: MemoryEmbeddingsStatus | null = null;
@@ -130,7 +141,7 @@ export async function runMemoryLiveSelfTest(
     embeddings = await fetchMemoryEmbeddingsStatus(port);
     return `live daemon on 127.0.0.1:${port} answers hive_status with the operator credential`;
   });
-  if (!discovery.passed) return report([discovery]);
+  if (!discovery.passed) return liveSelfTestReport([discovery], strict);
   const status = embeddings as unknown as MemoryEmbeddingsStatus;
   const disabled = status.state === "disabled";
 
@@ -364,7 +375,7 @@ export async function runMemoryLiveSelfTest(
     );
   });
 
-  return report([
+  return liveSelfTestReport([
     discovery,
     reportedState,
     articleProjection,
@@ -375,7 +386,7 @@ export async function runMemoryLiveSelfTest(
     noteReadBack,
     digestRead,
     cleanup,
-  ]);
+  ], strict);
 }
 
 export async function memoryLiveSelfTestCli(

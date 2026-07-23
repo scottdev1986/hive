@@ -773,7 +773,8 @@ export function createProgram(): Command {
   memory.command("self-test")
     .description(
       "Golden-canary recall probe: plants canary memories in a throwaway " +
-        "fixture and proves search, read-back, dedup, and delete-guard work",
+        "fixture and proves search, read-back, dedup, and delete-guard work " +
+        "(with --strict, any skipped assertion fails — the CI gate form)",
     )
     .option(
       "--live",
@@ -781,13 +782,21 @@ export function createProgram(): Command {
         "write projections, paraphrase recall, FTS round-trip — so a " +
         "degraded deployed binary fails instead of hiding behind the fixture",
     )
-    .action(async (options: { live?: boolean }) => {
-      const fixtureCode = await memorySelfTestCli();
+    .option(
+      "--strict",
+      "treat every SKIP as a FAIL (exit nonzero) — a skipped assertion " +
+        "never ran, so a strict green run proves the semantic leg actually " +
+        "executed; pair with " +
+        "HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 in CI",
+    )
+    .action(async (options: { live?: boolean; strict?: boolean }) => {
+      const strict = options.strict === true;
+      const fixtureCode = await memorySelfTestCli({ strict });
       if (options.live !== true) {
         process.exitCode = fixtureCode;
         return;
       }
-      const liveCode = await memoryLiveSelfTestCli();
+      const liveCode = await memoryLiveSelfTestCli({ strict });
       process.exitCode = fixtureCode === 0 && liveCode === 0 ? 0 : 1;
     });
 

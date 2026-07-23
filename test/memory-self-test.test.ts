@@ -6,7 +6,9 @@ import {
   memorySelfTestCli,
   plantMemorySelfTestFixture,
   probeMemorySelfTest,
+  runMemorySelfTest,
 } from "../src/cli/memory-self-test";
+import { liveSelfTestReport } from "../src/cli/memory-self-test-live";
 import {
   MemoryEmbeddingService,
   type MemoryEmbedder,
@@ -119,6 +121,76 @@ describe("hive memory self-test", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  test("--strict turns skipped semantic assertions into FAIL (defect D4)", async () => {
+    // No embedder (env var unset, no service): the semantic assertions skip.
+    // Strict mode is the CI gate — a skip means the assertion never ran, so
+    // it must fail the run instead of passing green behind a SKIP line.
+    const report = await runMemorySelfTest({ strict: true });
+    expect(report.ok).toBe(false);
+    expect(report.lines).toContain(
+      "FAIL semantic-recall — skipped in strict mode (embeddings unavailable)",
+    );
+    expect(report.lines).toContain(
+      "FAIL consolidation-dry-run — skipped in strict mode (embeddings unavailable)",
+    );
+    // The six provable assertions still pass; only the skips flip to FAIL.
+    expect(
+      report.lines.filter((line) => line.startsWith("PASS ")),
+    ).toHaveLength(6);
+    expect(
+      report.lines.filter((line) => line.startsWith("FAIL ")),
+    ).toHaveLength(2);
+    expect(report.lines.some((line) => line.startsWith("SKIP "))).toBe(false);
+  });
+
+  test("--strict passes when an embedder is available (nothing left to skip)", async () => {
+    const report = await runMemorySelfTest({
+      service: mockService(),
+      strict: true,
+    });
+    expect(report.ok).toBe(true);
+    expect(report.lines).toHaveLength(8);
+    for (const line of report.lines) {
+      expect(line.startsWith("PASS ")).toBe(true);
+    }
+  });
+
+  test("default (non-strict) run keeps SKIP a pass-with-note", async () => {
+    const report = await runMemorySelfTest();
+    expect(report.ok).toBe(true);
+    expect(
+      report.lines.filter((line) => line.startsWith("SKIP ")),
+    ).toHaveLength(2);
+    expect(report.lines.some((line) => line.startsWith("FAIL "))).toBe(false);
+  });
+
+  test("--strict composes with --live: a skipped live assertion fails", () => {
+    const skippedRun = [
+      { name: "reported-state", passed: true, detail: "state=ready" },
+      {
+        name: "semantic-recall",
+        passed: false,
+        skipped: true,
+        detail: "(disabled in config)",
+      },
+    ];
+    const strictReport = liveSelfTestReport(skippedRun, true);
+    expect(strictReport.ok).toBe(false);
+    expect(strictReport.lines).toContain(
+      "[live] FAIL semantic-recall — skipped in strict mode ((disabled in config))",
+    );
+    expect(strictReport.lines[0]).toBe(
+      "[live] PASS reported-state — state=ready",
+    );
+
+    // The same assertions without strict keep the honest SKIP, pass-with-note.
+    const defaultReport = liveSelfTestReport(skippedRun);
+    expect(defaultReport.ok).toBe(true);
+    expect(defaultReport.lines).toContain(
+      "[live] SKIP semantic-recall — (disabled in config)",
+    );
   });
 
   test("an injected unavailable service also yields SKIP, not failure", async () => {

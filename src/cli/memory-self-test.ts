@@ -39,6 +39,13 @@ import type {
 // embedder (HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 or an injected service) and
 // SKIP otherwise: SKIP is not failure, because the exit code may only
 // reflect what was provable in the environment the probe ran in.
+//
+// Defect D4: that honesty made the semantic leg opt-in for CI too — a green
+// default run says nothing about embeddings. `--strict` is the gate form:
+// every SKIP is re-rendered as a FAIL (exit nonzero), so a strict green run
+// proves the semantic assertions genuinely executed. CI provisions the model
+// and runs strict; developer machines without the model keep the default
+// pass-with-note behavior.
 
 interface Canary {
   id: string;
@@ -194,7 +201,8 @@ const CONSOLIDATION_PAIR = [
 // (downloads/caches it under the real Hive models dir). Unset — the default
 // for CI and `bun test` — the semantic assertions SKIP honestly instead of
 // loading onnxruntime into a context that cannot host it (the live-model
-// proof lives in test/memory-embedding-live.test.ts).
+// proof lives in test/memory-embedding-live.test.ts). CI pairs this with
+// --strict so a skip there is a failure, not a silent gap (defect D4).
 export const MEMORY_SELF_TEST_EMBEDDINGS_ENV = "HIVE_MEMORY_SELF_TEST_EMBEDDINGS";
 
 function canaryWriteInput(canary: Canary): MemoryWriteInput {
@@ -559,14 +567,36 @@ export interface MemorySelfTestReport {
   lines: string[];
 }
 
+// Defect D4: strict mode is the CI gate. A SKIP means the assertion never
+// ran, so a green run with skips says nothing about the semantic leg —
+// strict re-renders every skip as a failure (the line keeps the skip reason
+// so the log says WHY it could not run). The default stays pass-with-note
+// for developer machines without the model.
+export function applyStrictMode(
+  assertions: SelfTestAssertion[],
+  strict: boolean,
+): SelfTestAssertion[] {
+  if (!strict) return assertions;
+  return assertions.map((assertion) =>
+    assertion.skipped === true
+      ? {
+        name: assertion.name,
+        passed: false,
+        detail: `skipped in strict mode (${assertion.detail})`,
+      }
+      : assertion
+  );
+}
+
 // Full standalone run: throwaway HIVE_HOME + repo root, plant, probe, clean
 // up. Safe to run in any checkout — nothing outside the temp dir is touched.
 // Without an explicit `options.service`, the semantic assertions get the
 // real local model only when HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 (its cache
 // dir is captured BEFORE the HIVE_HOME redirect so the model cache is
 // reused, not re-downloaded into the throwaway home); otherwise they SKIP.
+// `options.strict` re-renders every SKIP as a FAIL (defect D4).
 export async function runMemorySelfTest(
-  options: { service?: MemoryEmbeddingService } = {},
+  options: { service?: MemoryEmbeddingService; strict?: boolean } = {},
 ): Promise<MemorySelfTestReport> {
   const base = await mkdtemp(join(tmpdir(), "hive-memory-self-test-"));
   const previousHome = process.env.HIVE_HOME;
@@ -581,9 +611,12 @@ export async function runMemorySelfTest(
   try {
     const repoRoot = join(base, "repo");
     await plantMemorySelfTestFixture(repoRoot);
-    const assertions = await probeMemorySelfTest(
-      repoRoot,
-      service === undefined ? {} : { service },
+    const assertions = applyStrictMode(
+      await probeMemorySelfTest(
+        repoRoot,
+        service === undefined ? {} : { service },
+      ),
+      options.strict === true,
     );
     return {
       ok: assertions.every((assertion) =>
@@ -602,8 +635,10 @@ export async function runMemorySelfTest(
   }
 }
 
-export async function memorySelfTestCli(): Promise<number> {
-  const report = await runMemorySelfTest();
+export async function memorySelfTestCli(
+  options: { strict?: boolean } = {},
+): Promise<number> {
+  const report = await runMemorySelfTest(options);
   for (const line of report.lines) console.log(line);
   const passed = report.lines.filter((line) => line.startsWith("PASS ")).length;
   const skipped = report.lines.filter((line) => line.startsWith("SKIP "));

@@ -58,6 +58,32 @@ jobs:
       - name: Test
         run: bun test
 
+      # Defect D4: the memory self-test's semantic assertions SKIP unless a
+      # real embedder is present, so the default probe above is no gate on the
+      # semantic leg. This step is the gate: --strict turns any SKIP into a
+      # FAIL, and HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 loads the real local
+      # model (in-process from node_modules — plain `bun` exits cleanly where
+      # `bun test` would hit the onnxruntime teardown SIGTRAP). A failed model
+      # download or load is therefore red, not silently skipped.
+      - name: Cache the embedding model (~90 MB, downloaded once)
+        uses: actions/cache@v4
+        with:
+          path: ${{ runner.temp }}/hive-home/models
+          key: memory-embeddings-model-bge-small-en-v1.5
+
+      - name: Memory self-test (strict, real embeddings)
+        env:
+          # runMemorySelfTest captures the models dir from HIVE_HOME before
+          # redirecting it to a throwaway fixture home, so the download lands
+          # here and rides the cache above. fastembed's cache mkdir is not
+          # recursive, so HIVE_HOME itself must exist first.
+          HIVE_HOME: ${{ runner.temp }}/hive-home
+          HIVE_MEMORY_SELF_TEST_EMBEDDINGS: "1"
+        run: |
+          set -euo pipefail
+          mkdir -p "$HIVE_HOME"
+          bun run src/cli.ts memory self-test --strict
+
       # The regression suite for the Workspace field-test failures: the real
       # CLI as a subprocess against a real daemon, real sqlite, and a real
       # private tmux server. It self-skips without HIVE_E2E=1, so this step is
