@@ -81,7 +81,7 @@ export class GraphifyService {
    * first so startup never waits on graph extraction. */
   async start(): Promise<void> {
     if (!existsSync(graphifyMcpBin())) {
-      this.lastError = "required runtime not installed — run `hive graphify enable`";
+      this.lastError = "runtime not installed — run `hive graphify enable`";
       this.log(`graphify: ${this.lastError}`);
       return;
     }

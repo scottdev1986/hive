@@ -159,7 +159,7 @@ profiling cache it rebuilt are gone, so the `--refresh` split described here no 
 exists. Original entry preserved below as historical record.*
 
 Plain `hive init` starts the daemon. `hive init --refresh` forces the outgoing
-cache rebuild while otherwise running init (skills, optional memory, Graphify,
+cache rebuild while otherwise running init (skills, memory, Graphify,
 stamp), then exits without starting the daemon (`src/cli.ts` skips `runStart`
 when `options.refresh === true`). README quick-start prose and the commands
 table state that split explicitly.
@@ -221,7 +221,7 @@ Compiled the release acceptance procedure from the production builder, native in
 layout, public Workspace entry points, instance lifecycle, provider drivers, Graphify,
 and composer-lease implementation. The gate now requires three visible concurrent
 Workspace processes, every orchestrator-to-agent combination, separate GUI text and
-submit events, known structured status, enabled-Graphify queries, cross-instance and
+submit events, known structured status, Graphify queries, cross-instance and
 draft isolation, no-op repository proof, a fresh final build, and complete cleanup.
 It explicitly rejects private launch helpers, copied repositories, headless smoke as
 acceptance, provider-secret/keychain handling, and evidence spanning two builds.

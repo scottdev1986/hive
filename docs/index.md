@@ -29,12 +29,12 @@ Vendor wire behavior. Most of this was bought with measured prompts and cannot b
 
 ## graphify
 
-The required local code knowledge graph, and how it is shipped.
+The local code knowledge graph Hive uses, and how it is shipped.
 
 | Article | Summary | Updated |
 | --- | --- | --- |
 | [Graphify integration](graphify/integration.md) | Init always provisions Graphify; graph context remains a hint, never an authority, and no Hive operation may block on it. | 2026-07-23 |
-| [Graphify bundling](graphify/bundling.md) | Shipping required Graphify as a frozen self-contained bundle Hive builds, signs, and hash-verifies — no uv, Python, or PyPI on a user's machine. | 2026-07-23 |
+| [Graphify bundling](graphify/bundling.md) | How Hive builds, signs, hash-verifies, and ships its self-contained Graphify toolchain — no uv, Python, or PyPI on a user's machine. | 2026-07-23 |
 
 ## daemon
 

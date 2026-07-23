@@ -58,7 +58,7 @@ Deleting a doc that cites `SPEC.md` *lowers* SPEC.md's inbound count. A doc corp
 
 - When no `AGENTS.md` exists, **offer** to scaffold a starter one — opt-in, never blind. Codex caps the AGENTS.md chain at **32 KiB and truncates silently**, so Hive never appends to a human's existing instructions (`scaffoldAgentsMd` in `src/cli/init.ts`). The starter is generic — placeholder Commands/Stack sections a human fills in — plus the discovered primary design doc; Hive invents no build command it did not read.
 - Seed a small set of narrative memory articles with `source: "init"` and a `verified` date — derived and re-derivable, distinct from the earned facts an agent learns.
-- Provision the required Graphify runtime and build its local code graph.
+- Provision Graphify and build the local code graph Hive uses for structural context.
 
 It never ends by asking for another command: anything Hive can finish itself, it finishes there (seeded facts are indexed on the spot, not left with a note to go reindex them).
 

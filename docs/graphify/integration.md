@@ -5,19 +5,19 @@ Source: Hive source tree, 2026-07-23
 
 ## Summary
 
-Graphify is required Hive infrastructure. Every `hive init` installs or verifies the pinned standalone runtime and builds a queryable, code-only graph; there is no prompt, disable command, init flag, or persisted enablement decision. Two rules still override every other consideration: **graph context is a hint, never an authority**, and **no Hive operation may block on graphify**.
+Hive uses Graphify as its local code-structure tool. Every `hive init` installs or verifies the pinned standalone runtime and builds a queryable, code-only graph. Agents receive a targeted graph brief at spawn and Graphify tools for deeper structural queries. Two rules shape the integration: **graph context is a hint, never an authority**, and **no Hive operation may block on Graphify**.
 
 ## The degradation contract
 
 Upstream's own published QA accuracy is **45–76%**. That single number is the load-bearing fact of the whole integration: it means a graph answer is a lead, not a truth, and it means graphify can never sit in a path whose failure would be a Hive failure.
 
-So unavailable (offline init, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: the agent runs without graph context, its brief says so in one line, `hive graphify status` reports the cause, and no spawn or landing fails. `hive graphify enable` is the explicit repair command; it does not record a preference. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
+So unavailable (offline init, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: the agent runs without graph context, its brief says so in one line, `hive graphify status` reports the cause, and no spawn or landing fails. `hive graphify enable` completes or refreshes the graph. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
 
 **There is deliberately no land-time enforcement** — no "did you consult the graph" gate. It would be unverifiable in exactly the way Hive's protocol warns about (an MCP call proves an act, not that the answer informed anything), and it would put a 45–76%-accurate oracle in the landing path for no measurable gain.
 
 ## Ignore hygiene
 
-Required infrastructure has repository-wide generated paths, so tracked `.gitignore` is the correct contract. `hive init` appends exactly `.hive/memory/`, `.hive/worktrees/`, `graphify-out/`, and `.graphifyignore`. It never writes the parent `.hive/` entry: `.hive/skills/` is user-authored project knowledge intended for version control, and ignoring the parent also caused the 2026-07-20 worktree-deletion incident.
+Hive's repository-wide generated paths belong in the tracked `.gitignore`. `hive init` appends exactly `.hive/memory/`, `.hive/worktrees/`, `graphify-out/`, and `.graphifyignore`. It never writes the parent `.hive/` entry: `.hive/skills/` is user-authored project knowledge intended for version control, and ignoring the parent also caused the 2026-07-20 worktree-deletion incident.
 
 The command-boundary test proves all four entries with `git check-ignore --no-index` on fresh probe names. Plain `check-ignore` consults the index and can lie for tracked files.
 

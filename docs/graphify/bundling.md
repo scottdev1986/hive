@@ -5,11 +5,11 @@ Source: Hive source tree, 2026-07-23
 
 ## Summary
 
-Hive ships Graphify as required product infrastructure through a frozen, self-contained bundle it builds, signs, and publishes itself — no uv, no Python, no PyPI on a user's machine. `hive init` fetches it from a Hive-owned release tag and refuses bytes whose SHA-256 does not match the constant compiled into the Hive binary.
+Hive uses Graphify to build the local code graph agents consult for repository structure, symbols, and relationships. Hive packages Graphify as a frozen, self-contained bundle it builds, signs, and publishes itself — no uv, Python, or PyPI on a user's machine. `hive init` fetches the bundle from a Hive-owned release tag and refuses bytes whose SHA-256 does not match the constant compiled into the Hive binary.
 
 ## Why a bundle at all
 
-The design it replaced installed from PyPI through `uv pip install --require-hashes` into a Hive-owned venv. Hashes made the fetch trustworthy, but three costs stood: it required a third-party toolchain on every user machine ("graphify broke because my Python is weird" was a standing support surface), it fetched from an origin Hive does not control, and it dented the single-binary promise.
+Graphify's upstream Python closure spans native parsers and platform-specific packages. Hive freezes that closure itself so repository setup has one Hive-owned origin, one reviewed dependency lock, and one signed artifact per platform.
 
 The bundle closes all three at once: **one origin** (Hive's own releases — the same trust as `hive update`), **one verification** (a hash over the exact published bytes, embedded in a binary the user already trusted), **zero toolchain**. The whole Python question now exists only on Hive's build machines.
 
@@ -61,13 +61,9 @@ Signing is defense in depth here, not a launch gate: the `hive` binary downloads
 
 ## Distribution shape
 
-**Rejected: embedding the bundle in the Hive binary** (the pattern that is right for kilobyte-scale shipped skills). Even embedding only the matching platform's artifact grows every Hive binary **~40%**, and Hive releases often while the Graphify pin deliberately moves rarely, so every `hive update` would re-download ~25 MB of unchanged bytes. The separate required artifact preserves the standalone user experience without welding the two release cadences together.
+Hive publishes per-platform artifacts on a dedicated, Hive-owned release tag, versioned independently of Hive (`graphify-v0.9.12-hive.1`; the suffix counts Hive rebuilds of the same upstream pin). The Hive binary embeds the tag, asset name, and SHA-256 for each platform. Keeping the ~25 MB bundle separate lets Hive and Graphify move on their own release cadences without making every `hive update` download unchanged Graphify bytes.
 
-**Chosen: per-platform artifacts on a dedicated, Hive-owned release tag**, versioned independently of Hive (`graphify-v0.9.12-hive.1` — the suffix counts Hive's own rebuilds of the same upstream pin, e.g. a spec fix or a re-sign with no upstream bump). The Hive binary embeds three constants per platform: tag, asset name, sha256.
-
-The variant worth naming: **attaching the artifacts to each Hive release** instead. Simpler — no second tag to manage — but it re-uploads ~52 MB of unchanged assets on every Hive release and welds the two cadences back together at the publishing layer. The dedicated tag costs one extra `gh release create` per bump and decouples exactly the thing the whole design exists to decouple.
-
-The download happens during every `hive init`; there is no consent branch because Graphify is part of Hive. Offline or failed download leaves an honest degraded state and the same `hive graphify enable` provisioning path is the repair command. The Hive release workflow verifies every required registry asset exists before publishing, so a release cannot knowingly ship a dead dependency.
+`hive init` downloads the matching artifact and builds the repository graph. If setup is offline or interrupted, Hive reports the degraded graph state and `hive graphify enable` completes the same provisioning path. The Hive release workflow verifies every registry asset before publishing.
 
 ## Linux facts (for when the matrix grows)
 
@@ -78,11 +74,11 @@ Hive ships two darwin slices today and `install.sh` refuses non-Darwin machines 
 
 ## Honest risks
 
-- **Hive owns the whole runtime now.** Every graphify crash on a user machine is Hive's artifact misbehaving, with no vendor toolchain to point at, and fixing one means shipping new artifacts. Contained by the degradation rule (a broken bundle collapses to "graphless, loudly noted"), but the escape hatch of "wait for an upstream binary distribution" is spent — Hive *is* the upstream binary distribution.
+- **Hive owns the whole runtime.** Every Graphify crash on a user machine is Hive's artifact misbehaving, and fixing one means shipping new artifacts. The degradation rule contains the failure: a broken bundle becomes an honestly reported graphless state while the rest of Hive continues.
 - **Emulation-tested is not bare-metal-tested.** darwin-x64 was measured under Rosetta 2; both arm64 slices ran native. Converting it to measured is one CI job on `macos-15-intel`.
 - **The bundle is fat and mostly not graphify.** Verilog's grammar alone is 18 MB; numpy 7 MB; the MCP auth stack drags in cryptography for a feature Hive never uses. All of it is upstream's dependency graph, pinned as-is on purpose — trimming forks Hive's closure away from the one upstream tests. Not worth it at 25 MB; revisit if the artifact ever triples.
 - **The bump review now covers three pins, not one** (graphify, the interpreter, PyInstaller). PyInstaller is version-pinned but not hash-pinned.
 
 ## See Also
 
-- [Integration](integration.md) — required provisioning, degradation, and how the bundle's binaries are used
+- [Integration](integration.md) — provisioning, degradation, and how Hive uses the bundle's binaries

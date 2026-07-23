@@ -11,7 +11,7 @@ const pin = graphifyPin();
 for (const platform of REQUIRED_PLATFORMS) {
   const artifact = GRAPHIFY_ARTIFACTS[platform];
   if (artifact === null || artifact === undefined) {
-    throw new Error(`required Graphify artifact is missing for ${platform}`);
+    throw new Error(`Graphify artifact is missing for ${platform}`);
   }
   if (!artifact.tag.includes(`graphify-v${pin}-`) || !artifact.asset.includes(pin)) {
     throw new Error(
@@ -26,7 +26,7 @@ for (const platform of REQUIRED_PLATFORMS) {
   });
   if (!response.ok) {
     throw new Error(
-      `required Graphify artifact is unavailable for ${platform}: HTTP ${response.status} ${url}`,
+      `Graphify artifact is unavailable for ${platform}: HTTP ${response.status} ${url}`,
     );
   }
   console.log(`${platform}: ${artifact.asset}`);

@@ -286,7 +286,7 @@ describe("buildGraph", () => {
 });
 
 describe("buildGraphBrief", () => {
-  test("required graph not built yet: one loud line, no command run", async () => {
+  test("graph not built yet: one loud line, no command run", async () => {
     const root = await gitRepo();
     const calls: string[][] = [];
     const brief = await buildGraphBrief(root, "fix the bug", async (argv) => {

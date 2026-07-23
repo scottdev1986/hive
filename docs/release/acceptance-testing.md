@@ -122,7 +122,7 @@ It must already be a Git repository and must contain no application code. This s
 
 First launch one development Hive from the actual Hive source repository and record its project identity, instance home/id, daemon PID/port, tmux socket, and Workspace PID. Keep it running as the run-owned foreign-project sentinel. Then, from the lifecycle repository, use the temporary binary by absolute path and prove these contracts:
 
-1. `"$HIVE" init` completes repository setup and the required Graphify build but creates no daemon lock, PID file, port file, tmux server/session, or Workspace process. The foreign-project sentinel remains byte-for-byte the same process and continues answering its handshake.
+1. `"$HIVE" init` completes repository setup and builds the Graphify code graph but creates no daemon lock, PID file, port file, tmux server/session, or Workspace process. The foreign-project sentinel remains byte-for-byte the same process and continues answering its handshake.
 2. The first bare absolute-path `"$HIVE"` creates a new `$HOME/.hive/instances/run-<uuid>` home, daemon, ephemeral port, database, tmux namespace, instance id, and Workspace process for `hive-test-project`.
 3. A second bare absolute-path `"$HIVE"` from the same directory creates another distinct set of all seven resources. It must not focus, reuse, replace, or stop the first test-repository instance.
 4. Immediately after each bare launch, run `HOME="$LIFECYCLE_HOME" "$HIVE" instances`, capture that launch's absolute home as `FIRST_HOME` or `SECOND_HOME`, and record its instance id, port, lock, and process tuple. Then use `HIVE_HOME="$FIRST_HOME" "$HIVE" status` and `HIVE_HOME="$SECOND_HOME" "$HIVE" status`; query each handshake only on its recorded port and require its recorded instance id. These bound checks prove both test-repository instances remain distinct and that the foreign-project sentinel retains the same tuple throughout. Uninstall is deliberately not an acceptance command.
@@ -143,7 +143,7 @@ TMUX_SOCKET="hive-$INSTANCE_ID"
 
 After launch, record the ephemeral port from `$HIVE_HOME/daemon.port`, the PID/start time/instance id from `$HIVE_HOME/daemon.lock` and process readback, the `hive-<agent>-$INSTANCE_ID` and `hive-orchestrator-$INSTANCE_ID` sessions, app-server sockets, Workspace PID/window, and every test evidence-log path. Hive launches the app with `open -n` and the daemon with ignored stdout/stderr; it defines no persistent service label or daemon log path, so record the service label as `none` and keep harness evidence logs below `TEST_ROOT` rather than inventing product settings.
 
-From the actual repository directory, initialize each instance. Graphify is required and has no enable flag. Init must leave that instance without daemon lifecycle files; the following public launch is what creates them:
+From the actual repository directory, initialize each instance. Init builds the Graphify graph and must leave that instance without daemon lifecycle files; the following public launch is what creates them:
 
 ```sh
 HIVE_HOME="$I_HOME" TMPDIR="$I_TMP" HIVE_PORT=0 \
@@ -154,7 +154,7 @@ HIVE_HOME="$I_HOME" TMPDIR="$I_TMP" \
   HIVE_DISABLE_UPDATES=1 HIVE_NO_UPDATE_CHECK=1 "$HIVE" graphify status
 ```
 
-Graphify passes only when each instance reports the pinned local bundle healthy, its graph current, and a real root/agent `graph_locate` call returns a relevant repository result. A missing graph that correctly degrades is valid runtime behavior but does not satisfy this required-Graphify acceptance criterion.
+Graphify passes only when each instance reports the pinned local bundle healthy, its graph current, and a real root/agent `graph_locate` call returns a relevant repository result. A missing graph that correctly degrades is valid runtime behavior but does not satisfy this Graphify acceptance criterion.
 
 Launch all three visible workspaces concurrently from the same shell working directory:
 
@@ -301,5 +301,5 @@ The exact attestation is permitted only when the runner actually enforced and pr
 - [Multiple concurrent instances](../daemon/multi-instance.md) — the instance boundary and shared-machine exceptions
 - [Orchestrator status](../daemon/orchestrator-status.md) — measured root state and honest unknown
 - [Workspace blueprint](../workspace/blueprint.md) — visible product surface and composer leases
-- [Graphify integration](../graphify/integration.md) — required graph behavior and degradation rules
+- [Graphify integration](../graphify/integration.md) — graph behavior and degradation rules
 - [Versioning and release](versioning-and-release.md) — native artifact and activation contract

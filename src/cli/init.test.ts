@@ -528,7 +528,7 @@ describe("readSeedFactsFile", () => {
   });
 });
 
-describe("required Graphify in init", () => {
+describe("Graphify in init", () => {
   interface Probe {
     deps: typeof defaultInitDeps;
     provisioned: string[];
@@ -553,7 +553,7 @@ describe("required Graphify in init", () => {
     return result.messages[result.messages.length - 1] as string;
   };
 
-  test("every init provisions Graphify without a prompt or flag", async () => {
+  test("every init provisions Graphify as part of repository setup", async () => {
     const root = await tsRepo();
     try {
       const { deps, provisioned } = probe();
@@ -610,7 +610,7 @@ describe("the embeddings step in init", () => {
     };
   }
 
-  test("always installs (no opt-out) and reports the outcome", async () => {
+  test("installs the embedding runtime and reports the outcome", async () => {
     const root = await tsRepo();
     try {
       const { deps, calls } = embeddingsProbe(async () => ({
@@ -649,11 +649,7 @@ describe("the embeddings step in init", () => {
     }
   });
 
-  test("there is no skip path: init always attempts the install", async () => {
-    // Embeddings are a required component (user ruling 2026-07-22) — the
-    // --no-embeddings opt-out is gone and InitOptions has no flag left to
-    // smuggle one through, so any init runs the install. The removed CLI flag
-    // itself is asserted in src/cli/entry.test.ts.
+  test("each init verifies the embedding runtime", async () => {
     const root = await tsRepo();
     try {
       const { deps, calls } = embeddingsProbe(async () => ({

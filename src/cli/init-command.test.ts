@@ -51,7 +51,7 @@ async function installFakeGraphify(home: string): Promise<void> {
 }
 
 describe("hive init command boundary", () => {
-  test("initializes required Graphify and repository state without starting a daemon", async () => {
+  test("builds Hive's Graphify graph and repository state without starting a daemon", async () => {
     const repo = await mkdtemp(join(tmpdir(), "hive-init-command-repo-"));
     const home = await mkdtemp(join(tmpdir(), "hive-init-command-home-"));
     roots.push(repo, home);

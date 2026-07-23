@@ -110,7 +110,7 @@ export interface StartedSession {
 
 /** Copy repo setup into a new runtime before switching HIVE_HOME. Init writes
  * under the default home; the fresh daemon needs the same project UUID and
- * Graphify decision without sharing mutable runtime state with another
+ * Graphify project state without sharing mutable runtime state with another
  * instance. */
 async function prepareFreshWorkspaceInstance(cwd: string): Promise<void> {
   if (!isDefaultHiveHome()) return;

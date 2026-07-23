@@ -618,12 +618,12 @@ export function createProgram(): Command {
   const graphify = program
     .command("graphify")
     .description(
-      "Required local code knowledge graph for agents (docs/graphify/integration.md)",
+      "Build and inspect Hive's local code knowledge graph (docs/graphify/integration.md)",
     );
 
   graphify.command("enable")
     .description(
-      "Repair Graphify: hash-verified install into ~/.hive/tools, then a code-only local graph build",
+      "Install or refresh Graphify, then build the local code graph",
     )
     .action(async () => {
       process.exitCode = await runGraphifyEnable(projectRootOrCwd());

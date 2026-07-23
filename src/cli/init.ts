@@ -17,14 +17,12 @@
  * printed. Seeded facts are indexed immediately when a daemon is available;
  * otherwise the report names the startup rebuild instead of claiming the index
  * already changed.
- * Graphify is required and provisioned on every run. A failed download or
- * build is reported as a loud deferred state; it never turns into an opt-out.
- * The embedding runtime is different: it is a required component of memory,
- * not a decision (user ruling 2026-07-22), so init always installs it —
- * probe-verified, machine-level under ~/.hive/tools/embeddings — with no
- * opt-out. A machine with no network gets a loud deferred-state error —
- * semantic memory is unavailable, recall stays FTS-only, and the fix is
- * `hive embeddings install` — and init still completes.
+ * Graphify is provisioned on every run to build Hive's local code graph. A
+ * failed download or build is reported as a loud deferred state. Init also
+ * installs the probe-verified embedding runtime under
+ * ~/.hive/tools/embeddings. On a machine without network access, semantic
+ * memory stays on full-text search until `hive embeddings install` completes,
+ * and the rest of init still finishes.
  * Model-authored narrative is supplied by the caller — hive's models are its
  * agents, not this CLI — and written through the same seeding path.
  */
@@ -119,7 +117,7 @@ export interface InitDeps {
     tool: SkillTool,
     options: { force?: boolean; coresidentVendors?: readonly SkillTool[] },
   ) => Promise<SkillInstallReport>;
-  /** Install or re-prove the required Graphify runtime and build this repo. */
+  /** Install or re-prove Graphify and build this repository's code graph. */
   provisionGraphify: (root: string) => Promise<number>;
   /** Record that init completed here, so bare `hive` stops offering to init. */
   writeInitStamp: (root: string) => Promise<void>;
@@ -423,15 +421,13 @@ export async function runInit(
     }
   }
 
-  // 5. Embedding runtime. A required memory component, not a human decision:
-  //    init always installs it, and there is no flag to skip it. A failure —
-  //    no network, no checkout, a refused download — is a loud deferred-state
-  //    error naming `hive embeddings install`, and init continues; recall
-  //    stays FTS-only until the install succeeds.
+  // 5. Embedding runtime. Init installs the local semantic-memory tool. When
+  //    setup cannot complete, the message names `hive embeddings install`
+  //    and recall stays on full-text search in the meantime.
   messages.push(await provisionEmbeddings(deps));
 
-  // 6. Graphify. Required, with no prompt or opt-out. A failed install or build
-  //    is a loud deferred state so offline init still completes honestly.
+  // 6. Graphify builds the local code graph Hive uses for structural context.
+  //    A failed install or build is loud so offline init completes honestly.
   const graphifyExit = await deps.provisionGraphify(cwd);
   messages.push(
     graphifyExit === 0

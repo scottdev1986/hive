@@ -1,4 +1,4 @@
-/** `hive graphify enable|status` — repair and inspect Hive's required local
+/** `hive graphify enable|status` — build and inspect Hive's local
  * code graph. Normal provisioning happens automatically inside `hive init`;
  * `enable` remains as the direct recovery command after an offline or failed
  * initialization. */
@@ -35,7 +35,7 @@ export async function runGraphifyEnable(
   root: string,
   deps: GraphifyCliDeps = defaultGraphifyCliDeps,
 ): Promise<number> {
-  deps.log(`Provisioning required Graphify for ${root}:`);
+  deps.log(`Preparing Graphify for ${root}:`);
   deps.log(
     `  fetching Hive's graphify bundle (graphifyy==${graphifyPin()}, sha256-verified against this Hive build) into ${graphifyToolsDir()},`,
   );
@@ -54,7 +54,7 @@ export async function runGraphifyEnable(
   const built = await buildGraph(root, deps.run);
   if (!built.ok) {
     deps.log(
-      `Graph build failed — Graphify remains required and the daemon will retry on the next landing: ${built.reason}`,
+      `Graph build failed — the daemon will retry on the next landing: ${built.reason}`,
     );
     return 1;
   }
@@ -69,7 +69,6 @@ export async function runGraphifyStatus(
 ): Promise<number> {
   const installed = existsSync(graphifyBin());
   deps.log(`pin: graphifyy==${graphifyPin()}`);
-  deps.log("required: yes");
   deps.log(`installed: ${installed ? graphifyToolsDir() : "no"}`);
   try {
     const graph = await stat(graphJsonPath(root));

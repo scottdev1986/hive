@@ -1,5 +1,5 @@
 /**
- * Graphify: Hive's required repo-local code knowledge graph.
+ * Graphify: Hive's repo-local code knowledge graph.
  * Design: docs/graphify/integration.md — the hard rules live
  * there and are enforced here:
  *
@@ -129,7 +129,7 @@ export const runCommand: CommandRunner = async (argv, options) => {
 export function noArtifactMessage(platformKey: string): string {
   return (
     `this Hive build ships no graphify bundle for ${platformKey}; ` +
-    "Graphify is unavailable until a Hive build with that required bundle is installed."
+    "Graphify is unavailable until a Hive build with that platform bundle is installed."
   );
 }
 

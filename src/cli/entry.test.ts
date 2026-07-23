@@ -40,24 +40,22 @@ describe("removed flags", () => {
     ).rejects.toThrow(/unknown option.*--refresh/);
   });
 
-  test("hive init rejects the removed --no-embeddings flag", async () => {
-    // Embeddings are a required component (user ruling 2026-07-22): init
-    // always provisions the runtime and there is no opt-out. Same
-    // `exitOverride()` trick as --refresh above.
-    await expect(
-      createProgram().parseAsync(["node", "hive", "init", "--no-embeddings"]),
-    ).rejects.toThrow(/unknown option.*--no-embeddings/);
+});
+
+describe("repository setup command surfaces", () => {
+  test("hive init exposes its repository preparation controls", () => {
+    const init = createProgram().commands.find((command) =>
+      command.name() === "init"
+    );
+
+    expect(init?.options.map((option) => option.long)).toEqual([
+      "--scaffold-agents",
+      "--seed-facts",
+      "--force",
+    ]);
   });
 
-  test("hive init rejects the retired Graphify choice flags", async () => {
-    for (const flag of ["--graphify", "--no-graphify"]) {
-      await expect(
-        createProgram().parseAsync(["node", "hive", "init", flag]),
-      ).rejects.toThrow(new RegExp(`unknown option.*${flag}`));
-    }
-  });
-
-  test("hive graphify has no disable command", () => {
+  test("hive graphify exposes build and status commands", () => {
     const graphify = createProgram().commands.find((command) =>
       command.name() === "graphify"
     );

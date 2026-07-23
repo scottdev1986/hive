@@ -8,6 +8,8 @@
 
 Hive coordinates Claude Code, Codex, and Grok agents in a native macOS Workspace. A read-only orchestrator named queen delegates work; each worker gets an isolated git worktree, branch, capability, and tmux session. Talk to queen for decomposition and routing; workers report back to queen. The architectural role remains orchestrator, and addressing the root as `orchestrator` is still understood. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
 
+Hive combines Graphify's local code graph with local semantic embeddings to give agents useful context before they act. Graphify maps repository structure, symbols, and relationships; embeddings retrieve relevant project memory by meaning. Hive builds and maintains both as part of repository setup, and both operate locally.
+
 Hive is currently a 0.0.x project. Its command and storage contracts may change between releases.
 
 ## Workspace
@@ -49,7 +51,7 @@ hive init
 hive
 ```
 
-`hive init` installs the agent skills used by the CLIs present on the machine, provisions the required local Graphify code graph, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. If Graphify provisioning is interrupted or offline, init reports the degraded state and `hive graphify enable` repairs it.
+`hive init` prepares the repository for Hive: it installs agent skills, builds the local Graphify code graph, seeds supplied narrative memory, and installs the local embedding runtime. It does not start a daemon or open a Workspace, and it is safe to run again. If Graphify setup is interrupted or offline, init reports the degraded state and `hive graphify enable` completes it.
 
 Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -63,7 +65,7 @@ older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
 | Command | Purpose |
 | --- | --- |
 | `hive` | Create a fresh isolated instance and open its Workspace |
-| `hive init` | Install agent skills, provision Graphify, seed optional memory, and run repo-only setup without starting a daemon |
+| `hive init` | Prepare agent skills, Graphify, memory, and embeddings without starting a daemon |
 | `hive claude`, `hive codex`, `hive grok` | Open the Workspace with queen on that read-only orchestrator vendor |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
@@ -74,7 +76,7 @@ older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
 | `hive quota` | Show provider capacity, reservations, provenance, and reset times |
 | `hive memory ...` | Search, read, write, delete, reindex, self-test, or consolidate durable memory |
 | `hive embeddings install` | Install the local semantic-memory embedding runtime |
-| `hive graphify enable\|status` | Repair or inspect the required local code graph |
+| `hive graphify enable\|status` | Build, refresh, or inspect Hive's local code graph |
 | `hive update [version]` | Install the latest or an exact release |
 | `hive update check\|status\|rollback\|skip` | Check, inspect, roll back, or skip an offered release |
 | `hive uninstall [--repo]` | Remove the machine installation, or only this repository's Hive state |
@@ -112,7 +114,7 @@ Memory has three layers. The curated wiki holds verified project knowledge as Ma
 
 Recall is summoned, never left to agent goodwill. Every agent is briefed with a ranked memory index at spawn — pitfalls matching the assignment first — and receives a bounded delta of what changed when it wakes. queen or the operator can summon memory explicitly with message triggers the daemon executes: `recall: <question>` searches and injects the results, `note this: <fact>` records an observation, and `document this: <topic>` scaffolds a curated article.
 
-Semantic (meaning-based) recall runs locally on a bundled bge-small model (~360 MB RSS warm) and ships with Hive itself: it is installed and updated automatically, not optional. If the machine is offline at install time, recall is keyword-only until `hive embeddings install` succeeds.
+Semantic (meaning-based) recall runs locally on Hive's bundled bge-small model (~360 MB RSS warm). `hive init` installs the embedding runtime and Hive updates it with the product. If the machine is offline during setup, recall uses keyword search until `hive embeddings install` completes the local runtime.
 
 ```sh
 hive memory search "quota"                 # full-text search compiled articles

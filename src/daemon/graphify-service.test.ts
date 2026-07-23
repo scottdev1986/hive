@@ -50,7 +50,7 @@ async function installFakeMcp(ignoreSigterm = false): Promise<void> {
 }
 
 describe("GraphifyService", () => {
-  test("required runtime missing: loud lastError, no throw, no url", async () => {
+  test("runtime missing: loud lastError, no throw, no url", async () => {
     const root = await gitRepo();
     const logged: string[] = [];
     const service = new GraphifyService(
