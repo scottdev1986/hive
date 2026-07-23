@@ -128,7 +128,7 @@
 
                   <!-- WIKI -->
                   <div class="settings-page" data-mem-panel="wiki">
-                    <div class="settings-page-head"><div><h2>Wiki</h2><p>The curated layer: compiled articles in repo and global scope. Full CRUD and search through the daemon — the write contract (self-supersede revisions, evidence, dedup) is enforced below the UI, not by it.</p></div><button class="light-button">New article…</button></div>
+                    <div class="settings-page-head"><div><h2>Wiki</h2><p>The curated layer: compiled articles in repo and global scope. Full CRUD and search through the daemon — the write contract (self-supersede revisions, evidence, dedup) is enforced below the UI, not by it.</p></div><button class="light-button" data-open-memory-page="article-new">New article…</button></div>
                     <div class="settings-card"><div class="selection-row"><strong>Search memories</strong><span class="fake-select">FTS + semantic ▾</span><span class="fake-select">repo + global ▾</span><span class="fake-select">all statuses ▾</span></div>
                       <p>The same search surface agents use: <code>memory_search</code> keyword hits beside <code>memory_recall</code> hybrid matches — a paraphrase finds what exact terms miss. Results carry verification labels; unverified and stale are styled as claims to reconcile, never as truth.</p>
                       <div class="chain-row"><span class="chain-rank">repo/quota</span><span class="chain-model"><strong>quota-resets-at-midnight-utc</strong><span>updated 2026-07-20 · evidence attached</span></span><span class="effort-pill">verified</span><span class="row-actions"><button class="light-button" data-open-memory-page="article-view">view</button> <button class="light-button" data-open-memory-page="article-edit">edit</button></span></div>
@@ -156,6 +156,22 @@
                       <div class="fact-row"><span>Status</span><strong>verified · re-stamped 2026-07-22</strong></div>
                     </div>
                     <div class="settings-card"><h3>Save preview</h3><p><code>memory_write(id: quota-resets-at-midnight-utc, supersedes: [quota-resets-at-midnight-utc])</code> → index, log, and embedding update in one daemon call. The dedup gate still applies: a title colliding with a different article is refused with a pointer. <button class="light-button">Save revision</button></p></div>
+                  </div>
+
+                  <!-- ARTICLE NEW -->
+                  <div class="settings-page" data-mem-panel="article-new">
+                    <div class="settings-page-head"><div><h2>New article</h2><p>Create a compiled memory article. The form is the write contract rendered: the daemon enforces every rule below, and a raw observation is recorded alongside the article automatically.</p></div><button class="light-button" data-open-memory-page="wiki">← Wiki</button></div>
+                    <div class="settings-card">
+                      <div class="fact-row"><span>Scope</span><strong>repo · global — repo is the default; global holds cross-project lessons</strong></div>
+                      <div class="fact-row"><span>Topic</span><strong>kebab-case · one level · e.g. quota, routing, terminal</strong></div>
+                      <div class="fact-row"><span>Kind</span><strong>article · pitfall — pitfalls lead spawn injection once verified</strong></div>
+                      <div class="fact-row"><span>Title</span><strong>required · the id slugs from it (quota-reset-timing)</strong></div>
+                      <div class="fact-row"><span>Body</span><strong>Markdown · current truth first; durable, non-derivable, load-bearing</strong></div>
+                      <div class="fact-row"><span>Evidence</span><strong>required · what was measured or supplied, and where</strong></div>
+                      <div class="fact-row"><span>Status</span><strong>verified (needs verified date) · unverified · stale · conflicted</strong></div>
+                      <div class="fact-row"><span>Tags</span><strong>optional · comma-separated</strong></div>
+                    </div>
+                    <div class="settings-card"><h3>Save preview</h3><p><code>memory_write(scope, topic, title, body, evidence, status, source: human, supersedes: [])</code> → raw observation + article + index + log + embedding in one daemon call. Empty supersedes is correct only when the article corrects nothing. The dedup gate applies on create too: a normalized-title collision with an existing article is refused with a pointer to update that id instead, and near-duplicates come back as <code>similarCandidates</code> for review. <button class="light-button">Create article</button></p></div>
                   </div>
 
                   <!-- PITFALLS -->
@@ -345,8 +361,8 @@
     });
 
     const showMemPage = (page) => {
-      // article-view and article-edit are sub-screens of the Wiki section.
-      const navPage = page === 'article-view' || page === 'article-edit' ? 'wiki' : page;
+      // article-view, article-edit, and article-new are sub-screens of the Wiki section.
+      const navPage = page === 'article-view' || page === 'article-edit' || page === 'article-new' ? 'wiki' : page;
       app.querySelectorAll('[data-mem-page]').forEach((item) => item.classList.toggle('active', item.dataset.memPage === navPage));
       app.querySelectorAll('[data-mem-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.memPanel === page));
     };
