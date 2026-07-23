@@ -116,6 +116,14 @@ pub fn build(b: *std.Build) void {
     protocol_api_module.addImport("session_protocol_generated", generated);
     _ = addTest(b, test_step, protocol_api_module);
 
+    const daemon_identity_module = b.createModule(.{
+        .root_source_file = b.path("src/daemon_identity.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    daemon_identity_module.addImport("session_protocol_generated", generated);
+    daemon_identity_module.addImport("protocol", test_module);
     const broker_module = b.createModule(.{
         .root_source_file = b.path("src/broker.zig"),
         .target = target,
@@ -125,6 +133,7 @@ pub fn build(b: *std.Build) void {
     broker_module.addImport("session_protocol_generated", generated);
     broker_module.addImport("protocol", test_module);
     broker_module.addImport("boot_envelope", boot_envelope_module);
+    broker_module.addImport("daemon_identity", daemon_identity_module);
     broker_module.addImport("wall_clock", wall_clock_module);
     const broker_tests = addTest(b, test_step, broker_module);
     broker_tests.linkLibrary(ghostty_vt);
