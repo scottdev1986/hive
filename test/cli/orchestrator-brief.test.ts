@@ -1,0 +1,657 @@
+import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { existsSync, readFileSync, realpathSync } from "node:fs";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { dirname, join } from "node:path";
+import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "../../src/cli/orchestrator-brief";
+import {
+  hiveTmuxSocketName,
+  hiveInstanceSuffix,
+  orchestratorTmuxSession,
+} from "../../src/daemon/tmux-sessions";
+import { rootSessionIdForLaunchRequest } from "../../src/daemon/orchestrator-host";
+import type { OrchestratorSessiondControl } from "../../src/cli/orchestrator-sessiond";
+import {
+  buildOrchestratorCommand,
+  buildOrchestratorLaunchCommand,
+  buildCodexRootAuthorityCommand,
+  CODEX_ROOT_TOKEN_SUBJECT,
+  launchLegacyTmuxOrchestrator,
+  launchOrchestrator,
+  orchestratorConfigRoot,
+  prepareFreshOrchestratorSession,
+  prepareOrchestratorConfig,
+  provisionCodexRootToken,
+} from "../../src/cli/orchestrator";
+
+const noExistingRoot = {
+  hasSession: async () => false,
+  listClientTtys: async () => [],
+  killSession: async () => {},
+};
+
+// Every test runs under a disposable HIVE_HOME. launchOrchestrator writes the
+// root's runtime config into orchestratorConfigRoot(), which resolves from the
+// REAL hive home when nothing overrides it — so every full-suite run was
+// stamping the live orchestrator's settings.local.json and .mcp.json with this
+// file's fixture port (4317), re-pointing production delivery config at a dead
+// port (found 2026-07-12 while tracing the root's severed turn-start events).
+let hiveHomeSandbox: string;
+let previousHiveHome: string | undefined;
+beforeEach(async () => {
+  previousHiveHome = process.env.HIVE_HOME;
+  hiveHomeSandbox = await mkdtemp(join(tmpdir(), "hive-home-"));
+  process.env.HIVE_HOME = hiveHomeSandbox;
+});
+afterEach(async () => {
+  if (previousHiveHome === undefined) delete process.env.HIVE_HOME;
+  else process.env.HIVE_HOME = previousHiveHome;
+  await rm(hiveHomeSandbox, { recursive: true, force: true });
+});
+
+describe("orchestrator brief", () => {
+  test("builds an authority-first Codex root command without enabling it yet", () => {
+    const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
+    expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
+    expect(command[2]).toContain("codex app-server --listen 'unix:///tmp/hive-root.sock'");
+    expect(command[2]).toContain(
+      "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen'",
+    );
+  });
+  test("is non-empty and names every orchestration MCP tool", () => {
+    expect(ORCHESTRATOR_BRIEF.trim().length).toBeGreaterThan(100);
+    for (const tool of [
+      "hive_spawn",
+      "hive_status",
+      "hive_quota_status",
+      "hive_token_usage",
+      "hive_send",
+      "hive_inbox",
+      "hive_read_message",
+      "hive_approvals",
+      "hive_approve",
+    ]) {
+      expect(ORCHESTRATOR_BRIEF).toContain(tool);
+    }
+    expect(ORCHESTRATOR_BRIEF).toContain("never write");
+    expect(ORCHESTRATOR_BRIEF).toContain("integrator");
+    expect(ORCHESTRATOR_BRIEF).toContain("every chain link refused");
+    expect(ORCHESTRATOR_BRIEF).toContain("Never pick models from your own knowledge");
+  });
+
+  test("makes agents land their own work and reserves integrators for escalations", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("land their own finished work");
+    expect(ORCHESTRATOR_BRIEF).toContain("fast-forward merge");
+    expect(ORCHESTRATOR_BRIEF).toContain("do not restate it");
+    expect(ORCHESTRATOR_BRIEF).toContain("stranded work");
+    expect(ORCHESTRATOR_BRIEF).toContain("never merge or edit files yourself");
+  });
+
+  test("states the standing idle-reap lifecycle rule: Hive closes merged-and-idle agents itself, and never a holder of unmerged work", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("Hive closes agents itself");
+    expect(ORCHESTRATOR_BRIEF).toContain("do not need to hive_kill a finished agent yourself");
+    expect(ORCHESTRATOR_BRIEF).toContain("Reaped");
+    expect(ORCHESTRATOR_BRIEF).toContain("is not done no matter how long it has been idle");
+  });
+
+  test("builds a read-only Claude command with the orchestrator brief", () => {
+    const claude = buildOrchestratorCommand("claude", 4317);
+    expect(claude[claude.indexOf("--append-system-prompt") + 1]).toEqual(
+      ORCHESTRATOR_BRIEF,
+    );
+    expect(buildOrchestratorCommand("codex", 4317)).toEqual([
+      "codex",
+      "-c",
+      "features.apps=false",
+      "-c",
+      'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
+      "-c",
+      'mcp_servers.hive.default_tools_approval_mode="approve"',
+      "--sandbox",
+      "read-only",
+      ORCHESTRATOR_BRIEF,
+    ]);
+  });
+
+  test("appends a supplied memory index to the root prompt", () => {
+    const index = "Hive memory index — durable facts.\n- [repo] x (2026-06-01): note";
+    const claudeCommand = buildOrchestratorCommand("claude", 4317, index);
+    expect(claudeCommand[claudeCommand.indexOf("--append-system-prompt") + 1]).toEqual(
+      `${ORCHESTRATOR_BRIEF}\n\n${index}`,
+    );
+    const codexCommand = buildOrchestratorCommand("codex", 4317, index);
+    expect(codexCommand.at(-1)).toEqual(`${ORCHESTRATOR_BRIEF}\n\n${index}`);
+    const plainClaudeCommand = buildOrchestratorCommand("claude", 4317);
+    expect(
+      plainClaudeCommand[plainClaudeCommand.indexOf("--append-system-prompt") + 1],
+    ).toEqual(ORCHESTRATOR_BRIEF);
+  });
+
+  test("starts a fresh root in the fixed instance-scoped tmux session", () => {
+    const command = buildOrchestratorLaunchCommand("claude", 4317, "/repo");
+    expect(command.slice(0, 9)).toEqual([
+      "tmux",
+      "-L",
+      hiveTmuxSocketName(),
+      "new-session",
+      "-s",
+      orchestratorTmuxSession(),
+      "-c",
+      "/repo",
+      "claude",
+    ]);
+    expect(command).not.toContain("-A");
+    expect(command).toContain(ORCHESTRATOR_BRIEF);
+    expect(command.slice(-5)).toEqual([
+      ";", "set-option", "-g", "mouse", "on",
+    ]);
+  });
+
+  test("places a backup identity and recovery state in the new root prompt", () => {
+    const recovery = "RECOVERY MODE — BACKUP ORCHESTRATOR\n- maya | working";
+    const claude = buildOrchestratorLaunchCommand(
+      "claude",
+      4317,
+      "/repo",
+      "",
+      "",
+      "claude",
+      "",
+      recovery,
+    );
+    const prompt = claude[claude.indexOf("--append-system-prompt") + 1];
+    expect(prompt).toContain(ORCHESTRATOR_BRIEF);
+    expect(prompt).toContain(recovery);
+
+    const codex = buildOrchestratorLaunchCommand(
+      "codex",
+      4317,
+      "/repo",
+      "",
+      "",
+      "claude",
+      "",
+      recovery,
+    );
+    expect(codex[codex.indexOf(";") - 1]).toContain(recovery);
+  });
+
+  test("runs Codex root through an app-server authority and remote TUI", () => {
+    const memory = "Hive memory index — durable facts.\n- [repo] launch fact";
+    const guidance = "DESIGN.md is the primary design doc.";
+    const command = buildOrchestratorLaunchCommand(
+      "codex",
+      4317,
+      "/repo",
+      memory,
+      guidance,
+    );
+    expect(command.slice(0, 9)).toEqual([
+      "tmux", "-L", hiveTmuxSocketName(), "new-session", "-s",
+      orchestratorTmuxSession(), "-c", "/repo", "sh",
+    ]);
+    const shellCommand = command[command.indexOf(";") - 1]!;
+    expect(shellCommand).toContain("codex app-server --listen 'unix://");
+    expect(shellCommand).toContain("'codex' '--remote' 'unix://");
+    expect(shellCommand).toContain("'features.apps=false'");
+    expect(shellCommand.match(/features\.apps=false/g)).toHaveLength(2);
+    expect(shellCommand).toContain("mcp_servers.hive.url=");
+    expect(shellCommand.match(/mcp_servers\.hive\.url=/g)).toHaveLength(2);
+    expect(shellCommand).toContain(
+      "'mcp_servers.hive.default_tools_approval_mode=\"approve\"'",
+    );
+    expect(
+      shellCommand.match(/mcp_servers\.hive\.default_tools_approval_mode/g),
+    ).toHaveLength(2);
+    expect(shellCommand).toContain("'--sandbox' 'read-only'");
+    expect(shellCommand).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
+    expect(shellCommand).toContain(guidance);
+    expect(shellCommand).toContain(memory);
+    expect(command.slice(-5)).toEqual([
+      ";", "set-option", "-g", "mouse", "on",
+    ]);
+  });
+
+  test("detaches inherited Codex MCP servers from the root process", () => {
+    const command = buildOrchestratorLaunchCommand(
+      "codex",
+      4317,
+      "/repo",
+      "",
+      "",
+      "claude",
+      "",
+      "",
+      ["-c", "mcp_servers.codex_apps.enabled=false"],
+    );
+    const shellCommand = command[command.indexOf(";") - 1]!;
+    expect(shellCommand).toContain("'mcp_servers.codex_apps.enabled=false'");
+    expect(shellCommand).toContain("'mcp_servers.hive.url=");
+  });
+
+  test("Codex launch does not resolve or version-gate Claude", async () => {
+    let command: string[] = [];
+    const exitCode = await launchLegacyTmuxOrchestrator(
+      "codex",
+      4317,
+      process.cwd(),
+      (spawned) => {
+        command = spawned;
+        return { exited: Promise.resolve(0) };
+      },
+      async () => { throw new Error("must not inspect Claude"); },
+      () => { throw new Error("must not resolve Claude"); },
+      noExistingRoot,
+      "",
+      async () => ["codex_apps", "hive"],
+      async () => "/tmp/codex-root.cap",
+    );
+    expect(exitCode).toEqual(0);
+    expect(command[command.indexOf(";") - 1]).toContain(
+      ORCHESTRATOR_BRIEF.slice(0, 80),
+    );
+    expect(command[command.indexOf(";") - 1]).toContain(
+      "mcp_servers.codex_apps.enabled=false",
+    );
+    expect(command[command.indexOf(";") - 1]).not.toContain(
+      "mcp_servers.hive.enabled=false",
+    );
+  });
+
+  test("launches the default queen through sessiond without touching tmux", async () => {
+    const claudeTarget = join(hiveHomeSandbox, "claude-2.1.80");
+    const claudeLink = join(hiveHomeSandbox, "claude");
+    await writeFile(claudeTarget, "fixture");
+    await symlink(claudeTarget, claudeLink);
+    const resolvedClaudeTarget = realpathSync.native(claudeTarget);
+    const launches: Parameters<OrchestratorSessiondControl["start"]>[0][] = [];
+    const control: OrchestratorSessiondControl = {
+      start: async (request) => {
+        launches.push(request);
+        return {
+          requestId: request.requestId,
+          locator: {
+            schemaVersion: 1,
+            instanceId: hiveInstanceSuffix(),
+            subject: { kind: "root" },
+            sessionId: rootSessionIdForLaunchRequest(request.requestId),
+            generation: 1,
+            hostKind: "sessiond",
+            engineBuildId: "engine-fixture",
+          },
+          state: "exited",
+          exitCode: 17,
+          diagnostic: null,
+        };
+      },
+      inspect: async () => {
+        throw new Error("an exited launch must not be polled");
+      },
+    };
+    const tmuxMustNotBeTouched = {
+      hasSession: async () => {
+        throw new Error("sessiond launch must not inspect tmux");
+      },
+      listClientTtys: async () => {
+        throw new Error("sessiond launch must not inspect tmux clients");
+      },
+      killSession: async () => {
+        throw new Error("sessiond launch must not kill tmux");
+      },
+    };
+
+    const exitCode = await launchOrchestrator(
+      "claude",
+      4317,
+      process.cwd(),
+      () => {
+        throw new Error("sessiond launch must not spawn a tmux client");
+      },
+      async () => "2.1.80",
+      () => ({ path: claudeLink, version: "2.1.80" }),
+      tmuxMustNotBeTouched,
+      "recovery fixture",
+      undefined,
+      undefined,
+      { sessiondControl: control },
+    );
+
+    expect(exitCode).toBe(17);
+    expect(launches[0]).toMatchObject({
+      provider: "claude",
+      cwd: process.cwd(),
+      expectedExecutable: resolvedClaudeTarget,
+      environment: {},
+    });
+    expect(launches[0]?.argv[0]).toBe(resolvedClaudeTarget);
+    expect(launches[0]?.argv.some((argument) => argument.includes("recovery fixture")))
+      .toBe(true);
+  });
+
+  test("kills an unattached stale root before launch", async () => {
+    const killed: string[] = [];
+    await prepareFreshOrchestratorSession({
+      hasSession: async () => true,
+      listClientTtys: async () => [],
+      killSession: async (session) => { killed.push(session); },
+    });
+    expect(killed).toEqual([orchestratorTmuxSession()]);
+  });
+
+  test("refuses to replace a root with an attached client", async () => {
+    let killed = false;
+    await expect(prepareFreshOrchestratorSession({
+      hasSession: async () => true,
+      listClientTtys: async () => ["/dev/ttys003"],
+      killSession: async () => { killed = true; },
+    })).rejects.toThrow("already running");
+    expect(killed).toEqual(false);
+  });
+
+  // Hive genuinely must not close a live orchestrator out from under the user,
+  // so this message has earned the command it names — and therefore states it
+  // as a labelled one-line `Fix:` rather than burying it in prose.
+  test("names the user's remedy as a Fix: line, not as prose", async () => {
+    await expect(prepareFreshOrchestratorSession({
+      hasSession: async () => true,
+      listClientTtys: async () => ["/dev/ttys003"],
+      killSession: async () => {},
+    })).rejects.toThrow(/Fix: close it, or run `hive stop`/);
+  });
+
+  test("forbids background polling and makes status explicitly on-demand", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("never poll");
+    expect(ORCHESTRATOR_BRIEF).toContain('detail "active"');
+    expect(ORCHESTRATOR_BRIEF).toContain("only when the user explicitly");
+    expect(ORCHESTRATOR_BRIEF).toContain("Wake only");
+  });
+
+  test("makes reusing a live agent the default over respawning", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "Prefer a follow-up to a live agent over a new spawn",
+    );
+    expect(ORCHESTRATOR_BRIEF).toContain("re-reads the repo from zero");
+    // SPEC deliberately leaves the numeric threshold absent; the brief must
+    // preserve that absence instead of quietly reintroducing one.
+    expect(ORCHESTRATOR_BRIEF).toContain("SPEC decision 7");
+    expect(ORCHESTRATOR_BRIEF).toContain("no numeric contextPct threshold");
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "weigh task size against remaining room qualitatively",
+    );
+    expect(ORCHESTRATOR_BRIEF).toContain("file scopes do not collide");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("under 65");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("recycle line");
+    // An unobserved context is not an empty one. The rule has to say so, or the
+    // orchestrator reads null as room and loads work onto an agent it cannot see.
+    expect(ORCHESTRATOR_BRIEF).toContain("NOT eligible for reuse");
+    expect(ORCHESTRATOR_BRIEF).toContain("Treat null as full, not as free");
+  });
+
+  test("tells the orchestrator to cite doc sections rather than whole docs", () => {
+    expect(ORCHESTRATOR_BRIEF).toContain("file:line pointers");
+    expect(ORCHESTRATOR_BRIEF).toContain(
+      "never tell an agent to read a document whole",
+    );
+    // The rule is generic: no hive-repo-specific doc name is compiled into the
+    // brief. The actual doc names are fed from on-demand doc discovery at launch.
+    expect(ORCHESTRATOR_BRIEF).not.toContain("SPEC.md");
+    expect(ORCHESTRATOR_BRIEF).not.toContain("docs/research");
+    expect(ORCHESTRATOR_BRIEF).toContain("Cite this repo's own documents by the names listed below");
+  });
+
+  describe("orchestratorDocGuidance (doc-discovery-fed at launch)", () => {
+    test("names this repo's primary and load-bearing docs, whatever they are", () => {
+      const guidance = orchestratorDocGuidance({
+        primary: "DESIGN.md",
+        loadBearing: ["DESIGN.md", "README.md", "docs/api.md"],
+      });
+      expect(guidance).toContain("DESIGN.md is the primary design doc");
+      expect(guidance).toContain('a bare "DESIGN §6" resolves to it');
+      expect(guidance).toContain("- README.md");
+      expect(guidance).toContain("- docs/api.md");
+      // The primary is listed once (as primary), not repeated in the plain list.
+      expect(guidance.match(/DESIGN\.md/g)!.length).toBe(1);
+    });
+
+    test("a repo with no discovered docs contributes nothing", () => {
+      expect(orchestratorDocGuidance({ primary: null, loadBearing: [] })).toBe("");
+    });
+
+    test("is appended to the brief in the launched command", () => {
+      const command = buildOrchestratorCommand(
+        "claude",
+        4317,
+        "",
+        orchestratorDocGuidance({ primary: "SPEC.md", loadBearing: ["SPEC.md"] }),
+      );
+      const prompt = command[command.indexOf("--append-system-prompt") + 1];
+      expect(prompt).toContain(ORCHESTRATOR_BRIEF);
+      expect(prompt).toContain("SPEC.md is the primary design doc");
+    });
+  });
+
+  test("does not write Codex runtime config into the project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-"));
+    const codexDirectory = join(root, ".codex");
+    const existing = '[features]\ncustom = true\n';
+    try {
+      await mkdir(codexDirectory, { recursive: true });
+      await writeFile(join(codexDirectory, "config.toml"), existing);
+      await prepareOrchestratorConfig("codex", 4317, root);
+
+      expect(await readFile(join(codexDirectory, "config.toml"), "utf8"))
+        .toEqual(existing);
+      expect(existsSync(join(codexDirectory, "hive-notify.sh"))).toBe(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  describe("codex root capability token", () => {
+    test("provisions a 0600 token file in a 0700 dir and returns only the path", async () => {
+      const home = await mkdtemp(join(tmpdir(), "hive-root-token-home-"));
+      const previousHome = process.env.HIVE_HOME;
+      process.env.HIVE_HOME = home;
+      try {
+        const path = await provisionCodexRootToken(4317, async () => "tok-first");
+        expect(path).not.toBeNull();
+        expect(path).toContain(CODEX_ROOT_TOKEN_SUBJECT);
+        expect(await readFile(path!, "utf8")).toEqual("tok-first\n");
+        expect((await stat(path!)).mode & 0o777).toEqual(0o600);
+        expect((await stat(dirname(path!))).mode & 0o777).toEqual(0o700);
+
+        // A relaunch mints fresh and overwrites: one current token on disk.
+        const second = await provisionCodexRootToken(4317, async () => "tok-second");
+        expect(second).toEqual(path);
+        expect(await readFile(path!, "utf8")).toEqual("tok-second\n");
+      } finally {
+        if (previousHome === undefined) {
+          delete process.env.HIVE_HOME;
+        } else {
+          process.env.HIVE_HOME = previousHome;
+        }
+        await rm(home, { recursive: true, force: true });
+      }
+    });
+
+    test("degrades to no token when the daemon cannot mint one", async () => {
+      expect(
+        await provisionCodexRootToken(4317, async () => null, () => {
+          throw new Error("must not write a file without a token");
+        }),
+      ).toBeNull();
+    });
+
+    test("the Codex config uses the supported bearer environment indirection", () => {
+      const tokenFile = "/home/x/.hive/credentials/codex-root.cap";
+      const command = buildOrchestratorCommand(
+        "codex",
+        4317,
+        "",
+        "",
+        "claude",
+        tokenFile,
+      );
+      expect(command).toContain(
+        'mcp_servers.hive.bearer_token_env_var="HIVE_CAPABILITY_TOKEN"',
+      );
+      expect(command.join(" ")).not.toContain(tokenFile);
+      expect(command.join(" ")).not.toContain("Bearer");
+      // Without a provisioned token the flag is absent entirely.
+      expect(buildOrchestratorCommand("codex", 4317).join(" "))
+        .not.toContain("bearer_token_env_var");
+    });
+
+    test("does not create a project .codex/config.toml", async () => {
+      const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-codex-"));
+      try {
+        await prepareOrchestratorConfig("codex", 4317, root);
+        expect(existsSync(join(root, ".codex", "config.toml"))).toBe(false);
+      } finally {
+        await rm(root, { recursive: true, force: true });
+      }
+    });
+
+    test("the root launch command threads the token file through to codex", () => {
+      const command = buildOrchestratorLaunchCommand(
+        "codex",
+        4317,
+        "/repo",
+        "",
+        "",
+        "claude",
+        "/home/x/.hive/credentials/codex-root.cap",
+      );
+      const shellCommand = command[command.indexOf(";") - 1]!;
+      expect(shellCommand).toContain(
+        'export HIVE_CAPABILITY_TOKEN="$(cat \'/home/x/.hive/credentials/codex-root.cap\')"',
+      );
+      expect(shellCommand).toContain("bearer_token_env_var");
+      expect(shellCommand).not.toContain("capability_token_file");
+    });
+  });
+
+  test("keeps Claude runtime config under HIVE_HOME and never changes the project", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-"));
+    const home = await mkdtemp(join(tmpdir(), "hive-orchestrator-home-"));
+    const previousHome = process.env.HIVE_HOME;
+    const settingsPath = join(root, ".claude", "settings.local.json");
+    const mcpPath = join(root, ".mcp.json");
+    const existingSettings = '{"customSetting":true}\n';
+    const existingMcp = '{"mcpServers":{"custom":{"command":"custom"}}}\n';
+    try {
+      process.env.HIVE_HOME = home;
+      await mkdir(join(root, ".claude"), { recursive: true });
+      await writeFile(settingsPath, existingSettings);
+      await writeFile(mcpPath, existingMcp);
+
+      const exitCode = await launchLegacyTmuxOrchestrator(
+        "claude",
+        4317,
+        root,
+        () => {
+          expect(readFileSync(join(orchestratorConfigRoot(), ".claude", "settings.local.json"), "utf8")).toContain(
+            "enableAllProjectMcpServers",
+          );
+          expect(readFileSync(join(orchestratorConfigRoot(), ".mcp.json"), "utf8")).toContain(
+            "http://127.0.0.1:4317/mcp",
+          );
+          expect(readFileSync(settingsPath, "utf8")).toEqual(existingSettings);
+          expect(readFileSync(mcpPath, "utf8")).toEqual(existingMcp);
+          return { exited: Promise.resolve(17) };
+        },
+        async () => "2.1.80",
+        undefined,
+        noExistingRoot,
+      );
+
+      expect(exitCode).toEqual(17);
+      expect(await readFile(settingsPath, "utf8")).toEqual(existingSettings);
+      expect(await readFile(mcpPath, "utf8")).toEqual(existingMcp);
+    } finally {
+      if (previousHome === undefined) delete process.env.HIVE_HOME;
+      else process.env.HIVE_HOME = previousHome;
+      await rm(root, { recursive: true, force: true });
+      await rm(home, { recursive: true, force: true });
+    }
+  });
+
+  test("removes temporary Claude project config when process exit rejects", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-"));
+    const settingsPath = join(root, ".claude", "settings.local.json");
+    const mcpPath = join(root, ".mcp.json");
+    try {
+      await expect(launchLegacyTmuxOrchestrator(
+        "claude",
+        4317,
+        root,
+        () => ({ exited: Promise.reject(new Error("claude failed")) }),
+        async () => "2.1.80",
+        undefined,
+        noExistingRoot,
+      )).rejects.toThrow("claude failed");
+
+      expect(existsSync(settingsPath)).toEqual(false);
+      expect(existsSync(mcpPath)).toEqual(false);
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
+  test("refuses to launch without a working Claude CLI", async () => {
+    await expect(launchLegacyTmuxOrchestrator(
+      "claude",
+      4317,
+      process.cwd(),
+      () => {
+        throw new Error("must not spawn");
+      },
+      async () => null,
+    )).rejects.toThrow(/needs a working Claude Code CLI/);
+  });
+
+  test("launches the orchestrator with the repo's committed memory index", async () => {
+    const root = await mkdtemp(join(tmpdir(), "hive-orchestrator-memory-"));
+    const previousHome = process.env.HIVE_HOME;
+    process.env.HIVE_HOME = await mkdtemp(
+      join(tmpdir(), "hive-orchestrator-memory-home-"),
+    );
+    try {
+      await mkdir(join(root, ".hive", "memory"), { recursive: true });
+      await writeFile(
+        join(root, ".hive", "memory", "flaky-login-test.md"),
+        "---\ntitle: The login test is flaky\ndate: 2026-06-01\ntags: []\n---\n\nRace condition.\n",
+      );
+
+      let capturedCommand: string[] = [];
+      await launchLegacyTmuxOrchestrator(
+        "claude",
+        4317,
+        root,
+        (command) => {
+          capturedCommand = command;
+          return { exited: Promise.resolve(0) };
+        },
+        async () => "2.1.80",
+        undefined,
+        noExistingRoot,
+      );
+
+      const prompt = capturedCommand[
+        capturedCommand.indexOf("--append-system-prompt") + 1
+      ];
+      expect(prompt).toContain("Hive memory index");
+      expect(prompt).toContain(
+        "[repo/general] flaky-login-test (2026-06-01) [unverified]: The login test is flaky",
+      );
+      expect(prompt).toContain(ORCHESTRATOR_BRIEF);
+    } finally {
+      if (previousHome === undefined) {
+        delete process.env.HIVE_HOME;
+      } else {
+        process.env.HIVE_HOME = previousHome;
+      }
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+});

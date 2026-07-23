@@ -36,7 +36,9 @@ function lockValue(key: string): string {
     ghostty: Record<string, string>;
     zig: { version: string };
   };
-  return key === "zigVersion" ? parsed.zig.version : parsed.ghostty[key];
+  const value = key === "zigVersion" ? parsed.zig.version : parsed.ghostty[key];
+  if (value === undefined) throw new Error(`toolchain lock has no ${key}`);
+  return value;
 }
 
 function lockSha(): string {

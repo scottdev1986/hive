@@ -855,7 +855,7 @@ export const CLAUDE_NO_SUBSCRIBER_LIMITS =
 
 /**
  * The `_x.ai/billing` ACP result, as captured off the wire from grok 0.2.99
- * on 2026-07-13 (fixture `fixtures/grok-billing-supergrok.json`). The gauge is
+ * on 2026-07-13 (fixture `test/daemon/fixtures/grok-billing-supergrok.json`). The gauge is
  * `config.creditUsagePercent`. The money rails stay in the schema so parsers
  * cannot confuse them with the gauge, but they are never mapped to usedPct.
  */

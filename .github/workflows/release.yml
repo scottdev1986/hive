@@ -39,7 +39,7 @@ jobs:
           fetch-tags: true
 
       # Pinned, not floating: the release binary embeds this Bun's runtime.
-      # `src/release/contract.test.ts` ("pins the same Bun the project pins")
+      # `test/release/contract.test.ts` ("pins the same Bun the project pins")
       # fails if this drifts from package.json's `packageManager` field.
       - uses: oven-sh/setup-bun@v2
         with:
@@ -92,7 +92,7 @@ jobs:
       - name: End-to-end (real daemon + tmux)
         env:
           HIVE_E2E: "1"
-        run: bun test src/cli/e2e-real.test.ts
+        run: bun test test/cli/e2e-real.test.ts
 
       # The bump rule is a tested pure function; this step is its adapter.
       - name: Plan the release

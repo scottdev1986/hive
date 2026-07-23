@@ -9,5 +9,8 @@
     "noUncheckedIndexedAccess": true,
     "skipLibCheck": true
   },
-  "include": ["src/**/*.ts", "prototypes/**/*.ts", "native/**/*.ts"]
+  "include": ["src/**/*.ts", "test/**/*.ts", "prototypes/**/*.ts", "native/**/*.ts"],
+  // WIP freeze-contract fixture (see pending-a1.test.ts) predates typecheck
+  // coverage of test/ and is ahead of the shipped TerminalEvent type.
+  "exclude": ["test/terminal-host-freeze"]
 }

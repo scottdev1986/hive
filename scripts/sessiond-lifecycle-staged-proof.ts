@@ -10,7 +10,7 @@
  * HELLO is peer-authenticated to the daemon PID, so this proof measures
  * ownership from outside: socket presence, process tree, and crash recovery
  * (SIGKILL broker → daemon supervisor restarts it). Engine discovery is
- * covered by src/daemon/sessiond-broker.live.test.ts (in-process daemon).
+ * covered by test/daemon/sessiond-broker.live.test.ts (in-process daemon).
  */
 import {
   appendFileSync,
