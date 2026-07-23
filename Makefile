@@ -279,7 +279,7 @@ run:
 	  exit 1; \
 	fi; \
 	cd "$$proj"; \
-	env $(DEV_ENV) "$(HIVE_BIN)" init --no-graphify; \
+	env $(DEV_ENV) "$(HIVE_BIN)" init --graphify; \
 	/bin/rm -f "$(DAEMON_STARTUP_LOG)"; \
 	env $(DEV_ENV) "$(HIVE_BIN)" daemon >"$(DAEMON_STARTUP_LOG)" 2>&1 & daemon_pid=$$!; \
 	if ! bun run "$(ROOT)/scripts/verify-dev-run.ts" "$(DAEMON_STARTUP_LOG)" "$(HIVE_BIN)" "$(ROOT)" "$$daemon_pid" "$(DEV_HOME)"; then \
