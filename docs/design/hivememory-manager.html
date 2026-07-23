@@ -1,0 +1,343 @@
+<!DOCTYPE html>
+<html lang="en" class="doc-split-horizon">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="color-scheme" content="light">
+  <title>Hive Memory Manager — Product and Build Specification</title>
+  <link rel="stylesheet" href="hive-design.css">
+</head>
+<body>
+  <nav class="doc-nav" aria-label="Document navigation">
+    <div class="shell doc-nav-inner">
+      <div class="brand"><img class="brand-icon" src="../../workspace/Resources/AppIcon.iconset/icon_128x128@2x.png" alt=""><div><strong>Hive</strong><small>Memory Manager · product + build spec</small></div></div>
+      <div class="doc-links">
+        <a href="#reality">Reality</a>
+        <a href="#prototype">UI</a>
+        <a href="#features">Features</a>
+        <a href="#contracts">Contracts</a>
+      </div>
+    </div>
+  </nav>
+
+  <main>
+    <header class="shell hero">
+      <div>
+        <p class="eyebrow">Hive Workspace · Memory Manager · revision 1</p>
+        <h1>A memory system you can <span>see, judge, and tune.</span></h1>
+        <p class="hero-copy">One management surface for the HiveMemory backend that already ships on main — the curated wiki, the episodic store, the pitfall pipeline, summoned recall, and the semantic leg — plus the monitoring that proves it stays healthy. The UI renders daemon truth; it never becomes a second memory implementation.</p>
+      </div>
+      <aside class="decision-card">
+        <span class="badge">Implementation target</span>
+        <h2>A Memory menu and a Memory Manager window, inside the Split Horizon shell.</h2>
+        <p>The backend is real: eleven memory MCP tools, per-project episodic stores, deterministic digests, pitfall harvest, wake deltas, triggers, local embeddings, retention sweeps, and a golden-canary self-test. What is missing is the <em>read/management layer</em> this window needs — list projections, a daemon-side self-test record, consolidation and sweep controls, config write, metrics, and a memory audit feed. Those are named below as contract gaps, not assumed.</p>
+        <div class="assumption">This document specifies product behavior and missing contracts. It does not claim the window exists. Backend claims cite the code that landed with the HiveMemory epic (#119–#123, #71, #72).</div>
+      </aside>
+    </header>
+
+    <div class="shell truth-grid" aria-label="Implementation state legend">
+      <article class="truth-item"><span class="state-badge current">Current Hive</span><strong>Shipping backend</strong><p>Memory tools, stores, and lifecycle that exist on main today and are covered by tests.</p></article>
+      <article class="truth-item"><span class="state-badge ui">UI work</span><strong>Presentation work</strong><p>Existing backend truth the Memory Manager must render and connect.</p></article>
+      <article class="truth-item"><span class="state-badge gap">Contract gap</span><strong>New backend work</strong><p>Promised by the UI but not owned by any current tool until explicitly added — §04.</p></article>
+      <article class="truth-item"><span class="state-badge remove">Forbidden</span><strong>Not a feature, ever</strong><p>Direct file writes from the UI, silent degradation, agent-reachable delete, unverified-as-truth.</p></article>
+    </div>
+
+    <section class="doc-section" id="reality">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">01 · Reality boundary</p><h2>The window manages the daemon's memory. It never owns it.</h2></div>
+          <p>Every row in this window is a daemon projection or tool result. Every mutation rides an existing capability-gated tool. The moment the UI writes <code>.hive/memory</code> itself, the provenance model is dead.</p>
+        </div>
+        <div class="dependency-map">
+          <article class="dependency-card"><span class="state-badge current">Current Hive</span><h3>The backend the window consumes</h3><p>Landed with the HiveMemory epic (2026-07-22), full suite green:</p><ul class="dependency-list"><li>Wiki layer: raw/ + wiki/, statuses, kind: pitfall, dedup layers 1–2, reference-checked delete</li><li>Episodic store: bi-temporal facts, events, digests, vectors — per project, structurally isolated</li><li>Summoned recall: ranked spawn injection, 300-token wake deltas, queen/operator triggers</li><li>Semantic leg: local bge-small, RRF hybrid, labeled degraded states</li><li>Lifecycle: retention sweeps, stale-demotion, golden-canary self-test (fixture + <code>--live</code> + <code>--strict</code>)</li><li>Tools: search, read, write, delete, reindex, query, recall, note, digest, pitfall, promote</li></ul><a class="source-link" href="../../planning/2026-07-22-hivememory-epic-rework.md">plan §8–§11 implementation record</a></article>
+          <article class="dependency-card"><span class="state-badge gap">Contract gap</span><h3>What the window needs that nothing serves yet</h3><p>Today's tools are agent-shaped: they answer one question at a time. A management UI needs browsable projections and daemon-side verbs:</p><ul class="dependency-list"><li>List/browse projections (articles, digests, pitfalls-by-status, facts)</li><li>Daemon-executed self-test with a last-run record</li><li>Consolidation report/apply over the daemon, not only the CLI</li><li>Config read/write with validation and loud changes</li><li>Sweep trigger + sweep history</li><li>Metrics: per-class token cost, latencies, index sizes, RSS</li><li>Memory audit feed (deletes, promotions, triggers, demotions)</li><li>Recall preview (what would an agent see for this brief?)</li></ul></article>
+          <article class="dependency-card"><span class="state-badge remove">Forbidden</span><h3>Honesty rules the window must keep</h3><ul class="dependency-list"><li>No direct file access — mutations go through daemon tools with capabilities</li><li>Degraded is always visible: <code>semantic: degraded:&lt;state&gt;</code> is a banner, never a footnote</li><li>Absent vs empty is rendered distinctly on every list</li><li>Unverified is a claim to reconcile, styled as such everywhere</li><li>Delete and promote are operator-only, preview-first, audited</li><li>No fabricated counts: unknown renders as unknown</li></ul></article>
+        </div>
+        <div class="callout stop"><strong>Authority rule.</strong> The window holds no capability of its own. Read surfaces use the operator's <code>memory:read</code>; verify/write uses <code>memory:write</code>; delete, promote, and consolidation-apply require <code>memory:delete</code> (queen/operator tier) and show a destructive preview naming exactly what changes before the call is made.</div>
+        <div class="callout"><strong>Fresh-corpus honesty.</strong> The production memory corpus was reset by the fresh-start ruling (2026-07-22) and is intentionally small. Mockup numbers below are representative of a matured project; the shipped window renders the real counts, including honest zeros and explicit empty states.</div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="prototype">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">02 · Memory Manager</p><h2>One window: observe, judge, maintain, measure.</h2></div>
+          <p>Use the prototype: open the Memory menu, move through the eight pages. The content is representative; the feature ledger in §03 defines what backs each surface, and §04 names the contracts that must be built.</p>
+        </div>
+
+        <div class="prototype-frame">
+          <div class="prototype-scroll">
+            <div class="app" data-app>
+              <div class="native-menu">
+                <div class="menu-row" aria-label="Application menus">
+                  <button class="menu-trigger" data-menu="hive">Hive</button>
+                  <button class="menu-trigger" data-menu="edit">Edit</button>
+                  <button class="menu-trigger" data-menu="view">View</button>
+                  <button class="menu-trigger" data-menu="agent">Agent</button>
+                  <button class="menu-trigger" data-menu="memory">Memory</button>
+                  <button class="menu-trigger" data-menu="window">Window</button>
+                </div>
+                <div class="menu-popover" data-menu-panel="hive"><button class="menu-item"><span>About Hive Workspace</span></button><div class="menu-separator"></div><button class="menu-item"><span>Settings…</span><span class="key">⌘,</span></button><div class="menu-separator"></div><button class="menu-item"><span>Stop Hive…</span></button></div>
+                <div class="menu-popover" data-menu-panel="edit"><button class="menu-item"><span>Undo</span><span class="key">⌘Z</span></button><button class="menu-item"><span>Redo</span><span class="key">⇧⌘Z</span></button><div class="menu-separator"></div><button class="menu-item"><span>Cut</span><span class="key">⌘X</span></button><button class="menu-item"><span>Copy</span><span class="key">⌘C</span></button><button class="menu-item"><span>Paste</span><span class="key">⌘V</span></button></div>
+                <div class="menu-popover" data-menu-panel="view"><button class="menu-item"><span>Run Workspace</span></button><button class="menu-item"><span>Toggle Inspector</span><span class="key">⌥⌘I</span></button><div class="menu-separator"></div><button class="menu-item"><span>Enter Full Terminal</span><span class="key">⌃⌘F</span></button></div>
+                <div class="menu-popover" data-menu-panel="agent"><button class="menu-item"><span>Attach Live Terminal</span><span class="key">⌘↩</span></button><button class="menu-item"><span>Detach Terminal</span></button><button class="menu-item"><span>Acknowledge Status</span><span class="key">⇧⌘K</span></button><div class="menu-separator"></div><button class="menu-item"><span>Close Agent…</span><span class="key">⇧⌘W</span></button></div>
+                <div class="menu-popover" data-menu-panel="memory"><button class="menu-item" data-open-memory><span>Memory Manager</span><span class="key">⇧⌘M</span></button><div class="menu-separator"></div><button class="menu-item" data-open-memory-page="recall"><span>Recall Inspector</span></button><button class="menu-item" data-open-memory-page="overview"><span>Run Memory Self-Test</span></button><button class="menu-item" data-open-memory-page="consolidation"><span>Run Consolidation…</span></button><button class="menu-item"><span>Repair Embedding Install…</span></button><div class="menu-separator"></div><button class="menu-item" data-open-memory-page="lifecycle"><span>Memory Settings…</span></button></div>
+                <div class="menu-popover" data-menu-panel="window"><button class="menu-item"><span>Minimize</span><span class="key">⌘M</span></button><button class="menu-item"><span>Zoom</span></button></div>
+              </div>
+
+              <header class="titlebar">
+                <div class="app-brand"><img class="app-icon" src="../../workspace/Resources/AppIcon.iconset/icon_128x128@2x.png" alt=""><div><strong>Hive</strong><small>Memory Manager</small></div></div>
+                <div class="project-context" aria-label="Current project"><strong>hive</strong><span>project · ~/Projects/hive</span></div>
+                <div class="run-context"><strong>Semantic leg: ready</strong><span>bge-small-en-v1.5 · 384-dim · local</span></div>
+                <div class="top-actions"><span class="app-button warn" title="Pitfall candidates awaiting review">3 unverified</span><button class="app-button" data-open-memory-page="performance">Metrics</button></div>
+              </header>
+
+              <div class="app-route memory-route active" data-route="memory">
+                <aside class="settings-nav">
+                  <h3>Memory</h3>
+                  <p class="nav-group">Observe</p>
+                  <button class="settings-nav-button active" data-mem-page="overview"><span>◉</span><strong>Overview</strong></button>
+                  <button class="settings-nav-button" data-mem-page="wiki"><span>☰</span><strong>Wiki</strong></button>
+                  <button class="settings-nav-button" data-mem-page="pitfalls"><span>⚠</span><strong>Pitfalls</strong></button>
+                  <button class="settings-nav-button" data-mem-page="digests"><span>▤</span><strong>Digests</strong></button>
+                  <p class="nav-group">Maintain</p>
+                  <button class="settings-nav-button" data-mem-page="consolidation"><span>⧉</span><strong>Consolidation</strong></button>
+                  <button class="settings-nav-button" data-mem-page="recall"><span>⌕</span><strong>Recall Inspector</strong></button>
+                  <button class="settings-nav-button" data-mem-page="lifecycle"><span>◷</span><strong>Lifecycle</strong></button>
+                  <p class="nav-group">Measure</p>
+                  <button class="settings-nav-button" data-mem-page="performance"><span>▥</span><strong>Performance</strong></button>
+                  <div class="settings-note">Reads are daemon projections. Verify, delete, promote, and apply are capability-gated daemon mutations with previews — the window never touches <code>.hive/memory</code> itself.</div>
+                </aside>
+
+                <section class="settings-content">
+
+                  <!-- OVERVIEW -->
+                  <div class="settings-page active" data-mem-panel="overview">
+                    <div class="settings-page-head"><div><h2>Overview</h2><p>Memory health at a glance. Degradation is a banner here, never a footnote — if the semantic leg is down, this page says so first.</p></div><button class="light-button">Run self-test</button></div>
+                    <div class="settings-banner">Last self-test: <strong>PASS 8/8</strong> · 3 hours ago · fixture + live tier, semantic assertions included (strict).</div>
+                    <div class="settings-card"><div class="usage-summary">
+                      <div class="usage-metric"><strong>63</strong><span>wiki articles · 41 verified</span></div>
+                      <div class="usage-metric"><strong>2,140</strong><span>episodic events · 87 facts</span></div>
+                      <div class="usage-metric"><strong>1,284</strong><span>vectors indexed</span></div>
+                      <div class="usage-metric"><strong>12</strong><span>session digests</span></div>
+                    </div>
+                    <p>Status mix: 41 verified · 12 unverified · 7 stale · 3 conflicted · 9 pitfalls (6 verified). Counts are daemon projections; unknown renders as unknown, never zero.</p></div>
+                    <div class="settings-card"><h3>Semantic leg</h3><div class="fact-row"><span>State</span><strong class="good">ready</strong></div><div class="fact-row"><span>Provider / model</span><strong>local · bge-small-en-v1.5</strong></div><div class="fact-row"><span>Runtime</span><strong>~/.hive/tools/embeddings</strong></div><div class="fact-row"><span>Warm RSS</span><strong>~360 MB</strong></div><div class="fact-row"><span>Last load</span><strong>122 ms · at daemon start 09:41</strong></div></div>
+                    <div class="settings-card"><h3>Lifecycle</h3><div class="fact-row"><span>Last sweep</span><strong>2 h ago · 31 events aged out · 2 stale-demotions</strong></div><div class="fact-row"><span>Consolidation</span><strong class="warn">4 candidate pairs pending review</strong></div><div class="fact-row"><span>Next scheduled sweep</span><strong>in 22 h (daily, plus on agent kill)</strong></div></div>
+                  </div>
+
+                  <!-- WIKI -->
+                  <div class="settings-page" data-mem-panel="wiki">
+                    <div class="settings-page-head"><div><h2>Wiki</h2><p>The curated layer: compiled articles in repo and global scope. Verify, correct, or delete through the daemon — the write contract (self-supersede, evidence, dedup) is enforced below the UI, not by it.</p></div><button class="light-button">New article…</button></div>
+                    <div class="settings-card"><div class="selection-row"><strong>Filter</strong><span class="fake-select">repo + global ▾</span><span class="fake-select">all statuses ▾</span><span class="fake-select">all kinds ▾</span></div>
+                      <div class="chain-row"><span class="chain-rank">repo/quota</span><span class="chain-model"><strong>quota-resets-at-midnight-utc</strong><span>updated 2026-07-20 · evidence attached</span></span><span class="effort-pill">verified</span><span class="row-actions">read</span></div>
+                      <div class="chain-row"><span class="chain-rank">repo/terminal</span><span class="chain-model"><strong>checkpoint-export-ceiling-64mib</strong><span>updated 2026-07-22 · 3 raw observations</span></span><span class="effort-pill">verified</span><span class="row-actions">read</span></div>
+                      <div class="chain-row"><span class="chain-rank">repo/routing</span><span class="chain-model"><strong>codex-resume-never-submits</strong><span>updated 2026-07-19 · reconcile before acting</span></span><span class="effort-pill">stale</span><span class="row-actions">read</span></div>
+                      <div class="chain-row"><span class="chain-rank">global/general</span><span class="chain-model"><strong>cli-distribution-story</strong><span>updated 2026-05-12 · promoted from repo/quota</span></span><span class="effort-pill">unverified</span><span class="row-actions">read</span></div>
+                    </div>
+                    <div class="settings-card"><h3>quota-resets-at-midnight-utc</h3><p>Frontmatter and body render exactly as compiled; raw observations are one click down. Verifying re-stamps through <code>memory_write</code> with self-supersede — the UI composes the call, the daemon enforces the contract.</p><div class="fact-row"><span>Status</span><strong class="good">verified · 2026-07-20</strong></div><div class="fact-row"><span>Kind / topic</span><strong>article · quota</strong></div><div class="fact-row"><span>Raw evidence</span><strong>2 observations</strong></div><div class="fact-row"><span>Embedding</span><strong>indexed · 2026-07-22 09:41</strong></div><div class="review-card"><strong>Destructive preview before delete</strong><p>Deleting this article is refused while <code>quota-spend-projections</code> lists it in supersedes. The preview names the blocker before the operator is asked to confirm — the reference check is daemon-enforced.</p></div></div>
+                  </div>
+
+                  <!-- PITFALLS -->
+                  <div class="settings-page" data-mem-panel="pitfalls">
+                    <div class="settings-page-head"><div><h2>Pitfalls</h2><p>The lesson wall: failure clusters harvested at session boundaries, awaiting human or queen verification. Unverified candidates never rank as truth anywhere in the system — this inbox is where they become lessons.</p></div><button class="light-button">Refresh</button></div>
+                    <div class="settings-card"><h3>Awaiting review · 3</h3>
+                      <div class="chain-row"><span class="chain-rank">2×</span><span class="chain-model"><strong>Pitfall: codex resume paste never submits</strong><span>harvested from omar's session · 2 occurrences · provenance [e412–e418, digest 7]</span></span><span class="effort-pill">unverified</span><span class="row-actions">✓ ✕</span></div>
+                      <div class="chain-row"><span class="chain-rank">1×</span><span class="chain-model"><strong>Pitfall: 64 MiB export ceiling loses reattachability</strong><span>harvested from nina's session · exit code 1 · provenance [e530, digest 11]</span></span><span class="effort-pill">unverified</span><span class="row-actions">✓ ✕</span></div>
+                      <div class="chain-row"><span class="chain-rank">4×</span><span class="chain-model"><strong>Pitfall: schema-respecting clients stringify empty arrays</strong><span>harvested from lena's session · 4 occurrences · possibly related: hive-update-status-empty-schema</span></span><span class="effort-pill">unverified</span><span class="row-actions">✓ ✕</span></div>
+                    </div>
+                    <div class="settings-card"><h3>Review: codex resume paste never submits</h3><p>Approve verifies through the daemon and the pitfall immediately leads spawn injection for matching tasks — every future agent is warned. Reject deletes with a reason, audited. Both are one daemon call each; neither touches files.</p><div class="fact-row"><span>Failure signature</span><strong>delivery submitted, no turn started · exit 0</strong></div><div class="fact-row"><span>Exact values</span><strong>2 paths · 1 SHA · exit code 0</strong></div><div class="fact-row"><span>Provenance</span><strong>events e412–e418 · digest 7 · session omar-2026-07-21</strong></div><div class="fact-row"><span>Harvested by</span><strong>pitfall-harvest at kill boundary</strong></div></div>
+                  </div>
+
+                  <!-- DIGESTS -->
+                  <div class="settings-page" data-mem-panel="digests">
+                    <div class="settings-page-head"><div><h2>Digests</h2><p>Session summaries compiled deterministically from typed records — never the agent about itself, never on the hot path. Every load-bearing line carries a pointer; drill-down is the hint-to-authority path.</p></div><button class="light-button">Refresh</button></div>
+                    <div class="settings-card"><div class="selection-row"><strong>Sessions</strong><span class="fake-select">all agents ▾</span></div>
+                      <div class="chain-row"><span class="chain-rank">2 h ago</span><span class="chain-model"><strong>maya · session 2026-07-22-3</strong><span>41 events · 3 outcomes · 1 failure · drift audit clean</span></span><span class="effort-pill">compiled</span><span class="row-actions">open</span></div>
+                      <div class="chain-row"><span class="chain-rank">7 h ago</span><span class="chain-model"><strong>omar · session 2026-07-21-8</strong><span>68 events · 2 outcomes · 4 failures · drift audit clean</span></span><span class="effort-pill">compiled</span><span class="row-actions">open</span></div>
+                    </div>
+                    <div class="settings-card"><h3>maya · session 2026-07-22-3</h3><p><em>Digest — hint, not authority. 41 events, 09:12–11:47. Drill into any [eN] for the source rows.</em></p><div class="fact-row"><span>Outcomes</span><strong>landed hive/maya-attach-cursor @ 7c31f2a [e31] · review package sent [e38]</strong></div><div class="fact-row"><span>Failures</span><strong>attach rejected on stale generation [e24]</strong></div><div class="fact-row"><span>Exact values</span><strong>2 SHAs · 4 paths · 1 exit code</strong></div><div class="fact-row"><span>Drift audit</span><strong class="good">recompiled identical · 11:47</strong></div></div>
+                  </div>
+
+                  <!-- CONSOLIDATION -->
+                  <div class="settings-page" data-mem-panel="consolidation">
+                    <div class="settings-page-head"><div><h2>Consolidation</h2><p>Offline dedup over the vector store — never inline in the write path. Identical pairs (≥0.95) may be applied; similar pairs (0.85–0.95) are review-only, because a false merge destroys information irreversibly.</p></div><button class="light-button">Re-scan</button></div>
+                    <div class="settings-card"><h3>Identical · 2 pairs</h3>
+                      <div class="chain-row"><span class="chain-rank">0.97</span><span class="chain-model"><strong>quota-resets-at-midnight-utc ↔ quota-reset-timing</strong><span>apply: supersede older into newer · raw evidence preserved · logged</span></span><span class="effort-pill">identical</span><span class="row-actions">apply…</span></div>
+                      <div class="chain-row"><span class="chain-rank">0.96</span><span class="chain-model"><strong>tmux-attach-paste-race ↔ paste-never-submits-on-resume</strong><span>apply: supersede older into newer · supersedes chain kept</span></span><span class="effort-pill">identical</span><span class="row-actions">apply…</span></div>
+                    </div>
+                    <div class="settings-card"><h3>Similar · 2 pairs · review only</h3>
+                      <div class="chain-row"><span class="chain-rank">0.89</span><span class="chain-model"><strong>checkpoint-export-ceiling ↔ restore-peak-rss-ceiling</strong><span>never auto-applied — link as related, or edit by hand</span></span><span class="effort-pill">similar</span><span class="row-actions">link…</span></div>
+                      <div class="chain-row"><span class="chain-rank">0.86</span><span class="chain-model"><strong>cold-build-ghosttykit-worktrees ↔ native-cache-not-shared</strong><span>never auto-applied</span></span><span class="effort-pill">similar</span><span class="row-actions">link…</span></div>
+                    </div>
+                  </div>
+
+                  <!-- RECALL INSPECTOR -->
+                  <div class="settings-page" data-mem-panel="recall">
+                    <div class="settings-page-head"><div><h2>Recall Inspector</h2><p>See exactly what an agent would see — before it does. The bundle below is the daemon's real composition: hybrid FTS+vector, pitfalls partitioned, verification labels, budget enforced.</p></div><button class="light-button">Run query</button></div>
+                    <div class="settings-card"><div class="selection-row"><strong>quota reconciliation</strong><span class="fake-select">as: worker agent ▾</span><button class="light-button">Preview spawn index…</button></div>
+                      <p><code>semantic: hybrid</code> · 312 / 800 tokens · 4 results · truncation: none</p>
+                      <div class="chain-row"><span class="chain-rank">pitfall</span><span class="chain-model"><strong>Pitfall: quota API rejects empty arrays</strong><span>cosine 0.91 · verified 2026-07-20</span></span><span class="effort-pill">verified</span></div>
+                      <div class="chain-row"><span class="chain-rank">wiki</span><span class="chain-model"><strong>quota-resets-at-midnight-utc</strong><span>FTS rank 1 · verified 2026-07-20</span></span><span class="effort-pill">verified</span></div>
+                      <div class="chain-row"><span class="chain-rank">wiki</span><span class="chain-model"><strong>codex-resume-never-submits</strong><span>cosine 0.84 · reconcile before acting</span></span><span class="effort-pill">stale</span></div>
+                    </div>
+                    <div class="settings-card"><h3>Spawn preview · task “reconcile the quota tables”</h3><p>What a new agent's first prompt would carry: the 60-day-old quota pitfall ranks row 0 (pitfalls first), the quota article follows on brief-match, newest fill after — no search call required of the agent. Wake-delta preview shows what the same agent would get on its next message instead.</p></div>
+                  </div>
+
+                  <!-- LIFECYCLE -->
+                  <div class="settings-page" data-mem-panel="lifecycle">
+                    <div class="settings-page-head"><div><h2>Lifecycle</h2><p>Retention and freshness policy. Editing writes validated config through the daemon and is loud in the log — facts and digests are forever by invariant, not by knob.</p></div><button class="light-button">Sweep now</button></div>
+                    <div class="settings-card"><h3>Policy · ~/.hive/config.toml</h3>
+                      <div class="fact-row"><span>wake_budget_tokens</span><strong>300</strong></div>
+                      <div class="fact-row"><span>events_hot_days</span><strong>30</strong></div>
+                      <div class="fact-row"><span>stale_after_days</span><strong>90</strong></div>
+                      <div class="fact-row"><span>sweep_interval_hours</span><strong>24</strong></div>
+                      <div class="fact-row"><span>facts / digests retention</span><strong>forever · invariant</strong></div>
+                    </div>
+                    <div class="settings-card"><h3>Sweep history</h3>
+                      <div class="fact-row"><span>today 09:41</span><strong>startup sweep · 0 deleted · 0 demoted · 4 consolidation candidates</strong></div>
+                      <div class="fact-row"><span>yesterday 23:10</span><strong>kill sweep (omar) · 12 events deleted · 1 digest compiled</strong></div>
+                      <div class="fact-row"><span>yesterday 07:00</span><strong>daily · 31 deleted · 2 stale-demotions (routing, quota)</strong></div>
+                    </div>
+                  </div>
+
+                  <!-- PERFORMANCE -->
+                  <div class="settings-page" data-mem-panel="performance">
+                    <div class="settings-page-head"><div><h2>Performance</h2><p>Measured, never asserted: what memory costs in tokens, milliseconds, and resident memory on the 16 GB floor. Every number names its source; estimates are labeled.</p></div><button class="light-button">Run bench</button></div>
+                    <div class="settings-card"><div class="usage-summary">
+                      <div class="usage-metric"><strong>39 ms</strong><span>embed · p50 short record</span></div>
+                      <div class="usage-metric"><strong>~360 MB</strong><span>embedding RSS · warm</span></div>
+                      <div class="usage-metric"><strong>8 ms</strong><span>vector scan · 5k records</span></div>
+                    </div></div>
+                    <div class="settings-card"><h3>Token cost per query class · measured vs raw-journal baseline</h3>
+                      <div class="fact-row"><span>agent-now</span><strong>~90 tok (budget 400) · baseline 4,100 · 45×</strong></div>
+                      <div class="fact-row"><span>fleet-summary</span><strong>~410 tok (budget 1,200) · baseline 22,000 · 53×</strong></div>
+                      <div class="fact-row"><span>point-search</span><strong>~280 tok (budget 1,000) · baseline 9,800 · 35×</strong></div>
+                      <div class="fact-row"><span>digest catch-up</span><strong>~300 tok · L1 search ~800 · raw journal ~31,000</strong></div>
+                      <p class="source-flag">Illustrative targets — the scripted-corpus measurement run is an outstanding HiveMemory acceptance item; this table renders it once it lands.</p>
+                    </div>
+                    <div class="settings-card"><h3>Store footprint</h3><div class="fact-row"><span>wiki on disk</span><strong>412 KB · 63 articles · 97 raw observations</strong></div><div class="fact-row"><span>episodic.db</span><strong>3.8 MB · 2,140 events · 87 facts · 12 digests</strong></div><div class="fact-row"><span>vectors</span><strong>1,284 × 384-dim ≈ 1.9 MB</strong></div><div class="fact-row"><span>models cache</span><strong>90 MB · ~/.hive/models</strong></div></div>
+                    <div class="settings-card"><h3>Health trend</h3><p>Self-test runs (fixture + live + strict) chart per day; CI runs the strict form on every push to main with the real model. A single FAIL pins this page's banner red and links the failing assertion.</p></div>
+                  </div>
+
+                </section>
+              </div>
+            </div>
+          </div>
+        </div>
+        <div class="prototype-caption">
+          <div><strong>Observe</strong><p>Overview, Wiki, Pitfalls, and Digests answer "what does Hive know, and how much of it is verified?" without opening a terminal.</p></div>
+          <div><strong>Maintain</strong><p>Consolidation, the Recall Inspector, and Lifecycle are the operator's hands: dedup, preview what agents will see, tune retention — all through daemon verbs.</p></div>
+          <div><strong>Measure</strong><p>Performance is a first-class page because the epic's rule is measured-not-asserted: token cost, latency, RSS, and the self-test trend live here.</p></div>
+          <div><strong>Menus</strong><p>The Memory menu carries the window, the self-test, consolidation, embedding repair, and settings. Anything that can't complete honestly is absent, not disabled.</p></div>
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="features">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-label">03 · Feature ledger</p><h2>What every surface does — and what Hive must add to back it.</h2></div><p>A surface is not "available" because the mockup contains it. Each row names user behavior, the grounded backend reality, and the implementation boundary needed for an honest release.</p></div>
+
+        <div class="feature-groups">
+
+          <article class="feature-group"><div class="feature-group-head"><h3>A · Health and overview</h3><p>The landing page: is memory working, and how much is there?</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Embedding state card</strong></td><td><p>Shows ready/degraded/disabled with provider, model, runtime dir, vector counts.</p></td><td><span class="state-badge current">Current Hive</span><p><code>hive_status</code> exposes <code>memory.embeddings</code> (state, vectors, runtimeDir) with distinct labeled failure states.</p><a class="source-link" href="../../src/daemon/server.ts">server.ts · hive_status</a></td><td><p>Render verbatim. Any <code>degraded:&lt;state&gt;</code> is a page-level banner, also mirrored in the titlebar.</p></td></tr>
+            <tr><td><strong>Memory counts</strong></td><td><p>Wiki articles by status/kind, episodic events/facts/digests, vector rows, store footprint.</p></td><td><span class="state-badge gap">Contract gap</span><p>Counts exist scattered (adapter discover, episodic rowCounts, vector counts) but no single overview projection serves them.</p></td><td><p>New <code>memory_overview</code> projection (§04-C1). Unknown renders as unknown; zeros are honest.</p></td></tr>
+            <tr><td><strong>Self-test from the UI</strong></td><td><p>Runs the canary probe (fixture + live tiers) on demand; shows the last run's per-assertion results.</p></td><td><span class="state-badge gap">Contract gap</span><p>The probe exists as CLI (<code>memory self-test [--live|--strict]</code>) with named assertions; there is no daemon endpoint and no persisted last-run record.</p><a class="source-link" href="../../src/cli/memory-self-test.ts">memory-self-test.ts</a></td><td><p>New daemon-run self-test + last-run record (§04-C2). The UI triggers and renders; it never re-implements the probe.</p></td></tr>
+            <tr><td><strong>Sweep status</strong></td><td><p>Last sweep report (events deleted, demotions, consolidation candidates) and next scheduled run.</p></td><td><span class="state-badge gap">Contract gap</span><p>Sweeps run (startup/daily/kill) and log to <code>~/.hive/logs/daemon.log</code>; reports are not persisted as queryable records.</p><a class="source-link" href="../../src/daemon/memory-retention.ts">memory-retention.ts</a></td><td><p>Persist sweep reports; expose latest in the overview projection (§04-C1/C6).</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>B · Wiki management</h3><p>Browse, verify, correct, and delete curated knowledge.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Article browser</strong></td><td><p>Lists articles with scope/topic/status/kind filters and pagination.</p></td><td><span class="state-badge gap">Contract gap</span><p><code>discoverMemoryFacts</code> exists internally; no MCP/HTTP list surface — agents search, they don't browse.</p><a class="source-link" href="../../src/adapters/memory.ts">adapters/memory.ts</a></td><td><p>New <code>memory_list</code> projection with filters (§04-C3). Server-side paging; absent-vs-empty rendered distinctly.</p></td></tr>
+            <tr><td><strong>Article detail + verify</strong></td><td><p>Reads one article with raw links; re-stamps verified or corrects through the write contract.</p></td><td><span class="state-badge current">Current Hive</span><p><code>memory_read</code> / <code>memory_write</code> with self-supersede, evidence, and dedup layers 1–2 enforced daemon-side.</p><a class="source-link" href="../../src/daemon/server.ts">server.ts · memory tools</a></td><td><p>UI composes the write; daemon enforces. Verification date rules stay below the UI.</p></td></tr>
+            <tr><td><strong>Delete with preview</strong></td><td><p>Operator-only delete; shows what breaks (supersedes blockers) before confirming.</p></td><td><span class="state-badge current">Current Hive</span><p><code>memory:delete</code> capability (operator/queen only); reference-checked delete names blockers.</p><a class="source-link" href="../../src/daemon/capabilities.ts">capabilities.ts</a></td><td><p>Preview calls the same check the daemon runs; the refusal text renders verbatim. Audited by the daemon.</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>C · Pitfall review</h3><p>Where harvested failures become verified lessons.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Review inbox</strong></td><td><p>Lists unverified pitfall candidates with occurrence counts and provenance; approve/reject.</p></td><td><span class="state-badge gap">Contract gap</span><p>Harvester writes unverified candidates; <code>memory_pitfall</code> searches them. No status-filtered inbox projection; approve/reject compose from existing tools but deserve first-class verbs with audit.</p><a class="source-link" href="../../src/daemon/pitfall-harvest.ts">pitfall-harvest.ts</a></td><td><p>Inbox = <code>memory_list</code> filtered kind:pitfall + status:unverified (§04-C3); approve = verify write; reject = operator delete with a required reason, both audit-logged (§04-C7).</p></td></tr>
+            <tr><td><strong>Provenance drill-down</strong></td><td><p>Follows a candidate's event/digest pointers to the source rows.</p></td><td><span class="state-badge current">Current Hive</span><p><code>memory_digest</code> drill-down returns exact source events by id.</p><a class="source-link" href="../../src/daemon/episodic-digest.ts">episodic-digest.ts</a></td><td><p>Render the chain inline: candidate → digest → event rows.</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>D · Digests and sessions</h3><p>What happened, with receipts.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Session list</strong></td><td><p>Browses compiled digests by agent/session with outcome/failure counts.</p></td><td><span class="state-badge gap">Contract gap</span><p><code>digestFor</code> exists internally; <code>memory_digest</code> reads one by id — no list surface.</p><a class="source-link" href="../../src/daemon/episodic-store.ts">episodic-store.ts</a></td><td><p>Fold into <code>memory_list</code> (§04-C3) as a digests view.</p></td></tr>
+            <tr><td><strong>Digest view + drift status</strong></td><td><p>Renders sections and exact-value tables; shows the last drift-audit result.</p></td><td><span class="state-badge current">Current Hive</span> <span class="state-badge gap">Gap: audit surface</span><p>Deterministic compile + <code>auditDigestDrift</code> exist; drift status is not persisted for display.</p></td><td><p>Persist drift-audit outcomes with the digest row; render timestamp + verdict (§04-C3).</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>E · Consolidation and dedup</h3><p>One memory, stored once.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Candidate pairs</strong></td><td><p>Lists identical (≥0.95) and similar (0.85–0.95) pairs with scores.</p></td><td><span class="state-badge gap">Contract gap</span><p><code>hive memory consolidate</code> computes buckets CLI-side against the stores; no daemon endpoint serves the report.</p><a class="source-link" href="../../src/daemon/memory-consolidate.ts">memory-consolidate.ts</a></td><td><p>Daemon-side report endpoint (§04-C4); the CLI and UI share the same pass.</p></td></tr>
+            <tr><td><strong>Apply identical</strong></td><td><p>Supersedes older into newer with raw preserved; similar pairs are never auto-applied.</p></td><td><span class="state-badge gap">Contract gap</span><p><code>--apply</code> exists CLI-side only.</p></td><td><p>Daemon-side apply verb behind <code>memory:delete</code> tier with per-pair preview (§04-C4). Audit-logged.</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>F · Recall inspection</h3><p>See what agents will see, before they do.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Bundle preview</strong></td><td><p>Runs a query and renders the exact recall bundle: semantic state, partitions, labels, budget.</p></td><td><span class="state-badge current">Current Hive</span><p><code>memory_recall</code> returns the hybrid bundle with <code>semantic</code> discriminator and token ceilings.</p><a class="source-link" href="../../src/daemon/memory-triggers.ts">memory-triggers.ts</a></td><td><p>Render the envelope verbatim, including the ⚠ degraded line when present.</p></td></tr>
+            <tr><td><strong>Spawn / wake preview</strong></td><td><p>Composes the spawn index or wake delta for an arbitrary task brief.</p></td><td><span class="state-badge gap">Contract gap</span><p><code>buildMemoryIndex(brief)</code> and the delta composer exist internally; no "preview for hypothetical brief" surface.</p><a class="source-link" href="../../src/daemon/memory-delta.ts">memory-delta.ts</a></td><td><p>New read-only <code>memory_preview</code> (§04-C5) — composition without delivery or high-water mutation.</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>G · Lifecycle and configuration</h3><p>Retention policy, edited honestly.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Config read/write</strong></td><td><p>Shows and edits <code>[memory]</code> / <code>[memory.retention]</code> keys with validation.</p></td><td><span class="state-badge gap">Contract gap</span><p>Config is file-based TOML with strict zod parsing; there is no daemon read/write surface for it.</p><a class="source-link" href="../../src/schemas/config.ts">schemas/config.ts</a></td><td><p>Validated config verbs (§04-C6); changes are loud in the daemon log; invariants (facts/digests forever) render as fixed text, not inputs.</p></td></tr>
+            <tr><td><strong>Sweep now + history</strong></td><td><p>Triggers a retention sweep on demand; lists past sweep reports.</p></td><td><span class="state-badge gap">Contract gap</span><p><code>runMemoryRetentionSweep</code> is daemon-internal; reports aren't persisted.</p><a class="source-link" href="../../src/daemon/memory-retention.ts">memory-retention.ts</a></td><td><p>Trigger verb + persisted history (§04-C6). Trigger failures surface honestly.</p></td></tr>
+          </tbody></table></div></article>
+
+          <article class="feature-group"><div class="feature-group-head"><h3>H · Performance and audit</h3><p>Measured, never asserted — and every destructive act accounted for.</p></div><div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Feature</th><th class="behavior">What it does</th><th class="reality">Grounded reality</th><th class="build">Memory Manager implementation</th></tr></thead><tbody>
+            <tr><td><strong>Metrics dashboard</strong></td><td><p>Per-class token costs, embed/recall latencies, index sizes, RSS, health trend.</p></td><td><span class="state-badge gap">Contract gap</span><p>Bench numbers exist as a script (<code>memory-embedding-bench.ts</code>); there are no runtime counters or a metrics endpoint. The per-class token-cost measurement run is an outstanding epic AC.</p><a class="source-link" href="../../scripts/memory-embedding-bench.ts">memory-embedding-bench.ts</a></td><td><p>New <code>memory_metrics</code> projection (§04-C8): counters on the query/recall paths + the scripted-corpus measurement results once landed.</p></td></tr>
+            <tr><td><strong>Memory audit feed</strong></td><td><p>Chronological feed of deletes, promotions, demotions, trigger executions, consolidation applies.</p></td><td><span class="state-badge gap">Contract gap</span><p>Capability audit rows exist for tool allows; trigger executions land as episodic events; wiki log records ingest/demote/delete. No unified memory-audit projection.</p></td><td><p>New <code>memory_audit</code> feed (§04-C7) unifying the three sources, filterable by actor and action.</p></td></tr>
+          </tbody></table></div></article>
+
+        </div>
+      </div>
+    </section>
+
+    <section class="doc-section" id="contracts">
+      <div class="shell">
+        <div class="section-head"><div><p class="section-label">04 · Contracts to build</p><h2>The backend work this window requires.</h2></div><p>Eight additions, all daemon-owned, all capability-gated. None changes the memory model; they expose and extend what exists. Ordered by dependency, each with its acceptance note.</p></div>
+        <div class="feature-table-wrap"><table class="feature-table"><thead><tr><th class="feature-name">Contract</th><th class="behavior">What it provides</th><th class="reality">Built on</th><th class="build">Acceptance</th></tr></thead><tbody>
+          <tr><td><strong>C1 · <code>memory_overview</code></strong></td><td><p>One projection: wiki counts by status/kind/scope, episodic counts, vector counts, store footprint, embedding state, latest sweep report, last self-test verdict.</p></td><td><span class="state-badge current">Parts exist</span><p>hive_status embedding section, adapter discover, episodic rowCounts.</p></td><td><p>Unknown ≠ zero; absent surfaces reported as absent; fixed cost, no scans on the hot path.</p></td></tr>
+          <tr><td><strong>C2 · daemon self-test run</strong></td><td><p>Runs the existing probe daemon-side (fixture + live tiers) and persists the last run (per-assertion results, timestamp, strict flag).</p></td><td><span class="state-badge current">Probe exists</span><p>memory-self-test.ts + --live tier.</p></td><td><p>Same assertion names as the CLI; a FAIL is retrievable until superseded by a newer run.</p></td></tr>
+          <tr><td><strong>C3 · <code>memory_list</code></strong></td><td><p>Browsable, filterable, paginated lists: wiki articles (scope/topic/status/kind), pitfall inbox, digest sessions, episodic facts — plus persisted drift-audit verdicts on digests.</p></td><td><span class="state-badge current">Parts exist</span><p>discoverMemoryFacts, digestFor.</p></td><td><p>Server-side paging; verification labels on every row; absent-vs-empty discriminators.</p></td></tr>
+          <tr><td><strong>C4 · consolidation verbs</strong></td><td><p>Daemon-side report (identical/similar buckets with scores) and apply (identicals only, per-pair, operator tier).</p></td><td><span class="state-badge current">CLI pass exists</span><p>memory-consolidate.ts.</p></td><td><p>UI and CLI share one implementation; applies are audited; similar bucket has no apply path.</p></td></tr>
+          <tr><td><strong>C5 · <code>memory_preview</code></strong></td><td><p>Read-only composition: spawn index or wake delta for an arbitrary brief, plus the recall bundle — with no delivery and no high-water mutation.</p></td><td><span class="state-badge current">Composers exist</span><p>buildMemoryIndex, composeMemoryDelta, recall bundle.</p></td><td><p>Byte-identical to what a real spawn/delivery would produce for the same inputs.</p></td></tr>
+          <tr><td><strong>C6 · config + sweep verbs</strong></td><td><p>Validated read/write of <code>[memory]</code>/<code>[memory.retention]</code>; sweep trigger; persisted sweep history.</p></td><td><span class="state-badge current">Schema exists</span><p>schemas/config.ts strict parsing; runRetentionSweep.</p></td><td><p>Invalid values rejected with the zod message; invariants not writable; changes logged loudly; sweep history queryable.</p></td></tr>
+          <tr><td><strong>C7 · <code>memory_audit</code></strong></td><td><p>Unified feed: capability-audited deletes/promotes, trigger executions, wiki log entries (ingest/demote/delete), consolidation applies.</p></td><td><span class="state-badge current">Sources exist</span><p>capabilities audit, episodic memory-trigger events, wiki log.md.</p></td><td><p>Chronological, filterable by actor/action; reads stay unlogged (deliberate).</p></td></tr>
+          <tr><td><strong>C8 · <code>memory_metrics</code></strong></td><td><p>Runtime counters: per-class query token totals, recall/embed latencies, index sizes, vector counts — plus the scripted-corpus measurement results when the epic's outstanding token-cost AC lands.</p></td><td><span class="state-badge gap">New</span><p>Bench script only today.</p></td><td><p>Counters are cheap and always-on; measurement-run results are labeled with corpus + date.</p></td></tr>
+        </tbody></table></div>
+        <div class="callout warn"><strong>Sequencing.</strong> C1–C3 unblock the Observe pages; C4–C6 unblock Maintain; C7–C8 unblock Measure. All eight are prerequisite to the window shipping — per the Split Horizon rule, a surface without its truth is absent, not mocked. The M5 UI-readiness gates (#31 family C) already expect named projections per feature; these eight are the memory family's rows.</div>
+        <div class="callout"><strong>Design authority.</strong> Memory semantics: <a href="../../planning/2026-07-22-hivememory-epic-rework.md">planning/2026-07-22-hivememory-epic-rework.md</a> (rulings R1–R4, decisions D1–D6, implementation record §8–§11). Operator manual: <a href="hivememory-system-overview.html">hivememory-system-overview.html</a> (investor) and <a href="hivememory-architecture-and-operations.html">hivememory-architecture-and-operations.html</a> (operations + proof matrix). Shell: <a href="split-horizon.html">split-horizon.html</a>.</div>
+      </div>
+    </section>
+  </main>
+
+  <script>
+    const app = document.querySelector('[data-app]');
+    const closeMenus = () => app.querySelectorAll('[data-menu-panel]').forEach((p) => p.classList.remove('open'));
+    app.querySelectorAll('[data-menu]').forEach((trigger) => {
+      trigger.addEventListener('click', (event) => {
+        event.stopPropagation();
+        const panel = app.querySelector(`[data-menu-panel="${trigger.dataset.menu}"]`);
+        const wasOpen = panel.classList.contains('open');
+        closeMenus();
+        if (!wasOpen) panel.classList.add('open');
+      });
+    });
+    document.addEventListener('click', (event) => {
+      if (!event.target.closest('[data-menu-panel]')) closeMenus();
+    });
+
+    const showMemPage = (page) => {
+      app.querySelectorAll('[data-mem-page]').forEach((item) => item.classList.toggle('active', item.dataset.memPage === page));
+      app.querySelectorAll('[data-mem-panel]').forEach((panel) => panel.classList.toggle('active', panel.dataset.memPanel === page));
+    };
+    app.querySelectorAll('[data-mem-page]').forEach((button) => {
+      button.addEventListener('click', () => showMemPage(button.dataset.memPage));
+    });
+    app.querySelectorAll('[data-open-memory-page]').forEach((button) => {
+      button.addEventListener('click', () => { showMemPage(button.dataset.openMemoryPage); closeMenus(); });
+    });
+    app.querySelectorAll('[data-open-memory]').forEach((button) => {
+      button.addEventListener('click', () => { showMemPage('overview'); closeMenus(); });
+    });
+
+    const preview = new URLSearchParams(window.location.search);
+    if (preview.get('page')) showMemPage(preview.get('page'));
+  </script>
+</body>
+</html>
