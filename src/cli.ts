@@ -33,6 +33,7 @@ import {
 } from "./cli/graphify";
 import { runInitCli } from "./cli/init";
 import { memorySelfTestCli } from "./cli/memory-self-test";
+import { memoryConsolidateCli } from "./cli/memory-consolidate";
 import { projectRootOrCwd } from "./cli/project-root";
 import { printRouting } from "./cli/routing";
 import { promoteDefaultModelControl } from "./cli/promote-default";
@@ -750,6 +751,20 @@ export function createProgram(): Command {
     )
     .action(async () => {
       process.exitCode = await memorySelfTestCli();
+    });
+
+  memory.command("consolidate")
+    .description(
+      "Offline consolidation dedup (report first): pairwise cosine over the " +
+        "memory vector store; --apply supersedes only >=0.95 identical pairs",
+    )
+    .option(
+      "--apply",
+      "supersede identical-bucket pairs (older into newer); the similar " +
+        "bucket is never auto-applied",
+    )
+    .action(async (options: { apply?: boolean }) => {
+      process.exitCode = await memoryConsolidateCli(options);
     });
 
   program

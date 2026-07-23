@@ -25,10 +25,16 @@ import {
 } from "../adapters/memory";
 import type { MemoryRetentionConfig, MemoryScope } from "../schemas";
 import type { EpisodicStore } from "./episodic-store";
+import { countConsolidationCandidates } from "./memory-consolidate";
 
 export interface RetentionSweepReport {
   eventsDeleted: number;
   articlesDemoted: Array<{ scope: MemoryScope; id: string }>;
+  /** Stored-vector pairs at or above the consolidation similar threshold
+   * (HiveMemory HM-5, D1 layer 3): count only, never applied here — the
+   * drift signal that tells the operator `hive memory consolidate` is worth
+   * a run. */
+  consolidationCandidates: number;
 }
 
 const DAY_MS = 24 * 3_600_000;
@@ -92,7 +98,11 @@ export async function runRetentionSweep(options: {
   now: Date;
 }): Promise<RetentionSweepReport> {
   const { episodic, repoRoot, config, now } = options;
-  const report: RetentionSweepReport = { eventsDeleted: 0, articlesDemoted: [] };
+  const report: RetentionSweepReport = {
+    eventsDeleted: 0,
+    articlesDemoted: [],
+    consolidationCandidates: 0,
+  };
 
   // (1) Hot-tier events age out; digest-referenced rows survive.
   const referenced = referencedEventIds(episodic.digestProvenanceBlobs());
@@ -126,6 +136,12 @@ export async function runRetentionSweep(options: {
       }
     }
   }
+
+  // (4) Consolidation drift signal (HiveMemory HM-5, D1 layer 3): count
+  // duplicate candidate pairs in the vector store so a growing pile is
+  // visible in the sweep report. Count only — consolidation is an offline,
+  // operator-run pass, never something the sweep applies.
+  report.consolidationCandidates = countConsolidationCandidates(episodic);
 
   return report;
 }

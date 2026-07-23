@@ -2964,11 +2964,16 @@ export class HiveDaemon {
           now: new Date(),
         })
       );
-      if (report.eventsDeleted > 0 || report.articlesDemoted.length > 0) {
+      if (
+        report.eventsDeleted > 0 || report.articlesDemoted.length > 0 ||
+        report.consolidationCandidates > 0
+      ) {
         console.log(
           `Hive memory retention sweep: deleted ${report.eventsDeleted} ` +
             `aged event(s), demoted ${report.articlesDemoted.length} ` +
-            "verified article(s) to stale",
+            "verified article(s) to stale, " +
+            `${report.consolidationCandidates} consolidation candidate ` +
+            "pair(s) in the vector store (hive memory consolidate to review)",
         );
       }
       if (report.articlesDemoted.length > 0) {

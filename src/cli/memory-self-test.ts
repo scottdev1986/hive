@@ -1,12 +1,20 @@
 import { Database } from "bun:sqlite";
-import { mkdtemp, rm } from "node:fs/promises";
+import { mkdtemp, readFile, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   deleteMemoryFact,
+  discoverMemoryFacts,
   readMemoryFact,
   writeMemoryFact,
 } from "../adapters/memory";
+import { runMemoryConsolidation } from "../daemon/memory-consolidate";
+import { EpisodicStore } from "../daemon/episodic-store";
+import {
+  MemoryEmbeddingIndex,
+  MemoryEmbeddingService,
+  memoryModelsDir,
+} from "../daemon/memory-embeddings";
 import {
   findSimilarMemoryCandidates,
   MemoryIndex,
@@ -23,6 +31,14 @@ import type {
 // daemon uses. Deterministic, no LLM, no daemon, no network. It NEVER touches
 // the real .hive/memory or ~/.hive/memory: runMemorySelfTest points HIVE_HOME
 // at its own temp dir for the duration and restores it afterwards.
+//
+// HM-5 (board #122) added two degradation-honest semantic assertions —
+// semantic-recall (a paraphrase canary only the embedding leg can find) and
+// consolidation-dry-run (a reworded-fact pair the offline consolidation pass
+// must bucket without modifying anything). They run only with a real
+// embedder (HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 or an injected service) and
+// SKIP otherwise: SKIP is not failure, because the exit code may only
+// reflect what was provable in the environment the probe ran in.
 
 interface Canary {
   id: string;
@@ -134,6 +150,53 @@ const NEGATIVE_CONTROL_QUERY = "zzqxvnonce916382047";
 const DELETE_GUARD_TARGET = "self-test-delete-guard-target";
 const DELETE_GUARD_REFERENCER = "self-test-delete-guard-referencer";
 
+// HM-5 semantic canary (D2 meets embeddings): the body and its query share
+// no content tokens ("RAM", "exhausted", "worker", "starts" appear nowhere
+// in the article), so porter-tokenizer FTS cannot answer it — only the
+// semantic leg can. Same construction as test/memory-embedding-live.test.ts.
+const SEMANTIC_CANARY_ID = "self-test-semantic-canary";
+const SEMANTIC_CANARY = {
+  title: "Daemon rejects spawns below the free-memory floor",
+  body:
+    "When available system memory drops under the configured floor, hive " +
+    "refuses to launch another agent and reports resource pressure instead.",
+};
+const SEMANTIC_PARAPHRASE_QUERY =
+  "what happens when RAM is exhausted and a new worker starts";
+
+// HM-5 consolidation canary pair: the same fact reworded (near-identical
+// bodies, differently-normalized titles so write-path dedup layer 1 lets
+// both plant), which a working consolidation pass must surface as a
+// duplicate pair in report mode without touching either article.
+const CONSOLIDATION_OLDER_ID = "self-test-consolidation-older";
+const CONSOLIDATION_NEWER_ID = "self-test-consolidation-newer";
+const CONSOLIDATION_OLDER_DATE = "2026-07-20";
+const CONSOLIDATION_PAIR = [
+  {
+    id: CONSOLIDATION_OLDER_ID,
+    date: CONSOLIDATION_OLDER_DATE,
+    title: "Wake budget defaults to three hundred tokens",
+    body:
+      "The wake-delta injection budget defaults to 300 tokens; the daemon " +
+      "clamps the recall bundle at that ceiling and reports the omitted count.",
+  },
+  {
+    id: CONSOLIDATION_NEWER_ID,
+    date: CANARY_DATE,
+    title: "Wake injection budget default is 300 tokens",
+    body:
+      "The daemon's wake-delta injection budget defaults to 300 tokens, " +
+      "clamping the recall bundle at that ceiling and reporting the omitted count.",
+  },
+] as const;
+
+// Set to run the semantic assertions against the real local embedding model
+// (downloads/caches it under the real Hive models dir). Unset — the default
+// for CI and `bun test` — the semantic assertions SKIP honestly instead of
+// loading onnxruntime into a context that cannot host it (the live-model
+// proof lives in test/memory-embedding-live.test.ts).
+export const MEMORY_SELF_TEST_EMBEDDINGS_ENV = "HIVE_MEMORY_SELF_TEST_EMBEDDINGS";
+
 function canaryWriteInput(canary: Canary): MemoryWriteInput {
   return {
     scope: "repo",
@@ -199,11 +262,44 @@ export async function plantMemorySelfTestFixture(root: string): Promise<void> {
     status: "unverified",
     supersedes: [],
   });
+  // Semantic canary: only the embedding leg can recall it from its
+  // paraphrase query.
+  await writeMemoryFact(root, {
+    scope: "repo",
+    id: SEMANTIC_CANARY_ID,
+    topic: "memory",
+    title: SEMANTIC_CANARY.title,
+    body: SEMANTIC_CANARY.body,
+    date: CANARY_DATE,
+    source: "agent",
+    evidence: "Planted by hive memory self-test",
+    status: "unverified",
+    supersedes: [],
+  });
+  // Consolidation pair: the same fact reworded, for the dry-run assertion.
+  for (const member of CONSOLIDATION_PAIR) {
+    await writeMemoryFact(root, {
+      scope: "repo",
+      id: member.id,
+      topic: "memory",
+      title: member.title,
+      body: member.body,
+      date: member.date,
+      source: "agent",
+      evidence: "Planted by hive memory self-test",
+      status: "unverified",
+      supersedes: [],
+    });
+  }
 }
 
 export interface SelfTestAssertion {
   name: string;
   passed: boolean;
+  /** True when the assertion could not run because the semantic surface is
+   * unavailable — reported as SKIP, never counted as a failure (liveness
+   * honesty: the exit code reflects only what was provable). */
+  skipped?: boolean;
   detail: string;
 }
 
@@ -223,9 +319,12 @@ async function attempt(
 }
 
 // Runs the probe assertions against an already-planted fixture at `root`.
-// Each assertion is independent: one failure never hides the others.
+// Each assertion is independent: one failure never hides the others. The
+// semantic assertions run only when `options.service` resolves to a real
+// embedder; otherwise they SKIP honestly.
 export async function probeMemorySelfTest(
   root: string,
+  options: { service?: MemoryEmbeddingService } = {},
 ): Promise<SelfTestAssertion[]> {
   const index = new MemoryIndex(new Database(":memory:"));
   await index.rebuild(root);
@@ -339,7 +438,117 @@ export async function probeMemorySelfTest(
     );
   });
 
-  return [recall, readBack, negativeControl, dedupLayer1, dedupLayer2, deleteGuard];
+  // HM-5 semantic assertions. Degradation-honest (plan A5/D2): when the
+  // embedding service is unavailable both print SKIP and do not fail the run
+  // — the exit code reflects only what was provable here, and the real-model
+  // proof lives in test/memory-embedding-live.test.ts.
+  const embedder = options.service === undefined
+    ? null
+    : await options.service.embedder();
+  const skippedDetail = "embeddings unavailable";
+  let semanticRecall: SelfTestAssertion;
+  let consolidationDryRun: SelfTestAssertion;
+  if (embedder === null) {
+    semanticRecall = {
+      name: "semantic-recall",
+      passed: false,
+      skipped: true,
+      detail: skippedDetail,
+    };
+    consolidationDryRun = {
+      name: "consolidation-dry-run",
+      passed: false,
+      skipped: true,
+      detail: skippedDetail,
+    };
+  } else {
+    // One in-memory vector store over the whole planted fixture serves both
+    // assertions (the consolidation pass reuses the rows instead of
+    // re-embedding).
+    const vectorStore = new EpisodicStore(":memory:");
+    try {
+      const semanticIndex = new MemoryEmbeddingIndex({
+        store: vectorStore,
+        service: options.service!,
+      });
+      for (const scope of ["repo", "global"] as const) {
+        for (const fact of await discoverMemoryFacts(root, scope)) {
+          await semanticIndex.upsertArticle(
+            scope,
+            fact.id,
+            MemoryEmbeddingIndex.articleText(fact),
+          );
+        }
+      }
+
+      semanticRecall = await attempt("semantic-recall", async () => {
+        const hits = await semanticIndex.searchArticles(
+          SEMANTIC_PARAPHRASE_QUERY,
+          5,
+        );
+        if (hits === null) throw new Error("semantic surface went unavailable mid-run");
+        if (!hits.some((hit) => hit.scope === "repo" && hit.id === SEMANTIC_CANARY_ID)) {
+          throw new Error(
+            `paraphrase query did not rank ${SEMANTIC_CANARY_ID} in the ` +
+              `semantic top 5 (got: ${hits.map((hit) => hit.id).join(", ") || "no hits"})`,
+          );
+        }
+        return `paraphrase query ranks ${SEMANTIC_CANARY_ID} in the semantic top 5`;
+      });
+
+      consolidationDryRun = await attempt("consolidation-dry-run", async () => {
+        const before = new Map<string, string>();
+        for (const id of [CONSOLIDATION_OLDER_ID, CONSOLIDATION_NEWER_ID]) {
+          const fact = await readMemoryFact(root, "repo", id);
+          if (fact === null) throw new Error(`planted pair member ${id} missing`);
+          before.set(id, await readFile(fact.path, "utf8"));
+        }
+        const report = await runMemoryConsolidation({
+          repoRoot: root,
+          episodic: vectorStore,
+          service: options.service!,
+        });
+        const pair = [...report.identical, ...report.similar].find(
+          (candidate) =>
+            candidate.scope === "repo" &&
+            [candidate.olderId, candidate.newerId].sort().join("") ===
+              [CONSOLIDATION_OLDER_ID, CONSOLIDATION_NEWER_ID].sort().join(""),
+        );
+        if (pair === undefined) {
+          throw new Error(
+            `report mode found no duplicate pair between ` +
+              `${CONSOLIDATION_OLDER_ID} and ${CONSOLIDATION_NEWER_ID} ` +
+              `(identical: ${report.identical.length}, similar: ${report.similar.length})`,
+          );
+        }
+        const bucket = report.identical.includes(pair) ? "identical" : "similar";
+        for (const [id, contents] of before) {
+          const fact = await readMemoryFact(root, "repo", id);
+          if (fact === null || await readFile(fact.path, "utf8") !== contents) {
+            throw new Error(`report mode modified ${id} — consolidation must be read-only without --apply`);
+          }
+        }
+        return (
+          `pair ${CONSOLIDATION_OLDER_ID} ↔ ${CONSOLIDATION_NEWER_ID} found ` +
+          `in the ${bucket} bucket (cosine ${pair.score.toFixed(3)}); ` +
+          "nothing modified without --apply"
+        );
+      });
+    } finally {
+      vectorStore.close();
+    }
+  }
+
+  return [
+    recall,
+    readBack,
+    negativeControl,
+    dedupLayer1,
+    dedupLayer2,
+    deleteGuard,
+    semanticRecall,
+    consolidationDryRun,
+  ];
 }
 
 export interface MemorySelfTestReport {
@@ -349,19 +558,38 @@ export interface MemorySelfTestReport {
 
 // Full standalone run: throwaway HIVE_HOME + repo root, plant, probe, clean
 // up. Safe to run in any checkout — nothing outside the temp dir is touched.
-export async function runMemorySelfTest(): Promise<MemorySelfTestReport> {
+// Without an explicit `options.service`, the semantic assertions get the
+// real local model only when HIVE_MEMORY_SELF_TEST_EMBEDDINGS=1 (its cache
+// dir is captured BEFORE the HIVE_HOME redirect so the model cache is
+// reused, not re-downloaded into the throwaway home); otherwise they SKIP.
+export async function runMemorySelfTest(
+  options: { service?: MemoryEmbeddingService } = {},
+): Promise<MemorySelfTestReport> {
   const base = await mkdtemp(join(tmpdir(), "hive-memory-self-test-"));
   const previousHome = process.env.HIVE_HOME;
+  const service = options.service ??
+    (process.env[MEMORY_SELF_TEST_EMBEDDINGS_ENV] === "1"
+      ? new MemoryEmbeddingService(
+        { provider: "local", model: "bge-small-en-v1.5" },
+        { cacheDir: memoryModelsDir() },
+      )
+      : undefined);
   process.env.HIVE_HOME = join(base, "hive-home");
   try {
     const repoRoot = join(base, "repo");
     await plantMemorySelfTestFixture(repoRoot);
-    const assertions = await probeMemorySelfTest(repoRoot);
+    const assertions = await probeMemorySelfTest(
+      repoRoot,
+      service === undefined ? {} : { service },
+    );
     return {
-      ok: assertions.every((assertion) => assertion.passed),
+      ok: assertions.every((assertion) =>
+        assertion.passed || assertion.skipped === true
+      ),
       lines: assertions.map((assertion) =>
-        `${assertion.passed ? "PASS" : "FAIL"} ${assertion.name} — ` +
-        assertion.detail
+        `${
+          assertion.skipped === true ? "SKIP" : assertion.passed ? "PASS" : "FAIL"
+        } ${assertion.name} — ` + assertion.detail
       ),
     };
   } finally {
@@ -374,9 +602,15 @@ export async function runMemorySelfTest(): Promise<MemorySelfTestReport> {
 export async function memorySelfTestCli(): Promise<number> {
   const report = await runMemorySelfTest();
   for (const line of report.lines) console.log(line);
+  const passed = report.lines.filter((line) => line.startsWith("PASS ")).length;
+  const skipped = report.lines.filter((line) => line.startsWith("SKIP "));
   console.log(
     report.ok
-      ? `memory self-test: all ${report.lines.length} assertions passed`
+      ? `memory self-test: all ${passed} assertions passed` +
+        (skipped.length > 0
+          ? ` (${skipped.length} skipped — embeddings unavailable; set ` +
+            `${MEMORY_SELF_TEST_EMBEDDINGS_ENV}=1 to prove the semantic leg)`
+          : "")
       : "memory self-test: FAILED — the memory system is not recalling correctly",
   );
   return report.ok ? 0 : 1;

@@ -7,6 +7,10 @@ import {
   plantMemorySelfTestFixture,
   probeMemorySelfTest,
 } from "../src/cli/memory-self-test";
+import {
+  MemoryEmbeddingService,
+  type MemoryEmbedder,
+} from "../src/daemon/memory-embeddings";
 import { OUTSIDE_REPO_TMPDIR } from "./outside-repo-tmpdir";
 
 const tempRoots: string[] = [];
@@ -19,6 +23,60 @@ afterEach(async () => {
     tempRoots.splice(0).map((root) => rm(root, { recursive: true, force: true })),
   );
 });
+
+// The semantic assertions NEVER load the real model under `bun test` (the
+// onnxruntime teardown SIGTRAP, see test/memory-embedding-live.test.ts) —
+// they get a deterministic mock embedder with controlled geometry instead:
+// the paraphrase canary and its query share one vector, the consolidation
+// pair shares another, everything else hashes to an independent random
+// direction in 64 dims (cosine ≈ 0, never ≥ 0.85 by chance).
+function mockSelfTestEmbedder(): MemoryEmbedder {
+  const unit = (seed: number): number[] => {
+    let state = seed || 1;
+    const vector = Array.from({ length: 64 }, () => {
+      state = (state * 1103515245 + 12345) % 2 ** 31;
+      return state / 2 ** 30 - 1;
+    });
+    const magnitude = Math.hypot(...vector);
+    return vector.map((component) => component / magnitude);
+  };
+  const semanticVector = unit(1);
+  const pairVector = unit(2);
+  const hash = (text: string): number => {
+    let value = 7;
+    for (const char of text) value = (value * 31 + char.charCodeAt(0)) % 2 ** 31;
+    return value;
+  };
+  const pick = (text: string): number[] => {
+    if (text.includes("free-memory floor") || text.includes("RAM is exhausted")) {
+      return semanticVector;
+    }
+    if (text.includes("wake-delta injection budget defaults to 300 tokens")) {
+      return pairVector;
+    }
+    return unit(hash(text));
+  };
+  return {
+    model: "mock-self-test",
+    dimensions: 64,
+    embed: (texts) => Promise.resolve(texts.map(pick)),
+    embedQuery: (text) => Promise.resolve(pick(text)),
+  };
+}
+
+function mockService(): MemoryEmbeddingService {
+  return new MemoryEmbeddingService(
+    { provider: "local", model: "bge-small-en-v1.5" },
+    { load: () => Promise.resolve(mockSelfTestEmbedder()) },
+  );
+}
+
+function unavailableService(): MemoryEmbeddingService {
+  return new MemoryEmbeddingService(
+    { provider: "local", model: "bge-small-en-v1.5" },
+    { load: () => Promise.reject(new Error("mock load failure")) },
+  );
+}
 
 describe("hive memory self-test", () => {
   test("passes end-to-end on a fresh fixture: exit 0, all PASS lines", async () => {
@@ -42,6 +100,64 @@ describe("hive memory self-test", () => {
     } finally {
       log.mockRestore();
     }
+  });
+
+  test("semantic assertions SKIP honestly when embeddings are unavailable", async () => {
+    const log = spyOn(console, "log").mockImplementation(() => undefined);
+    try {
+      const exitCode = await memorySelfTestCli();
+      expect(exitCode).toBe(0);
+      const lines = log.mock.calls.map((call) => String(call[0]));
+      const skips = lines.filter((line) => line.startsWith("SKIP "));
+      expect(skips).toHaveLength(2);
+      expect(skips[0]).toBe("SKIP semantic-recall — embeddings unavailable");
+      expect(skips[1]).toBe(
+        "SKIP consolidation-dry-run — embeddings unavailable",
+      );
+      // A SKIP is not a failure: the exit code reflects only what was provable.
+      expect(lines.some((line) => line.startsWith("FAIL "))).toBe(false);
+    } finally {
+      log.mockRestore();
+    }
+  });
+
+  test("an injected unavailable service also yields SKIP, not failure", async () => {
+    const home = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"));
+    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"));
+    tempRoots.push(home, root);
+    process.env.HIVE_HOME = home;
+    await plantMemorySelfTestFixture(root);
+
+    const assertions = await probeMemorySelfTest(root, {
+      service: unavailableService(),
+    });
+    expect(assertions).toHaveLength(8);
+    const semantic = assertions.find((a) => a.name === "semantic-recall");
+    const dryRun = assertions.find((a) => a.name === "consolidation-dry-run");
+    expect(semantic?.skipped).toBe(true);
+    expect(dryRun?.skipped).toBe(true);
+    expect(assertions.every((a) => a.passed || a.skipped === true)).toBe(true);
+  });
+
+  test("with a mock embedder the semantic assertions PASS deterministically", async () => {
+    const home = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-home-"));
+    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-self-test-repo-"));
+    tempRoots.push(home, root);
+    process.env.HIVE_HOME = home;
+    await plantMemorySelfTestFixture(root);
+
+    const assertions = await probeMemorySelfTest(root, {
+      service: mockService(),
+    });
+    expect(assertions).toHaveLength(8);
+    expect(assertions.every((a) => a.passed)).toBe(true);
+    const semantic = assertions.find((a) => a.name === "semantic-recall");
+    expect(semantic?.passed).toBe(true);
+    expect(semantic?.detail).toContain("self-test-semantic-canary");
+    const dryRun = assertions.find((a) => a.name === "consolidation-dry-run");
+    expect(dryRun?.passed).toBe(true);
+    expect(dryRun?.detail).toContain("identical bucket");
+    expect(dryRun?.detail).toContain("nothing modified");
   });
 
   test("sabotaged fixture fails the probe: deleting canaries breaks recall@5", async () => {
@@ -68,7 +184,9 @@ describe("hive memory self-test", () => {
     expect(deleted).toBe(5);
 
     const assertions = await probeMemorySelfTest(root);
-    expect(assertions.some((assertion) => !assertion.passed)).toBe(true);
+    expect(
+      assertions.some((a) => !a.passed && a.skipped !== true),
+    ).toBe(true);
     const recall = assertions.find((assertion) => assertion.name === "recall@5");
     expect(recall?.passed).toBe(false);
     expect(recall?.detail).toContain(

@@ -14,6 +14,7 @@ import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { writeMemoryFact } from "../src/adapters/memory";
+import { runMemorySelfTest } from "../src/cli/memory-self-test";
 import { EpisodicStore } from "../src/daemon/episodic-store";
 import {
   MemoryEmbeddingIndex,
@@ -177,6 +178,29 @@ liveSuite("memory embeddings, live (HIVE_LIVE_MEMORY_EMBEDDINGS=1)", () => {
       const hybridIds = [...hybrid.pitfalls, ...hybrid.articles]
         .map((row) => row.id);
       expect(hybridIds).toContain(canaryId());
+    });
+  }, 120_000);
+
+  // HM-5 final package (board #122): the golden-canary self-test's semantic
+  // assertions, proven against the REAL model — the bun-test suite only ever
+  // sees the SKIP/mock path, so this is where semantic-recall and
+  // consolidation-dry-run earn their PASS lines. The self-test plants and
+  // cleans up its own throwaway fixture; it just reuses this suite's loaded
+  // service so the model initializes once.
+  test("self-test semantic assertions pass with the real model", async () => {
+    await gated(async () => {
+      const report = await runMemorySelfTest({ service });
+      const semantic = report.lines.find((line) =>
+        line.includes("semantic-recall")
+      );
+      expect(semantic).toBeDefined();
+      expect(semantic!.startsWith("PASS ")).toBe(true);
+      const dryRun = report.lines.find((line) =>
+        line.includes("consolidation-dry-run")
+      );
+      expect(dryRun).toBeDefined();
+      expect(dryRun!.startsWith("PASS ")).toBe(true);
+      expect(report.ok).toBe(true);
     });
   }, 120_000);
 });
