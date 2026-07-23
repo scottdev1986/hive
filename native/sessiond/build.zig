@@ -263,6 +263,25 @@ pub fn build(b: *std.Build) void {
     );
     neutral_host_proof_step.dependOn(&run_neutral_host_golden.step);
 
+    const neutral_evidence_module = b.createModule(.{
+        .root_source_file = b.path("src/neutral_evidence.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    neutral_evidence_module.addImport("neutral_host", neutral_host_module);
+    neutral_evidence_module.addImport("process_inspector", process_inspector_module);
+    neutral_evidence_module.addImport("session_protocol_generated", generated);
+    neutral_evidence_module.addImport("wall_clock", wall_clock_module);
+    const neutral_operations_module = b.createModule(.{
+        .root_source_file = b.path("src/neutral_operations.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    neutral_operations_module.addImport("neutral_evidence", neutral_evidence_module);
+    neutral_operations_module.addImport("neutral_host", neutral_host_module);
+    neutral_operations_module.addImport("process_inspector", process_inspector_module);
+    neutral_operations_module.addImport("session_protocol_generated", generated);
     const neutral_control_plane_module = b.createModule(.{
         .root_source_file = b.path("src/neutral_control_plane.zig"),
         .target = target,
@@ -273,6 +292,8 @@ pub fn build(b: *std.Build) void {
     neutral_control_plane_module.addImport("process_inspector", process_inspector_module);
     neutral_control_plane_module.addImport("session_protocol_generated", generated);
     neutral_control_plane_module.addImport("wall_clock", wall_clock_module);
+    neutral_control_plane_module.addImport("neutral_evidence", neutral_evidence_module);
+    neutral_control_plane_module.addImport("neutral_operations", neutral_operations_module);
     broker_module.addImport("neutral_control_plane", neutral_control_plane_module);
     broker_module.addImport("neutral_host", neutral_host_module);
     broker_module.addImport("process_inspector", process_inspector_module);
