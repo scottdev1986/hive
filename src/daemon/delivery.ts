@@ -361,6 +361,9 @@ export class MessageDelivery {
      * trigger authority; their trigger-shaped text is delivered verbatim.
      * Absent (embedded daemons, tests), delivery is byte-identical to before. */
     private readonly memoryTriggers?: MemoryTriggerExecutor,
+    /** Durable warning sink (defect D2): trigger and wake-delta failures
+     * persist here in addition to the console. */
+    private readonly log?: (line: string) => void,
   ) {}
 
   private sleep(ms: number): Promise<void> {
@@ -932,10 +935,11 @@ export class MessageDelivery {
       return await this.memoryTriggers.execute(message);
     } catch (error) {
       const detail = error instanceof Error ? error.message : "unknown error";
-      console.error(
+      const line =
         `Hive memory trigger in message ${message.id} (${message.from} → ${message.to}) ` +
-          `failed; delivering the original text: ${detail}`,
-      );
+        `failed; delivering the original text: ${detail}`;
+      console.error(line);
+      this.log?.(line);
       return `${this.formatAgentMessage(message)}\n\n` +
         `⚠️ Hive memory trigger failed (${detail}); ` +
         "the original message is delivered unmodified.";
@@ -955,11 +959,11 @@ export class MessageDelivery {
     try {
       return await this.wakeDelta.compose(recipient);
     } catch (error) {
-      console.error(
-        `Hive memory wake-delta for ${recipient.name} failed; delivering without it: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
+      const line = `Hive memory wake-delta for ${recipient.name} failed; delivering without it: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`;
+      console.error(line);
+      this.log?.(line);
       return null;
     }
   }
@@ -976,11 +980,11 @@ export class MessageDelivery {
     try {
       this.wakeDelta.advance(recipient, delta.advanceTo);
     } catch (error) {
-      console.error(
-        `Hive could not advance ${recipient.name}'s memory high-water mark: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
+      const line = `Hive could not advance ${recipient.name}'s memory high-water mark: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`;
+      console.error(line);
+      this.log?.(line);
     }
   }
 

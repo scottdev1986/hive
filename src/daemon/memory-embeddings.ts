@@ -50,6 +50,48 @@ export type MemoryEmbeddingStatus =
   | { state: "available"; model: string; dimensions: number }
   | { state: "unavailable"; detail: string };
 
+/** The one-word state every user-facing surface (recall envelope, write
+ * responses, hive_status) carries (defect D2). The three embedding-* labels
+ * are the distinct D1 runtime failure modes; "unavailable" is any other
+ * failure; "disabled" is provider config that keeps the leg off. */
+export type MemoryEmbeddingStateLabel =
+  | "ready"
+  | "pending"
+  | "disabled"
+  | "embedding-runtime-missing"
+  | "embedding-runtime-broken"
+  | "embedding-native-unloadable"
+  | "unavailable";
+
+const DISTINGUISHED_FAILURE_LABELS = [
+  "embedding-runtime-missing",
+  "embedding-runtime-broken",
+  "embedding-native-unloadable",
+] as const;
+
+/** Extract the state label an unavailable detail string carries. The D1
+ * loader throws errors whose message starts with the distinct label, and the
+ * service's failure detail preserves it — anything else is the generic
+ * "unavailable". */
+export function embeddingStateLabelFromDetail(
+  detail: string,
+): MemoryEmbeddingStateLabel {
+  for (const label of DISTINGUISHED_FAILURE_LABELS) {
+    if (detail.includes(label)) return label;
+  }
+  return "unavailable";
+}
+
+/** What actually happened to a write's vector projection (defect D2):
+ * "indexed" — the vector is stored; "queued" — the first-ever embed is
+ * loading the model, so the projection runs in the background rather than
+ * blocking the write inside the memory lock; "unavailable:<state>" — the
+ * semantic leg is down and the write is keyword-searchable only. */
+export type MemoryEmbeddingWriteOutcome =
+  | "indexed"
+  | "queued"
+  | `unavailable:${MemoryEmbeddingStateLabel}`;
+
 export interface MemoryEmbeddingConfig {
   provider: "local" | "api";
   model: MemoryEmbeddingModel;
@@ -248,12 +290,17 @@ export type MemoryEmbedderLoad = (
 export class MemoryEmbeddingService {
   private attempt: Promise<MemoryEmbedder | null> | null = null;
   private failureDetail: string | null = null;
+  private loaded: MemoryEmbedder | null = null;
 
   constructor(
     private readonly config: MemoryEmbeddingConfig,
     private readonly options: {
       cacheDir?: string;
       load?: MemoryEmbedderLoad;
+      /** State-transition sink (defect D2): the daemon wires its durable log
+       * here so a READY/UNAVAILABLE transition persists somewhere readable —
+       * console output alone has no reader on the deployed daemon. */
+      log?: (message: string) => void;
     } = {},
   ) {}
 
@@ -271,10 +318,29 @@ export class MemoryEmbeddingService {
     if (this.config.provider === "api") {
       return { state: "unavailable", detail: this.apiUnavailableDetail() };
     }
+    if (this.loaded !== null) {
+      return {
+        state: "available",
+        model: this.loaded.model,
+        dimensions: this.loaded.dimensions,
+      };
+    }
     if (this.failureDetail !== null) {
       return { state: "unavailable", detail: this.failureDetail };
     }
     return { state: "pending" };
+  }
+
+  /** The one-word state for user-facing surfaces (defect D2). The api knob
+   * reports "disabled": it is provider config keeping the leg off, not a
+   * runtime failure. */
+  stateLabel(): MemoryEmbeddingStateLabel {
+    if (this.config.provider === "api") return "disabled";
+    if (this.loaded !== null) return "ready";
+    if (this.failureDetail !== null) {
+      return embeddingStateLabelFromDetail(this.failureDetail);
+    }
+    return "pending";
   }
 
   private apiUnavailableDetail(): string {
@@ -295,12 +361,20 @@ export class MemoryEmbeddingService {
     if (this.attempt === null) {
       const cacheDir = this.options.cacheDir ?? memoryModelsDir();
       const load = this.options.load ?? loadLocalEmbedder;
-      this.attempt = load(this.config.model, cacheDir).catch((error) => {
+      this.attempt = load(this.config.model, cacheDir).then((embedder) => {
+        this.loaded = embedder;
+        this.options.log?.(
+          `Hive memory embeddings: READY — model ${embedder.model} loaded ` +
+            `(${embedder.dimensions}-dim)`,
+        );
+        return embedder;
+      }).catch((error) => {
         this.failureDetail =
           `local embedding model ${this.config.model} failed to load: ${
             error instanceof Error ? error.message : "unknown error"
           } — semantic memory is unavailable, recall is FTS-only`;
         console.error(`Hive memory embeddings: ${this.failureDetail}`);
+        this.options.log?.(`Hive memory embeddings: ${this.failureDetail}`);
         return null;
       });
     }
@@ -339,11 +413,17 @@ export interface SemanticArticleHit {
  * The maintained half of the semantic leg: embeds sources into the episodic
  * store's vector table on the memory write paths and answers brute-force
  * cosine top-k queries over it. Index maintenance is failure-isolated — an
- * embedding failure is logged and the write it rode on still succeeds;
- * recall with an unavailable surface returns null (the caller then renders
- * exactly the FTS-only bundle).
+ * embedding failure is logged and the write it rode on still succeeds, with
+ * the projection's outcome reported back (indexed/queued/unavailable:<state>,
+ * defect D2) so the write response can say what actually happened; recall
+ * with an unavailable surface returns null (the caller then renders the
+ * FTS-only bundle, labeled degraded).
  */
 export class MemoryEmbeddingIndex {
+  /** In-flight background projections (the "queued" path), tracked so tests
+   * and orderly consumers can settle them. */
+  private readonly inflight = new Set<Promise<unknown>>();
+
   constructor(
     private readonly deps: {
       store: EpisodicStore;
@@ -356,6 +436,11 @@ export class MemoryEmbeddingIndex {
     (this.deps.log ?? console.error)(message);
   }
 
+  /** Resolves when every queued background projection has finished. */
+  async settle(): Promise<void> {
+    await Promise.all([...this.inflight]);
+  }
+
   /** The text an article embeds as: title plus body — the same fields the
    * FTS index feeds its porter tokenizer. */
   static articleText(article: { title: string; body: string }): string {
@@ -366,15 +451,17 @@ export class MemoryEmbeddingIndex {
     return `${fact.title}\n${fact.body}`;
   }
 
-  private async embedAndStore(
+  private async runEmbed(
     kind: "article" | "fact",
     scope: string,
     sourceId: string,
     text: string,
-  ): Promise<void> {
+  ): Promise<MemoryEmbeddingWriteOutcome> {
     try {
       const embedder = await this.deps.service.embedder();
-      if (embedder === null) return;
+      if (embedder === null) {
+        return `unavailable:${this.deps.service.stateLabel()}`;
+      }
       const [vector] = await embedder.embed([text]);
       if (vector === undefined) {
         throw new Error(`embedder returned no vector for ${kind} ${sourceId}`);
@@ -386,6 +473,7 @@ export class MemoryEmbeddingIndex {
         model: embedder.model,
         vector: Float32Array.from(vector),
       });
+      return "indexed";
     } catch (error) {
       // Failure-isolated by contract: the source write already succeeded and
       // the semantic leg is a recall enhancement, not correctness (D4).
@@ -393,10 +481,40 @@ export class MemoryEmbeddingIndex {
         `Hive memory embedding index maintenance failed for ${kind} ` +
           `${sourceId}: ${error instanceof Error ? error.message : "unknown error"}`,
       );
+      return `unavailable:${this.deps.service.stateLabel()}`;
     }
   }
 
-  upsertArticle(scope: string, id: string, text: string): Promise<void> {
+  private embedAndStore(
+    kind: "article" | "fact",
+    scope: string,
+    sourceId: string,
+    text: string,
+  ): Promise<MemoryEmbeddingWriteOutcome> {
+    const label = this.deps.service.stateLabel();
+    if (label !== "ready" && label !== "pending") {
+      // The leg is known-down (the load failure is memoized) or configured
+      // off — do not re-attempt on every write, say so on the response.
+      return Promise.resolve<MemoryEmbeddingWriteOutcome>(`unavailable:${label}`);
+    }
+    if (label === "pending") {
+      // The first-ever embed pays the model load (~seconds warm, a download
+      // cold); that wait must not block the write inside the daemon's
+      // serialized memory lock. The projection runs in the background —
+      // tracked so settle() can drain it — and the write reports "queued".
+      const pending = this.runEmbed(kind, scope, sourceId, text);
+      this.inflight.add(pending);
+      void pending.finally(() => this.inflight.delete(pending));
+      return Promise.resolve("queued");
+    }
+    return this.runEmbed(kind, scope, sourceId, text);
+  }
+
+  upsertArticle(
+    scope: string,
+    id: string,
+    text: string,
+  ): Promise<MemoryEmbeddingWriteOutcome> {
     return this.embedAndStore("article", scope, id, text);
   }
 
@@ -404,7 +522,7 @@ export class MemoryEmbeddingIndex {
     this.deps.store.removeMemoryEmbedding("article", scope, id);
   }
 
-  upsertFact(id: string, text: string): Promise<void> {
+  upsertFact(id: string, text: string): Promise<MemoryEmbeddingWriteOutcome> {
     return this.embedAndStore("fact", "", id, text);
   }
 

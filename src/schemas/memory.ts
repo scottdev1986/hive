@@ -145,6 +145,10 @@ export const MemoryWriteResultSchema = z.strictObject({
   status: MemoryVerificationStatusSchema,
   verified: IsoDateSchema.optional(),
   similarCandidates: z.array(MemorySimilarCandidateSchema).optional(),
+  /** What happened to this write's vector projection (defect D2):
+   * "indexed" | "queued" | "unavailable:<state>". Optional so older daemons
+   * still parse. */
+  embedding: z.string().optional(),
 }).superRefine((input, context) => {
   const verificationError = verificationDateError(input);
   if (verificationError !== null) {

@@ -406,12 +406,33 @@ export async function searchMemoryCli(
   }
 }
 
+/** The one-line CLI rendering of a write's embedding outcome (defect D2):
+ * quiet on the happy path ("indexed" or a daemon too old to say), one loud
+ * line otherwise. */
+export function memoryEmbeddingNotice(embedding: string | undefined): string | null {
+  if (embedding === undefined || embedding === "indexed") return null;
+  if (embedding === "queued") {
+    return "embedding queued — the vector projection is running in the " +
+      "background; this write is keyword-searchable until it lands";
+  }
+  const state = embedding.startsWith("unavailable:")
+    ? embedding.slice("unavailable:".length)
+    : embedding;
+  return `⚠ embedding unavailable (${state}) — this write is ` +
+    "keyword-searchable only; see ~/.hive/logs/daemon.log or run " +
+    "`hive embeddings install`";
+}
+
 export async function writeMemoryCli(input: MemoryWriteInput): Promise<void> {
   const fact = await writeMemory(requireDaemonPort(), input);
   console.log(
     `wrote [${fact.scope}/${fact.topic}] ${fact.id} — ${fact.path}\n` +
       `raw observation: ${fact.rawPath}`,
   );
+  const embeddingNotice = memoryEmbeddingNotice(fact.embedding);
+  if (embeddingNotice !== null) {
+    console.log(embeddingNotice);
+  }
   for (const candidate of fact.similarCandidates ?? []) {
     console.log(
       `similar: [${candidate.scope}] ${candidate.id} — ${candidate.title} ` +

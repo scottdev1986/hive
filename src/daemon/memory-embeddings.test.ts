@@ -390,8 +390,11 @@ describe("MemoryEmbeddingIndex", () => {
       ]),
       queryVector: [1, 0, 0, 0],
     }));
+    // The first upserts ride the queued path (the model load must not block
+    // a write); settle drains the background projections.
     await index.upsertArticle("repo", "near", "near text");
     await index.upsertArticle("repo", "far", "far text");
+    await index.settle();
     expect(store.memoryEmbeddings({ kind: "article" })).toHaveLength(2);
     const hits = await index.searchArticles("anything", 10);
     expect(hits).not.toBeNull();
@@ -405,6 +408,7 @@ describe("MemoryEmbeddingIndex", () => {
     for (const id of ["b", "a", "c"]) {
       await index.upsertArticle("repo", id, `${id} text`);
     }
+    await index.settle();
     const hits = await index.searchArticles("q", 2);
     // All vectors identical (mock fallback) → score ties break on scope/id.
     expect(hits!.map((hit) => hit.id)).toEqual(["a", "b"]);
@@ -421,11 +425,52 @@ describe("MemoryEmbeddingIndex", () => {
     const { store, index, logged } = makeIndex(
       mockEmbedder({ failOnEmbed: true }),
     );
-    await index.upsertArticle("repo", "x", "x text");
+    // Pending on the first write: the projection is queued, the failure
+    // surfaces when the background projection runs.
+    expect(await index.upsertArticle("repo", "x", "x text")).toBe("queued");
+    await index.settle();
     expect(store.memoryEmbeddings()).toHaveLength(0);
     expect(logged).toHaveLength(1);
     expect(logged[0]).toContain("mock embed failure");
     store.close();
+  });
+
+  test("upsert reports unavailable:<state> without re-attempting a known-down leg", async () => {
+    const { store, index } = makeIndex(null);
+    // The first attempt queues (the load has not failed yet) and fails.
+    expect(await index.upsertArticle("repo", "x", "x text")).toBe("queued");
+    await index.settle();
+    // The failure is memoized — later writes report the state, no retry.
+    expect(await index.upsertArticle("repo", "y", "y text"))
+      .toBe("unavailable:unavailable");
+    expect(store.memoryEmbeddings()).toHaveLength(0);
+    store.close();
+  });
+
+  test("a warm leg reports indexed, an api-configured leg reports disabled", async () => {
+    const { store, index } = makeIndex(mockEmbedder());
+    // The first upsert queues behind the model load; once settled the leg is
+    // warm and the next upsert reports the true outcome.
+    expect(await index.upsertArticle("repo", "cold", "cold text"))
+      .toBe("queued");
+    await index.settle();
+    expect(await index.upsertArticle("repo", "warm", "warm text"))
+      .toBe("indexed");
+    expect(store.memoryEmbeddings()).toHaveLength(2);
+    store.close();
+
+    const apiStore = new EpisodicStore(":memory:");
+    const apiService = new MemoryEmbeddingService({
+      provider: "api",
+      model: "bge-small-en-v1.5",
+    });
+    const apiIndex = new MemoryEmbeddingIndex({
+      store: apiStore,
+      service: apiService,
+    });
+    expect(await apiIndex.upsertArticle("repo", "x", "x text"))
+      .toBe("unavailable:disabled");
+    apiStore.close();
   });
 
   test("rows from another model width never mix into a search", async () => {
@@ -438,6 +483,7 @@ describe("MemoryEmbeddingIndex", () => {
       vector: Float32Array.from([1, 0]),
     });
     await index.upsertArticle("repo", "right-width", "right text");
+    await index.settle();
     const hits = await index.searchArticles("q", 10);
     expect(hits!.map((hit) => hit.id)).toEqual(["right-width"]);
     store.close();
@@ -497,7 +543,7 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
     },
   ];
 
-  test("semantic unavailable (null) is BYTE-IDENTICAL to no semantic leg", async () => {
+  test("semantic unavailable (null) keeps the FTS-only ROWS byte-identical", async () => {
     const { repo, index } = await makeWiki(articles);
     const query = "lease renewal overlapping";
     const without = await buildMemoryRecallBundle(query, {
@@ -509,8 +555,14 @@ describe("buildMemoryRecallBundle, hybrid (HM-5)", () => {
       repoRoot: () => repo,
       semantic: () => Promise.resolve(null),
     });
-    expect(JSON.stringify(unavailable)).toBe(JSON.stringify(without));
+    // The rows are the exact pre-HM-5 output — same hits, same order. The
+    // envelope's semantic discriminator INTENTIONALLY differs (defect D2):
+    // an unwired leg is "disabled", a leg that answered null is degraded.
+    expect(unavailable.pitfalls).toEqual(without.pitfalls);
+    expect(unavailable.articles).toEqual(without.articles);
     expect(without.state).toBe("ok");
+    expect(without.semantic).toBe("disabled");
+    expect(unavailable.semantic).toBe("degraded:unavailable");
   });
 
   test("a semantic hit FTS misses ranks in the bundle, hydrated from disk", async () => {
@@ -639,6 +691,10 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
     const written = await daemon.writeMemoryFact(
       writeInput("Embeddings maintain the vector index", "Body text."),
     );
+    // The first write queues the projection behind the model load; settle
+    // drains it.
+    expect(written.embedding).toBe("queued");
+    await daemon.embeddingIndex!.settle();
     const rows = episodic.memoryEmbeddings({ kind: "article" });
     expect(rows).toHaveLength(1);
     expect(rows[0]).toMatchObject({
@@ -660,6 +716,7 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
       id: first.id,
       supersedes: [first.id],
     });
+    await daemon.embeddingIndex!.settle();
     // Same id re-embedded once — exactly one row, newest write wins.
     const rows = episodic.memoryEmbeddings({ kind: "article" });
     expect(rows).toHaveLength(1);
@@ -694,6 +751,7 @@ describe("HiveDaemon embedding index maintenance (HM-5)", () => {
       vector: Float32Array.from([1, 0, 0, 0]),
     });
     episodic.invalidateFact(fact.id);
+    await daemon.embeddingIndex!.settle();
     await daemon.rebuildMemoryIndex();
     const rows = episodic.memoryEmbeddings();
     expect(rows).toHaveLength(1);

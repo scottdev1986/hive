@@ -97,10 +97,21 @@ export interface MemoryTriggerDeps {
     id: string;
     score: number;
   }> | null>;
-  /** The daemon's serialized writeMemoryFact (file lock + FTS upsert). */
-  write: (input: MemoryWriteInput) => Promise<MemoryWriteFileResult>;
+  /** The semantic leg's one-word state (defect D2), consulted when the leg
+   * answered null so the recall envelope can name WHY it is FTS-only
+   * (degraded:embedding-runtime-missing, not a silent keyword-only result). */
+  semanticStatus?: () => string;
+  /** The daemon's serialized writeMemoryFact (file lock + FTS upsert). The
+   * optional embedding outcome (defect D2) says what happened to the write's
+   * vector projection so the confirmation can say when it is keyword-only. */
+  write: (
+    input: MemoryWriteInput,
+  ) => Promise<MemoryWriteFileResult & { embedding?: string }>;
   /** The audit sink; null skips the episodic `memory-trigger` event. */
   episodic: Pick<EpisodicStore, "appendEvent"> | null;
+  /** Durable warning sink (defect D2) for trigger machinery failures;
+   * undefined logs to the console only. */
+  log?: (message: string) => void;
 }
 
 export interface MemoryTriggerContext {
@@ -154,8 +165,23 @@ export const MEMORY_RECALL_HINT_NOTE =
 export interface MemoryRecallBundle {
   /** absent = no wiki search index wired; empty = searched, no matches. */
   state: "ok" | "empty" | "absent";
+  /** What the semantic leg contributed to THIS bundle (defect D2): "hybrid"
+   * — semantic search actually ran and was blended; "disabled" — the leg is
+   * not wired (or provider config keeps it off); "degraded:<state>" — the
+   * leg is down and these results are keyword-only, named with the distinct
+   * state label (e.g. degraded:embedding-runtime-missing). */
+  semantic: MemoryRecallSemantic;
   pitfalls: MemoryRecallRow[];
   articles: MemoryRecallRow[];
+}
+
+export type MemoryRecallSemantic = "hybrid" | "disabled" | `degraded:${string}`;
+
+/** The loud line every degraded recall surface carries (defect D2). Kept as
+ * a function of the state label so the trigger lane and the memory_recall
+ * tool render byte-identical wording. */
+export function memoryRecallDegradedWarning(state: string): string {
+  return `⚠ semantic search unavailable (${state}) — results are keyword-only`;
 }
 
 export function formatMemoryRecallRow(row: MemoryRecallRow): string {
@@ -184,23 +210,44 @@ const RECALL_RRF_K = 60;
  * Hybrid retrieval (HM-5): when deps.semantic is wired AND answers (non-null),
  * its cosine top-k is RRF-blended with the FTS ranking — a paraphrase the
  * porter tokenizer cannot match still ranks. When the semantic leg is absent
- * or unavailable (null), the bundle is BYTE-IDENTICAL to the FTS-only output
- * — a test pins this.
+ * or unavailable (null), the bundle's ROWS are byte-identical to the FTS-only
+ * output — a test pins this — while the envelope's `semantic` field
+ * (defect D2) says out loud that the leg did not run, and why.
  */
 export async function buildMemoryRecallBundle(
   query: string,
-  deps: Pick<MemoryTriggerDeps, "memory" | "repoRoot" | "semantic">,
+  deps: Pick<MemoryTriggerDeps, "memory" | "repoRoot" | "semantic" | "semanticStatus">,
   limit = 8,
 ): Promise<MemoryRecallBundle> {
+  // The envelope discriminator (defect D2): names what the semantic leg
+  // contributed, so "FTS-only because embeddings are down" is never
+  // indistinguishable from a genuine keyword-only result. In the absent
+  // state nothing was searched at all; the field then reports the leg's
+  // wiring/health, not a search outcome.
+  const degradedSemantic = (): MemoryRecallSemantic => {
+    if (deps.semantic === undefined) return "disabled";
+    const label = deps.semanticStatus?.() ?? "unavailable";
+    return label === "disabled" ? "disabled" : `degraded:${label}`;
+  };
   if (deps.memory === null) {
-    return { state: "absent", pitfalls: [], articles: [] };
+    return {
+      state: "absent",
+      semantic: degradedSemantic(),
+      pitfalls: [],
+      articles: [],
+    };
   }
   const hits = deps.memory.search(query, { limit });
   const semantic = deps.semantic === undefined
     ? null
     : await deps.semantic(query, limit);
   if (semantic === null && hits.length === 0) {
-    return { state: "empty", pitfalls: [], articles: [] };
+    return {
+      state: "empty",
+      semantic: degradedSemantic(),
+      pitfalls: [],
+      articles: [],
+    };
   }
   const facts = await listMemoryFacts(deps.repoRoot());
   const factByKey = new Map<string, (typeof facts)[number]>(
@@ -242,6 +289,7 @@ export async function buildMemoryRecallBundle(
     const rows = hits.map(toRow);
     return {
       state: "ok",
+      semantic: degradedSemantic(),
       pitfalls: rows.filter((row) => row.pitfall),
       articles: rows.filter((row) => !row.pitfall),
     };
@@ -269,7 +317,7 @@ export async function buildMemoryRecallBundle(
   if (ordered.length === 0) {
     // Both legs answered and neither matched — the honest empty result, same
     // as the FTS-only path reports.
-    return { state: "empty", pitfalls: [], articles: [] };
+    return { state: "empty", semantic: "hybrid", pitfalls: [], articles: [] };
   }
   const rows = ordered.flatMap(([key, entry]): MemoryRecallRow[] => {
     const ftsHit = entry.fts >= 0 ? hits[entry.fts] : undefined;
@@ -292,6 +340,7 @@ export async function buildMemoryRecallBundle(
   });
   return {
     state: "ok",
+    semantic: "hybrid",
     pitfalls: rows.filter((row) => row.pitfall),
     articles: rows.filter((row) => !row.pitfall),
   };
@@ -321,6 +370,13 @@ async function executeRecall(
     `🧠 Hive memory recall for '${query}' — ${outcome} (${SYSTEM_NOTE(context.from, "recall:")})`;
 
   const bundle = await buildMemoryRecallBundle(query, deps);
+  // The degradation warning rides directly under the header (defect D2): it
+  // is part of the envelope, not a result row, so budget clamping can never
+  // cut it, and an FTS-only empty result is never mistaken for a genuine
+  // no-match.
+  const degradedWarning = bundle.semantic.startsWith("degraded:")
+    ? `\n${memoryRecallDegradedWarning(bundle.semantic.slice("degraded:".length))}`
+    : "";
   if (bundle.state === "absent") {
     return {
       body: header("memory surface unavailable") +
@@ -333,7 +389,7 @@ async function executeRecall(
   }
   if (bundle.state === "empty") {
     return {
-      body: header("no matching memory") +
+      body: header("no matching memory") + degradedWarning +
         "\nThe wiki was searched and nothing matched — an honest empty " +
         "result, not a missing index. Broaden the query with memory_search, " +
         'or record what you learn with "note this:".',
@@ -355,7 +411,7 @@ async function executeRecall(
     sections.push("Articles:", ...bundle.articles.map(formatMemoryRecallRow));
   }
   return {
-    body: header(`${count} result${count === 1 ? "" : "s"}`) +
+    body: header(`${count} result${count === 1 ? "" : "s"}`) + degradedWarning +
       `\n${MEMORY_RECALL_HINT_NOTE}\n` +
       sections.join("\n"),
     summary:
@@ -374,7 +430,10 @@ async function executeRecall(
 async function writeTriggerArticle(
   input: Omit<MemoryWriteInput, "id" | "supersedes">,
   deps: MemoryTriggerDeps,
-): Promise<{ written: MemoryWriteFileResult; action: "created" | "updated" }> {
+): Promise<{
+  written: MemoryWriteFileResult & { embedding?: string };
+  action: "created" | "updated";
+}> {
   const duplicate = (await discoverMemoryFacts(deps.repoRoot(), "repo")).find(
     (fact) => normalizeTitle(fact.title) === normalizeTitle(input.title),
   );
@@ -437,10 +496,17 @@ async function executeWrite(
   const did = action === "created"
     ? `wrote article [${written.scope}/${written.topic}] ${written.id}`
     : `updated existing article [${written.scope}/${written.topic}] ${written.id}`;
+  const embedding = written.embedding;
+  const embeddingWarning = embedding !== undefined &&
+      embedding.startsWith("unavailable:")
+    ? `\n⚠ semantic index unavailable (${embedding.slice("unavailable:".length)})` +
+      " — this write is keyword-searchable only."
+    : "";
   return {
     body: `🧠 ${verb}: "${written.title}" [unverified] (${SYSTEM_NOTE(context.from, trigger)} ` +
       `The daemon ${did}. Unverified is a claim to reconcile, not ` +
-      "authority — verify with memory_read and promote before relying on it.)",
+      "authority — verify with memory_read and promote before relying on it.)" +
+      embeddingWarning,
     summary:
       `${kind} trigger from ${context.from} to ${context.target}: ${action} [repo/${written.topic}] ${written.id}`,
     provenance: {
@@ -480,11 +546,12 @@ export async function executeMemoryTrigger(
         },
       });
     } catch (error) {
-      console.error(
+      const message =
         `Hive could not audit the memory trigger from ${context.from} to ${context.target}: ${
           error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
+        }`;
+      console.error(message);
+      deps.log?.(message);
     }
   }
   return execution;

@@ -644,6 +644,18 @@ export class EpisodicStore {
     return rows.map(parseEmbeddingRow);
   }
 
+  /** Per-kind vector-row counts without deserializing the vectors — the
+   * status surface's cheap projection-health read (defect D2). */
+  memoryEmbeddingCounts(): { articles: number; facts: number } {
+    const rows = this.database.query(
+      "SELECT kind, COUNT(*) AS count FROM memory_embeddings GROUP BY kind",
+    ).all() as Array<{ kind: string; count: number }>;
+    return {
+      articles: rows.find((row) => row.kind === "article")?.count ?? 0,
+      facts: rows.find((row) => row.kind === "fact")?.count ?? 0,
+    };
+  }
+
   /** Delete vector rows whose source no longer exists: an article not in
    * `keep.articles` ("scope:id" keys) or a fact not in `keep.facts` (ids of
    * currently-believed facts — an invalidated fact's vector is stale too).

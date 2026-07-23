@@ -480,6 +480,9 @@ export async function probeMemorySelfTest(
           );
         }
       }
+      // The first upserts ride the queued path (the model load must not block
+      // a write); drain the background projections before searching.
+      await semanticIndex.settle();
 
       semanticRecall = await attempt("semantic-recall", async () => {
         const hits = await semanticIndex.searchArticles(

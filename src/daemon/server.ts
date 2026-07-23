@@ -138,16 +138,20 @@ import type { SelectionPreferenceControl } from "./selection-preferences";
 import { findSimilarMemoryCandidates, MemoryIndex } from "./memory-index";
 import { createWakeDeltaProvider } from "./memory-delta";
 import {
+  embeddingsRuntimeDir,
   MemoryEmbeddingIndex,
   MemoryEmbeddingService,
   type MemoryEmbedderLoad,
   type MemoryEmbeddingConfig,
+  type MemoryEmbeddingWriteOutcome,
 } from "./memory-embeddings";
 import {
   buildMemoryRecallBundle,
   createMemoryTriggerExecutor,
   MEMORY_RECALL_HINT_NOTE,
+  memoryRecallDegradedWarning,
 } from "./memory-triggers";
+import { DaemonLog } from "./daemon-log";
 import {
   promotionProvenanceBlock,
   promotionSource,
@@ -701,6 +705,11 @@ export interface HiveDaemonOptions {
   /** Test seam: substitute the embedder factory so daemon-level tests never
    * load a real model. */
   memoryEmbeddingLoad?: MemoryEmbedderLoad;
+  /** Durable warning sink (defect D2): startup config lines, embedding state
+   * transitions, sweep reports, and trigger/delta failures are appended here
+   * in addition to the console. Defaults to $HIVE_HOME/logs/daemon.log with
+   * a size-capped rollover; tests substitute to capture lines. */
+  daemonLog?: (line: string) => void;
   /** Test seams for the resource sweep's process interrogation. */
   resourceRunners?: {
     ps?: CommandOutput;
@@ -830,7 +839,10 @@ export class HiveDaemon {
   private retentionRunning = false;
   private readonly wakeBudgetTokens: number | null;
   private readonly embeddingService: MemoryEmbeddingService | null;
-  private readonly embeddingIndex: MemoryEmbeddingIndex | null;
+  readonly embeddingIndex: MemoryEmbeddingIndex | null;
+  /** The durable warning sink (defect D2) — console lines that must survive
+   * past the detached daemon's unread stdout. */
+  private readonly writeDaemonLog: (line: string) => void;
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
   private readonly panePids: (session: string) => Promise<number[]>;
@@ -866,6 +878,9 @@ export class HiveDaemon {
     }
     this.memory = new MemoryIndex(this.db.database);
     this.episodic = options.episodicStore ?? null;
+    const daemonLogFile = new DaemonLog();
+    this.writeDaemonLog = options.daemonLog ??
+      ((line) => daemonLogFile.write(line));
     // The semantic leg (HiveMemory HM-5): wired only with an episodic store
     // (its vector table lives there) and an embedding config. Lazy — nothing
     // loads here; the surface reports itself at start and on first use.
@@ -875,6 +890,9 @@ export class HiveDaemon {
           ...(options.memoryEmbeddingLoad === undefined
             ? {}
             : { load: options.memoryEmbeddingLoad }),
+          // Load transitions persist to the daemon log (defect D2) — the
+          // console line alone has no reader on the deployed daemon.
+          log: (message) => this.writeDaemonLog(message),
         })
         : null;
     this.embeddingIndex =
@@ -882,6 +900,10 @@ export class HiveDaemon {
         ? new MemoryEmbeddingIndex({
           store: this.episodic,
           service: this.embeddingService,
+          log: (message) => {
+            console.error(message);
+            this.writeDaemonLog(message);
+          },
         })
         : null;
     // Every status-store write — agent reports, source events, and the
@@ -1109,10 +1131,15 @@ export class HiveDaemon {
           repoRoot: () => this.repoRoot,
           memory: this.memory,
           semantic: this.semanticRecall(),
+          semanticStatus: this.semanticRecallState(),
           write: (input) => this.writeMemoryFact(input),
           episodic: this.episodic,
+          log: (message) => this.writeDaemonLog(message),
         })
         : undefined,
+      // Durable warning sink (defect D2): trigger and wake-delta failures
+      // persist to the daemon log, not only the unread console.
+      (line) => this.writeDaemonLog(line),
     );
     this.quota?.setAlertSink(async (body) => {
       await this.delivery.send("hive-quota", ORCHESTRATOR_NAME, body);
@@ -1468,12 +1495,13 @@ export class HiveDaemon {
     // are loud (S3.7 DoD 5).
     if (this.retentionConfig !== null && this.episodic !== null) {
       const retention = this.retentionConfig;
-      console.log(
+      const line =
         `Hive memory retention: events hot for ${retention.events_hot_days}d, ` +
-          `verified articles demote to stale after ${retention.stale_after_days}d, ` +
-          `sweep every ${retention.sweep_interval_hours}h; ` +
-          "facts and digests are kept forever (invariant, not a setting)",
-      );
+        `verified articles demote to stale after ${retention.stale_after_days}d, ` +
+        `sweep every ${retention.sweep_interval_hours}h; ` +
+        "facts and digests are kept forever (invariant, not a setting)";
+      console.log(line);
+      this.writeDaemonLog(line);
       this.retentionTimer = setInterval(() => {
         this.triggerMemoryRetentionSweep("periodic");
       }, retention.sweep_interval_hours * 3_600_000);
@@ -1484,11 +1512,12 @@ export class HiveDaemon {
     // budget is logged every start — recall-budget changes are loud, the
     // same posture as the retention config.
     if (this.wakeBudgetTokens !== null && this.episodic !== null) {
-      console.log(
+      const line =
         `Hive memory wake deltas: ${this.wakeBudgetTokens}-token budget, ` +
-          "injected over the send lane on message delivery and resume " +
-          "([memory] wake_budget_tokens)",
-      );
+        "injected over the send lane on message delivery and resume " +
+        "([memory] wake_budget_tokens)";
+      console.log(line);
+      this.writeDaemonLog(line);
     }
     // Semantic recall leg (HiveMemory HM-5, board #122): the effective
     // provider+model is logged every start — same loud-change posture as the
@@ -1497,13 +1526,13 @@ export class HiveDaemon {
     // load failure is reported when it happens.
     if (this.embeddingService !== null) {
       const status = this.embeddingService.status();
-      console.log(
-        status.state === "unavailable"
-          ? `Hive memory embeddings: UNAVAILABLE — ${status.detail}`
-          : `Hive memory embeddings: provider=${this.embeddingService.provider} ` +
-            `model=${this.embeddingService.model} (loads lazily on first use; ` +
-            "[memory] embedding_provider / embedding_model)",
-      );
+      const line = status.state === "unavailable"
+        ? `Hive memory embeddings: UNAVAILABLE — ${status.detail}`
+        : `Hive memory embeddings: provider=${this.embeddingService.provider} ` +
+          `model=${this.embeddingService.model} (loads lazily on first use; ` +
+          "[memory] embedding_provider / embedding_model)";
+      console.log(line);
+      this.writeDaemonLog(line);
     }
     void this.runMaintenance().catch((error) => {
       console.error(
@@ -1582,6 +1611,44 @@ export class HiveDaemon {
     return (query, limit) => index.searchArticles(query, limit);
   }
 
+  /** The semantic leg's one-word state for the recall envelope's degraded
+   * label (defect D2); undefined when the leg is unwired. */
+  private semanticRecallState(): (() => string) | undefined {
+    const service = this.embeddingService;
+    if (service === null) return undefined;
+    return () => service.stateLabel();
+  }
+
+  /** The memory.embeddings status section (defect D2): provider, model, the
+   * one-word state, vector-row counts, and the runtime dir in use — an
+   * operator sees degradation here without reading code or logs. */
+  private memoryEmbeddingsStatusSection() {
+    const service = this.embeddingService;
+    if (service === null) {
+      return {
+        state: "disabled",
+        detail:
+          "semantic leg is not wired on this daemon (no episodic store or " +
+          "no [memory] embedding config)",
+      };
+    }
+    const status = service.status();
+    const counts = this.episodic?.memoryEmbeddingCounts() ??
+      { articles: 0, facts: 0 };
+    return {
+      provider: service.provider,
+      model: service.model,
+      state: service.stateLabel(),
+      ...(status.state === "unavailable" ? { detail: status.detail } : {}),
+      runtimeDir: embeddingsRuntimeDir(),
+      vectors: {
+        articles: counts.articles,
+        facts: counts.facts,
+        total: counts.articles + counts.facts,
+      },
+    };
+  }
+
   async writeMemoryFact(input: MemoryWriteInput) {
     return this.serializeMemory(async () => {
       const written = await writeMemoryFactFile(this.repoRoot, input);
@@ -1592,13 +1659,17 @@ export class HiveDaemon {
       this.memory.upsertFact(written);
       // Index maintenance for the semantic leg (HM-5): failure-isolated
       // inside the index — the write above is the truth, the vector is a
-      // projection.
-      await this.embeddingIndex?.upsertArticle(
-        written.scope,
-        written.id,
-        MemoryEmbeddingIndex.articleText(written),
-      );
-      return written;
+      // projection. The outcome rides the response (defect D2) so a caller
+      // can SEE when its write is keyword-searchable only.
+      const embedding: MemoryEmbeddingWriteOutcome =
+        this.embeddingIndex === null
+          ? "unavailable:disabled"
+          : await this.embeddingIndex.upsertArticle(
+            written.scope,
+            written.id,
+            MemoryEmbeddingIndex.articleText(written),
+          );
+      return { ...written, embedding };
     });
   }
 
@@ -2968,13 +3039,14 @@ export class HiveDaemon {
         report.eventsDeleted > 0 || report.articlesDemoted.length > 0 ||
         report.consolidationCandidates > 0
       ) {
-        console.log(
+        const line =
           `Hive memory retention sweep: deleted ${report.eventsDeleted} ` +
-            `aged event(s), demoted ${report.articlesDemoted.length} ` +
-            "verified article(s) to stale, " +
-            `${report.consolidationCandidates} consolidation candidate ` +
-            "pair(s) in the vector store (hive memory consolidate to review)",
-        );
+          `aged event(s), demoted ${report.articlesDemoted.length} ` +
+          "verified article(s) to stale, " +
+          `${report.consolidationCandidates} consolidation candidate ` +
+          "pair(s) in the vector store (hive memory consolidate to review)";
+        console.log(line);
+        this.writeDaemonLog(line);
       }
       if (report.articlesDemoted.length > 0) {
         // The FTS index is a disposable projection of the article files and
@@ -2994,11 +3066,11 @@ export class HiveDaemon {
    * maintenance noise, never a daemon failure: log and move on. */
   private triggerMemoryRetentionSweep(reason: string): void {
     void this.runMemoryRetentionSweep().catch((error) => {
-      console.error(
-        `Hive memory retention sweep (${reason}) failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
+      const line = `Hive memory retention sweep (${reason}) failed: ${
+        error instanceof Error ? error.message : "unknown error"
+      }`;
+      console.error(line);
+      this.writeDaemonLog(line);
     });
   }
 
@@ -3018,11 +3090,11 @@ export class HiveDaemon {
     try {
       compileDigest(this.episodic, { agent: agentId, sessionId });
     } catch (error) {
-      console.error(
-        `Hive session digest compile (${reason}) failed for ${agentId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const line = `Hive session digest compile (${reason}) failed for ${agentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      console.error(line);
+      this.writeDaemonLog(line);
     }
   }
 
@@ -3049,11 +3121,11 @@ export class HiveDaemon {
       write: (input) => this.writeMemoryFact(input),
       search: (query) => this.memory.search(query, { limit: 5 }),
     }).catch((error) => {
-      console.error(
-        `Hive pitfall harvest (${reason}) failed for ${agentId}: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      const line = `Hive pitfall harvest (${reason}) failed for ${agentId}: ${
+        error instanceof Error ? error.message : String(error)
+      }`;
+      console.error(line);
+      this.writeDaemonLog(line);
     });
   }
 
@@ -5003,7 +5075,7 @@ export class HiveDaemon {
     server.registerTool("hive_status", {
       title: "Hive agent status",
       description:
-        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed.',
+        'Fetch bounded live-agent status on demand. The compact default reports spawn-task provenance, later orchestrator instructions, observed Git paths, and overlaps. Use detail "full" for full live records, fields for a projection, and history:true only when terminal history is explicitly needed. The structuredContent memory.embeddings section reports the semantic recall leg — provider, model, state (ready / pending / disabled / embedding-runtime-missing / embedding-runtime-broken / embedding-native-unloadable / unavailable), vector-row counts, and the runtime dir in use — so embedding degradation is visible here without reading logs.',
       inputSchema: StatusRequestSchema,
     }, async ({ detail, history, fields }) => {
       this.authorizeTool(capability, "hive_status", "status:read", undefined, false);
@@ -5065,20 +5137,33 @@ export class HiveDaemon {
       const result = detail === "full"
         ? agents
         : compactActiveTeam(agents, evidence);
+      // Defect D2: the semantic leg's health is an operator-visible status
+      // section, so embedding degradation is SEEN without reading code or
+      // logs. It rides structuredContent (the text payload stays the agents
+      // shape parsers already read).
+      const memory = { embeddings: this.memoryEmbeddingsStatusSection() };
       if (fields !== undefined) {
-        return toolResult(
+        const base = toolResult(
           result.map((record) => Object.fromEntries(
             Object.entries(record).filter(([field]) => fields.includes(field)),
           )),
           "agents",
           build.message,
         );
+        return {
+          ...base,
+          structuredContent: { ...base.structuredContent, memory },
+        };
       }
-      return toolResult(
+      const base = toolResult(
         result,
         "agents",
         build.message,
       );
+      return {
+        ...base,
+        structuredContent: { ...base.structuredContent, memory },
+      };
     });
 
     server.registerTool("hive_update_status", {
@@ -5760,7 +5845,7 @@ export class HiveDaemon {
     server.registerTool("memory_write", {
       title: "Write a Hive memory observation and article",
       description:
-        "Record one immutable raw observation and create or update its compiled memory article. The schema is enforced here: topic, source provenance, evidence, verification status, and supersedes relationships are required. Search first; update a matching id instead of adding a duplicate. A normalized-title duplicate under a different id is rejected — re-issue as an update to the id named in the error (id set, supersedes including it). A successful write may return similarCandidates: near-duplicate articles to resolve with a follow-up update or merge. For a correction, pass the corrected article id in supersedes, make body state current truth, and preserve prior reasoning through the raw history. status=verified requires verified=YYYY-MM-DD; conflicted means the article must describe the unresolved disagreement. Repo scope lives under .hive/memory/{raw,wiki}; global under ~/.hive/memory/{raw,wiki}. Writes are serialized, rebuild wiki/index.md, append wiki/log.md, and immediately update compiled-article search.",
+        "Record one immutable raw observation and create or update its compiled memory article. The schema is enforced here: topic, source provenance, evidence, verification status, and supersedes relationships are required. Search first; update a matching id instead of adding a duplicate. A normalized-title duplicate under a different id is rejected — re-issue as an update to the id named in the error (id set, supersedes including it). A successful write may return similarCandidates: near-duplicate articles to resolve with a follow-up update or merge. The response's embedding field reports what happened to this write's vector projection: indexed, queued (projection running in the background), or unavailable:<state> (keyword-searchable only). For a correction, pass the corrected article id in supersedes, make body state current truth, and preserve prior reasoning through the raw history. status=verified requires verified=YYYY-MM-DD; conflicted means the article must describe the unresolved disagreement. Repo scope lives under .hive/memory/{raw,wiki}; global under ~/.hive/memory/{raw,wiki}. Writes are serialized, rebuild wiki/index.md, append wiki/log.md, and immediately update compiled-article search.",
       inputSchema: MemoryWriteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_write", "memory:write");
@@ -5769,7 +5854,12 @@ export class HiveDaemon {
       // index writeMemoryFact just upserted.
       const similarCandidates = findSimilarMemoryCandidates(this.memory, written);
       return toolResult(
-        compactMemoryWriteResult(written, written.rawPath, similarCandidates),
+        {
+          ...compactMemoryWriteResult(written, written.rawPath, similarCandidates),
+          // Defect D2: what actually happened to this write's vector
+          // projection — "indexed", "queued", or "unavailable:<state>".
+          embedding: written.embedding,
+        },
         "fact",
       );
     });
@@ -5928,7 +6018,7 @@ export class HiveDaemon {
     server.registerTool("memory_note", {
       title: "Record a Hive episodic memory note",
       description:
-        "Record a lightweight fact in this project's episodic memory — the bi-temporal store agents and the queen share, not the curated wiki. Source is your own identity. Dedup is enforced: if a currently-believed fact with the same normalized title exists, the write is REFUSED and the existing fact's id and body are returned — to correct a belief, invalidate the named fact and record its replacement (the store is bi-temporal: never delete, supersede). For durable curated knowledge use memory_write instead.",
+        "Record a lightweight fact in this project's episodic memory — the bi-temporal store agents and the queen share, not the curated wiki. Source is your own identity. Dedup is enforced: if a currently-believed fact with the same normalized title exists, the write is REFUSED and the existing fact's id and body are returned — to correct a belief, invalidate the named fact and record its replacement (the store is bi-temporal: never delete, supersede). The response's embedding field reports what happened to this note's vector projection: indexed, queued, or unavailable:<state> (keyword-searchable only). For durable curated knowledge use memory_write instead.",
       inputSchema: MemoryNoteRequestSchema,
     }, async (input) => {
       this.authorizeTool(capability, "memory_note", "memory:write");
@@ -5979,14 +6069,19 @@ export class HiveDaemon {
       });
       // Semantic-leg index maintenance (HM-5): failure-isolated, and a later
       // invalidate is covered by the prune pass on the rebuild boundary —
-      // only currently-believed facts stay indexed.
-      await this.embeddingIndex?.upsertFact(
-        fact.id,
-        MemoryEmbeddingIndex.factText(fact),
-      );
+      // only currently-believed facts stay indexed. The outcome rides the
+      // response (defect D2).
+      const embedding: MemoryEmbeddingWriteOutcome =
+        this.embeddingIndex === null
+          ? "unavailable:disabled"
+          : await this.embeddingIndex.upsertFact(
+            fact.id,
+            MemoryEmbeddingIndex.factText(fact),
+          );
       return toolResult(
         {
           state: "recorded",
+          embedding,
           fact: {
             id: fact.id,
             kind: fact.kind,
@@ -6012,6 +6107,7 @@ export class HiveDaemon {
         memory: this.memory,
         repoRoot: () => this.repoRoot,
         semantic: this.semanticRecall(),
+        semanticStatus: this.semanticRecallState(),
       });
       const ceiling = MEMORY_RECALL_DEFAULT_BUDGET;
       const effective = Math.min(budget ?? ceiling, ceiling);
@@ -6030,9 +6126,20 @@ export class HiveDaemon {
         tokens += cost;
         (row.pitfall ? keptPitfalls : keptArticles).push(row);
       }
+      // Defect D2: the envelope discriminates hybrid / degraded:<state> /
+      // disabled so FTS-only-because-embeddings-are-down is never
+      // indistinguishable from a genuine keyword-only result. The warning is
+      // envelope-level (field + note block), never a row — budget clamping
+      // cannot cut it.
+      const degraded = bundle.semantic.startsWith("degraded:");
+      const warning = degraded
+        ? memoryRecallDegradedWarning(bundle.semantic.slice("degraded:".length))
+        : null;
       return toolResult(
         {
           state: bundle.state,
+          semantic: bundle.semantic,
+          ...(warning === null ? {} : { warning }),
           detail: bundle.state === "absent"
             ? "this daemon has no wiki search index wired"
             : bundle.state === "empty"
@@ -6047,6 +6154,7 @@ export class HiveDaemon {
           articles: keptArticles,
         },
         "results",
+        warning,
       );
     });
 
