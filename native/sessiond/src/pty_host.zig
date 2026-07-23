@@ -111,6 +111,11 @@ pub const Geometry = struct {
     }
 };
 
+pub fn cellFixed16_16(total_px: u32, cells: u32) u32 {
+    if (total_px == 0 or cells == 0) return 0;
+    return @intCast((@as(u64, total_px) << 16) / cells);
+}
+
 pub const DescriptorMapping = struct {
     /// The caller retains ownership. The child receives a duplicate only.
     source_fd: posix.fd_t,

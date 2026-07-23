@@ -51,6 +51,41 @@ pub fn build(b: *std.Build) void {
         .target = target,
         .optimize = optimize,
     });
+    const visibility_lease_module = b.createModule(.{
+        .root_source_file = b.path("src/visibility_lease.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    visibility_lease_module.addImport("session_protocol_generated", generated);
+    const visibility_lease_test_module = b.createModule(.{
+        .root_source_file = b.path("test/visibility-lease.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    visibility_lease_test_module.addImport("visibility_lease", visibility_lease_module);
+    visibility_lease_test_module.addImport("session_protocol_generated", generated);
+    const final_evidence_module = b.createModule(.{
+        .root_source_file = b.path("src/final_evidence.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const final_evidence_test_module = b.createModule(.{
+        .root_source_file = b.path("test/final-evidence.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    final_evidence_test_module.addImport("final_evidence", final_evidence_module);
+    const executable_identity_module = b.createModule(.{
+        .root_source_file = b.path("src/executable_identity.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    const executable_identity_test_module = b.createModule(.{
+        .root_source_file = b.path("test/executable-identity.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    executable_identity_test_module.addImport("executable_identity", executable_identity_module);
 
     const boot_envelope_module = b.createModule(.{
         .root_source_file = b.path("src/boot_envelope.zig"),
@@ -67,6 +102,9 @@ pub fn build(b: *std.Build) void {
     test_module.addImport("session_protocol_generated", generated);
 
     const test_step = b.step("test", "Run hive-sessiond tests");
+    _ = addTest(b, test_step, visibility_lease_test_module);
+    _ = addTest(b, test_step, final_evidence_test_module);
+    _ = addTest(b, test_step, executable_identity_test_module);
     _ = addTest(b, test_step, boot_envelope_module);
     _ = addTest(b, test_step, test_module);
     const protocol_api_module = b.createModule(.{
@@ -148,6 +186,18 @@ pub fn build(b: *std.Build) void {
     });
     pty_host_module.addImport("process_inspector", process_inspector_module);
     _ = addTest(b, test_step, pty_host_module);
+
+    const terminal_adapter_module = b.createModule(.{
+        .root_source_file = b.path("src/terminal_adapter.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    terminal_adapter_module.addImport("input_arbiter", input_arbiter_module);
+    terminal_adapter_module.addImport("pty_host", pty_host_module);
+    terminal_adapter_module.addImport("terminal_state", terminal_state_module);
+    terminal_adapter_module.addIncludePath(ghostty.path("include"));
+    terminal_adapter_module.addIncludePath(b.path("../include"));
 
     const neutral_host_module = b.createModule(.{
         .root_source_file = b.path("src/neutral_host.zig"),
@@ -236,6 +286,69 @@ pub fn build(b: *std.Build) void {
     input_arbiter_pty_host_module.addImport("pty_host", pty_host_module);
     _ = addTest(b, test_step, input_arbiter_pty_host_module);
 
+    const host_record_module = b.createModule(.{
+        .root_source_file = b.path("src/host_record.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    host_record_module.addImport("broker", broker_module);
+    host_record_module.addImport("protocol", test_module);
+    host_record_module.addImport("session_protocol_generated", generated);
+    const host_wire_module = b.createModule(.{
+        .root_source_file = b.path("src/host_wire.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    host_wire_module.addImport("protocol", test_module);
+    host_wire_module.addImport("session_protocol_generated", generated);
+    const host_registration_module = b.createModule(.{
+        .root_source_file = b.path("src/host_registration.zig"),
+        .target = target,
+        .optimize = optimize,
+    });
+    host_registration_module.addImport("boot_envelope", boot_envelope_module);
+    host_registration_module.addImport("broker", broker_module);
+    host_registration_module.addImport("executable_identity", executable_identity_module);
+    host_registration_module.addImport("host_record", host_record_module);
+    host_registration_module.addImport("host_wire", host_wire_module);
+    host_registration_module.addImport("protocol", test_module);
+    host_registration_module.addImport("session_protocol_generated", generated);
+    host_registration_module.addImport("wall_clock", wall_clock_module);
+    const host_runtime_module = b.createModule(.{
+        .root_source_file = b.path("src/host_runtime.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    host_runtime_module.addImport("boot_envelope", boot_envelope_module);
+    host_runtime_module.addImport("broker", broker_module);
+    host_runtime_module.addImport("host_record", host_record_module);
+    host_runtime_module.addImport("host_registration", host_registration_module);
+    host_runtime_module.addImport("host_wire", host_wire_module);
+    host_runtime_module.addImport("protocol", test_module);
+    host_runtime_module.addImport("session_protocol_generated", generated);
+    host_runtime_module.addImport("visibility_lease", visibility_lease_module);
+    const host_core_module = b.createModule(.{
+        .root_source_file = b.path("src/host_core.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    host_core_module.addImport("broker", broker_module);
+    host_core_module.addImport("final_evidence", final_evidence_module);
+    host_core_module.addImport("host_record", host_record_module);
+    host_core_module.addImport("host_registration", host_registration_module);
+    host_core_module.addImport("input_arbiter", input_arbiter_module);
+    host_core_module.addImport("neutral_control_plane", neutral_control_plane_module);
+    host_core_module.addImport("neutral_host", neutral_host_module);
+    host_core_module.addImport("process_inspector", process_inspector_module);
+    host_core_module.addImport("protocol", test_module);
+    host_core_module.addImport("pty_host", pty_host_module);
+    host_core_module.addImport("session_protocol_generated", generated);
+    host_core_module.addImport("terminal_state", terminal_state_module);
+    host_core_module.addImport("visibility_lease", visibility_lease_module);
+    host_core_module.addImport("wall_clock", wall_clock_module);
+
     const session_host_module = b.createModule(.{
         .root_source_file = b.path("src/session_host.zig"),
         .target = target,
@@ -252,7 +365,16 @@ pub fn build(b: *std.Build) void {
     session_host_module.addImport("neutral_host", neutral_host_module);
     session_host_module.addImport("neutral_control_plane", neutral_control_plane_module);
     session_host_module.addImport("terminal_state", terminal_state_module);
+    session_host_module.addImport("terminal_adapter", terminal_adapter_module);
     session_host_module.addImport("wall_clock", wall_clock_module);
+    session_host_module.addImport("visibility_lease", visibility_lease_module);
+    session_host_module.addImport("final_evidence", final_evidence_module);
+    session_host_module.addImport("host_record", host_record_module);
+    session_host_module.addImport("host_wire", host_wire_module);
+    session_host_module.addImport("executable_identity", executable_identity_module);
+    session_host_module.addImport("host_registration", host_registration_module);
+    session_host_module.addImport("host_runtime", host_runtime_module);
+    session_host_module.addImport("host_core", host_core_module);
     session_host_module.addIncludePath(ghostty.path("include"));
     session_host_module.addIncludePath(b.path("../include"));
     const session_host_tests = addTest(b, test_step, session_host_module);
