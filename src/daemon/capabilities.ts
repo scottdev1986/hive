@@ -56,8 +56,7 @@ export type Action =
   | "autonomy:write"
   | "routing-policy:read"
   | "routing-policy:write"
-  | "workspace-visibility:write"
-  | "graphify:write";
+  | "workspace-visibility:write";
 
 export interface RoleGrant {
   /** The explicit action allowlist. Anything absent is denied. */
@@ -91,10 +90,6 @@ const OPERATOR_ACTIONS: readonly Action[] = [
   // router that governs agents would be self-authorization.
   "routing-policy:read", "routing-policy:write",
   "workspace-visibility:write",
-  // Graphify is likewise the human's dial: opting a repo into a code-indexing
-  // service (and the install that comes with it) is consent only the
-  // operator's own CLI may express.
-  "graphify:write",
   // The one sanctioned token issuance outside the daemon's own spawn path:
   // the launcher mints the Codex root's capability (SPEC decision 4's "no
   // delegation" rule carves out exactly this exchange).

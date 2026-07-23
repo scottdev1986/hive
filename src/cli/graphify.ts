@@ -54,7 +54,7 @@ export async function runGraphifyEnable(
   const built = await buildGraph(root, deps.run);
   if (!built.ok) {
     deps.log(
-      `Graph build failed — graphify stays enabled and the daemon will retry on the next landing: ${built.reason}`,
+      `Graph build failed — Graphify remains required and the daemon will retry on the next landing: ${built.reason}`,
     );
     return 1;
   }

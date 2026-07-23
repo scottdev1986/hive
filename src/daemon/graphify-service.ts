@@ -20,7 +20,6 @@ import {
   graphJsonPath,
   graphifyMcpBin,
   buildGraph,
-  readGraphifyState,
   runCommand,
   scrubbedGraphifyEnv,
   servingGraphPath,
@@ -78,14 +77,11 @@ export class GraphifyService {
     };
   }
 
-  /** Bring the server up if this repo opted in. Missing graph? Build it in
-   * the background first — an existing repo adopting graphify mid-life gets
-   * its first graph here without anyone waiting. */
+  /** Bring the required server up. Missing graph? Build it in the background
+   * first so startup never waits on graph extraction. */
   async start(): Promise<void> {
-    const state = await readGraphifyState(this.repoRoot);
-    if (!state.enabled) return;
     if (!existsSync(graphifyMcpBin())) {
-      this.lastError = "enabled but not installed — run `hive graphify enable`";
+      this.lastError = "required runtime not installed — run `hive graphify enable`";
       this.log(`graphify: ${this.lastError}`);
       return;
     }
@@ -121,8 +117,7 @@ export class GraphifyService {
     this.rebuildChain = this.rebuildChain
       .then(async () => {
         this.rebuildQueued = false;
-        const state = await readGraphifyState(this.repoRoot);
-        if (!state.enabled || !existsSync(graphifyMcpBin())) return;
+        if (!existsSync(graphifyMcpBin())) return;
         const updated = await updateGraph(this.repoRoot, this.run);
         if (!updated.ok) {
           this.lastError = updated.reason;

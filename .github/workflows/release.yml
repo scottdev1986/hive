@@ -103,6 +103,12 @@ jobs:
         if: steps.plan.outputs.action != 'release'
         run: echo "::notice::${{ steps.plan.outputs.version }} — this commit is already released."
 
+      # Graphify is required at init, so a Hive release may not publish a
+      # registry whose platform asset is missing or points at another pin.
+      - name: Verify required Graphify bundles
+        if: steps.plan.outputs.action == 'release'
+        run: bun run scripts/verify-graphify-artifacts.ts
+
       # The Gate 6 lock restores every lib-vt-authored split through the
       # ReleaseFast GhosttyKit surface on both macOS architectures. Build in a
       # fresh per-run cache: a cache directory alone cannot establish the

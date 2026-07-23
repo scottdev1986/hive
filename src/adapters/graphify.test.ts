@@ -3,25 +3,18 @@ import { mkdir, mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
-import { OUTSIDE_REPO_TMPDIR } from "../../test/outside-repo-tmpdir";
 import {
   buildGraph,
   buildGraphBrief,
   buildTargetedGraphBrief,
-  ensureGraphifyIgnored,
   GRAPHIFY_IGNORE_MARKER,
   graphifyPin,
-  graphifyStatePath,
   installGraphify,
   noArtifactMessage,
-  purgeGraphify,
-  readGraphifyState,
-  removeGraphifyExcludeEntry,
   runCommand,
   scrubbedGraphifyEnv,
   selectGraphBrief,
   writeGraphifyIgnore,
-  writeGraphifyState,
   type CommandRunner,
   type RunResult,
 } from "./graphify";
@@ -119,106 +112,6 @@ describe("scrubbedGraphifyEnv", () => {
     } finally {
       delete process.env.FAKE_PROVIDER_API_KEY;
     }
-  });
-});
-
-describe("per-repo state", () => {
-  test("round-trips, and absence reads as disabled", async () => {
-    const root = await gitRepo();
-    expect(await readGraphifyState(root)).toEqual({ enabled: false, pin: null });
-    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
-    expect(await readGraphifyState(root)).toEqual({
-      enabled: true,
-      pin: graphifyPin(),
-    });
-    expect(graphifyStatePath(root).startsWith(hiveHome)).toBe(true);
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("a malformed state file reads as disabled", async () => {
-    const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: null });
-    await writeFile(graphifyStatePath(root), "enabled = [");
-    expect(await readGraphifyState(root)).toEqual({ enabled: false, pin: null });
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("refuses valid TOML whose state keys are misspelled", async () => {
-    const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
-
-    await writeFile(graphifyStatePath(root), "enabeld = true\n");
-    expect(readGraphifyState(root)).rejects.toThrow("Invalid graphify state");
-
-    await writeFile(
-      graphifyStatePath(root),
-      `enabled = true\npni = ${JSON.stringify(graphifyPin())}\n`,
-    );
-    expect(readGraphifyState(root)).rejects.toThrow("Invalid graphify state");
-    await rm(root, { recursive: true, force: true });
-  });
-});
-
-describe("ensureGraphifyIgnored", () => {
-  test("writes .git/info/exclude once and verifies with --no-index", async () => {
-    const root = await gitRepo();
-    const first = await ensureGraphifyIgnored(root);
-    expect(first.ok).toBe(true);
-    const second = await ensureGraphifyIgnored(root);
-    expect(second.ok).toBe(true);
-    const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8");
-    for (const entry of ["graphify-out/", ".graphifyignore"]) {
-      const occurrences = exclude
-        .split("\n")
-        .filter((line) => line.trim() === entry).length;
-      expect(occurrences, entry).toBe(1);
-    }
-    const check = Bun.spawnSync(
-      ["git", "-C", root, "check-ignore", "--no-index", "graphify-out/probe", ".graphifyignore"],
-      { stdout: "ignore", stderr: "ignore" },
-    );
-    expect(check.exitCode).toBe(0);
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("from a linked worktree, one exclude in the common dir covers it", async () => {
-    const root = await gitRepo();
-    const worktree = join(root, ".wt");
-    git(root, ["worktree", "add", worktree, "-b", "wt"]);
-    const result = await ensureGraphifyIgnored(worktree);
-    expect(result.ok).toBe(true);
-    const exclude = await readFile(join(root, ".git", "info", "exclude"), "utf8");
-    expect(exclude).toContain("graphify-out/");
-    const check = Bun.spawnSync(
-      ["git", "-C", worktree, "check-ignore", "--no-index", "graphify-out/probe"],
-      { stdout: "ignore", stderr: "ignore" },
-    );
-    expect(check.exitCode).toBe(0);
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("outside a git repo it fails loudly instead of writing anywhere", async () => {
-    const root = await mkdtemp(join(OUTSIDE_REPO_TMPDIR, "hive-nogit-"));
-    const result = await ensureGraphifyIgnored(root);
-    expect(result.ok).toBe(false);
-    await rm(root, { recursive: true, force: true });
-  });
-});
-
-describe("removeGraphifyExcludeEntry", () => {
-  test("removes exactly the lines Hive appended and keeps the user's", async () => {
-    const root = await gitRepo();
-    const excludePath = join(root, ".git", "info", "exclude");
-    await writeFile(excludePath, "mine.log\n");
-    await ensureGraphifyIgnored(root);
-    expect(await removeGraphifyExcludeEntry(root)).toBe(true);
-    const after = await readFile(excludePath, "utf8");
-    expect(after).toContain("mine.log");
-    expect(after).not.toContain("graphify-out/");
-    expect(after).not.toContain("hive graphify");
-    // A second removal finds nothing to do.
-    expect(await removeGraphifyExcludeEntry(root)).toBe(false);
-    await rm(root, { recursive: true, force: true });
   });
 });
 
@@ -393,15 +286,8 @@ describe("buildGraph", () => {
 });
 
 describe("buildGraphBrief", () => {
-  test("a repo that never opted in gets silence, not a note", async () => {
+  test("required graph not built yet: one loud line, no command run", async () => {
     const root = await gitRepo();
-    expect(await buildGraphBrief(root, "fix the bug")).toBeNull();
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("opted in but no graph yet: one loud line, no command run", async () => {
-    const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
     const calls: string[][] = [];
     const brief = await buildGraphBrief(root, "fix the bug", async (argv) => {
       calls.push(argv);
@@ -415,7 +301,6 @@ describe("buildGraphBrief", () => {
 
   test("a timed-out query degrades to the loud line inside its time-box", async () => {
     const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
     // Fake an installed binary and graph so the query path is reached.
     const { mkdir, writeFile: write } = await import("node:fs/promises");
     const { graphifyBin, graphJsonPath } = await import("./graphify");
@@ -445,7 +330,6 @@ describe("buildGraphBrief", () => {
 
   test("a healthy query becomes an advisory-prefixed digest", async () => {
     const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
     const { mkdir, writeFile: write } = await import("node:fs/promises");
     const { graphifyBin, graphJsonPath } = await import("./graphify");
     const { dirname } = await import("node:path");
@@ -520,7 +404,6 @@ describe("buildTargetedGraphBrief", () => {
 describe("buildGraphBrief targeted path", () => {
   test("a parseable graph is answered by Hive's locate with no subprocess", async () => {
     const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: graphifyPin() });
     const { mkdir, writeFile: write } = await import("node:fs/promises");
     const { graphifyBin, graphJsonPath } = await import("./graphify");
     const { dirname } = await import("node:path");
@@ -617,18 +500,6 @@ describe("writeGraphifyIgnore", () => {
     await rm(root, { recursive: true, force: true });
   });
 
-  test("purge removes Hive's generated file but never a user's", async () => {
-    const root = await gitRepo();
-    await writeGraphifyIgnore(root);
-    let removed = await purgeGraphify(root);
-    expect(removed.some((path) => path.endsWith(".graphifyignore"))).toBe(true);
-
-    await writeFile(join(root, ".graphifyignore"), "my-own-rules/\n");
-    removed = await purgeGraphify(root);
-    expect(removed.some((path) => path.endsWith(".graphifyignore"))).toBe(false);
-    expect(await readFile(join(root, ".graphifyignore"), "utf8")).toBe("my-own-rules/\n");
-    await rm(root, { recursive: true, force: true });
-  });
 });
 
 describe("snapshotGraphForServing", () => {

@@ -6,9 +6,7 @@ import { tmpdir } from "node:os";
 import { dirname, join } from "node:path";
 import {
   graphJsonPath,
-  graphifyPin,
   servingGraphPath,
-  writeGraphifyState,
 } from "../adapters/graphify";
 import type { AgentRecord } from "../schemas";
 import { HiveDatabase } from "./db";
@@ -109,7 +107,6 @@ describe("graph_locate over the daemon's real MCP interface", () => {
   test("answers a locate-question with cited nodes, edges, and the verify footer", async () => {
     await makeHome();
     const { daemon, repoRoot } = await bootDaemon();
-    await writeGraphifyState(repoRoot, { enabled: true, pin: graphifyPin() });
     await mkdir(dirname(graphJsonPath(repoRoot)), { recursive: true });
     await writeFile(graphJsonPath(repoRoot), SYNTHETIC_GRAPH);
     const client = await connectedClient(daemon);
@@ -130,7 +127,6 @@ describe("graph_locate over the daemon's real MCP interface", () => {
   test("prefers the serving snapshot rebuilds never mutate over the live file", async () => {
     await makeHome();
     const { daemon, repoRoot } = await bootDaemon();
-    await writeGraphifyState(repoRoot, { enabled: true, pin: graphifyPin() });
     await mkdir(dirname(graphJsonPath(repoRoot)), { recursive: true });
     // The live file is mid-rebuild garbage; only the snapshot is coherent.
     await writeFile(graphJsonPath(repoRoot), "MID-REBUILD GARBAGE");
@@ -150,7 +146,6 @@ describe("graph_locate over the daemon's real MCP interface", () => {
   test("a vocabulary-mismatch question gets the honest no-leads answer, not noise", async () => {
     await makeHome();
     const { daemon, repoRoot } = await bootDaemon();
-    await writeGraphifyState(repoRoot, { enabled: true, pin: graphifyPin() });
     await mkdir(dirname(graphJsonPath(repoRoot)), { recursive: true });
     await writeFile(graphJsonPath(repoRoot), SYNTHETIC_GRAPH);
     const client = await connectedClient(daemon);
@@ -165,19 +160,13 @@ describe("graph_locate over the daemon's real MCP interface", () => {
     }
   });
 
-  test("absent opt-in, absent graph, and corrupt graph all degrade to honest answers", async () => {
+  test("absent and corrupt graphs both degrade to honest answers", async () => {
     await makeHome();
     const { daemon, repoRoot } = await bootDaemon();
     const client = await connectedClient(daemon);
     try {
-      // Never enabled: the tool says so instead of erroring.
+      // Required but never built.
       let result = await locate(client, "where is auth handled");
-      expect(result.available).toBe(false);
-      expect(result.answer).toContain("not enabled");
-
-      // Enabled but never built.
-      await writeGraphifyState(repoRoot, { enabled: true, pin: graphifyPin() });
-      result = await locate(client, "where is auth handled");
       expect(result.available).toBe(false);
       expect(result.answer).toContain("not built");
 

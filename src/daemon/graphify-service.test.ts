@@ -3,12 +3,11 @@ import { chmod, mkdir, mkdtemp, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { Subprocess } from "bun";
-import { graphifyPin, writeGraphifyState } from "../adapters/graphify";
+import { graphifyPin } from "../adapters/graphify";
 import { GraphifyService } from "./graphify-service";
 
 // The hard rule under test everywhere here: nothing throws, nothing hangs,
-// and a repo that cannot have a graph behaves exactly like one that never
-// opted in — except that the failure is recorded and loggable.
+// and a repo that cannot have a graph records an honest degraded state.
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -51,22 +50,8 @@ async function installFakeMcp(ignoreSigterm = false): Promise<void> {
 }
 
 describe("GraphifyService", () => {
-  test("a repo that never opted in: start is a no-op, url stays null", async () => {
+  test("required runtime missing: loud lastError, no throw, no url", async () => {
     const root = await gitRepo();
-    const calls: string[][] = [];
-    const service = new GraphifyService(root, async (argv) => {
-      calls.push(argv);
-      return { exitCode: 0, stdout: "", stderr: "", timedOut: false };
-    }, () => {});
-    await service.start();
-    expect(service.serverUrl()).toBeNull();
-    expect(calls).toEqual([]);
-    await rm(root, { recursive: true, force: true });
-  });
-
-  test("enabled but not installed: loud lastError, no throw, no url", async () => {
-    const root = await gitRepo();
-    await writeGraphifyState(root, { enabled: true, pin: "0.9.12" });
     const logged: string[] = [];
     const service = new GraphifyService(
       root,
@@ -82,8 +67,8 @@ describe("GraphifyService", () => {
 
   test("rebuilds coalesce: many landings in a burst queue one follow-up", async () => {
     const root = await gitRepo();
-    // Never enabled, so the queued rebuild reads state and stops — what is
-    // being counted is how many chain links a burst creates.
+    // No runtime is installed, so the queued rebuild stops immediately. What
+    // is being counted is how many chain links a burst creates.
     const service = new GraphifyService(root, async () => ({
       exitCode: 0,
       stdout: "",
@@ -113,7 +98,6 @@ describe("GraphifyService", () => {
   test("stop cannot be held open by a TERM-resistant server", async () => {
     const root = await gitRepo();
     await installFakeMcp(true);
-    await writeGraphifyState(root, { enabled: true, pin: "0.9.12" });
     await mkdir(join(root, "graphify-out"));
     await writeFile(join(root, "graphify-out", "graph.json"), "{}");
     const service = new GraphifyService(root, async () => ({
@@ -158,7 +142,6 @@ describe("GraphifyService", () => {
   test("rebuild keeps the advertised endpoint stable; a crash withdraws it", async () => {
     const root = await gitRepo();
     await installFakeMcp();
-    await writeGraphifyState(root, { enabled: true, pin: "0.9.12" });
     await mkdir(join(root, "graphify-out"));
     await writeFile(join(root, "graphify-out", "graph.json"), "{}");
     const logged: string[] = [];

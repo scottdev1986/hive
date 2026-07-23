@@ -757,7 +757,7 @@ export async function buildGraphBrief(
   root: string,
   task: string,
   run: CommandRunner = runCommand,
-): Promise<string | null> {
+): Promise<string> {
   if (!existsSync(graphifyBin()) || !existsSync(graphJsonPath(root))) {
     return "Graph context: unavailable (graph not built yet); proceeding without it.";
   }

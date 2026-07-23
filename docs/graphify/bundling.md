@@ -1,11 +1,11 @@
 # Graphify bundling
 
-Updated: 2026-07-14
-Source: Hive source tree, 2026-07-14
+Updated: 2026-07-23
+Source: Hive source tree, 2026-07-23
 
 ## Summary
 
-Hive ships graphify as a frozen, self-contained bundle it builds, signs, and publishes itself — no uv, no Python, no PyPI on a user's machine — fetched from a Hive-owned release tag and refused unless its sha256 matches a constant compiled into the Hive binary. This is what ships today (`src/adapters/graphify-artifacts.ts:31-41`, tag `graphify-v0.9.12-hive.1`), not a plan.
+Hive ships Graphify as required product infrastructure through a frozen, self-contained bundle it builds, signs, and publishes itself — no uv, no Python, no PyPI on a user's machine. `hive init` fetches it from a Hive-owned release tag and refuses bytes whose SHA-256 does not match the constant compiled into the Hive binary.
 
 ## Why a bundle at all
 
@@ -15,7 +15,7 @@ The bundle closes all three at once: **one origin** (Hive's own releases — the
 
 It is also not "vendoring," which was and remains rejected: upstream's *source tree* never enters Hive's repo. Upstream's churn reaches a user only when a Hive developer deliberately bumps the pin and ships new artifacts.
 
-There is no venv anywhere. The daemon invokes `$HIVE_HOME/tools/graphify/<pin>/graphify` and `…/graphify-mcp` by absolute path (`src/adapters/graphify.ts:51-63`) — nothing on `PATH`, and a `graphify` the user installed themselves is neither touched nor trusted. Purging removes that tool directory, the repo's `graphify-out/`, its serving snapshot, and Hive's generated `.graphifyignore`; user-authored ignore files are left alone (`src/adapters/graphify.ts:1111-1135`). No uv cache, managed Python, or venv exists.
+There is no venv anywhere. The daemon invokes `$HIVE_HOME/tools/graphify/<pin>/graphify` and `…/graphify-mcp` by absolute path — nothing on `PATH`, and a `graphify` the user installed themselves is neither touched nor trusted. Repo uninstall removes the graph output and Hive-generated `.graphifyignore`; machine uninstall removes the shared runtime. No uv cache, managed Python, or venv exists.
 
 ## Freezing survives tree-sitter (this was the gate)
 
@@ -61,13 +61,13 @@ Signing is defense in depth here, not a launch gate: the `hive` binary downloads
 
 ## Distribution shape
 
-**Rejected: embedding the bundle in the Hive binary** (the pattern that is right for kilobyte-scale shipped skills). Even embedding only the matching platform's artifact grows every Hive binary **~40%** — and the recurring cost is worse than the static one: **Hive releases often and the graphify pin deliberately moves rarely**, so every `hive update` would re-download ~25 MB of unchanged graphify bytes. It buys exactly one thing, zero-network enable, and charges every user for it including the majority who never enable graphify.
+**Rejected: embedding the bundle in the Hive binary** (the pattern that is right for kilobyte-scale shipped skills). Even embedding only the matching platform's artifact grows every Hive binary **~40%**, and Hive releases often while the Graphify pin deliberately moves rarely, so every `hive update` would re-download ~25 MB of unchanged bytes. The separate required artifact preserves the standalone user experience without welding the two release cadences together.
 
 **Chosen: per-platform artifacts on a dedicated, Hive-owned release tag**, versioned independently of Hive (`graphify-v0.9.12-hive.1` — the suffix counts Hive's own rebuilds of the same upstream pin, e.g. a spec fix or a re-sign with no upstream bump). The Hive binary embeds three constants per platform: tag, asset name, sha256.
 
 The variant worth naming: **attaching the artifacts to each Hive release** instead. Simpler — no second tag to manage — but it re-uploads ~52 MB of unchanged assets on every Hive release and welds the two cadences back together at the publishing layer. The dedicated tag costs one extra `gh release create` per bump and decouples exactly the thing the whole design exists to decouple.
 
-The download rides consent and never precedes it: it happens inside `hive graphify enable`. An unconditional init-time prefetch was rejected — it buys offline-enable for the rare machine that installs online and enables offline, at the price of 25 MB on every install.
+The download happens during every `hive init`; there is no consent branch because Graphify is part of Hive. Offline or failed download leaves an honest degraded state and the same `hive graphify enable` provisioning path is the repair command. The Hive release workflow verifies every required registry asset exists before publishing, so a release cannot knowingly ship a dead dependency.
 
 ## Linux facts (for when the matrix grows)
 
@@ -85,4 +85,4 @@ Hive ships two darwin slices today and `install.sh` refuses non-Darwin machines 
 
 ## See Also
 
-- [Integration](integration.md) — consent, degradation, and how the bundle's binaries are actually used
+- [Integration](integration.md) — required provisioning, degradation, and how the bundle's binaries are used

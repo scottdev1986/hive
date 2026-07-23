@@ -4,8 +4,8 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
   defaultInitDeps,
-  ensureHiveMemoryGitignored,
-  HIVE_MEMORY_GITIGNORE_ENTRY,
+  ensureHiveStateGitignored,
+  HIVE_GITIGNORE_ENTRIES,
   initStampPath,
   isRepoInitialized,
   readSeedFactsFile,
@@ -46,6 +46,7 @@ const testDeps = (): typeof defaultInitDeps => ({
     ok: true,
     detail: "test runtime already installed",
   }),
+  provisionGraphify: async () => 0,
 });
 
 function git(root: string, args: string[]): void {
@@ -254,14 +255,15 @@ describe("runInit", () => {
   });
 });
 
-describe("runInit — gitignoring .hive/memory/ (board issue #78)", () => {
-  test("creates a missing .gitignore with exactly the .hive/memory/ entry", async () => {
+describe("runInit — gitignoring Hive's local state (board issue #78)", () => {
+  test("creates a missing .gitignore with the exact required entries", async () => {
     const root = await tsRepo();
     try {
       const result = await runInit(root, {}, testDeps());
       const gitignore = await readFile(join(root, ".gitignore"), "utf8");
-      expect(gitignore).toBe(`# Hive memory\n${HIVE_MEMORY_GITIGNORE_ENTRY}\n`);
-      expect(gitignore).toContain(".hive/memory/\n");
+      expect(gitignore).toBe(
+        `# Hive local state\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
+      );
       // The #78 ruling: never a bare parent-dir entry.
       expect(gitignore).not.toContain("\n.hive/\n");
       expect(result.messages.some((m) => m.includes("Created .gitignore"))).toBe(true);
@@ -275,25 +277,26 @@ describe("runInit — gitignoring .hive/memory/ (board issue #78)", () => {
     try {
       await writeFile(join(root, ".gitignore"), "node_modules/\n# theirs\nout");
       const first = await runInit(root, {}, testDeps());
-      expect(first.messages.some((m) => m.includes("Appended `.hive/memory/`"))).toBe(true);
+      expect(first.messages.some((m) => m.includes("Updated .gitignore"))).toBe(true);
       const after = await readFile(join(root, ".gitignore"), "utf8");
       expect(after).toBe(
-        "node_modules/\n# theirs\nout\n\n# Hive memory\n.hive/memory/\n",
+        `node_modules/\n# theirs\nout\n\n# Hive local state\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
       );
 
       const second = await runInit(root, {}, testDeps());
-      expect(second.messages.some((m) => m.includes("already covers `.hive/memory/`"))).toBe(true);
+      expect(second.messages.some((m) => m.includes("already covers Hive's local state"))).toBe(true);
       expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(after);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("any covering entry (.hive/memory, .hive/, .hive/*) leaves the file untouched", async () => {
-    for (const entry of [".hive/memory", "/.hive/memory/", ".hive/", ".hive/*"]) {
+  test("existing exact entries leave the file untouched", async () => {
+    for (const entry of [".hive/memory", "/.hive/memory/"]) {
       const root = await tsRepo();
       try {
-        const original = `node_modules/\n${entry}\n`;
+        const original =
+          `node_modules/\n${entry}\n.hive/worktrees/\ngraphify-out/\n.graphifyignore\n`;
         await writeFile(join(root, ".gitignore"), original);
         const result = await runInit(root, {}, testDeps());
         expect(result.messages.some((m) => m.includes("already covers"))).toBe(true);
@@ -304,14 +307,31 @@ describe("runInit — gitignoring .hive/memory/ (board issue #78)", () => {
     }
   });
 
+  test("a broad .hive rule never substitutes for the exact tracked contract", async () => {
+    const root = await tsRepo();
+    try {
+      await writeFile(
+        join(root, ".gitignore"),
+        ".hive/\ngraphify-out/\n.graphifyignore\n",
+      );
+      await runInit(root, {}, testDeps());
+      const gitignore = await readFile(join(root, ".gitignore"), "utf8");
+      expect(gitignore).toContain(
+        "# Hive local state\n.hive/memory/\n.hive/worktrees/\n",
+      );
+    } finally {
+      await rm(root, { recursive: true, force: true });
+    }
+  });
+
   test("a negation or comment mentioning the path does not count as covering", async () => {
     const root = await tsRepo();
     try {
       await writeFile(join(root, ".gitignore"), "# ignore .hive/memory/ later\n");
-      const message = await ensureHiveMemoryGitignored(root);
-      expect(message).toContain("Appended");
+      const message = await ensureHiveStateGitignored(root);
+      expect(message).toContain("Updated");
       expect(await readFile(join(root, ".gitignore"), "utf8")).toBe(
-        "# ignore .hive/memory/ later\n\n# Hive memory\n.hive/memory/\n",
+        `# ignore .hive/memory/ later\n\n# Hive local state\n${HIVE_GITIGNORE_ENTRIES.join("\n")}\n`,
       );
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -508,28 +528,20 @@ describe("readSeedFactsFile", () => {
   });
 });
 
-describe("the graphify decision in init", () => {
+describe("required Graphify in init", () => {
   interface Probe {
     deps: typeof defaultInitDeps;
-    enabled: string[];
-    declined: boolean[];
+    provisioned: string[];
   }
 
   function probe(overrides: Partial<typeof defaultInitDeps> = {}): Probe {
-    const enabled: string[] = [];
-    const declined: boolean[] = [];
+    const provisioned: string[] = [];
     const deps: typeof defaultInitDeps = {
       ...testDeps(),
-      graphifyAvailable: () => true,
-      graphifyDecisionRecorded: () => false,
-      confirm: async () => null,
-      enableGraphify: async (root) => (enabled.push(root), 0),
-      writeGraphifyState: async (_root, state) => {
-        declined.push(!state.enabled);
-      },
+      provisionGraphify: async (root) => (provisioned.push(root), 0),
       ...overrides,
     };
-    return { deps, enabled, declined };
+    return { deps, provisioned };
   }
 
   const lastLine = async (
@@ -541,125 +553,26 @@ describe("the graphify decision in init", () => {
     return result.messages[result.messages.length - 1] as string;
   };
 
-  test("--graphify enables without asking, even without a TTY", async () => {
+  test("every init provisions Graphify without a prompt or flag", async () => {
     const root = await tsRepo();
     try {
-      const { deps, enabled } = probe({
-        confirm: async () => {
-          throw new Error("flags never prompt");
-        },
-      });
-      const line = await lastLine(root, { graphify: true }, deps);
-      expect(enabled).toEqual([root]);
-      expect(line).toContain("Graphify: enabled");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("--no-graphify declines without asking and persists the answer", async () => {
-    const root = await tsRepo();
-    try {
-      const { deps, enabled, declined } = probe({
-        confirm: async () => {
-          throw new Error("flags never prompt");
-        },
-      });
-      const line = await lastLine(root, { graphify: false }, deps);
-      expect(enabled).toEqual([]);
-      expect(declined).toEqual([true]);
-      expect(line).toContain("Graphify: declined");
-      expect(line).toContain("hive graphify enable");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("no flag, no terminal: declines for the run, installs nothing, persists nothing", async () => {
-    const root = await tsRepo();
-    try {
-      const { deps, enabled, declined } = probe({ confirm: async () => null });
+      const { deps, provisioned } = probe();
       const line = await lastLine(root, {}, deps);
-      expect(enabled).toEqual([]);
-      expect(declined).toEqual([]);
-      expect(line).toContain("non-interactive");
-      expect(line).toContain("hive graphify enable");
+      expect(provisioned).toEqual([root]);
+      expect(line).toContain("Graphify: ready");
     } finally {
       await rm(root, { recursive: true, force: true });
     }
   });
 
-  test("a TTY yes enables; a TTY no persists the decline", async () => {
+  test("a provisioning failure is loud, deferred, and still leaves the init stamp", async () => {
     const root = await tsRepo();
     try {
-      const yes = probe({ confirm: async () => true });
-      expect(await lastLine(root, {}, yes.deps)).toContain("Graphify: enabled");
-      expect(yes.enabled).toEqual([root]);
-
-      const no = probe({ confirm: async () => false });
-      expect(await lastLine(root, {}, no.deps)).toContain("Graphify: declined");
-      expect(no.declined).toEqual([true]);
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("a recorded decision is respected: no re-asking", async () => {
-    const root = await tsRepo();
-    try {
-      const { deps, enabled } = probe({
-        graphifyDecisionRecorded: () => true,
-        confirm: async () => {
-          throw new Error("a recorded decision never re-prompts");
-        },
-      });
-      const line = await lastLine(root, {}, deps);
-      expect(enabled).toEqual([]);
-      expect(line).toContain("declined earlier");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("already enabled: reported, never re-asked", async () => {
-    const root = await tsRepo();
-    try {
-      const { deps } = probe({
-        readGraphifyState: async () => ({ enabled: true, pin: "0.0.0" }),
-        confirm: async () => {
-          throw new Error("enabled repos are never re-prompted");
-        },
-      });
-      expect(await lastLine(root, {}, deps)).toContain("Graphify: enabled");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("no bundle for this platform: one honest line, no question", async () => {
-    const root = await tsRepo();
-    try {
-      const { deps, enabled } = probe({
-        graphifyAvailable: () => false,
-        confirm: async () => {
-          throw new Error("nothing installable is never offered");
-        },
-      });
-      const line = await lastLine(root, {}, deps);
-      expect(enabled).toEqual([]);
-      expect(line).toContain("no bundle is published for this platform");
-    } finally {
-      await rm(root, { recursive: true, force: true });
-    }
-  });
-
-  test("an enable failure is reported and init still completes", async () => {
-    const root = await tsRepo();
-    try {
-      const { deps } = probe({ enableGraphify: async () => 1 });
-      const result = await runInit(root, { graphify: true }, deps);
+      const { deps } = probe({ provisionGraphify: async () => 1 });
+      const result = await runInit(root, {}, deps);
       const line = result.messages[result.messages.length - 1] as string;
-      expect(line).toContain("could not be enabled");
+      expect(line).toContain("GRAPHIFY UNAVAILABLE");
+      expect(line).toContain("hive graphify enable");
       expect(isRepoInitialized(root)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -704,7 +617,7 @@ describe("the embeddings step in init", () => {
         ok: true,
         detail: "embedding runtime from hive 1.2.3 installed (sha256-verified against the release manifest) and probe-verified (bge-small-en-v1.5, dimensions=384)",
       }));
-      const result = await runInit(root, { graphify: false }, deps);
+      const result = await runInit(root, {}, deps);
       expect(calls).toHaveLength(1);
       const report = result.messages.join("\n");
       expect(report).toContain("Embeddings: embedding runtime from hive 1.2.3");
@@ -721,7 +634,7 @@ describe("the embeddings step in init", () => {
         ok: false,
         reason: "could not read the hive 1.2.3 release: network unreachable",
       }));
-      const result = await runInit(root, { graphify: false }, deps);
+      const result = await runInit(root, {}, deps);
       expect(calls).toHaveLength(1);
       const report = result.messages.join("\n");
       expect(report).toContain("EMBEDDINGS NOT INSTALLED");
@@ -747,7 +660,7 @@ describe("the embeddings step in init", () => {
         ok: true,
         detail: "test runtime already installed",
       }));
-      const result = await runInit(root, { graphify: false }, deps);
+      const result = await runInit(root, {}, deps);
       expect(calls).toHaveLength(1);
       expect(result.messages.join("\n")).not.toContain("skipped");
       expect(isRepoInitialized(root)).toBe(true);

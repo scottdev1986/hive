@@ -4,7 +4,6 @@ import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import {
-  ensureGraphifyIgnored,
   GRAPHIFY_IGNORE_MARKER,
   runCommand,
 } from "../adapters/graphify";
@@ -170,7 +169,6 @@ describe("hive uninstall --repo", () => {
         join(root, ".graphifyignore"),
         `${GRAPHIFY_IGNORE_MARKER}\nnode_modules/\n`,
       );
-      await ensureGraphifyIgnored(root);
       await writeFile(
         join(root, ".mcp.json"),
         JSON.stringify({

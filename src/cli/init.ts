@@ -238,15 +238,9 @@ function normalizedGitignoreLine(line: string): string | null {
   return trimmed.replace(/^\//, "").replace(/\/+$/, "");
 }
 
-function gitignoreCovers(entry: string, lines: readonly string[]): boolean {
+function gitignoreContains(entry: string, lines: readonly string[]): boolean {
   const wanted = entry.replace(/\/+$/, "");
-  return lines.some((line) => {
-    const normalized = normalizedGitignoreLine(line);
-    if (normalized === null) return false;
-    if (normalized === wanted) return true;
-    return wanted.startsWith(".hive/") &&
-      (normalized === ".hive" || normalized === ".hive/*");
-  });
+  return lines.some((line) => normalizedGitignoreLine(line) === wanted);
 }
 
 /**
@@ -263,7 +257,7 @@ export async function ensureHiveStateGitignored(
   const existing = exists ? await deps.readFile(path) : "";
   const lines = existing.split(/\r?\n/);
   const missing = HIVE_GITIGNORE_ENTRIES.filter((entry) =>
-    !gitignoreCovers(entry, lines)
+    !gitignoreContains(entry, lines)
   );
   if (missing.length === 0) return ".gitignore already covers Hive's local state.";
   const separator = existing === "" || existing.endsWith("\n") ? "" : "\n";
@@ -399,12 +393,9 @@ export async function runInit(
     }
   }
 
-  // 3. .gitignore: `.hive/memory/` is daemon-written derived state and must
-  //    never be committed. The entry is exactly `.hive/memory/` — never a bare
-  //    `.hive/` entry (a parent-dir entry caused a worktree-deletion incident;
-  //    board issue #78). Idempotent: any line that already covers the directory
-  //    counts, and an existing .gitignore is only ever appended to.
-  messages.push(await ensureHiveMemoryGitignored(cwd, deps));
+  // 3. .gitignore: Hive's exact generated paths are local derived state. Never
+  //    write a bare `.hive/`: project skills under it belong in version control.
+  messages.push(await ensureHiveStateGitignored(cwd, deps));
 
   // 4. Seed narrative facts (source: init): genuinely narrative knowledge an
   //    agent should start with, distinct from the facts an agent earns.
@@ -439,12 +430,14 @@ export async function runInit(
   //    stays FTS-only until the install succeeds.
   messages.push(await provisionEmbeddings(deps));
 
-  // 6. Graphify. The choice is the human's, and init is where it gets made:
-  //    flags always win and never prompt; a TTY without a flag is asked once
-  //    (recommended, default yes); non-interactive without a flag safely
-  //    declines for this run and says how to enable. An enable failure is
-  //    reported and init continues — nothing in init ever blocks on graphify.
-  messages.push(await decideGraphify(cwd, options.graphify, deps));
+  // 6. Graphify. Required, with no prompt or opt-out. A failed install or build
+  //    is a loud deferred state so offline init still completes honestly.
+  const graphifyExit = await deps.provisionGraphify(cwd);
+  messages.push(
+    graphifyExit === 0
+      ? "Graphify: ready — agents get a local, code-only knowledge graph."
+      : "⚠ GRAPHIFY UNAVAILABLE — Hive initialized in a degraded state. Run `hive graphify enable` to repair it.",
+  );
 
   await deps.writeInitStamp(cwd);
 
@@ -472,58 +465,6 @@ async function provisionEmbeddings(deps: InitDeps): Promise<string> {
     `unavailable and search is FTS-only until the runtime lands (${outcome.reason}).`,
     `This is not a supported end state; ${EMBEDDINGS_FIX_HINT}.`,
   ].join("\n");
-}
-
-const GRAPHIFY_ENABLED_LINE =
-  "Graphify: enabled — agents get a local, code-only knowledge graph.";
-const GRAPHIFY_LATER_HINT = "`hive graphify enable` turns it on any time.";
-
-function graphifyQuestion(): string {
-  return [
-    "Graphify (recommended) gives agents a local code knowledge graph of this repo.",
-    `Yes installs Hive's graphify bundle (graphifyy==${graphifyPin()}, sha256-verified from Hive's own release) under ~/.hive/tools`,
-    "and builds graphify-out/ here. Code is parsed locally — no LLM calls, nothing leaves this machine.",
-    "Enable graphify?",
-  ].join("\n");
-}
-
-async function decideGraphify(
-  cwd: string,
-  flag: boolean | undefined,
-  deps: InitDeps,
-): Promise<string> {
-  const state = await deps.readGraphifyState(cwd);
-  if (state.enabled) return GRAPHIFY_ENABLED_LINE;
-
-  const enable = async (): Promise<string> =>
-    (await deps.enableGraphify(cwd)) === 0
-      ? GRAPHIFY_ENABLED_LINE
-      : "Graphify: could not be enabled (details above); everything else is ready. " +
-        GRAPHIFY_LATER_HINT;
-  const decline = async (): Promise<string> => {
-    await deps.writeGraphifyState(cwd, { enabled: false, pin: null });
-    return `Graphify: declined. ${GRAPHIFY_LATER_HINT}`;
-  };
-
-  if (flag === true) return enable();
-  if (flag === false) return decline();
-  if (deps.graphifyDecisionRecorded(cwd)) {
-    return `Graphify: not enabled (declined earlier). ${GRAPHIFY_LATER_HINT}`;
-  }
-  if (!deps.graphifyAvailable()) {
-    return (
-      "Graphify: no bundle is published for this platform in this Hive build; " +
-      "everything else works identically."
-    );
-  }
-  const answer = await deps.confirm(graphifyQuestion(), true);
-  if (answer === null) {
-    return (
-      "Graphify: not installed (non-interactive, no --graphify flag given). " +
-      "`hive init --graphify` or `hive graphify enable` installs it."
-    );
-  }
-  return answer ? enable() : decline();
 }
 
 /** Read a JSON array of `InitFact`s from a file, so a human or orchestrator can
@@ -561,7 +502,6 @@ export async function runInitCli(options: {
   scaffoldAgents?: boolean;
   seedFacts?: string;
   force?: boolean;
-  graphify?: boolean;
 }): Promise<void> {
   const root = options.cwd ?? projectRootOrCwd();
   const repaired = await repairLeakedProjectConfig(root);
@@ -576,7 +516,6 @@ export async function runInitCli(options: {
       ? {}
       : { scaffoldAgents: options.scaffoldAgents }),
     ...(options.force === true ? { force: true } : {}),
-    ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
     facts,
   });
   for (const line of result.messages) console.log(line);

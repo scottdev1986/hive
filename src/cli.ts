@@ -27,7 +27,6 @@ import {
 } from "./cli/event";
 import { runWorkspaceOrchestrator } from "./cli/orchestrator-supervisor";
 import {
-  runGraphifyDisable,
   runGraphifyEnable,
   runGraphifyStatus,
 } from "./cli/graphify";
@@ -271,13 +270,10 @@ export function createProgram(): Command {
       "--force",
       "replace a Hive skill you have edited with the version Hive ships",
     )
-    .option("--graphify", "enable graphify without asking (recommended default)")
-    .option("--no-graphify", "skip graphify without asking")
     .action(async (options: {
       scaffoldAgents?: boolean;
       seedFacts?: string;
       force?: boolean;
-      graphify?: boolean;
     }) => {
       const root = projectRootOrCwd();
       await runInitCli({
@@ -289,7 +285,6 @@ export function createProgram(): Command {
           ? {}
           : { seedFacts: options.seedFacts }),
         ...(options.force === undefined ? {} : { force: options.force }),
-        ...(options.graphify === undefined ? {} : { graphify: options.graphify }),
       });
     });
 
@@ -623,24 +618,15 @@ export function createProgram(): Command {
   const graphify = program
     .command("graphify")
     .description(
-      "Opt-in local code knowledge graph for agents (docs/graphify/integration.md)",
+      "Required local code knowledge graph for agents (docs/graphify/integration.md)",
     );
 
   graphify.command("enable")
     .description(
-      "Consent to graphify: hash-verified install into ~/.hive/tools, then a code-only local graph build",
+      "Repair Graphify: hash-verified install into ~/.hive/tools, then a code-only local graph build",
     )
     .action(async () => {
       process.exitCode = await runGraphifyEnable(projectRootOrCwd());
-    });
-
-  graphify.command("disable")
-    .description("Turn graphify off for this repo; --purge also removes the tool and graphify-out/")
-    .option("--purge", "delete the installed tool and this repo's graphify-out/")
-    .action(async (options: { purge?: boolean }) => {
-      process.exitCode = await runGraphifyDisable(projectRootOrCwd(), {
-        ...(options.purge === undefined ? {} : { purge: options.purge }),
-      });
     });
 
   graphify.command("status")

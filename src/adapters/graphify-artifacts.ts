@@ -5,15 +5,15 @@
  * Hive ships graphify as a frozen, self-contained bundle it built itself — no
  * uv, no Python, no PyPI on the user's machine. The bundle is published as a
  * per-platform tar.zst asset on a Hive-owned release tag, and this module is
- * the trust anchor: `hive graphify enable` downloads the one matching asset
+ * the trust anchor: `hive init` downloads the one matching asset
  * and refuses to unpack bytes whose sha256 does not match the constant here.
  *
  * A bump PR touches exactly this file plus `graphify.lock`: the pipeline
  * (scripts/graphify/build.sh, run by .github/workflows/graphify-artifacts.yml)
  * freezes the lock into per-platform bundles, uploads them to the release
  * tag, and the CI-built sha256s land here. `null` means no artifact is
- * published for that platform in this build — enable reports it in one
- * honest line and nothing degrades below the integration doc's floor.
+ * published for that platform in this build — init reports the required
+ * component as unavailable and names the repair command.
  */
 import { HIVE_UPDATE_REPO } from "../version";
 

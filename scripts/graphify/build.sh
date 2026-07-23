@@ -1,6 +1,6 @@
 #!/usr/bin/env bash
 # Build Hive's graphify bundles: the per-platform standalone artifacts
-# `hive graphify enable` downloads (docs/graphify/bundling.md).
+# `hive init` downloads (`hive graphify enable` repairs).
 #
 #   scripts/graphify/build.sh [--build-number N]
 #

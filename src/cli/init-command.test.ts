@@ -34,9 +34,11 @@ async function installFakeGraphify(home: string): Promise<void> {
   await mkdir(directory, { recursive: true });
   const source = [
     `#!${process.execPath}`,
+    'import { mkdirSync } from "node:fs";',
     'if (process.argv[2] === "--help") process.exit(0);',
     'if (process.argv[2] !== "extract") process.exit(2);',
     'const root = process.argv[3];',
+    'mkdirSync(`${root}/graphify-out`, { recursive: true });',
     'await Bun.write(`${root}/graphify-out/graph.json`, \'{"nodes":[],"links":[]}\\n\');',
     'console.log("[graphify extract] wrote graphify-out/graph.json: 0 nodes, 0 edges, 0 communities");',
     "",

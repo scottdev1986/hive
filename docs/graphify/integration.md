@@ -1,25 +1,25 @@
 # Graphify integration
 
-Updated: 2026-07-14
-Source: Hive source tree, 2026-07-14
+Updated: 2026-07-23
+Source: Hive source tree, 2026-07-23
 
 ## Summary
 
-Hive indexes a repo into a queryable code graph and feeds it to agents, under two rules that override every other consideration: **graph context is a hint, never an authority**, and **no Hive operation may block on graphify**. Everything below is either a consequence of those rules or a trap discovered while enforcing them.
+Graphify is required Hive infrastructure. Every `hive init` installs or verifies the pinned standalone runtime and builds a queryable, code-only graph; there is no prompt, disable command, init flag, or persisted enablement decision. Two rules still override every other consideration: **graph context is a hint, never an authority**, and **no Hive operation may block on graphify**.
 
 ## The degradation contract
 
 Upstream's own published QA accuracy is **45–76%**. That single number is the load-bearing fact of the whole integration: it means a graph answer is a lead, not a truth, and it means graphify can never sit in a path whose failure would be a Hive failure.
 
-So absent (not installed, consent declined, no bundle for this platform), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: the agent runs without graph context, its brief says so in one line, `hive graphify status` reports the cause, no spawn or landing fails, and nothing retries anywhere an agent can observe. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
+So unavailable (offline init, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: the agent runs without graph context, its brief says so in one line, `hive graphify status` reports the cause, and no spawn or landing fails. `hive graphify enable` is the explicit repair command; it does not record a preference. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
 
 **There is deliberately no land-time enforcement** — no "did you consult the graph" gate. It would be unverifiable in exactly the way Hive's protocol warns about (an MCP call proves an act, not that the answer informed anything), and it would put a 45–76%-accurate oracle in the landing path for no measurable gain.
 
-## Ignore hygiene: two traps
+## Ignore hygiene
 
-**`.git/info/exclude`, never `.gitignore`.** Graphify enablement is a per-machine choice; `.gitignore` is a tracked file the whole team shares. Hive writing to it would be uninvited repo mutation on behalf of one developer's local opt-in. The entry goes to the git *common* dir, so one write covers every linked worktree.
+Required infrastructure has repository-wide generated paths, so tracked `.gitignore` is the correct contract. `hive init` appends exactly `.hive/memory/`, `.hive/worktrees/`, `graphify-out/`, and `.graphifyignore`. It never writes the parent `.hive/` entry: `.hive/skills/` is user-authored project knowledge intended for version control, and ignoring the parent also caused the 2026-07-20 worktree-deletion incident.
 
-**Only `check-ignore --no-index` is evidence.** Plain `git check-ignore` consults the index, so it reports "not ignored" for anything already tracked — it will happily confirm nothing while the exclusion silently failed. The enable step verifies with `--no-index` on fresh probe names, and counts the echoed matches rather than trusting the exit code, because `check-ignore` exits 0 when *any* path matches (`src/adapters/graphify.ts:926-982`).
+The command-boundary test proves all four entries with `git check-ignore --no-index` on fresh probe names. Plain `check-ignore` consults the index and can lie for tracked files.
 
 ## The vendored-code flood
 
@@ -27,7 +27,7 @@ Measured on this repo: **51% of all graph nodes were vendored Swift** under `wor
 
 The pinned binary honors gitignore rules **only at the scan root** (`_load_graphifyignore` walks ancestors, never descendants), so the nested `workspace/.gitignore: .build/` that git itself respects was invisible to extraction. And `extract` has no `--exclude` flag: `.graphifyignore` at the repo root is the only exclusion lever that exists.
 
-Hive therefore generates that file before every build: a short static floor of commonly *committed* vendored dirs (`vendor/`, `third_party/`, `Pods/`, `.build/`, …) plus, verbatim, the directories the repo's own gitignore machinery already excludes, taken from `git ls-files --others --ignored --exclude-standard --directory` (`src/adapters/graphify.ts:1024-1108`). The team's own gitignore is the general signal — it is their declaration of "not our code," per-repo and ecosystem-free — which is what makes the rule portable instead of a hand-maintained ecosystem list that is always one ecosystem behind. Rebuilt, this repo went from 10,033 nodes (51.3% vendored, 25.3% `src/`) to 4,895 (0% vendored, 51.8% `src/`), and start nodes stopped resolving into SwiftTerm.
+Hive therefore generates that file before every build: a short static floor of commonly *committed* vendored dirs (`vendor/`, `third_party/`, `Pods/`, `.build/`, …) plus, verbatim, the directories the repo's own gitignore machinery already excludes, taken from `git ls-files --others --ignored --exclude-standard --directory`. The team's own gitignore is the general signal — it is their declaration of "not our code," per-repo and ecosystem-free — which is what makes the rule portable instead of a hand-maintained ecosystem list that is always one ecosystem behind. Rebuilt, this repo went from 10,033 nodes (51.3% vendored, 25.3% `src/`) to 4,895 (0% vendored, 51.8% `src/`), and start nodes stopped resolving into SwiftTerm.
 
 Two guards, both because over-exclusion is a *silent* failure: a `.graphifyignore` not starting with Hive's marker line is user-authored and never touched, and the build says out loud what it excluded.
 
@@ -85,5 +85,4 @@ independently, so a missing Graphify server never blocks a spawn.
 ## See Also
 
 - [Bundling](bundling.md) — how the graphify binary is built, signed, and shipped
-- [Daemon authorization](../daemon/authorization.md) — the capability matrix the missing `/graphify` row belongs to
 - [SPEC](../../SPEC.md) — the accurate-or-unknown protocol the degradation reporting defers to

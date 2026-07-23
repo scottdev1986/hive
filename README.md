@@ -49,7 +49,7 @@ hive init
 hive
 ```
 
-`hive init` installs the agent skills used by the CLIs present on the machine, offers the optional local Graphify integration, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. Use `hive init --no-graphify` to skip the Graphify prompt.
+`hive init` installs the agent skills used by the CLIs present on the machine, provisions the required local Graphify code graph, seeds optional narrative memory, and performs repo-only setup: it does not start a daemon or open a Workspace. It is safe to run again. If Graphify provisioning is interrupted or offline, init reports the degraded state and `hive graphify enable` repairs it.
 
 Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -63,7 +63,7 @@ older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
 | Command | Purpose |
 | --- | --- |
 | `hive` | Create a fresh isolated instance and open its Workspace |
-| `hive init` | Install agent skills, seed optional memory, offer Graphify, and run repo-only setup without starting a daemon |
+| `hive init` | Install agent skills, provision Graphify, seed optional memory, and run repo-only setup without starting a daemon |
 | `hive claude`, `hive codex`, `hive grok` | Open the Workspace with queen on that read-only orchestrator vendor |
 | `hive status` | Show agent name, tool, model, state, context use, task, and failure |
 | `hive kill <agent>` | Stop one agent and preserve any unlanded work |
@@ -74,7 +74,7 @@ older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
 | `hive quota` | Show provider capacity, reservations, provenance, and reset times |
 | `hive memory ...` | Search, read, write, delete, reindex, self-test, or consolidate durable memory |
 | `hive embeddings install` | Install the local semantic-memory embedding runtime |
-| `hive graphify enable\|disable\|status` | Manage the optional local code graph for this repository |
+| `hive graphify enable\|status` | Repair or inspect the required local code graph |
 | `hive update [version]` | Install the latest or an exact release |
 | `hive update check\|status\|rollback\|skip` | Check, inspect, roll back, or skip an offered release |
 | `hive uninstall [--repo]` | Remove the machine installation, or only this repository's Hive state |

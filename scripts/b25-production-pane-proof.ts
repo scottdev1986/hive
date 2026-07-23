@@ -572,7 +572,7 @@ async function main(): Promise<void> {
     "git", "-c", "user.name=Hive B2.5", "-c", "user.email=b25@hive.local",
     "commit", "-q", "-m", "qualification project",
   ], project);
-  command([stagedHive, "init", "--no-graphify"], project, env);
+  command([stagedHive, "init"], project, env);
   command(["git", "add", "-A"], project);
   command([
     "git", "-c", "user.name=Hive B2.5", "-c", "user.email=b25@hive.local",

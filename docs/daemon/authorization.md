@@ -23,7 +23,7 @@ Four roles exist (`src/daemon/capabilities.ts:97-136`), and the interesting prop
 
 **Operator** — the human's `hive` CLI and the Workspace acting for them. Holds every action. Its subject scope is unrestricted, deliberately: a caller that can already spawn and kill any agent gains no new authority from also being allowed to name one, so narrowing it would cost clarity and buy nothing.
 
-**Orchestrator** — the root agent, named queen. Prefer queen when addressing or referring to it; the role name orchestrator remains correct, and old/`orchestrator` addressing is still understood. Spawns, approves, kills, recovers, reads the global inbox, and reads autonomy. It holds **no landing right and no autonomy/routing/graphify write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge. Naming does not change this matrix.
+**Orchestrator** — the root agent, named queen. Prefer queen when addressing or referring to it; the role name orchestrator remains correct, and old/`orchestrator` addressing is still understood. Spawns, approves, kills, recovers, reads the global inbox, and reads autonomy. It holds **no landing right and no autonomy/routing write**, ever. This is the single most important line in the matrix: the process that decides *what work happens* must not be the process that can *put code on `main`*. An orchestrator compromised by prompt injection can waste money; it cannot merge. Naming does not change this matrix.
 
 **Writer** — a spawned agent with a worktree and a branch. It talks, reads its own inbox, acks its own controls, reports its own events, writes memory, and — exactly once, at the current epoch, for its own branch — lands.
 
@@ -64,7 +64,6 @@ Enumerated from `src/daemon/capabilities.ts:25-51`. `O` operator, `R` orchestrat
 | `routing-policy:read` | O | |
 | `routing-policy:write` | O | an agent rewriting the router is self-authorization |
 | `workspace-visibility:write` | O | only the credential-holding Workspace feed may attest UI inventory |
-| `graphify:write` | O | opting a repo into an indexing service is consent |
 
 `anySubject` (`src/daemon/capabilities.ts:62-67`): the operator for everything it holds; the orchestrator for exactly the four agent-directed actions. Writers and readers may only ever name themselves.
 
@@ -114,7 +113,6 @@ Every HTTP route below `/handshake` in `src/daemon/server.ts:2349-2411` authenti
 | `GET /routing/policy` | `routing-policy:read` | — | no | `src/daemon/server.ts:2363-2368` |
 | `POST /routing/policy` | `routing-policy:write` | — | yes | `src/daemon/server.ts:2363-2368` |
 | `POST /workspace-visibility` | `workspace-visibility:write` | — | yes | `src/daemon/server.ts:2800-2849` |
-| `POST /graphify` | `graphify:write` | — | yes | `src/daemon/server.ts:2392-2394` |
 | `GET /orchestrator-status` | `status:read` | — | no | `src/daemon/server.ts:2369-2371` |
 | `GET /token-usage` | `token-usage:read` | — | no | `src/daemon/server.ts:2372-2374` |
 | `POST /token-usage/**` | `token-usage:write` | — | yes | `src/daemon/server.ts:2375-2390` |
@@ -199,7 +197,7 @@ Every mutating decision appends an `audit_log` row: timestamp, route, action, ca
 
 ## Keeping the matrix from drifting
 
-This document declares itself binding and `src/daemon/capabilities.ts:1-3` declares the code must not drift from it. Between those two statements, the code grew six actions (`root-token:mint`, `autonomy:read/write`, `routing-policy:read/write`, `graphify:write`), seven routes, and four MCP tools that this table had no rows for. The contract did not fail loudly; it failed by **omission**, which is the failure mode a "binding table" is least able to detect.
+This document declares itself binding and `src/daemon/capabilities.ts:1-3` declares the code must not drift from it. Between those two statements, the code grew five actions (`root-token:mint`, `autonomy:read/write`, `routing-policy:read/write`), six routes, and four MCP tools that this table had no rows for. The contract did not fail loudly; it failed by **omission**, which is the failure mode a "binding table" is least able to detect.
 
 So, the rule the drift itself teaches:
 
@@ -216,5 +214,4 @@ Capabilities are bound to a subject, not to a connection. Over HTTP there is not
 - [Database resilience](database-resilience.md) — the absence test, and why `audit_log` may never be pruned
 - [Orchestrator status](orchestrator-status.md) — `status:read`, and the no-agents-row invariant
 - [Routing policy](../routing/routing-policy.md) — what `routing-policy:write` consents to
-- [Graphify integration](../graphify/integration.md) — what `graphify:write` consents to
 - [SPEC](../../SPEC.md) — the agent model these roles are cut from

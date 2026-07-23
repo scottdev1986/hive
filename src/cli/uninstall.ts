@@ -16,10 +16,9 @@
  *   - leaked orchestrator runtime config in the primary checkout
  *     (`.mcp.json`, `.claude/settings.local.json`, `.codex/*`) — the same
  *     signature-matched repair every session boundary runs
- *   - `graphify-out/` and the `.git/info/exclude` lines Hive appended (in
- *     the git common dir, so linked worktrees are covered)
- *   - the project's derived-state dir `~/.hive/projects/<uuid>/` (graphify
- *     decision, init stamp)
+ *   - `graphify-out/` and Hive's generated `.graphifyignore`
+ *   - the project's derived-state dir `~/.hive/projects/<uuid>/` (serving
+ *     snapshot and init stamp)
  *
  *   Machine-level (no flag):
  *   - `~/.hive` — state, memory, the graphify tool under `tools/`, and any
@@ -44,7 +43,6 @@ import { basename, dirname, join, resolve } from "node:path";
 import {
   GRAPHIFY_IGNORE_MARKER,
   graphOutDir,
-  removeGraphifyExcludeEntry,
   runCommand,
   type CommandRunner,
 } from "../adapters/graphify";
@@ -305,7 +303,7 @@ export async function runUninstallRepo(
     "  - stops the selected daemon only when its handshake proves it serves this project",
     "  - deletes this instance's agent worktrees and hive/* branches (its unlanded agent work is lost)",
     "  - removes the skills Hive installed (edited copies are yours and stay)",
-    "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, .codex/, and .git/info/exclude",
+    "  - removes Hive's entries from .mcp.json, .claude/settings.local.json, and .codex/",
     "  - deletes graphify-out/, the generated .graphifyignore, and this repo's derived state under ~/.hive/projects/",
     "The graphify tool under ~/.hive/tools is shared across repos and stays; `hive uninstall` removes it.",
   ];
@@ -339,9 +337,6 @@ export async function runUninstallRepo(
   const repaired = await repairLeakedProjectConfig(root);
   for (const path of repaired) deps.log(`Removed Hive's entries from ${path}.`);
   await rm(graphOutDir(root), { recursive: true, force: true });
-  if (await removeGraphifyExcludeEntry(root, deps.run)) {
-    deps.log("Removed Hive's .git/info/exclude entries.");
-  }
   // Only Hive's generated .graphifyignore (identified by its marker line) is
   // Hive's to delete; a user-authored one stays — the same rule purge obeys.
   const ignorePath = join(root, ".graphifyignore");

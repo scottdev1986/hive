@@ -48,4 +48,23 @@ describe("removed flags", () => {
       createProgram().parseAsync(["node", "hive", "init", "--no-embeddings"]),
     ).rejects.toThrow(/unknown option.*--no-embeddings/);
   });
+
+  test("hive init rejects the retired Graphify choice flags", async () => {
+    for (const flag of ["--graphify", "--no-graphify"]) {
+      await expect(
+        createProgram().parseAsync(["node", "hive", "init", flag]),
+      ).rejects.toThrow(new RegExp(`unknown option.*${flag}`));
+    }
+  });
+
+  test("hive graphify has no disable command", () => {
+    const graphify = createProgram().commands.find((command) =>
+      command.name() === "graphify"
+    );
+
+    expect(graphify?.commands.map((command) => command.name())).toEqual([
+      "enable",
+      "status",
+    ]);
+  });
 });
