@@ -32,7 +32,7 @@ The strategic read is unchanged and stated honestly: several parties could close
 
 ## Where the rebuild stands
 
-Hive is mid-rebuild. The product described above runs today on a tmux + SwiftTerm substrate that is being replaced, on `main`, progressively — not on a long-lived integration branch. Development is coordinated by a checksummed, pinned **old** Hive release with its own `HIVE_HOME`, database, sockets, and ports, so the tool building the rebuild cannot see the rebuild's runtime state (`M1-BOOT`, closed; `planning/backlog-outline.md` M1 Prerequisite).
+Hive is mid-rebuild. The product described above runs today on a tmux + SwiftTerm substrate that is being replaced, on `main`, progressively — not on a long-lived integration branch.
 
 Ground truth for board state, landed artifacts, and where the tracker lags reality is `planning/2026-07-20-board-planning-repo-reconciliation.md` §1–§4. Its standing observation is worth repeating here because it changes how the milestones below should be read: **the board understates engineering progress** (columns lag landings) while the definition-of-done verdict holds exactly — the atomic cut has not started, and zero of six human evidence gates are met. The milestone boundaries below are stated in terms of *exit criteria*, never column positions.
 
@@ -51,7 +51,7 @@ The foundation M1 is qualifying is recorded in [ADR 0001 — macOS native termin
 
 **Exit criteria.** All of the following, none softened:
 
-1. **The atomic tmux cut** — `#1` (STORY-001, gut all tmux terminal code) and `#2` (STORY-002, remove the SwiftTerm/tmux-attach agent-TUI hosting path) execute as **one atomic merge train** at the Removal Gate, with the full live vendor matrix re-run on the post-deletion tree. **The orchestrator session is included in the cut.** Pre-cut drain is performed by the pinned bootstrap build.
+1. **The atomic tmux cut** — `#1` (STORY-001, gut all tmux terminal code) and `#2` (STORY-002, remove the SwiftTerm/tmux-attach agent-TUI hosting path) execute as **one atomic merge train** at the Removal Gate, with the full live vendor matrix re-run on the post-deletion tree. **The orchestrator session is included in the cut.** Pre-cut drain is performed by the old build before it is retired.
 2. **`make terminal` and all testing-only support code removed** — `#59`. Every temporary harness or support path that exists only to exercise the terminal during development is deleted before M1 closes. An artifact that still ships or depends on a testing-only support path has not proven what M1 claims.
 3. **The exit-command acceptance criterion** — `#60`. An agent's own exit command closes the *agent*; the **terminal pane STAYS OPEN**; and Hive records the closure and runs work preservation. Agent lifetime and pane lifetime are separate facts, and this is the first place M1 proves it.
 4. **C2 packaging** — `#11`, per `planning/story-m1-c2-packaging.md`. A signed, notarized, self-contained universal artifact installs and runs the full M1 spine. Per the user rulings recorded in that doc: signing/notarization evidence is a **green `release.yml` run on the post-cut tree**, not a fresh per-cut attestation bundle; and **"clean machine" means a tmux-absence check only** — any machine where `tmux` is verifiably absent from `PATH`, measured with a negative control, not a fresh user account and not separate hardware.

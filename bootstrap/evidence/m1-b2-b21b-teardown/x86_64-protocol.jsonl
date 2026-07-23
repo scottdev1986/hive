@@ -1,5 +1,0 @@
-{"pid":40473,"stage":"before"}
-{"engineBuildId":"4eb4c9f69ef85bf88de4fad52a4c1cb4f72a9e911a3fca285be00520a92d8a27","ghosttyCommit":"73534c4680a809398b396c94ac7f12fcccb7963d","layerClass":"IOSurfaceLayer","locatorGeneration":1,"locatorSessionId":"00000000-0000-4000-8000-000000000021","pid":40473,"stage":"create"}
-{"drawCount":1,"hasPresentedContents":true,"highWater":"106","layerClass":"IOSurfaceLayer","orderedChunkCount":3,"pid":40473,"stage":"use"}
-{"hasPresentedContents":false,"pid":40473,"stage":"free","surfaceState":"exited(evidence: \"user-close\")"}
-{"pid":40473,"stage":"done"}

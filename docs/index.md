@@ -47,7 +47,6 @@ The control plane: who may do what, and what happens when state is missing.
 | [Orchestrator status](daemon/orchestrator-status.md) | queen (the root orchestrator) has no agents row, so structured turn events and process evidence derive its status without terminal scraping. | 2026-07-15 |
 | [sessiond queen restart proof](daemon/sessiond-queen-restart-proof.md) | Opt-in restart gate for the sessiond-hosted root: exact host identity, six communication lanes, visibility expiry/recovery, and root scrolling without converting queued or redrawn state into receipt. | 2026-07-22 |
 | [Multiple concurrent instances](daemon/multi-instance.md) | Per-instance identity, lifecycle, and control state; owner-scoped repository work; serialized landing; one machine-wide quota ledger; and a global mutation lease. | 2026-07-14 |
-| [Isolated rebuild bootstrap](daemon/bootstrap.md) | The immutable old-release control plane used while main carries the rebuild: exact artifact pin, full process-home and runtime isolation, operating contract, and simultaneous live proof. | 2026-07-17 |
 | [Agent teardown](daemon/agent-teardown.md) | Capture the owned process tree before killing tmux, reap it, verify post-state, and preserve work whenever cleanup cannot be proved. | 2026-07-14 |
 
 ## terminal

@@ -169,8 +169,6 @@ and 15:26:37Z. The memory article
 still open" — **that claim is outdated and wrong**; the constraint it records
 (a daemon-only TMUX_TMPDIR splits the daemon from the launcher's tmux server
 and kills every root wake) still holds and is still honored by the code.
-(`bootstrap/hive-bootstrap` sets TMUX_TMPDIR, but it sets it for everything
-it launches — launcher and daemon share it, so no split.)
 
 ## Fix spec (for the implementing agent)
 

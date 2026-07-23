@@ -46,8 +46,8 @@ The single largest fan-out in M1. Row K (real Claude Code, Codex, Grok TUIs thro
 
 Gated by: the full vendor matrix (above), and executes as **ONE atomic merge train** — `story-001:18`: "the full vendor matrix is re-run on the post-deletion tree before the cut lands. **Two separately-green PRs are NOT acceptable.**" Effort: unknown; footprint measured above.
 
-### B3. Pre-cut drain · USER-ONLY (must run from the bootstrap build)
-`story-001:43`: the OLD/bootstrap build performs the drain BEFORE the cut; "the cut is refused while any legacy session or process survives; **emptiness is positively proven** (live tmux server query + process-table readback, not absence-of-error)". No agent on the new tree can discharge this.
+### B3. Pre-cut drain · USER-ONLY (must run from the old build)
+`story-001:43`: the OLD build performs the drain BEFORE the cut; "the cut is refused while any legacy session or process survives; **emptiness is positively proven** (live tmux server query + process-table readback, not absence-of-error)". No agent on the new tree can discharge this.
 
 ### B4. A0 freeze closure · agent-doable
 Turn `pending-a1.test.ts` cases B and C green (adopt the frozen shapes in `pty_host.zig`), then build the non-Hive consumer demo. A0 is the contract A2 was supposed to be built against, so this is foundational debt, not polish.

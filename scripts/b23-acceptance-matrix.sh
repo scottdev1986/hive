@@ -3,7 +3,7 @@
 #
 # Usage: scripts/b23-acceptance-matrix.sh
 #
-# Writes one .txt per suite into bootstrap/evidence/m1-b2-b23-input/ plus a
+# Writes one .txt per suite into raw/qualification/m1-b2-b23-input/ plus a
 # sha256 manifest. Evidence is named .txt deliberately: *.log is gitignored,
 # which would leave the manifest unverifiable on a fresh checkout.
 #
@@ -12,7 +12,7 @@
 set -uo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
-OUT="$ROOT/bootstrap/evidence/m1-b2-b23-input"
+OUT="$ROOT/raw/qualification/m1-b2-b23-input"
 MANIFEST="evidence-sha256.txt"
 
 mkdir -p "$OUT"

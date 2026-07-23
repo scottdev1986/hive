@@ -29,7 +29,6 @@ Method: board Status and issue state read as independent axes; neither treated a
 | 23–28 | Backlog | OPEN | `backlog-outline.md` M4 S4.1–S4.6 | — | ALIGNED |
 | 29–33 | Backlog | OPEN | `backlog-outline.md` M5 (S5.x families, unenumerated) | — | ALIGNED (vague, §3) |
 | 34 | Ready | OPEN | `story-m1-a0-terminal-host-contract.md` | freeze tests B/C still `test.failing` in `test/terminal-host-freeze/pending-a1.test.ts` | ALIGNED |
-| 35 | Done | CLOSED | `backlog-outline.md` M1-BOOT | `bootstrap/evidence/live-isolation.json` | ALIGNED |
 | 36 | Backlog | OPEN | **board-only scope** | — | ALIGNED (outline DOC-STALE, §2) |
 | 37 | Backlog | OPEN | **board-only scope** | `adc5df1b` daemon owns broker lifecycle; `8592225e`/`9fd29e3f` ownership + ready-proof | **BOARD-STALE** (partial) |
 | 38 | Backlog | OPEN | **board-only scope** — supersedes outline S2.1/S2.2 | `07a09e93` lands #38's queen-`gh`-permission requirement | **BOARD-STALE** |

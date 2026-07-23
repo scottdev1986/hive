@@ -34,7 +34,7 @@ else
     fi
   done
 fi
-EVIDENCE=${2:-"$ROOT/bootstrap/evidence/m1-b2-b24-viewer"}
+EVIDENCE=${2:-"$ROOT/raw/qualification/m1-b2-b24-viewer"}
 XCFRAMEWORK="$ARTIFACT/GhosttyKit.xcframework"
 MANIFEST="$ARTIFACT/artifact-manifest.json"
 MACOS_LIBRARY_PATH='GhosttyKit.xcframework/macos-arm64_x86_64/libghostty-internal.a'
