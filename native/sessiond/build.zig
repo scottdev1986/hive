@@ -320,17 +320,32 @@ pub fn build(b: *std.Build) void {
         .optimize = optimize,
         .link_libc = true,
     });
-    neutral_control_plane_module.addImport("neutral_host", neutral_host_module);
-    neutral_control_plane_module.addImport("process_inspector", process_inspector_module);
-    neutral_control_plane_module.addImport("session_protocol_generated", generated);
-    neutral_control_plane_module.addImport("wall_clock", wall_clock_module);
     neutral_control_plane_module.addImport("neutral_evidence", neutral_evidence_module);
     neutral_control_plane_module.addImport("neutral_operations", neutral_operations_module);
     broker_host_client_module.addImport("neutral_control_plane", neutral_control_plane_module);
     broker_module.addImport("neutral_control_plane", neutral_control_plane_module);
     broker_module.addImport("neutral_host", neutral_host_module);
     broker_module.addImport("process_inspector", process_inspector_module);
-    const neutral_control_plane_tests = b.addTest(.{ .root_module = neutral_control_plane_module });
+    const neutral_control_plane_test_module = b.createModule(.{
+        .root_source_file = b.path("test/neutral-control-plane.zig"),
+        .target = target,
+        .optimize = optimize,
+        .link_libc = true,
+    });
+    neutral_control_plane_test_module.addImport(
+        "neutral_control_plane",
+        neutral_control_plane_module,
+    );
+    neutral_control_plane_test_module.addImport("neutral_evidence", neutral_evidence_module);
+    neutral_control_plane_test_module.addImport("neutral_host", neutral_host_module);
+    neutral_control_plane_test_module.addImport(
+        "process_inspector",
+        process_inspector_module,
+    );
+    neutral_control_plane_test_module.addImport("session_protocol_generated", generated);
+    const neutral_control_plane_tests = b.addTest(.{
+        .root_module = neutral_control_plane_test_module,
+    });
     const run_neutral_control_plane_tests = b.addRunArtifact(neutral_control_plane_tests);
     test_step.dependOn(&run_neutral_control_plane_tests.step);
     const neutral_control_plane_step = b.step(
