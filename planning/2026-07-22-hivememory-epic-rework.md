@@ -95,7 +95,7 @@ User directive overrode D5 slotting: everything built immediately on the daemon'
 - `805b6d23` HM-3 WP7: `recall:`/`note this:`/`document this:` trigger protocol (queen/operator only, enforced at daemon).
 - `55557440` fix: spawn index reads the primary checkout (`.hive/memory` is gitignored — worktrees never had it; production bug found during WP6).
 - `c5075d41` + `de4fd022` HM-4/§5: `memory_note`, `memory_recall`, `memory_promote` (redaction-checked, operator/queen tier) + static vendor conformance suite (claude/codex/grok).
-- `7d61cd83` HM-5 core (gate waived by user directive): local fastembed embeddings (bge-small-en-v1.5 default, `[memory] embedding_provider`/`embedding_model` knobs, models cached under `~/.hive/models`), `memory_embeddings` vector store in the episodic DB (schema v2), RRF hybrid FTS+vector recall bundle, unavailable-degrades-to-FTS-only; live paraphrase-recall gate env-gated (`HIVE_LIVE_MEMORY_EMBEDDINGS=1`).
+- `be7da723` HM-5 core (gate waived by user directive): local fastembed embeddings (bge-small-en-v1.5 default, `[memory] embedding_provider`/`embedding_model` knobs, models cached under `~/.hive/models`), `memory_embeddings` vector store in the episodic DB (schema v2), RRF hybrid FTS+vector recall bundle, unavailable-degrades-to-FTS-only; live paraphrase-recall gate env-gated (`HIVE_LIVE_MEMORY_EMBEDDINGS=1`).
 
 **Deviations from the phase plan, ratified by build:**
 
