@@ -1,0 +1,93 @@
+name: promote release
+
+# Promotion is deliberately separate from the build. A human runs this only
+# after installing and accepting the candidate; it changes GitHub release state
+# without rebuilding, retagging, or replacing any tested artifact.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Candidate version without v (0.0.N)"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+# Do not promote while another run is still creating a newer candidate.
+concurrency:
+  group: hive-release
+  cancel-in-progress: false
+
+jobs:
+  promote:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          fetch-tags: true
+
+      - name: Validate and promote the tested candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+        run: |
+          set -euo pipefail
+
+          case "$VERSION" in
+            0.0.|0.0.0*|0.0.*[!0-9]*|"")
+              echo "::error::version must be a canonical 0.0.N release greater than zero"
+              exit 1
+              ;;
+            0.0.*) ;;
+            *)
+              echo "::error::version must be a canonical 0.0.N release"
+              exit 1
+              ;;
+          esac
+
+          tag="v$VERSION"
+          candidate_commit="$(git rev-parse "$tag^{commit}")"
+          git merge-base --is-ancestor "$candidate_commit" origin/main || {
+            echo "::error::$tag does not point to a commit on main"
+            exit 1
+          }
+
+          newest_tag="$(git tag --list 'v0.0.*' --sort=-version:refname | sed -n '1p')"
+          if [ "$tag" != "$newest_tag" ]; then
+            echo "::error::$tag is not the newest candidate ($newest_tag)"
+            exit 1
+          fi
+
+          metadata="$(
+            gh release view "$tag" \
+              --json tagName,isDraft,isPrerelease \
+              --jq '[.tagName, .isDraft, .isPrerelease] | @tsv'
+          )"
+          IFS=$'\t' read -r actual_tag draft prerelease <<< "$metadata"
+          if [ "$actual_tag" != "$tag" ] || [ "$draft" != "false" ] ||
+             [ "$prerelease" != "true" ]; then
+            echo "::error::$tag is not a published prerelease candidate"
+            exit 1
+          fi
+
+          assets="$(gh release view "$tag" --json assets --jq '.assets[].name')"
+          for required in \
+            hive-darwin-arm64 \
+            hive-darwin-x64 \
+            hive-sessiond-darwin-arm64 \
+            hive-sessiond-darwin-x64 \
+            HiveWorkspace.tar.gz \
+            embeddings-runtime.tar.gz \
+            hive-release.json \
+            hive-release.json.sig
+          do
+            if ! grep -Fxq "$required" <<< "$assets"; then
+              echo "::error::$tag is missing required asset $required"
+              exit 1
+            fi
+          done
+
+          gh release edit "$tag" --prerelease=false --latest
+          echo "::notice::$tag is now the stable Hive release"

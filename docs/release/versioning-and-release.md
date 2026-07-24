@@ -1,11 +1,11 @@
 # Versioning and release
 
-Updated: 2026-07-14
-Sources: Hive source tree, 2026-07-14; `test/release/contract.test.ts`
+Updated: 2026-07-24
+Sources: Hive source tree, 2026-07-24; `test/release/contract.test.ts`
 
 ## Summary
 
-Hive's version is a fact about what a user is running, not a label someone remembers to change: one push to `main` publishes exactly one release, one patch above the last, nobody types a version number, and no commit contains one. This document owns the versioning contract; every rule below that a human could break with a plausible edit is asserted in `test/release/contract.test.ts`, which runs in the same `bun test` step the release workflow gates on.
+Hive's version is a fact about what a user is running, not a label someone remembers to change: one push to `main` publishes exactly one release candidate, one patch above the last, nobody types a version number, and no commit contains one. That candidate becomes the stable release only after a human installs and accepts its exact artifacts. This document owns the versioning contract; every rule below that a human could break with a plausible edit is asserted in `test/release/contract.test.ts`, which runs in the same `bun test` step the release workflow gates on.
 
 This document is authoritative. [distribution.md](distribution.md) owns *how* releases reach machines; [update-experience.md](update-experience.md) owns *what the user sees*. Where they disagree with this document, this one is the implementation and they are the design — fix whichever is wrong. `src/release/plan.ts:47-58` raises an error that names this document by path: a minor or major bump "must update docs/release/versioning-and-release.md and src/release/plan.ts together." Editing a rule here without editing the code, or the reverse, is the failure both are designed to prevent.
 
@@ -13,7 +13,7 @@ This document is authoritative. [distribution.md](distribution.md) owns *how* re
 
 Hive is `0.0.x`. Patch-only. The first release is `0.0.1`.
 
-One push to `main` bumps the patch by exactly one. A push carrying a hundred local commits is still one push, so it is still one release — **the bump is a function of the tip commit and the existing tags**, never of how many commits arrived. The GitHub `push` event fires once per push, so nothing needs to deduplicate anything. The workflow therefore checks out with `fetch-depth: 0` and `fetch-tags: true`, because the tags *are* the input (`test/release/contract.test.ts:83-86`).
+One push to `main` bumps the patch by exactly one. A push carrying a hundred local commits is still one push, so it is still one candidate — **the bump is a function of the tip commit and the existing tags**, never of how many commits arrived. The GitHub `push` event fires once per push, so nothing needs to deduplicate anything. The workflow therefore checks out with `fetch-depth: 0` and `fetch-tags: true`, because the tags *are* the input (`test/release/contract.test.ts:83-86`).
 
 A commit that already carries a release tag is never released again. That single rule is what makes the pipeline idempotent: re-running the workflow, re-triggering it by hand, or force-pushing a tip that is already tagged all resolve to "nothing to do" (`src/release/plan.ts:94-107`). The tag push itself is a compare-and-swap — `git push` of a ref that exists fails — so two concurrent runs can never both mint `v0.0.7`.
 
@@ -37,14 +37,20 @@ The key value is a comma-separated list, which permits rotation without a flag d
 
 ## The pipeline
 
-`.github/workflows/release.yml`, on **push to `main`** (`branches: [main]`), **serialized by a concurrency group** (`group: hive-release`, `cancel-in-progress: false`) so two pushes cannot race, and **raising itself to `contents: write`** because the repository default for `GITHUB_TOKEN` is read-only. All three are asserted in `test/release/contract.test.ts:70-81`.
+Before pushing, the developer gate is `make clean && make build && make test`,
+followed by `make run` for visible development acceptance. Passing locally is
+necessary but does not publish anything; CI rebuilds the signed customer
+artifact on its clean runner.
+
+`.github/workflows/release.yml`, on **push to `main`** (`branches: [main]`), **serialized by a concurrency group** (`group: hive-release`, `cancel-in-progress: false`) so two pushes cannot race, and **raising itself to `contents: write`** because the repository default for `GITHUB_TOKEN` is read-only. It creates a GitHub prerelease with `--latest=false`; the previous stable release remains the one returned by `releases/latest`. All of this is asserted in `test/release/contract.test.ts`.
 
 1. Typecheck and test. **Nothing is released from a red tree** — `bun test` runs ahead of the planner, and `test/release/contract.test.ts:100-104` fails the build if that order is ever inverted.
 2. Plan: `plan-cli.ts` reads the tags and the tip's tags, and prints `{action, version, tag}`.
 3. Build, if the action is `release`: two Bun-compiled CLI slices (`darwin-arm64`, `darwin-x64`, cross-compiled from one macOS runner) and one universal Workspace application built with `swift build -c release --arch arm64 --arch x86_64`. The universal bundle is duplicated across both manifest entries rather than sliced, because a 3 MB duplicate is cheaper than a second bundle to sign and notarize.
 4. Sign, if a Developer ID certificate is configured: a Developer ID Application signature with the hardened runtime and a secure timestamp on both CLI slices and the app, one `notarytool` submission for all three, and a stapled ticket on the app. With no certificate configured the artifacts stay unsigned and the release notes say so. **The switch is the presence of the certificate secret, not a flag anyone flips** (`.github/workflows/release.yml:79-114`).
 5. Prove the built binary reports its own version; sign `hive-release.json` with the CI-held manifest key if one exists; verify the manifest signature *with the client's own `verifyManifest` against the key that was actually embedded*; and verify every Apple signature — `codesign --verify --strict` on everything, `codesign --check-notarization` on the CLI slices, `spctl --assess` and a stapled-ticket check on the app — failing the release on any defect. All of this is *before* the tag.
-6. Tag, then publish the GitHub Release with both binaries, the app tarball, `hive-release.json`, and — when a key is configured — `hive-release.json.sig`.
+6. Tag, then publish a non-latest GitHub prerelease candidate with both binaries, the app tarball, `hive-release.json`, and — when a key is configured — `hive-release.json.sig`.
+7. Install that exact candidate with `hive update 0.0.N`, test it as a customer would, and either return to the prior stable build with `hive update rollback` or run `.github/workflows/promote-release.yml`. Promotion validates that the requested tag is the newest `v0.0.N` tag on `main`, is still a prerelease, and carries every required signed asset. It then changes only the release's prerelease/latest flags. It never rebuilds, retags, or uploads assets.
 
 **Building *before* tagging is the interesting ordering, and it is a bound rule** (`test/release/contract.test.ts:93-98`). A failed build must not burn a version number, so the tag is minted only once there are artifacts to attach to it. The cost is that two racing runs may both build and only one may tag; a wasted build is cheaper than a gap in the series. Signing and its verification sit inside that same before-the-tag window for the same reason: a certificate problem or a notarization rejection must fail the release, not ship a broken signature under a fresh version number. The client-side manifest verification in step 5 exists for the sharpest version of this: verification is fail-closed, so a public/private pair that disagree — a bad paste into a secret, a half-finished rotation — would publish a release that *every installed Hive refuses*, including the ones that would have carried the fix. Silent at build time, total at update time. Running the client's verifier before the tag costs a build instead of a version.
 

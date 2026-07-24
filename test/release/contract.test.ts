@@ -66,6 +66,7 @@ describe("the version has exactly one source", () => {
 
 describe("the release workflow", () => {
   const workflow = read(".github/workflows/release.yml");
+  const promotion = read(".github/workflows/promote-release.yml");
 
   test("exists and triggers on a push to main", () => {
     expect(workflow).toContain("branches: [main]");
@@ -147,6 +148,25 @@ describe("the release workflow", () => {
     ]) {
       expect(publishList).toContain(asset);
     }
+  });
+
+  test("publishes a non-latest candidate instead of exposing an untested stable release", () => {
+    const create = workflow.slice(workflow.indexOf("gh release create"));
+    expect(create).toContain("--prerelease");
+    expect(create).toContain("--latest=false");
+  });
+
+  test("promotes only through an explicit metadata-only workflow", () => {
+    expect(promotion).toContain("workflow_dispatch:");
+    expect(promotion).toContain("group: hive-release");
+    expect(promotion).toContain("gh release view");
+    expect(promotion).toContain("hive-release.json.sig");
+    expect(promotion).toContain(
+      'gh release edit "$tag" --prerelease=false --latest',
+    );
+    expect(promotion).not.toContain("src/release/build.ts");
+    expect(promotion).not.toContain("gh release create");
+    expect(promotion).not.toContain("gh release upload");
   });
 
   test("verifies both session broker slices before publishing", () => {

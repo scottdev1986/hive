@@ -1,9 +1,9 @@
 name: release
 
-# One push to main is one patch bump. The push event fires once per push
-# regardless of how many commits it carries, so a hundred local commits landing
-# together produce exactly one release. Everything else here exists to make that
-# sentence survive re-runs, races, and failures.
+# One push to main is one patch bump and one release candidate. The exact signed
+# artifacts stay a GitHub prerelease until a human tests that installed version
+# and runs promote-release.yml. Standard install/update paths therefore remain
+# on the previous stable release throughout acceptance.
 on:
   push:
     branches: [main]
@@ -299,7 +299,7 @@ jobs:
           git tag -a "${{ steps.plan.outputs.tag }}" -m "hive ${{ steps.plan.outputs.version }}"
           git push origin "refs/tags/${{ steps.plan.outputs.tag }}"
 
-      - name: Publish the release
+      - name: Publish the release candidate
         if: steps.plan.outputs.action == 'release'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -325,20 +325,25 @@ jobs:
           fi
 
           if [ "$SIGNED" = "true" ]; then
-            notes="Automated release of ${{ github.sha }}.
+            notes="Release candidate for ${{ github.sha }}.
 
           These artifacts are signed with a Developer ID and notarized by Apple, so macOS
           runs them without a Gatekeeper quarantine prompt. ${manifest_line}
+          Install this candidate explicitly with \`hive update ${{ steps.plan.outputs.version }}\`.
           See docs/release/versioning-and-release.md."
           else
-            notes="Automated release of ${{ github.sha }}.
+            notes="Release candidate for ${{ github.sha }}.
 
           These artifacts are **not yet signed or notarized**, so macOS quarantines them on
-          first run. ${manifest_line} See docs/release/versioning-and-release.md."
+          first run. ${manifest_line}
+          Install this candidate explicitly with \`hive update ${{ steps.plan.outputs.version }}\`.
+          See docs/release/versioning-and-release.md."
           fi
 
           gh release create "${{ steps.plan.outputs.tag }}" \
             --verify-tag \
-            --title "hive ${{ steps.plan.outputs.version }}" \
+            --prerelease \
+            --latest=false \
+            --title "hive ${{ steps.plan.outputs.version }} candidate" \
             --notes "$notes" \
             "${assets[@]}"
