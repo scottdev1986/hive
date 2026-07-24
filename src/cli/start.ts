@@ -13,6 +13,7 @@
 
 import { cp, mkdir } from "node:fs/promises";
 import { basename, join } from "node:path";
+import { installGraphify } from "../adapters/graphify";
 import { getHiveHome } from "../daemon/db";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import { isDefaultHiveHome } from "../daemon/instance-identity";
@@ -46,6 +47,7 @@ export interface StartDeps {
   readonly ensureDaemon?: (cwd: string) => Promise<void>;
   readonly ensurePort?: () => Promise<number>;
   readonly repairProjectConfig?: (cwd: string) => Promise<unknown>;
+  readonly refreshGraphify?: () => Promise<void>;
   /** Select the runtime after repo-only preparation and before daemon lookup. */
   readonly prepareInstance?: (cwd: string) => void | Promise<void>;
 }
@@ -163,6 +165,28 @@ export async function startSession(
   });
   const cwd = deps.cwd ?? process.cwd();
   await (deps.repairProjectConfig ?? repairLeakedProjectConfig)(cwd);
+  try {
+    await (
+      deps.refreshGraphify ??
+      (async () => {
+        const result = await installGraphify();
+        if (result.ok && result.changed === true) {
+          process.stderr.write(`Graphify updated: ${result.detail}\n`);
+        } else if (!result.ok) {
+          process.stderr.write(
+            `Graphify update unavailable; keeping the current runtime: ${result.reason}\n`,
+          );
+        }
+      })
+    )();
+  } catch (error) {
+    // Runtime delivery is advisory; an update outage never blocks Hive.
+    process.stderr.write(
+      `Graphify update unavailable; keeping the current runtime: ${
+        error instanceof Error ? error.message : String(error)
+      }\n`,
+    );
+  }
   await (deps.prepareInstance ?? prepareFreshWorkspaceInstance)(cwd);
   await (deps.ensureDaemon ?? ensureDaemonForBuild)(cwd);
   const port = await (deps.ensurePort ?? ensureStarted)();

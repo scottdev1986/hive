@@ -4,11 +4,9 @@
  * there and are enforced here:
  *
  *   - Installed as a Hive-built frozen bundle (docs/graphify/bundling.md):
- *     fetched from Hive's own release, sha256-verified
- *     against a constant embedded in this binary, unpacked only after the
- *     hash matches. No uv, no Python, no PyPI on the user's machine. The
- *     embedded lock remains the pin's source of truth — it is what the
- *     bundle was built from.
+ *     fetched from Hive's signed runtime channel and unpacked only after its
+ *     size and SHA-256 match the signed manifest. No uv, Python, or PyPI on a
+ *     user's machine.
  *   - Every graphify invocation runs keyless from a scrubbed allowlist
  *     environment with `--code-only`, so the LLM-enrichment paths fail
  *     closed instead of sending repo content anywhere.
@@ -23,24 +21,21 @@ import {
   copyFile,
   mkdir,
   readFile,
+  realpath,
   rename,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import graphifyLock from "../../graphify.lock" with { type: "text" };
 import { machineHiveHome } from "../daemon/instances";
 import { projectStateDir } from "../daemon/project-state";
-import {
-  type GraphifyArtifact,
-  graphifyArtifact,
-  graphifyArtifactUrl,
-  graphifyPlatformKey,
-} from "./graphify-artifacts";
+import { fetchGraphifyRelease, type GraphifyRelease } from "./graphify-channel";
 
-/** The exact version the embedded lock pins. The lock is the single source of
- * truth; a lock that stops naming graphifyy is a build error, not a fallback. */
+/** The source pin CI and local development build. Runtime clients follow the
+ * signed channel instead, so publishing Graphify never edits Hive source. */
 export function graphifyPin(): string {
   const match = graphifyLock.match(/^graphifyy(?:\[[^\]]*\])?==(\S+?)\s*\\?$/m);
   if (match === null) {
@@ -55,16 +50,20 @@ export function graphifyToolsDir(): string {
 
 /** One immutable bundle dir per pin, so a pin bump can never layer onto a
  * stale install: the new pin is simply a new directory. */
-function bundleDir(): string {
+function legacyBundleDir(): string {
   return join(graphifyToolsDir(), graphifyPin());
 }
 
 export function graphifyBin(): string {
-  return join(bundleDir(), "graphify");
+  const current = join(graphifyToolsDir(), "current", "graphify");
+  return existsSync(current) ? current : join(legacyBundleDir(), "graphify");
 }
 
 export function graphifyMcpBin(): string {
-  return join(bundleDir(), "graphify-mcp");
+  const current = join(graphifyToolsDir(), "current", "graphify-mcp");
+  return existsSync(current)
+    ? current
+    : join(legacyBundleDir(), "graphify-mcp");
 }
 
 export function graphOutDir(root: string): string {
@@ -134,35 +133,34 @@ export const runCommand: CommandRunner = async (argv, options) => {
   }
 };
 
-export function noArtifactMessage(platformKey: string): string {
-  return (
-    `this Hive build ships no graphify bundle for ${platformKey}; ` +
-    "Graphify is unavailable until a Hive build with that platform bundle is installed."
-  );
-}
-
 export interface GraphifyInstallDeps {
-  /** The artifact this binary trusts for this platform, or null. */
-  artifact: () => GraphifyArtifact | null;
-  /** Fetch the published bundle bytes. Injectable so tests never hit the network. */
+  resolveRelease: () => Promise<GraphifyRelease>;
   fetchArtifact: (url: string) => Promise<Response>;
   run: CommandRunner;
 }
 
 export const defaultInstallDeps: GraphifyInstallDeps = {
-  artifact: () => graphifyArtifact(),
-  fetchArtifact: (url) => fetch(url, { signal: AbortSignal.timeout(300_000) }),
+  resolveRelease: () => fetchGraphifyRelease(),
+  fetchArtifact: async (url) => {
+    if (url.startsWith("file:")) {
+      return new Response(await readFile(new URL(url)));
+    }
+    return fetch(url, { signal: AbortSignal.timeout(300_000) });
+  },
   run: runCommand,
 };
 
 export type GraphifyOutcome =
-  | { ok: true; detail: string }
+  | { ok: true; detail: string; changed?: boolean }
   | { ok: false; reason: string };
 
 /** Probe both entry points of an unpacked bundle; a bundle that unpacked but
  * cannot run is a failed install, not a shrug. */
-async function probeBundle(run: CommandRunner): Promise<GraphifyOutcome> {
-  const probe = await run([graphifyBin(), "--help"], {
+async function probeBundle(
+  directory: string,
+  run: CommandRunner,
+): Promise<GraphifyOutcome> {
+  const probe = await run([join(directory, "graphify"), "--help"], {
     env: scrubbedGraphifyEnv(),
     timeoutMs: 30_000,
   });
@@ -172,7 +170,7 @@ async function probeBundle(run: CommandRunner): Promise<GraphifyOutcome> {
       reason: `installed graphify does not run: ${probe.stderr.trim()}`,
     };
   }
-  const mcpProbe = await run([graphifyMcpBin(), "--help"], {
+  const mcpProbe = await run([join(directory, "graphify-mcp"), "--help"], {
     env: scrubbedGraphifyEnv(),
     timeoutMs: 30_000,
   });
@@ -182,40 +180,93 @@ async function probeBundle(run: CommandRunner): Promise<GraphifyOutcome> {
       reason: `installed graphify MCP server does not run: ${mcpProbe.stderr.trim()}`,
     };
   }
-  return { ok: true, detail: `graphifyy==${graphifyPin()} in ${bundleDir()}` };
+  return { ok: true, detail: `Graphify runtime in ${directory}` };
 }
 
-/** Download, verify, unpack, probe. Nothing is unpacked until the sha256 of
- * the downloaded bytes matches the constant this binary shipped with, so the
- * outcome is always "installed and working" or "cleanly absent" — there is no
- * half-install for an uninstall to miss. A bundle already on disk that probes
- * healthy is kept: the pin names the directory, so a pin bump reinstalls by
- * construction. */
+async function activateBundle(tools: string, directory: string): Promise<void> {
+  const temporary = join(tools, `.current-${process.pid}`);
+  await rm(temporary, { force: true });
+  await symlink(directory, temporary);
+  await rename(temporary, join(tools, "current"));
+}
+
+function runtimeOrder(value: string): readonly number[] | null {
+  const match = value.match(/^(\d+)\.(\d+)\.(\d+)-hive\.(\d+)$/);
+  return match === null ? null : match.slice(1).map(Number);
+}
+
+function isOlderRuntime(candidate: string, active: string): boolean {
+  const left = runtimeOrder(candidate);
+  const right = runtimeOrder(active);
+  if (left === null || right === null) return false;
+  for (let index = 0; index < left.length; index += 1) {
+    const difference = (left[index] ?? 0) - (right[index] ?? 0);
+    if (difference !== 0) return difference < 0;
+  }
+  return false;
+}
+
 export async function installGraphify(
   deps: GraphifyInstallDeps = defaultInstallDeps,
 ): Promise<GraphifyOutcome> {
-  const artifact = deps.artifact();
-  if (artifact === null) {
-    return { ok: false, reason: noArtifactMessage(graphifyPlatformKey()) };
+  let release: GraphifyRelease;
+  try {
+    release = await deps.resolveRelease();
+  } catch (error) {
+    const current = dirname(graphifyBin());
+    if (existsSync(graphifyBin())) {
+      const cached = await probeBundle(current, deps.run);
+      if (cached.ok) {
+        return {
+          ok: true,
+          detail: `${cached.detail} (channel unavailable: ${
+            error instanceof Error ? error.message : String(error)
+          })`,
+        };
+      }
+    }
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
   }
 
+  const artifact = release.artifact;
   const tools = graphifyToolsDir();
-
-  if (existsSync(graphifyBin())) {
-    const probed = await probeBundle(deps.run);
-    if (probed.ok)
-      return { ok: true, detail: `${probed.detail} (already installed)` };
-    // Present but broken: fall through to a fresh install over it.
+  const releaseId = `${release.manifest.graphifyVersion}-hive.${release.manifest.hiveBuild}`;
+  const current = join(tools, "current");
+  const activeId = await realpath(current)
+    .then((path) => path.slice(path.lastIndexOf("/") + 1))
+    .catch(() => null);
+  if (
+    !release.local &&
+    activeId !== null &&
+    isOlderRuntime(releaseId, activeId)
+  ) {
+    return {
+      ok: true,
+      detail: `kept newer verified Graphify runtime ${activeId}`,
+    };
+  }
+  const directory = join(tools, "versions", releaseId);
+  if (existsSync(join(directory, "graphify"))) {
+    const probed = await probeBundle(directory, deps.run);
+    if (probed.ok) {
+      await activateBundle(tools, directory);
+      return {
+        ok: true,
+        detail: `graphifyy==${release.manifest.graphifyVersion} (${release.local ? "local" : release.signed ? "signed" : "GitHub-trusted"}, already installed)`,
+      };
+    }
   }
 
-  const url = graphifyArtifactUrl(artifact);
   let response: Response;
   try {
-    response = await deps.fetchArtifact(url);
+    response = await deps.fetchArtifact(artifact.url);
   } catch (error) {
     return {
       ok: false,
-      reason: `could not download the graphify bundle (${url}): ${
+      reason: `could not download the graphify bundle (${artifact.url}): ${
         error instanceof Error ? error.message : String(error)
       }`,
     };
@@ -223,40 +274,47 @@ export async function installGraphify(
   if (!response.ok) {
     return {
       ok: false,
-      reason: `could not download the graphify bundle (${url}): HTTP ${response.status}`,
+      reason: `could not download the graphify bundle (${artifact.url}): HTTP ${response.status}`,
     };
   }
   const bytes = new Uint8Array(await response.arrayBuffer());
+  if (bytes.byteLength !== artifact.size) {
+    return {
+      ok: false,
+      reason: `refusing to install: downloaded bundle size ${bytes.byteLength} does not match signed size ${artifact.size}`,
+    };
+  }
   const digest = new Bun.CryptoHasher("sha256").update(bytes).digest("hex");
   if (digest !== artifact.sha256) {
     return {
       ok: false,
       reason:
         `refusing to install: downloaded bundle hash ${digest} does not match the ` +
-        `sha256 this Hive build trusts (${artifact.sha256}) for ${artifact.asset}`,
+        `manifest sha256 (${artifact.sha256}) for ${artifact.name}`,
     };
   }
 
   await mkdir(join(tools, "home"), { recursive: true });
-  const tarball = join(tools, `${artifact.asset}.download`);
+  await mkdir(join(tools, "versions"), { recursive: true });
+  const tarball = join(tools, `${artifact.name}.download`);
   await writeFile(tarball, bytes);
   try {
-    await rm(bundleDir(), { recursive: true, force: true });
-    await mkdir(bundleDir(), { recursive: true });
+    await rm(directory, { recursive: true, force: true });
+    await mkdir(directory, { recursive: true });
     const untar = await deps.run(
       [
         "/usr/bin/tar",
         "-xf",
         tarball,
         "-C",
-        bundleDir(),
+        directory,
         "--strip-components",
         "1",
       ],
       { timeoutMs: 120_000 },
     );
     if (untar.exitCode !== 0) {
-      await rm(bundleDir(), { recursive: true, force: true });
+      await rm(directory, { recursive: true, force: true });
       return {
         ok: false,
         reason: `could not unpack the graphify bundle: ${untar.stderr.trim()}`,
@@ -266,12 +324,17 @@ export async function installGraphify(
     await rm(tarball, { force: true });
   }
 
-  const probed = await probeBundle(deps.run);
+  const probed = await probeBundle(directory, deps.run);
   if (!probed.ok) {
-    await rm(bundleDir(), { recursive: true, force: true });
+    await rm(directory, { recursive: true, force: true });
     return probed;
   }
-  return { ok: true, detail: `${probed.detail} (sha256-verified)` };
+  await activateBundle(tools, directory);
+  return {
+    ok: true,
+    detail: `graphifyy==${release.manifest.graphifyVersion} (${release.local ? "local" : release.signed ? "signature and SHA-256 verified" : "GitHub and SHA-256 verified"})`,
+    changed: true,
+  };
 }
 
 /** Full extraction into `<root>/graphify-out/`. Local AST only: `--code-only`

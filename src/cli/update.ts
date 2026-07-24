@@ -412,8 +412,7 @@ async function graphifyUpdateLine(
   ].join("\n");
 }
 
-/** The old updater must not install Graphify with its old pin. It asks the
- * activated binary to install the bundle whose identity that binary embeds. */
+/** The activated binary checks the shared Graphify channel after Hive moves. */
 export async function ensureGraphifyRuntimeForRelease(
   version: string,
   root = installRoot(),

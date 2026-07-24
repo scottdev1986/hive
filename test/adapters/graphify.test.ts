@@ -5,6 +5,7 @@ import {
   readFile,
   rm,
   stat,
+  symlink,
   writeFile,
 } from "node:fs/promises";
 import { tmpdir } from "node:os";
@@ -18,14 +19,16 @@ import {
   GRAPHIFY_IGNORE_MARKER,
   graphifyPin,
   installGraphify,
-  noArtifactMessage,
   type RunResult,
   runCommand,
   scrubbedGraphifyEnv,
   selectGraphBrief,
   writeGraphifyIgnore,
 } from "../../src/adapters/graphify";
-import type { GraphifyArtifact } from "../../src/adapters/graphify-artifacts";
+import type {
+  GraphifyArtifact,
+  GraphifyRelease,
+} from "../../src/adapters/graphify-channel";
 
 let hiveHome: string;
 const originalHiveHome = process.env.HIVE_HOME;
@@ -132,16 +135,38 @@ describe("installGraphify", () => {
     .update(bundleBytes)
     .digest("hex");
   const artifact: GraphifyArtifact = {
-    tag: "graphify-vtest-hive.1",
-    asset: "graphify-test-darwin-arm64.tar.zst",
+    platform: "darwin",
+    arch: process.arch === "arm64" ? "arm64" : "x64",
+    name: "graphify-0.9.25-darwin-arm64.tar.zst",
+    url: "https://example.test/graphify-0.9.25-darwin-arm64.tar.zst",
+    size: bundleBytes.byteLength,
     sha256: bundleSha256,
   };
+  const release = (
+    artifactOverride: GraphifyArtifact = artifact,
+  ): GraphifyRelease => ({
+    manifest: {
+      schema: 1,
+      graphifyVersion: "0.9.25",
+      hiveBuild: 1,
+      consumerApi: 1,
+      tag: "graphify-v0.9.25-hive.1",
+      sourceCommit: "abc123",
+      publishedAt: "2026-07-24T00:00:00Z",
+      artifacts: [artifactOverride],
+    },
+    artifact: artifactOverride,
+    signed: true,
+    local: false,
+  });
 
-  test("no published artifact for this platform: one honest line, nothing run", async () => {
+  test("an unavailable channel reports one failure and runs nothing", async () => {
     const calls: string[][] = [];
     let fetched = 0;
     const result = await installGraphify({
-      artifact: () => null,
+      resolveRelease: async () => {
+        throw new Error("channel unavailable");
+      },
       fetchArtifact: async () => {
         fetched += 1;
         return new Response(bundleBytes);
@@ -152,8 +177,7 @@ describe("installGraphify", () => {
       },
     });
     expect(result.ok).toBe(false);
-    if (!result.ok)
-      expect(result.reason).toBe(noArtifactMessage("darwin-arm64"));
+    if (!result.ok) expect(result.reason).toBe("channel unavailable");
     expect(fetched).toBe(0);
     expect(calls).toEqual([]);
   });
@@ -161,7 +185,8 @@ describe("installGraphify", () => {
   test("a hash mismatch refuses to unpack with zero residue", async () => {
     const calls: string[][] = [];
     const result = await installGraphify({
-      artifact: () => ({ ...artifact, sha256: "0".repeat(64) }),
+      resolveRelease: async () =>
+        release({ ...artifact, sha256: "0".repeat(64) }),
       fetchArtifact: async () => new Response(bundleBytes),
       run: async (argv) => {
         calls.push(argv);
@@ -186,7 +211,8 @@ describe("installGraphify", () => {
     await writeFile(previous, "working install\n");
     try {
       const result = await installGraphify({
-        artifact: () => ({ ...artifact, sha256: "0".repeat(64) }),
+        resolveRelease: async () =>
+          release({ ...artifact, sha256: "0".repeat(64) }),
         fetchArtifact: async () => new Response(bundleBytes),
         run: async () => {
           throw new Error("a hash mismatch must not run anything");
@@ -207,11 +233,9 @@ describe("installGraphify", () => {
   test("verifies the sha256, unpacks with tar, then probes both entry points", async () => {
     const calls: string[][] = [];
     const result = await installGraphify({
-      artifact: () => artifact,
+      resolveRelease: async () => release(),
       fetchArtifact: async (url) => {
-        expect(url).toBe(
-          `https://github.com/${process.env.HIVE_UPDATE_REPO ?? "scottdev1986/hive"}/releases/download/${artifact.tag}/${artifact.asset}`,
-        );
+        expect(url).toBe(artifact.url);
         return new Response(bundleBytes);
       },
       run: async (argv) => {
@@ -220,17 +244,17 @@ describe("installGraphify", () => {
       },
     });
     expect(result.ok).toBe(true);
-    if (result.ok) expect(result.detail).toContain("sha256-verified");
+    if (result.ok) expect(result.detail).toContain("SHA-256 verified");
     expect(calls.length).toBe(3);
     const [untar, probe, mcpProbe] = calls as [string[], string[], string[]];
     expect(untar[0]).toBe("/usr/bin/tar");
     expect(untar).toContain("--strip-components");
     // Probes run the bundle binaries by absolute path, never a PATH lookup.
     expect(probe[0]).toContain(
-      join("tools", "graphify", graphifyPin(), "graphify"),
+      join("tools", "graphify", "versions", "0.9.25-hive.1", "graphify"),
     );
     expect(mcpProbe[0]).toContain(
-      join("tools", "graphify", graphifyPin(), "graphify-mcp"),
+      join("tools", "graphify", "versions", "0.9.25-hive.1", "graphify-mcp"),
     );
     // The downloaded tarball is cleaned up either way.
     expect(untar[2]).toContain(".download");
@@ -240,14 +264,20 @@ describe("installGraphify", () => {
   });
 
   test("a healthy existing bundle is kept: no download, probes only", async () => {
-    const bin = join(hiveHome, "tools", "graphify", graphifyPin());
+    const bin = join(
+      hiveHome,
+      "tools",
+      "graphify",
+      "versions",
+      "0.9.25-hive.1",
+    );
     await mkdir(bin, { recursive: true });
     await writeFile(join(bin, "graphify"), "#!/bin/sh\n");
     let fetched = 0;
     const calls: string[][] = [];
     try {
       const result = await installGraphify({
-        artifact: () => artifact,
+        resolveRelease: async () => release(),
         fetchArtifact: async () => {
           fetched += 1;
           return new Response(bundleBytes);
@@ -263,6 +293,34 @@ describe("installGraphify", () => {
       expect(calls.length).toBe(2);
     } finally {
       await rm(bin, { recursive: true, force: true });
+    }
+  });
+
+  test("a channel rollback cannot replace a newer active runtime", async () => {
+    const tools = join(hiveHome, "tools", "graphify");
+    const newer = join(tools, "versions", "0.9.26-hive.1");
+    await mkdir(newer, { recursive: true });
+    await writeFile(join(newer, "graphify"), "#!/bin/sh\n");
+    await rm(join(tools, "current"), { force: true });
+    await symlink(newer, join(tools, "current"));
+    let fetched = false;
+    try {
+      const result = await installGraphify({
+        resolveRelease: async () => release(),
+        fetchArtifact: async () => {
+          fetched = true;
+          return new Response(bundleBytes);
+        },
+        run: async () => ok(),
+      });
+      expect(result).toEqual({
+        ok: true,
+        detail: "kept newer verified Graphify runtime 0.9.26-hive.1",
+      });
+      expect(fetched).toBe(false);
+    } finally {
+      await rm(join(tools, "current"), { force: true });
+      await rm(newer, { recursive: true, force: true });
     }
   });
 });
@@ -288,9 +346,7 @@ describe("buildGraph", () => {
       env: Record<string, string> | undefined;
     };
     expect(call.argv).toContain("--code-only");
-    expect(call.argv[0]).toContain(
-      join("tools", "graphify", graphifyPin(), "graphify"),
-    );
+    expect(call.argv[0]).toContain(join("tools", "graphify"));
     expect(call.env).toEqual(scrubbedGraphifyEnv());
     expect(JSON.stringify(call.argv)).not.toContain("--backend");
   });

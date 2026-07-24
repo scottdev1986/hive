@@ -91,6 +91,9 @@ WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
 SESSIOND_RELEASE_ROOT := $(ROOT)/.cache/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
 SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
+GRAPHIFY_LOCAL_KEY := $(shell cat "$(ROOT)/graphify.lock" $(shell find "$(ROOT)/scripts/graphify" -type f) | /usr/bin/shasum -a 256 | cut -c1-16)
+GRAPHIFY_LOCAL_DIR := $(DEV)/graphify/$(GRAPHIFY_LOCAL_KEY)
+GRAPHIFY_LOCAL_MANIFEST := $(GRAPHIFY_LOCAL_DIR)/graphify-runtime.json
 
 GHOSTTY_ENGINE_INPUTS := $(shell find \
 	$(ROOT)/vendor/ghostty \
@@ -140,11 +143,21 @@ DEV_ENV := \
 	HIVE_INSTALL_ROOT=$(INSTALL_ROOT) \
 	HIVE_BIN_LINK=$(DEV)/bin/hive \
 	HIVE_DISABLE_UPDATES=1 \
+	HIVE_GRAPHIFY_MANIFEST=$(GRAPHIFY_LOCAL_MANIFEST) \
 	HIVE_PORT=0 \
 	TMPDIR=$(DEV)/tmp
 
 # The four public commands, then the internal structure they pull in.
-.PHONY: clean build run test sessiond toolchain
+.PHONY: clean build run test sessiond toolchain graphify-local
+
+graphify-local: $(GRAPHIFY_LOCAL_MANIFEST)
+
+$(GRAPHIFY_LOCAL_MANIFEST): graphify.lock $(shell find "$(ROOT)/scripts/graphify" -type f)
+	@mkdir -p "$(GRAPHIFY_LOCAL_DIR)"
+	@"$(ROOT)/scripts/graphify/build.sh" --arch "$(if $(filter arm64,$(UNAME_M)),arm64,x64)" --out "$(GRAPHIFY_LOCAL_DIR)"
+	@bun run "$(ROOT)/scripts/graphify/write-manifest.ts" \
+	  --out "$(GRAPHIFY_LOCAL_DIR)" --manifest "$@" --build 1 \
+	  --source "$$(git rev-parse HEAD)"
 
 # System zig (version pinned by the lock) + the hash-verified Ghostty dep cache.
 toolchain: $(TOOLCHAIN_STAMP)
@@ -243,6 +256,7 @@ build:
 	/bin/rm -f "$(HIVE_BIN)"
 	$(MAKE) toolchain vendor-verify "$(GHOSTTYKIT_INFO)" sessiond
 	bun install --frozen-lockfile
+	$(MAKE) graphify-local
 	bun run src/release/build.ts --version $(DEV_VERSION) \
 	  --commit $$(git rev-parse --short HEAD) --out "$(DIST)"
 	rm -rf "$(INSTALL_ROOT)/versions/$(DEV_VERSION)"

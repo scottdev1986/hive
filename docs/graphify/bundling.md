@@ -11,11 +11,11 @@ Hive uses Graphify to build the local code graph agents consult for repository s
 
 Graphify's upstream Python closure spans native parsers and platform-specific packages. Hive freezes that closure itself so repository setup has one Hive-owned origin, one reviewed dependency lock, and one signed artifact per platform.
 
-The bundle closes all three at once: **one origin** (Hive's own releases — the same trust as `hive update`), **one verification** (a hash over the exact published bytes, embedded in a binary the user already trusted), **zero toolchain**. The whole Python question now exists only on Hive's build machines.
+The bundle closes all three at once: **one origin** (Hive's own releases — the same trust as `hive update`), **one verification** (a hash over the exact published bytes in an Ed25519-signed runtime manifest), **zero toolchain**. The whole Python question now exists only on Hive's build machines.
 
 It is also not "vendoring," which was and remains rejected: upstream's *source tree* never enters Hive's repo. Upstream's churn reaches a user only when a Hive developer deliberately bumps the pin and ships new artifacts.
 
-There is no venv anywhere. The daemon invokes `$HIVE_HOME/tools/graphify/<pin>/graphify` and `…/graphify-mcp` by absolute path — nothing on `PATH`, and a `graphify` the user installed themselves is neither touched nor trusted. Repo uninstall removes the graph output and Hive-generated `.graphifyignore`; machine uninstall removes the shared runtime. No uv cache, managed Python, or venv exists.
+There is no venv on a user's machine. The daemon invokes `$HIVE_HOME/tools/graphify/current/graphify` and `…/graphify-mcp` by absolute path — nothing on `PATH`, and a `graphify` the user installed themselves is neither touched nor trusted. Repo uninstall removes the graph output and Hive-generated `.graphifyignore`; machine uninstall removes the shared runtime. Development builds may create a throwaway build venv under `.dev/` to test an unpublished pin; production never does.
 
 ## Freezing survives tree-sitter (this was the gate)
 
@@ -61,9 +61,9 @@ Signing is defense in depth here, not a launch gate: the `hive` binary downloads
 
 ## Distribution shape
 
-Hive publishes per-platform artifacts on a dedicated, Hive-owned release tag, versioned independently of Hive (`graphify-v0.9.25-hive.1`; the suffix counts Hive rebuilds of the same upstream pin). The Hive binary embeds the tag, asset name, and SHA-256 for each platform. Keeping the ~25 MB bundle separate lets Hive and Graphify move on their own release cadences without making every `hive update` download unchanged Graphify bytes.
+Hive publishes per-platform artifacts on a dedicated, immutable release tag, versioned independently of Hive (`graphify-v0.9.25-hive.1`; the suffix counts Hive rebuilds of the same upstream pin). Only after both slices pass does the workflow sign and advance `graphify-runtime.json` on the `graphify-channel` release. The manifest names the exact asset size and SHA-256, and its `consumerApi` prevents an incompatible runtime from reaching an older Hive.
 
-`hive init` downloads the matching artifact and builds the repository graph. `hive update` asks the newly activated Hive binary to install the Graphify artifact whose pin and hashes it embeds. If either path is offline or interrupted, Hive reports the degraded graph state; running `hive init` again retries provisioning. The Hive release workflow verifies every registry asset before publishing.
+Workspace launch, `hive init`, and `hive update` all resolve the same channel. Installation happens in a new immutable version directory; probes must pass before the `current` symlink moves. A failed check or install keeps the prior verified runtime. A Graphify-only push publishes the channel and does not manufacture a Hive release. A combined push publishes Graphify first, then the Hive prerelease waits for that signed channel version.
 
 ## Linux facts (for when the matrix grows)
 

@@ -5,13 +5,13 @@ Source: Hive source tree, 2026-07-23
 
 ## Summary
 
-Hive uses Graphify as its local code-structure tool. Every `hive init` installs or verifies the pinned standalone runtime and builds a queryable, code-only graph. Agents receive a targeted graph brief at spawn and Graphify tools for deeper structural queries. Two rules shape the integration: **graph context is a hint, never an authority**, and **no Hive operation may block on Graphify**.
+Hive uses Graphify as its local code-structure tool. Workspace launch and every `hive init` install or verify the newest compatible runtime from Hive's signed Graphify channel; init then builds a queryable, code-only graph. Agents receive a targeted graph brief at spawn and Graphify tools for deeper structural queries. Two rules shape the integration: **graph context is a hint, never an authority**, and **no Hive operation may fail because Graphify is unavailable**.
 
 ## The degradation contract
 
 Upstream's own published QA accuracy is **45–76%**. That single number is the load-bearing fact of the whole integration: it means a graph answer is a lead, not a truth, and it means graphify can never sit in a path whose failure would be a Hive failure.
 
-So unavailable (offline init, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: the agent runs without graph context, its brief says so in one line, `hive graphify status` reports the cause, and no spawn or landing fails. Graphify has no enable/disable lifecycle: `hive init` always provisions it, and `hive update` installs the runtime pinned to the activated release. Running `hive init` again retries a failed install or rebuild. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
+So unavailable (offline channel, missing platform bundle), broken (extract failing, server unhealthy), and slow (build in progress, query timeout) all collapse to **one** behavior: Hive retains the previous verified runtime when one exists, the agent runs without graph context otherwise, its brief says so in one line, and no spawn or landing fails. Graphify has no enable/disable lifecycle: launch and init check the channel, and `hive update` checks again after activation. "Loudly noted" is not politeness — a silently missing graph is indistinguishable from a repo with nothing to find, and Hive's protocol is that an absent field is unknown, never false (`SPEC.md`, the accurate-or-unknown rule). Telemetry follows the same rule: `graphifyCalls` is null when unknown, never 0.
 
 **There is deliberately no land-time enforcement** — no "did you consult the graph" gate. It would be unverifiable in exactly the way Hive's protocol warns about (an MCP call proves an act, not that the answer informed anything), and it would put a 45–76%-accurate oracle in the landing path for no measurable gain.
 

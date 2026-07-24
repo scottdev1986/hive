@@ -674,8 +674,7 @@ export function createProgram(): Command {
       process.exitCode = await runGraphifyStatus(projectRootOrCwd());
     });
 
-  // The updater calls this private boundary through the newly activated
-  // binary, whose embedded Graphify pin and artifact hashes are authoritative.
+  // The updater calls this private boundary through the newly activated binary.
   program
     .command("graphify-runtime-install", { hidden: true })
     .action(async () => {

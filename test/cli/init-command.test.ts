@@ -137,6 +137,7 @@ describe("hive init command boundary", () => {
         cwd: ${JSON.stringify(repo)},
         checkUpdate: async () => { throw new Error("offline"); },
         repairProjectConfig: async () => {},
+        refreshGraphify: async () => {},
         ensureDaemon: async () => {},
         ensurePort: async () => 45123,
         write: () => {},

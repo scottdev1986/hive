@@ -187,6 +187,30 @@ describe("the release workflow", () => {
   });
 });
 
+describe("the Graphify runtime workflow", () => {
+  const workflow = read(".github/workflows/graphify-artifacts.yml");
+  const release = read(".github/workflows/release.yml");
+
+  test("a Graphify push publishes its signed channel automatically", () => {
+    expect(workflow).toContain("branches: [main]");
+    expect(workflow).toContain("graphify.lock");
+    expect(workflow).toContain("scripts/signing/sign-manifest.ts");
+    expect(workflow).toContain("scripts/graphify/verify-manifest.ts");
+    expect(workflow).toContain("gh release upload graphify-channel");
+  });
+
+  test("Graphify-only changes do not manufacture a Hive release", () => {
+    expect(release).toContain("graphify_only");
+    expect(release).toContain(
+      "if: needs.changes.outputs.graphify_only != 'true'",
+    );
+  });
+
+  test("a combined release waits for the signed runtime channel", () => {
+    expect(release).toContain("scripts/graphify/wait-channel.ts");
+  });
+});
+
 describe("the installer", () => {
   const installer = read("install.sh");
 

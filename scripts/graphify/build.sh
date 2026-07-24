@@ -2,17 +2,12 @@
 # Build Hive's graphify bundles: the per-platform standalone artifacts
 # `hive init` downloads (`hive graphify enable` repairs).
 #
-#   scripts/graphify/build.sh [--build-number N]
+#   scripts/graphify/build.sh [--build-number N] [--arch arm64|x64] [--out DIR]
 #
 # From the repo's graphify.lock (the freeze input, regenerated only from
 # scripts/graphify/graphify.in), this produces for each platform slice:
 #   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst        the artifact
 #   dist/graphify/graphify-<pin>-darwin-{arm64,x64}.tar.zst.sha256 its hash
-# plus dist/graphify/registry.snippet.ts — the exact GRAPHIFY_ARTIFACTS
-# entries to land in src/adapters/graphify-artifacts.ts as a reviewable diff.
-# The snippet's hashes are of the FINAL bytes (signed, then packed), so only
-# the run that produced the published assets may produce the landed hashes —
-# in practice that is CI (.github/workflows/graphify-artifacts.yml).
 #
 # Signing rides the same environment contract as src/release/build.ts:
 #   MACOS_SIGN_IDENTITY   set → every Mach-O in each bundle is signed with the
@@ -42,12 +37,17 @@ OUT="$REPO_ROOT/dist/graphify"
 ENTITLEMENTS="$HERE/entitlements.plist"
 
 BUILD_NUMBER=1
+ARCH=all
 while [ $# -gt 0 ]; do
   case "$1" in
     --build-number) BUILD_NUMBER="$2"; shift 2 ;;
+    --arch) ARCH="$2"; shift 2 ;;
+    --out) OUT="$2"; shift 2 ;;
     *) echo "unknown argument: $1" >&2; exit 2 ;;
   esac
 done
+
+case "$ARCH" in arm64|x64|all) ;; *) echo "invalid --arch $ARCH" >&2; exit 2;; esac
 
 [ -f "$LOCK" ] || { echo "graphify.lock not found at $LOCK" >&2; exit 1; }
 PIN="$(grep -m1 '^graphifyy==' "$LOCK" | sed 's/graphifyy==//; s/ .*//; s/\\//')"
@@ -160,27 +160,18 @@ build_one() { # build_one <arch> <python-key>
   rm -rf "$work"
 }
 
-build_one arm64 "$PYTHON_KEY_ARM64"
-if arch -x86_64 /usr/bin/true 2>/dev/null; then
-  build_one x64 "$PYTHON_KEY_X64"
-else
-  echo "SKIPPED darwin-x64: Rosetta 2 not available on this machine" >&2
-  exit 1
+if [ "$ARCH" = "arm64" ] || [ "$ARCH" = "all" ]; then
+  build_one arm64 "$PYTHON_KEY_ARM64"
 fi
-
-# The registry snippet: what a bump PR pastes into graphify-artifacts.ts.
-{
-  for arch in arm64 x64; do
-    asset="graphify-${PIN}-darwin-${arch}.tar.zst"
-    sha="$(cut -d' ' -f1 "$OUT/$asset.sha256")"
-    printf '  "darwin-%s": {\n    tag: "%s",\n    asset: "%s",\n    sha256: "%s",\n  },\n' \
-      "$arch" "$TAG" "$asset" "$sha"
-  done
-} > "$OUT/registry.snippet.ts"
+if [ "$ARCH" = "x64" ] || [ "$ARCH" = "all" ]; then
+  if arch -x86_64 /usr/bin/true 2>/dev/null; then
+    build_one x64 "$PYTHON_KEY_X64"
+  else
+    echo "darwin-x64 requires Rosetta 2" >&2
+    exit 1
+  fi
+fi
 
 echo
 echo "artifacts in $OUT (release tag: $TAG):"
 ls -lh "$OUT"/*.tar.zst
-echo
-echo "GRAPHIFY_ARTIFACTS entries (dist/graphify/registry.snippet.ts):"
-cat "$OUT/registry.snippet.ts"

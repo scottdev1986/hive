@@ -3,31 +3,28 @@ name: graphify-artifacts
 # Builds and publishes the per-platform Graphify bundles `hive init` uses to
 # construct Hive's local repository graph.
 #
-# NEVER runs automatically: a graphify bump is a deliberate act
-# (graphify-integration.md, "Rollout and version policy"), so this fires only
-# by hand. Running it IS the publish decision:
-#
-#   gh workflow run graphify-artifacts.yml            # build number 1
-#   gh workflow run graphify-artifacts.yml -f build-number=2
-#
 # It builds both darwin slices from graphify.lock, signs and notarizes them
 # when the release secrets are configured (same secrets, same posture as
 # release.yml — absent secrets publish unsigned and say so), smoke-tests each
 # bundle, publishes the assets on the dedicated tag
-# `graphify-v<pin>-hive.<build-number>`, and prints the GRAPHIFY_ARTIFACTS
-# entries for src/adapters/graphify-artifacts.ts in the job summary. Landing
-# those hashes is a normal reviewed PR — this workflow never commits.
+# `graphify-v<pin>-hive.<build-number>`, then advances the signed runtime
+# channel consumed by installed and development Hive.
 #
 # A notarization rejection fails the run BEFORE the tag exists (the same
 # build-before-tag ordering as release.yml), so a bootloader Apple dislikes
 # costs a build, never a published version.
 on:
+  push:
+    branches: [main]
+    paths:
+      - graphify.lock
+      - scripts/graphify/**
+      - .github/workflows/graphify-artifacts.yml
   workflow_dispatch:
     inputs:
       build-number:
         description: "hive build number for this pin (the N in graphify-v<pin>-hive.N); bump when republishing the same pin"
         required: false
-        default: "1"
 
 permissions:
   contents: write
@@ -48,6 +45,33 @@ jobs:
 
       - name: Install uv
         uses: astral-sh/setup-uv@v5
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      - run: bun install --frozen-lockfile
+
+      - name: Choose the next immutable build
+        id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          REQUESTED_BUILD: ${{ inputs.build-number }}
+        run: |
+          set -euo pipefail
+          pin="$(grep -m1 '^graphifyy==' graphify.lock | sed 's/graphifyy==//; s/ .*//; s/\\//')"
+          build="${REQUESTED_BUILD:-}"
+          if [ -z "$build" ]; then
+            build=1
+            while gh release view "graphify-v${pin}-hive.${build}" >/dev/null 2>&1; do
+              build=$((build + 1))
+            done
+          fi
+          tag="graphify-v${pin}-hive.${build}"
+          echo "pin=$pin" >> "$GITHUB_OUTPUT"
+          echo "build=$build" >> "$GITHUB_OUTPUT"
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          echo "base_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/${tag}" >> "$GITHUB_OUTPUT"
 
       - name: Install zstd and Rosetta 2
         run: |
@@ -102,16 +126,34 @@ jobs:
           MACOS_NOTARY_KEY_PATH: ${{ steps.keychain.outputs.identity != '' && format('{0}/notary.p8', runner.temp) || '' }}
           MACOS_NOTARY_KEY_ID: ${{ secrets.MACOS_NOTARY_KEY_ID }}
           MACOS_NOTARY_ISSUER_ID: ${{ secrets.MACOS_NOTARY_ISSUER_ID }}
-        run: scripts/graphify/build.sh --build-number "${{ inputs.build-number || '1' }}"
+        run: scripts/graphify/build.sh --build-number "${{ steps.release.outputs.build }}"
 
-      - name: Publish the release tag and assets
+      - name: Write and sign the runtime manifest
+        env:
+          HIVE_RELEASE_PRIVATE_KEY: ${{ secrets.HIVE_RELEASE_PRIVATE_KEY }}
+          HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
+        run: |
+          set -euo pipefail
+          [ -n "${HIVE_RELEASE_PRIVATE_KEY:-}" ] || { echo "::error::HIVE_RELEASE_PRIVATE_KEY is required"; exit 1; }
+          [ -n "${HIVE_RELEASE_PUBLIC_KEY:-}" ] || { echo "::error::HIVE_RELEASE_PUBLIC_KEY is required"; exit 1; }
+          bun run scripts/graphify/write-manifest.ts \
+            --out dist/graphify \
+            --manifest dist/graphify-runtime.json \
+            --build "${{ steps.release.outputs.build }}" \
+            --source "$GITHUB_SHA" \
+            --base-url "${{ steps.release.outputs.base_url }}"
+          bun run scripts/signing/sign-manifest.ts dist/graphify-runtime.json
+          bun run scripts/graphify/verify-manifest.ts dist/graphify-runtime.json
+
+      - name: Publish the immutable release and advance the signed channel
         env:
           GH_TOKEN: ${{ github.token }}
           SIGNED: ${{ steps.keychain.outputs.identity != '' }}
         run: |
           set -euo pipefail
-          pin="$(grep -m1 '^graphifyy==' graphify.lock | sed 's/graphifyy==//; s/ .*//; s/\\//')"
-          tag="graphify-v${pin}-hive.${{ inputs.build-number || '1' }}"
+          pin="${{ steps.release.outputs.pin }}"
+          tag="${{ steps.release.outputs.tag }}"
+          build="${{ steps.release.outputs.build }}"
           if [ "$SIGNED" = "true" ]; then
             signed_line="Bundles are Developer ID-signed with the hardened runtime and notarized."
           else
@@ -119,14 +161,17 @@ jobs:
           fi
           gh release create "$tag" \
             dist/graphify/*.tar.zst dist/graphify/*.sha256 \
-            --title "graphify $pin (hive build ${{ inputs.build-number || '1' }})" \
-            --notes "$(printf 'Standalone Graphify bundles used by `hive init` (docs/graphify/bundling.md).\n\n%s\n\nLand the hashes below in `src/adapters/graphify-artifacts.ts` via a reviewed PR:\n\n```ts\n%s```\n' "$signed_line" "$(cat dist/graphify/registry.snippet.ts)")"
-
-      - name: Registry entries for graphify-artifacts.ts
-        run: |
-          {
-            echo '### Paste into `src/adapters/graphify-artifacts.ts`'
-            echo '```ts'
-            cat dist/graphify/registry.snippet.ts
-            echo '```'
-          } >> "$GITHUB_STEP_SUMMARY"
+            dist/graphify-runtime.json dist/graphify-runtime.json.sig \
+            --title "graphify $pin (hive build $build)" \
+            --latest=false \
+            --notes "Standalone Graphify bundles used by Hive. $signed_line"
+          if gh release view graphify-channel >/dev/null 2>&1; then
+            gh release upload graphify-channel \
+              dist/graphify-runtime.json dist/graphify-runtime.json.sig --clobber
+          else
+            gh release create graphify-channel \
+              dist/graphify-runtime.json dist/graphify-runtime.json.sig \
+              --title "Graphify runtime channel" \
+              --latest=false \
+              --notes "Signed pointer to the latest compatible Graphify runtime."
+          fi

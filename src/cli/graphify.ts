@@ -34,7 +34,7 @@ export async function provisionGraphify(
 ): Promise<number> {
   deps.log(`Preparing Graphify for ${root}:`);
   deps.log(
-    `  fetching Hive's graphify bundle (graphifyy==${graphifyPin()}, sha256-verified against this Hive build) into ${graphifyToolsDir()},`,
+    `  checking Hive's signed Graphify runtime channel and installing any compatible update into ${graphifyToolsDir()},`,
   );
   deps.log(
     "  then building a code-only knowledge graph in graphify-out/ — parsed locally, nothing leaves this machine.",
@@ -62,9 +62,7 @@ export async function provisionGraphify(
   return 0;
 }
 
-/** Install only the runtime owned by this Hive binary. The updater invokes
- * this through the newly activated binary so the pin and hashes cannot come
- * from the old release. */
+/** Install only the newest compatible runtime from the shared signed channel. */
 export async function provisionGraphifyRuntime(
   deps: GraphifyCliDeps = defaultGraphifyCliDeps,
 ): Promise<number> {
@@ -78,7 +76,7 @@ export async function runGraphifyStatus(
   deps: GraphifyCliDeps = defaultGraphifyCliDeps,
 ): Promise<number> {
   const installed = existsSync(graphifyBin());
-  deps.log(`pin: graphifyy==${graphifyPin()}`);
+  deps.log(`build input: graphifyy==${graphifyPin()}`);
   deps.log(`installed: ${installed ? graphifyToolsDir() : "no"}`);
   try {
     const graph = await stat(graphJsonPath(root));

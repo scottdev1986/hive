@@ -67,6 +67,9 @@ describe("startSession", () => {
         prepareInstance: () => {
           steps.push("instance");
         },
+        refreshGraphify: async () => {
+          steps.push("graphify");
+        },
         ensurePort: async () => {
           steps.push("port");
           return 45_017;
@@ -76,7 +79,13 @@ describe("startSession", () => {
       expect(session).toEqual({ port: 45_017, cwd: root });
       // The update check ran first and its failure stopped nothing; the daemon
       // came up after instance selection, and the returned port is the gate's.
-      expect(steps).toEqual(["check", "instance", `ensure:${root}`, "port"]);
+      expect(steps).toEqual([
+        "check",
+        "graphify",
+        "instance",
+        `ensure:${root}`,
+        "port",
+      ]);
     } finally {
       await rm(root, { recursive: true, force: true });
     }
@@ -95,6 +104,7 @@ describe("startSession", () => {
           throw new Error("live agents still running");
         },
         prepareInstance: () => {},
+        refreshGraphify: async () => {},
         ensurePort: async () => {
           started = true;
           return 45_019;

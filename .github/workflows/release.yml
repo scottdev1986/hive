@@ -25,7 +25,39 @@ concurrency:
   cancel-in-progress: false
 
 jobs:
+  changes:
+    runs-on: ubuntu-latest
+    outputs:
+      graphify_only: ${{ steps.classify.outputs.graphify_only }}
+      graphify_changed: ${{ steps.classify.outputs.graphify_changed }}
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - id: classify
+        env:
+          BEFORE: ${{ github.event.before }}
+        run: |
+          set -euo pipefail
+          base="${BEFORE:-}"
+          if [ -z "$base" ] || [ "$base" = "0000000000000000000000000000000000000000" ]; then
+            base="HEAD^"
+          fi
+          graphify_only=true
+          graphify_changed=false
+          while IFS= read -r path; do
+            case "$path" in
+              graphify.lock|scripts/graphify/*|.github/workflows/graphify-artifacts.yml)
+                graphify_changed=true ;;
+              *) graphify_only=false ;;
+            esac
+          done < <(git diff --name-only "$base" HEAD)
+          echo "graphify_only=$graphify_only" >> "$GITHUB_OUTPUT"
+          echo "graphify_changed=$graphify_changed" >> "$GITHUB_OUTPUT"
+
   release:
+    needs: changes
+    if: needs.changes.outputs.graphify_only != 'true'
     # macOS because the artifacts are Mach-O: `bun build --compile` cross-compiles
     # both CLI slices from here, and `swift build` needs a real toolchain. Signing
     # and notarization need the same real macOS tools (codesign, notarytool).
@@ -90,11 +122,13 @@ jobs:
         if: steps.plan.outputs.action != 'release'
         run: echo "::notice::${{ steps.plan.outputs.version }} — this commit is already released."
 
-      # Hive builds the repository graph during init, so every registry entry
-      # must resolve to the matching platform asset and pin.
-      - name: Verify Graphify bundles
-        if: steps.plan.outputs.action == 'release'
-        run: bun run scripts/verify-graphify-artifacts.ts
+      # A combined Hive/Graphify push waits for the independent runtime channel.
+      # A Graphify-only push skips this job entirely.
+      - name: Wait for the signed Graphify channel
+        if: steps.plan.outputs.action == 'release' && needs.changes.outputs.graphify_changed == 'true'
+        env:
+          HIVE_RELEASE_PUBLIC_KEY: ${{ secrets.HIVE_RELEASE_PUBLIC_KEY }}
+        run: bun run scripts/graphify/wait-channel.ts
 
       # The Gate 6 lock restores every lib-vt-authored split through the
       # ReleaseFast GhosttyKit surface on both macOS architectures. Build in a
