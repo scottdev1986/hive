@@ -91,8 +91,7 @@ WORKSPACE_SPM_BIN := $(ROOT)/workspace/.build/debug/HiveWorkspace
 SESSIOND_RELEASE_ROOT := $(ROOT)/.cache/sessiond-releasefast
 SESSIOND_RELEASE_BIN := $(SESSIOND_RELEASE_ROOT)/bin/hive-sessiond
 SESSIOND_BIN := $(ROOT)/native/sessiond/zig-out/bin/hive-sessiond
-GRAPHIFY_LOCAL_KEY := $(shell cat "$(ROOT)/graphify.lock" $(shell find "$(ROOT)/scripts/graphify" -type f) | /usr/bin/shasum -a 256 | cut -c1-16)
-GRAPHIFY_LOCAL_DIR := $(DEV)/graphify/$(GRAPHIFY_LOCAL_KEY)
+GRAPHIFY_LOCAL_DIR := $(DEV)/graphify
 GRAPHIFY_LOCAL_MANIFEST := $(GRAPHIFY_LOCAL_DIR)/graphify-runtime.json
 
 GHOSTTY_ENGINE_INPUTS := $(shell find \
