@@ -624,6 +624,77 @@ describe("HiveTerminalHostAdapter", () => {
     });
   });
 
+  test("reports a terminated process tree as closed before its host is reaped", async () => {
+    const bindings = new MemoryBindings();
+    bindings.bindTerminalHostSession({ locator, visibility });
+    bindings.completeTerminalHostSession(locator, {
+      expectedExecutable: sessionSpec.expectedExecutable,
+      executableVerified: true,
+      verifiedProviderRoot: createResult.inspection.providerRoot,
+      geometry,
+      visibility: createResult.inspection.visibility,
+    });
+    const host = {
+      issueAttach: async () => {
+        throw new Error("issueAttach not under test");
+      },
+      renewVisibility,
+      create: async () => createResult,
+      claimInput: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      submitInput: async () => ({
+        transactionId: "transaction-fixture",
+        stage: "unknown" as const,
+        byteRange: null,
+        orderedAt: null,
+        availableCreditBytes: 0,
+        consumedByProcess: "not-claimed" as const,
+        completeness: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      resize: async () => ({
+        state: "unknown" as const,
+        diagnostic: "fixture",
+      }),
+      list: async () => [inspection],
+      inspect: async () => inspection,
+      terminate: async () => ({
+        ...termination,
+        reap: {
+          ...termination.reap,
+          reaped: false,
+        },
+      }),
+    };
+    const adapter = new HiveTerminalHostAdapter(
+      host,
+      bindings,
+      locator.instanceId,
+    );
+
+    await expect(
+      adapter.terminate(locator, {
+        mode: "immediate",
+        reason: "stop fixture",
+        requestId: "req_018f1e90-7b5a-7cc0-8000-000000000106",
+      }),
+    ).resolves.toEqual({
+      locator,
+      state: "terminated",
+      exit: null,
+      survivors: [],
+      errors: [
+        {
+          phase: "neutral-control",
+          code: "UNKNOWN",
+          diagnosticId: "SESSIOND_TERMINATION_UNREAPED",
+        },
+      ],
+    });
+  });
+
   test("fails closed for missing, foreign, or mismatched bindings", async () => {
     const bindings = new MemoryBindings();
     const host = {

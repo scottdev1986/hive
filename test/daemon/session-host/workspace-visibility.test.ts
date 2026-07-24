@@ -1,4 +1,6 @@
 import { describe, expect, test } from "bun:test";
+import { HiveDatabase } from "../../../src/daemon/db";
+import { HiveDaemon } from "../../../src/daemon/server";
 import { mintSessionLocator } from "../../../src/daemon/session-host/locators";
 import {
   ROOT_VISIBILITY_ID,
@@ -314,5 +316,44 @@ describe("WorkspaceVisibilityAuthority", () => {
     });
     expect(observed.size).toBe(2);
     expect(host.currentSnapshot()?.source.sessionId).toBe("workspace-session");
+  });
+
+  test("a dead Workspace asks its daemon to shut down exactly once", async () => {
+    let workspaceIsLive = true;
+    const visibility = new WorkspaceVisibilityAuthority({
+      expectedInstanceId: instanceId,
+      observeProcess: () => (workspaceIsLive ? process : null),
+      discoverEngineBuildId: async () => engineBuildId,
+    });
+    expect(visibility.publish(snapshot("1", { terminals: [] }))).toMatchObject({
+      state: "accepted",
+    });
+    const db = new HiveDatabase(":memory:");
+    let shutdowns = 0;
+    const daemon = new HiveDaemon({
+      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
+      db,
+      spawner: {
+        async spawn() {
+          throw new Error("spawn not under test");
+        },
+      },
+      repoRoot: "/tmp/hive-workspace-owner-test",
+      workspaceVisibility: visibility,
+      initiateShutdown: () => {
+        shutdowns += 1;
+      },
+    });
+
+    try {
+      expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+      expect(shutdowns).toBe(0);
+      workspaceIsLive = false;
+      expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+      expect(await daemon.renewWorkspaceVisibility()).toBe(0);
+      expect(shutdowns).toBe(1);
+    } finally {
+      db.close();
+    }
   });
 });

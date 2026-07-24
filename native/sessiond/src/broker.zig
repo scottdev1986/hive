@@ -546,6 +546,21 @@ pub const Registry = struct {
         return self.occupiedSlots() < self.entries.len;
     }
 
+    pub fn reapExitedChildHosts(self: *Registry) usize {
+        var reaped: usize = 0;
+        for (&self.entries) |*slot| if (slot.*) |*entry| {
+            if (entry.host_process_ownership != .child or entry.record.state == .exited) continue;
+            if (observeExactProcess(
+                entry.record.host_pid,
+                entry.record.host_start_token,
+                .child,
+            ) != .absent) continue;
+            entry.record.state = .unknown;
+            reaped += 1;
+        };
+        return reaped;
+    }
+
     pub fn register(self: *Registry, record: HostRecord, host: HostControl) ?protocol.Failure {
         return self.registerWithOwnership(record, host, .non_parent);
     }
@@ -2218,6 +2233,29 @@ pub const StartupBackend = struct {
     }
 };
 
+const BrokerOwner = struct {
+    pid: i32,
+    start_token: ProcessStartToken,
+};
+
+fn observeBrokerOwner(pid: i32) !BrokerOwner {
+    const observed = try inspectProcess(pid);
+    return .{ .pid = pid, .start_token = observed.start_token };
+}
+
+fn captureBrokerOwner() !BrokerOwner {
+    const pid = c.getppid();
+    if (pid <= 1) return error.DaemonParentUnavailable;
+    const owner = try observeBrokerOwner(pid);
+    if (c.getppid() != pid) return error.DaemonParentUnavailable;
+    return owner;
+}
+
+fn brokerOwnerIsLive(owner: BrokerOwner) bool {
+    const observed = inspectProcess(owner.pid) catch return false;
+    return std.meta.eql(observed.start_token, owner.start_token);
+}
+
 /// Runs the shipped broker role. WP4 replaces only the host side of the
 /// lifecycle transport; this process never opens or retains a PTY master.
 pub fn serve(
@@ -2225,6 +2263,7 @@ pub fn serve(
     hive_home: []const u8,
     launcher: HostLauncher,
 ) !void {
+    const owner = try captureBrokerOwner();
     var runtime = try Runtime.open(allocator, hive_home);
     defer runtime.deinit();
     const build_id = try executableBuildId(allocator);
@@ -2248,6 +2287,8 @@ pub fn serve(
     defer production_backend.deinit();
     const backend = production_backend.backend();
     while (true) {
+        if (!brokerOwnerIsLive(owner)) return;
+        _ = recovered.registry.reapExitedChildHosts();
         var poll_fds = [_]std.posix.pollfd{.{
             .fd = runtime.server.stream.handle,
             .events = std.posix.POLL.IN,
@@ -3128,6 +3169,85 @@ test "socket substitution fails closed" {
     var substituted = expected;
     substituted.inode = 3;
     try std.testing.expectEqual(protocol.WireError.unauthenticated, verifySocket(expected, substituted).?.code);
+}
+
+test "broker owner identity detects a missing or reused process" {
+    var owner = try observeBrokerOwner(c.getpid());
+    try std.testing.expect(brokerOwnerIsLive(owner));
+    owner.start_token.microseconds +%= 1;
+    try std.testing.expect(!brokerOwnerIsLive(owner));
+}
+
+test "registry reaps an exited broker-owned host child" {
+    const child_pid = c.fork();
+    if (child_pid < 0) return error.ForkFailed;
+    if (child_pid == 0) {
+        std.Thread.sleep(100 * std.time.ns_per_ms);
+        c._exit(0);
+    }
+    var child_reaped = false;
+    defer if (!child_reaped) {
+        _ = c.kill(child_pid, c.SIGKILL);
+        var status: c_int = 0;
+        _ = c.waitpid(child_pid, &status, 0);
+    };
+
+    const observed = try inspectProcess(child_pid);
+    var token_storage: [64]u8 = undefined;
+    const token = try formatStartToken(observed.start_token, &token_storage);
+    const locator: Locator = .{
+        .instance_id = "instance-fixture",
+        .session_id = "ses_018f1e90-7b5a-7cc0-8000-0000000000ab",
+        .generation = 1,
+        .subject = .{ .agent = "agent-fixture" },
+        .host_kind = .sessiond,
+        .engine_build_id = "engine-fixture",
+    };
+    const record: HostRecord = .{
+        .locator = locator,
+        .host_pid = child_pid,
+        .host_start_token = token,
+        .process_root = .{
+            .pid = child_pid,
+            .start_token = token,
+            .process_group_id = child_pid,
+        },
+        .expected_executable = "/bin/test",
+        .executable_build_hash = "build-fixture",
+        .engine_build_id = "engine-fixture",
+        .protocol_major = generated.protocol_major,
+        .protocol_minor = generated.protocol_minor,
+        .geometry = .{
+            .columns = 80,
+            .rows = 24,
+            .width_px = 800,
+            .height_px = 480,
+            .cell_width_px = 10,
+            .cell_height_px = 20,
+        },
+        .state = .live,
+        .visibility = .{
+            .state = .visible,
+            .workspace_session_id = "workspace-fixture",
+            .open_terminal_revision = 1,
+            .expires_mono_ns = std.time.ns_per_s,
+        },
+        .output_seq = 0,
+        .checkpoint_seq = 0,
+    };
+    var registry: Registry = .{};
+    registry.entries[0] = .{
+        .record = record,
+        .host = null,
+        .host_process_ownership = .child,
+    };
+
+    var timer = try std.time.Timer.start();
+    while (registry.reapExitedChildHosts() == 0 and timer.read() < std.time.ns_per_s) {
+        std.Thread.sleep(std.time.ns_per_ms);
+    }
+    child_reaped = registry.entries[0].?.record.state == .unknown;
+    try std.testing.expect(child_reaped);
 }
 
 test "host peer authenticates the sessiond self executable, not the provider executable" {

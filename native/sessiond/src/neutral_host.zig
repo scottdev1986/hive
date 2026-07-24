@@ -1536,13 +1536,16 @@ pub fn proveLiveLifecycle(allocator: std.mem.Allocator) !void {
         return error.TerminationReplayChanged;
     var changed_termination_digest = termination_digest;
     changed_termination_digest[0] ^= 0xff;
-    if (recovered.reserveTermination(
+    const changed_termination_replay = switch (try recovered.reserveTermination(
         session,
         "terminate-1",
         changed_termination_digest,
-    )) |_|
-        return error.ChangedTerminationAccepted
-    else |err| if (err != error.TerminationConflict) return err;
+    )) {
+        .replay => |result| result,
+        .reserved, .pending => return error.TerminationReplayMissing,
+    };
+    if (!std.mem.eql(u8, changed_termination_replay, "terminated-and-reaped"))
+        return error.TerminationReplayChanged;
 
     const next = switch (try recovered.reserve(
         key,

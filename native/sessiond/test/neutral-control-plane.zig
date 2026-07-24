@@ -435,11 +435,13 @@ test "live neutral session lists inspects and terminates with direct wait replay
     const replayed = try controller.terminate(terminate_bytes);
     defer allocator.free(replayed);
     try testing.expectEqualStrings(terminated_bytes, replayed);
-    var conflict_request = terminate_request;
-    conflict_request.target = .@"session-members";
-    const conflict_bytes = try std.json.Stringify.valueAlloc(allocator, conflict_request, .{});
-    defer allocator.free(conflict_bytes);
-    try testing.expectError(error.TerminationConflict, controller.terminate(conflict_bytes));
+    var retry_request = terminate_request;
+    retry_request.target = .@"session-members";
+    const retry_bytes = try std.json.Stringify.valueAlloc(allocator, retry_request, .{});
+    defer allocator.free(retry_bytes);
+    const retried = try controller.terminate(retry_bytes);
+    defer allocator.free(retried);
+    try testing.expectEqualStrings(terminated_bytes, retried);
 
     var host_status: c_int = 0;
     try testing.expectEqual(host_pid, c.waitpid(host_pid, &host_status, 0));

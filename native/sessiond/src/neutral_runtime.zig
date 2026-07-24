@@ -935,12 +935,12 @@ pub const Registry = struct {
         const index = self.indexOf(owned_session.value) orelse return error.SessionNotFound;
         var record = self.entries.items[index];
         if (record.terminationIdempotencyKey) |existing_key| {
+            if (record.terminationResultJson) |result| return .{ .replay = result };
             const existing_digest = record.terminationRequestSha256 orelse
                 return error.InvalidRecord;
             if (!std.mem.eql(u8, existing_key, owned_idempotency_key) or
                 !std.mem.eql(u8, &existing_digest, &request_sha256))
                 return error.TerminationConflict;
-            if (record.terminationResultJson) |result| return .{ .replay = result };
             return .pending;
         }
         record.terminationIdempotencyKey = try copyString(

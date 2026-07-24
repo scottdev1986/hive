@@ -749,8 +749,7 @@ export class HiveDaemon {
   private readonly hostname: string;
   private readonly manageLifecycle: boolean;
   private readonly initiateShutdown: () => void;
-  /** POST /stop's commit latch: set once its gates pass, never unset while
-   * the kills it authorized are still executing. */
+  /** Shutdown latch shared by POST /stop and Workspace-death detection. */
   private stopInProgress = false;
   private readonly sessiondBroker: SessiondBrokerSupervisor | null;
   private readonly machineMutations: Pick<
@@ -2581,7 +2580,7 @@ export class HiveDaemon {
       const inspection = await this.terminalHost.inspect(
         requireSessiondAgentLocator(agent),
       );
-      return inspection.presence === "exited";
+      return sessiondVendorProcessIsDead(inspection);
     } catch {
       return false;
     }
@@ -4179,19 +4178,23 @@ export class HiveDaemon {
    *
    * This does not widen the invariant. It renews only what `admit` still
    * admits, and `admit` requires a positive PID+start-token match against the
-   * recorded source. A dead Workspace, a replaced one, or a source that cannot
-   * be observed at all admits nothing — so the leases lapse and sessiond kills
-   * exactly as before. Fail-closed is preserved; only "the publisher stalled"
-   * is separated from "the Workspace is gone".
+   * recorded source. A dead or unobservable Workspace shuts down the daemon;
+   * sessiond's lease remains the independent backstop if daemon shutdown
+   * cannot finish. A stalled publisher with a live source keeps renewing.
    */
   async renewWorkspaceVisibility(): Promise<number> {
     const workspaceVisibility = this.workspaceVisibility;
     if (workspaceVisibility == null) return 0;
     const snapshot = workspaceVisibility.currentSnapshot();
     if (snapshot === null) return 0;
-    const renewals = workspaceVisibility.sourceVerified()
-      ? await this.renewVisibleTerminals(snapshot.terminals)
-      : [];
+    if (!workspaceVisibility.sourceVerified()) {
+      if (!this.stopInProgress) {
+        this.stopInProgress = true;
+        this.initiateShutdown();
+      }
+      return 0;
+    }
+    const renewals = await this.renewVisibleTerminals(snapshot.terminals);
     await this.recordVisibilityExpiryAudits(snapshot);
     return renewals.filter((renewal) => renewal?.state === "renewed").length;
   }

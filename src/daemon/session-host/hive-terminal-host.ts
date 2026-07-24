@@ -444,7 +444,6 @@ export class HiveTerminalHostAdapter {
     const terminated =
       result.state === "terminated" &&
       complete &&
-      result.reap.reaped &&
       result.survivors.length === 0;
     if (!complete) diagnostics.add("SESSIOND_TERMINATION_INCOMPLETE");
     if (result.state === "terminated" && !result.reap.reaped) {
