@@ -590,6 +590,9 @@ export interface HiveDaemonOptions {
     resolveGrokSessionId?: SessionResolver;
     worktreeExists?: (path: string) => boolean;
     sleep?: (milliseconds: number) => Promise<void>;
+    claudeExecutable?: string;
+    codexExecutable?: string;
+    grokExecutable?: string;
     seedClaudeTrust?: CrashRecoveryDependencies["seedClaudeTrust"];
     writeClaudeConfig?: CrashRecoveryDependencies["writeClaudeConfig"];
     writeCodexConfig?: CrashRecoveryDependencies["writeCodexConfig"];
@@ -985,9 +988,6 @@ export class HiveDaemon {
           bindings: this.db,
           visibility: this.workspaceVisibility,
           instanceId: hiveInstanceSuffix(),
-          onRunning: async () => {
-            await this.delivery.wakeOrchestrator();
-          },
         })
         : null;
     this.autonomy = options.autonomy;
@@ -1084,6 +1084,7 @@ export class HiveDaemon {
         (this.orchestratorHost === "sessiond"
           ? new SessiondOrchestratorRootDelivery({
             current: () => this.orchestratorSessiond?.snapshot() ?? null,
+            ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
             input: {
               injectRoot: async (locator, text, message) =>
                 this.sessiondInput.injectRoot === undefined
@@ -1284,6 +1285,15 @@ export class HiveDaemon {
       ...(options.recovery?.sleep === undefined
         ? {}
         : { sleep: options.recovery.sleep }),
+      ...(options.recovery?.claudeExecutable === undefined
+        ? {}
+        : { claudeExecutable: options.recovery.claudeExecutable }),
+      ...(options.recovery?.codexExecutable === undefined
+        ? {}
+        : { codexExecutable: options.recovery.codexExecutable }),
+      ...(options.recovery?.grokExecutable === undefined
+        ? {}
+        : { grokExecutable: options.recovery.grokExecutable }),
       ...(options.recovery?.seedClaudeTrust === undefined
         ? {}
         : { seedClaudeTrust: options.recovery.seedClaudeTrust }),
@@ -1414,6 +1424,10 @@ export class HiveDaemon {
 
   prepareSessiondSpawn(): Promise<Readonly<{ engineBuildId: string }> | null> {
     return this.workspaceVisibility?.prepare() ?? Promise.resolve(null);
+  }
+
+  prepareAgentSessiondSpawn(): Promise<WorkspaceVisibilityAdmission | null> {
+    return this.workspaceVisibility?.prepareAgentCreation() ?? Promise.resolve(null);
   }
 
   admitSessiondSpawn(
@@ -3889,9 +3903,8 @@ export class HiveDaemon {
   }
 
   /** Starts or observes the exact sessiond root generation owned by the
-   * Workspace supervisor. The stable request id makes POST retry-safe across a
-   * daemon restart; the returned locator is publishable before create so the
-   * visibility authority can admit the session without a circular wait. */
+   * Workspace supervisor. POST returns a locator only after terminal creation
+   * and its durable binding complete. */
   private async orchestratorSessionEndpoint(
     url: URL,
     request: Request,
@@ -3927,9 +3940,7 @@ export class HiveDaemon {
     if (!parsed.success) return json({ error: parsed.error.message }, { status: 400 });
     try {
       const snapshot = await this.orchestratorSessiond.start(parsed.data);
-      return json(snapshot, {
-        status: snapshot.state === "awaiting-visibility" ? 202 : 200,
-      });
+      return json(snapshot);
     } catch (error) {
       return json(
         { error: error instanceof Error ? error.message : "queen launch failed" },
@@ -3970,6 +3981,7 @@ export class HiveDaemon {
       ),
       host: this.orchestratorHost,
       hostState: host?.state ?? null,
+      hostDiagnostic: host?.diagnostic ?? null,
       sessionLocator: host?.locator ?? null,
     });
   }
@@ -4691,6 +4703,18 @@ export class HiveDaemon {
           error: "Hive refused to attach queen: its session generation changed",
         }, { status: 409 });
       }
+      if (current.state !== "running") {
+        return json({
+          state: "rejected",
+          reason: current.state === "awaiting-visibility"
+            ? "session-not-ready"
+            : "session-not-running",
+          error: current.diagnostic ??
+            (current.state === "awaiting-visibility"
+              ? "Queen terminal is still starting"
+              : `Queen terminal is ${current.state}`),
+        }, { status: 409 });
+      }
       try {
         const grant = await this.terminalHost.issueAttach(
           requireSessiondRootLocator(current.locator),
@@ -4978,6 +5002,15 @@ export class HiveDaemon {
       ).catch(logAlertDeliveryFailure);
     }
 
+    // Claude emits session-start while its TUI is still painting. Treating it
+    // as input-ready can paste a queued startup alert through the logo. A turn
+    // boundary proves the provider has completed startup and accepted input.
+    if (
+      isOrchestratorName(value.agentName) &&
+      (value.kind === "turn-start" || value.kind === "turn-end")
+    ) {
+      this.orchestratorSessiond?.markInputReady();
+    }
     if (value.kind === "session-start") {
       await this.delivery.recoverCriticalControls();
     }
@@ -5050,7 +5083,13 @@ export class HiveDaemon {
       // orchestrator can see it without knowing to look (2026-07-21 messaging
       // regression: hours of silence that looked exactly like "nothing to say").
       const blocked = this.delivery.blockedDeliveries();
-      const storedAgents = this.db.listAgents();
+      // A sessiond row is Hive's private cleanup ownership until host creation
+      // completes. Publishing it earlier gives Workspace a locator that cannot
+      // attach yet and turns ordinary launch ordering into a renderer race.
+      const storedAgents = this.db.listAgents().filter((agent) =>
+        agent.sessionLocator?.hostKind !== "sessiond" ||
+        this.hasCompletedSessiondBinding(agent)
+      );
       let sessions: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null = null;
       if (storedAgents.some((agent) =>
         agent.status === "working" && this.hasCompletedSessiondBinding(agent)

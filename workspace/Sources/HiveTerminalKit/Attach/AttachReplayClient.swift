@@ -59,7 +59,6 @@ public final class AttachReplayClient {
     private var pendingInputBatches: [PendingInputBatch] = []
     private var pendingInputRequests: [UInt64: PendingInputRequest] = [:]
     private var releaseAfterPendingInputRequested = false
-    private var inputFenced = false
     private var inputSequence: UInt64 = 0
     private var resizeRevision: UInt64 = 0
     private var pendingResizeRequests: [UInt64: PendingResizeRequest] = [:]
@@ -110,7 +109,6 @@ public final class AttachReplayClient {
             state = .incompatibleEngine(evidence: "locator engine \(locEngine)")
             return .failed(state)
         }
-
         self.transport = transport
         state = .attaching
         firstCorrectFramePresented = false
@@ -120,9 +118,6 @@ public final class AttachReplayClient {
         let binding = SurfaceBinding(locator: grant.locator, connectionId: transport.connectionId)
         self.binding = binding
         resetInputState()
-        if !grant.operations.contains("human-input") {
-            refuseInput(code: "FORBIDDEN", evidence: "attach grant does not authorize human input")
-        }
         applicator.bind(binding, highWater: afterSeq)
         highWater = afterSeq
 
@@ -269,7 +264,7 @@ public final class AttachReplayClient {
     /// Gate 8 encoder output is held until this exact binding owns a human
     /// claim, then submitted through the frozen INPUT_SUBMIT JSON operation.
     public func handleEncodedWrite(_ bytes: Data) {
-        guard !bytes.isEmpty, !inputFenced, let binding, transport != nil else { return }
+        guard !bytes.isEmpty, let binding, transport != nil else { return }
         if bytes.count > FrameCodec.inputTransactionMaxBytes {
             var offset = 0
             while offset < bytes.count {
@@ -282,18 +277,13 @@ public final class AttachReplayClient {
         let batch = PendingInputBatch(binding: binding, bytes: bytes)
         if activeClaimToken == nil {
             pendingInputBatches.append(batch)
-            do {
-                try beginClaimAcquire()
-            } catch {
-                refuseInput(code: "CLAIM_FAILED", evidence: String(describing: error))
-            }
+            requestClaim()
             return
         }
         submitInput(batch)
     }
 
     public func beginClaimAcquire() throws {
-        guard !inputFenced else { return }
         guard let binding, transport != nil else { throw WireError.notConnected }
         guard activeClaimToken == nil, claimRequestId == nil else { return }
         let requestId = nextRequestId
@@ -388,15 +378,15 @@ public final class AttachReplayClient {
             if frame.requestId == claimRequestId || pendingInputRequests[frame.requestId] != nil {
                 if frame.requestId == claimRequestId {
                     claimRequestId = nil
-                    pendingInputBatches.removeAll()
+                } else if let pending = pendingInputRequests[frame.requestId] {
+                    pendingInputBatches.append(PendingInputBatch(
+                        binding: pending.binding,
+                        bytes: pending.bytes
+                    ))
                 }
                 pendingInputRequests.removeValue(forKey: frame.requestId)
                 activeClaimToken = nil
-                refuseInput(
-                    code: code,
-                    evidence: object["message"] as? String ?? "host refused terminal input"
-                )
-                releaseClaimIfInputQuiescent()
+                requestClaim()
                 return .continueReplay
             }
             if code == "ENGINE_MISMATCH" || code == "PROTOCOL_MISMATCH" {
@@ -504,8 +494,8 @@ public final class AttachReplayClient {
             let object = try FrameCodec.parseJSONObject(frame.payload)
             guard let result = object["result"] as? [String: Any],
                   let claimState = result["state"] as? String else {
-                refuseInput(code: "MALFORMED_CLAIM_RESULT", evidence: "claim result has no state")
-                releaseClaimIfInputQuiescent()
+                activeClaimToken = nil
+                requestClaim()
                 return .continueReplay
             }
             if claimState == "granted",
@@ -584,40 +574,37 @@ public final class AttachReplayClient {
                   transactionId == pending.transactionId,
                   let stage = receipt["stage"] as? String else {
                 pendingInputRequests.removeValue(forKey: frame.requestId)
-                inputFenced = true
-                setInputSubmissionState(.unknown(evidence: "malformed or uncorrelated input receipt"))
+                // The host may already have written an uncorrelated result.
+                // Do not duplicate it and do not freeze later input.
+                setInputSubmissionState(.applied(
+                    transactionId: pending.transactionId,
+                    stage: "unknown"
+                ))
+                releaseClaimIfInputQuiescent()
                 return .continueReplay
             }
             pendingInputRequests.removeValue(forKey: frame.requestId)
             if stage == "rejected" {
                 let diagnostic = receipt["diagnostic"] as? String ?? "host rejected terminal input"
-                // Host claim races are complete rejections, not unknown acts:
-                // retain the bytes and submit them under a fresh claim. The
-                // host still arbitrates every re-acquire, so this never steals.
-                if [
-                    "input claim unavailable",
-                    "input claim expired",
-                    "input claim fenced",
-                ].contains(diagnostic) {
-                    NSLog("hive claim: %@; re-acquiring and resubmitting viewer=%@", diagnostic, viewerId)
-                    activeClaimToken = nil
-                    pendingInputBatches.append(PendingInputBatch(
-                        binding: pending.binding,
-                        bytes: pending.bytes
-                    ))
-                    do {
-                        try beginClaimAcquire()
-                    } catch {
-                        refuseInput(code: "CLAIM_FAILED", evidence: String(describing: error))
-                    }
-                } else {
-                    refuseInput(code: "INPUT_REJECTED", evidence: diagnostic)
-                }
-            } else if stage == "unknown" {
-                inputFenced = true
-                setInputSubmissionState(.unknown(
-                    evidence: receipt["diagnostic"] as? String ?? "terminal input result is unknown"
+                // A rejected receipt is complete proof that these bytes were
+                // not written. Keep them and acquire the next available turn
+                // in the host's ordered input stream.
+                NSLog("hive input: %@; re-acquiring and resubmitting viewer=%@", diagnostic, viewerId)
+                activeClaimToken = nil
+                pendingInputBatches.append(PendingInputBatch(
+                    binding: pending.binding,
+                    bytes: pending.bytes
                 ))
+                requestClaim()
+            } else if stage == "unknown" {
+                // The write outcome is uncertain. Replaying could duplicate
+                // input, but fencing would discard every future keystroke.
+                // End only this transaction and keep the terminal writable.
+                setInputSubmissionState(.applied(
+                    transactionId: transactionId,
+                    stage: "unknown"
+                ))
+                releaseClaimIfInputQuiescent()
             } else {
                 setInputSubmissionState(.applied(transactionId: transactionId, stage: stage))
                 releaseClaimIfInputQuiescent()
@@ -645,8 +632,7 @@ public final class AttachReplayClient {
     }
 
     private func submitInput(_ batch: PendingInputBatch) {
-        guard !inputFenced,
-              let binding,
+        guard let binding,
               binding == batch.binding,
               let transport,
               transport.connectionId == binding.connectionId,
@@ -682,8 +668,9 @@ public final class AttachReplayClient {
             nextRequestId += 1
             setInputSubmissionState(.pending(transactionId: transactionId))
         } catch {
-            inputFenced = true
-            setInputSubmissionState(.unknown(evidence: "input send failed: \(error)"))
+            activeClaimToken = nil
+            pendingInputBatches.append(batch)
+            requestClaim()
         }
     }
 
@@ -702,15 +689,9 @@ public final class AttachReplayClient {
         pendingInputRequests.removeAll()
         releaseAfterPendingInputRequested = false
         pendingResizeRequests.removeAll()
-        inputFenced = false
         claimPresentation = .free
         setInputSubmissionState(.idle)
         lastResizeResult = nil
-    }
-
-    private func refuseInput(code: String, evidence: String) {
-        inputFenced = true
-        setInputSubmissionState(.refused(code: code, evidence: evidence))
     }
 
     /// A claim can be denied while an automation transaction is between BEGIN
@@ -719,7 +700,6 @@ public final class AttachReplayClient {
     /// binding check prevents a delayed retry from crossing a reattach.
     private func scheduleClaimRetry() {
         guard !claimRetryScheduled,
-              !inputFenced,
               !pendingInputBatches.isEmpty,
               activeClaimToken == nil,
               claimRequestId == nil,
@@ -731,11 +711,16 @@ public final class AttachReplayClient {
                   self.claimRetryScheduled,
                   self.binding == retryBinding else { return }
             self.claimRetryScheduled = false
-            do {
-                try self.beginClaimAcquire()
-            } catch {
-                self.refuseInput(code: "CLAIM_FAILED", evidence: String(describing: error))
-            }
+            self.requestClaim()
+        }
+    }
+
+    private func requestClaim() {
+        setInputSubmissionState(.waitingForClaim)
+        do {
+            try beginClaimAcquire()
+        } catch {
+            scheduleClaimRetry()
         }
     }
 

@@ -37,14 +37,28 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
             status: nil, host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
-        let firstView = try XCTUnwrap(controller.sessiondTerminalView(
+        let provisionalView = try XCTUnwrap(controller.sessiondTerminalView(
             pane: ProjectState.orchestratorPaneID))
+        XCTAssertFalse(controller.sessiondTerminalHasStarted(
+            pane: ProjectState.orchestratorPaneID),
+            "the provisional surface measures geometry but never attaches")
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
             status: nil, host: "sessiond", hostState: "awaiting-visibility",
             sessionLocator: first))
         XCTAssertTrue(controller.sessiondTerminalView(
-            pane: ProjectState.orchestratorPaneID) === firstView)
+            pane: ProjectState.orchestratorPaneID) === provisionalView)
+        XCTAssertFalse(controller.sessiondTerminalHasStarted(
+            pane: ProjectState.orchestratorPaneID))
+
+        controller.applyFeed([], orchestrator: OrchestratorSnapshot(
+            status: "idle", host: "sessiond", hostState: "running",
+            sessionLocator: first))
+        let firstView = try XCTUnwrap(controller.sessiondTerminalView(
+            pane: ProjectState.orchestratorPaneID))
+        XCTAssertTrue(firstView === provisionalView)
+        XCTAssertTrue(controller.sessiondTerminalHasStarted(
+            pane: ProjectState.orchestratorPaneID))
 
         controller.applyFeed([], orchestrator: OrchestratorSnapshot(
             status: "idle", host: "sessiond", hostState: "running",

@@ -53,7 +53,9 @@ describe("orchestrator brief", () => {
   test("builds an authority-first Codex root command without enabling it yet", () => {
     const command = buildCodexRootAuthorityCommand("/tmp/hive-root.sock");
     expect(command.slice(0, 2)).toEqual(["sh", "-lc"]);
-    expect(command[2]).toContain("codex app-server --listen 'unix:///tmp/hive-root.sock'");
+    expect(command[2]).toContain(
+      "'codex' app-server --listen 'unix:///tmp/hive-root.sock'",
+    );
     expect(command[2]).toContain(
       "exec 'codex' '--remote' 'unix:///tmp/hive-root.sock' '--no-alt-screen'",
     );
@@ -127,6 +129,19 @@ describe("orchestrator brief", () => {
     ).toEqual(ORCHESTRATOR_BRIEF);
   });
 
+  test("normalizes NUL bytes before putting the root prompt in argv", () => {
+    const command = buildOrchestratorCommand(
+      "claude",
+      4317,
+      "memory before\0memory after",
+    );
+
+    expect(command.every((argument) => !argument.includes("\0"))).toBe(true);
+    expect(command.some((argument) =>
+      argument.includes("memory before\uFFFDmemory after")
+    )).toBe(true);
+  });
+
   test("starts a fresh root in the fixed instance-scoped tmux session", () => {
     const command = buildOrchestratorLaunchCommand("claude", 4317, "/repo");
     expect(command.slice(0, 9)).toEqual([
@@ -191,7 +206,7 @@ describe("orchestrator brief", () => {
       orchestratorTmuxSession(), "-c", "/repo", "sh",
     ]);
     const shellCommand = command[command.indexOf(";") - 1]!;
-    expect(shellCommand).toContain("codex app-server --listen 'unix://");
+    expect(shellCommand).toContain("'codex' app-server --listen 'unix://");
     expect(shellCommand).toContain("'codex' '--remote' 'unix://");
     expect(shellCommand).toContain("'features.apps=false'");
     expect(shellCommand.match(/features\.apps=false/g)).toHaveLength(2);
@@ -607,6 +622,7 @@ describe("orchestrator brief", () => {
         throw new Error("must not spawn");
       },
       async () => null,
+      () => ({ path: "claude", version: null }),
     )).rejects.toThrow(/needs a working Claude Code CLI/);
   });
 

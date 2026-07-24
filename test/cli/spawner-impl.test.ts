@@ -1147,7 +1147,7 @@ describe("HiveSpawner name pool", () => {
 });
 
 describe("HiveSpawner wiring", () => {
-  test("sessiond recovery waits for the replacement generation to become visible", async () => {
+  test("sessiond recovery creates before the replacement generation is visible", async () => {
     const recovered = {
       ...agent("maya", "working"),
       sessionLocator: {
@@ -1160,7 +1160,6 @@ describe("HiveSpawner wiring", () => {
         engineBuildId: "engine-recovery",
       },
     } satisfies AgentRecord;
-    let admissions = 0;
     const created: string[] = [];
     const spawner = newTestSpawner({
       db: new FakeStore([recovered]),
@@ -1169,19 +1168,25 @@ describe("HiveSpawner wiring", () => {
       config: {},
       readRoutingPolicy: () => policyFromRoute(CODEX_ROUTE),
       sessiond: {
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-recovery",
+          geometry: {
+            columns: 80,
+            rows: 24,
+            widthPx: 800,
+            heightPx: 480,
+            cellWidthPx: 10,
+            cellHeightPx: 20,
+          },
+          visibility: {
+            workspaceSessionId: "workspace-recovery",
+            workspacePid: 4100,
+            workspaceStartToken: "4100:123456",
+            openTerminalRevision: "2",
+          },
+        }),
         admit: async () => {
-          admissions += 1;
-          return admissions === 1
-            ? null
-            : {
-              engineBuildId: "engine-recovery",
-              visibility: {
-                workspaceSessionId: "workspace-recovery",
-                workspacePid: 4100,
-                workspaceStartToken: "4100:123456",
-                openTerminalRevision: "2",
-              },
-            };
+          throw new Error("creation must not wait for public pane visibility");
         },
         terminalHost: {
           create: async (spec) => {
@@ -1201,7 +1206,6 @@ describe("HiveSpawner wiring", () => {
       "recovery:agent-maya:1",
     );
 
-    expect(admissions).toBe(3);
     expect(created).toEqual([recovered.sessionLocator.sessionId]);
   });
 
@@ -1222,7 +1226,7 @@ describe("HiveSpawner wiring", () => {
         throw new Error("worktree must not be created");
       },
       sessiond: {
-        prepare: async () => null,
+        prepareAgentCreation: async () => null,
         admit: async () => {
           throw new Error("null preparation must fail before visibility admission");
         },
@@ -1299,9 +1303,33 @@ describe("HiveSpawner wiring", () => {
         removals += 1;
       },
       sessiond: {
-        prepare: async () => ({ engineBuildId: "engine-capacity" }),
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-capacity",
+          geometry: {
+            columns: 80,
+            rows: 24,
+            widthPx: 800,
+            heightPx: 480,
+            cellWidthPx: 10,
+            cellHeightPx: 20,
+          },
+          visibility: {
+            workspaceSessionId: "workspace-capacity",
+            workspacePid: 4100,
+            workspaceStartToken: "4100:123456",
+            openTerminalRevision: "1",
+          },
+        }),
         admit: async () => ({
           engineBuildId: "engine-capacity",
+          geometry: {
+            columns: 117,
+            rows: 41,
+            widthPx: 1170,
+            heightPx: 820,
+            cellWidthPx: 10,
+            cellHeightPx: 20,
+          },
           visibility: {
             workspaceSessionId: "workspace-capacity",
             workspacePid: 4100,
@@ -3477,8 +3505,6 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
 
     await spawner.spawn({ task: "Build auth API", category: "simple_coding" });
     const command = tmux.sessions[0]?.[2] ?? "";
-    // The executable resolves to an absolute path on a real machine.
-    expect(command).toMatch(/^'[^']*claude'/);
     // The rules ride the prompt the vendor receives, not the pipe that carries
     // it: the brief outgrew the tmux command line and now travels in a file.
     const launched = await deliveredPrompt(command);
@@ -4212,11 +4238,11 @@ describe("a refusal names the reason it actually refused for", () => {
 
     expect(failure).toContain(
       "simple_coding: grok/grok-4.5 — enablement: grok-4.5 cannot launch " +
-        "because exact model consent is not enabled under provider grok; enable both in the Model Control Center",
+        "because provider grok is not enabled in the Model Control Center",
     );
     expect(failure).toContain(
       "default: claude/claude-opus-4-8 — enablement: claude-opus-4-8 cannot launch " +
-        "because exact model consent is not enabled under provider claude; enable both in the Model Control Center",
+        "because provider claude is not enabled in the Model Control Center",
     );
     expect(tmux.sessions).toEqual([]);
   });

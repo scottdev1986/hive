@@ -1,5 +1,12 @@
 import { z } from "zod";
 
+export function normalizeNulText(value: string): string {
+  return value.replaceAll("\0", "\uFFFD");
+}
+
+const RequiredMemoryTextSchema = z.string().min(1).transform(normalizeNulText);
+const MemoryTextSchema = z.string().transform(normalizeNulText);
+
 export const MemoryScopeSchema = z.enum(["repo", "global"]);
 export type MemoryScope = z.infer<typeof MemoryScopeSchema>;
 
@@ -63,13 +70,13 @@ export const MemoryFactSchema = z.strictObject({
   id: z.string().min(1),
   scope: MemoryScopeSchema,
   topic: MemoryTopicSchema,
-  title: z.string().min(1),
-  body: z.string(),
-  tags: z.array(z.string()),
+  title: RequiredMemoryTextSchema,
+  body: MemoryTextSchema,
+  tags: z.array(MemoryTextSchema),
   date: IsoDateSchema,
   path: z.string().min(1),
   source: MemorySourceSchema,
-  evidence: z.string().min(1),
+  evidence: RequiredMemoryTextSchema,
   status: MemoryVerificationStatusSchema,
   kind: MemoryKindSchema.default("article"),
   supersedes: z.array(z.string()),
@@ -98,12 +105,12 @@ export const MemoryWriteInputSchema = z.strictObject({
   scope: MemoryScopeSchema,
   id: z.string().min(1).optional(),
   topic: MemoryTopicSchema,
-  title: z.string().min(1),
-  body: z.string().min(1),
-  tags: z.array(z.string()).optional(),
+  title: RequiredMemoryTextSchema,
+  body: RequiredMemoryTextSchema,
+  tags: z.array(MemoryTextSchema).optional(),
   date: IsoDateSchema.optional(),
   source: MemoryWriterSourceSchema,
-  evidence: z.string().min(1),
+  evidence: RequiredMemoryTextSchema,
   status: MemoryVerificationStatusSchema,
   kind: MemoryKindSchema.default("article"),
   supersedes: z.array(z.string()),

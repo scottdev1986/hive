@@ -568,9 +568,8 @@ function applyMutation(
       if (mutation.entries.length === 0) delete chains[mutation.category];
       else chains[mutation.category] = mutation.entries;
       if (mutation.entries.length === 0) return { ...policy, chains };
-      // Accepting an exact chain is also exact model consent. It never enables
-      // the provider master switch, and clearing/reordering a chain never
-      // revokes a model that another category or explicit model row may use.
+      // Keep an explicit enabled row for the UI's per-model preference. The
+      // provider master switch remains the launch authority.
       let models = [...policy.models];
       for (const entry of mutation.entries) {
         const existing = models.find((row) =>
@@ -756,8 +755,8 @@ export function policyModelEnablement(
     if (state === "enabled") return true;
     if (state === "disabled") return false;
     return {
-      refusal: `${model} cannot launch because exact model consent is not enabled ` +
-        `under provider ${provider}; enable both in the Model Control Center`,
+      refusal: `${model} cannot launch because provider ${provider} is not enabled ` +
+        "in the Model Control Center",
     };
   };
 }

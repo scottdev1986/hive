@@ -123,8 +123,7 @@ describe("WP8 provider manifests", () => {
     for (const manifest of allProviderManifests()) {
       ProviderManifestSchema.parse(manifest);
       expect(manifest.unknownModalBlocksDelivery.value).toBe(true);
-      expect(manifest.versionRange.supportedMin.length).toBeGreaterThan(0);
-      expect(manifest.versionRange.supportedMax.length).toBeGreaterThan(0);
+      expect(manifest.executableProbe.argv.at(-1)).toBe("--version");
     }
   });
 
@@ -133,7 +132,7 @@ describe("WP8 provider manifests", () => {
       const paths = collectManifestCitationPaths(manifest);
       const pathNames = paths.map((p) => p.path);
       for (const required of [
-        "versionRange",
+        "executableProbe",
         "readinessStates",
         "strongestAutomaticReceipt",
         "unknownModalBlocksDelivery",

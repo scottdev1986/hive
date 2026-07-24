@@ -64,6 +64,7 @@ describe("SessiondOrchestratorRootDelivery", () => {
     const calls: unknown[] = [];
     const delivery = new SessiondOrchestratorRootDelivery({
       current: () => sessiondRoot,
+      ready: () => true,
       input: {
         async injectRoot(locator, content, options) {
           calls.push({ locator, content, options });
@@ -85,6 +86,7 @@ describe("SessiondOrchestratorRootDelivery", () => {
   test("keeps delivery unconfirmed when the host declines input", async () => {
     const delivery = new SessiondOrchestratorRootDelivery({
       current: () => sessiondRoot,
+      ready: () => true,
       input: {
         async injectRoot() {
           return { outcome: "declined", reason: "claim denied" };
@@ -100,8 +102,26 @@ describe("SessiondOrchestratorRootDelivery", () => {
   test("is not live before the root host is running", () => {
     const delivery = new SessiondOrchestratorRootDelivery({
       current: () => ({ ...sessiondRoot, state: "awaiting-visibility" }),
+      ready: () => true,
       input: { injectRoot: async () => ({ outcome: "injected", receipt: inputReceipt }) },
     });
     expect(delivery.isLive()).toBe(false);
+  });
+
+  test("does not inject while the provider is still drawing its startup screen", async () => {
+    const delivery = new SessiondOrchestratorRootDelivery({
+      current: () => sessiondRoot,
+      ready: () => false,
+      input: {
+        injectRoot: async () => {
+          throw new Error("startup input must remain queued");
+        },
+      },
+    });
+    expect(delivery.isLive()).toBe(false);
+    await expect(delivery.deliverMessage(
+      "queued startup alert",
+      { message_id: "message-1" },
+    )).resolves.toBe(false);
   });
 });

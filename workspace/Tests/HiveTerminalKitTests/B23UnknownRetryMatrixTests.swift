@@ -13,11 +13,9 @@ import XCTest
 /// `AttachReplayClient` derives `idempotencyKey` from `transactionId`, which
 /// embeds a monotonic sequence (`AttachReplayClient.swift:512-519`) — so any
 /// resend after an unknown result would necessarily mint a NEW key and thus a
-/// new act. The client therefore satisfies the clause by fencing: after an
-/// unknown outcome it writes no further input until a fresh attach.
-///
-/// These rows assert that fence, and bracket it with a positive control that
-/// proves a second submission is observable when the outcome is not unknown.
+/// new act. The client therefore does not replay an uncertain transaction, but
+/// it also does not freeze the terminal: the next user input is a new act and
+/// remains writable.
 final class B23UnknownRetryMatrixTests: XCTestCase {
     private let geometry = TerminalGeometry(
         columns: 80,
@@ -107,18 +105,12 @@ final class B23UnknownRetryMatrixTests: XCTestCase {
         return (before, after, view.inputSubmissionState)
     }
 
-    /// After an unknown terminal result the client must not author a new act.
-    func testUnknownResultFencesInputAndMintsNoNewTransaction() throws {
+    func testUnknownResultDoesNotReplayPastInputOrFreezeFutureInput() throws {
         let result = try submissionsAfterSecondType(stage: "unknown")
 
-        guard case .unknown = result.state else {
-            return XCTFail("unknown stage did not produce an unknown state, got \(result.state)")
-        }
-        XCTAssertEqual(
+        XCTAssertGreaterThan(
             result.after, result.before,
-            "typing after an unknown result submitted \(result.after - result.before) "
-                + "additional INPUT_SUBMIT frame(s); the clause forbids inventing a new act"
-        )
+            "an uncertain past transaction permanently froze later terminal input")
     }
 
     /// Positive control through the same reader: a written-to-terminal receipt
@@ -131,7 +123,7 @@ final class B23UnknownRetryMatrixTests: XCTestCase {
         XCTAssertGreaterThan(
             result.after, result.before,
             "the reader saw no second INPUT_SUBMIT even on a healthy receipt; "
-                + "the unknown-fence row above is unattributable until this passes"
+                + "the unknown retry row above is unattributable until this passes"
         )
     }
 

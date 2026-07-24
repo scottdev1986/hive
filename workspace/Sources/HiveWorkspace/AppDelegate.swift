@@ -144,8 +144,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             // stay up.
             self?.closeOwnedSurfaces(except: controller?.window)
         }
-        controller.bootstrapOrchestrator()
         startFeed()
+        // Publish an empty initial inventory before starting queen. Terminal
+        // creation uses this live Workspace identity, then publishes only the
+        // completed root locator back through the normal feed.
+        publishVisibility()
+        controller.bootstrapOrchestrator()
 
         if config.smoke {
             let runner = SmokeRunner(controller: controller, config: config)
@@ -237,7 +241,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
     private func publishVisibility() {
         guard let controller, let feedClient else { return }
         do {
-            try feedClient.publishVisibility(controller.state.visibilityInventory())
+            try feedClient.publishVisibility(controller.state.visibilityInventory(
+                geometries: controller.visibilityGeometries()))
         } catch {
             NSLog("workspace visibility publish failed: %@", error.localizedDescription)
         }

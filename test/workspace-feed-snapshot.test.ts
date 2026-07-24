@@ -16,6 +16,7 @@ describe("the shared Workspace feed wire fixture", () => {
       status: "working",
       host: "tmux",
       hostState: null,
+      hostDiagnostic: null,
       sessionLocator: null,
     });
     expect(fixture.agents[0]).toMatchObject({

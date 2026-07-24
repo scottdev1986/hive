@@ -10,12 +10,11 @@ const VisibilityLease = @import("visibility_lease").VisibilityLease;
 
 const inherited_control_fd = boot_envelope.inherited_control_fd;
 const ParsedRegistration = host_registration.ParsedRegistration;
-const beginInheritedRegistration = host_registration.beginInheritedRegistration;
+const launchFreshChild = host_registration.launchFreshChild;
+const acknowledgeFreshChild = host_registration.acknowledgeFreshChild;
 const promoteTrustedExecutableEvidence = host_registration.promoteTrustedExecutableEvidence;
-const acceptPendingRegistration = host_registration.acceptPendingRegistration;
 const WireLocator = host_record.WireLocator;
 const readRequiredFrame = host_wire.readRequiredFrame;
-const writeHostFailure = host_wire.writeFailure;
 
 const c = @cImport({
     @cInclude("fcntl.h");
@@ -123,22 +122,6 @@ pub fn killAndWait(pid: i32) void {
             .CHILD => return,
             else => return,
         }
-    }
-}
-
-fn waitForChildExit(pid: i32, timeout_ns: u64) bool {
-    var timer = std.time.Timer.start() catch return false;
-    while (true) {
-        var status: c_int = 0;
-        const waited = c.waitpid(pid, &status, c.WNOHANG);
-        if (waited == pid) return true;
-        if (waited < 0) switch (std.posix.errno(waited)) {
-            .INTR => continue,
-            .CHILD => return true,
-            else => return false,
-        };
-        if (timer.read() >= timeout_ns) return false;
-        std.Thread.sleep(std.time.ns_per_ms);
     }
 }
 
@@ -444,7 +427,7 @@ pub const LaunchClient = struct {
     adoption_secret: [32]u8,
     pending_id: ?broker.PendingRegistration,
     pending_stream: ?std.net.Stream,
-    pending_header: protocol.Header,
+    ready_header: protocol.Header,
 
     fn deinit(self: *LaunchClient) void {
         if (self.pending_stream) |stream| {
@@ -560,7 +543,7 @@ pub const ProductionHostLauncher = struct {
         var stream_owned = true;
         errdefer if (stream_owned) child.stream.close();
         try setControlTimeout(child.stream.handle);
-        var pending = try beginInheritedRegistration(
+        var ready = try launchFreshChild(
             allocator,
             child.stream,
             spec_json,
@@ -570,14 +553,14 @@ pub const ProductionHostLauncher = struct {
             instance_id,
         );
         var parsed_owned = true;
-        errdefer if (parsed_owned) pending.parsed.deinit(allocator);
-        if (pending.parsed.registration.record.host_pid != child.pid or
-            !std.mem.eql(u8, pending.parsed.registration.record.locator.session_id, spec.value.locator.sessionId))
+        errdefer if (parsed_owned) ready.parsed.deinit(allocator);
+        if (ready.parsed.registration.record.host_pid != child.pid or
+            !std.mem.eql(u8, ready.parsed.registration.record.locator.session_id, spec.value.locator.sessionId))
             return error.HostIdentityMismatch;
         const observed = try broker.inspectProcess(child.pid);
         var token_storage: [64]u8 = undefined;
         const token = try broker.formatStartToken(observed.start_token, &token_storage);
-        if (!std.mem.eql(u8, token, pending.parsed.registration.record.host_start_token) or
+        if (!std.mem.eql(u8, token, ready.parsed.registration.record.host_start_token) or
             !std.mem.eql(u8, observed.executablePath(), executable))
             return error.HostIdentityMismatch;
 
@@ -603,7 +586,7 @@ pub const ProductionHostLauncher = struct {
             host_directory,
             socket_path,
             socket_evidence,
-            pending.parsed.registration.record,
+            ready.parsed.registration.record,
             build_id,
         );
         errdefer wire.deinit();
@@ -612,7 +595,7 @@ pub const ProductionHostLauncher = struct {
             allocator,
             spec.value.expectedExecutable,
             spec.value.argv,
-            &pending.parsed,
+            &ready.parsed,
         );
         errdefer allocator.free(created_payload);
 
@@ -627,13 +610,13 @@ pub const ProductionHostLauncher = struct {
         errdefer self.allocator.destroy(client);
         client.* = .{
             .allocator = allocator,
-            .parsed = pending.parsed,
+            .parsed = ready.parsed,
             .wire = wire,
             .host_pid = child.pid,
             .adoption_secret = adoption_secret,
             .pending_id = pending_id,
             .pending_stream = child.stream,
-            .pending_header = pending.request_header,
+            .ready_header = ready.request_header,
         };
         try self.clients.append(self.allocator, client);
         parsed_owned = false;
@@ -674,7 +657,7 @@ pub const ProductionHostLauncher = struct {
 
         switch (decision) {
             .admitted => {
-                acceptPendingRegistration(stream, client.pending_header) catch {
+                acknowledgeFreshChild(stream, client.ready_header) catch {
                     stream.close();
                     killAndWait(client.host_pid);
                     _ = self.clients.orderedRemove(index);
@@ -703,26 +686,13 @@ pub const ProductionHostLauncher = struct {
                 }
                 return true;
             },
-            .rejected => |code| {
-                const wrote_rejection = blk: {
-                    writeHostFailure(
-                        client.allocator,
-                        stream,
-                        client.pending_header,
-                        code,
-                    ) catch break :blk false;
-                    break :blk true;
-                };
+            .rejected => {
                 stream.close();
-                const exited_cleanly = waitForChildExit(
-                    client.host_pid,
-                    generated.limits.control_rpc_timeout_ms * std.time.ns_per_ms,
-                );
-                if (!exited_cleanly) killAndWait(client.host_pid);
+                killAndWait(client.host_pid);
                 _ = self.clients.orderedRemove(index);
                 client.deinit();
                 self.allocator.destroy(client);
-                return wrote_rejection and exited_cleanly;
+                return true;
             },
         }
     }

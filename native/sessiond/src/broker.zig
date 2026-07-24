@@ -754,7 +754,7 @@ pub const Registry = struct {
             fallbackRequestId(&request_id_storage);
         if (self.terminate(locator, .{
             .mode = "immediate",
-            .reason = "host registration acceptance failed",
+            .reason = "fresh terminal READY acknowledgement failed",
             .request_id = request_id,
         }) == .terminated) return;
 

@@ -17,6 +17,8 @@ const encodeHostRegister = host_record.encodeHostRegister;
 const encodeRecordJson = host_record.encodeRecordJson;
 const encodeCreatedPayload = host_record.encodeCreatedPayload;
 
+/// HELLO remains the authentication preface for ordinary host.sock
+/// connections and broker-restart adoption. Fresh-child fd 3 does not use it.
 pub const WireHello = struct {
     schemaVersion: u8,
     buildId: []const u8,
@@ -26,18 +28,8 @@ pub const WireHello = struct {
     grantToken: ?[]const u8 = null,
 };
 
-const WireWelcome = struct {
-    schemaVersion: u8,
-    protocol: struct { major: u8, minor: u8 },
-    instanceId: []const u8,
-    endpointRole: []const u8,
-    buildId: []const u8,
-    engineBuildId: ?[]const u8,
-};
-
 const host_wire = @import("host_wire");
 const readRequiredFrame = host_wire.readRequiredFrame;
-const writeHostFailure = host_wire.writeFailure;
 
 pub fn writeHostWelcome(
     allocator: std.mem.Allocator,
@@ -83,67 +75,32 @@ pub fn writeHostWelcome(
     );
 }
 
-/// Host side of the inherited-fd milestone: boot bytes first, then a generated
-/// HELLO/WELCOME and HOST_REGISTER/accepted exchange.
+/// Host side of fresh-child startup: receive the private boot envelope, then
+/// publish one READY registration after the provider has crossed exec.
 pub fn serveInheritedRegistration(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     registration: HostRegistration,
-    host_build_id: []const u8,
-    server_epoch: u64,
 ) !BootMessage {
     const file: std.fs.File = .{ .handle = stream.handle };
     var boot = try readBootMessage(allocator, file.deprecatedReader());
     errdefer boot.deinit(allocator);
-    const broker_build_id = try serveRegistrationAfterBoot(
+    try sendReadyAfterBoot(
         allocator,
         stream,
         registration,
-        host_build_id,
-        server_epoch,
     );
-    allocator.free(broker_build_id);
+    try waitForReadyAcknowledgement(allocator, stream);
     return boot;
 }
 
-/// Completes registration after the host role has consumed the private boot
-/// envelope and created the PTY/socket evidence named by HOST_REGISTER.
-pub fn serveRegistrationAfterBoot(
+/// The one fresh-child response. Registry admission and recovery adoption are
+/// broker concerns; the child does not wait for an acceptance round trip.
+pub fn sendReadyAfterBoot(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     registration: HostRegistration,
-    host_build_id: []const u8,
-    server_epoch: u64,
-) ![]u8 {
-    var hello_frame = try readRequiredFrame(allocator, stream);
-    defer hello_frame.deinit(allocator);
-    if (hello_frame.header.type_code != generated.frame_type.hello or
-        hello_frame.header.flags != 0 or
-        !protocol.validateControlPayload(
-            allocator,
-            generated.wire_schema.hello_payload,
-            hello_frame.payload,
-        )) return error.InvalidHostHello;
-    var hello = try std.json.parseFromSlice(WireHello, allocator, hello_frame.payload, .{
-        .ignore_unknown_fields = true,
-    });
-    defer hello.deinit();
-    if (hello.value.schemaVersion != 1 or
-        hello.value.protocol.major != generated.protocol_major or
-        hello.value.protocol.minMinor > generated.protocol_minor or
-        hello.value.protocol.maxMinor < generated.protocol_minor or
-        !std.mem.eql(u8, hello.value.clientRole, "broker") or
-        !std.mem.eql(u8, hello.value.instanceId, registration.record.locator.instance_id))
-        return error.InvalidHostHello;
-    try writeHostWelcome(
-        allocator,
-        stream,
-        hello_frame.header,
-        registration,
-        host_build_id,
-        server_epoch,
-    );
-
+) !void {
     const register = try encodeHostRegister(allocator, registration);
     defer allocator.free(register);
     try protocol.writeFrame(stream, .{
@@ -154,22 +111,61 @@ pub fn serveRegistrationAfterBoot(
         .request_id = 2,
         .stream_seq = 0,
     }, register);
-    var accepted_frame = try readRequiredFrame(allocator, stream);
-    defer accepted_frame.deinit(allocator);
-    if (accepted_frame.header.type_code != generated.frame_type.host_register or
-        accepted_frame.header.request_id != 2 or
-        accepted_frame.header.flags != (generated.frame_flag.response | generated.frame_flag.final) or
+}
+
+pub fn sendStartupFailure(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+    startup_error: anyerror,
+) !void {
+    const payload = try std.json.Stringify.valueAlloc(allocator, .{
+        .schemaVersion = @as(u8, 1),
+        .code = "NOT_READY",
+        .message = @errorName(startup_error),
+        .diagnosticId = @as(?[]const u8, null),
+    }, .{});
+    defer allocator.free(payload);
+    if (!protocol.validateControlPayload(
+        allocator,
+        generated.wire_schema.error_payload,
+        payload,
+    )) return error.InvalidStartupFailure;
+    try protocol.writeFrame(stream, .{
+        .minor = generated.protocol_minor,
+        .type_code = generated.frame_type.@"error",
+        .flags = generated.frame_flag.response |
+            generated.frame_flag.final |
+            generated.frame_flag.error_flag,
+        .payload_length = @intCast(payload.len),
+        .request_id = 2,
+        .stream_seq = 0,
+    }, payload);
+}
+
+pub fn waitForReadyAcknowledgement(
+    allocator: std.mem.Allocator,
+    stream: std.net.Stream,
+) !void {
+    var frame = try readRequiredFrame(allocator, stream);
+    defer frame.deinit(allocator);
+    if (frame.header.type_code != generated.frame_type.host_register or
+        frame.header.request_id != 2 or
+        frame.header.flags != (generated.frame_flag.response | generated.frame_flag.final) or
         !protocol.validateControlPayload(
             allocator,
             generated.wire_schema.host_register_payload,
-            accepted_frame.payload,
+            frame.payload,
         )) return error.HostRegistrationRefused;
-    const Accepted = struct { schemaVersion: u8, accepted: bool };
-    var accepted = try std.json.parseFromSlice(Accepted, allocator, accepted_frame.payload, .{});
-    defer accepted.deinit();
-    if (accepted.value.schemaVersion != 1 or !accepted.value.accepted)
+    const Acknowledgement = struct { schemaVersion: u8, accepted: bool };
+    var parsed = try std.json.parseFromSlice(
+        Acknowledgement,
+        allocator,
+        frame.payload,
+        .{},
+    );
+    defer parsed.deinit();
+    if (parsed.value.schemaVersion != 1 or !parsed.value.accepted)
         return error.HostRegistrationRefused;
-    return allocator.dupe(u8, hello.value.buildId);
 }
 
 pub const ParsedRegistration = struct {
@@ -303,14 +299,13 @@ pub fn parseRegistration(
     };
 }
 
-/// Launcher-side registration exchange. The host independently enforces its
-/// own 15-second monotonic deadline.
-pub const PendingRegistrationReadback = struct {
+pub const FreshChildReady = struct {
     parsed: ParsedRegistration,
     request_header: protocol.Header,
 };
 
-pub fn beginInheritedRegistration(
+/// Sends the private launch data and reads the fresh child's one READY frame.
+pub fn launchFreshChild(
     allocator: std.mem.Allocator,
     stream: std.net.Stream,
     spec_json: []const u8,
@@ -318,66 +313,38 @@ pub fn beginInheritedRegistration(
     adoption_secret: [32]u8,
     broker_build_id: []const u8,
     instance_id: []const u8,
-) !PendingRegistrationReadback {
+) !FreshChildReady {
     try writeBootMessage(stream, spec_json, initial_input, adoption_secret);
-    const hello = try std.json.Stringify.valueAlloc(allocator, .{
-        .schemaVersion = @as(u8, 1),
-        .buildId = broker_build_id,
-        .instanceId = instance_id,
-        .protocol = .{
-            .major = generated.protocol_major,
-            .minMinor = generated.protocol_minor,
-            .maxMinor = generated.protocol_minor,
-        },
-        .clientRole = "broker",
-    }, .{});
-    defer allocator.free(hello);
-    if (!protocol.validateControlPayload(
-        allocator,
-        generated.wire_schema.hello_payload,
-        hello,
-    )) return error.InvalidBrokerHello;
-    try protocol.writeFrame(stream, .{
-        .minor = generated.protocol_minor,
-        .type_code = generated.frame_type.hello,
-        .flags = 0,
-        .payload_length = @intCast(hello.len),
-        .request_id = 1,
-        .stream_seq = 0,
-    }, hello);
-
-    var welcome_frame = try readRequiredFrame(allocator, stream);
-    defer welcome_frame.deinit(allocator);
-    if (welcome_frame.header.type_code != generated.frame_type.welcome or
-        welcome_frame.header.request_id != 1 or
-        welcome_frame.header.flags != (generated.frame_flag.response | generated.frame_flag.final) or
-        !protocol.validateControlPayload(
-            allocator,
-            generated.wire_schema.welcome_payload,
-            welcome_frame.payload,
-        )) return error.InvalidWelcome;
-    var welcome = try std.json.parseFromSlice(WireWelcome, allocator, welcome_frame.payload, .{
-        .ignore_unknown_fields = true,
-    });
-    defer welcome.deinit();
-    if (welcome.value.schemaVersion != 1 or
-        welcome.value.protocol.major != generated.protocol_major or
-        welcome.value.protocol.minor != generated.protocol_minor or
-        !std.mem.eql(u8, welcome.value.instanceId, instance_id) or
-        !std.mem.eql(u8, welcome.value.endpointRole, "host"))
-        return error.InvalidWelcome;
 
     var register_frame = try readRequiredFrame(allocator, stream);
     defer register_frame.deinit(allocator);
+    if (register_frame.header.type_code == generated.frame_type.@"error") {
+        const Failure = struct { message: []const u8 };
+        var failure = std.json.parseFromSlice(
+            Failure,
+            allocator,
+            register_frame.payload,
+            .{ .ignore_unknown_fields = true },
+        ) catch return error.FreshChildFailed;
+        defer failure.deinit();
+        std.log.warn("fresh terminal child failed before READY: {s}", .{
+            failure.value.message,
+        });
+        return error.FreshChildFailed;
+    }
     if (register_frame.header.type_code != generated.frame_type.host_register or
         register_frame.header.flags != 0)
         return error.InvalidHostRegister;
     var result = try parseRegistration(allocator, register_frame.payload);
     errdefer result.deinit(allocator);
     if (!std.mem.eql(u8, result.registration.record.locator.instance_id, instance_id) or
-        !std.mem.eql(u8, result.registration.record.executable_build_hash, welcome.value.buildId) or
-        welcome.value.engineBuildId == null or
-        !std.mem.eql(u8, result.registration.record.engine_build_id, welcome.value.engineBuildId.?))
+        !std.mem.eql(u8, result.registration.record.executable_build_hash, broker_build_id) or
+        result.registration.record.locator.engine_build_id == null or
+        !std.mem.eql(
+            u8,
+            result.registration.record.engine_build_id,
+            result.registration.record.locator.engine_build_id.?,
+        ))
         return error.InvalidHostRegister;
 
     return .{
@@ -386,41 +353,19 @@ pub fn beginInheritedRegistration(
     };
 }
 
-pub fn acceptPendingRegistration(
+pub fn acknowledgeFreshChild(
     stream: std.net.Stream,
     request_header: protocol.Header,
 ) !void {
-    const accepted = "{\"schemaVersion\":1,\"accepted\":true}";
+    const acknowledgement = "{\"schemaVersion\":1,\"accepted\":true}";
     try protocol.writeFrame(
         stream,
-        request_header.response(generated.frame_type.host_register, accepted.len),
-        accepted,
+        request_header.response(
+            generated.frame_type.host_register,
+            acknowledgement.len,
+        ),
+        acknowledgement,
     );
-}
-
-/// Compatibility helper for unit seams that admit immediately. The production
-/// launcher retains the pending readback until broker Registry admission.
-pub fn completeInheritedRegistration(
-    allocator: std.mem.Allocator,
-    stream: std.net.Stream,
-    spec_json: []const u8,
-    initial_input: []const u8,
-    adoption_secret: [32]u8,
-    broker_build_id: []const u8,
-    instance_id: []const u8,
-) !ParsedRegistration {
-    var pending = try beginInheritedRegistration(
-        allocator,
-        stream,
-        spec_json,
-        initial_input,
-        adoption_secret,
-        broker_build_id,
-        instance_id,
-    );
-    errdefer pending.parsed.deinit(allocator);
-    try acceptPendingRegistration(stream, pending.request_header);
-    return pending.parsed;
 }
 
 pub fn validatedLeaseRemaining(expires_at: []const u8) !u64 {

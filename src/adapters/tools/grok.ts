@@ -8,6 +8,7 @@ import {
   selectRecoverySessionId,
   type RecoverySessionArtifact,
 } from "./recovery-session";
+import { resolveProviderExecutable } from "./provider-executable";
 
 export interface GrokSpawnOptions {
   model: string;
@@ -85,6 +86,13 @@ export function probeGrokCliVersion(
   } catch {
     return null;
   }
+}
+
+export function resolveWorkingGrokExecutable() {
+  return resolveProviderExecutable(
+    "grok",
+    [".local/bin/grok", ".grok/bin/grok", ".opencode/bin/grok"],
+  );
 }
 
 export function probeGrokDefaultModel(executable = "grok"): string | null {

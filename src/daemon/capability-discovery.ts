@@ -689,14 +689,16 @@ export interface GrokCapabilityTransport {
 }
 
 export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
+  constructor(private readonly executable = "grok") {}
+
   async readCatalog(timeoutMs: number): Promise<GrokCapabilityPayload> {
-    const identity = probeGrokCliVersion("grok", timeoutMs);
+    const identity = probeGrokCliVersion(this.executable, timeoutMs);
     if (identity === null) throw new Error("grok --version failed");
     const debugRoot = await mkdtemp(join(tmpdir(), "hive-grok-models-"));
     const debugFile = join(debugRoot, "debug.log");
     try {
       const models = Bun.spawn([
-        "grok",
+        this.executable,
         "models",
         "--debug",
         "--debug-file",

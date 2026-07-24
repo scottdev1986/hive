@@ -286,14 +286,14 @@ describe("MessageDelivery", () => {
     }
   });
 
-  test("a held human-claim preemption remains visible on the delivered row", async () => {
-    const db = new HiveDatabase(join(home, "sessiond-held-preemption.db"));
+  test("an orphan recovery remains visible on the delivered row", async () => {
+    const db = new HiveDatabase(join(home, "sessiond-orphan-recovery.db"));
     const sessiondInput: SessiondAgentInput = {
       async injectIdle(_recipient, _text, options) {
         return {
           outcome: "injected",
           receipt: acceptingReceipt(options.messageId),
-          recovery: "held human claim (owner workspace-pane) preempted for delivery; retrying",
+          recovery: "orphaned draft (owner workspace-pane) discarded after 1000ms; retrying",
         };
       },
     };
@@ -306,7 +306,7 @@ describe("MessageDelivery", () => {
       const message = await delivery.send("queen", "maya", "Fleet delivery must proceed.");
       expect(message.state).toBe("injected");
       expect(db.getMessage(message.id)?.deliveryDiagnostic).toBe(
-        "sessiond inject recovered: held human claim (owner workspace-pane) preempted for delivery; retrying",
+        "sessiond inject recovered: orphaned draft (owner workspace-pane) discarded after 1000ms; retrying",
       );
     } finally {
       db.close();

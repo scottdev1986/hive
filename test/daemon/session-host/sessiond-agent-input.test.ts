@@ -13,8 +13,8 @@ import type { InputReceipt, SessionInspection } from "../../../src/daemon/sessio
  * The arbiter orphaned the human claim to protect the unsubmitted draft (#40
  * never-steal), and from that moment every daemon inject was denied
  * HumanOrphaned — with no automated exit and no visible failure. These tests
- * pin the exit: the host immediately resolves an orphan, or explicitly
- * preempts a held claim, then the daemon retries exactly once.
+ * pin the exit: the host immediately resolves an orphan. An actively held
+ * human claim wins and automation remains queued instead of preempting it.
  */
 
 const timestamp = "2026-07-21T12:00:00.000Z";
@@ -203,47 +203,30 @@ describe("HumanOrphaned deadlock exit (2026-07-21 messaging regression)", () => 
     expect(wire.attempts).toEqual(["message-1", "message-1"]);
   });
 
-  test("a held claim is host-preempted with a typed visible delivery notice", async () => {
+  test("a held human claim is never preempted by automation", async () => {
     const wire = new HumanClaimArbiterWire("HumanOwned");
     const modes: OrphanDiscardMode[] = [];
-    const recovered = await injector(wire, async (mode) => {
+    const result = await injector(wire, async (mode) => {
       modes.push(mode);
-      wire.discarded = true;
-      return {
-        state: "preempted",
-        priorOwnerViewerId: "workspace-pane",
-        priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
-        orphanAgeMilliseconds: null,
-        diagnostic: "held human claim preempted for delivery",
-      };
+      throw new Error(`unexpected discard mode ${mode}`);
     }).injectIdle(agent(), "hi", { messageId: "message-1" });
 
-    expect(recovered.outcome).toBe("injected");
-    expect(modes).toEqual(["held"]);
-    expect(recovered.outcome === "injected" && recovered.recovery)
-      .toContain("held human claim (owner workspace-pane) preempted for delivery; retrying");
-    expect(wire.attempts).toEqual(["message-1", "message-1"]);
+    expect(result.outcome).toBe("declined");
+    expect(modes).toEqual([]);
+    expect(wire.attempts).toEqual(["message-1"]);
   });
 
-  test("the root wake retains and retries when a human draft wins the claim race", async () => {
+  test("the root wake remains queued while the operator owns Queen input", async () => {
     const wire = new HumanClaimArbiterWire("HumanOwned");
     const modes: OrphanDiscardMode[] = [];
-    const recovered = await injector(wire, async (mode) => {
+    const result = await injector(wire, async (mode) => {
       modes.push(mode);
-      wire.discarded = true;
-      return {
-        state: "preempted",
-        priorOwnerViewerId: "workspace-root-pane",
-        priorClaimId: "clm_018f1e90-7b5a-7cc0-8000-0000000000aa",
-        orphanAgeMilliseconds: null,
-        diagnostic: "held human claim preempted for delivery",
-      };
+      throw new Error(`unexpected discard mode ${mode}`);
     }).injectRoot(rootLocator, "wake queen", { messageId: "message-1" });
 
-    expect(recovered.outcome).toBe("injected");
-    expect(modes).toEqual(["held"]);
-    expect(wire.attempts).toEqual(["message-1", "message-1"]);
-    expect(recovered.outcome === "injected" && recovered.receipt).toEqual(receipt);
+    expect(result.outcome).toBe("declined");
+    expect(modes).toEqual([]);
+    expect(wire.attempts).toEqual(["message-1"]);
   });
 
   test("a host refusal is recorded, not retried", async () => {

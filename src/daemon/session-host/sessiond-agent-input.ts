@@ -24,7 +24,6 @@ const CLAIM_LEASE_MS = 60_000;
 
 /** The arbiter's own name for "a human's abandoned draft owns input". */
 const HUMAN_ORPHANED = "HumanOrphaned";
-const HUMAN_OWNED = "HumanOwned";
 
 /**
  * Injects one automated message into an idle sessiond-hosted agent over the
@@ -186,41 +185,33 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
       isPromptPending,
     );
     if (first.outcome !== "declined") return first;
-    const mode = first.reason.includes(HUMAN_ORPHANED)
-      ? "orphaned"
-      : first.reason.includes(HUMAN_OWNED)
-      ? "held"
-      : null;
-    if (mode === null) return first;
-    return this.resolveHumanClaim(
+    if (!first.reason.includes(HUMAN_ORPHANED)) return first;
+    return this.resolveOrphanedHumanClaim(
       locator,
       inspection,
       bytes,
       transactionId,
       first.reason,
-      mode,
       isPromptPending,
     );
   }
 
   /**
-   * Resolve the host's current human claim immediately, then retry exactly
-   * once. Orphan age is measured by the host monotonic clock; an attached
-   * human is a separate, typed preemption decision with a visible recovery
-   * notice, never a disguised orphan discard.
+   * Discard an abandoned draft, then retry exactly once. A live human claim
+   * never reaches this path: automation stays queued until the operator's turn
+   * ends.
    */
-  private async resolveHumanClaim(
+  private async resolveOrphanedHumanClaim(
     locator: ReturnType<typeof requireSessiondAgentLocator>,
     inspection: SessionInspection,
     bytes: Uint8Array,
     transactionId: string,
     declineReason: string,
-    mode: OrphanDiscardMode,
     isPromptPending?: () => boolean,
   ): Promise<SessiondInjectResult> {
     let discard;
     try {
-      discard = await this.discardOrphan(locator, mode);
+      discard = await this.discardOrphan(locator, "orphaned");
     } catch (error) {
       const detail = error instanceof Error ? error.message : "unknown error";
       return {
@@ -234,9 +225,14 @@ export class SessiondViewerAgentInput implements SessiondAgentInput, SessiondRoo
         reason: `${declineReason}; input-claim resolution refused: ${discard.diagnostic}`,
       };
     }
-    const recovery = discard.state === "discarded"
-      ? `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`
-      : `held human claim (owner ${discard.priorOwnerViewerId}) preempted for delivery; retrying`;
+    if (discard.state !== "discarded") {
+      return {
+        outcome: "declined",
+        reason: `${declineReason}; orphan discard returned unexpected state ${discard.state}`,
+      };
+    }
+    const recovery =
+      `orphaned draft (owner ${discard.priorOwnerViewerId}) discarded after ${discard.orphanAgeMilliseconds}ms; retrying`;
     const retried = await this.submitOnce(
       locator,
       inspection,

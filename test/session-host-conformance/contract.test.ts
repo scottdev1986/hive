@@ -47,11 +47,11 @@ describe("terminal foundation WP0 contracts", () => {
   });
 
   test("the native scrollback budget stays pinned to the cross-language contract", async () => {
-    const host = await readFile(
-      resolve(import.meta.dir, "../../native/sessiond/src/session_host.zig"),
+    const adapter = await readFile(
+      resolve(import.meta.dir, "../../native/sessiond/src/terminal_adapter.zig"),
       "utf8",
     );
-    expect(host).toContain(
+    expect(adapter).toContain(
       `pub const canonical_scrollback_bytes: usize = ${
         TERMINAL_LIMITS.nonImageCheckpointBytes / (1024 * 1024)
       } * 1024 * 1024;`,
@@ -117,8 +117,8 @@ describe("terminal foundation WP0 contracts", () => {
     // Swift consumers alias SessionProtocolGenerated.Checkpoint.Offset.
     const zig = await readFile(GENERATED_FILES.zig, "utf8");
     const checkpointSwift = await readFile(GENERATED_FILES.checkpointSwift, "utf8");
-    const terminalState = await readFile(
-      resolve(import.meta.dir, "../../native/sessiond/src/terminal_state.zig"),
+    const checkpointFormat = await readFile(
+      resolve(import.meta.dir, "../../native/sessiond/src/checkpoint_format.zig"),
       "utf8",
     );
     const envelope = await readFile(
@@ -129,13 +129,13 @@ describe("terminal foundation WP0 contracts", () => {
       "utf8",
     );
 
-    // Generated Zig must name the offset block so terminal_state can assert it.
+    // Generated Zig must name the offset block so checkpoint_format can assert it.
     expect(zig).toContain("pub const offset = struct {");
-    expect(terminalState).toContain("generated.checkpoint.offset");
-    expect(terminalState).toContain("checkpoint offset through_seq drifted from generated");
+    expect(checkpointFormat).toContain("generated.checkpoint.offset");
+    expect(checkpointFormat).toContain("checkpoint offset through_seq drifted from generated");
     // Deliberate-mismatch canary values that MUST appear in the dual-source local table.
-    expect(terminalState).toMatch(/const through_seq: usize = 16;/);
-    expect(terminalState).toMatch(/const payload_sha256: usize = 84;/);
+    expect(checkpointFormat).toMatch(/const through_seq: usize = 16;/);
+    expect(checkpointFormat).toMatch(/const payload_sha256: usize = 84;/);
 
     // Swift production path must point at the generated projection, not bare literals.
     expect(checkpointSwift).toContain("public enum SessionProtocolGenerated");

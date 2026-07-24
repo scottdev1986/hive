@@ -245,9 +245,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
               let view = paneViews[paneID],
               let locator = pane.sessionLocator,
               locator.hostKind == "sessiond" else { return }
-        // Worker panes begin with their locator. The root is different: its
-        // local supervisor must start first, then the feed delivers the exact
-        // pending generation that Workspace admits and renders here.
+        // Feed locators are ready-to-attach for both root and agent panes.
         view.installSessiondTerminal(SessiondPaneTerminal(
             agentName: pane.kind == .orchestrator
                 ? ProjectState.orchestratorRecipient : pane.title,
@@ -406,6 +404,25 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     func sessiondTerminalView(pane: PaneID) -> HiveTerminalView? {
         paneViews[pane]?.sessiondTerminal?.view
+    }
+
+    func sessiondTerminalHasStarted(pane: PaneID) -> Bool {
+        paneViews[pane]?.sessiondTerminal?.hasStarted ?? false
+    }
+
+    func visibilityGeometries() -> [PaneID: WorkspaceTerminalGeometry] {
+        Dictionary(uniqueKeysWithValues: paneViews.compactMap { paneID, paneView in
+            guard let geometry = paneView.sessiondTerminal?.view?.reportedGeometry else {
+                return nil
+            }
+            return (paneID, WorkspaceTerminalGeometry(
+                columns: geometry.columns,
+                rows: geometry.rows,
+                widthPx: geometry.widthPx,
+                heightPx: geometry.heightPx,
+                cellWidthPx: geometry.cellWidthPx,
+                cellHeightPx: geometry.cellHeightPx))
+        })
     }
 
     /// Delivers a real left-click at the pane's center through the window's own

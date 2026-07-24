@@ -18,14 +18,18 @@ import {
 import {
   TmuxSessionHost,
 } from "../daemon/session-host/tmux-host";
-import { ORCHESTRATOR_NAME, unknownVendor } from "../schemas";
+import {
+  normalizeNulText,
+  ORCHESTRATOR_NAME,
+  unknownVendor,
+} from "../schemas";
 import { ORCHESTRATOR_BRIEF, orchestratorDocGuidance } from "./orchestrator-brief";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
 import {
   buildGrokSpawnCommand,
   GROK_COMPATIBILITY_ENV,
-  probeGrokCliVersion,
   probeGrokDefaultModel,
+  resolveWorkingGrokExecutable,
   writeGrokAgentConfig,
 } from "../adapters/tools/grok";
 import type { CapabilityProvider } from "../schemas";
@@ -33,7 +37,10 @@ import {
   buildCodexMcpExclusionArgs,
   listInheritedCodexMcpServers,
 } from "../adapters/tools/mcp-scope";
-import { CODEX_CAPABILITY_TOKEN_ENV } from "../adapters/tools/codex";
+import {
+  CODEX_CAPABILITY_TOKEN_ENV,
+  resolveWorkingCodexExecutable,
+} from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import { type OrchestratorHostKind } from "../daemon/orchestrator-host";
@@ -72,11 +79,12 @@ export function buildCodexRootAuthorityCommand(
   socketPath = codexRootSocketPath(),
   codexArguments: readonly string[] = [],
   capabilityTokenFile = "",
+  executable = "codex",
 ): string[] {
   const shellQuote = (value: string): string =>
     `'${value.replaceAll("'", `'"'"'`)}'`;
   const remoteCommand = [
-    "codex",
+    executable,
     "--remote",
     `unix://${socketPath}`,
     // Keep startup and disconnect diagnostics visible in the native terminal.
@@ -110,7 +118,7 @@ export function buildCodexRootAuthorityCommand(
   return [
     "sh",
     "-lc",
-    `${capabilityEnvironment}codex app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
+    `${capabilityEnvironment}${shellQuote(executable)} app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
       `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
       `for attempt in $(seq 1 50); do ` +
       `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
@@ -277,14 +285,16 @@ export function buildOrchestratorCommand(
   port: number,
   memoryIndex = "",
   docGuidance = "",
-  executable = "claude",
+  executable?: string,
   codexTokenFile = "",
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
-  const brief = [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
-    .filter((part) => part !== "")
-    .join("\n\n");
+  const brief = normalizeNulText(
+    [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
+      .filter((part) => part !== "")
+      .join("\n\n"),
+  );
   switch (tool) {
     case "claude": {
       const configRoot = orchestratorConfigRoot();
@@ -295,7 +305,7 @@ export function buildOrchestratorCommand(
           worktreePath: process.cwd(),
           daemonPort: port,
           readOnly: true,
-          executable,
+          executable: executable ?? "claude",
           scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
           appendSystemPrompt: brief,
@@ -304,7 +314,7 @@ export function buildOrchestratorCommand(
     }
     case "codex":
       return [
-        "codex",
+        executable ?? "codex",
         // Apps/connectors are a separate Codex feature, not an inherited
         // mcp_servers table, and can otherwise hold the root at startup on
         // `codex_apps`. Hive orchestration needs only Hive's own MCP server.
@@ -334,7 +344,8 @@ export function buildOrchestratorCommand(
         brief,
       ];
     case "grok": {
-      const model = probeGrokDefaultModel();
+      const grokExecutable = executable ?? "grok";
+      const model = probeGrokDefaultModel(grokExecutable);
       if (model === null) {
         throw new Error("grok models did not report an effective default");
       }
@@ -343,6 +354,7 @@ export function buildOrchestratorCommand(
           model,
           worktreePath: process.cwd(),
           readOnly: true,
+          executable: grokExecutable,
         }),
         brief,
       ];
@@ -358,7 +370,7 @@ export function buildOrchestratorLaunchCommand(
   cwd: string,
   memoryIndex = "",
   docGuidance = "",
-  executable = "claude",
+  executable?: string,
   codexTokenFile = "",
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
@@ -374,7 +386,7 @@ export function buildOrchestratorLaunchCommand(
         port,
         memoryIndex,
         docGuidance,
-        "claude",
+        executable,
         codexTokenFile,
         recoveryBrief,
         codexMcpExclusionArgs,
@@ -386,6 +398,7 @@ export function buildOrchestratorLaunchCommand(
           undefined,
           codexCommand.slice(1),
           codexTokenFile,
+          executable,
         ),
       );
     }
@@ -418,7 +431,7 @@ export function buildOrchestratorLaunchCommand(
             port,
             memoryIndex,
             docGuidance,
-            "claude",
+            executable,
             "",
             recoveryBrief,
           ),
@@ -454,30 +467,35 @@ async function launchOrchestratorOnHost(
     : null;
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
-  let claudePath = "claude";
+  let providerExecutable: string;
   switch (tool) {
     case "claude": {
       const claude = resolveExecutable();
-      const version = await (detectVersion ?? (async () => claude.version))();
-      if (version === null) {
+      if (claude.path === "claude" && claude.version === null) {
         throw new Error(
           "the Claude orchestrator needs a working Claude Code CLI\n" +
             "Fix: repair or install Claude Code, then retry",
         );
       }
-      claudePath = realpathSync.native(claude.path);
+      providerExecutable = realpathSync.native(claude.path);
       break;
     }
-    case "codex":
-      // No version gate today: a future vendor must state its own minimum here
-      // rather than inherit Codex's silence — an ungated launch of a CLI too
-      // old for the Hive MCP server stalls instead of failing.
+    case "codex": {
+      const codex = resolveWorkingCodexExecutable();
+      if (codex === null) {
+        throw new Error("the Codex orchestrator needs a working codex CLI");
+      }
+      providerExecutable = codex.path;
       break;
-    case "grok":
-      if (probeGrokCliVersion() === null) {
+    }
+    case "grok": {
+      const grok = resolveWorkingGrokExecutable();
+      if (grok === null) {
         throw new Error("the Grok orchestrator needs a working grok CLI");
       }
+      providerExecutable = grok.path;
       break;
+    }
     default:
       unknownVendor(tool, "orchestrator launch");
   }
@@ -526,11 +544,11 @@ async function launchOrchestratorOnHost(
           port,
           memoryIndex,
           docGuidance,
-          claudePath,
+          providerExecutable,
           "",
           recoveryBrief,
         );
-        expectedExecutable = claudePath;
+        expectedExecutable = providerExecutable;
         break;
       case "codex": {
         const codexCommand = buildOrchestratorCommand(
@@ -538,7 +556,7 @@ async function launchOrchestratorOnHost(
           port,
           memoryIndex,
           docGuidance,
-          "claude",
+          providerExecutable,
           codexTokenFile,
           recoveryBrief,
           codexMcpExclusionArgs,
@@ -547,8 +565,9 @@ async function launchOrchestratorOnHost(
           undefined,
           codexCommand.slice(1),
           codexTokenFile,
+          providerExecutable,
         );
-        expectedExecutable = "codex";
+        expectedExecutable = providerExecutable;
         break;
       }
       case "grok":
@@ -557,7 +576,7 @@ async function launchOrchestratorOnHost(
           port,
           memoryIndex,
           docGuidance,
-          "claude",
+          providerExecutable,
           "",
           recoveryBrief,
         );
@@ -565,7 +584,7 @@ async function launchOrchestratorOnHost(
           GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
           ...GROK_COMPATIBILITY_ENV,
         };
-        expectedExecutable = "grok";
+        expectedExecutable = providerExecutable;
         break;
       default:
         return unknownVendor(tool, "sessiond orchestrator launch");
@@ -591,7 +610,7 @@ async function launchOrchestratorOnHost(
       cwd,
       memoryIndex,
       docGuidance,
-      claudePath,
+      providerExecutable,
       codexTokenFile,
       recoveryBrief,
       codexMcpExclusionArgs,

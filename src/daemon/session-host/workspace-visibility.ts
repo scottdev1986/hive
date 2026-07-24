@@ -1,8 +1,10 @@
 import { z } from "zod";
 import {
   SessionLocatorSchema,
+  TerminalGeometrySchema,
   TerminalHostProcessIdentitySchema,
   type SessionLocator,
+  type TerminalGeometry,
 } from "../../schemas/session-protocol";
 import type { HiveTerminalPolicy } from "./hive-terminal-host";
 import type { VisibilitySourceIdentity } from "./terminal-host-visibility-contract";
@@ -31,6 +33,7 @@ export const WorkspaceVisibleTerminalSchema = z.strictObject({
     hostKind: z.literal("sessiond"),
   }).readonly(),
   state: WorkspaceTerminalStateSchema,
+  geometry: TerminalGeometrySchema.nullable().optional(),
 }).readonly();
 export type WorkspaceVisibleTerminal = z.infer<typeof WorkspaceVisibleTerminalSchema>;
 
@@ -83,8 +86,18 @@ export type WorkspaceVisibilityCandidate = Readonly<{
 
 export type WorkspaceVisibilityAdmission = Readonly<{
   engineBuildId: string;
+  geometry: TerminalGeometry;
   visibility: HiveTerminalPolicy["visibility"];
 }>;
+
+const DEFAULT_TERMINAL_GEOMETRY: TerminalGeometry = {
+  columns: 80,
+  rows: 24,
+  widthPx: 800,
+  heightPx: 480,
+  cellWidthPx: 10,
+  cellHeightPx: 20,
+};
 
 const ADMITTING_STATES: ReadonlySet<WorkspaceTerminalState> = new Set([
   "pending",
@@ -181,6 +194,27 @@ export class WorkspaceVisibilityAuthority {
     }
   }
 
+  async prepareAgentCreation(): Promise<WorkspaceVisibilityAdmission | null> {
+    const snapshot = this.current;
+    if (snapshot === null || !this.sourceIsLive(snapshot.source)) return null;
+    try {
+      const engineBuildId = await this.dependencies.discoverEngineBuildId();
+      if (engineBuildId.length === 0) return null;
+      return {
+        engineBuildId,
+        geometry: DEFAULT_TERMINAL_GEOMETRY,
+        visibility: {
+          workspaceSessionId: snapshot.source.sessionId,
+          workspacePid: snapshot.source.process.processId,
+          workspaceStartToken: snapshot.source.process.startToken,
+          openTerminalRevision: snapshot.inventoryRevision,
+        },
+      };
+    } catch {
+      return null;
+    }
+  }
+
   async admit(
     candidate: WorkspaceVisibilityCandidate,
   ): Promise<WorkspaceVisibilityAdmission | null> {
@@ -210,6 +244,7 @@ export class WorkspaceVisibilityAuthority {
     if (terminal.locator.engineBuildId !== engineBuildId) return null;
     return {
       engineBuildId,
+      geometry: terminal.geometry ?? DEFAULT_TERMINAL_GEOMETRY,
       visibility: {
         workspaceSessionId: snapshot.source.sessionId,
         workspacePid: snapshot.source.process.processId,

@@ -536,30 +536,13 @@ pub const PtyHost = struct {
             return error.IdentityUnavailable;
         }
 
-        // Spawn-time root snapshot via process_inspector (stable preferred).
-        var real_plat = process_inspector.RealPlatform.init();
-        var snap = process_inspector.snapshotTree(
-            real_plat.platform(),
-            self.allocator,
-            self.pid,
-            self.start_token,
-        ) catch {
-            // Snapshot failure does not undo a live spawn with identity evidence,
-            // but readback reports unknown completeness.
-            return .{ .running = makeReadback(
-                self,
-                identity,
-                .unknown,
-                foreground_pgid,
-                terminal_identity[0..terminal_identity_len],
-            ) };
-        };
-        defer snap.deinit(self.allocator);
-
+        // A successful exec is enough to open a terminal. Process-tree
+        // completeness is measured later by inspection; provider startup must
+        // not delay or veto the PTY becoming usable.
         return .{ .running = makeReadback(
             self,
             identity,
-            snap.status,
+            .unknown,
             foreground_pgid,
             terminal_identity[0..terminal_identity_len],
         ) };

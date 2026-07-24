@@ -291,7 +291,7 @@ run:
 
 # No pipes anywhere: a red suite must exit red. The real-CLI e2e suite is already
 # inside `bun run test` and self-skips unless HIVE_E2E=1; opting in is
-# `HIVE_E2E=1 bun test src/cli/e2e-real.test.ts`, which is what CI runs.
+# `HIVE_E2E=1 bun test test/cli/e2e-real.test.ts`, which is what CI runs.
 test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 	bun install --frozen-lockfile
 	bun run test
@@ -312,6 +312,12 @@ test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 #   - Empty derivations refuse instead of defaulting: an empty dev path would
 #     prefix-match every absolute path on the machine.
 #   - The invoker's whole ancestor chain is excluded, walked to pid 1.
+# Deletion only ever receives the literal $(DEV) and DEV_HOME paths, with no
+# trailing slash. DEV_HOME/memory, projects, project-registry.json and models
+# may be symlinks into the real ~/.hive; rm -rf unlinks a symlink without
+# following it, so the real home stays unreachable. Physical path spellings
+# feed only the process-binding checks. The -L guards refuse a top-level
+# symlink so no future edit can delete "through" a dev path.
 clean:
 	@set -e; \
 	if [ -d "$(DEV)" ]; then dev=$$(cd "$(DEV)" && pwd -P) || true; else dev="$(DEV)"; fi; \
@@ -437,14 +443,6 @@ clean:
 	  fi; \
 	  echo "all dev processes confirmed stopped"; \
 	fi; \
-	# Deletion: only ever the literal $(DEV) and $$home paths, no trailing
-	# slash. $$home/memory, projects, project-registry.json and models are
-	# symlinks into the real ~/.hive (see DEV_HOME above); rm -rf unlinks a
-	# symlink at any depth without following it, so the real home is
-	# unreachable from this line — provided nothing ever resolves the links
-	# first. The physical-path spellings above (devp/homep) feed ONLY the
-	# process-binding checks, never rm. The -L guards refuse a top-level
-	# symlink outright, so no future edit can delete "through" a dev path.
 	[ ! -L "$(DEV)" ] || { echo "refusing: $(DEV) is a symlink; clean deletes literal dev paths only" >&2; exit 1; }; \
 	[ ! -L "$$home" ] || { echo "refusing: $$home is a symlink; clean deletes literal dev paths only" >&2; exit 1; }; \
 	rm -rf "$(DEV)" "$$home"

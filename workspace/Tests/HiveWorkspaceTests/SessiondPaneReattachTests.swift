@@ -2,8 +2,8 @@ import XCTest
 @testable import HiveWorkspace
 import WorkspaceCore
 
-/// A pane retries the exact generation with one fresh grant after each
-/// completed failure. Repeated failures become visible but never latch.
+/// Startup failure is final because no renderer ever went live. Only a proven
+/// live renderer may reconnect after a later transport loss.
 final class SessiondPaneReattachTests: XCTestCase {
     private func makeTerminal() -> SessiondPaneTerminal {
         SessiondPaneTerminal(
@@ -22,37 +22,35 @@ final class SessiondPaneReattachTests: XCTestCase {
         )
     }
 
-    func testRepeatedFailuresDegradeVisiblyOnce() {
+    func testFailureBeforeFirstLiveAttachStopsWithoutReconnect() {
         let terminal = makeTerminal()
         var degraded: [String] = []
         var failures: [String] = []
         terminal.onDegraded = { degraded.append($0) }
         terminal.onFailure = { failures.append($0) }
 
-        for _ in 0..<terminal.failuresBeforeDegraded + 20 {
-            terminal.recordReconnectFailureForTesting("host refused")
-        }
+        terminal.recordReconnectFailureForTesting("host refused")
 
-        XCTAssertTrue(terminal.degraded)
+        XCTAssertFalse(terminal.degraded)
         XCTAssertEqual(terminal.lastFailure, "host refused")
-        XCTAssertEqual(degraded, ["host refused"], "degraded once, surfaced once")
-        XCTAssertFalse(terminal.gaveUp, "a host refusal is recoverable — it must not latch")
-        XCTAssertEqual(failures, [], "the sticky give-up is reserved for unrecoverable losses")
-        XCTAssertEqual(terminal.reconnectDelay, 1)
+        XCTAssertEqual(degraded, [])
+        XCTAssertTrue(terminal.gaveUp, "there was never a connection to reconnect")
+        XCTAssertEqual(failures, ["host refused"])
     }
 
     /// The other half of #90: recovery must actually re-engage. A live attach
     /// lifts the degraded state and says so, through the same entry point
     /// `completeAttach` uses.
-    func testGoingLiveClearsTheDegradedStateAndReportsRecovery() {
+    func testLossAfterLiveAttachRetriesAndReportsRecovery() {
         let terminal = makeTerminal()
         var degraded: [String] = []
         var recoveries = 0
         terminal.onDegraded = { degraded.append($0) }
         terminal.onRecovered = { recoveries += 1 }
 
+        terminal.noteLiveAttach()
         for _ in 0..<terminal.failuresBeforeDegraded {
-            terminal.recordReconnectFailureForTesting("host refused")
+            terminal.recordReconnectFailureForTesting("transport lost")
         }
         XCTAssertTrue(terminal.degraded, "positive control: the pane really was degraded")
 
@@ -65,7 +63,7 @@ final class SessiondPaneReattachTests: XCTestCase {
         // fast retry window rather than degrading immediately.
         terminal.recordReconnectFailureForTesting("later loss")
         XCTAssertFalse(terminal.degraded)
-        XCTAssertEqual(degraded, ["host refused"])
+        XCTAssertEqual(degraded, ["transport lost"])
     }
 
     func testReconnectUsesOneFixedDelay() {
@@ -73,49 +71,23 @@ final class SessiondPaneReattachTests: XCTestCase {
         XCTAssertEqual(terminal.reconnectDelay, 1, accuracy: 0.0001)
     }
 
-    /// #81: the geometry poll had no bound, so a pane whose surface never
-    /// measured a usable grid waited forever with nothing on screen, no badge
-    /// and nothing in workspace.log. It must become visible — and keep polling,
-    /// because geometry arrives the moment the pane is given room.
-    func testGeometryWaitBecomesVisibleAndKeepsPolling() {
+    func testStartDoesNotWaitForMeasuredGeometry() {
         let terminal = makeTerminal()
-        terminal.geometryWaitOverride = 0.05
-        var reports: [String] = []
-        let surfaced = expectation(description: "geometry wait surfaced")
-        // Over-fulfilment fails the test, which is the guard against a notice
-        // that fires once per 0.05s poll tick instead of once per wait.
-        terminal.onDegraded = {
-            reports.append($0)
-            surfaced.fulfill()
+        var requestedGeometry: String?
+        terminal.requestGrant = {
+            requestedGeometry = $0
+            throw SessiondPaneTerminalError.grantRefused("test")
         }
-        // No view is installed, so reportedGeometry never becomes usable.
-        terminal.startWhenGeometryReady()
-        wait(for: [surfaced], timeout: 5)
-        // Keep polling past the notice: a bound that stops the poll would strand
-        // a pane that is about to be given room.
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        terminal.detach()
 
-        XCTAssertTrue(terminal.waitingForGeometry)
-        XCTAssertEqual(reports.count, 1, "reported once, not once per poll tick")
-        XCTAssertFalse(terminal.gaveUp, "a pane with no room yet is not a failed pane")
-        XCTAssertFalse(terminal.degraded, "the geometry wait is not an attach failure")
-    }
+        terminal.start()
+        let deadline = Date().addingTimeInterval(2)
+        while requestedGeometry == nil, Date() < deadline {
+            RunLoop.main.run(until: Date().addingTimeInterval(0.01))
+        }
 
-    /// Control: before its bound the wait stays quiet, so the row above is
-    /// reading a real bound rather than a notice that fires unconditionally.
-    func testControlGeometryWaitStaysQuietBeforeItsBound() {
-        let terminal = makeTerminal()
-        terminal.geometryWaitOverride = 30
-        var reports: [String] = []
-        terminal.onDegraded = { reports.append($0) }
-
-        terminal.startWhenGeometryReady()
-        RunLoop.main.run(until: Date().addingTimeInterval(0.3))
-        terminal.detach()
-
-        XCTAssertFalse(terminal.waitingForGeometry)
-        XCTAssertEqual(reports, [], "the wait notice fired before its bound")
+        XCTAssertTrue(terminal.hasStarted)
+        XCTAssertTrue(requestedGeometry?.contains("\"columns\":80") == true)
+        XCTAssertTrue(requestedGeometry?.contains("\"rows\":24") == true)
     }
 
     /// A detached pane never retries and never reports a failure — renderer

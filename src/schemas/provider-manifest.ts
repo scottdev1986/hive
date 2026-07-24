@@ -119,22 +119,9 @@ export function citedSchema<T extends z.ZodType>(valueSchema: T) {
   });
 }
 
-/**
- * Pinned supported binary version range (§25 version-support panel).
- * Outside the range: interactive may run, automatic features whose evidence
- * changed are disabled until classified.
- */
-export const VersionRangeSchema = z.strictObject({
-  /** Inclusive lower bound of supported automatic-delivery range. */
-  supportedMin: z.string().min(1),
-  /** Inclusive upper bound of supported automatic-delivery range. */
-  supportedMax: z.string().min(1),
-  /** In-repo measured examples that established the pin. */
-  measuredExamples: z.array(z.string().min(1)).min(1),
-  unknownVersionPolicy: z.literal(
-    "interactive-ok-automatic-features-disabled-until-classified",
-  ),
-  versionProbeArgv: z.array(z.string().min(1)).min(1),
+/** Launchability probe only. Versions are diagnostic, never compatibility gates. */
+export const ExecutableProbeSchema = z.strictObject({
+  argv: z.array(z.string().min(1)).min(1),
   sourceCitations: SourceCitationsSchema,
 });
 
@@ -189,7 +176,7 @@ export const ProviderManifestSchema = z.strictObject({
   schemaVersion: z.literal(1),
   surface: ProviderSurfaceIdSchema,
   fixtureSet: citedSchema(z.string().min(1)),
-  versionRange: VersionRangeSchema,
+  executableProbe: ExecutableProbeSchema,
   launchArgv: LaunchArgvContractSchema,
   eventSchemas: z.array(EventSchemaIdentifierSchema).min(1),
   readinessStates: citedSchema(z.array(ReadinessEvidenceKindSchema).min(1)),

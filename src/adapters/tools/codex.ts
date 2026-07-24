@@ -24,6 +24,7 @@ import {
   selectRecoverySessionId,
   type RecoverySessionArtifact,
 } from "./recovery-session";
+import { resolveProviderExecutable } from "./provider-executable";
 
 /** Typed, not a bare string in a template: the token the generated hook
  * dispatches on. A kind the script has no arm for silently never nudges. */
@@ -36,6 +37,7 @@ export interface CodexSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
+  executable?: string;
   /** No-prompt autonomy through config overrides shared by spawn and resume.
    * Read-only sessions keep their filesystem sandbox, but still inherit the
    * user's no-prompt choice. */
@@ -280,7 +282,10 @@ function buildCodexConfigArgs(
 }
 
 export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
-  return ["codex", ...buildCodexConfigArgs(options, { asConfigOverride: false })];
+  return [
+    options.executable ?? "codex",
+    ...buildCodexConfigArgs(options, { asConfigOverride: false }),
+  ];
 }
 
 // Relaunches a crashed agent's recorded rollout (`codex resume [OPTIONS]
@@ -291,11 +296,18 @@ export function buildCodexResumeCommand(
   sessionId: string,
 ): string[] {
   return [
-    "codex",
+    options.executable ?? "codex",
     "resume",
     ...buildCodexConfigArgs(options, { asConfigOverride: true }),
     sessionId,
   ];
+}
+
+export function resolveWorkingCodexExecutable() {
+  return resolveProviderExecutable(
+    "codex",
+    [".local/bin/codex", ".codex/bin/codex"],
+  );
 }
 
 export function codexSessionsDirectory(home = homedir()): string {

@@ -30,7 +30,13 @@ pub fn main() !void {
         defer launcher.deinit();
         try broker.serve(allocator, hive_home, launcher.launcher());
     } else if (std.mem.eql(u8, role, "host")) {
-        try session_host.runHostRole(allocator, hive_home);
+        session_host.runHostRole(allocator, hive_home) catch |err| {
+            // This stderr is inherited by the broker startup log. Preserve the
+            // host's actual boot failure instead of leaving only the broker's
+            // secondary InvalidRegistrationFrame symptom.
+            std.log.err("sessiond host startup failed: {s}", .{@errorName(err)});
+            return err;
+        };
     } else {
         return error.UnsupportedRole;
     }

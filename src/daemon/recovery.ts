@@ -134,6 +134,8 @@ export interface CrashRecoveryDependencies {
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
   claudeExecutable?: string;
+  codexExecutable?: string;
+  grokExecutable?: string;
   /** Config-writer seams so tests can resume into synthetic worktrees; the
    * defaults write the real per-worktree agent configs. A failed write fails
    * the resume — the spawn-time config may name a daemon port this restarted
@@ -185,6 +187,8 @@ export class CrashRecovery {
   private readonly worktreeExists: (path: string) => boolean;
   private readonly wait: Sleep;
   private readonly claudeExecutable: string;
+  private readonly codexExecutable: string;
+  private readonly grokExecutable: string;
   private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
   private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
   private readonly writeCodexConfig: typeof writeCodexAgentConfig;
@@ -228,6 +232,8 @@ export class CrashRecovery {
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
+    this.codexExecutable = deps.codexExecutable ?? "codex";
+    this.grokExecutable = deps.grokExecutable ?? "grok";
     this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
     this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
@@ -720,6 +726,7 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             dangerous,
             worktreePath,
+            executable: this.codexExecutable,
           }, sessionId);
           break;
         }
@@ -734,6 +741,7 @@ export class CrashRecovery {
               : {}),
             worktreePath,
             readOnly: record.readOnly,
+            executable: this.grokExecutable,
           }, sessionId);
           break;
         }

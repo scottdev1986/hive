@@ -66,6 +66,7 @@ export interface WorkspaceOrchestratorSnapshot {
   readonly status: OrchestratorStatus | null;
   readonly host: OrchestratorHostKind;
   readonly hostState: OrchestratorSessiondSnapshot["state"] | null;
+  readonly hostDiagnostic: string | null;
   readonly sessionLocator: RootSessiondLocator | null;
 }
 
@@ -294,7 +295,7 @@ async function getAutonomy(port: number): Promise<Autonomy | null> {
 
 /** `GET /orchestrator-status` with the operator credential: independently
  * measured root turn state and terminal lifecycle. A null turn status stays
- * null; a pending sessiond locator must still reach Workspace for admission. */
+ * null; a sessiond locator is present only after its host is ready. */
 async function getOrchestratorStatus(
   port: number,
 ): Promise<WorkspaceOrchestratorSnapshot | null> {
@@ -307,10 +308,8 @@ async function getOrchestratorStatus(
   );
 }
 
-/** The root's turn status and terminal lifecycle are independent. In
- * particular, a fresh sessiond root has a pending locator before it has any
- * turn boundary. Preserve that locator so Workspace can publish visibility;
- * dropping the whole object on a null status deadlocks host creation. */
+/** The root's turn status and terminal lifecycle are independent. Preserve a
+ * ready locator even before the first turn boundary. */
 export function parseWorkspaceOrchestratorSnapshot(
   value: unknown,
 ): WorkspaceOrchestratorSnapshot | null {
@@ -325,10 +324,13 @@ export function parseWorkspaceOrchestratorSnapshot(
       body.hostState === "failed"
     ? body.hostState
     : null;
+  const hostDiagnostic = typeof body.hostDiagnostic === "string"
+    ? body.hostDiagnostic
+    : null;
   const locator = RootSessiondLocatorSchema.safeParse(body.sessionLocator);
   const sessionLocator = locator.success ? locator.data : null;
   if (host === null || (status === null && sessionLocator === null)) return null;
-  return { status, host, hostState, sessionLocator };
+  return { status, host, hostState, hostDiagnostic, sessionLocator };
 }
 
 /** Keep the feed and daemon lifecycle vocabularies identical. Dropping a
@@ -413,7 +415,7 @@ export async function runWorkspaceFeed(
       const autonomy = await fetchAutonomy(port).catch(() => null);
       // Root turn status and terminal lifecycle ride the same line. Best-effort
       // like autonomy: no turn evidence stays null, while an independently
-      // measured pending locator still reaches Workspace for visibility.
+      // measured ready locator still reaches Workspace before the first turn.
       const orchestrator = await fetchOrchestrator(port).catch(() => null);
       const snapshot = JSON.stringify({ agents, autonomy, orchestrator });
       const heartbeatDue = lastEmitAt === null ||

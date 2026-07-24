@@ -95,8 +95,8 @@ export const RoutingChainSchema = z.array(ChainEntrySchema).refine(
 export const ModelPolicySchema = z.strictObject({
   provider: CapabilityProviderSchema,
   model: ExactModelIdSchema,
-  /** Absent state means the row exists only for effort intent; it never
-   * inherits consent from the provider. Choosing effort must not bless a model. */
+  /** Absent state means the row exists only for effort intent and inherits
+   * the provider switch. An explicit model state overrides that inheritance. */
   state: z.enum(["enabled", "disabled"]).optional(),
   /** Explicit even when unanswered: absence must never acquire AUTO meaning. */
   effort: EffortTargetSchema,
@@ -126,9 +126,9 @@ export const SelectionPolicySchema = z.strictObject({
 export type SelectionPolicy = z.infer<typeof SelectionPolicySchema>;
 
 /**
- * The whole policy document. Only EXPLICIT settings appear: a provider or
- * model with no entry is unconfigured, and the reading helpers below say so
- * rather than inventing a state.
+ * The whole policy document. Only EXPLICIT settings appear: an absent provider
+ * is unconfigured; under an enabled provider, an absent model state inherits
+ * that provider until the user explicitly disables the model.
  */
 export const RoutingPolicySchema = z.strictObject({
   schemaVersion: z.literal(2),
@@ -298,10 +298,9 @@ export function providerPolicyState(
 
 /**
  * The effective per-model reading: provider-off overrides everything under
- * it; an absent model row remains unconfigured even under an enabled provider.
- * Provider enablement is a master switch, not consent for every model the
- * vendor may discover tomorrow. `source` names which row answered, so a UI can show
- * effective-vs-preference without re-deriving the rule.
+ * it; under an enabled provider, an explicit model row answers next and an
+ * absent state inherits the provider. `source` names which row answered, so a
+ * UI can show effective-vs-preference without re-deriving the rule.
  */
 export function modelPolicyState(
   policy: RoutingPolicy,
@@ -318,5 +317,5 @@ export function modelPolicyState(
     (entry) => entry.provider === provider && entry.model === model,
   );
   if (row?.state !== undefined) return { state: row.state, source: "model" };
-  return { state: "unconfigured", source: "none" };
+  return { state: "enabled", source: "provider" };
 }

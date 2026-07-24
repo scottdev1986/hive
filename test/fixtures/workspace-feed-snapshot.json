@@ -26,6 +26,7 @@
     "status": "working",
     "host": "tmux",
     "hostState": null,
+    "hostDiagnostic": null,
     "sessionLocator": null
   }
 }

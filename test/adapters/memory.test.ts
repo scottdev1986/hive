@@ -71,6 +71,30 @@ describe("raw observations and compiled articles", () => {
     )).toContain("ingest | The login test is flaky");
   });
 
+  test("normalizes NUL bytes before writing memory text", async () => {
+    const root = await makeRoot();
+    const written = await writeMemoryFact(root, input({
+      title: "NUL\0 title",
+      body: "Body\0 text",
+      evidence: "Evidence\0 text",
+      tags: ["tag\0value"],
+    }));
+    const paths = [
+      written.rawPath,
+      written.path,
+      join(getRepoMemoryRoot(root), "wiki", "index.md"),
+      join(getRepoMemoryRoot(root), "wiki", "log.md"),
+    ];
+
+    expect(written.title).toBe("NUL\uFFFD title");
+    expect(written.body).toBe("Body\uFFFD text");
+    for (const path of paths) {
+      const contents = await readFile(path, "utf8");
+      expect(contents).not.toContain("\0");
+      expect(contents).toContain("\uFFFD");
+    }
+  });
+
   test("updating an article preserves both raw observations and supersession", async () => {
     const root = await makeRoot();
     const first = await writeMemoryFact(root, input({ id: "login-flake" }));
@@ -258,6 +282,23 @@ describe("spawn index", () => {
     expect(index.indexOf("newer")).toBeLessThan(index.indexOf("older"));
     expect(index).toContain("[global/delivery]");
     expect(index).not.toContain("A body that must not be injected");
+  });
+
+  test("normalizes NUL bytes found in a pre-existing compiled article", async () => {
+    const root = await makeRoot();
+    const written = await writeMemoryFact(root, input({ id: "legacy-nul" }));
+    const contaminated = (await readFile(written.path, "utf8"))
+      .replace("The login test", "The login\0 test");
+    await writeFile(written.path, contaminated);
+
+    const index = await buildMemoryIndex(root);
+
+    expect(index).not.toContain("\0");
+    expect(index).toContain("The login\uFFFD test");
+    expect(await readFile(
+      join(getRepoMemoryRoot(root), "wiki", "index.md"),
+      "utf8",
+    )).not.toContain("\0");
   });
 
   test("caps the always-paid surface at 30 article rows", async () => {

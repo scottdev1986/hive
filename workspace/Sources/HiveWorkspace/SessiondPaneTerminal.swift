@@ -22,16 +22,10 @@ final class SessiondPaneTerminal {
     private var transport: UdsHostTransport?
     private var detached = false
     private var attachInFlight = false
-    private var geometryPollTimer: Timer?
-    /// #81: how long the geometry poll stays quiet before it reports that it is
-    /// still waiting. It keeps polling either way.
-    let geometryWaitSeconds: TimeInterval = 10
-    /// Test seam: shorten the bound so the row runs without the wall-clock.
-    var geometryWaitOverride: TimeInterval?
-    private var geometryWaitStarted: Date?
-    private(set) var waitingForGeometry = false
+    private(set) var hasStarted = false
 
     private var reconnectFailures = 0
+    private var hasAttachedSuccessfully = false
     private(set) var degraded = false
     /// Reserved for conditions retrying cannot fix. A recoverable loss must
     /// never land here: a resting "renderer disconnected" pane is the defect
@@ -100,72 +94,22 @@ final class SessiondPaneTerminal {
         return terminal
     }
 
-    /// Begins attaching once the surface has measured a usable grid. Geometry
-    /// is grant-bound (§19), so the attach waits for the engine's real
-    /// font/grid measurement rather than guessing from bounds.
-    ///
-    /// #81: the wait used to be unbounded and silent — a pane whose surface
-    /// never measured a usable grid sat empty forever with no badge, no
-    /// give-up and nothing in workspace.log. It is bounded now, but bounded
-    /// into a VISIBLE wait rather than a failure: geometry becomes usable the
-    /// moment the pane is given room, so latching here would recreate the dead
-    /// pane #90 rules out. Say so once, keep polling, clear on success.
-    func startWhenGeometryReady() {
-        guard geometryPollTimer == nil, !detached else { return }
-        geometryWaitStarted = Date()
-        let timer = Timer(timeInterval: 0.05, repeats: true) { [weak self] timer in
-            guard let self else {
-                timer.invalidate()
-                return
-            }
-            if self.detached {
-                timer.invalidate()
-                self.geometryPollTimer = nil
-                return
-            }
-            guard let geometry = self.view?.reportedGeometry, geometry.isUsable else {
-                self.noteGeometryWaitElapsed()
-                return
-            }
-            timer.invalidate()
-            self.geometryPollTimer = nil
-            self.clearGeometryWait()
-            // Apply C1 theme BEFORE attach so journal replay paints onto the
-            // themed surface. applyHiveConfiguration after processOutput can
-            // wipe the VT (blank pane while journal is full — hubert finding).
-            self.view?.prepareThemeBeforeAttach()
-            self.beginAttach(afterSeq: 0)
-        }
-        geometryPollTimer = timer
-        RunLoop.main.add(timer, forMode: .common)
-    }
-
-    /// Surfaces the geometry wait once it passes the bound. Idempotent: the
-    /// poll runs 20x a second and the user needs one notice, not a stream.
-    private func noteGeometryWaitElapsed() {
-        guard !waitingForGeometry, let started = geometryWaitStarted else { return }
-        let bound = geometryWaitOverride ?? geometryWaitSeconds
-        guard Date().timeIntervalSince(started) >= bound else { return }
-        waitingForGeometry = true
-        let evidence = "surface has not measured a usable grid after \(bound)s"
-        NSLog("sessiond pane %@ still waiting for geometry: %@", agentName, evidence)
-        onDegraded?(evidence)
-    }
-
-    private func clearGeometryWait() {
-        geometryWaitStarted = nil
-        guard waitingForGeometry else { return }
-        waitingForGeometry = false
-        NSLog("sessiond pane %@ geometry became usable", agentName)
-        onRecovered?()
+    /// Starts immediately with the surface's current size or a conventional
+    /// 80×24 terminal. Later layout changes use the normal resize path.
+    func start() {
+        guard !hasStarted, !detached else { return }
+        hasStarted = true
+        // Apply C1 theme BEFORE attach so journal replay paints onto the
+        // themed surface. applyHiveConfiguration after processOutput can
+        // wipe the VT (blank pane while journal is full — hubert finding).
+        view?.prepareThemeBeforeAttach()
+        beginAttach(afterSeq: 0)
     }
 
     /// Renderer detach only: the logical pane, the session, and the daemon's
     /// close/kill authority are untouched (§26 — detach never claims close).
     func detach() {
         detached = true
-        geometryPollTimer?.invalidate()
-        geometryPollTimer = nil
         stopRecovery()
         // #40: clean release before transport close so host claim does not orphan.
         view?.releaseClaimBestEffort()
@@ -177,11 +121,8 @@ final class SessiondPaneTerminal {
 
     private func beginAttach(afterSeq: UInt64) {
         guard !detached, !attachInFlight, !gaveUp else { return }
-        guard let geometry = view?.reportedGeometry, geometry.isUsable else {
-            NSLog("sessiond attach for %@ skipped: no usable geometry yet", agentName)
-            scheduleReconnect()
-            return
-        }
+        let reported = view?.reportedGeometry
+        let geometry = reported?.isUsable == true ? reported! : Self.defaultGeometry
         attachInFlight = true
         let geometryJSON = Self.encodeGeometry(geometry)
         DispatchQueue.global(qos: .userInitiated).async { [weak self] in
@@ -311,6 +252,14 @@ final class SessiondPaneTerminal {
 
     private func recordRecoverableFailure(_ evidence: String) {
         guard !gaveUp, !detached else { return }
+        // Before the first live attach there is nothing to reconnect. The
+        // daemon publishes a root as running only after host creation, so an
+        // initial refusal is a real launch/contract failure and retrying it
+        // forever merely hides the evidence.
+        guard hasAttachedSuccessfully else {
+            failAttach(evidence)
+            return
+        }
         reconnectFailures += 1
         lastFailure = evidence
         if reconnectFailures >= failuresBeforeDegraded, !degraded {
@@ -332,6 +281,7 @@ final class SessiondPaneTerminal {
     /// An attach went live. Clears the budget so a later transient loss starts
     /// fresh, and lifts a degraded pane back to healthy.
     func noteLiveAttach() {
+        hasAttachedSuccessfully = true
         stopRecovery()
         reconnectFailures = 0
         lastFailure = nil
@@ -433,6 +383,15 @@ final class SessiondPaneTerminal {
             ?? Data("{}".utf8)
         return String(data: data, encoding: .utf8) ?? "{}"
     }
+
+    private static let defaultGeometry = TerminalGeometry(
+        columns: 80,
+        rows: 24,
+        widthPx: 800,
+        heightPx: 480,
+        cellWidthPx: 10,
+        cellHeightPx: 20
+    )
 }
 
 enum SessiondPaneTerminalError: Error, CustomStringConvertible {

@@ -17,11 +17,9 @@
 // WHITELIST: runtime state is never linked, whatever the real home contains.
 //
 // Rules (tested in dev-memory-setup.test.ts):
-//   - The real memory/ and projects/ dirs are created when absent, so dev
-//     can write them into being on a fresh machine.
-//   - models/ and project-registry.json are linked only when the real path
-//     already exists (prod creates them on first use; a fresh machine has
-//     nothing to share yet).
+//   - The real memory/, projects/, and models/ dirs plus an empty valid
+//     project-registry.json are created when absent, so a dev-first machine
+//     shares one identity and memory store with a later installed release.
 //   - A dev path that already exists as a REAL directory/file is never
 //     deleted or merged: a non-empty one (pre-existing dev-only memory)
 //     gets a loud warning with manual reconcile steps and stays untouched.
@@ -32,7 +30,7 @@
 // the dev home with `rm -rf` — which unlinks symlinks without following
 // them, so the real ~/.hive is unreachable from clean (audited 2026-07-23;
 // see the comment on the clean target).
-import { lstat, mkdir, readlink, rm, symlink } from "node:fs/promises";
+import { lstat, mkdir, readlink, rm, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { join } from "node:path";
 
@@ -49,7 +47,7 @@ export const SHARED_STATE_NAMES = [
 
 /** Real-home entries created when absent, so dev can write them into
  * being. */
-export const REAL_DIRS_CREATED = ["memory", "projects"] as const;
+export const REAL_DIRS_CREATED = ["memory", "projects", "models"] as const;
 
 export interface ShareResult {
   /** Names now symlinked dev → real (already correct counts). */
@@ -64,6 +62,9 @@ export interface ShareResult {
 
 const isEnoent = (error: unknown): boolean =>
   (error as NodeJS.ErrnoException).code === "ENOENT";
+
+const isEexist = (error: unknown): boolean =>
+  (error as NodeJS.ErrnoException).code === "EEXIST";
 
 /**
  * Link the real home's memory state into `devHome` per the header's rules.
@@ -84,6 +85,13 @@ export async function shareMemoryState(
   for (const name of REAL_DIRS_CREATED) {
     await mkdir(join(realHome, name), { recursive: true });
   }
+  await writeFile(
+    join(realHome, "project-registry.json"),
+    '{"records":[],"tombstones":[]}',
+    { flag: "wx" },
+  ).catch((error: unknown) => {
+    if (!isEexist(error)) throw error;
+  });
   for (const name of SHARED_STATE_NAMES) {
     const realPath = join(realHome, name);
     const devPath = join(devHome, name);

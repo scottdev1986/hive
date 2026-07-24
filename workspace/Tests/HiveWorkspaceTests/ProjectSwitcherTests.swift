@@ -24,7 +24,7 @@ final class ProjectSwitcherTests: XCTestCase {
 
         let refreshedLabels = labelValues()
         XCTAssertTrue(
-            refreshedLabels.contains("2 panes · 2 running"),
+            refreshedLabels.contains("2 panes · 1 running"),
             "rendered labels: \(refreshedLabels)")
         let labels = NSApp.windows
             .filter { $0.title == "Projects" }

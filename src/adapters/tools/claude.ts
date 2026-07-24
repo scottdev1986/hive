@@ -29,6 +29,11 @@ import {
   selectRecoverySessionId,
   type RecoverySessionArtifact,
 } from "./recovery-session";
+import {
+  probeProviderExecutable,
+  providerExecutableCandidates,
+  resolveProviderExecutable,
+} from "./provider-executable";
 
 export interface ClaudeSpawnOptions {
   name: string;
@@ -122,19 +127,9 @@ export async function detectClaudeCliVersion(
  * never opens a session (a guessed subcommand, by contrast, becomes a billable
  * prompt). Null means this executable cannot launch anything. */
 export function probeClaudeVersion(executable: string): string | null {
-  try {
-    const result = Bun.spawnSync([executable, "--version"], {
-      stdin: "ignore",
-      stdout: "pipe",
-      stderr: "ignore",
-      timeout: VERSION_PROBE_TIMEOUT_MS,
-      killSignal: "SIGKILL",
-    });
-    if (result.exitCode !== 0) return null;
-    return /(\d+\.\d+\.\d+)/.exec(result.stdout.toString())?.[1] ?? null;
-  } catch {
-    return null;
-  }
+  const output = probeProviderExecutable(executable, VERSION_PROBE_TIMEOUT_MS);
+  if (output === null) return null;
+  return /(\d+\.\d+\.\d+)/.exec(output)?.[1] ?? "unknown";
 }
 
 /** Candidate installations in preference order: every PATH entry, then the
@@ -144,22 +139,11 @@ export function probeClaudeVersion(executable: string): string | null {
 export function claudeExecutableCandidates(
   env: Record<string, string | undefined> = process.env,
 ): string[] {
-  const home = env.HOME ?? homedir();
-  const fromPath = (env.PATH ?? "")
-    .split(":")
-    .filter((dir) => dir.length > 0)
-    .map((dir) => join(dir, "claude"));
-  const known = [
-    join(home, ".local", "bin", "claude"),
-    join(home, ".claude", "local", "claude"),
-  ];
-  const candidates: string[] = [];
-  for (const candidate of [...fromPath, ...known]) {
-    if (!candidates.includes(candidate) && existsSync(candidate)) {
-      candidates.push(candidate);
-    }
-  }
-  return candidates;
+  return providerExecutableCandidates(
+    "claude",
+    [".local/bin/claude", ".claude/local/claude"],
+    env,
+  );
 }
 
 export interface ResolvedClaudeExecutable {
@@ -176,13 +160,8 @@ export function resolveWorkingClaudeExecutable(
   probe: (executable: string) => string | null = probeClaudeVersion,
   candidates: () => string[] = claudeExecutableCandidates,
 ): ResolvedClaudeExecutable {
-  for (const candidate of candidates()) {
-    const version = probe(candidate);
-    if (version !== null) {
-      return { path: candidate, version };
-    }
-  }
-  return { path: "claude", version: null };
+  return resolveProviderExecutable("claude", [], probe, candidates) ??
+    { path: "claude", version: null };
 }
 
 const shellToken = (value: string): string => {

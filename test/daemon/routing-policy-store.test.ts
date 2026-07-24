@@ -114,7 +114,7 @@ describe("fail-closed reading", () => {
     expect(() => store.read(NOW)).toThrow(RoutingPolicyCorruptError);
   });
 
-  test("provider-off overrides an explicitly enabled model; provider enablement never consents to unlisted models", () => {
+  test("provider-off overrides a model; provider enablement covers models not explicitly disabled", () => {
     let policy = store.apply(
       { op: "set-provider", expectedRevision: 0, provider: "claude", state: "enabled" },
       "test",
@@ -145,7 +145,7 @@ describe("fail-closed reading", () => {
       NOW,
     );
     expect(modelPolicyState(policy, "claude", "claude-unlisted"))
-      .toEqual({ state: "unconfigured", source: "none" });
+      .toEqual({ state: "enabled", source: "provider" });
     expect(modelPolicyState(policy, "codex", "gpt-anything"))
       .toEqual({ state: "unconfigured", source: "none" });
   });
@@ -763,13 +763,13 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
     const isModelEnabled = policyModelEnablement(store);
     expect(await isModelEnabled("claude", "claude-fable-5"))
       .toEqual({
-        refusal: "claude-fable-5 cannot launch because exact model consent is not enabled " +
-          "under provider claude; enable both in the Model Control Center",
+        refusal: "claude-fable-5 cannot launch because provider claude is not enabled " +
+          "in the Model Control Center",
       });
     expect(await isModelEnabled("codex", "gpt-5.6-sol"))
       .toEqual({
-        refusal: "gpt-5.6-sol cannot launch because exact model consent is not enabled " +
-          "under provider codex; enable both in the Model Control Center",
+        refusal: "gpt-5.6-sol cannot launch because provider codex is not enabled " +
+          "in the Model Control Center",
       });
   });
 
@@ -783,23 +783,12 @@ describe("the spawner join — policyModelEnablement answers the AuthorizedLaunc
     const isModelEnabled = policyModelEnablement(store);
     expect(await isModelEnabled("grok", "grok-4.5"))
       .toEqual({
-        refusal: "grok-4.5 cannot launch because exact model consent is not enabled " +
-          "under provider grok; enable both in the Model Control Center",
+        refusal: "grok-4.5 cannot launch because provider grok is not enabled " +
+          "in the Model Control Center",
       });
 
     store.apply(
       { op: "set-provider", expectedRevision: 1, provider: "grok", state: "enabled" },
-      "the-user",
-      NOW,
-    );
-    store.apply(
-      {
-        op: "set-model",
-        expectedRevision: 2,
-        provider: "grok",
-        model: "grok-4.5",
-        state: "enabled",
-      },
       "the-user",
       NOW,
     );

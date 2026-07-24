@@ -22,18 +22,10 @@ export const CLAUDE_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.pars
       "src/adapters/tools/__fixtures__/tg4/corpus.ts (claude-tui scenarios)",
     ],
   },
-  versionRange: {
-    supportedMin: "2.1.206",
-    supportedMax: "2.1.207",
-    measuredExamples: ["2.1.206", "2.1.207"],
-    unknownVersionPolicy:
-      "interactive-ok-automatic-features-disabled-until-classified",
-    versionProbeArgv: ["claude", "--version"],
+  executableProbe: {
+    argv: ["claude", "--version"],
     sourceCitations: [
-      "src/adapters/tools/claude.ts:99-125 (probeClaudeVersion)",
-      "test/adapters/tools/claude.test.ts:214-218,814-818 (measured 2.1.206)",
-      "src/schemas/event.ts:43-47 (notification_type measured against claude 2.1.207)",
-      "docs/design/terminal-stack-transition.html §25 version-support panel",
+      "src/adapters/tools/provider-executable.ts (launchability probe and candidate scan)",
     ],
   },
   launchArgv: {
@@ -171,17 +163,10 @@ export const CODEX_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse
       "src/adapters/tools/__fixtures__/tg4/corpus.ts (codex-tui scenarios)",
     ],
   },
-  versionRange: {
-    supportedMin: "0.144.0",
-    supportedMax: "0.144.1",
-    measuredExamples: ["0.144.0", "0.144.1"],
-    unknownVersionPolicy:
-      "interactive-ok-automatic-features-disabled-until-classified",
-    versionProbeArgv: ["codex", "--version"],
+  executableProbe: {
+    argv: ["codex", "--version"],
     sourceCitations: [
-      "src/adapters/tools/codex.ts:82,157 (verified against codex 0.144.1)",
-      "test/adapters/tools/codex.test.ts:134,157,633 (0.144.0 / 0.144.1)",
-      "docs/design/terminal-stack-transition.html §25 version-support panel",
+      "src/adapters/tools/provider-executable.ts (launchability probe and candidate scan)",
     ],
   },
   launchArgv: {
@@ -338,17 +323,10 @@ export const CODEX_APP_SERVER_MANIFEST: ProviderManifest = ProviderManifestSchem
       "src/adapters/tools/__fixtures__/tg4/corpus.ts (codex-app-server scenarios)",
     ],
   },
-  versionRange: {
-    supportedMin: "0.144.1",
-    supportedMax: "0.144.1",
-    measuredExamples: ["0.144.1"],
-    unknownVersionPolicy:
-      "interactive-ok-automatic-features-disabled-until-classified",
-    versionProbeArgv: ["codex", "--version"],
+  executableProbe: {
+    argv: ["codex", "--version"],
     sourceCitations: [
-      "src/adapters/tools/codex-app-server.ts:722-751 (buildCodexAppServerCommand)",
-      "src/daemon/capability-discovery.ts:279 (codex-cli 0.144.1 model/list)",
-      "docs/design/terminal-stack-transition.html §25 version-support panel",
+      "src/adapters/tools/provider-executable.ts (launchability probe and candidate scan)",
     ],
   },
   launchArgv: {
@@ -487,17 +465,10 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
       "src/adapters/tools/__fixtures__/tg4/corpus.ts (grok-tui scenarios)",
     ],
   },
-  versionRange: {
-    supportedMin: "0.2.101",
-    supportedMax: "0.2.101",
-    measuredExamples: ["0.2.101"],
-    unknownVersionPolicy:
-      "interactive-ok-automatic-features-disabled-until-classified",
-    versionProbeArgv: ["grok", "--version"],
+  executableProbe: {
+    argv: ["grok", "--version"],
     sourceCitations: [
-      "src/adapters/tools/grok.ts:58-88 (GROK_VERSION_PATTERN / probeGrokCliVersion)",
-      "test/adapters/tools/grok.test.ts:97-127 (measured 0.2.101)",
-      "docs/design/terminal-stack-transition.html §25 version-support panel",
+      "src/adapters/tools/provider-executable.ts (launchability probe and candidate scan)",
     ],
   },
   launchArgv: {
@@ -678,7 +649,7 @@ export function allProviderManifests(): ProviderManifest[] {
 
 /**
  * Walk every sourceCitations list on a manifest (for tests).
- * Returns paths like "versionRange", "readinessStates", "eventSchemas[0]", ...
+ * Returns paths like "executableProbe", "readinessStates", "eventSchemas[0]", ...
  */
 export function collectManifestCitationPaths(
   manifest: ProviderManifest,
@@ -689,8 +660,8 @@ export function collectManifestCitationPaths(
     citations: manifest.fixtureSet.sourceCitations,
   });
   rows.push({
-    path: "versionRange",
-    citations: manifest.versionRange.sourceCitations,
+    path: "executableProbe",
+    citations: manifest.executableProbe.sourceCitations,
   });
   rows.push({
     path: "launchArgv",

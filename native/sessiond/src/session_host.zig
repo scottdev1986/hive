@@ -81,16 +81,14 @@ const readRequiredFrame = host_wire.readRequiredFrame;
 const writeHostFailure = host_wire.writeFailure;
 const host_registration = @import("host_registration");
 pub const serveInheritedRegistration = host_registration.serveInheritedRegistration;
-pub const serveRegistrationAfterBoot = host_registration.serveRegistrationAfterBoot;
+pub const sendReadyAfterBoot = host_registration.sendReadyAfterBoot;
 pub const ParsedRegistration = host_registration.ParsedRegistration;
 const promoteTrustedExecutableEvidence = host_registration.promoteTrustedExecutableEvidence;
 const parseLocator = host_registration.parseLocator;
 const parseRegistration = host_registration.parseRegistration;
-const PendingRegistrationReadback = host_registration.PendingRegistrationReadback;
-const beginInheritedRegistration = host_registration.beginInheritedRegistration;
-const acceptPendingRegistration = host_registration.acceptPendingRegistration;
+const launchFreshChild = host_registration.launchFreshChild;
+const acknowledgeFreshChild = host_registration.acknowledgeFreshChild;
 const writeHostWelcome = host_registration.writeHostWelcome;
-pub const completeInheritedRegistration = host_registration.completeInheritedRegistration;
 const validatedHostLeaseRemaining = host_registration.validatedLeaseRemaining;
 const WireHello = host_registration.WireHello;
 
@@ -779,8 +777,10 @@ fn pumpAttachedViewer(
                         continue;
                     }
                 }
-                detachAttachedViewer(allocator, core, viewer_slot, state, timer.read());
-                return;
+                // A malformed or impossible acknowledgement cannot erase or
+                // disconnect a healthy terminal. Ignore it; valid later acks
+                // still advance the same monotonically fenced cursor.
+                continue;
             }
             handleViewerFrame(
                 allocator,
@@ -905,13 +905,15 @@ fn validateSpawnStrings(
     expected_executable: []const u8,
     argv: []const []const u8,
 ) !void {
-    if (argv.len == 0 or !std.fs.path.isAbsolute(cwd) or
-        std.mem.indexOfScalar(u8, cwd, 0) != null or
-        std.mem.indexOfScalar(u8, expected_executable, 0) != null)
-        return error.InvalidCreateSpec;
+    if (argv.len == 0) return error.EmptyProviderCommand;
+    if (!std.fs.path.isAbsolute(cwd) or
+        std.mem.indexOfScalar(u8, cwd, 0) != null)
+        return error.InvalidWorkingDirectory;
+    if (std.mem.indexOfScalar(u8, expected_executable, 0) != null)
+        return error.InvalidExpectedExecutable;
     for (argv) |argument| {
         if (std.mem.indexOfScalar(u8, argument, 0) != null)
-            return error.InvalidCreateSpec;
+            return error.InvalidProviderArgument;
     }
 }
 
@@ -1377,6 +1379,21 @@ pub fn runHostRole(
 ) !void {
     const control: std.net.Stream = .{ .handle = inherited_control_fd };
     defer control.close();
+    runHostRoleWithControl(allocator, hive_home, control) catch |err| {
+        host_registration.sendStartupFailure(
+            allocator,
+            control,
+            err,
+        ) catch {};
+        return err;
+    };
+}
+
+fn runHostRoleWithControl(
+    allocator: std.mem.Allocator,
+    hive_home: []const u8,
+    control: std.net.Stream,
+) !void {
     try setControlTimeout(control.handle);
     const control_file: std.fs.File = .{ .handle = control.handle };
     var boot = try readBootMessage(allocator, control_file.deprecatedReader());
@@ -1386,7 +1403,7 @@ pub fn runHostRole(
         allocator,
         generated.wire_schema.create_begin_payload,
         boot.spec_json,
-    )) return error.InvalidCreateSpec;
+    )) return error.InvalidCreatePayload;
     var spec = try std.json.parseFromSlice(WireCreateSpec, allocator, boot.spec_json, .{
         .ignore_unknown_fields = true,
         // The boot envelope is scrubbed once its input and adoption secret
@@ -1394,7 +1411,7 @@ pub fn runHostRole(
         .allocate = .alloc_always,
     });
     defer spec.deinit();
-    if (spec.value.schemaVersion != 1) return error.InvalidCreateSpec;
+    if (spec.value.schemaVersion != 1) return error.InvalidCreateSchemaVersion;
     try validateSpawnStrings(
         spec.value.cwd,
         spec.value.expectedExecutable,
@@ -1649,15 +1666,13 @@ pub fn runHostRole(
         if (response) |bytes| allocator.free(bytes);
     };
 
-    const broker_build_id = try serveRegistrationAfterBoot(
+    try sendReadyAfterBoot(
         allocator,
         control,
         core.registration,
-        host_build_id,
-        start_ns,
     );
-    defer allocator.free(broker_build_id);
-    core.broker_build_id = broker_build_id;
+    try host_registration.waitForReadyAcknowledgement(allocator, control);
+    core.broker_build_id = host_build_id;
     try runHostLoop(
         &runtime,
         &neutral_registry,
@@ -1795,11 +1810,11 @@ test "spawn strings reject C ABI truncation with a valid control" {
 
     const invalid_argv = [_][]const u8{"/bin/sh\x00ignored"};
     try std.testing.expectError(
-        error.InvalidCreateSpec,
+        error.InvalidProviderArgument,
         validateSpawnStrings("/tmp", "/bin/sh", &invalid_argv),
     );
     try std.testing.expectError(
-        error.InvalidCreateSpec,
+        error.InvalidWorkingDirectory,
         validateSpawnStrings("/tmp\x00ignored", "/bin/sh", &valid_argv),
     );
 }
@@ -2492,8 +2507,6 @@ const RegistrationThread = struct {
             std.heap.c_allocator,
             self.stream,
             self.registration,
-            self.registration.record.executable_build_hash,
-            99,
         ) catch |err| {
             self.failure = err;
             return;
@@ -2511,7 +2524,7 @@ fn socketPair() ![2]std.net.Stream {
     };
 }
 
-test "inherited control fd completes HELLO and HOST_REGISTER before publication" {
+test "fresh child receives private boot and returns one READY registration" {
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
@@ -2532,16 +2545,17 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
         thread.join();
     };
     const secret: [32]u8 = @splat(0x5a);
-    var parsed = try completeInheritedRegistration(
+    var ready = try launchFreshChild(
         std.testing.allocator,
         sockets[0],
         "{\"schemaVersion\":1}",
         "initial",
         secret,
-        "broker-build-a",
+        "host-build-a",
         "instance-a",
     );
-    defer parsed.deinit(std.testing.allocator);
+    defer ready.parsed.deinit(std.testing.allocator);
+    try acknowledgeFreshChild(sockets[0], ready.request_header);
     thread.join();
     thread_joined = true;
     try std.testing.expect(host.failure == null);
@@ -2551,56 +2565,36 @@ test "inherited control fd completes HELLO and HOST_REGISTER before publication"
     try std.testing.expectEqualSlices(u8, &secret, &boot.adoption_secret);
     try std.testing.expectEqualStrings(
         fixtureRegistration().record.locator.session_id,
-        parsed.registration.record.locator.session_id,
+        ready.parsed.registration.record.locator.session_id,
     );
     try std.testing.expect(
-        parsed.registration.record.visibility.expires_mono_ns > 0 and
-            parsed.registration.record.visibility.expires_mono_ns <=
+        ready.parsed.registration.record.visibility.expires_mono_ns > 0 and
+            ready.parsed.registration.record.visibility.expires_mono_ns <=
                 generated.limits.visibility_expiry_ms * std.time.ns_per_ms,
     );
 }
 
-test "pending HOST_REGISTER remains unpublished after a typed rejection" {
+test "fresh child reports its real startup failure instead of an invalid frame" {
     var sockets = try socketPair();
     defer sockets[0].close();
     defer sockets[1].close();
-    var expiry_storage: [24]u8 = undefined;
-    var registration = fixtureRegistration();
-    registration.expires_at = try broker.wallDeadline(
-        &expiry_storage,
-        generated.limits.visibility_expiry_ms,
-    );
-    var host: RegistrationThread = .{
-        .stream = sockets[1],
-        .registration = registration,
-    };
-    const thread = try std.Thread.spawn(.{}, RegistrationThread.run, .{&host});
-    var thread_joined = false;
-    defer if (!thread_joined) {
-        _ = c.shutdown(sockets[0].handle, c.SHUT_RDWR);
-        thread.join();
-    };
-    var pending = try beginInheritedRegistration(
+    try host_registration.sendStartupFailure(
         std.testing.allocator,
-        sockets[0],
-        "{\"schemaVersion\":1}",
-        "initial",
-        @splat(0x6b),
-        "broker-build-a",
-        "instance-a",
+        sockets[1],
+        error.ProviderExecFailed,
     );
-    defer pending.parsed.deinit(std.testing.allocator);
-    try writeHostFailure(
-        std.testing.allocator,
-        sockets[0],
-        pending.request_header,
-        .not_ready,
+    try std.testing.expectError(
+        error.FreshChildFailed,
+        launchFreshChild(
+            std.testing.allocator,
+            sockets[0],
+            "{\"schemaVersion\":1}",
+            "",
+            @splat(0),
+            "host-build-a",
+            "instance-a",
+        ),
     );
-    thread.join();
-    thread_joined = true;
-    const failure = host.failure orelse return error.MissingHostRejection;
-    try std.testing.expectEqualStrings("HostRegistrationRefused", @errorName(failure));
-    try std.testing.expect(host.boot == null);
 }
 
 test "HostLauncher positive control observes failed same-role exec" {
@@ -2641,12 +2635,8 @@ test "production launcher restores trusted executable evidence after frozen regi
     ) != null);
 }
 
-test "admitted HOST_REGISTER write failure reaps and removes the launch client" {
+test "failed READY acknowledgement reaps and removes the launch client" {
     var sockets = try socketPair();
-    var pending_stream_open = true;
-    defer {
-        if (pending_stream_open) sockets[0].close();
-    }
     defer sockets[1].close();
     const no_sigpipe: c_int = 1;
     if (c.setsockopt(
@@ -2661,8 +2651,6 @@ test "admitted HOST_REGISTER write failure reaps and removes the launch client" 
     const pid = c.fork();
     if (pid < 0) return error.HostForkFailed;
     if (pid == 0) {
-        sockets[0].close();
-        sockets[1].close();
         c._exit(0);
     }
     var child_reaped = false;
@@ -2708,7 +2696,7 @@ test "admitted HOST_REGISTER write failure reaps and removes the launch client" 
         .adoption_secret = @splat(0),
         .pending_id = 1,
         .pending_stream = sockets[0],
-        .pending_header = .{
+        .ready_header = .{
             .minor = generated.protocol_minor,
             .type_code = generated.frame_type.host_register,
             .flags = 0,
@@ -2720,7 +2708,6 @@ test "admitted HOST_REGISTER write failure reaps and removes the launch client" 
     try launcher.clients.append(std.testing.allocator, client);
     parsed_owned = false;
     wire_owned = false;
-    pending_stream_open = false;
 
     try std.testing.expect(!try launcher.finalizeOne(1, .admitted));
     var status: c_int = 0;

@@ -55,11 +55,20 @@ import {
   SessiondBrokerUnavailableError,
   type LandedTerminalHost,
 } from "../../src/daemon/session-host/sessiond-host";
+import { RootSessiondLocatorSchema } from "../../src/daemon/orchestrator-host";
 
 const home = mkdtempSync(join(tmpdir(), "hive-server-test-"));
 process.env.HIVE_HOME = home;
 
 const timestamp = "2026-07-09T12:00:00.000Z";
+const measuredGeometry = {
+  columns: 153,
+  rows: 39,
+  widthPx: 1530,
+  heightPx: 780,
+  cellWidthPx: 10,
+  cellHeightPx: 20,
+};
 
 function machineCoordinator(
   path: string,
@@ -248,6 +257,7 @@ test("only the operator may publish a live advancing Workspace inventory", async
       agentName: "visible",
       locator,
       state: "pending",
+      geometry: measuredGeometry,
     }],
   };
   const request = (revision: string) => ({
@@ -295,7 +305,7 @@ test("only the operator may publish a live advancing Workspace inventory", async
   }
 });
 
-test("the sessiond queen endpoint publishes one exact root generation before create", async () => {
+test("the sessiond queen endpoint never publishes a locator before create", async () => {
   const db = new HiveDatabase(":memory:");
   const instanceId = hiveInstanceSuffix();
   const engineBuildId = "engine-root-endpoint";
@@ -348,23 +358,6 @@ test("the sessiond queen endpoint publishes one exact root generation before cre
     expectedExecutable: "codex",
   };
   try {
-    const started = await operator("http://hive/orchestrator-session", {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(launch),
-    });
-    expect(started.status).toBe(202);
-    const pending = await started.json() as {
-      locator: Parameters<LandedTerminalHost["renewVisibility"]>[0];
-    };
-    expect(pending.locator).toMatchObject({
-      instanceId,
-      subject: { kind: "root" },
-      hostKind: "sessiond",
-      engineBuildId,
-    });
-    expect(events).toEqual([]);
-
     const published = await operator("http://hive/workspace-visibility", {
       method: "POST",
       headers: { "content-type": "application/json" },
@@ -378,38 +371,23 @@ test("the sessiond queen endpoint publishes one exact root generation before cre
           },
         },
         inventoryRevision: workspace.openTerminalRevision,
-        terminals: [{
-          agentId: ROOT_VISIBILITY_ID,
-          agentName: ORCHESTRATOR_NAME,
-          locator: pending.locator,
-          state: "pending",
-        }],
+        terminals: [],
       }),
     });
     expect(published.status).toBe(200);
 
-    for (let attempt = 0; attempt < 20 && events.length === 0; attempt += 1) {
-      await Bun.sleep(10);
-    }
-    expect(events).toEqual(["create"]);
-    const observed = await operator(
-      `http://hive/orchestrator-session?requestId=${launch.requestId}`,
-    );
-    expect(observed.status).toBe(200);
-    expect(await observed.json()).toMatchObject({
-      requestId: launch.requestId,
-      locator: pending.locator,
-      state: "failed",
-      diagnostic: "fixture stops after proving admitted create",
-    });
-
-    const retry = await operator("http://hive/orchestrator-session", {
+    const started = await operator("http://hive/orchestrator-session", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(launch),
     });
-    expect(retry.status).toBe(200);
+    expect(started.status).toBe(409);
     expect(events).toEqual(["create"]);
+    const observed = await operator(
+      `http://hive/orchestrator-session?requestId=${launch.requestId}`,
+    );
+    expect(observed.status).toBe(404);
+    expect(db.listTerminalHostBindings(instanceId)).toEqual([]);
   } finally {
     db.close();
   }
@@ -600,7 +578,13 @@ test("visibility expiry audit follows sessiond kill evidence", async () => {
             process: { processId: 7501, startToken: "7501:100" },
           },
           inventoryRevision: "2",
-          terminals: [{ agentId, agentName: "stalled", locator, state: "live" }],
+          terminals: [{
+            agentId,
+            agentName: "stalled",
+            locator,
+            state: "live",
+            geometry: measuredGeometry,
+          }],
         }),
       },
     );
@@ -847,6 +831,7 @@ test("an accepted full inventory renews each exact completed sessiond binding", 
             agentName: "renewed",
             locator,
             state: "live",
+            geometry: measuredGeometry,
           }],
         }),
       },

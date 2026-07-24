@@ -265,7 +265,9 @@ public final class ProjectState {
 
     /** Full Workspace-owned terminal inventory. Every publication advances the
      revision, including unchanged heartbeat re-attestations after reconnect. */
-    public func visibilityInventory() -> WorkspaceVisibilityInventory {
+    public func visibilityInventory(
+        geometries: [PaneID: WorkspaceTerminalGeometry] = [:]
+    ) -> WorkspaceVisibilityInventory {
         let terminals = panes.values.compactMap { pane -> WorkspaceVisibleTerminal? in
             guard let locator = pane.sessionLocator,
                   locator.hostKind == "sessiond",
@@ -310,7 +312,8 @@ public final class ProjectState {
                 agentId: agentID,
                 agentName: agentName,
                 locator: locator,
-                state: visibilityState)
+                state: visibilityState,
+                geometry: geometries[pane.id])
         }.sorted { left, right in
             left.agentId == right.agentId
                 ? left.locator.generation < right.locator.generation
@@ -341,6 +344,10 @@ public final class ProjectState {
         if let host = snapshot?.host {
             pane.sessionLocator = host == "sessiond" ? snapshot?.sessionLocator : nil
             pane.terminalHostState = host == "sessiond" ? snapshot?.hostState : nil
+            if host == "sessiond", snapshot?.hostState == "failed" {
+                pane.feedStatus = "failed"
+                pane.status = .failed(acknowledged: false)
+            }
         }
         guard pane != previous else { return [] }
         panes[paneID] = pane

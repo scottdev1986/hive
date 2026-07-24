@@ -74,18 +74,22 @@ describe("shareMemoryState", () => {
       .toBe('{"via":"dev"}');
   });
 
-  test("creates the real memory/ and projects/ dirs when absent", async () => {
+  test("creates and links every shared path before the first installed release", async () => {
     const { devHome, realHome } = await makeHomes();
 
     const result = await shareMemoryState(devHome, realHome);
 
     expect((await lstat(join(realHome, "memory"))).isDirectory()).toBe(true);
     expect((await lstat(join(realHome, "projects"))).isDirectory()).toBe(true);
-    expect(result.linked.sort()).toEqual(["memory", "projects"]);
-    // models/ and project-registry.json exist only after prod's first use:
-    // nothing to share yet, and no empty decoys are planted.
-    expect(result.skipped.sort()).toEqual(["models", "project-registry.json"]);
-    expect(await linkTarget(join(devHome, "models"))).toBeNull();
+    expect((await lstat(join(realHome, "models"))).isDirectory()).toBe(true);
+    expect(
+      JSON.parse(await Bun.file(join(realHome, "project-registry.json")).text()),
+    ).toEqual({ records: [], tombstones: [] });
+    expect(result.linked.sort()).toEqual([...SHARED_STATE_NAMES].sort());
+    expect(result.skipped).toEqual([]);
+    for (const name of SHARED_STATE_NAMES) {
+      expect(await linkTarget(join(devHome, name))).toBe(join(realHome, name));
+    }
   });
 
   test("an existing real dev directory with content warns and stays untouched", async () => {

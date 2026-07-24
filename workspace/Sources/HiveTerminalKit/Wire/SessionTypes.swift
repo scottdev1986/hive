@@ -254,17 +254,4 @@ public enum InputSubmissionState: Equatable, Sendable {
     case waitingForClaim
     case pending(transactionId: String)
     case applied(transactionId: String, stage: String)
-    case refused(code: String, evidence: String)
-    case unknown(evidence: String)
-
-    /// Evidence for a refusal the viewer cannot recover from on its own. This
-    /// is the only kind that may latch a pane's §26 give-up badge; a retryable
-    /// refusal must not, or a pane reads frozen while typing still works.
-    public var failureEvidence: String? {
-        switch self {
-        case .refused(let code, let evidence): return "\(code): \(evidence)"
-        case .unknown(let evidence): return evidence
-        default: return nil
-        }
-    }
 }

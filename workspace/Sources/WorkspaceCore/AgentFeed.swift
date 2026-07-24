@@ -112,11 +112,41 @@ public enum WorkspaceTerminalVisibilityState: String, Equatable, Codable {
     case pending, attaching, live, reconnecting, closing, exited, failed
 }
 
+public struct WorkspaceTerminalGeometry: Equatable, Encodable {
+    public let columns: Int
+    public let rows: Int
+    public let widthPx: Int
+    public let heightPx: Int
+    public let cellWidthPx: Double
+    public let cellHeightPx: Double
+
+    public init(columns: Int, rows: Int, widthPx: Int, heightPx: Int,
+                cellWidthPx: Double, cellHeightPx: Double) {
+        self.columns = columns
+        self.rows = rows
+        self.widthPx = widthPx
+        self.heightPx = heightPx
+        self.cellWidthPx = cellWidthPx
+        self.cellHeightPx = cellHeightPx
+    }
+}
+
 public struct WorkspaceVisibleTerminal: Equatable, Encodable {
     public let agentId: String
     public let agentName: String
     public let locator: AgentSessionLocator
     public let state: WorkspaceTerminalVisibilityState
+    public let geometry: WorkspaceTerminalGeometry?
+
+    public init(agentId: String, agentName: String, locator: AgentSessionLocator,
+                state: WorkspaceTerminalVisibilityState,
+                geometry: WorkspaceTerminalGeometry? = nil) {
+        self.agentId = agentId
+        self.agentName = agentName
+        self.locator = locator
+        self.state = state
+        self.geometry = geometry
+    }
 }
 
 public struct WorkspaceVisibilityInventory: Equatable, Encodable {
@@ -141,13 +171,16 @@ public struct OrchestratorSnapshot: Equatable, Decodable {
     public let status: String?
     public let host: String?
     public let hostState: String?
+    public let hostDiagnostic: String?
     public let sessionLocator: AgentSessionLocator?
 
     public init(status: String?, host: String? = nil, hostState: String? = nil,
+                hostDiagnostic: String? = nil,
                 sessionLocator: AgentSessionLocator? = nil) {
         self.status = status
         self.host = host
         self.hostState = hostState
+        self.hostDiagnostic = hostDiagnostic
         self.sessionLocator = sessionLocator
     }
 }

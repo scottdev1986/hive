@@ -41,6 +41,7 @@ import {
 } from "./session-host/hive-terminal-host";
 import { SessiondWireError } from "./session-host/sessiond-host";
 import type { SessionLocator, SessionSpec } from "./session-host/contract";
+import type { WorkspaceVisibilityAdmission } from "./session-host/workspace-visibility";
 import {
   modelVendor,
 } from "../adapters/tools/models";
@@ -108,6 +109,7 @@ import {
 } from "./usage-credits";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
+import { providerTerminalEnvironment } from "./provider-terminal-environment";
 
 /**
  * Names an agent can be given. Human first names, because the user's interface
@@ -279,25 +281,22 @@ export type CredentialIssuer = (
 
 export interface SessiondSpawnAdmission {
   terminalHost: Pick<HiveTerminalHostAdapter, "create" | "inspect">;
-  /** Availability only: reserves the engine identity before the new database
-   * row lets Workspace render the exact pending locator. */
-  prepare?(candidate: Readonly<{
+  /** Creation policy from the live Workspace process, independent of whether
+   * the not-yet-created terminal appears in its public pane inventory. */
+  prepareAgentCreation(candidate: Readonly<{
     agentId: string;
     agentName: string;
-  }>): Promise<Readonly<{ engineBuildId: string }> | null>;
-  /** Idempotent for one candidate: selection and the final create gate both
-   * resolve the Workspace-owned evidence instead of caching it in the daemon. */
+  }>): Promise<WorkspaceVisibilityAdmission | null>;
+  /** Resolves an already-published pane for visibility renewal. */
   admit(candidate: Readonly<{
     agentId: string;
     agentName: string;
   }>): Promise<Readonly<{
     engineBuildId: string;
+    geometry: SessionSpec["geometry"];
     visibility: HiveTerminalPolicy["visibility"];
   }> | null>;
 }
-
-const SESSIOND_VISIBILITY_WAIT_ATTEMPTS = 100;
-const SESSIOND_VISIBILITY_WAIT_MILLISECONDS = 100;
 
 /**
  * The only context-window evidence the catalogs publish today: Claude's
@@ -391,6 +390,8 @@ export interface HiveSpawnerDependencies {
   graphifyBrief?: (task: string) => Promise<string | null>;
   /** Test seam for the daemon-resolved Claude binary. */
   claudeExecutable?: string;
+  codexExecutable?: string;
+  grokExecutable?: string;
   /** Reads the process table for the readiness probe's process-tree check.
    * Defaults to the real `ps`. */
   ps?: CommandOutput;
@@ -774,6 +775,8 @@ export class HiveSpawner implements Spawner {
   >;
   private readonly wait: Sleep;
   private readonly claudeExecutable: string;
+  private readonly codexExecutable: string;
+  private readonly grokExecutable: string;
   private readonly readCodexActivity: (
     worktreePath: string,
     toolSessionId: string,
@@ -793,6 +796,8 @@ export class HiveSpawner implements Spawner {
     this.wait = dependencies.sleep ?? sleep;
     this.claudeExecutable = dependencies.claudeExecutable ??
       resolveWorkingClaudeExecutable().path;
+    this.codexExecutable = dependencies.codexExecutable ?? "codex";
+    this.grokExecutable = dependencies.grokExecutable ?? "grok";
     this.readCodexActivity = dependencies.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
@@ -827,9 +832,15 @@ export class HiveSpawner implements Spawner {
       );
       return;
     }
-    const admission = await this.requireSessiondPolicy(record);
+    const admission = await this.requireSessiondCreationPolicy(record);
     await this.requireSessiondHost(record).create(
-      this.sessiondSpec(record, command, expectedExecutable, launchGrantId),
+      this.sessiondSpec(
+        record,
+        command,
+        expectedExecutable,
+        launchGrantId,
+        admission.geometry,
+      ),
       new Uint8Array(),
       { locator: requireSessiondAgentLocator(record), visibility: admission.visibility },
     );
@@ -841,9 +852,6 @@ export class HiveSpawner implements Spawner {
     expectedExecutable: string,
     launchGrantId: string,
   ): Promise<void> {
-    if (this.requireAgentLocator(record).hostKind === "sessiond") {
-      await this.awaitInitialSessiondPolicy(record);
-    }
     await this.createSession(record, command, expectedExecutable, launchGrantId);
   }
 
@@ -893,42 +901,21 @@ export class HiveSpawner implements Spawner {
     return this.sessions;
   }
 
-  private async requireSessiondPolicy(
+  private async requireSessiondCreationPolicy(
     record: AgentRecord,
-  ): Promise<Readonly<{
-    engineBuildId: string;
-    visibility: HiveTerminalPolicy["visibility"];
-  }>> {
+  ): Promise<WorkspaceVisibilityAdmission> {
     const locator = requireSessiondAgentLocator(record);
-    const policy = await this.dependencies.sessiond?.admit({
+    const policy = await this.dependencies.sessiond?.prepareAgentCreation({
       agentId: record.id,
       agentName: record.name,
     }) ?? null;
     if (policy === null) {
-      throw new Error(`Agent ${record.id} has no sessiond spawn admission`);
+      throw new Error(`Agent ${record.id} has no sessiond creation policy`);
     }
     if (policy.engineBuildId !== locator.engineBuildId) {
       throw new Error(`Agent ${record.id} sessiond engine admission changed`);
     }
     return policy;
-  }
-
-  private async awaitInitialSessiondPolicy(record: AgentRecord): Promise<void> {
-    for (let attempt = 0; attempt < SESSIOND_VISIBILITY_WAIT_ATTEMPTS; attempt += 1) {
-      const policy = await this.dependencies.sessiond?.admit({
-        agentId: record.id,
-        agentName: record.name,
-      }) ?? null;
-      if (policy !== null) {
-        const locator = requireSessiondAgentLocator(record);
-        if (policy.engineBuildId !== locator.engineBuildId) {
-          throw new Error(`Agent ${record.id} sessiond engine admission changed`);
-        }
-        return;
-      }
-      await this.wait(SESSIOND_VISIBILITY_WAIT_MILLISECONDS);
-    }
-    throw new Error(`Agent ${record.id} never became visible in the Workspace inventory`);
   }
 
   private requireSessiondHost(
@@ -946,6 +933,7 @@ export class HiveSpawner implements Spawner {
     command: string,
     expectedExecutable: string,
     launchGrantId: string,
+    geometry: SessionSpec["geometry"],
   ): SessionSpec {
     if (record.worktreePath === null) {
       throw new Error(`Agent ${record.id} has no worktree for session creation`);
@@ -957,15 +945,11 @@ export class HiveSpawner implements Spawner {
       toolSessionId: record.toolSessionId ?? null,
       cwd: record.worktreePath,
       argv: ["/bin/sh", "-lc", command],
-      environment: Object.fromEntries(
-        Object.entries(process.env).filter(
-          (entry): entry is [string, string] => entry[1] !== undefined,
-        ),
-      ),
+      environment: providerTerminalEnvironment(process.env),
       expectedExecutable,
       readOnly: record.readOnly,
       capabilityEpoch: record.capabilityEpoch,
-      geometry: DEFAULT_TMUX_GEOMETRY,
+      geometry,
       launchGrantId,
       launchGrantRevision: 1,
     };
@@ -1260,6 +1244,7 @@ export class HiveSpawner implements Spawner {
             );
           } else {
             argv = buildCodexSpawnCommand({
+              executable: this.codexExecutable,
               daemonPort: this.daemonPort(),
               effort: identity.effort,
               model: identity.model,
@@ -1278,6 +1263,7 @@ export class HiveSpawner implements Spawner {
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
           const options = {
+            executable: this.grokExecutable,
             model: identity.model,
             ...(identity.effort === undefined ? {} : { effort: identity.effort }),
             worktreePath: agent.worktreePath,
@@ -1372,6 +1358,7 @@ export class HiveSpawner implements Spawner {
             }),
           };
           const fallback = buildCodexSpawnCommand({
+            executable: this.codexExecutable,
             daemonPort: this.daemonPort(),
             effort: identity.tool === "codex"
               ? identity.effort
@@ -2133,7 +2120,7 @@ export class HiveSpawner implements Spawner {
           break;
         case "grok": {
           const identity = this.dependencies.grokIdentity?.() ??
-            probeGrokCliVersion();
+            probeGrokCliVersion(this.grokExecutable);
           if (identity === null) {
             throw new Error("Cannot spawn Grok: grok --version failed");
           }
@@ -2152,13 +2139,10 @@ export class HiveSpawner implements Spawner {
     }
     const agentId = crypto.randomUUID();
     const sessiondCandidate = this.dependencies.sessiond;
-    const preparedSessiond = await sessiondCandidate?.prepare?.({
+    const sessiondPolicy = await sessiondCandidate?.prepareAgentCreation({
       agentId,
       agentName: name,
-    });
-    const sessiondPolicy = preparedSessiond === undefined
-      ? await sessiondCandidate?.admit({ agentId, agentName: name }) ?? null
-      : preparedSessiond;
+    }) ?? null;
     if (sessiondCandidate !== undefined && sessiondPolicy === null) {
       throw new SpawnFailedError(
         name,
@@ -2287,9 +2271,6 @@ export class HiveSpawner implements Spawner {
     });
 
     try {
-      if (preparedSessiond !== undefined && preparedSessiond !== null) {
-        await this.awaitInitialSessiondPolicy(record);
-      }
       const assignment = this.dependencies.assignments?.open(
         record.id,
         record.createdAt,
@@ -2372,6 +2353,7 @@ export class HiveSpawner implements Spawner {
               graphifyUrl ?? undefined,
             )
           : buildCodexSpawnCommand({
+              executable: this.codexExecutable,
               daemonPort: this.daemonPort(),
               effort: effort ?? "medium",
               model,
@@ -2392,6 +2374,7 @@ export class HiveSpawner implements Spawner {
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
         argv = buildGrokSpawnCommand({
+          executable: this.grokExecutable,
           model,
           ...(effort === undefined ? {} : { effort }),
           worktreePath: worktree.path,
@@ -2488,6 +2471,7 @@ export class HiveSpawner implements Spawner {
             lastEventAt: new Date().toISOString(),
           });
           const fallback = buildCodexSpawnCommand({
+            executable: this.codexExecutable,
             daemonPort: this.daemonPort(),
             effort: effort ?? "medium",
             model,

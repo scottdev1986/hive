@@ -18,8 +18,18 @@ class MemoryBindings implements TerminalHostBindingStore {
     this.values.push(binding);
     return binding;
   }
-  releaseUncreatedTerminalHostSession(): boolean {
-    return false;
+  releaseUncreatedTerminalHostSession(
+    locator: HiveTerminalBinding["locator"],
+  ): boolean {
+    const index = this.values.findIndex((binding) =>
+      binding.locator.instanceId === locator.instanceId &&
+      binding.locator.sessionId === locator.sessionId &&
+      binding.locator.generation === locator.generation &&
+      binding.createEvidence === undefined
+    );
+    if (index < 0) return false;
+    this.values.splice(index, 1);
+    return true;
   }
   completeTerminalHostSession(
     locator: HiveTerminalBinding["locator"],
@@ -66,6 +76,14 @@ const visibility = {
   workspacePid: 123,
   workspaceStartToken: "123:1",
   openTerminalRevision: "1",
+};
+const geometry = {
+  columns: 117,
+  rows: 41,
+  widthPx: 1170,
+  heightPx: 820,
+  cellWidthPx: 10,
+  cellHeightPx: 20,
 };
 
 function inspection(
@@ -131,23 +149,56 @@ async function settle(): Promise<void> {
 }
 
 describe("OrchestratorSessiondController", () => {
-  test("publishes the locator before visibility, creates once, and wakes queued mail", async () => {
+  test("failed native create releases its incomplete generation", async () => {
     const bindings = new MemoryBindings();
-    let admissionAttempts = 0;
-    let creates = 0;
-    let renewals = 0;
-    let wakes = 0;
     const controller = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
       visibility: {
-        prepare: async () => ({ engineBuildId: "engine-a" }),
-        admit: async () => ++admissionAttempts < 2
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
+      },
+      terminalHost: {
+        create: async (_spec, _input, policy) => {
+          bindings.bindTerminalHostSession(policy);
+          throw new Error("native host registration failed");
+        },
+        renewVisibility: async () => { throw new Error("not reached"); },
+        inspect: async () => { throw new Error("not reached"); },
+      },
+      sleep: async () => {},
+    });
+
+    await expect(controller.start(launch)).rejects.toThrow(
+      "native host registration failed",
+    );
+    expect(controller.snapshot()).toBeNull();
+    expect(bindings.values).toEqual([]);
+  });
+
+  test("creates once before publishing the ready locator", async () => {
+    const bindings = new MemoryBindings();
+    let admissionAttempts = 0;
+    let creates = 0;
+    let renewals = 0;
+    const controller = new OrchestratorSessiondController({
+      bindings,
+      instanceId: "instance-a",
+      visibility: {
+        prepareAgentCreation: async () => ++admissionAttempts < 2
           ? null
-          : { engineBuildId: "engine-a", visibility },
+          : { engineBuildId: "engine-a", visibility, geometry },
       },
       terminalHost: {
         create: async (spec, _input, policy) => {
+          expect(spec.geometry).toEqual(geometry);
+          expect(spec.environment).toEqual({
+            BASE_ENV: "base",
+            HIVE_ROOT_FIXTURE: "1",
+          });
           creates += 1;
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);
@@ -167,19 +218,17 @@ describe("OrchestratorSessiondController", () => {
         inspect: async (value) => inspection(value, "exited"),
       },
       sleep: async () => {},
-      environment: { BASE_ENV: "base" },
-      onRunning: async () => { wakes += 1; },
+      environment: { BASE_ENV: "base", NO_COLOR: "1" },
     });
 
-    const pending = await controller.start(launch);
-    expect(pending.state).toBe("awaiting-visibility");
-    expect(pending.locator.subject).toEqual({ kind: "root" });
+    const ready = await controller.start(launch);
+    expect(ready.state).toBe("running");
+    expect(ready.locator.subject).toEqual({ kind: "root" });
     await settle();
     expect(admissionAttempts).toBe(2);
     expect(creates).toBe(1);
     expect(renewals).toBe(1);
-    expect(wakes).toBe(1);
-    expect(bindings.values[0]?.locator).toEqual(pending.locator);
+    expect(bindings.values[0]?.locator).toEqual(ready.locator);
     expect(controller.snapshot()).toMatchObject({ state: "exited", exitCode: 1 });
     await controller.start(launch);
     expect(creates).toBe(1);
@@ -191,8 +240,11 @@ describe("OrchestratorSessiondController", () => {
       bindings,
       instanceId: "instance-a",
       visibility: {
-        prepare: async () => ({ engineBuildId: "engine-a" }),
-        admit: async () => ({ engineBuildId: "engine-a", visibility }),
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
       },
       terminalHost: {
         create: async (spec, _input, policy) => {
@@ -223,8 +275,7 @@ describe("OrchestratorSessiondController", () => {
       bindings: new MemoryBindings(),
       instanceId: "instance-a",
       visibility: {
-        prepare: async () => ({ engineBuildId: "engine-a" }),
-        admit: async () => null,
+        prepareAgentCreation: async () => null,
       },
       terminalHost: {
         create: async () => { throw new Error("not reached"); },
@@ -233,22 +284,23 @@ describe("OrchestratorSessiondController", () => {
       },
       sleep: async () => await new Promise<void>(() => {}),
     });
-    await waiting.start(launch);
+    const pending = waiting.start(launch);
     await settle();
     waiting.cancel("test shutdown during admission");
     await settle();
-    expect(waiting.snapshot()).toMatchObject({
-      state: "failed",
-      diagnostic: "queen sessiond controller canceled: test shutdown during admission",
-    });
+    await expect(pending).rejects.toThrow("queen sessiond creation canceled");
+    expect(waiting.snapshot()).toBeNull();
 
     const bindings = new MemoryBindings();
     const monitoring = new OrchestratorSessiondController({
       bindings,
       instanceId: "instance-a",
       visibility: {
-        prepare: async () => ({ engineBuildId: "engine-a" }),
-        admit: async () => ({ engineBuildId: "engine-a", visibility }),
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
       },
       terminalHost: {
         create: async (spec, _input, policy) => {
@@ -305,8 +357,11 @@ describe("OrchestratorSessiondController", () => {
       bindings,
       instanceId: "instance-a",
       visibility: {
-        prepare: async () => ({ engineBuildId: "engine-a" }),
-        admit: async () => ({ engineBuildId: "engine-a", visibility }),
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
       },
       terminalHost: {
         ...terminalHost,
@@ -329,8 +384,11 @@ describe("OrchestratorSessiondController", () => {
       bindings,
       instanceId: "instance-a",
       visibility: {
-        prepare: async () => ({ engineBuildId: "engine-a" }),
-        admit: async () => ({ engineBuildId: "engine-a", visibility }),
+        prepareAgentCreation: async () => ({
+          engineBuildId: "engine-a",
+          visibility,
+          geometry,
+        }),
       },
       terminalHost,
       sleep: async () => {},

@@ -739,9 +739,6 @@ final class LiveHostAttachTests: XCTestCase {
         let deadlineB = Date().addingTimeInterval(10)
         while Date() < deadlineB {
             if case .applied = viewB.inputSubmissionState { break }
-            if case .refused(let code, let evidence) = viewB.inputSubmissionState {
-                return XCTFail("viewer-b claim/input refused after unclean drop: \(code) \(evidence)")
-            }
             do {
                 guard let frame = try transportB.receive(timeout: 1.0) else { break }
                 viewB.pumpHostFrame(frame, frameBinding: bindingB)

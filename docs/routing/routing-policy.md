@@ -47,19 +47,16 @@ exists to kill.** Vendors also move their defaults server-side mid-session (repo
 memory: *vendor-default-model-moves-under-you*). An indirection that cannot be
 *written* cannot bite. Commit `0dc25c0` removed it.
 
-### Absence is never permission
+### Provider consent is the permission boundary
 
-The fail-closed reading every consumer inherits (:283-322): an absent provider or
-model row means **not configured**, and not-configured never means allowed.
-`providerPolicyState` and `modelPolicyState` are the single implementation of that
-rule — a consumer that re-derives it by hand is how a null becomes permission again.
-Provider enablement is a master switch, not consent for every model the vendor may
-discover tomorrow: an absent model row stays unconfigured even under an enabled
-provider.
+An absent provider means **not configured**, and not-configured never means
+allowed. Enabling a provider authorizes its discovered models; an explicit
+model-off overrides that provider consent for one model. `providerPolicyState`
+and `modelPolicyState` are the single implementation of that rule.
 
-**Enablement is consent.** With approval prompts retired (user directive
-2026-07-12), a model enabled here *is* the user's standing authorization to spend on
-it. Every write path in the store is therefore a safety surface.
+**Provider enablement is consent.** With approval prompts retired (user directive
+2026-07-12), an enabled provider is the user's standing authorization to use its
+models. Every write path in the store is therefore a safety surface.
 
 ## Selection: never-configured | auto | choice
 

@@ -53,6 +53,7 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
       status: "working",
       host: "tmux",
       hostState: null,
+      hostDiagnostic: null,
       sessionLocator: null,
     }),
     write: (line) => lines.push(line),

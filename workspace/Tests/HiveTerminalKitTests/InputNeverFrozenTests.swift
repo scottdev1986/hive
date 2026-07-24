@@ -5,10 +5,8 @@ import XCTest
 /// #87 (M1 acceptance, user ruling 2026-07-21): the human write path must never
 /// become permanently unavailable while a pane stays attached.
 ///
-/// The freeze these rows pin was a viewer-side latch. `inputFenced` drops every
-/// subsequent keystroke and is cleared only by a fresh attach/retarget, and the
-/// claim-acquisition answers set it — so a single transient host "no" ended
-/// typing for the life of the attach. Those answers are routinely transient:
+/// The freeze these rows pin was a viewer-side latch: a single transient host
+/// "no" ended typing for the life of the attach. Those answers are routinely transient:
 /// `input_arbiter.zig:349-356` returns `InputBusy` while the arbiter is
 /// mid-automation (i.e. every queen→agent inject), `HumanOrphaned` after an
 /// unclean viewer drop, `NotReady` before the visibility lease is current. The
@@ -101,12 +99,9 @@ final class InputNeverFrozenTests: XCTestCase {
             Data("\u{1B}[27;2;13~".utf8),
             "the original in-process NSEvent was lost or reordered during claim arbitration"
         )
-        XCTAssertFalse(states.contains { state in
-            switch state {
-            case .refused, .unknown: return true
-            default: return false
-            }
-        }, "recoverable inject contention surfaced an input refusal: \(states)")
+        XCTAssertTrue(
+            states.contains(.waitingForClaim),
+            "the queued input never exposed its internal wait state: \(states)")
     }
 
     /// Types before and after a host answer and reports whether the second
@@ -187,11 +182,7 @@ final class InputNeverFrozenTests: XCTestCase {
         )
     }
 
-    /// Negative control through the same reader. A malformed claim result is a
-    /// protocol desync the viewer cannot retry its way out of, so it still
-    /// fences — which is what proves the two rows above are reading a real
-    /// difference rather than a reader that always sees another claim.
-    func testControlMalformedClaimResultStillFencesInput() throws {
+    func testMalformedClaimResultKeepsInputQueuedForAnotherClaim() throws {
         let result = try secondKeystroke(connectionId: "never-frozen-control") { view, binding, claim in
             view.pumpHostFrame(
                 WireFrame(
@@ -204,26 +195,13 @@ final class InputNeverFrozenTests: XCTestCase {
             )
         }
 
-        guard case .refused(let code, _) = result.stateAfterAnswer else {
-            return XCTFail(
-                "a malformed claim result must stay a terminal refusal, got "
-                    + "\(result.stateAfterAnswer)"
-            )
-        }
-        XCTAssertEqual(code, "MALFORMED_CLAIM_RESULT")
+        XCTAssertEqual(result.stateAfterAnswer, .waitingForClaim)
+        XCTAssertGreaterThanOrEqual(
+            result.claimsBefore, 2,
+            "a malformed reply did not trigger replacement claim acquisition")
         XCTAssertEqual(
             result.claimsAfter, result.claimsBefore,
-            "the reader saw a new CLAIM_ACQUIRE even after a fencing refusal; the rows above "
-                + "are unattributable until this passes"
-        )
-    }
-
-    func testOnlyTerminalRefusalCarriesGiveUpEvidence() {
-        XCTAssertNil(InputSubmissionState.waitingForClaim.failureEvidence)
-        let terminal = InputSubmissionState.refused(
-            code: "MALFORMED_CLAIM_RESULT", evidence: "claim result has no state")
-        XCTAssertEqual(
-            terminal.failureEvidence, "MALFORMED_CLAIM_RESULT: claim result has no state")
+            "later input opened a competing claim instead of joining the existing queue")
     }
 
     private func grantedClaimPayload(token: String) throws -> Data {

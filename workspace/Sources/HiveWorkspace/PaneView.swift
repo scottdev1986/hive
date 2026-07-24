@@ -50,7 +50,10 @@ final class PaneView: NSView {
     /// there while this exact-generation renderer is disposable (§26).
     func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
         if let current = sessiondTerminal {
-            guard current.paneLocator != terminal.paneLocator else { return }
+            guard current.paneLocator != terminal.paneLocator else {
+                current.start()
+                return
+            }
             current.detach()
             current.view?.removeFromSuperview()
             sessiondTerminal = nil
@@ -76,10 +79,7 @@ final class PaneView: NSView {
                     badge: "Terminal renderer disconnected",
                     evidence: evidence)
             }
-            terminalView.onInputSubmissionStateChange = { [weak self] state in
-                self?.applyInputSubmissionState(state)
-            }
-            terminal.startWhenGeometryReady()
+            terminal.start()
         } catch {
             NSLog("sessiond terminal surface for pane %@ failed: %@",
                   titleLabel.stringValue, "\(error)")
@@ -289,17 +289,6 @@ final class PaneView: NSView {
         failureBadge.toolTip = "\(terminalFailure.badge) — \(terminalFailure.evidence)"
         detailLabel.stringValue = terminalFailure.detail
         detailLabel.toolTip = terminalFailure.evidence
-    }
-
-    /// #87: recoverable host arbitration remains `waitingForClaim` and never
-    /// reaches this failure path. Only an input failure the viewer cannot
-    /// recover from may latch the pane's give-up badge.
-    func applyInputSubmissionState(_ state: InputSubmissionState) {
-        guard let evidence = state.failureEvidence else { return }
-        showTerminalFailure(
-            detail: "input refused",
-            badge: "Terminal input refused",
-            evidence: evidence)
     }
 
     /// #90: the renderer is past its escalating budget but still reconnecting.

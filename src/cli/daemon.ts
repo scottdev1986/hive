@@ -1,6 +1,9 @@
 import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { CodexAppServerManager } from "../adapters/tools/codex-app-server";
+import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
+import { resolveWorkingCodexExecutable } from "../adapters/tools/codex";
+import { resolveWorkingGrokExecutable } from "../adapters/tools/grok";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import {
@@ -51,8 +54,11 @@ import {
 } from "../schemas";
 import {
   ClaudeCapabilityProbe,
+  ClaudeStdioCapabilityTransport,
   CodexCapabilityProbe,
+  CodexStdioCapabilityTransport,
   GrokCapabilityProbe,
+  GrokCliCapabilityTransport,
 } from "../daemon/capability-discovery";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
@@ -208,6 +214,43 @@ export async function runDaemon(): Promise<void> {
   });
   const config = await loadHiveConfig();
   const quotaConfig = await loadQuotaConfig();
+  const claudeExecutable = resolveWorkingClaudeExecutable().path;
+  const codexExecutable = resolveWorkingCodexExecutable()?.path ?? "codex";
+  const grokExecutable = resolveWorkingGrokExecutable()?.path ?? "grok";
+  const discoverCapabilities = async (
+    provider: CapabilityProvider,
+  ) => {
+    switch (provider) {
+      case "claude":
+        return await new ClaudeCapabilityProbe(
+          new ClaudeStdioCapabilityTransport(
+            [
+              claudeExecutable,
+              "-p",
+              "--input-format",
+              "stream-json",
+              "--output-format",
+              "stream-json",
+              "--verbose",
+            ],
+            [claudeExecutable],
+          ),
+        ).read();
+      case "codex":
+        return await new CodexCapabilityProbe(
+          new CodexStdioCapabilityTransport(
+            [codexExecutable, "app-server", "--stdio"],
+            [codexExecutable],
+          ),
+        ).read();
+      case "grok":
+        return await new GrokCapabilityProbe(
+          new GrokCliCapabilityTransport(grokExecutable),
+        ).read();
+      default:
+        return unknownVendor(provider, "capability discovery");
+    }
+  };
   const db = new HiveDatabase();
   const statusStore = new StatusStore(db, hiveInstanceSuffix());
   // routing.toml is dead as a policy source (user directive 2026-07-12); the
@@ -226,18 +269,7 @@ export async function runDaemon(): Promise<void> {
   inheritDefaultModelControlSettings(routingPolicy);
   if (routingPolicy.isEmpty()) {
     const facts = await (async () => {
-      const discovery = await forEachProvider(async (provider) => {
-        switch (provider) {
-          case "claude":
-            return await new ClaudeCapabilityProbe().read();
-          case "codex":
-            return await new CodexCapabilityProbe().read();
-          case "grok":
-            return await new GrokCapabilityProbe().read();
-          default:
-            return unknownVendor(provider, "policy baseline seeding");
-        }
-      });
+      const discovery = await forEachProvider(discoverCapabilities);
       const vendorDefaults: Partial<Record<CapabilityProvider, string>> = {};
       for (const provider of CAPABILITY_PROVIDERS) {
         const probed = discovery[provider];
@@ -266,9 +298,25 @@ export async function runDaemon(): Promise<void> {
     quotaConfig,
     () => new Date(),
     [
-      new CodexQuotaProbe(new CodexStdioProbeTransport()),
-      new ClaudeQuotaProbe(new ClaudeStdioProbeTransport()),
-      new GrokQuotaProbe(new GrokStdioProbeTransport()),
+      new CodexQuotaProbe(new CodexStdioProbeTransport([
+        codexExecutable,
+        "app-server",
+        "--stdio",
+      ])),
+      new ClaudeQuotaProbe(new ClaudeStdioProbeTransport([
+        claudeExecutable,
+        "-p",
+        "--input-format",
+        "stream-json",
+        "--output-format",
+        "stream-json",
+        "--verbose",
+      ])),
+      new GrokQuotaProbe(new GrokStdioProbeTransport([
+        grokExecutable,
+        "agent",
+        "stdio",
+      ])),
     ],
   );
   const terminalComposition = createProductionTerminalComposition({
@@ -312,6 +360,9 @@ export async function runDaemon(): Promise<void> {
     ...terminalComposition.spawnerDependencies,
     db,
     repoRoot,
+    claudeExecutable,
+    codexExecutable,
+    grokExecutable,
     // `port` is normally 0: Bun chooses the instance's ephemeral port only
     // when the daemon starts. Every later launch must read that bound port,
     // never preserve the pre-bind sentinel in agent hooks and MCP config.
@@ -336,18 +387,7 @@ export async function runDaemon(): Promise<void> {
     // category resolves to the user-authored chain, every link passes the
     // launch gate, and a corrupt or absent policy refuses rather than routes.
     readRoutingPolicy: () => routingPolicy.read(),
-    discoverCapabilities: async (provider) => {
-      switch (provider) {
-        case "claude":
-          return await new ClaudeCapabilityProbe().read();
-        case "codex":
-          return await new CodexCapabilityProbe().read();
-        case "grok":
-          return await new GrokCapabilityProbe().read();
-        default:
-          return unknownVendor(provider, "capability discovery");
-      }
-    },
+    discoverCapabilities,
     // THE JOIN: the AuthorizedLaunch gate's enablement guard reads the policy
     // store — an enabled row is the user's consent, anything else refuses.
     isModelEnabled: policyModelEnablement(routingPolicy),
@@ -362,7 +402,7 @@ export async function runDaemon(): Promise<void> {
     codexAppServer,
     sessiond: {
       get terminalHost() { return daemon.sessiondTerminalHost; },
-      prepare: () => daemon.prepareSessiondSpawn(),
+      prepareAgentCreation: () => daemon.prepareAgentSessiondSpawn(),
       admit: (candidate) => daemon.admitSessiondSpawn(candidate),
     },
     // HiveMemory HM-3 WP6: baseline the agent's wake-delta high-water mark
@@ -392,7 +432,10 @@ export async function runDaemon(): Promise<void> {
     sessiondBroker,
     quota,
     modelInventory: () =>
-      readModelInventory({ readPolicy: () => routingPolicy.read() }),
+      readModelInventory({
+        discover: discoverCapabilities,
+        readPolicy: () => routingPolicy.read(),
+      }),
     codexControl: codexAppServer,
     resources: config.resources,
     lifecycle: config.lifecycle,
@@ -401,6 +444,11 @@ export async function runDaemon(): Promise<void> {
     memoryEmbeddings: {
       provider: config.memory.embedding_provider,
       model: config.memory.embedding_model,
+    },
+    recovery: {
+      claudeExecutable,
+      codexExecutable,
+      grokExecutable,
     },
     // One source of truth for autonomy: this very `config` object, which the
     // spawner also reads at each spawn. Persist first, mutate second — if the

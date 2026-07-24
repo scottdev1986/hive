@@ -1,21 +1,18 @@
 import { isAbsolute } from "node:path";
 import { z } from "zod";
-import { CapabilityProviderSchema, ORCHESTRATOR_NAME } from "../schemas";
+import { CapabilityProviderSchema } from "../schemas";
 import {
   domainUuidV7Schema,
 } from "../schemas/session-protocol";
 import type { SessionInspection, SessionSpec } from "./session-host/contract";
 import type { HiveTerminalHostAdapter } from "./session-host/hive-terminal-host";
-import { DEFAULT_TMUX_GEOMETRY } from "./session-host/tmux-host";
 import type { TerminalHostBindingStore } from "./session-host/terminal-host-binding";
-import {
-  ROOT_VISIBILITY_ID,
-  type WorkspaceVisibilityAuthority,
-} from "./session-host/workspace-visibility";
+import type { WorkspaceVisibilityAuthority } from "./session-host/workspace-visibility";
 import {
   RootSessiondLocatorSchema,
   mintRootSessiondLocator,
 } from "./orchestrator-host";
+import { providerTerminalEnvironment } from "./provider-terminal-environment";
 
 export const OrchestratorSessiondLaunchSchema = z.strictObject({
   requestId: domainUuidV7Schema("req"),
@@ -48,23 +45,26 @@ export interface OrchestratorSessiondDependencies {
     "create" | "inspect" | "renewVisibility"
   >;
   bindings: TerminalHostBindingStore;
-  visibility: Pick<WorkspaceVisibilityAuthority, "prepare" | "admit">;
+  visibility: Pick<WorkspaceVisibilityAuthority, "prepareAgentCreation">;
   instanceId: string;
   sleep?: (milliseconds: number) => Promise<void>;
   environment?: Readonly<Record<string, string | undefined>>;
-  onRunning?: () => Promise<void>;
 }
 
-const VISIBILITY_RETRY_MS = 100;
+const CREATION_POLICY_RETRY_MS = 100;
 const INSPECTION_RETRY_MS = 250;
 
-/** Owns the one root provider generation. Pending state is intentionally
- * reconstructible rather than separately persisted: requestId deterministically
- * names the locator, while the completed binding and every queued message are
- * durable. Retrying after a daemon restart therefore resumes the exact create. */
+/** Owns the one root provider generation. Creation is private: no locator is
+ * published until the host and its durable binding both exist. */
 export class OrchestratorSessiondController {
   private current: OrchestratorSessiondSnapshot | null = null;
+  private starting: Readonly<{
+    requestId: string;
+    promise: Promise<OrchestratorSessiondSnapshot>;
+    abort: AbortController;
+  }> | null = null;
   private abort: AbortController | null = null;
+  private inputReady = false;
   private readonly sleep: (milliseconds: number) => Promise<void>;
 
   constructor(private readonly dependencies: OrchestratorSessiondDependencies) {
@@ -73,41 +73,29 @@ export class OrchestratorSessiondController {
 
   async start(input: OrchestratorSessiondLaunch): Promise<OrchestratorSessiondSnapshot> {
     if (this.current?.requestId === input.requestId) return this.current;
-    if (
-      this.current !== null &&
-      (this.current.state === "awaiting-visibility" || this.current.state === "running")
-    ) {
+    if (this.starting?.requestId === input.requestId) return await this.starting.promise;
+    if (this.starting !== null || this.current?.state === "running") {
       throw new Error("a queen sessiond generation is already active");
     }
-    const prepared = await this.dependencies.visibility.prepare();
-    if (prepared === null) {
-      throw new Error("sessiond engine identity is unavailable");
-    }
-    const locator = mintRootSessiondLocator({
-      requestId: input.requestId,
-      instanceId: this.dependencies.instanceId,
-      engineBuildId: prepared.engineBuildId,
-      bindings: this.dependencies.bindings.listTerminalHostBindings(
-        this.dependencies.instanceId,
-      ),
-    });
-    this.current = {
-      requestId: input.requestId,
-      locator,
-      state: "awaiting-visibility",
-      exitCode: null,
-      diagnostic: null,
-    };
+    this.inputReady = false;
     const abort = new AbortController();
-    this.abort = abort;
-    void this.run(input, locator, abort.signal).finally(() => {
-      if (this.abort === abort) this.abort = null;
+    const promise = this.create(input, abort.signal);
+    this.starting = { requestId: input.requestId, promise, abort };
+    return await promise.finally(() => {
+      if (this.starting?.promise === promise) this.starting = null;
     });
-    return this.current;
   }
 
   snapshot(): OrchestratorSessiondSnapshot | null {
     return this.current;
+  }
+
+  markInputReady(): void {
+    if (this.current?.state === "running") this.inputReady = true;
+  }
+
+  isInputReady(): boolean {
+    return this.current?.state === "running" && this.inputReady;
   }
 
   /** Ends admission/inspection waits when their daemon owner is stopping.
@@ -115,9 +103,9 @@ export class OrchestratorSessiondController {
    * teardown; this only prevents a detached controller task from waiting
    * forever after its authority is gone. */
   cancel(reason: string): void {
+    this.starting?.abort.abort(reason);
     const current = this.current;
-    if (current === null ||
-        (current.state !== "awaiting-visibility" && current.state !== "running")) {
+    if (current === null || current.state !== "running") {
       return;
     }
     this.abort?.abort(reason);
@@ -129,61 +117,61 @@ export class OrchestratorSessiondController {
     };
   }
 
-  private async run(
+  private async create(
     input: OrchestratorSessiondLaunch,
-    locator: OrchestratorSessiondSnapshot["locator"],
     signal: AbortSignal,
-  ): Promise<void> {
+  ): Promise<OrchestratorSessiondSnapshot> {
+    let locator: OrchestratorSessiondSnapshot["locator"] | null = null;
     try {
-      let admission = null;
-      while (admission === null && !signal.aborted) {
-        admission = await this.dependencies.visibility.admit({
-          agentId: ROOT_VISIBILITY_ID,
-          agentName: ORCHESTRATOR_NAME,
-        });
-        if (admission === null) await this.wait(VISIBILITY_RETRY_MS, signal);
+      let policy = null;
+      while (policy === null && !signal.aborted) {
+        policy = await this.dependencies.visibility.prepareAgentCreation();
+        if (policy === null) await this.wait(CREATION_POLICY_RETRY_MS, signal);
       }
-      if (signal.aborted || admission === null) return;
-      if (admission.engineBuildId !== locator.engineBuildId) {
-        throw new Error("queen sessiond engine admission changed");
+      if (signal.aborted || policy === null) {
+        throw new Error("queen sessiond creation canceled");
       }
+      locator = mintRootSessiondLocator({
+        requestId: input.requestId,
+        instanceId: this.dependencies.instanceId,
+        engineBuildId: policy.engineBuildId,
+        bindings: this.dependencies.bindings.listTerminalHostBindings(
+          this.dependencies.instanceId,
+        ),
+      });
       const existing = this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       if (existing?.createEvidence === undefined) {
         await this.dependencies.terminalHost.create(
-          this.sessionSpec(input, locator),
+          this.sessionSpec(input, locator, policy.geometry),
           new Uint8Array(),
-          { locator, visibility: admission.visibility },
+          { locator, visibility: policy.visibility },
         );
       }
-      if (signal.aborted) return;
-      // The Workspace's first publish can race ahead of create evidence, so
-      // the generic renewal sweep correctly skips it. Renew explicitly only
-      // after create is durably bound; otherwise the initial 15-second lease
-      // can expire before the next publisher tick and kill queen silently.
+      if (signal.aborted) throw new Error("queen sessiond creation canceled");
       await this.dependencies.terminalHost.renewVisibility(
         locator,
-        admission.visibility,
+        policy.visibility,
       );
-      if (signal.aborted) return;
-      this.current = {
+      if (signal.aborted) throw new Error("queen sessiond creation canceled");
+      const ready: OrchestratorSessiondSnapshot = {
         requestId: input.requestId,
         locator,
         state: "running",
         exitCode: null,
         diagnostic: null,
       };
-      await this.dependencies.onRunning?.();
-      if (signal.aborted) return;
-      await this.monitor(input.requestId, locator, signal);
+      this.current = ready;
+      const monitorAbort = new AbortController();
+      this.abort = monitorAbort;
+      void this.monitor(input.requestId, locator, monitorAbort.signal).finally(() => {
+        if (this.abort === monitorAbort) this.abort = null;
+      });
+      return ready;
     } catch (error) {
-      if (signal.aborted) return;
-      this.current = {
-        requestId: input.requestId,
-        locator,
-        state: "failed",
-        exitCode: null,
-        diagnostic: error instanceof Error ? error.message : String(error),
-      };
+      if (locator !== null) {
+        this.dependencies.bindings.releaseUncreatedTerminalHostSession(locator);
+      }
+      throw error;
     }
   }
 
@@ -244,6 +232,7 @@ export class OrchestratorSessiondController {
   private sessionSpec(
     input: OrchestratorSessiondLaunch,
     locator: OrchestratorSessiondSnapshot["locator"],
+    geometry: SessionSpec["geometry"],
   ): SessionSpec {
     return {
       schemaVersion: 1,
@@ -252,18 +241,14 @@ export class OrchestratorSessiondController {
       toolSessionId: null,
       cwd: input.cwd,
       argv: input.argv,
-      environment: {
-        ...Object.fromEntries(
-          Object.entries(this.dependencies.environment ?? process.env).filter(
-            (entry): entry is [string, string] => entry[1] !== undefined,
-          ),
-        ),
+      environment: providerTerminalEnvironment({
+        ...(this.dependencies.environment ?? process.env),
         ...input.environment,
-      },
+      }),
       expectedExecutable: input.expectedExecutable,
       readOnly: false,
       capabilityEpoch: 0,
-      geometry: DEFAULT_TMUX_GEOMETRY,
+      geometry,
       launchGrantId: input.requestId,
       launchGrantRevision: 1,
     };

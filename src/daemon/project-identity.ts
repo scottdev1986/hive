@@ -1,4 +1,10 @@
-import { mkdirSync, readFileSync, renameSync, writeFileSync } from "node:fs";
+import {
+  mkdirSync,
+  readFileSync,
+  realpathSync,
+  renameSync,
+  writeFileSync,
+} from "node:fs";
 import { join } from "node:path";
 import { getHiveHome } from "./db";
 import { InMemoryManagedWorktreeLedger, LedgerCapability, ProjectRegistry, resolveOrCreate, resolveProject, type ProjectRegistrySnapshot } from "./project-identity-core/index";
@@ -50,14 +56,25 @@ export function resolveHandshakeProject(directory: string) {
 
 function persistRegistry(registry: ProjectRegistry): void {
   mkdirSync(getHiveHome(), { recursive: true });
+  const registryPath = (() => {
+    try {
+      return realpathSync.native(path());
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === "ENOENT") return path();
+      throw error;
+    }
+  })();
   // Write-then-rename so a crash mid-write cannot leave a half-written file
   // for the next boot's corruption path to quarantine. The temp name carries the
   // pid: a fixed one is not a private staging file at all, and two processes
   // resolving identity at the same moment would rename each other's temp out
   // from under themselves — the second `renameSync` dying with ENOENT.
-  const temp = `${path()}.${process.pid}.tmp`;
+  // A dev home symlinks this file into ~/.hive. Resolve that link before the
+  // atomic rename; renaming onto the link itself would replace it and fork
+  // dev's identity from the later installed release.
+  const temp = `${registryPath}.${process.pid}.tmp`;
   writeFileSync(temp, JSON.stringify(registry.snapshot()));
-  renameSync(temp, path());
+  renameSync(temp, registryPath);
 }
 
 /**

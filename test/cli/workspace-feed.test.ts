@@ -115,6 +115,7 @@ const orchestrator = (
   status,
   host: "tmux",
   hostState: null,
+  hostDiagnostic: null,
   sessionLocator: null,
   ...overrides,
 });

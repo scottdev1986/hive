@@ -322,6 +322,14 @@ final class ProjectStateTests: XCTestCase {
                 agentName: "visible",
                 locator: locator,
                 state: .pending)]))
+        let measured = WorkspaceTerminalGeometry(
+            columns: 117, rows: 41, widthPx: 1170, heightPx: 820,
+            cellWidthPx: 10, cellHeightPx: 20)
+        XCTAssertEqual(
+            state.visibilityInventory(geometries: [
+                ProjectState.paneID(forAgent: "visible"): measured,
+            ]).terminals.first?.geometry,
+            measured)
 
         state.apply(feed: [snapshot(status: "working")])
         XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .live)
@@ -333,7 +341,7 @@ final class ProjectStateTests: XCTestCase {
             status: "done",
             closedAt: "2026-07-18T12:00:00.000Z")])
         let closing = state.visibilityInventory()
-        XCTAssertEqual(closing.inventoryRevision, "5")
+        XCTAssertEqual(closing.inventoryRevision, "6")
         XCTAssertEqual(closing.terminals.first?.state, .closing)
     }
 
@@ -382,6 +390,31 @@ final class ProjectStateTests: XCTestCase {
         state.apply(feed: [], orchestrator: nil)
         XCTAssertEqual(state.panes[ProjectState.orchestratorPaneID]?.sessionLocator, second,
                        "unknown turn state is not evidence that the terminal vanished")
+    }
+
+    func testFailedRootHostIsFailureNotReconnect() {
+        let state = ProjectState(projectID: "proj", displayName: "hive")
+        state.addOrchestrator()
+        let locator = AgentSessionLocator(
+            instanceId: "instance",
+            subject: AgentSessionSubject(kind: "root"),
+            generation: 1,
+            sessionId: "ses_failed",
+            hostKind: "sessiond",
+            engineBuildId: "engine")
+
+        state.apply(feed: [], orchestrator: OrchestratorSnapshot(
+            status: nil,
+            host: "sessiond",
+            hostState: "failed",
+            hostDiagnostic: "native host registration failed",
+            sessionLocator: locator))
+
+        let pane = state.panes[ProjectState.orchestratorPaneID]
+        XCTAssertEqual(pane?.feedStatus, "failed")
+        XCTAssertEqual(pane?.status, .failed(acknowledged: false))
+        XCTAssertEqual(pane?.terminalHostState, "failed")
+        XCTAssertEqual(state.visibilityInventory().terminals.first?.state, .failed)
     }
 
     func testPromoteAndReturnOrchestrator() {
