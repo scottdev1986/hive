@@ -111,6 +111,12 @@ jobs:
           xcodebuild -downloadComponent MetalToolchain
           scripts/provision-native-toolchain.sh
           scripts/build-ghosttykit.sh --production
+          commit=$(/usr/bin/plutil -extract ghostty.commit raw -o - native/toolchain-lock.json)
+          zig=$(/usr/bin/plutil -extract zig.version raw -o - native/toolchain-lock.json)
+          artifact="$HIVE_NATIVE_CACHE/artifacts/ghostty-$commit-zig-$zig"
+          /bin/rm -rf workspace/Vendor/GhosttyKit.xcframework workspace/Vendor/checkpoint-fixtures
+          /usr/bin/ditto "$artifact/GhosttyKit.xcframework" workspace/Vendor/GhosttyKit.xcframework
+          /usr/bin/ditto "$artifact/checkpoint-fixtures" workspace/Vendor/checkpoint-fixtures
 
       # Graceful degradation lives here, not in a flag. If the Apple certificate
       # secret is absent the build stays unsigned and publishes exactly today's

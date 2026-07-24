@@ -117,6 +117,17 @@ describe("the release workflow", () => {
     );
   });
 
+  test("stages the qualified native artifact where SwiftPM consumes it", () => {
+    const nativeBuild = workflow.indexOf("scripts/build-ghosttykit.sh --production");
+    const stage = workflow.indexOf(
+      '/usr/bin/ditto "$artifact/GhosttyKit.xcframework" workspace/Vendor/GhosttyKit.xcframework',
+    );
+    const releaseBuild = workflow.indexOf("Build release artifacts");
+    expect(nativeBuild).toBeGreaterThan(0);
+    expect(stage).toBeGreaterThan(nativeBuild);
+    expect(releaseBuild).toBeGreaterThan(stage);
+  });
+
   test("pins the same Bun the project pins", () => {
     // The release binary embeds this Bun's runtime; a floating version would
     // silently change what every user runs.
