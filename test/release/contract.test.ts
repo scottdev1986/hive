@@ -110,6 +110,13 @@ describe("the release workflow", () => {
     expect(preflight).toBeGreaterThan(download);
   });
 
+  test("runs on the exact Xcode image pinned by the native toolchain lock", () => {
+    expect(workflow).toContain("runs-on: macos-26");
+    expect(workflow).toContain(
+      "DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer",
+    );
+  });
+
   test("pins the same Bun the project pins", () => {
     // The release binary embeds this Bun's runtime; a floating version would
     // silently change what every user runs.

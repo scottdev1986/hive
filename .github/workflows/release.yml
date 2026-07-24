@@ -29,7 +29,9 @@ jobs:
     # macOS because the artifacts are Mach-O: `bun build --compile` cross-compiles
     # both CLI slices from here, and `swift build` needs a real toolchain. Signing
     # and notarization need the same real macOS tools (codesign, notarytool).
-    runs-on: macos-15
+    runs-on: macos-26
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.6.app/Contents/Developer
     steps:
       - uses: actions/checkout@v5
         with:
