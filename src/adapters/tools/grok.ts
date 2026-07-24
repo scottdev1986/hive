@@ -19,6 +19,8 @@ export interface GrokSpawnOptions {
   /** The session UUID Hive assigns at creation because Grok has no session-id
    * hook channel. */
   sessionId?: string;
+  /** Additional vendor system rules for this session. */
+  rules?: string;
 }
 
 export interface GrokAgentConfigOptions {
@@ -127,6 +129,9 @@ function grokLaunchArgs(options: GrokSpawnOptions): string[] {
   const argv = [options.executable ?? "grok", "-m", options.model];
   if (options.effort !== undefined) {
     argv.push("--reasoning-effort", options.effort);
+  }
+  if (options.rules !== undefined) {
+    argv.push("--rules", options.rules);
   }
   argv.push(...grokPermissionArgs(options.readOnly));
   return argv;

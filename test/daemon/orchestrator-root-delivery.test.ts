@@ -124,4 +124,21 @@ describe("SessiondOrchestratorRootDelivery", () => {
       { message_id: "message-1" },
     )).resolves.toBe(false);
   });
+
+  test("does not turn a queued Hive message into a shell command after the TUI exits", async () => {
+    const delivery = new SessiondOrchestratorRootDelivery({
+      current: () => sessiondRoot,
+      ready: () => true,
+      canInject: async () => false,
+      input: {
+        injectRoot: async () => {
+          throw new Error("the idle shell must never receive provider input");
+        },
+      },
+    });
+    await expect(delivery.deliverMessage(
+      "agent report",
+      { message_id: "message-1" },
+    )).resolves.toBe(false);
+  });
 });

@@ -13,6 +13,11 @@ import {
   mintRootSessiondLocator,
 } from "./orchestrator-host";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
+import { shellJoin } from "./session-host/tmux-host";
+import {
+  shellSessionLaunch,
+  type ShellSessionLaunch,
+} from "./session-host/shell-session";
 
 export const OrchestratorSessiondLaunchSchema = z.strictObject({
   requestId: domainUuidV7Schema("req"),
@@ -141,9 +146,10 @@ export class OrchestratorSessiondController {
       });
       const existing = this.dependencies.bindings.getTerminalHostBindingByLocator(locator);
       if (existing?.createEvidence === undefined) {
+        const shell = shellSessionLaunch(shellJoin(input.argv));
         await this.dependencies.terminalHost.create(
-          this.sessionSpec(input, locator, policy.geometry),
-          new Uint8Array(),
+          this.sessionSpec(input, locator, policy.geometry, shell),
+          shell.initialInput,
           { locator, visibility: policy.visibility },
         );
       }
@@ -233,6 +239,7 @@ export class OrchestratorSessiondController {
     input: OrchestratorSessiondLaunch,
     locator: OrchestratorSessiondSnapshot["locator"],
     geometry: SessionSpec["geometry"],
+    shell: ShellSessionLaunch,
   ): SessionSpec {
     return {
       schemaVersion: 1,
@@ -240,12 +247,12 @@ export class OrchestratorSessiondController {
       provider: input.provider,
       toolSessionId: null,
       cwd: input.cwd,
-      argv: input.argv,
+      argv: shell.argv,
       environment: providerTerminalEnvironment({
         ...(this.dependencies.environment ?? process.env),
         ...input.environment,
       }),
-      expectedExecutable: input.expectedExecutable,
+      expectedExecutable: shell.expectedExecutable,
       readOnly: false,
       capabilityEpoch: 0,
       geometry,

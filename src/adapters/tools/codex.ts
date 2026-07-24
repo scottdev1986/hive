@@ -54,6 +54,8 @@ export interface CodexSpawnOptions {
    * (docs/graphify/integration.md). Attached through the same
    * config-override channel as `hive`; absent means no entry at all. */
   graphifyUrl?: string;
+  /** Ephemeral Hive-owned profile containing developer_instructions. */
+  profile?: string;
 }
 
 export type CodexAgentConfigOptions = Pick<
@@ -284,6 +286,7 @@ function buildCodexConfigArgs(
 export function buildCodexSpawnCommand(options: CodexSpawnOptions): string[] {
   return [
     options.executable ?? "codex",
+    ...(options.profile === undefined ? [] : ["--profile", options.profile]),
     ...buildCodexConfigArgs(options, { asConfigOverride: false }),
   ];
 }
@@ -298,6 +301,7 @@ export function buildCodexResumeCommand(
   return [
     options.executable ?? "codex",
     "resume",
+    ...(options.profile === undefined ? [] : ["--profile", options.profile]),
     ...buildCodexConfigArgs(options, { asConfigOverride: true }),
     sessionId,
   ];

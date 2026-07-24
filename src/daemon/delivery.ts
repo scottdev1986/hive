@@ -1019,6 +1019,18 @@ export class MessageDelivery {
     if (recipient.sessionLocator?.hostKind === "sessiond") {
       requireSessiondAgentLocator(recipient);
       if (this.sessiondInput === undefined) return this.getStoredMessage(message.id);
+      if (this.processState !== undefined) {
+        const state = await this.processState(recipient)
+          .catch(() => "unknown" as const);
+        if (state !== "running") {
+          this.db.recordMessageDeliveryDiagnostic(
+            message.id,
+            `sessiond inject declined: provider foreground state is ${state}`,
+            new Date().toISOString(),
+          );
+          return this.getStoredMessage(message.id);
+        }
+      }
       // Every non-delivery on this branch records WHY on the message row.
       // The #68 live proof failed with the only diagnostic on a /dev/null
       // stderr: ~24 silent retries, three indistinguishable causes. A row

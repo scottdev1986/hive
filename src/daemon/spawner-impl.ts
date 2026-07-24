@@ -41,6 +41,10 @@ import {
 } from "./session-host/hive-terminal-host";
 import { SessiondWireError } from "./session-host/sessiond-host";
 import type { SessionLocator, SessionSpec } from "./session-host/contract";
+import {
+  shellSessionLaunch,
+  type ShellSessionLaunch,
+} from "./session-host/shell-session";
 import type { WorkspaceVisibilityAdmission } from "./session-host/workspace-visibility";
 import {
   modelVendor,
@@ -81,7 +85,13 @@ import {
 import type { HiveDatabase } from "./db";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
-import { promptArgument, writeLaunchPrompt } from "./launch-prompt";
+import {
+  codexInstructionProfileName,
+  wrapCodexWithInstructionProfile,
+  wrapGrokWithRulesFile,
+  writeCodexInstructionProfile,
+  writeLaunchPrompt,
+} from "./launch-prompt";
 import { watchForProofOfLife } from "./readiness";
 import {
   parseProcessTable,
@@ -833,15 +843,15 @@ export class HiveSpawner implements Spawner {
       return;
     }
     const admission = await this.requireSessiondCreationPolicy(record);
+    const shell = shellSessionLaunch(command);
     await this.requireSessiondHost(record).create(
       this.sessiondSpec(
         record,
-        command,
-        expectedExecutable,
+        shell,
         launchGrantId,
         admission.geometry,
       ),
-      new Uint8Array(),
+      shell.initialInput,
       { locator: requireSessiondAgentLocator(record), visibility: admission.visibility },
     );
   }
@@ -930,8 +940,7 @@ export class HiveSpawner implements Spawner {
 
   private sessiondSpec(
     record: AgentRecord,
-    command: string,
-    expectedExecutable: string,
+    shell: ShellSessionLaunch,
     launchGrantId: string,
     geometry: SessionSpec["geometry"],
   ): SessionSpec {
@@ -944,9 +953,9 @@ export class HiveSpawner implements Spawner {
       provider: record.tool,
       toolSessionId: record.toolSessionId ?? null,
       cwd: record.worktreePath,
-      argv: ["/bin/sh", "-lc", command],
+      argv: shell.argv,
       environment: providerTerminalEnvironment(process.env),
-      expectedExecutable,
+      expectedExecutable: shell.expectedExecutable,
       readOnly: record.readOnly,
       capabilityEpoch: record.capabilityEpoch,
       geometry,
@@ -1234,27 +1243,17 @@ export class HiveSpawner implements Spawner {
             hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
             ...(capabilityToken === undefined ? {} : { capabilityToken }),
           });
-          const useAppServer =
-            this.dependencies.config.codex?.driver === "app-server" &&
-            (await this.dependencies.codexAppServer?.isAvailable() ?? false);
-          if (useAppServer) {
-            argv = this.dependencies.codexAppServer!.buildHostCommand(
-              prepared.record,
-              this.daemonPort(),
-            );
-          } else {
-            argv = buildCodexSpawnCommand({
-              executable: this.codexExecutable,
-              daemonPort: this.daemonPort(),
-              effort: identity.effort,
-              model: identity.model,
-              name: agent.name,
-              readOnly,
-              worktreePath: agent.worktreePath,
-              excludeMcpServers,
-              withCapabilityToken: capabilityToken !== undefined,
-            });
-          }
+          argv = buildCodexSpawnCommand({
+            executable: this.codexExecutable,
+            daemonPort: this.daemonPort(),
+            effort: identity.effort,
+            model: identity.model,
+            name: agent.name,
+            readOnly,
+            worktreePath: agent.worktreePath,
+            excludeMcpServers,
+            withCapabilityToken: capabilityToken !== undefined,
+          });
           break;
         }
         case "grok": {
@@ -1294,101 +1293,64 @@ export class HiveSpawner implements Spawner {
         `Acknowledge with hive_ack_message using agent=${JSON.stringify(agent.name)}, messageId=${JSON.stringify(message.id)}, capabilityEpoch=${message.capabilityEpoch}.`,
         `Previous assignment for context only: ${agent.taskDescription}`,
       ].join("\n\n");
-      const nativeCodex = identity.tool === "codex" &&
-        this.dependencies.codexAppServer !== undefined &&
-        argv[1] === "codex-app-server-host";
-      // The control order enters through the launch shell, never an argv: it
-      // carries the agent's whole prior assignment and is bounded by nothing.
-      const promptSuffix = ` ${
-        promptArgument(await writeLaunchPrompt(agent.tmuxSession, controlPrompt))
-      }`;
+      const instructionPath = await writeLaunchPrompt(
+        agent.tmuxSession,
+        controlPrompt,
+      );
+      if (identity.tool === "codex") {
+        await writeCodexInstructionProfile(agent.tmuxSession, controlPrompt);
+      }
+      const instructionVendor = identity.tool;
+      argv = (() => {
+        switch (instructionVendor) {
+          case "claude":
+            return [...argv, "--append-system-prompt-file", instructionPath];
+          case "codex":
+            return [
+              argv[0]!,
+              "--profile",
+              codexInstructionProfileName(agent.tmuxSession),
+              ...argv.slice(1),
+            ];
+          case "grok":
+            return argv;
+          default:
+            return unknownVendor(
+              instructionVendor,
+              "critical-control instructions",
+            );
+        }
+      })();
+      const kickoff = "Read and acknowledge the assigned Hive control message.";
       // The token value enters through the launch shell, never an argv.
       const restartWorktreePath = agent.worktreePath;
       const withCapabilityEnv = (command: string): string => {
         if (identity.tool === "grok") {
-          return wrapGrokSpawnWithCompatibilityEnv(command);
+          return wrapGrokSpawnWithCompatibilityEnv(
+            wrapGrokWithRulesFile(command, instructionPath, kickoff),
+          );
         }
-        return identity.tool === "codex" && !nativeCodex &&
-            capabilityToken !== undefined
-          ? wrapCodexSpawnWithCapabilityEnv(command, restartWorktreePath)
-          : command;
+        if (identity.tool !== "codex") return command;
+        const authorized = capabilityToken === undefined
+          ? command
+          : wrapCodexSpawnWithCapabilityEnv(command, restartWorktreePath);
+        return wrapCodexWithInstructionProfile(
+          authorized,
+          agent.tmuxSession,
+        );
       };
-      // The binary that will actually be running in the pane. Reassigned below
-      // if the app-server handshake fails and the TUI takes over the session,
-      // because readiness looks for *this* process and nothing else.
-      let launchedCommand = launchedCommandName(argv);
+      const launchedCommand = launchedCommandName(argv);
       authorized = await this.authorizeLaunch(identity);
       requireAuthorizedLaunch(authorized);
       this.dependencies.quota.requireActiveReservation(reservationId);
       await this.createSession(
         prepared.record,
-        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
+        withCapabilityEnv(
+          shellJoin(identity.tool === "grok" ? argv : [...argv, kickoff]),
+        ),
         launchedCommand,
         message.id,
       );
-      if (nativeCodex) {
-        try {
-          authorized = await this.authorizeLaunch(identity);
-          requireAuthorizedLaunch(authorized);
-          this.dependencies.quota.requireActiveReservation(reservationId);
-          await this.dependencies.codexAppServer!.startAgent(
-            prepared.record,
-            controlPrompt,
-            readOnly,
-            identity.tool === "codex"
-              ? identity.effort
-              : (() => { throw new Error("Codex app-server requires Codex identity"); })(),
-          );
-        } catch (error) {
-          console.error(
-            `Hive codex app-server handshake failed for ${agent.name}; falling back to the TUI launch: ${
-              error instanceof Error ? error.message : "unknown error"
-            }`,
-          );
-          this.dependencies.codexAppServer!.disconnect(agent.name);
-          await this.stopVerifiedSession(
-            prepared.record,
-            `Codex app-server fallback for ${agent.name}`,
-          );
-          prepared = {
-            record: this.dependencies.db.insertAgent({
-              ...prepared.record,
-              sessionLocator: this.nextSessionLocator(prepared.record),
-              lastEventAt: new Date().toISOString(),
-            }),
-          };
-          const fallback = buildCodexSpawnCommand({
-            executable: this.codexExecutable,
-            daemonPort: this.daemonPort(),
-            effort: identity.tool === "codex"
-              ? identity.effort
-              : (() => { throw new Error("Codex fallback requires Codex identity"); })(),
-            model: identity.model,
-            name: agent.name,
-            readOnly,
-            worktreePath: agent.worktreePath,
-            excludeMcpServers,
-            withCapabilityToken: capabilityToken !== undefined,
-          });
-          launchedCommand = launchedCommandName(fallback);
-          const fallbackCommand = shellJoin(fallback) + promptSuffix;
-          const fallbackShell = capabilityToken !== undefined
-            ? wrapCodexSpawnWithCapabilityEnv(
-              fallbackCommand,
-              agent.worktreePath,
-            )
-            : fallbackCommand;
-          authorized = await this.authorizeLaunch(identity);
-          requireAuthorizedLaunch(authorized);
-          this.dependencies.quota.requireActiveReservation(reservationId);
-          await this.createSession(
-            prepared.record,
-            fallbackShell,
-            launchedCommand,
-            message.id,
-          );
-        }
-      }
       const failureReason = await this.monitorControlReadiness(
         prepared.record,
         launchedCommand,
@@ -2291,6 +2253,13 @@ export class HiveSpawner implements Spawner {
           ...(assignment === undefined ? {} : { assignment }),
         },
       );
+      const instructionPath = await writeLaunchPrompt(
+        record.tmuxSession,
+        prompt,
+      );
+      if (tool === "codex") {
+        await writeCodexInstructionProfile(record.tmuxSession, prompt);
+      }
       const dangerous = this.dependencies.config.autonomy === "dangerous";
       // Servers the human attached to their own Codex sessions. This agent did
       // not ask for them and pays for them on every message it sends, so the
@@ -2331,6 +2300,7 @@ export class HiveSpawner implements Spawner {
           worktreePath: worktree.path,
           executable: this.claudeExecutable,
           scopedMcpConfigPath: claudeMcpConfigPath(worktree.path),
+          appendSystemPromptFile: instructionPath,
         });
         break;
         }
@@ -2343,28 +2313,20 @@ export class HiveSpawner implements Spawner {
           ...(capabilityToken === undefined ? {} : { capabilityToken }),
           ...(graphifyUrl === null ? {} : { graphifyUrl }),
         });
-        const useAppServer =
-          this.dependencies.config.codex?.driver === "app-server" &&
-          (await this.dependencies.codexAppServer?.isAvailable() ?? false);
-        argv = useAppServer
-          ? this.dependencies.codexAppServer!.buildHostCommand(
-              record,
-              this.daemonPort(),
-              graphifyUrl ?? undefined,
-            )
-          : buildCodexSpawnCommand({
-              executable: this.codexExecutable,
-              daemonPort: this.daemonPort(),
-              effort: effort ?? "medium",
-              model,
-              name,
-              readOnly,
-              dangerous,
-              worktreePath: worktree.path,
-              excludeMcpServers,
-              withCapabilityToken: capabilityToken !== undefined,
-              ...(graphifyUrl === null ? {} : { graphifyUrl }),
-            });
+        argv = buildCodexSpawnCommand({
+          executable: this.codexExecutable,
+          daemonPort: this.daemonPort(),
+          effort: effort ?? "medium",
+          model,
+          name,
+          readOnly,
+          dangerous,
+          worktreePath: worktree.path,
+          excludeMcpServers,
+          withCapabilityToken: capabilityToken !== undefined,
+          profile: codexInstructionProfileName(record.tmuxSession),
+          ...(graphifyUrl === null ? {} : { graphifyUrl }),
+        });
         break;
         }
         case "grok": {
@@ -2386,21 +2348,22 @@ export class HiveSpawner implements Spawner {
         default:
           unknownVendor(tool, "spawn");
       }
-      const nativeCodex = tool === "codex" &&
-        this.dependencies.codexAppServer !== undefined &&
-        argv[1] === "codex-app-server-host";
-      // The brief enters through the launch shell, never an argv: tmux caps a
-      // command well below ARG_MAX and Hive's briefs outgrow that cap by design.
-      // Written even for the app-server, whose TUI fallback below needs it.
-      const promptSuffix = ` ${
-        promptArgument(await writeLaunchPrompt(record.tmuxSession, prompt))
-      }`;
+      const kickoff = "Begin the assigned task.";
       // The token value enters through the launch shell, never an argv.
       const withCapabilityEnv = (command: string): string => {
-        if (tool === "grok") return wrapGrokSpawnWithCompatibilityEnv(command);
-        return tool === "codex" && !nativeCodex && capabilityToken !== undefined
-          ? wrapCodexSpawnWithCapabilityEnv(command, worktree.path)
-          : command;
+        if (tool === "grok") {
+          return wrapGrokSpawnWithCompatibilityEnv(
+            wrapGrokWithRulesFile(command, instructionPath, kickoff),
+          );
+        }
+        if (tool !== "codex") return command;
+        const authorized = capabilityToken === undefined
+          ? command
+          : wrapCodexSpawnWithCapabilityEnv(command, worktree.path);
+        return wrapCodexWithInstructionProfile(
+          authorized,
+          record.tmuxSession,
+        );
       };
       const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
         if (quotaReservationId !== undefined) {
@@ -2437,66 +2400,14 @@ export class HiveSpawner implements Spawner {
         );
       };
 
-      // See the control-restart path: readiness looks for the process hive
-      // actually launched, so this must follow the session that wins.
-      let launchedCommand = launchedCommandName(argv);
+      const launchedCommand = launchedCommandName(argv);
       await launchSession(
         await revalidateAtAdapter(),
-        withCapabilityEnv(shellJoin(argv) + (nativeCodex ? "" : promptSuffix)),
+        withCapabilityEnv(
+          shellJoin(tool === "grok" ? argv : [...argv, kickoff]),
+        ),
         launchedCommand,
       );
-      if (nativeCodex) {
-        try {
-          const candidate = await revalidateAtAdapter();
-          requireAuthorizedLaunch(candidate);
-          await this.dependencies.codexAppServer!.startAgent(record, prompt, readOnly, effort ?? "medium");
-        } catch (error) {
-          // The binary advertised app-server support but the control process
-          // could not complete its handshake. Replace it immediately with the
-          // maintained TUI path; tmux paste remains the automatic fallback.
-          console.error(
-            `Hive codex app-server handshake failed for ${name}; falling back to the TUI launch: ${
-              error instanceof Error ? error.message : "unknown error"
-            }`,
-          );
-          this.dependencies.codexAppServer!.disconnect(name);
-          await this.stopVerifiedSession(
-            record,
-            `Codex app-server fallback for ${record.name}`,
-          );
-          record = this.dependencies.db.insertAgent({
-            ...record,
-            sessionLocator: this.nextSessionLocator(record),
-            status: "spawning",
-            lastEventAt: new Date().toISOString(),
-          });
-          const fallback = buildCodexSpawnCommand({
-            executable: this.codexExecutable,
-            daemonPort: this.daemonPort(),
-            effort: effort ?? "medium",
-            model,
-            name,
-            readOnly,
-            dangerous,
-            worktreePath: worktree.path,
-            excludeMcpServers,
-            withCapabilityToken: capabilityToken !== undefined,
-          });
-          launchedCommand = launchedCommandName(fallback);
-          const fallbackCommand = shellJoin(fallback) + promptSuffix;
-          const fallbackShell = capabilityToken !== undefined
-            ? wrapCodexSpawnWithCapabilityEnv(
-              fallbackCommand,
-              worktree.path,
-            )
-            : fallbackCommand;
-          await launchSession(
-            await revalidateAtAdapter(),
-            fallbackShell,
-            launchedCommand,
-          );
-        }
-      }
       const failureReason = await this.monitorReadiness(record, launchedCommand);
       if (failureReason !== null) {
         // The command ran, so this is the model's answer — unless the pane shows

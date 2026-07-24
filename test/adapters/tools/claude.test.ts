@@ -176,12 +176,12 @@ describe("Claude adapter", () => {
       const command = buildClaudeSpawnCommand({
         ...base,
         scopedMcpConfigPath: "/tmp/worktree/.mcp.json",
-        appendSystemPrompt: "root instructions",
+        appendSystemPromptFile: "/tmp/root-instructions",
       });
-      expect(command[command.indexOf("--append-system-prompt") + 1]).toBe(
-        "root instructions",
+      expect(command[command.indexOf("--append-system-prompt-file") + 1]).toBe(
+        "/tmp/root-instructions",
       );
-      expect(command.indexOf("--append-system-prompt")).toBeGreaterThan(
+      expect(command.indexOf("--append-system-prompt-file")).toBeGreaterThan(
         command.indexOf("--strict-mcp-config"),
       );
     });
@@ -281,11 +281,11 @@ describe("Claude adapter", () => {
       worktreePath: "/tmp/worktree",
       daemonPort: 4317,
       readOnly: false,
-      appendSystemPrompt: "root instructions",
+      appendSystemPromptFile: "/tmp/root-instructions",
     }, "0189-session");
     expect(command.slice(0, 3)).toEqual(["claude", "--resume", "0189-session"]);
-    expect(command.at(-2)).toBe("--append-system-prompt");
-    expect(command.at(-1)).toBe("root instructions");
+    expect(command.at(-2)).toBe("--append-system-prompt-file");
+    expect(command.at(-1)).toBe("/tmp/root-instructions");
   });
 
   test("derives the transcript project directory from the munged worktree path", () => {

@@ -10,6 +10,7 @@ import {
   type OrchestratorSessiondDependencies,
   type OrchestratorSessiondLaunch,
 } from "../../src/daemon/orchestrator-sessiond";
+import { TERMINAL_SHELL } from "../../src/daemon/session-host/shell-session";
 
 class MemoryBindings implements TerminalHostBindingStore {
   values: HiveTerminalBinding[] = [];
@@ -193,12 +194,21 @@ describe("OrchestratorSessiondController", () => {
           : { engineBuildId: "engine-a", visibility, geometry },
       },
       terminalHost: {
-        create: async (spec, _input, policy) => {
+        create: async (spec, input, policy) => {
           expect(spec.geometry).toEqual(geometry);
           expect(spec.environment).toEqual({
             BASE_ENV: "base",
             HIVE_ROOT_FIXTURE: "1",
           });
+          expect(spec.argv.slice(0, 4)).toEqual([
+            TERMINAL_SHELL,
+            "-l",
+            "-i",
+            "-c",
+          ]);
+          expect(spec.argv.at(-1)).toBe("'codex' '--no-alt-screen'");
+          expect(spec.expectedExecutable).toBe(TERMINAL_SHELL);
+          expect(input).toEqual(new Uint8Array());
           creates += 1;
           bindings.bindTerminalHostSession(policy);
           completeBinding(bindings, policy.locator);

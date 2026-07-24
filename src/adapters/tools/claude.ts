@@ -67,8 +67,8 @@ export interface ClaudeSpawnOptions {
   /** Hive-owned settings file for a launch that must not read project or local
    * settings from its cwd. User settings still apply. */
   scopedSettingsPath?: string;
-  /** Additional system instructions for this session. */
-  appendSystemPrompt?: string;
+  /** 0600 file containing additional system instructions for this session. */
+  appendSystemPromptFile?: string;
   /** Exact argv prefix for this Hive build. Installed releases pass their
    * absolute binary path so hooks and MCP helpers cannot attach to a
    * different installation (or fail because `hive` is absent from PATH).
@@ -286,8 +286,11 @@ export function buildClaudeSpawnCommand(
       "--strict-mcp-config",
     );
   }
-  if (options.appendSystemPrompt !== undefined) {
-    command.push("--append-system-prompt", options.appendSystemPrompt);
+  if (options.appendSystemPromptFile !== undefined) {
+    command.push(
+      "--append-system-prompt-file",
+      options.appendSystemPromptFile,
+    );
   }
   return command;
 }

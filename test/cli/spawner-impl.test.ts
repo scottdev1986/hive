@@ -422,11 +422,21 @@ class FakeStore {
  * what the agent was actually handed.
  */
 async function deliveredPrompt(command: string): Promise<string> {
-  const path = /\$\(cat '([^']+)'\)/.exec(command)?.[1];
-  if (path === undefined) {
-    throw new Error(`launch command carries no prompt file: ${command}`);
+  const claudePath =
+    /'--append-system-prompt-file' '([^']+)'/.exec(command)?.[1];
+  if (claudePath !== undefined) {
+    return await readFile(claudePath, "utf8");
   }
-  return await readFile(path, "utf8");
+  const codexPath =
+    /install -m 600 '([^']+\.codex\.config\.toml)'/.exec(command)?.[1];
+  if (codexPath !== undefined) {
+    const source = await readFile(codexPath, "utf8");
+    const encoded = /^developer_instructions = (.+)$/m.exec(source)?.[1];
+    if (encoded !== undefined) return JSON.parse(encoded) as string;
+  }
+  const legacyPath = /\$\(cat '([^']+)'\)/.exec(command)?.[1];
+  if (legacyPath !== undefined) return await readFile(legacyPath, "utf8");
+  throw new Error(`launch command carries no instruction file: ${command}`);
 }
 
 function signalReadiness(store: FakeStore): () => Promise<void> {
@@ -680,7 +690,7 @@ describe("HiveSpawner name pool", () => {
       config: {},
       readRoutingPolicy: () => policyFromRoute(CHEAP_ROUTE),
       tmux,
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       quota: controlQuota.quota,
     });
 
@@ -1423,7 +1433,7 @@ describe("HiveSpawner wiring", () => {
     expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
   });
 
-  test("launches Codex through the app-server host and delivers the assignment with turn/start", async () => {
+  test("ignores the retired worker app-server preference and launches the Codex TUI", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-server-"));
     tempRoots.push(root);
     const store = new FakeStore();
@@ -1448,7 +1458,7 @@ describe("HiveSpawner wiring", () => {
         await mkdir(path, { recursive: true });
         return { path, branch: `hive/${name}-${slug}` };
       },
-      sleep: async () => {},
+      sleep: signalReadiness(store),
       codexAppServer: {
         isAvailable: async () => true,
         buildHostCommand: (value) => [
@@ -1469,15 +1479,16 @@ describe("HiveSpawner wiring", () => {
       task: "Implement native control",
       category: "simple_coding",
     });
-    expect(tmux.sessions[0]?.[2]).toContain("'codex-app-server-host'");
-    expect(tmux.sessions[0]?.[2]).not.toContain("Implement native control");
-    expect(starts).toHaveLength(1);
-    expect(starts[0]).toMatchObject({ name: "maya", effort: "high" });
-    expect(starts[0]?.prompt).toContain("Implement native control");
+    expect(tmux.sessions[0]?.[2]).toContain("'codex'");
+    expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
+    expect(starts).toHaveLength(0);
+    expect(await deliveredPrompt(tmux.sessions[0]?.[2] ?? "")).toContain(
+      "Implement native control",
+    );
     expect(spawned.status).toEqual("working");
   });
 
-  test("automatically replaces a failed app-server handshake with the tmux TUI", async () => {
+  test("does not probe or handshake the retired worker app-server path", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-fallback-"));
     tempRoots.push(root);
     const store = new FakeStore();
@@ -1523,18 +1534,18 @@ describe("HiveSpawner wiring", () => {
     });
 
     await spawner.spawn({ task: "Fallback task", category: "simple_coding" });
-    expect(disconnected).toEqual(["maya"]);
-    expect(stopped).toEqual([agentTmuxSession("maya")]);
-    expect(tmux.sessions).toHaveLength(2);
-    expect(tmux.sessions[1]?.[2]).toContain("'codex'");
-    expect(tmux.sessions[1]?.[2]).toContain("--dangerously-bypass-hook-trust");
-    expect(tmux.sessions[1]?.[2]).toContain("features.hooks=true");
-    expect(await deliveredPrompt(tmux.sessions[1]?.[2] ?? "")).toContain(
+    expect(disconnected).toEqual([]);
+    expect(stopped).toEqual([]);
+    expect(tmux.sessions).toHaveLength(1);
+    expect(tmux.sessions[0]?.[2]).toContain("'codex'");
+    expect(tmux.sessions[0]?.[2]).toContain("--dangerously-bypass-hook-trust");
+    expect(tmux.sessions[0]?.[2]).toContain("features.hooks=true");
+    expect(await deliveredPrompt(tmux.sessions[0]?.[2] ?? "")).toContain(
       "Fallback task",
     );
   });
 
-  test("does not launch a TUI fallback when the app-server stop is unverified", async () => {
+  test("a retired app-server preference cannot create a fallback teardown", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-spawner-app-stop-failed-"));
     tempRoots.push(root);
     const store = new FakeStore();
@@ -1580,14 +1591,14 @@ describe("HiveSpawner wiring", () => {
       category: "simple_coding",
     });
 
-    expect(stopAttempts).toBeGreaterThanOrEqual(1);
-    expect(stuck.status).toEqual("stuck");
-    expect(disconnected).toEqual(["maya"]);
+    expect(stopAttempts).toBe(0);
+    expect(stuck.status).toEqual("working");
+    expect(disconnected).toEqual([]);
     expect(tmux.killed).toEqual([]);
     expect(tmux.sessions).toHaveLength(1);
-    expect(tmux.sessions[0]?.[2]).toContain("codex-app-server-host");
+    expect(tmux.sessions[0]?.[2]).not.toContain("codex-app-server-host");
     expect(tmux.sessions.some(([, , command]) => command.includes("'codex'")))
-      .toBeFalse();
+      .toBeTrue();
   });
 
   test("reserves quota before worktree creation and launches the selected fallback model", async () => {
@@ -3511,14 +3522,15 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
     for (const rule of RULES) expect(launched).toContain(rule);
   });
 
-  test("the rules reach a launched CODEX agent — both the TUI argv and the app-server turn", async () => {
+  test("the rules reach a launched CODEX agent through its developer profile", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-guidelines-codex-"));
     tempRoots.push(root);
     const starts: string[] = [];
-    const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) =>
-      newTestSpawner({
+    const codexSpawner = (driver: "tui" | "app-server", tmux: FakeTmux) => {
+      const store = new FakeStore();
+      return newTestSpawner({
         isModelEnabled: async () => true,
-        db: new FakeStore(),
+        db: store,
         repoRoot: root,
         port: 4317,
         config: {
@@ -3535,7 +3547,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
           await mkdir(path, { recursive: true });
           return { path, branch: `hive/${name}-${slug}` };
         },
-        sleep: async () => {},
+        sleep: signalReadiness(store),
         codexAppServer: {
           isAvailable: async () => true,
           buildHostCommand: () => ["hive", "codex-app-server-host"],
@@ -3545,6 +3557,7 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
           disconnect: () => undefined,
         },
       });
+    };
 
     // Codex has no --append-system-prompt; the prompt IS the carrier, on both drivers.
     const tuiTmux = new FakeTmux();
@@ -3559,8 +3572,9 @@ describe("coding guidelines are guaranteed in context at spawn", () => {
       task: "Build auth API",
       category: "simple_coding",
     });
-    expect(starts).toHaveLength(1);
-    for (const rule of RULES) expect(starts[0]).toContain(rule);
+    expect(starts).toHaveLength(0);
+    const hostLaunched = await deliveredPrompt(hostTmux.sessions[0]?.[2] ?? "");
+    for (const rule of RULES) expect(hostLaunched).toContain(rule);
   });
 
   test("the blocks between them carry every rule (they are what the prompt splices in)", () => {
@@ -3711,10 +3725,11 @@ describe("HiveSpawner launch prompt transport", () => {
     expect(command).not.toContain("Rewrite the router");
     expect(Buffer.byteLength(command)).toBeLessThan(4_096);
     // It reached the agent intact, through a file outside the user's repo.
-    const promptPath = /\$\(cat '([^']+)'\)/.exec(command)?.[1] ?? "";
+    const promptPath =
+      /'--append-system-prompt-file' '([^']+)'/.exec(command)?.[1] ?? "";
     expect(promptPath).toStartWith(process.env.HIVE_HOME!);
     expect(promptPath).not.toStartWith(root);
-    const delivered = await readFile(promptPath, "utf8");
+    const delivered = await deliveredPrompt(command);
     expect(delivered).toContain(hugeBrief);
     expect(delivered).toContain(
       "Your assignment: asg_018f1e90-7b5a-7cc0-8000-000000000001 generation 1",

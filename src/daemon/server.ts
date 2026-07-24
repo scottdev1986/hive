@@ -235,12 +235,15 @@ import {
 import {
   assessResources,
   descendantsOf,
+  foregroundJobState,
   paneProcessState,
   parseAvailableMemoryMb,
+  parseForegroundProcessTable,
   parseProcessTable,
   parseStateTable,
   processCommandName,
   runPs,
+  runPsForeground,
   runPsState,
   runVmStat,
   type CommandOutput,
@@ -1085,6 +1088,7 @@ export class HiveDaemon {
           ? new SessiondOrchestratorRootDelivery({
             current: () => this.orchestratorSessiond?.snapshot() ?? null,
             ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
+            canInject: () => this.rootProviderAcceptsInput(),
             input: {
               injectRoot: async (locator, text, message) =>
                 this.sessiondInput.injectRoot === undefined
@@ -1890,9 +1894,34 @@ export class HiveDaemon {
         requireSessiondAgentLocator(agent),
       );
       if (sessiondVendorProcessIsDead(inspection)) return "gone";
-      return inspection.executableVerified ? "running" : "unknown";
+      const shellPid = inspection.providerRoot?.pid;
+      if (shellPid === null || shellPid === undefined) return "unknown";
+      return foregroundJobState(
+        parseForegroundProcessTable(await runPsForeground()),
+        shellPid,
+      );
     } catch {
       return "unknown";
+    }
+  }
+
+  private async rootProviderAcceptsInput(): Promise<boolean> {
+    const current = this.orchestratorSessiond?.snapshot() ?? null;
+    if (current?.state !== "running" || !this.orchestratorSessiond?.isInputReady()) {
+      return false;
+    }
+    try {
+      const inspection = await this.terminalHost.inspect(
+        requireSessiondRootLocator(current.locator),
+      );
+      const shellPid = inspection.providerRoot?.pid;
+      if (shellPid === null || shellPid === undefined) return false;
+      return foregroundJobState(
+        parseForegroundProcessTable(await runPsForeground()),
+        shellPid,
+      ) === "running";
+    } catch {
+      return false;
     }
   }
 

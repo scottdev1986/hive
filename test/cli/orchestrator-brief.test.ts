@@ -13,6 +13,7 @@ import { rootSessionIdForLaunchRequest } from "../../src/daemon/orchestrator-hos
 import type { OrchestratorSessiondControl } from "../../src/cli/orchestrator-sessiond";
 import {
   buildOrchestratorCommand,
+  buildOrchestratorInstructions,
   buildOrchestratorLaunchCommand,
   buildCodexRootAuthorityCommand,
   CODEX_ROOT_TOKEN_SUBJECT,
@@ -23,6 +24,7 @@ import {
   prepareOrchestratorConfig,
   provisionCodexRootToken,
 } from "../../src/cli/orchestrator";
+import { launchPromptPath } from "../../src/daemon/launch-prompt";
 
 const noExistingRoot = {
   hasSession: async () => false,
@@ -98,8 +100,8 @@ describe("orchestrator brief", () => {
 
   test("builds a read-only Claude command with the orchestrator brief", () => {
     const claude = buildOrchestratorCommand("claude", 4317);
-    expect(claude[claude.indexOf("--append-system-prompt") + 1]).toEqual(
-      ORCHESTRATOR_BRIEF,
+    expect(claude[claude.indexOf("--append-system-prompt-file") + 1]).toEqual(
+      launchPromptPath(orchestratorTmuxSession()),
     );
     expect(buildOrchestratorCommand("codex", 4317)).toEqual([
       "codex",
@@ -109,37 +111,28 @@ describe("orchestrator brief", () => {
       'mcp_servers.hive.url="http://127.0.0.1:4317/mcp"',
       "-c",
       'mcp_servers.hive.default_tools_approval_mode="approve"',
+      "--profile",
+      orchestratorTmuxSession(),
       "--sandbox",
       "read-only",
-      ORCHESTRATOR_BRIEF,
     ]);
   });
 
   test("appends a supplied memory index to the root prompt", () => {
     const index = "Hive memory index — durable facts.\n- [repo] x (2026-06-01): note";
-    const claudeCommand = buildOrchestratorCommand("claude", 4317, index);
-    expect(claudeCommand[claudeCommand.indexOf("--append-system-prompt") + 1]).toEqual(
+    expect(buildOrchestratorInstructions(index)).toEqual(
       `${ORCHESTRATOR_BRIEF}\n\n${index}`,
     );
-    const codexCommand = buildOrchestratorCommand("codex", 4317, index);
-    expect(codexCommand.at(-1)).toEqual(`${ORCHESTRATOR_BRIEF}\n\n${index}`);
-    const plainClaudeCommand = buildOrchestratorCommand("claude", 4317);
-    expect(
-      plainClaudeCommand[plainClaudeCommand.indexOf("--append-system-prompt") + 1],
-    ).toEqual(ORCHESTRATOR_BRIEF);
+    expect(buildOrchestratorInstructions()).toEqual(ORCHESTRATOR_BRIEF);
   });
 
   test("normalizes NUL bytes before putting the root prompt in argv", () => {
-    const command = buildOrchestratorCommand(
-      "claude",
-      4317,
+    const instructions = buildOrchestratorInstructions(
       "memory before\0memory after",
     );
 
-    expect(command.every((argument) => !argument.includes("\0"))).toBe(true);
-    expect(command.some((argument) =>
-      argument.includes("memory before\uFFFDmemory after")
-    )).toBe(true);
+    expect(instructions).not.toContain("\0");
+    expect(instructions).toContain("memory before\uFFFDmemory after");
   });
 
   test("starts a fresh root in the fixed instance-scoped tmux session", () => {
@@ -156,7 +149,8 @@ describe("orchestrator brief", () => {
       "claude",
     ]);
     expect(command).not.toContain("-A");
-    expect(command).toContain(ORCHESTRATOR_BRIEF);
+    expect(command).not.toContain(ORCHESTRATOR_BRIEF);
+    expect(command).toContain("--append-system-prompt-file");
     expect(command.slice(-5)).toEqual([
       ";", "set-option", "-g", "mouse", "on",
     ]);
@@ -174,9 +168,9 @@ describe("orchestrator brief", () => {
       "",
       recovery,
     );
-    const prompt = claude[claude.indexOf("--append-system-prompt") + 1];
-    expect(prompt).toContain(ORCHESTRATOR_BRIEF);
-    expect(prompt).toContain(recovery);
+    expect(claude).not.toContain(ORCHESTRATOR_BRIEF);
+    expect(claude).not.toContain(recovery);
+    expect(buildOrchestratorInstructions("", "", recovery)).toContain(recovery);
 
     const codex = buildOrchestratorLaunchCommand(
       "codex",
@@ -188,7 +182,7 @@ describe("orchestrator brief", () => {
       "",
       recovery,
     );
-    expect(codex[codex.indexOf(";") - 1]).toContain(recovery);
+    expect(codex[codex.indexOf(";") - 1]).not.toContain(recovery);
   });
 
   test("runs Codex root through an app-server authority and remote TUI", () => {
@@ -219,9 +213,10 @@ describe("orchestrator brief", () => {
       shellCommand.match(/mcp_servers\.hive\.default_tools_approval_mode/g),
     ).toHaveLength(2);
     expect(shellCommand).toContain("'--sandbox' 'read-only'");
-    expect(shellCommand).toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
-    expect(shellCommand).toContain(guidance);
-    expect(shellCommand).toContain(memory);
+    expect(shellCommand).not.toContain(ORCHESTRATOR_BRIEF.slice(0, 80));
+    expect(shellCommand).not.toContain(guidance);
+    expect(shellCommand).not.toContain(memory);
+    expect(shellCommand).toContain("--profile");
     expect(command.slice(-5)).toEqual([
       ";", "set-option", "-g", "mouse", "on",
     ]);
@@ -262,7 +257,7 @@ describe("orchestrator brief", () => {
       async () => "/tmp/codex-root.cap",
     );
     expect(exitCode).toEqual(0);
-    expect(command[command.indexOf(";") - 1]).toContain(
+    expect(command[command.indexOf(";") - 1]).not.toContain(
       ORCHESTRATOR_BRIEF.slice(0, 80),
     );
     expect(command[command.indexOf(";") - 1]).toContain(
@@ -340,7 +335,9 @@ describe("orchestrator brief", () => {
     });
     expect(launches[0]?.argv[0]).toBe(resolvedClaudeTarget);
     expect(launches[0]?.argv.some((argument) => argument.includes("recovery fixture")))
-      .toBe(true);
+      .toBe(false);
+    expect(await readFile(launchPromptPath(orchestratorTmuxSession()), "utf8"))
+      .toContain("recovery fixture");
   });
 
   test("kills an unattached stale root before launch", async () => {
@@ -439,9 +436,16 @@ describe("orchestrator brief", () => {
         "",
         orchestratorDocGuidance({ primary: "SPEC.md", loadBearing: ["SPEC.md"] }),
       );
-      const prompt = command[command.indexOf("--append-system-prompt") + 1];
-      expect(prompt).toContain(ORCHESTRATOR_BRIEF);
-      expect(prompt).toContain("SPEC.md is the primary design doc");
+      expect(command).not.toContain(ORCHESTRATOR_BRIEF);
+      expect(
+        buildOrchestratorInstructions(
+          "",
+          orchestratorDocGuidance({
+            primary: "SPEC.md",
+            loadBearing: ["SPEC.md"],
+          }),
+        ),
+      ).toContain("SPEC.md is the primary design doc");
     });
   });
 
@@ -653,9 +657,10 @@ describe("orchestrator brief", () => {
         noExistingRoot,
       );
 
-      const prompt = capturedCommand[
-        capturedCommand.indexOf("--append-system-prompt") + 1
-      ];
+      const prompt = await readFile(
+        launchPromptPath(orchestratorTmuxSession()),
+        "utf8",
+      );
       expect(prompt).toContain("Hive memory index");
       expect(prompt).toContain(
         "[repo/general] flaky-login-test (2026-06-01) [unverified]: The login test is flaky",

@@ -16,6 +16,7 @@ import {
   hiveInstanceSuffix,
 } from "../daemon/tmux-sessions";
 import {
+  shellJoin,
   TmuxSessionHost,
 } from "../daemon/session-host/tmux-host";
 import {
@@ -51,6 +52,14 @@ import {
   runOrchestratorSessiondLaunch,
   type OrchestratorSessiondControl,
 } from "./orchestrator-sessiond";
+import {
+  codexInstructionProfileName,
+  launchPromptPath,
+  wrapCodexWithInstructionProfile,
+  wrapGrokWithRulesFile,
+  writeCodexInstructionProfile,
+  writeLaunchPrompt,
+} from "../daemon/launch-prompt";
 
 export type OrchestratorTool = CapabilityProvider;
 
@@ -115,15 +124,20 @@ export function buildCodexRootAuthorityCommand(
     : `export ${CODEX_CAPABILITY_TOKEN_ENV}="$(cat ${
       shellQuote(capabilityTokenFile)
     })"; `;
+  const authorityCommand =
+    `${capabilityEnvironment}${shellQuote(executable)} app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
+    `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
+    `for attempt in $(seq 1 50); do ` +
+    `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
+    `test -S ${quotedSocket} || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
+    `exec ${remoteCommand}`;
   return [
     "sh",
     "-lc",
-    `${capabilityEnvironment}${shellQuote(executable)} app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
-      `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
-      `for attempt in $(seq 1 50); do ` +
-      `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
-      `test -S ${quotedSocket} || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
-      `exec ${remoteCommand}`,
+    wrapCodexWithInstructionProfile(
+      authorityCommand,
+      orchestratorTmuxSession(),
+    ),
   ];
 }
 
@@ -280,6 +294,18 @@ export async function buildOrchestratorDocGuidance(cwd: string): Promise<string>
   });
 }
 
+export function buildOrchestratorInstructions(
+  memoryIndex = "",
+  docGuidance = "",
+  recoveryBrief = "",
+): string {
+  return normalizeNulText(
+    [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
+      .filter((part) => part !== "")
+      .join("\n\n"),
+  );
+}
+
 export function buildOrchestratorCommand(
   tool: OrchestratorTool,
   port: number,
@@ -290,10 +316,10 @@ export function buildOrchestratorCommand(
   recoveryBrief = "",
   codexMcpExclusionArgs: readonly string[] = [],
 ): string[] {
-  const brief = normalizeNulText(
-    [ORCHESTRATOR_BRIEF, recoveryBrief, docGuidance, memoryIndex]
-      .filter((part) => part !== "")
-      .join("\n\n"),
+  const brief = buildOrchestratorInstructions(
+    memoryIndex,
+    docGuidance,
+    recoveryBrief,
   );
   switch (tool) {
     case "claude": {
@@ -308,7 +334,7 @@ export function buildOrchestratorCommand(
           executable: executable ?? "claude",
           scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
-          appendSystemPrompt: brief,
+          appendSystemPromptFile: launchPromptPath(orchestratorTmuxSession()),
         }),
       ];
     }
@@ -332,6 +358,8 @@ export function buildOrchestratorCommand(
         // pre-approve only this Hive-owned server, never inherited MCPs.
         "-c",
         'mcp_servers.hive.default_tools_approval_mode="approve"',
+        "--profile",
+        codexInstructionProfileName(orchestratorTmuxSession()),
         // Codex's supported bearer indirection. The launch shell populates
         // this process-local variable from the 0600 capability file; neither
         // the token nor a made-up config key appears in argv.
@@ -341,7 +369,6 @@ export function buildOrchestratorCommand(
         ]),
         "--sandbox",
         "read-only",
-        brief,
       ];
     case "grok": {
       const grokExecutable = executable ?? "grok";
@@ -350,13 +377,14 @@ export function buildOrchestratorCommand(
         throw new Error("grok models did not report an effective default");
       }
       return [
-        ...buildGrokSpawnCommand({
+        "sh",
+        "-lc",
+        wrapGrokWithRulesFile(shellJoin(buildGrokSpawnCommand({
           model,
           worktreePath: process.cwd(),
           readOnly: true,
           executable: grokExecutable,
-        }),
-        brief,
+        })), launchPromptPath(orchestratorTmuxSession())),
       ];
     }
     default:
@@ -533,6 +561,18 @@ async function launchOrchestratorOnHost(
     buildMemoryIndex(cwd).catch(() => ""),
     buildOrchestratorDocGuidance(cwd).catch(() => ""),
   ]);
+  const orchestratorBrief = buildOrchestratorInstructions(
+    memoryIndex,
+    docGuidance,
+    recoveryBrief,
+  );
+  await writeLaunchPrompt(orchestratorTmuxSession(), orchestratorBrief);
+  if (tool === "codex") {
+    await writeCodexInstructionProfile(
+      orchestratorTmuxSession(),
+      orchestratorBrief,
+    );
+  }
   if (host === "sessiond") {
     let argv: string[];
     let environment: Record<string, string> = {};

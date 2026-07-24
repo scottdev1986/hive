@@ -811,7 +811,8 @@ test("an accepted full inventory renews each exact completed sessiond binding", 
     expect(status.find((record) => record.name === "renewed")?.deliveryBlocked)
       .toMatchObject({
         messageId: stuck.id,
-        diagnostic: "sessiond inject declined: claim denied: HumanOrphaned",
+        diagnostic:
+          "sessiond inject declined: provider foreground state is unknown",
       });
 
     const response = await actingAs(daemon, "operator")(

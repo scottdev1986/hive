@@ -39,6 +39,7 @@ export interface SessiondOrchestratorRootDeliveryDependencies {
   input: SessiondRootInput;
   current: () => OrchestratorSessiondSnapshot | null;
   ready: () => boolean;
+  canInject?: () => Promise<boolean>;
 }
 
 /** The host receipt returned by INPUT_SUBMIT is the only success boundary.
@@ -63,6 +64,12 @@ export class SessiondOrchestratorRootDelivery implements RootProtocolDeliverer {
   ): Promise<boolean> {
     const current = this.dependencies.current();
     if (current?.state !== "running" || !this.dependencies.ready()) return false;
+    if (
+      this.dependencies.canInject !== undefined &&
+      !await this.dependencies.canInject()
+    ) {
+      return false;
+    }
     const messageId = meta.message_id;
     if (messageId === undefined) throw new Error("root delivery has no message id");
     const result = await this.dependencies.input.injectRoot(

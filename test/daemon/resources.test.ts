@@ -2,7 +2,9 @@ import { describe, expect, test } from "bun:test";
 import {
   assessResources,
   descendantsOf,
+  foregroundJobState,
   parseAvailableMemoryMb,
+  parseForegroundProcessTable,
   parseProcessTable,
   processCommandName,
   treeRunsCommand,
@@ -47,6 +49,36 @@ describe("parseAvailableMemoryMb", () => {
 
   test("returns null for unrecognizable output", () => {
     expect(parseAvailableMemoryMb("no vm_stat here")).toBeNull();
+  });
+});
+
+describe("foregroundJobState", () => {
+  const samples = parseForegroundProcessTable([
+    "  100     1   100   200 Ss",
+    "  200   100   200   200 S+",
+  ].join("\n"));
+
+  test("reports a child foreground job as running", () => {
+    expect(foregroundJobState(samples, 100)).toBe("running");
+  });
+
+  test("reports the shell itself in front as no provider job", () => {
+    expect(foregroundJobState([
+      {
+        pid: 100,
+        ppid: 1,
+        processGroupId: 100,
+        foregroundProcessGroupId: 100,
+        stat: "Ss+",
+      },
+    ], 100)).toBe("gone");
+  });
+
+  test("reports a suspended foreground job", () => {
+    expect(foregroundJobState([
+      ...samples.slice(0, 1),
+      { ...samples[1]!, stat: "T+" },
+    ], 100)).toBe("stopped");
   });
 });
 

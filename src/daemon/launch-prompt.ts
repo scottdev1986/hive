@@ -1,4 +1,5 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { chmod, mkdir, writeFile } from "node:fs/promises";
+import { homedir } from "node:os";
 import { dirname, join } from "node:path";
 import { shellQuote } from "./session-host/tmux-host";
 import { getHiveHome } from "./db";
@@ -33,7 +34,72 @@ export async function writeLaunchPrompt(
   const path = launchPromptPath(session);
   await mkdir(dirname(path), { recursive: true, mode: 0o700 });
   await writeFile(path, prompt, { mode: 0o600 });
+  await chmod(path, 0o600);
   return path;
+}
+
+export function codexInstructionProfileName(session: string): string {
+  const safe = session.replaceAll(/[^A-Za-z0-9_-]/g, "-");
+  return safe.startsWith("hive-") ? safe : `hive-${safe}`;
+}
+
+export function codexHome(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return env.CODEX_HOME ?? join(env.HOME ?? homedir(), ".codex");
+}
+
+export function codexInstructionProfilePath(
+  session: string,
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return join(
+    codexHome(env),
+    `${codexInstructionProfileName(session)}.config.toml`,
+  );
+}
+
+export async function writeCodexInstructionProfile(
+  session: string,
+  prompt: string,
+): Promise<string> {
+  const source = join(
+    getHiveHome(),
+    "runtime",
+    "prompts",
+    `${session}.codex.config.toml`,
+  );
+  await mkdir(dirname(source), { recursive: true, mode: 0o700 });
+  await mkdir(codexHome(), { recursive: true, mode: 0o700 });
+  await writeFile(
+    source,
+    `developer_instructions = ${JSON.stringify(prompt)}\n`,
+    { mode: 0o600 },
+  );
+  await chmod(source, 0o600);
+  return source;
+}
+
+/**
+ * Codex profiles must live directly under CODEX_HOME. Install the Hive-owned
+ * profile only for the lifetime of this invocation, then remove it. The source
+ * remains under HIVE_HOME, so the same shell command can be recalled to launch
+ * the TUI again without leaking the instructions into shell history.
+ */
+export function wrapCodexWithInstructionProfile(
+  command: string,
+  session: string,
+): string {
+  const source = join(
+    getHiveHome(),
+    "runtime",
+    "prompts",
+    `${session}.codex.config.toml`,
+  );
+  const destination = codexInstructionProfilePath(session);
+  return `install -m 600 ${shellQuote(source)} ${shellQuote(destination)} && (` +
+    `trap ${shellQuote(`rm -f ${shellQuote(destination)}`)} EXIT INT TERM; ` +
+    `${command})`;
 }
 
 /**
@@ -44,4 +110,16 @@ export async function writeLaunchPrompt(
  */
 export function promptArgument(path: string): string {
   return `"$(cat ${shellQuote(path)})"`;
+}
+
+/** Keep Grok's rules out of the visible shell command while still handing
+ * them to the vendor's native --rules system layer. */
+export function wrapGrokWithRulesFile(
+  command: string,
+  path: string,
+  initialPrompt?: string,
+): string {
+  return `exec ${command} --rules ${promptArgument(path)}${
+    initialPrompt === undefined ? "" : ` ${shellQuote(initialPrompt)}`
+  }`;
 }

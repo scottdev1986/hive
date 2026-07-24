@@ -137,8 +137,25 @@ export interface ProcessStateSample {
   stat: string;
 }
 
+export interface ForegroundProcessSample extends ProcessStateSample {
+  processGroupId: number;
+  foregroundProcessGroupId: number;
+}
+
 export const runPsState: CommandOutput = async () => {
   const child = Bun.spawn(["ps", "-axo", "pid=,ppid=,stat="], {
+    stdout: "pipe",
+    stderr: "ignore",
+  });
+  return await new Response(child.stdout).text();
+};
+
+export const runPsForeground: CommandOutput = async () => {
+  const child = Bun.spawn([
+    "ps",
+    "-axo",
+    "pid=,ppid=,pgid=,tpgid=,stat=",
+  ], {
     stdout: "pipe",
     stderr: "ignore",
   });
@@ -157,6 +174,41 @@ export function parseStateTable(raw: string): ProcessStateSample[] {
     });
   }
   return samples;
+}
+
+export function parseForegroundProcessTable(
+  raw: string,
+): ForegroundProcessSample[] {
+  const samples: ForegroundProcessSample[] = [];
+  for (const line of raw.split("\n")) {
+    const match = /^\s*(\d+)\s+(\d+)\s+(\d+)\s+(-?\d+)\s+(\S+)/.exec(line);
+    if (match === null) continue;
+    samples.push({
+      pid: Number(match[1]),
+      ppid: Number(match[2]),
+      processGroupId: Number(match[3]),
+      foregroundProcessGroupId: Number(match[4]),
+      stat: match[5]!,
+    });
+  }
+  return samples;
+}
+
+/** Whether the PTY foreground belongs to a child job or its idle shell. */
+export function foregroundJobState(
+  samples: ForegroundProcessSample[],
+  shellPid: number,
+): PaneProcessState | "unknown" {
+  const shell = samples.find((sample) => sample.pid === shellPid);
+  if (shell === undefined || shell.foregroundProcessGroupId <= 0) return "unknown";
+  if (shell.foregroundProcessGroupId === shell.processGroupId) return "gone";
+  const foreground = samples.filter(
+    (sample) => sample.processGroupId === shell.foregroundProcessGroupId,
+  );
+  if (foreground.length === 0) return "unknown";
+  if (foreground.some((sample) => sample.stat.startsWith("T"))) return "stopped";
+  if (foreground.every((sample) => sample.stat.startsWith("Z"))) return "gone";
+  return "running";
 }
 
 /**

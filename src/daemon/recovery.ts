@@ -55,6 +55,12 @@ import {
   type HiveTerminalHostAdapter,
 } from "./session-host/hive-terminal-host";
 import type { HiveTerminalTerminationAudit } from "./session-host/terminal-host-binding";
+import {
+  codexInstructionProfileName,
+  launchPromptPath,
+  wrapCodexWithInstructionProfile,
+  wrapGrokWithRulesFile,
+} from "./launch-prompt";
 
 // Three auto-resumes for one agent means the process is dying on its own,
 // not being killed by crashes; after that the sweep stops retrying and
@@ -671,6 +677,8 @@ export class CrashRecovery {
       // the launch-failure catch below naming it. Splitting the two would let
       // a future vendor write one harness's config and launch the other's CLI.
       let argv: string[];
+      const instructionPath = launchPromptPath(record.tmuxSession);
+      const hasInstructions = existsSync(instructionPath);
       switch (record.tool) {
         case "claude": {
           // Re-seed rather than assume: the operator's ~/.claude.json may have
@@ -708,6 +716,9 @@ export class CrashRecovery {
             dangerous,
             worktreePath,
             executable: this.claudeExecutable,
+            ...(hasInstructions
+              ? { appendSystemPromptFile: instructionPath }
+              : {}),
           }, sessionId);
           break;
         }
@@ -727,6 +738,9 @@ export class CrashRecovery {
             dangerous,
             worktreePath,
             executable: this.codexExecutable,
+            ...(hasInstructions
+              ? { profile: codexInstructionProfileName(record.tmuxSession) }
+              : {}),
           }, sessionId);
           break;
         }
@@ -748,9 +762,23 @@ export class CrashRecovery {
         default:
           unknownVendor(record.tool, "crash recovery resume");
       }
-      const command = record.tool === "grok"
-        ? wrapGrokSpawnWithCompatibilityEnv(shellJoin(argv))
-        : shellJoin(argv);
+      const command = (() => {
+        const joined = shellJoin(argv);
+        if (record.tool === "grok") {
+          return wrapGrokSpawnWithCompatibilityEnv(
+            hasInstructions
+              ? wrapGrokWithRulesFile(joined, instructionPath)
+              : joined,
+          );
+        }
+        if (record.tool === "codex" && hasInstructions) {
+          return wrapCodexWithInstructionProfile(
+            joined,
+            record.tmuxSession,
+          );
+        }
+        return joined;
+      })();
       const revalidated = await this.deps.authorizeLaunch?.(
         identity,
         record.category,
