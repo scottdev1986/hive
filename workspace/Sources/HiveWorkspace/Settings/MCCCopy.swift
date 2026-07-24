@@ -67,10 +67,12 @@ enum MCCCopy {
 
     // Unmetered provider
 
-    static let unmeteredTitle = "Usage limits cannot be tracked for this provider"
+    static let unmeteredTitle = "No usage meter — always spawnable"
     static func unmeteredBody(_ vendorName: String) -> String {
-        "\(vendorName) does not report plan capacity to Hive. Money rails are monitored so Hive " +
-        "does not silently spend on-demand balance; they are not a usage gauge."
+        "\(vendorName) does not report plan capacity or billing to Hive, so there is no " +
+        "meter to show — and no fake 100%. Launches here are never blocked for usage: " +
+        "Hive only learns this provider has run out when the vendor itself answers " +
+        "with a rate-limit error."
     }
 
     // Effort

@@ -28,6 +28,16 @@ final class UsageMeterViewTests: XCTestCase {
         XCTAssertFalse(copy.contains("xAI"))
     }
 
+    func testUnmeteredCopyStatesTheWildcardRuleAndNoFakeQuota() {
+        let copy = MCCCopy.unmeteredBody("Future Vendor")
+
+        // The new quota policy (§06): unmetered means always spawnable, never
+        // a fabricated utilization figure.
+        XCTAssertTrue(copy.contains("no fake 100%"))
+        XCTAssertTrue(copy.contains("never blocked for usage"))
+        XCTAssertEqual(MCCCopy.unmeteredTitle, "No usage meter — always spawnable")
+    }
+
     private func textFields(in view: NSView) -> [NSTextField] {
         ((view as? NSTextField).map { [$0] } ?? [])
             + view.subviews.flatMap(textFields)
