@@ -116,6 +116,9 @@ const AgentRecordShape = {
     "idle",
     "awaiting-approval",
     "control-paused",
+    /** Held by the quota drain handler (§R4/R6): its provider's window is
+     * spent and resets soon; the 30s sweep pokes it past the reset. */
+    "held",
     "stuck",
     "done",
     "dead",
@@ -123,6 +126,10 @@ const AgentRecordShape = {
   ]),
   failureReason: z.string().optional(),
   failedAt: z.iso.datetime().optional(),
+  /** Why the drain handler is holding this agent (pool + window + reset). */
+  holdReason: z.string().nullable().optional(),
+  /** The window reset the hold waits for. Cleared with the hold. */
+  holdResetAt: z.iso.datetime().nullable().optional(),
   // When this holder closed. Stamped once, the first time the agent reaches a
   // terminal status, and cleared if crash recovery brings the same agent back.
   // Absent means the holder is live. This is what makes a name safe to reissue:

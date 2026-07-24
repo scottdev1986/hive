@@ -60,6 +60,7 @@ import { hiveCliSpawnArgv } from "./lifecycle";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
 import type { QuotaService } from "./quota";
 import { waitForMcpReporting, watchForProofOfLife } from "./readiness";
+import { classifyVendorDrainError } from "./drain-handler";
 import {
   type CommandOutput,
   parseProcessTable,
@@ -835,6 +836,9 @@ export interface HiveSpawnerDependencies {
   mcpClientSeen?: (subject: string, since: string) => boolean;
   /** §R1: resolves once the boot's all-provider quota refresh has settled. */
   quotaReady?: () => Promise<unknown>;
+  /** §06: a model-layer failure the vendor says is a rate limit goes to the
+   * drain handler, never the launch-failure quarantine. */
+  drainError?: (agent: AgentRecord, failure: string) => Promise<void>;
   /** Test seam to collapse the reachability wait's deadline. */
   mcpReportingTimeoutMs?: number;
   /** Live account capability records used only after the final model is chosen. */
@@ -3049,6 +3053,11 @@ export class HiveSpawner implements Spawner {
         return this.dependencies.db.getAgentById(record.id) ?? stopping;
       }
     }
+    // §06: a vendor rate-limit error is a drain, not a route failure — the
+    // quarantine would punish a healthy route for an empty meter.
+    const vendorDrain =
+      layer === "model" &&
+      classifyVendorDrainError(record.tool, failureReason);
     if (record.quotaReservationId !== undefined) {
       try {
         // A model-layer failure reached the provider and may quarantine that
@@ -3057,7 +3066,7 @@ export class HiveSpawner implements Spawner {
         await this.dependencies.quota?.cancel(
           record.quotaReservationId,
           new Date().toISOString(),
-          layer === "model" ? failureReason : undefined,
+          layer === "model" && !vendorDrain ? failureReason : undefined,
         );
       } catch (error) {
         const detail =
@@ -3077,6 +3086,10 @@ export class HiveSpawner implements Spawner {
       failedAt,
       lastEventAt: failedAt,
     });
+    if (vendorDrain) {
+      failed = this.dependencies.db.getAgentById(failed.id) ?? failed;
+      await this.dependencies.drainError?.(failed, failureReason);
+    }
     const cleanupErrors: string[] = [];
     let preserved: string | null = null;
 

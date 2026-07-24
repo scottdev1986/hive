@@ -658,6 +658,59 @@ export class QuotaService {
     );
   }
 
+  /** §R4–R6: is any pool metering this model spent, and when does the
+   * drained window reset? The drain handler's one per-agent read. */
+  drainFor(candidate: QuotaCandidateIdentity, now = this.clock()): DrainedWindow | null {
+    return drainedWindowFor(this.poolsGoverning(candidate, now));
+  }
+
+  /** Whether this provider has a usage surface at all (a probe). opencode
+   * does not: its drain is only knowable through vendor errors. A metered
+   * provider whose pool has not been read yet is UNKNOWN, not unmetered —
+   * and unknown stays a spawnable wildcard (§R3), never a drain. */
+  isMetered(provider: CapabilityProvider): boolean {
+    return this.probes.some((probe) => probe.provider === provider);
+  }
+
+  /** §R6: every metered provider's general pool is spent. Unmetered routes
+   * are not knowable here — the drain handler joins its own error record. */
+  allMeteredDrained(now = this.clock()): boolean {
+    const providers = [
+      ...new Set(this.probes.map((probe) => probe.provider)),
+    ];
+    if (providers.length === 0) return false;
+    return providers.every((provider) => {
+      const general = this.generalLimit(provider);
+      return (
+        general !== null &&
+        drainedWindowFor([this.statusForLimit(general, now)]) !== null
+      );
+    });
+  }
+
+  /** §R6: the nearest reset across every drained general-pool window, split
+   * by window kind — the all-drained arm's wait decision. */
+  nearestDrainResets(now = this.clock()): {
+    fiveHour: string | null;
+    weekly: string | null;
+  } {
+    const nearest = { fiveHour: null as string | null, weekly: null as string | null };
+    for (const limit of this.resolvedLimits()) {
+      if (!limit.routable || !limit.models.includes("*")) continue;
+      const status = this.statusForLimit(limit, now);
+      for (const window of ["fiveHour", "weekly"] as const) {
+        const value = status[window];
+        if (value.availability !== "available") continue;
+        if (value.remainingPct === null || value.remainingPct > 0) continue;
+        if (value.resetsAt === null) continue;
+        if (nearest[window] === null || value.resetsAt < nearest[window]!) {
+          nearest[window] = value.resetsAt;
+        }
+      }
+    }
+    return nearest;
+  }
+
   /** The account-wide pool: what every model spends from, whatever else it has. */
   private generalLimit(
     provider: CapabilityProvider,
@@ -2065,4 +2118,61 @@ export class QuotaService {
   }
 
 
+}
+
+// ---------------------------------------------------------------------------
+// Drain detection (§R4–R7, docs/design/quota-lifecycle-redesign.html).
+// ---------------------------------------------------------------------------
+
+/** One drained metering window: which pool, which window, when it resets
+ * (null when the provider never said — a hold cannot be scheduled on it). */
+export interface DrainedWindow {
+  pool: string;
+  window: "fiveHour" | "weekly";
+  resetsAt: string | null;
+}
+
+/**
+ * Is any pool metering this model spent right now, and when does the drained
+ * window reset? One drained window is a drain: a model-scoped cap at zero
+ * empties the model even while the general pool has room.
+ *
+ * §R7 — the user-ruled estimate exception lives HERE and nowhere else: when
+ * the provider's API is down this reads the last-known windows
+ * (statusForLimit already carries them, provenance-stamped "stale") and
+ * treats them as the estimate the user accepted for the drain decision only.
+ * Spawn admission, billing, and every other reader keep the strict
+ * never-invent posture.
+ */
+export function drainedWindowFor(
+  statuses: readonly QuotaPoolStatus[],
+): DrainedWindow | null {
+  let drained: DrainedWindow | null = null;
+  for (const status of statuses) {
+    for (const window of ["fiveHour", "weekly"] as const) {
+      const value = status[window];
+      // An unmetered or unmeasured window cannot be drained — unknown stays
+      // unknown, it never reads as empty.
+      if (value.availability !== "available") continue;
+      if (value.remainingPct === null || value.remainingPct > 0) continue;
+      const candidate: DrainedWindow = {
+        pool: status.pool,
+        window,
+        resetsAt: value.resetsAt,
+      };
+      // The earliest reset wins: it is the soonest the work can continue.
+      if (
+        drained === null ||
+        (candidate.resetsAt !== null &&
+          (drained.resetsAt === null || candidate.resetsAt < drained.resetsAt))
+      ) drained = candidate;
+    }
+  }
+  return drained;
+}
+
+export interface ProviderDrainStatus {
+  /** Whether this provider has any metered pool at all. opencode does not. */
+  metered: boolean;
+  drained: DrainedWindow | null;
 }

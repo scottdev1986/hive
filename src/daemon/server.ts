@@ -227,6 +227,7 @@ import {
   stopSessiondAgentSession,
 } from "./teardown";
 import { TokenUsageStore } from "./token-usage";
+import { DrainHandler } from "./drain-handler";
 import {
   type ClaudeTelemetryReader,
   clampPct,
@@ -817,6 +818,7 @@ export class HiveDaemon {
   private readonly land: LandBranch;
   private readonly landReadiness: ReadLandReadiness;
   private bunServer: Server<undefined> | null = null;
+  private readonly drainHandler: DrainHandler;
   private reconciliationTimer: ReturnType<typeof setInterval> | null = null;
   private visibilityRenewalTimer: ReturnType<typeof setInterval> | null = null;
   private ownerRegistrationTimer: ReturnType<typeof setTimeout> | null = null;
@@ -1189,12 +1191,28 @@ export class HiveDaemon {
         ));
     const createRecoverySession = this.spawner.createRecoverySession;
     const autonomy = options.autonomy;
+    this.drainHandler = new DrainHandler({
+      db: this.db,
+      quota: this.quota,
+      send: (from, to, body) => this.delivery.send(from, to, body),
+      closeAgent: async (agent, reason) =>
+        await this.killAgentTeardown(agent, { failureReason: reason }),
+      spawn: (request) => this.spawner.spawn(request),
+      ...(this.episodic === null
+        ? {}
+        : {
+          remember: (event) => this.episodic!.appendEvent(event),
+        }),
+    });
     this.recovery = new CrashRecovery({
       db: this.db,
       terminalHost: this.terminalHost,
       port: () => this.listeningPort ?? this.port,
       // #57: a resume whose hive MCP never answers is refused, not recorded.
       mcpClientSeen: (subject, since) => this.mcpClientSeen(subject, since),
+      // §06: a resume that dies of a vendor rate limit is a drain, not a crash.
+      drainError: (agent, failure) =>
+        this.drainHandler.onVendorError(agent, failure),
       revokeCapabilities: (agentName) => {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
@@ -1726,6 +1744,15 @@ export class HiveDaemon {
     await this.quotaBootRefresh;
   }
 
+  /** §06: vendor rate-limit failures route to the drain handler, never the
+   * launch-failure quarantine. */
+  async onVendorDrainError(
+    agent: AgentRecord,
+    failure: string,
+  ): Promise<void> {
+    await this.drainHandler.onVendorError(agent, failure);
+  }
+
   private quotaBootRefresh: Promise<void> = Promise.resolve();
 
   /**
@@ -1939,6 +1966,15 @@ export class HiveDaemon {
         });
       }
       await this.recoverQuotaReservations();
+      // §R4–R6: poke held agents past their reset, then handle newly drained
+      // running agents. Runs on the existing sweep — no new timers.
+      await this.drainHandler.sweep().catch((error) => {
+        console.error(
+          `Hive quota drain sweep failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      });
       await this.delivery.recoverCriticalControls();
       // Root wakes deferred behind a human draft are retried only at this
       // bounded daemon boundary. The row remains queued until the terminal confirms
@@ -5252,6 +5288,10 @@ export class HiveDaemon {
     }
 
     const agent = this.db.getAgentByName(value.agentName);
+    if (
+      agent !== null &&
+      (value.kind === "session-start" || value.kind === "turn-start")
+    ) this.drainHandler.noteProviderAlive(agent.tool);
     const eventReservationId =
       agent?.controlQuotaReservationId ?? agent?.quotaReservationId;
     if (eventReservationId !== undefined) {

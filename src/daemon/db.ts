@@ -146,6 +146,8 @@ const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
   closedAt: z.string().nullable(),
+  holdReason: z.string().nullable().default(null),
+  holdResetAt: z.string().nullable().default(null),
   // Null on every row written before the model was observed separately from the
   // model it was launched with, and on every agent Hive has not observed yet.
   liveModel: z.string().nullable().default(null),
@@ -694,6 +696,12 @@ export class HiveDatabase {
       this.database.exec(
         "ALTER TABLE agents ADD COLUMN capabilityEpoch INTEGER NOT NULL DEFAULT 0",
       );
+    }
+    if (!agentColumnNames.has("holdReason")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN holdReason TEXT");
+    }
+    if (!agentColumnNames.has("holdResetAt")) {
+      this.database.exec("ALTER TABLE agents ADD COLUMN holdResetAt TEXT");
     }
     // The model an agent is *observed* running, which is a different fact from
     // `model` — the immutable launch identity decision 6 records so a control
@@ -1304,8 +1312,8 @@ export class HiveDatabase {
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
-        capabilityEpoch, readOnly, writeRevoked, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        capabilityEpoch, readOnly, writeRevoked, closedAt, holdReason, holdResetAt
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -1332,7 +1340,9 @@ export class HiveDatabase {
         capabilityEpoch = excluded.capabilityEpoch,
         readOnly = excluded.readOnly,
         writeRevoked = excluded.writeRevoked,
-        closedAt = excluded.closedAt
+        closedAt = excluded.closedAt,
+        holdReason = excluded.holdReason,
+        holdResetAt = excluded.holdResetAt
     `)
       .run(
         value.id,
@@ -1364,6 +1374,8 @@ export class HiveDatabase {
         value.readOnly ? 1 : 0,
         value.writeRevoked ? 1 : 0,
         closedAt,
+        value.holdReason ?? null,
+        value.holdResetAt ?? null,
       );
     const result = this.getAgentById(value.id);
     if (result === null)
