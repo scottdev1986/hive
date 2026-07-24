@@ -83,6 +83,7 @@ const discovery: Record<CapabilityProvider, CapabilityDiscoveryResult> = {
     },
   },
   kimi: { status: "unavailable", reason: "kimi CLI not signed in" },
+  opencode: { status: "unavailable", reason: "opencode CLI not signed in" },
 };
 
 const billing: Record<CapabilityProvider, AccountBilling | null> = {
@@ -96,6 +97,7 @@ const billing: Record<CapabilityProvider, AccountBilling | null> = {
   codex: null,
   grok: null,
   kimi: null,
+  opencode: null,
 };
 
 const quota: QuotaStatus[] = [{

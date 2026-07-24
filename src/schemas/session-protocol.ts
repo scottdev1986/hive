@@ -350,6 +350,7 @@ export const SESSION_PROTOCOL_PROVIDERS = [
   "codex",
   "grok",
   "kimi",
+  "opencode",
 ] as const;
 export const SessionProtocolProviderSchema = z.enum(SESSION_PROTOCOL_PROVIDERS);
 

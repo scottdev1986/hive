@@ -134,6 +134,10 @@
     "kimi": {
       "status": "unavailable",
       "reason": "kimi CLI not signed in"
+    },
+    "opencode": {
+      "status": "unavailable",
+      "reason": "opencode CLI not signed in"
     }
   },
   "billing": {
@@ -156,13 +160,15 @@
     },
     "codex": null,
     "grok": null,
-    "kimi": null
+    "kimi": null,
+    "opencode": null
   },
   "usageSurfaces": {
     "claude": "metered",
     "codex": "metered",
     "grok": "metered",
-    "kimi": "none"
+    "kimi": "none",
+    "opencode": "none"
   },
   "quota": [
     {

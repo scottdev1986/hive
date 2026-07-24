@@ -34,6 +34,14 @@ import {
   type KimiSpawnOptions,
 } from "./kimi";
 import {
+  buildOpencodeResumeCommand,
+  buildOpencodeSpawnCommand,
+  OPENCODE_HIVE_AGENT,
+  resolveWorkingOpencodeExecutable,
+  writeOpencodeAgentConfig,
+  type OpencodeSpawnOptions,
+} from "./opencode";
+import {
   ClaudeCapabilityProbe,
   ClaudeStdioCapabilityTransport,
   CodexCapabilityProbe,
@@ -42,6 +50,8 @@ import {
   GrokCliCapabilityTransport,
   KimiCapabilityProbe,
   KimiCliCapabilityTransport,
+  OpencodeCapabilityProbe,
+  OpencodeCliCapabilityTransport,
   type CapabilityDiscoveryResult,
 } from "../../daemon/capability-discovery";
 import {
@@ -363,11 +373,66 @@ const kimiAdapter: VendorAdapter = {
     new KimiCapabilityProbe(new KimiCliCapabilityTransport(executable)).read(),
 };
 
+const opencodeAdapter: VendorAdapter = {
+  id: "opencode",
+  async prepareSpawn(context) {
+    await writeOpencodeAgentConfig(context.worktreePath, {
+      daemonPort: context.daemonPort,
+      readOnly: context.readOnly,
+      ...(context.capabilityToken === undefined
+        ? {}
+        : { capabilityToken: context.capabilityToken }),
+      ...(context.graphifyUrl === undefined
+        ? {}
+        : { graphifyUrl: context.graphifyUrl }),
+      ...(context.instructionPath === undefined
+        ? {}
+        : { instructionPath: context.instructionPath }),
+    });
+    const options: OpencodeSpawnOptions = {
+      model: context.model,
+      readOnly: context.readOnly,
+      dangerous: context.dangerous,
+      ...(context.executable === undefined
+        ? {}
+        : { executable: context.executable }),
+      // The brief rides the hive agent's {file:} prompt in the worktree
+      // config; launching with any other agent would drop it.
+      ...(context.instructionPath === undefined
+        ? {}
+        : { agent: OPENCODE_HIVE_AGENT }),
+    };
+    const argv = context.resumeSessionId === undefined
+      ? buildOpencodeSpawnCommand(options)
+      : buildOpencodeResumeCommand(options, context.resumeSessionId);
+    // opencode's TUI takes the opening instruction as --prompt, the same
+    // role claude/codex's positional plays. Effort is NOT mapped: opencode
+    // accepts reasoning levels only as provider-specific agent passthrough
+    // options (and --variant on `run`), so there is no vendor-neutral
+    // per-launch channel for the TUI.
+    return {
+      argv,
+      command: shellJoin(
+        context.kickoff === undefined
+          ? argv
+          : [...argv, "--prompt", context.kickoff],
+      ),
+    };
+  },
+  discover: (
+    executable = resolveWorkingOpencodeExecutable()?.path ?? "opencode",
+  ) =>
+    new OpencodeCapabilityProbe(
+      new OpencodeCliCapabilityTransport(executable),
+    ).read(),
+};
+
 const ADAPTERS: Record<CapabilityProvider, VendorAdapter> = {
   claude: claudeAdapter,
   codex: codexAdapter,
   grok: grokAdapter,
   kimi: kimiAdapter,
+  opencode: opencodeAdapter,
 };
 
 /** The one registry lookup. The record makes a missing vendor a compile

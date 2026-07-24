@@ -67,6 +67,9 @@ function usageSurface(provider: CapabilityProvider): "metered" | "none" {
     case "kimi":
       // Kimi exposes no session-free quota or billing surface.
       return "none";
+    case "opencode":
+      // opencode exposes no session-free quota or billing surface.
+      return "none";
     default:
       return unknownVendor(provider, "model-control-snapshot usageSurface");
   }

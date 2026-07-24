@@ -43,6 +43,13 @@ import {
   wrapKimiWithInstructionFile,
   writeKimiAgentConfig,
 } from "../adapters/tools/kimi";
+import {
+  buildOpencodeSpawnCommand,
+  OPENCODE_HIVE_AGENT,
+  probeOpencodeDefaultModel,
+  resolveWorkingOpencodeExecutable,
+  writeOpencodeAgentConfig,
+} from "../adapters/tools/opencode";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
@@ -141,6 +148,19 @@ export async function prepareOrchestratorConfig(
       const authorization = operatorHeaders().Authorization;
       await writeKimiAgentConfig(cwd, {
         daemonPort: port,
+        capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
+      });
+      return;
+    }
+    case "opencode": {
+      // opencode's project config is read from the process cwd, so the
+      // config lands where the root runs; the brief rides the hive agent's
+      // {file:} prompt in it.
+      const authorization = operatorHeaders().Authorization;
+      await writeOpencodeAgentConfig(cwd, {
+        daemonPort: port,
+        readOnly: true,
+        instructionPath: launchPromptPath(orchestratorSessionKey()),
         capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
       });
       return;
@@ -272,6 +292,20 @@ export function buildOrchestratorCommand(
         })), launchPromptPath(orchestratorSessionKey())),
       ];
     }
+    case "opencode": {
+      const opencodeExecutable = executable ?? "opencode";
+      const model = probeOpencodeDefaultModel();
+      if (model === null) {
+        throw new Error("opencode config did not report an effective default");
+      }
+      return buildOpencodeSpawnCommand({
+        model,
+        readOnly: true,
+        dangerous: false,
+        executable: opencodeExecutable,
+        agent: OPENCODE_HIVE_AGENT,
+      });
+    }
     default:
       unknownVendor(tool, "orchestrator command");
   }
@@ -284,6 +318,7 @@ export interface LaunchOrchestratorOptions {
   resolveCodexExecutable?: typeof resolveWorkingCodexExecutable;
   resolveGrokExecutable?: typeof resolveWorkingGrokExecutable;
   resolveKimiExecutable?: typeof resolveWorkingKimiExecutable;
+  resolveOpencodeExecutable?: typeof resolveWorkingOpencodeExecutable;
   listCodexMcpServers?: () => Promise<string[]>;
   provisionCodexToken?: (port: number) => Promise<string | null>;
 }
@@ -338,6 +373,17 @@ export async function launchOrchestrator(
       providerExecutable = kimi.path;
       break;
     }
+    case "opencode": {
+      const opencode = (options.resolveOpencodeExecutable ??
+        resolveWorkingOpencodeExecutable)();
+      if (opencode === null) {
+        throw new Error(
+          "the opencode orchestrator needs a working opencode CLI",
+        );
+      }
+      providerExecutable = opencode.path;
+      break;
+    }
     default:
       unknownVendor(tool, "orchestrator launch");
   }
@@ -377,6 +423,10 @@ export async function launchOrchestrator(
     case "kimi":
       // Kimi authenticates through the same operator credential, written
       // into the project `.kimi-code/mcp.json` above.
+      break;
+    case "opencode":
+      // opencode authenticates through the same operator credential,
+      // written into the project `opencode.json` above.
       break;
     default:
       unknownVendor(tool, "orchestrator root token");

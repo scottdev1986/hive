@@ -75,6 +75,7 @@ export const CapabilityProviderSchema = z.enum([
   "codex",
   "grok",
   "kimi",
+  "opencode",
 ]);
 export type CapabilityProvider = z.infer<typeof CapabilityProviderSchema>;
 
@@ -160,6 +161,13 @@ export const CapabilitySurfaceSchema = z.enum([
    * `kimi provider list` prints the catalog but never the default.
    */
   "kimi.config",
+  /** `opencode models` stdout: the configured providers' model catalog. */
+  "opencode.models",
+  /**
+   * `~/.config/opencode/opencode.json[ c]`: the `model` key — the only
+   * surface that answers what an unflagged opencode launch runs.
+   */
+  "opencode.config",
   /** `~/.grok/models_cache.json`: structured per-model capability facts. */
   "grok.models_cache",
   /** Grok ACP's subscription tier and rolling reset boundary. */

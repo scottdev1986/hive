@@ -165,7 +165,7 @@ test("a vendor whose billing reads null is omitted, not invented", () => {
     Parameters<typeof knownBillings>[0][CapabilityProvider]
   >;
 
-  const billings = knownBillings({ claude: billing, codex: null, grok: null, kimi: null });
+  const billings = knownBillings({ claude: billing, codex: null, grok: null, kimi: null, opencode: null });
 
   expect(billings.claude).toBe(billing);
   expect("codex" in billings).toBe(false);
@@ -255,6 +255,12 @@ test("a model no catalog claims cannot be billed to any vendor's pool", () => {
     provider: "kimi",
     modelId: "fixture-kimi-model",
     displayName: "Fixture Kimi Model",
+    discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
+  }]);
+  ledger.replaceModelCatalog("opencode", [{
+    provider: "opencode",
+    modelId: "fixture-opencode-model",
+    displayName: "Fixture opencode Model",
     discoveredAt: new Date("2026-07-09T12:00:00.000Z").toISOString(),
   }]);
 

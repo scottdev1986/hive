@@ -371,6 +371,7 @@ export interface HiveSpawnerDependencies {
   codexExecutable?: string;
   grokExecutable?: string;
   kimiExecutable?: string;
+  opencodeExecutable?: string;
   /** Reads the process table for the readiness probe's process-tree check.
    * Defaults to the real `ps`. */
   ps?: CommandOutput;
@@ -751,6 +752,7 @@ export class HiveSpawner implements Spawner {
   private readonly codexExecutable: string;
   private readonly grokExecutable: string;
   private readonly kimiExecutable: string;
+  private readonly opencodeExecutable: string;
   private readonly readCodexActivity: (
     worktreePath: string,
     toolSessionId: string,
@@ -767,6 +769,7 @@ export class HiveSpawner implements Spawner {
     this.codexExecutable = dependencies.codexExecutable ?? "codex";
     this.grokExecutable = dependencies.grokExecutable ?? "grok";
     this.kimiExecutable = dependencies.kimiExecutable ?? "kimi";
+    this.opencodeExecutable = dependencies.opencodeExecutable ?? "opencode";
     this.readCodexActivity = dependencies.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
@@ -793,6 +796,7 @@ export class HiveSpawner implements Spawner {
       codex: this.codexExecutable,
       grok: this.grokExecutable,
       kimi: this.kimiExecutable,
+      opencode: this.opencodeExecutable,
     }[tool];
   }
 
@@ -1352,6 +1356,7 @@ export class HiveSpawner implements Spawner {
       case "claude":
       case "grok":
       case "kimi":
+      case "opencode":
         // These vendors have their own durable artifacts; a Codex rollout can
         // only belong to a stale predecessor and must never signal liveness.
         return null;
@@ -1701,6 +1706,9 @@ export class HiveSpawner implements Spawner {
               : undefined;
             switch (candidate.tool) {
               case "claude":
+              case "opencode":
+                // opencode has no vendor-neutral per-launch effort channel,
+                // so an explicit effort is the only way one ever reaches it.
                 return { refusal: null };
               case "grok":
               case "kimi": {
@@ -1908,6 +1916,7 @@ export class HiveSpawner implements Spawner {
       switch (tool) {
         case "claude":
         case "kimi":
+        case "opencode":
           executionIdentity = {
             tool,
             model,

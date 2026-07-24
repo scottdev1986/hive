@@ -368,6 +368,10 @@ export function countGraphifyCallLines(
       // cursor untouched for kimi, so this counter is unreachable in
       // practice. Kimi's session-transcript shape has not been measured.
       return 0;
+    case "opencode":
+      // No opencode transcript artifact is wired either (its session data
+      // lives in a sqlite database no reader has been written for).
+      return 0;
     default:
       return unknownVendor(tool, "countGraphifyCallLines");
   }
@@ -485,6 +489,9 @@ export async function readGraphifyCalls(
     case "kimi":
       // No kimi session-transcript reader is wired yet, so there is no
       // artifact to advance a cursor against — unknown, not zero.
+      return cursor ?? null;
+    case "opencode":
+      // opencode's session data is a sqlite database with no reader wired.
       return cursor ?? null;
     default:
       return unknownVendor(tool, "readGraphifyCalls");

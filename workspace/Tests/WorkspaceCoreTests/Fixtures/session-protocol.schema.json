@@ -1641,7 +1641,8 @@
             "claude",
             "codex",
             "grok",
-            "kimi"
+            "kimi",
+            "opencode"
           ]
         },
         "toolSessionId": {
@@ -9470,7 +9471,8 @@
             "claude",
             "codex",
             "grok",
-            "kimi"
+            "kimi",
+            "opencode"
           ]
         },
         "toolSessionId": {

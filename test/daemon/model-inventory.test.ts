@@ -62,6 +62,7 @@ const discovery = {
   },
   grok: { status: "unavailable" as const, reason: "not in fixture" },
   kimi: { status: "unavailable" as const, reason: "not in fixture" },
+  opencode: { status: "unavailable" as const, reason: "not in fixture" },
 };
 
 const policy: RoutingPolicy = {
@@ -129,6 +130,7 @@ describe("model inventory", () => {
         codex: { status: "unavailable", reason: "discovery has not run" },
         grok: { status: "unavailable", reason: "discovery has not run" },
         kimi: { status: "unavailable", reason: "discovery has not run" },
+        opencode: { status: "unavailable", reason: "discovery has not run" },
       },
       policy,
     });

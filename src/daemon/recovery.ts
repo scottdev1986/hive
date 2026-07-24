@@ -29,6 +29,12 @@ import {
   writeKimiAgentConfig,
 } from "../adapters/tools/kimi";
 import {
+  buildOpencodeResumeCommand,
+  discoverOpencodeRecoverySessionId,
+  OPENCODE_HIVE_AGENT,
+  writeOpencodeAgentConfig,
+} from "../adapters/tools/opencode";
+import {
   ORCHESTRATOR_NAME,
   CapabilityProviderSchema,
   unknownVendor,
@@ -138,12 +144,14 @@ export interface CrashRecoveryDependencies {
   resolveCodexSessionId?: SessionResolver;
   resolveGrokSessionId?: SessionResolver;
   resolveKimiSessionId?: SessionResolver;
+  resolveOpencodeSessionId?: SessionResolver;
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
   claudeExecutable?: string;
   codexExecutable?: string;
   grokExecutable?: string;
   kimiExecutable?: string;
+  opencodeExecutable?: string;
   /** Config-writer seams so tests can resume into synthetic worktrees; the
    * defaults write the real per-worktree agent configs. A failed write fails
    * the resume — the spawn-time config may name a daemon port this restarted
@@ -153,6 +161,7 @@ export interface CrashRecoveryDependencies {
   writeCodexConfig?: typeof writeCodexAgentConfig;
   writeGrokConfig?: typeof writeGrokAgentConfig;
   writeKimiConfig?: typeof writeKimiAgentConfig;
+  writeOpencodeConfig?: typeof writeOpencodeAgentConfig;
   /** The current writer autonomy, read at resume time so a recovered agent
    * matches the setting the user can see in the Workspace menu — a thunk
    * because the user may flip the dial mid-session. Absent fails safe to the
@@ -191,17 +200,20 @@ export class CrashRecovery {
   private readonly resolveCodex: SessionResolver;
   private readonly resolveGrok: SessionResolver;
   private readonly resolveKimi: SessionResolver;
+  private readonly resolveOpencode: SessionResolver;
   private readonly worktreeExists: (path: string) => boolean;
   private readonly wait: Sleep;
   private readonly claudeExecutable: string;
   private readonly codexExecutable: string;
   private readonly grokExecutable: string;
   private readonly kimiExecutable: string;
+  private readonly opencodeExecutable: string;
   private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
   private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
   private readonly writeCodexConfig: typeof writeCodexAgentConfig;
   private readonly writeGrokConfig: typeof writeGrokAgentConfig;
   private readonly writeKimiConfig: typeof writeKimiAgentConfig;
+  private readonly writeOpencodeConfig: typeof writeOpencodeAgentConfig;
   private readonly readCodexActivity: (
     worktreePath: string,
     toolSessionId: string | undefined,
@@ -235,17 +247,27 @@ export class CrashRecovery {
     this.resolveKimi = deps.resolveKimiSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverKimiRecoverySessionId(worktreePath, agentCreatedAt));
+    this.resolveOpencode = deps.resolveOpencodeSessionId ??
+      ((worktreePath, agentCreatedAt) =>
+        discoverOpencodeRecoverySessionId(
+          worktreePath,
+          agentCreatedAt,
+          this.opencodeExecutable,
+        ));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
     this.codexExecutable = deps.codexExecutable ?? "codex";
     this.grokExecutable = deps.grokExecutable ?? "grok";
     this.kimiExecutable = deps.kimiExecutable ?? "kimi";
+    this.opencodeExecutable = deps.opencodeExecutable ?? "opencode";
     this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
     this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
     this.writeGrokConfig = deps.writeGrokConfig ?? writeGrokAgentConfig;
     this.writeKimiConfig = deps.writeKimiConfig ?? writeKimiAgentConfig;
+    this.writeOpencodeConfig = deps.writeOpencodeConfig ??
+      writeOpencodeAgentConfig;
     this.readCodexActivity = deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
@@ -552,6 +574,8 @@ export class CrashRecovery {
         return this.resolveGrok(worktreePath, agentCreatedAt);
       case "kimi":
         return this.resolveKimi(worktreePath, agentCreatedAt);
+      case "opencode":
+        return this.resolveOpencode(worktreePath, agentCreatedAt);
       default:
         return unknownVendor(tool, "crash recovery session resolver");
     }
@@ -699,6 +723,21 @@ export class CrashRecovery {
             readOnly: record.readOnly,
             dangerous,
             executable: this.kimiExecutable,
+          }, sessionId);
+          break;
+        }
+        case "opencode": {
+          await this.writeOpencodeConfig(worktreePath, {
+            daemonPort: this.daemonPort(),
+            readOnly: record.readOnly,
+            ...(hasInstructions ? { instructionPath } : {}),
+          });
+          argv = buildOpencodeResumeCommand({
+            model,
+            readOnly: record.readOnly,
+            dangerous,
+            executable: this.opencodeExecutable,
+            ...(hasInstructions ? { agent: OPENCODE_HIVE_AGENT } : {}),
           }, sessionId);
           break;
         }

@@ -3,6 +3,7 @@ import {
   CodexCapabilityProbe,
   GrokCapabilityProbe,
   KimiCapabilityProbe,
+  OpencodeCapabilityProbe,
 } from "../daemon/capability-discovery";
 import {
   knownBillings,
@@ -90,14 +91,15 @@ function describeProviderBilling(billing: AccountBilling | undefined): string {
 
 export async function printRouting(): Promise<void> {
   const now = new Date();
-  const [claude, codex, grok, kimi, billings] = await Promise.all([
+  const [claude, codex, grok, kimi, opencode, billings] = await Promise.all([
     new ClaudeCapabilityProbe().read(),
     new CodexCapabilityProbe().read(),
     new GrokCapabilityProbe().read(),
     new KimiCapabilityProbe().read(),
+    new OpencodeCapabilityProbe().read(),
     forEachProvider(readBillingWithMemory).then(knownBillings),
   ]);
-  const discovery = { claude, codex, grok, kimi };
+  const discovery = { claude, codex, grok, kimi, opencode };
 
   const db = HiveDatabase.openReadonly();
   let policy: RoutingPolicy;

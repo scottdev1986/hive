@@ -29,6 +29,8 @@ export function nativeSkillDirectory(tool: SkillTool): string {
       return join(".agents", "skills");
     case "kimi":
       return join(".agents", "skills");
+    case "opencode":
+      return join(".opencode", "skills");
     default:
       return unknownVendor(tool, "native skill directory");
   }

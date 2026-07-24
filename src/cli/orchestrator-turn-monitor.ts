@@ -146,16 +146,19 @@ async function reportBoundary(
 
 /** Run one root generation with the native monitor when the provider has no
  * Claude-style hooks. Failure to establish the baseline fails closed to
- * unknown status while leaving the orchestrator itself usable. Kimi runs
- * unmonitored: its hooks live only in the operator's global config (which
- * Hive never writes) and no kimi session-artifact turn reader exists yet. */
+ * unknown status while leaving the orchestrator itself usable. Kimi and
+ * opencode run unmonitored: their hooks/plugins live only in the operator's
+ * global config (which Hive never writes) and no session-artifact turn
+ * reader exists for them yet. */
 export async function withNativeOrchestratorTurnMonitor<T>(
   tool: CapabilityProvider,
   port: number,
   cwd: string,
   run: () => Promise<T>,
 ): Promise<T> {
-  if (tool === "claude" || tool === "kimi") return run();
+  if (tool === "claude" || tool === "kimi" || tool === "opencode") {
+    return run();
+  }
   const nativeTool = tool;
   if (!(await publishOrchestratorSessionId(null))) {
     console.error("[hive] orchestrator session identity marker unavailable");

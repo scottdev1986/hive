@@ -34,6 +34,10 @@ const PROVED_EFFORT_ORDER: Record<CapabilityProvider, readonly string[]> = {
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
   grok: ["low", "medium", "high"],
   kimi: ["low", "medium", "high", "xhigh", "max"],
+  // opencode delegates reasoning levels to provider-specific variants and
+  // documents no vendor-canonical spelling set, so nothing is provably
+  // orderable: every effort stays explicit-only.
+  opencode: [],
 };
 
 const EFFORT_ORDER_BASIS: Record<CapabilityProvider, string> = {
@@ -41,6 +45,7 @@ const EFFORT_ORDER_BASIS: Record<CapabilityProvider, string> = {
   codex: "Codex model/list descriptions and OpenAI reasoning-effort documentation",
   grok: "xAI reasoning-effort documentation and the model's advertised levels",
   kimi: "Kimi Code thinking-effort documentation and the model's advertised levels",
+  opencode: "no vendor-canonical effort order; opencode reasoning levels are provider-specific variants",
 };
 
 export function codingTierForCategory(category: RoutingCategory): CodingTier {

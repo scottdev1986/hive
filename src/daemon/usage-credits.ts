@@ -672,6 +672,9 @@ function billingReader(
       // Kimi exposes no session-free billing or quota surface, so there is
       // nothing to read: the account's billing is unknown, never zero.
       return async () => null;
+    case "opencode":
+      // opencode exposes no session-free billing or quota surface either.
+      return async () => null;
     default:
       return unknownVendor(provider, "readAccountBilling");
   }

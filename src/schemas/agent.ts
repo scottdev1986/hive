@@ -58,6 +58,11 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
     model: z.string().min(1),
     effort: EffortLevelSchema.optional(),
   }),
+  z.strictObject({
+    tool: z.literal("opencode"),
+    model: z.string().min(1),
+    effort: EffortLevelSchema.optional(),
+  }),
 ]);
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;

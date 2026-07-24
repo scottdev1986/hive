@@ -17,6 +17,7 @@ import {
 import { pendingControlResponses, pendingResponses } from "./quota-sources";
 import { HIVE_VERSION } from "../version";
 import { probeGrokCliVersion } from "../adapters/tools/grok";
+import { probeOpencodeDefaultModel } from "../adapters/tools/opencode";
 
 /**
  * Runtime capability discovery.
@@ -1041,6 +1042,141 @@ export class KimiCapabilityProbe implements CapabilityProbe {
         reason: error instanceof Error
           ? error.message
           : "kimi capability probe failed",
+      };
+    }
+  }
+}
+
+// --------------------------------------------------------------------------
+// opencode: `opencode models` plus the global config's default model.
+// --------------------------------------------------------------------------
+
+const OPENCODE_MODELS = "opencode.models" as const;
+const OPENCODE_CONFIG = "opencode.config" as const;
+
+export interface OpencodeCapabilityPayload {
+  /** Raw `opencode models` stdout: one `provider/model` per line. */
+  stdout: string;
+  /** The `model` key of the global config; null when absent. */
+  defaultModel: string | null;
+  cliVersion: string;
+}
+
+export interface OpencodeCapabilityTransport {
+  readCatalog(timeoutMs: number): Promise<OpencodeCapabilityPayload>;
+}
+
+export class OpencodeCliCapabilityTransport
+  implements OpencodeCapabilityTransport {
+  constructor(private readonly executable = "opencode") {}
+
+  async readCatalog(timeoutMs: number): Promise<OpencodeCapabilityPayload> {
+    const cliVersion = await readCliVersion(
+      [this.executable, "--version"],
+      UNKNOWN_VERSION,
+    );
+    const models = Bun.spawn([this.executable, "models"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(models.stdout).text(),
+      new Response(models.stderr).text(),
+      models.exited,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(
+        `opencode models failed: ${stderr.trim() || `exit ${exitCode}`}`,
+      );
+    }
+    return {
+      stdout,
+      defaultModel: probeOpencodeDefaultModel(),
+      cliVersion,
+    };
+  }
+}
+
+/**
+ * One `opencode models` output → capability records. Each line is a
+ * `provider/model` launch token and the canonical id in one: opencode's
+ * catalog carries no display name, no hidden flag, and no effort facts on
+ * this surface (its reasoning levels are provider-specific variants), so
+ * every one of those is recorded as unknown rather than guessed.
+ */
+export function recordsFromOpencodeModels(
+  payload: OpencodeCapabilityPayload,
+  observedAt: string,
+): CapabilityRecord[] {
+  const lines = payload.stdout
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => /^[^\s/]+\/[^\s]+$/.test(line));
+  const providers = [...new Set(lines.map((line) => line.split("/")[0]!))]
+    .sort();
+  const accountFingerprint = fingerprintAccount("opencode", providers);
+  return lines.map((line) => ({
+    provider: "opencode" as const,
+    accountFingerprint,
+    cliVersion: payload.cliVersion,
+    canonicalId: line,
+    variant: null,
+    launchToken: line,
+    displayName: null,
+    aliases: [],
+    entitled: known(true, OPENCODE_MODELS, observedAt),
+    hidden: unknown("surface-silent", OPENCODE_MODELS, observedAt),
+    supportsEffort: unknown("surface-silent", OPENCODE_MODELS, observedAt),
+    supportedEffortLevels: unknown(
+      "surface-silent",
+      OPENCODE_MODELS,
+      observedAt,
+    ),
+    defaultEffort: unknown("surface-silent", OPENCODE_MODELS, observedAt),
+    observedAt,
+  }));
+}
+
+export class OpencodeCapabilityProbe implements CapabilityProbe {
+  readonly provider = "opencode";
+
+  constructor(
+    private readonly transport: OpencodeCapabilityTransport =
+      new OpencodeCliCapabilityTransport(),
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  async read(): Promise<CapabilityDiscoveryResult> {
+    try {
+      const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS);
+      const observedAt = this.clock().toISOString();
+      const records = recordsFromOpencodeModels(payload, observedAt);
+      if (records.length === 0) {
+        return {
+          status: "unavailable",
+          reason: "opencode models returned no usable model catalog",
+        };
+      }
+      return {
+        status: "ok",
+        records,
+        effectiveDefault: {
+          provider: "opencode",
+          model: payload.defaultModel === null
+            ? unknown("field-absent", OPENCODE_CONFIG, observedAt)
+            : known(payload.defaultModel, OPENCODE_CONFIG, observedAt),
+          effort: unknown("surface-silent", OPENCODE_CONFIG, observedAt),
+        },
+      };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        reason: error instanceof Error
+          ? error.message
+          : "opencode capability probe failed",
       };
     }
   }

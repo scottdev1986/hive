@@ -5,6 +5,7 @@ import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
 import { resolveWorkingCodexExecutable } from "../adapters/tools/codex";
 import { resolveWorkingGrokExecutable } from "../adapters/tools/grok";
 import { resolveWorkingKimiExecutable } from "../adapters/tools/kimi";
+import { resolveWorkingOpencodeExecutable } from "../adapters/tools/opencode";
 import { loadHiveConfig, loadQuotaConfig } from "../config/load";
 import { HiveDatabase } from "../daemon/db";
 import {
@@ -196,11 +197,14 @@ export async function runDaemon(): Promise<void> {
   const codexExecutable = resolveWorkingCodexExecutable()?.path ?? "codex";
   const grokExecutable = resolveWorkingGrokExecutable()?.path ?? "grok";
   const kimiExecutable = resolveWorkingKimiExecutable()?.path ?? "kimi";
+  const opencodeExecutable = resolveWorkingOpencodeExecutable()?.path ??
+    "opencode";
   const discoveryExecutables: Record<CapabilityProvider, string> = {
     claude: claudeExecutable,
     codex: codexExecutable,
     grok: grokExecutable,
     kimi: kimiExecutable,
+    opencode: opencodeExecutable,
   };
   const discoverCapabilities = (provider: CapabilityProvider) =>
     getVendorAdapter(provider).discover(discoveryExecutables[provider]);

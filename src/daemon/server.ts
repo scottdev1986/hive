@@ -2041,6 +2041,10 @@ export class HiveDaemon {
           // session-transcript reader exists yet, so there is nothing
           // measured to read.
           break;
+        case "opencode":
+          // opencode's session data lives in a sqlite database with no
+          // telemetry reader wired, and its plugins are global-config only.
+          break;
         default:
           unknownVendor(agent.tool, "refreshToolTelemetry");
       }
@@ -2171,6 +2175,9 @@ export class HiveDaemon {
         case "kimi":
           // Nothing measured to fold into the row: no kimi telemetry
           // artifact is wired (see the reader switch above).
+          break;
+        case "opencode":
+          // Nothing measured to fold into the row either.
           break;
         default:
           unknownVendor(current.tool, "refreshToolTelemetry");
@@ -3767,6 +3774,9 @@ export class HiveDaemon {
       case "kimi":
         // Kimi's session state.json records no model name, so there is no
         // live observation to reconcile against — the launch model stands.
+        return known;
+      case "opencode":
+        // opencode's session database has no live-model reader wired.
         return known;
       default:
         return unknownVendor(agent.tool, "live model reconciliation");
