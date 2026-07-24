@@ -833,6 +833,8 @@ export interface HiveSpawnerDependencies {
    * daemon's /mcp at or after a launch baseline. Wired in production; when
    * the seam is absent the reachability check does not run. */
   mcpClientSeen?: (subject: string, since: string) => boolean;
+  /** §R1: resolves once the boot's all-provider quota refresh has settled. */
+  quotaReady?: () => Promise<unknown>;
   /** Test seam to collapse the reachability wait's deadline. */
   mcpReportingTimeoutMs?: number;
   /** Live account capability records used only after the final model is chosen. */
@@ -1620,6 +1622,7 @@ export class HiveSpawner implements Spawner {
 
     let reservationId: string;
     try {
+      await this.dependencies.quotaReady?.();
       const reservation = await this.dependencies.quota.reserveControlRun({
         agentName: agent.name,
         category: agent.category,
@@ -1729,7 +1732,6 @@ export class HiveSpawner implements Spawner {
       const launchedCommand = launchedCommandName(preparedLaunch.argv);
       authorized = await this.authorizeLaunch(identity);
       requireAuthorizedLaunch(authorized);
-      this.dependencies.quota.requireActiveReservation(reservationId);
       await this.createSession(
         prepared.record,
         preparedLaunch.command,
@@ -2358,6 +2360,7 @@ export class HiveSpawner implements Spawner {
       };
       const gated = await requireGate(raw);
       if (this.dependencies.quota?.config.enabled === true) {
+        await this.dependencies.quotaReady?.();
         const decision = await this.dependencies.quota.routeAndReserve({
           agentName: name,
           category: request.category,
@@ -2453,6 +2456,7 @@ export class HiveSpawner implements Spawner {
           return { authorized: firstEligible };
         }
         try {
+          await this.dependencies.quotaReady?.();
           const decision = await this.dependencies.quota.routeAndReserve({
             agentName: name,
             category,
@@ -2782,11 +2786,6 @@ export class HiveSpawner implements Spawner {
         kickoff: "Begin the assigned task.",
       });
       const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
-        if (quotaReservationId !== undefined) {
-          this.dependencies.quota?.requireActiveReservation?.(
-            quotaReservationId,
-          );
-        }
         const revalidated = await requireGate({
           tool: authorized.tool,
           model: authorized.model,

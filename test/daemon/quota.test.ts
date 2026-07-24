@@ -64,9 +64,6 @@ function config(
 ): QuotaConfig {
   return QuotaConfigSchema.parse({
     limits,
-    reserveFiveHourPct: 0,
-    reserveWeeklyPct: 0,
-    estimates: { deep: 20, standard: 10, cheap: 4, review: 8 },
     ...overrides,
   });
 }
@@ -317,30 +314,6 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
-  test("final launch revalidation refuses a released reservation", async () => {
-    const { db } = await fileDatabase("adapter-revalidation");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("codex")]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const decision = await service.routeAndReserve({
-      agentName: "maya",
-      category: "simple_coding",
-      selection: "spread",
-      explicitTool: "codex",
-      candidates: candidates(),
-    });
-    expect(() =>
-      service.requireActiveReservation(decision.reservation.id),
-    ).not.toThrow();
-    await service.cancel(decision.reservation.id);
-    expect(() =>
-      service.requireActiveReservation(decision.reservation.id),
-    ).toThrow("no longer active at launch");
-    db.close();
-  });
-
   test("migrates legacy reservation ledgers without control-run columns", async () => {
     const { db } = await fileDatabase("legacy-control-columns");
     db.database.exec(`
@@ -377,35 +350,6 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
-  test("atomically prevents two database connections from reserving the same headroom", async () => {
-    const { path, db } = await fileDatabase("concurrency");
-    const secondDb = new HiveDatabase(path);
-    const quotaConfig = config([limit("claude", 15, { weeklyAllowance: 100 })]);
-    const now = () => new Date("2026-07-09T12:00:00.000Z");
-    const services = [
-      new QuotaService(new QuotaLedger(db), quotaConfig, now),
-      new QuotaService(new QuotaLedger(secondDb), quotaConfig, now),
-    ];
-    const results = await Promise.allSettled(
-      services.map((service, index) =>
-        service.routeAndReserve({
-          agentName: index === 0 ? "maya" : "sam",
-          category: "simple_coding",
-          selection: "strict",
-          explicitTool: "claude",
-          candidates: candidates(),
-        }),
-      ),
-    );
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toHaveLength(1);
-    secondDb.close();
-    db.close();
-  });
 
   test("shares reservations across instance databases without aliasing same-repo agent names", async () => {
     const root = await mkdtemp(join(tmpdir(), "hive-quota-shared-instances-"));
@@ -500,12 +444,11 @@ describe("quota persistence and reservations", () => {
         }),
       ),
     );
+    // §R3: usage never refuses a spawn anymore, so both siblings book; the
+    // liveness-aware expiry below is the still-valid half of this test.
     expect(
       results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toHaveLength(1);
+    ).toHaveLength(2);
     const accepted = results.find((result) => result.status === "fulfilled");
     if (accepted?.status !== "fulfilled")
       throw new Error("missing accepted reservation");
@@ -670,39 +613,6 @@ describe("quota persistence and reservations", () => {
     db.close();
   });
 
-  test("atomically prevents concurrent control restarts from overcommitting headroom", async () => {
-    const { path, db } = await fileDatabase("control-concurrency");
-    const secondDb = new HiveDatabase(path);
-    const quotaConfig = config([limit("claude", 15, { weeklyAllowance: 100 })]);
-    const now = () => new Date("2026-07-09T12:00:00.000Z");
-    const services = [
-      new QuotaService(new QuotaLedger(db), quotaConfig, now),
-      new QuotaService(new QuotaLedger(secondDb), quotaConfig, now),
-    ];
-    const results = await Promise.allSettled(
-      services.map((service, index) =>
-        service.reserveControlRun({
-          agentName: index === 0 ? "maya" : "sam",
-          category: "simple_coding",
-          tool: "claude",
-          model: "claude-model",
-          controlMessageId: `control-${index}`,
-        }),
-      ),
-    );
-    expect(
-      results.filter((result) => result.status === "fulfilled"),
-    ).toHaveLength(1);
-    expect(
-      results.filter((result) => result.status === "rejected"),
-    ).toHaveLength(1);
-    const rejected = results.find((result) => result.status === "rejected");
-    expect(rejected?.status === "rejected" && rejected.reason).toBeInstanceOf(
-      QuotaExhaustedError,
-    );
-    secondDb.close();
-    db.close();
-  });
 
   test("persists reconciliation, releases unstarted cancellations, and conservatively recovers started reservations", async () => {
     const { root, path, db } = await fileDatabase("recovery");
@@ -867,26 +777,6 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
-  test("AUTO excludes unreadable quota while an affordable measured candidate exists", async () => {
-    const { db } = await fileDatabase("unknown-headroom");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude", 100)]),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    const [grok, claude] = await authorizeForQuotaTest([
-      { tool: "grok", model: "grok-4.5" },
-      { tool: "claude", model: "claude-model" },
-    ]);
-    const decision = await service.routeAndReserve({
-      agentName: "measured-wins",
-      category: "complex_coding",
-      selection: "spread",
-      candidates: [required(grok), required(claude)],
-    });
-    expect(decision.tool).toBe("claude");
-    db.close();
-  });
 
   test("atomic fair dispatch gives concurrent spawns different providers", async () => {
     const { db } = await fileDatabase("reservations-spread");
@@ -954,36 +844,6 @@ describe("quota-aware routing", () => {
     db.close();
   });
 
-  test("preserves deep capacity for cheap work and recommends a verified cross-vendor fallback for an unsafe explicit choice", async () => {
-    const { db } = await fileDatabase("explicit");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude", 6), limit("codex", 100)], {
-        reserveFiveHourPct: 0.5,
-        reserveWeeklyPct: 0.5,
-      }),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    let error: unknown;
-    try {
-      await service.routeAndReserve({
-        agentName: "maya",
-        category: "summarization",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      });
-    } catch (caught) {
-      error = caught;
-    }
-    expect(error).toBeInstanceOf(QuotaExhaustedError);
-    expect((error as QuotaExhaustedError).fallback).toMatchObject({
-      tool: "codex",
-      model: "codex-model",
-    });
-    expect((error as Error).message).toContain("Recommended fallback");
-    db.close();
-  });
 
   test("routes review to the other vendor when quota is equally healthy", async () => {
     const { db } = await fileDatabase("review");
@@ -1032,7 +892,9 @@ describe("quota-aware routing", () => {
       configured: false,
       confidence: "missing",
     });
-    expect(alerts).toHaveLength(1);
+    // Compatibility mode is gone: an unmetered route is the normal case now,
+    // so nothing warns — the status above is the only diagnostic left.
+    expect(alerts).toHaveLength(0);
     db.close();
   });
 });
@@ -1141,59 +1003,6 @@ describe("quota telemetry and alerts", () => {
     db.close();
   });
 
-  test("delivers threshold alerts through the durable orchestrator message path", async () => {
-    const { db } = await fileDatabase("alert-delivery");
-    const sender: RootProtocolDeliverer & { calls: string[] } = {
-      calls: [],
-      async deliverMessage(text: string) {
-        this.calls.push(text);
-        return true;
-      },
-      isLive: () => true,
-    };
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude", 20, { weeklyAllowance: 1_000 })], {
-        estimates: {
-          ...DEFAULT_QUOTA_CONFIG.estimates,
-          complex_coding: 20,
-          simple_coding: 10,
-          summarization: 4,
-          code_review: 8,
-        },
-      }),
-      () => new Date("2026-07-09T12:00:00.000Z"),
-    );
-    new HiveDaemon({
-      statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
-      db,
-      spawner: {
-        async spawn() {
-          throw new Error("unused");
-        },
-      },
-      rootProtocol: sender,
-      quota: service,
-    });
-    await service.routeAndReserve({
-      agentName: "maya",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    expect(db.listMessages()).toMatchObject([
-      {
-        from: "hive-quota",
-        to: "queen",
-        state: "injected",
-        deliveredAt: expect.any(String),
-      },
-    ]);
-    expect(sender.calls).toHaveLength(1);
-    expect(sender.calls[0]).toContain("Hive quota critical:");
-    db.close();
-  });
 
   test("marks old provider observations stale and takes the conservative maximum", async () => {
     const { db } = await fileDatabase("stale");
@@ -1224,71 +1033,6 @@ describe("quota telemetry and alerts", () => {
     db.close();
   });
 
-  test("deduplicates warning and critical alerts and rearms after a reset plus hysteresis", async () => {
-    const { db } = await fileDatabase("alerts");
-    let now = new Date("2026-07-09T12:00:00.000Z");
-    const service = new QuotaService(
-      new QuotaLedger(db),
-      config([limit("claude", 100, { weeklyAllowance: 1_000 })], {
-        estimates: {
-          ...DEFAULT_QUOTA_CONFIG.estimates,
-          complex_coding: 10,
-          simple_coding: 20,
-          summarization: 20,
-          code_review: 10,
-        },
-      }),
-      () => now,
-    );
-    const alerts: string[] = [];
-    service.setAlertSink(async (body) => {
-      alerts.push(body);
-    });
-    for (let index = 0; index < 4; index += 1) {
-      const decision = await service.routeAndReserve({
-        agentName: `agent-${index}`,
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      });
-      await service.reconcile(decision.reservation.id);
-    }
-    expect(alerts.filter((body) => body.includes("five-hour"))).toHaveLength(1);
-    const critical = await service.routeAndReserve({
-      agentName: "critical",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    await service.reconcile(critical.reservation.id);
-    expect(alerts.filter((body) => body.includes("five-hour"))).toHaveLength(2);
-    await service.reconcile(critical.reservation.id);
-    expect(alerts.filter((body) => body.includes("five-hour"))).toHaveLength(2);
-
-    now = new Date("2026-07-09T18:00:00.000Z");
-    const rearm = await service.routeAndReserve({
-      agentName: "rearm",
-      category: "simple_coding",
-      selection: "strict",
-      explicitTool: "claude",
-      candidates: candidates(),
-    });
-    await service.cancel(rearm.reservation.id);
-    for (let index = 0; index < 4; index += 1) {
-      const decision = await service.routeAndReserve({
-        agentName: `again-${index}`,
-        category: "simple_coding",
-        selection: "strict",
-        explicitTool: "claude",
-        candidates: candidates(),
-      });
-      await service.reconcile(decision.reservation.id);
-    }
-    expect(alerts.filter((body) => body.includes("five-hour"))).toHaveLength(3);
-    db.close();
-  });
 });
 
 /**

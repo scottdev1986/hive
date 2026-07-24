@@ -37,17 +37,6 @@ describe("config loading", () => {
     expect(await loadQuotaConfig()).toMatchObject({
       enabled: true,
       limits: [],
-      estimates: {
-        code_review: 8,
-        complex_coding: 20,
-        debugging: 20,
-        default: 10,
-        heavy_research: 20,
-        light_research: 4,
-        planning: 10,
-        simple_coding: 10,
-        summarization: 4,
-      },
     });
   });
 

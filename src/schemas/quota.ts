@@ -58,71 +58,6 @@ export const QuotaLimitSchema = z.strictObject({
 export type QuotaLimit = z.infer<typeof QuotaLimitSchema>;
 
 /**
- * The one-release compatibility mapping from the dead tiers to categories
- * (governing doc §2.10): an existing quota.toml keyed by tier still parses,
- * its values landing on the tier's successor category. New files use
- * category keys directly.
- */
-const LEGACY_TIER_CATEGORY = {
-  deep: "complex_coding",
-  standard: "standard_coding",
-  cheap: "summarization",
-  review: "code_review",
-} as const;
-
-const legacyKeysMapped = <T>(table: Record<string, T>): Record<string, T> =>
-  Object.fromEntries(
-    Object.entries(table).map(([key, value]) => [
-      LEGACY_TIER_CATEGORY[key as keyof typeof LEGACY_TIER_CATEGORY] ?? key,
-      value,
-    ]),
-  );
-
-const legacyKeyCollisions = (table: Record<string, unknown>) =>
-  Object.entries(LEGACY_TIER_CATEGORY).filter(
-    ([legacy, category]) =>
-      table[legacy] !== undefined && table[category] !== undefined,
-  );
-
-const DEFAULT_ESTIMATES: Record<RoutingCategory, number> = {
-  complex_coding: 20,
-  debugging: 20,
-  heavy_research: 20,
-  planning: 10,
-  standard_coding: 10,
-  simple_coding: 10,
-  default: 10,
-  code_review: 8,
-  light_research: 4,
-  summarization: 4,
-};
-
-const EstimateSchema = z
-  .partialRecord(
-    z.union([
-      RoutingCategorySchema,
-      z.enum(["deep", "standard", "cheap", "review"]),
-    ]),
-    z.number().positive(),
-  )
-  .superRefine((table, context) => {
-    const values = table as Record<string, unknown>;
-    for (const [legacy, category] of legacyKeyCollisions(values)) {
-      context.addIssue({
-        code: "custom",
-        path: [category],
-        message: `cannot set both legacy ${legacy} and ${category}`,
-      });
-    }
-  })
-  .transform(
-    (table): Record<RoutingCategory, number> => ({
-      ...DEFAULT_ESTIMATES,
-      ...legacyKeysMapped(table),
-    }),
-  );
-
-/**
  * How much of each window one run of a category is expected to consume, as a percent
  * of that window. This is Hive's own workload guess — never a provider number —
  * so every reservation built from it is surfaced as `estimated`. It is separate
@@ -158,31 +93,6 @@ export const DEFAULT_PERCENT_ESTIMATES: Record<
   summarization: { fiveHour: 1.5, weekly: 0.3 },
 };
 
-const PercentEstimateTableSchema = z
-  .partialRecord(
-    z.union([
-      RoutingCategorySchema,
-      z.enum(["deep", "standard", "cheap", "review"]),
-    ]),
-    PercentEstimateSchema,
-  )
-  .superRefine((table, context) => {
-    const values = table as Record<string, unknown>;
-    for (const [legacy, category] of legacyKeyCollisions(values)) {
-      context.addIssue({
-        code: "custom",
-        path: [category],
-        message: `cannot set both legacy ${legacy} and ${category}`,
-      });
-    }
-  })
-  .transform(
-    (table): Record<RoutingCategory, { fiveHour: number; weekly: number }> => ({
-      ...DEFAULT_PERCENT_ESTIMATES,
-      ...legacyKeysMapped(table),
-    }),
-  );
-
 export const QuotaConfigSchema = z
   .strictObject({
     enabled: z.boolean().default(true),
@@ -190,12 +100,6 @@ export const QuotaConfigSchema = z
     discovery: z.boolean().default(true),
     /** How often the daemon re-reads provider limits, in minutes. */
     refreshIntervalMinutes: z.number().positive().default(15),
-    estimatesPct: PercentEstimateTableSchema.default(DEFAULT_PERCENT_ESTIMATES),
-    warningRemainingPct: z.number().min(0).max(1).default(0.25),
-    criticalRemainingPct: z.number().min(0).max(1).default(0.1),
-    hysteresisPct: z.number().min(0).max(0.5).default(0.05),
-    reserveFiveHourPct: z.number().min(0).max(1).default(0.15),
-    reserveWeeklyPct: z.number().min(0).max(1).default(0.2),
     reservationTtlMinutes: z.number().positive().default(360),
     /**
      * How long a route that failed to produce a working agent is passed over for
@@ -205,17 +109,9 @@ export const QuotaConfigSchema = z
      * would silently become the outage it was meant to prevent.
      */
     launchQuarantineMinutes: z.number().positive().default(15),
-    estimates: EstimateSchema.default(DEFAULT_ESTIMATES),
     limits: z.array(QuotaLimitSchema).default([]),
   })
   .superRefine((value, context) => {
-    if (value.criticalRemainingPct > value.warningRemainingPct) {
-      context.addIssue({
-        code: "custom",
-        path: ["criticalRemainingPct"],
-        message: "must be less than or equal to warningRemainingPct",
-      });
-    }
     const identities = new Set<string>();
     for (const [index, limit] of value.limits.entries()) {
       for (const model of limit.models) {

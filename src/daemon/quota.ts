@@ -47,20 +47,6 @@ type QuotaCandidateIdentity = Pick<
   "tool" | "model" | "effort"
 >;
 
-/**
- * Light work leaves a reserve floor untouched so heavy work still has
- * somewhere to land; the heavy categories spend down to the line. The old
- * cheap/standard-preserve-deep rule, carried onto the categories that
- * inherited each kind of work.
- */
-const HEADROOM_PRESERVING_CATEGORIES: ReadonlySet<RoutingCategory> = new Set([
-  "simple_coding",
-  "standard_coding",
-  "summarization",
-  "light_research",
-  "default",
-]);
-
 export interface QuotaRouteRequest {
   agentName: string;
   category: RoutingCategory;
@@ -374,7 +360,6 @@ export class QuotaService {
   private readonly probes: QuotaProbe[];
   private readonly probeErrors = new Map<CapabilityProvider, string>();
   /** Unspent usage-limit reset grants, as the provider reports them. Read only. */
-  private readonly resetCredits = new Map<CapabilityProvider, number>();
   private lastRefreshAt: Date | null = null;
 
   constructor(
@@ -649,23 +634,6 @@ export class QuotaService {
     return [...general, ...specific];
   }
 
-  /**
-   * A model-scoped meter whose provider name no longer joins the provider's
-   * catalog may be this model's cap under an old or new name. Until the next
-   * shared snapshot heals the join, automatic adoption on that provider is
-   * unsafe; another provider remains entirely unaffected.
-   */
-  private unboundModelPools(
-    provider: CapabilityProvider,
-  ): ResolvedQuotaLimit[] {
-    return this.resolvedLimits().filter(
-      (limit) =>
-        limit.provider === provider &&
-        limit.origin === "discovered" &&
-        !limit.routable &&
-        limit.label !== null,
-    );
-  }
 
   /** The pool a run is booked against: its own cap if it has one, else general. */
   private limitFor(
@@ -767,7 +735,6 @@ export class QuotaService {
     if (held.startedAt !== null && reservations[0] !== undefined) {
       this.ledger.markStarted(reservations[0].id, held.startedAt);
     }
-    for (const entry of entries) await this.alertPool(entry.limit, now);
     return reservations;
   }
 
@@ -782,12 +749,9 @@ export class QuotaService {
     category: RoutingCategory,
   ): { fiveHour: number; weekly: number } {
     if (limit.unit === "units") {
-      const estimate =
-        this.config.estimates[category] ?? this.config.estimates.default ?? 10;
-      return { fiveHour: estimate, weekly: estimate };
+      return { fiveHour: 10, weekly: 10 };
     }
-    const percent =
-      this.config.estimatesPct[category] ?? DEFAULT_PERCENT_ESTIMATES[category];
+    const percent = DEFAULT_PERCENT_ESTIMATES[category];
     return { fiveHour: percent.fiveHour, weekly: percent.weekly };
   }
 
@@ -800,11 +764,6 @@ export class QuotaService {
     now: Date,
     purpose?: { purpose: "control"; controlMessageId: string },
   ): ReserveQuotaInput[] {
-    // Light work leaves a floor untouched so a heavy run still has somewhere
-    // to land; the heavy categories themselves may spend down to the line —
-    // the old cheap/standard-preserve-deep rule, carried onto the categories
-    // that inherited the work.
-    const preserveDeep = HEADROOM_PRESERVING_CATEGORIES.has(category);
     return entries.map((entry) => {
       const estimate = this.estimateFor(entry.limit, category);
       const bounds = this.windowBounds(entry.limit, now);
@@ -837,12 +796,8 @@ export class QuotaService {
         supplementalWeeklyUsed: supplemental.week,
         fiveHourAllowance: allowanceFor("fiveHour"),
         weeklyAllowance: allowanceFor("weekly"),
-        fiveHourFloor: preserveDeep
-          ? entry.limit.fiveHourAllowance * this.config.reserveFiveHourPct
-          : 0,
-        weeklyFloor: preserveDeep
-          ? entry.limit.weeklyAllowance * this.config.reserveWeeklyPct
-          : 0,
+        fiveHourFloor: 0,
+        weeklyFloor: 0,
         ...(purpose ?? {}),
       };
     });
@@ -907,46 +862,6 @@ export class QuotaService {
     );
   }
 
-  /**
-   * Could this candidate be launched right now? Every pool that meters it must
-   * have room — a model whose own cap is spent has no room even when the general
-   * pool is wide open, so it is never offered as a fallback.
-   */
-  private hasRoom(
-    candidate: QuotaCandidateIdentity,
-    category: RoutingCategory,
-    now: Date,
-  ): boolean {
-    // A route that cannot start is not a fallback, whatever its headroom says.
-    if (this.quarantinedUntil(candidate, now) !== null) return false;
-    const limits = this.limitsFor(candidate);
-    const preserveDeep = HEADROOM_PRESERVING_CATEGORIES.has(category);
-    const checked = limits.map((limit) => {
-      const status = this.statusForLimit(limit, now);
-      const measured = this.measured(status, limit);
-      if (measured === null) return null;
-      const estimate = this.estimateFor(limit, category);
-      const fiveFloor = preserveDeep
-        ? limit.fiveHourAllowance * this.config.reserveFiveHourPct
-        : 0;
-      const weekFloor = preserveDeep
-        ? limit.weeklyAllowance * this.config.reserveWeeklyPct
-        : 0;
-      return (
-        measured.fiveRemaining - estimate.fiveHour >= fiveFloor &&
-        measured.weekRemaining - estimate.weekly >= weekFloor
-      );
-    });
-    // A fallback is only recommended when Hive can actually see that it fits.
-    // Every pool that could be checked must have room, and at least one must have
-    // been checkable — an unmeasured model is not a *safe* fallback, it is an
-    // unknown one, and recommending it would be the same false confidence that
-    // put two agents on an exhausted model.
-    return (
-      checked.some((room) => room !== null) &&
-      checked.every((room) => room !== false)
-    );
-  }
 
   /** The pool with the least room: the one that actually governs the run. */
   private tightest(
@@ -965,77 +880,7 @@ export class QuotaService {
     );
   }
 
-  /** Which pool blocked this route, how much is left, and when it comes back. */
-  private describeBlock(
-    candidate: QuotaCandidateIdentity,
-    limit: ResolvedQuotaLimit,
-    status: QuotaPoolStatus,
-  ): string {
-    const unit = limit.unit === "percent" ? "%" : "";
-    const window = (name: "fiveHour" | "weekly"): string =>
-      `${describeRemaining(status[name], unit)} remaining` +
-      (status[name].resetsAt === null
-        ? ""
-        : ` (resets ${status[name].resetsAt})`);
-    const scope = limit.models.includes("*")
-      ? `${limit.provider} general pool ${limit.pool}`
-      : `${limit.provider} pool ${limit.pool}`;
-    const windows = this.meters(limit, status, "fiveHour")
-      ? `5h ${window("fiveHour")}, weekly ${window("weekly")}`
-      : `weekly ${window("weekly")}`;
-    return `${candidate.tool}/${candidate.model} is blocked by ${scope}: ${windows}`;
-  }
 
-  /**
-   * A route that squeaked through on a pool near its limit is not a clean
-   * success. The orchestrator is promised a warning under quota pressure, so a
-   * governing pool below the warning threshold — after this run's own estimated
-   * cost — says so by name.
-   */
-  private pressureWarnings(
-    candidate: QuotaCandidateIdentity,
-    entries: { limit: ResolvedQuotaLimit; status: QuotaPoolStatus }[],
-    category: RoutingCategory,
-  ): string[] {
-    const warnings: string[] = [];
-    for (const entry of entries) {
-      const measured = this.measured(entry.status, entry.limit);
-      if (measured === null) {
-        if (!entry.limit.models.includes("*")) {
-          warnings.push(
-            `${entry.limit.provider} pool ${entry.limit.pool} meters ` +
-              `${candidate.model} but has no live reading, so it could not be checked.`,
-          );
-        }
-        continue;
-      }
-      const estimate = this.estimateFor(entry.limit, category);
-      const after = Math.min(
-        (measured.fiveRemaining - estimate.fiveHour) /
-          entry.limit.fiveHourAllowance,
-        (measured.weekRemaining - estimate.weekly) /
-          entry.limit.weeklyAllowance,
-      );
-      if (after > this.config.warningRemainingPct) continue;
-      const unit = entry.limit.unit === "percent" ? "%" : "";
-      const tightWindow =
-        (measured.weekRemaining - estimate.weekly) /
-          entry.limit.weeklyAllowance <
-        (measured.fiveRemaining - estimate.fiveHour) /
-          entry.limit.fiveHourAllowance
-          ? "weekly"
-          : "fiveHour";
-      const status = entry.status[tightWindow];
-      warnings.push(
-        `${entry.limit.provider} pool ${entry.limit.pool} is at ` +
-          `${describeRemaining(status, unit)} remaining ` +
-          `(${tightWindow === "weekly" ? "weekly" : "5h"} window` +
-          `${status.resetsAt === null ? "" : `, resets ${status.resetsAt}`}) ` +
-          `after this ${category} run.`,
-      );
-    }
-    return warnings;
-  }
 
   /**
    * Read live limits from every provider and fold them into the store.
@@ -1053,11 +898,15 @@ export class QuotaService {
    */
   async refreshFromProviders(
     now = this.clock(),
-    options: { force?: boolean } = {},
+    options: { force?: boolean; providers?: readonly CapabilityProvider[] } = {},
   ): Promise<QuotaRefreshReport[]> {
     if (!this.config.discovery) return [];
     const reports: QuotaRefreshReport[] = [];
     for (const probe of this.probes) {
+      if (
+        options.providers !== undefined &&
+        !options.providers.includes(probe.provider)
+      ) continue;
       if (options.force !== true && this.hasFreshReading(probe.provider, now)) {
         reports.push({ provider: probe.provider, status: "skipped", pools: 0 });
         continue;
@@ -1097,9 +946,6 @@ export class QuotaService {
             discoveredAt: iso(now),
           })),
         );
-      }
-      if (result.resetCredits !== undefined) {
-        this.resetCredits.set(probe.provider, result.resetCredits);
       }
       for (const reading of result.pools) {
         this.ledger.upsertDiscoveredPool({
@@ -1191,7 +1037,6 @@ export class QuotaService {
     const limit = this.resolvedLimits().find(
       (candidate) => scopeKey(candidate) === scopeKey(scope),
     );
-    if (limit !== undefined) await this.alertPool(limit, this.clock());
   }
 
   /**
@@ -1642,6 +1487,15 @@ export class QuotaService {
       : { fiveRemaining, weekRemaining };
   }
 
+  /**
+   * Route and book — but never refuse for usage (the 2026-07-24 quota
+   * ruling, docs/design/quota-lifecycle-redesign.html §R3). Selection is
+   * unchanged in kind: `spread` fairly shares work across providers by
+   * Hive-observed dispatch deficit, `strict` walks rank order. What is gone
+   * is the veto: pool exhaustion is a mid-work condition, handled by the
+   * drain handler, never a reason to stop a launch. Consent, enablement,
+   * and capability refusals are the launch gate's, and are untouched here.
+   */
   async routeAndReserve(
     request: QuotaRouteRequest,
   ): Promise<QuotaRouteDecision> {
@@ -1673,54 +1527,18 @@ export class QuotaService {
       );
     }
 
-    const catalogQuarantine = new Map<QuotaRouteCandidate, string>();
-    for (const candidate of candidates) {
-      const pools = this.unboundModelPools(candidate.tool);
-      if (pools.length === 0) continue;
-      const hasOwnBoundMeter = this.resolvedLimits().some(
-        (limit) =>
-          limit.provider === candidate.tool &&
-          limit.routable &&
-          !limit.models.includes("*") &&
-          limit.models.includes(candidate.model),
-      );
-      if (!hasOwnBoundMeter) {
-        catalogQuarantine.set(
-          candidate,
-          `${candidate.tool} has unbound model-scoped quota ${pools.map((pool) => pool.pool).join(", ")}; ` +
-            `${candidate.model} is explicit-pin only until the provider catalog join heals`,
-        );
-      }
-    }
-    if (request.explicitCandidate !== true) {
-      const eligible = candidates.filter(
-        (candidate) => !catalogQuarantine.has(candidate),
-      );
-      if (eligible.length === 0 && catalogQuarantine.size > 0) {
-        throw new QuotaExhaustedError(
-          `Provider catalog quarantine leaves no auto-routable candidate. ${[
-            ...catalogQuarantine.values(),
-          ].join("; ")}`,
-        );
-      }
-      candidates = eligible;
-    }
-
     const evaluated = candidates.map((candidate) => {
       const entries = this.limitsFor(candidate).map((limit) => ({
         limit,
         status: this.statusForLimit(limit, now),
       }));
-      // Compatibility mode is for a provider Hive has no number for at all — not
-      // for a run that merely has one dark meter among several. As long as *some*
-      // governing pool is measured, the run is constrained by it: a Fable pool
-      // read at 99% still refuses the spawn even if the general pool has gone
-      // stale, and a measured general pool still gates a model whose own cap has
-      // not been read yet. Only when every pool that meters this model is unknown
-      // does Hive admit that it cannot judge.
       const known = entries.filter(
         (entry) => this.measured(entry.status, entry.limit) !== null,
       );
+      // An unmetered candidate is not a special warned case anymore — it is
+      // the normal case for a provider with no usage surface (opencode) or a
+      // quiet one. It books against its `unconfigured:` pool, which is what
+      // the status displays already read.
       if (entries.length === 0 || known.length === 0) {
         return {
           candidate,
@@ -1732,7 +1550,8 @@ export class QuotaService {
     });
 
     // Viability, before distribution gets a vote. A route Hive has just watched fail
-    // to produce a working agent is not a route, however much quota it has.
+    // to produce a working agent is not a route, however much quota it has. This
+    // cooldown is failure evidence, not usage, and the ruling does not touch it.
     const quarantine = new Map<
       (typeof evaluated)[number],
       { until: string; reason: string }
@@ -1743,9 +1562,6 @@ export class QuotaService {
     }
     const viable = evaluated.filter((item) => !quarantine.has(item));
     // If every route is quarantined, try anyway rather than refuse everything.
-    // Hive's own recent bad luck is a weaker fact than a human needing an agent,
-    // and this is also what lets a single explicitly-pinned model still launch:
-    // an explicit directive is not overridden by a cooldown. It warns, loudly.
     const attemptable = viable.length > 0 ? viable : evaluated;
     const quarantineWarnings =
       attemptable === evaluated
@@ -1759,88 +1575,14 @@ export class QuotaService {
               `${item.candidate.tool}/${item.candidate.model} was passed over: it ` +
               `failed to start (${held.reason}) and is retried after ${held.until}.`,
           );
-    if (request.explicitCandidate === true) {
-      const warnings = [...catalogQuarantine.values()];
-      quarantineWarnings.push(...warnings);
-      if (this.alertSink !== null) {
-        for (const warning of warnings) {
-          await this.alertSink(
-            `Quota routing for ${request.agentName}: ${warning}`,
-          );
-        }
-      }
-    }
 
-    const failures: string[] = [];
-    const autoCandidates =
-      request.selection === "spread"
-        ? attemptable.filter((item) => !item.unknown)
-        : attemptable;
-    if (request.selection === "spread") {
-      for (const item of attemptable.filter((candidate) => candidate.unknown)) {
-        failures.push(
-          `${item.candidate.tool}/${item.candidate.model}: quota read failed; ` +
-            "AUTO excludes unreadable capacity, while an explicit choice may still run it",
-        );
-      }
-      if (autoCandidates.length > 0) {
-        const fair = this.ledger.tryReserveFairGroups(
-          autoCandidates.map((item) => ({
-            provider: item.candidate.tool,
-            inputs: this.reservationInputs(
-              request.agentName,
-              item.candidate,
-              item.entries,
-              request.category,
-              now,
-            ),
-          })),
-        );
-        if (fair.ok) {
-          const item = autoCandidates[fair.candidateIndex];
-          const primary = fair.reservations[0];
-          if (item === undefined || primary === undefined) {
-            throw new Error("Quota fairness returned an empty reservation");
-          }
-          const governing = this.tightest(item.entries);
-          for (const entry of item.entries)
-            await this.alertPool(entry.limit, now);
-          return {
-            ...item.candidate,
-            authorized: item.candidate,
-            reservation: primary,
-            status: this.statusForLimit(governing.limit, now),
-            reason:
-              "capability-cleared weighted fair dispatch over Hive-observed assignments",
-            warnings: [
-              ...this.pressureWarnings(
-                item.candidate,
-                item.entries,
-                request.category,
-              ),
-              ...quarantineWarnings,
-            ],
-          };
-        }
-        for (const blocked of fair.blocked) {
-          const item = autoCandidates[blocked.candidateIndex];
-          if (item === undefined) {
-            throw new Error("Quota fairness returned an unknown candidate");
-          }
-          failures.push(
-            `${item.candidate.tool}/${item.candidate.model}: ${blocked.blockedBy.pool} has no safe headroom`,
-          );
-        }
-      }
-    }
-    let safeFallback: QuotaRouteCandidate | undefined;
-    for (const item of request.selection === "spread" ? [] : attemptable) {
-      if (item.unknown) {
-        const fallbackEstimate =
-          this.config.estimates[request.category] ??
-          this.config.estimates.default ??
-          10;
-        const reservation = this.ledger.insertUnboundedReservation({
+    /** The observation rows one candidate books against: its metering
+     * pools, or its `unconfigured:` pool when nothing meters it. */
+    const inputsFor = (
+      item: (typeof attemptable)[number],
+    ): ReserveQuotaInput[] =>
+      item.entries.length === 0
+        ? [{
           id: crypto.randomUUID(),
           agentName: request.agentName,
           provider: item.candidate.tool,
@@ -1849,148 +1591,88 @@ export class QuotaService {
           model: item.candidate.model,
           effort: item.candidate.effort ?? null,
           category: request.category,
-          estimatedUnits: fallbackEstimate,
+          estimatedUnits: 10,
           now: iso(now),
           expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
-        });
-        const status = this.gapStatus(
-          item.candidate.tool,
-          item.candidate.model,
-          {
-            reserved: fallbackEstimate,
-            fiveHourRecorded: 0,
-            weeklyRecorded: 0,
-          },
-        );
-        await this.alertUnknown(item.candidate, now);
-        return {
-          ...item.candidate,
-          authorized: item.candidate,
-          reservation,
-          status,
-          reason: `${item.candidate.tool} selected in compatibility mode`,
-          warnings: [
-            `Hive has no live usage for ${item.candidate.tool}; ` +
-              `${item.candidate.model} is running unconstrained.`,
-            ...quarantineWarnings,
-          ],
-        };
-      }
-      const reserved = this.ledger.tryReserveGroup(
-        this.reservationInputs(
+          fiveHourStart: iso(now),
+          weeklyStart: iso(now),
+          supplementalFiveHourUsed: 0,
+          supplementalWeeklyUsed: 0,
+          fiveHourAllowance: 0,
+          weeklyAllowance: 0,
+          fiveHourFloor: 0,
+          weeklyFloor: 0,
+        }]
+        : this.reservationInputs(
           request.agentName,
           item.candidate,
           item.entries,
           request.category,
           now,
-        ),
-      );
-      if (!reserved.ok) {
-        // Name the pool that refused, not just the model. "Fable is blocked" is
-        // useless without which meter blocked it, how much is left, and when it
-        // comes back — the caller has to be able to act on this.
-        const blocked = item.entries.find(
-          (entry) =>
-            entry.limit.pool === reserved.blockedBy.pool &&
-            entry.limit.provider === reserved.blockedBy.provider &&
-            entry.limit.account === reserved.blockedBy.account,
         );
-        failures.push(
-          blocked === undefined
-            ? `${item.candidate.tool}/${item.candidate.model}: no headroom`
-            : this.describeBlock(item.candidate, blocked.limit, blocked.status),
-        );
-        continue;
+
+    if (request.selection === "spread") {
+      const fair = this.ledger.reserveFairGroups(
+        attemptable.map((item) => ({
+          provider: item.candidate.tool,
+          inputs: inputsFor(item),
+        })),
+      );
+      const item = attemptable[fair.candidateIndex];
+      const primary = fair.reservations[0];
+      if (item === undefined || primary === undefined) {
+        throw new Error("Quota fairness returned an empty reservation");
       }
-      const primary = reserved.reservations[0];
-      if (primary === undefined) {
-        throw new Error("Quota ledger returned an empty reservation");
-      }
-      const governing = this.tightest(item.entries);
-      if (
-        request.explicitTool === undefined ||
-        item.candidate.tool === request.explicitTool
-      ) {
-        for (const entry of item.entries)
-          await this.alertPool(entry.limit, now);
-        return {
-          ...item.candidate,
-          authorized: item.candidate,
-          reservation: primary,
-          status: this.statusForLimit(governing.limit, now),
-          reason: "safe headroom for the user's chosen link",
-          warnings: [
-            ...this.pressureWarnings(
-              item.candidate,
-              item.entries,
-              request.category,
-            ),
-            ...quarantineWarnings,
-          ],
-        };
-      }
-      safeFallback = item.candidate;
-      this.ledger.release(primary.id, iso(now));
+      const governing = item.entries.length === 0
+        ? undefined
+        : this.tightest(item.entries);
+      return {
+        ...item.candidate,
+        authorized: item.candidate,
+        reservation: primary,
+        status: governing === undefined
+          ? this.gapStatus(item.candidate.tool, item.candidate.model, {
+            reserved: 0,
+            fiveHourRecorded: 0,
+            weeklyRecorded: 0,
+          })
+          : this.statusForLimit(governing.limit, now),
+        reason:
+          "capability-cleared weighted fair dispatch over Hive-observed assignments",
+        warnings: quarantineWarnings,
+      };
     }
 
-    if (request.explicitTool !== undefined) {
-      const other = request.candidates.find(
-        (candidate) => candidate.tool !== request.explicitTool,
-      );
-      if (other !== undefined && this.hasRoom(other, request.category, now)) {
-        safeFallback ??= other;
-      }
+    // strict: rank order, first attemptable candidate. It always exists —
+    // usage cannot empty this list anymore.
+    const item = attemptable[0];
+    if (item === undefined) {
+      throw new Error("no candidate to route");
     }
-    const blockedProviders = new Set(
-      attemptable.map((item) => item.candidate.tool),
-    );
-    throw new QuotaExhaustedError(
-      `Quota pressure makes this spawn unsafe. ${failures.join("; ")}` +
-        (safeFallback === undefined
-          ? ". No safe fallback is currently known."
-          : `. Recommended fallback: ${safeFallback.tool}/${safeFallback.model}.`) +
-        quarantineWarnings.map((warning) => ` ${warning}`).join("") +
-        this.describeResetCredits(blockedProviders),
-      safeFallback,
-    );
+    const reservations = this.ledger.reserveGroupUnchecked(inputsFor(item));
+    const reservation = reservations[0];
+    if (reservation === undefined) {
+      throw new Error("Quota ledger returned an empty reservation");
+    }
+    const governing = item.entries.length === 0
+      ? undefined
+      : this.tightest(item.entries);
+    return {
+      ...item.candidate,
+      authorized: item.candidate,
+      reservation,
+      status: governing === undefined
+        ? this.gapStatus(item.candidate.tool, item.candidate.model, {
+          reserved: 0,
+          fiveHourRecorded: 0,
+          weeklyRecorded: 0,
+        })
+        : this.statusForLimit(governing.limit, now),
+      reason: "the user's chosen link",
+      warnings: quarantineWarnings,
+    };
   }
 
-  /** Final adapter-boundary check: a stale/released reservation launches nothing. */
-  requireActiveReservation(reservationId: string): void {
-    const reservation = this.ledger.getReservation(reservationId);
-    if (
-      reservation === null ||
-      reservation.status !== "active" ||
-      new Date(reservation.expiresAt) <= this.clock()
-    ) {
-      throw new QuotaExhaustedError(
-        `Quota reservation ${reservationId} is no longer active at launch`,
-      );
-    }
-  }
-
-  /**
-   * Mention the unspent reset grants; never spend one.
-   *
-   * The account carries a finite number of "full reset" credits, readable in the
-   * same free call as the limits. Hive will not redeem one to get its own way:
-   * an agent that can quietly spend a human's scarce credits to unblock itself is
-   * a bad agent, and the fact that it would look helpful is exactly what makes it
-   * dangerous. The human is told the option exists and decides.
-   */
-  private describeResetCredits(providers: Set<CapabilityProvider>): string {
-    const notes: string[] = [];
-    for (const provider of providers) {
-      const credits = this.resetCredits.get(provider) ?? 0;
-      if (credits <= 0) continue;
-      notes.push(
-        ` ${provider} reports ${credits} unspent usage-limit reset ` +
-          `${credits === 1 ? "credit" : "credits"}. Hive will not spend one on ` +
-          `its own — redeem it yourself if you want this run to proceed now.`,
-      );
-    }
-    return notes.join("");
-  }
 
   async reserveControlRun(
     request: ControlQuotaRequest,
@@ -2022,23 +1704,15 @@ export class QuotaService {
         model: request.model,
         effort: request.effort ?? null,
         category: request.category,
-        estimatedUnits:
-          this.config.estimates[request.category] ??
-          this.config.estimates.default ??
-          10,
+        estimatedUnits: 10,
         now: iso(now),
         expiresAt: add(now, this.config.reservationTtlMinutes * 60_000),
         purpose: "control",
         controlMessageId: request.controlMessageId,
       });
-      await this.alertUnknown(request, now);
       return this.requireMatchingControlReservation(reservation, request);
     }
 
-    // A critical acknowledgement may use the last safe capacity. It never falls
-    // back to another provider or model, but it also must not preserve a
-    // deep-work reserve at the expense of delivering the control — so the floors
-    // the category would normally protect are dropped to zero here.
     const inputs = this.reservationInputs(
       request.agentName,
       request,
@@ -2048,45 +1722,18 @@ export class QuotaService {
       { purpose: "control", controlMessageId: request.controlMessageId },
     ).map((input, index) => ({
       ...input,
-      fiveHourFloor: 0,
-      weeklyFloor: 0,
       // One control run may hold several pool rows. The group primary owns
       // the idempotency key; stamping every row violates its unique index.
       ...(index === 0 ? {} : { controlMessageId: undefined }),
     }));
-    const group = this.ledger.tryReserveGroup(inputs);
-    const governing = this.tightest(entries);
-    const limit = governing.limit;
-    const _status = governing.status;
-    if (!group.ok) {
-      const blocked =
-        entries.find(
-          (entry) =>
-            entry.limit.pool === group.blockedBy.pool &&
-            entry.limit.provider === group.blockedBy.provider &&
-            entry.limit.account === group.blockedBy.account,
-        ) ?? governing;
-      const unit = blocked.limit.unit === "percent" ? "%" : "";
-      const estimate = this.estimateFor(blocked.limit, request.category);
-      throw new QuotaExhaustedError(
-        `Insufficient quota for critical control ${request.controlMessageId}: ` +
-          `${this.describeBlock(request, blocked.limit, blocked.status)}; ` +
-          `${estimate.fiveHour.toFixed(1)}${unit} five-hour and ` +
-          `${estimate.weekly.toFixed(1)}${unit} weekly are required. ` +
-          "The agent remains write-revoked, " +
-          "the worktree is preserved, and Hive will not switch models.",
-      );
-    }
-    const reservation = group.reservations[0];
+    // §R3: a critical acknowledgement is never refused on usage either. It
+    // books unchecked, on its own model, always.
+    const reservations = this.ledger.reserveGroupUnchecked(inputs);
+    const reservation = reservations[0];
     if (reservation === undefined) {
       throw new Error("Quota ledger returned an empty control reservation");
     }
-    const matched = this.requireMatchingControlReservation(
-      reservation,
-      request,
-    );
-    await this.alertPool(limit, now);
-    return matched;
+    return this.requireMatchingControlReservation(reservation, request);
   }
 
   /**
@@ -2142,7 +1789,6 @@ export class QuotaService {
       tool: reservation.provider,
       model: reservation.model,
     });
-    if (limit !== null) await this.alertPool(limit, new Date(at));
   }
 
   /**
@@ -2311,7 +1957,6 @@ export class QuotaService {
       return prior;
     }
     const value = this.ledger.upsertObservation(observation);
-    await this.alertPool(limit, new Date(report.observedAt));
     return value;
   }
 
@@ -2379,7 +2024,6 @@ export class QuotaService {
       );
     }
     const value = this.ledger.upsertObservation(parsed);
-    await this.alertPool(limit, this.clock());
     return value;
   }
 
@@ -2394,44 +2038,6 @@ export class QuotaService {
     }
   }
 
-  /**
-   * Hive could not read this provider's live limits, so it does not know the
-   * account's headroom. It says exactly that. It does not tell the operator to go
-   * fill in a configuration file — a hand-typed allowance is a guess, and a guess
-   * is what this whole subsystem exists to avoid.
-   */
-  private async alertUnknown(
-    candidate: QuotaCandidateIdentity,
-    now: Date,
-  ): Promise<void> {
-    const scope: QuotaScope = {
-      provider: candidate.tool,
-      account: "default",
-      pool: `unconfigured:${candidate.model}`,
-    };
-    const prior = this.ledger.getAlertState(scope, "data");
-    if (prior?.level === "unknown") return;
-    this.ledger.setAlertState({
-      ...scope,
-      window: "data",
-      level: "unknown",
-      notifiedAt: iso(now),
-      boundaryAt: null,
-    });
-    const cause = this.probeErrors.get(candidate.tool);
-    await this.sendAlert(
-      `Hive could not read live quota limits from ${candidate.tool} for ` +
-        `${candidate.model}, so this account's headroom is unknown. ` +
-        (cause === undefined
-          ? "No live reading has arrived yet. "
-          : `Reason: ${cause}. `) +
-        "The spawn proceeded on the legacy route and Hive is tracking a local " +
-        "estimate of its own usage only. Hive will adopt real numbers " +
-        "automatically as soon as the provider answers.",
-    );
-  }
-
-  /** One durable, deduplicated message per provider outage — never a wall of them. */
   private async alertProbeFailure(
     provider: CapabilityProvider,
     reason: string,
@@ -2458,72 +2064,5 @@ export class QuotaService {
     );
   }
 
-  private level(remainingPct: number): "normal" | "warning" | "critical" {
-    if (remainingPct <= this.config.criticalRemainingPct) return "critical";
-    if (remainingPct <= this.config.warningRemainingPct) return "warning";
-    return "normal";
-  }
 
-  private severity(level: QuotaAlertState["level"]): number {
-    return level === "critical" ? 2 : level === "warning" ? 1 : 0;
-  }
-
-  private async alertPool(limit: ResolvedQuotaLimit, now: Date): Promise<void> {
-    const status = this.statusForLimit(limit, now);
-    const unit = limit.unit === "percent" ? "%" : "";
-    for (const [window, value] of [
-      ["five-hour", status.fiveHour],
-      ["weekly", status.weekly],
-    ] as const) {
-      // An unmeasured window cannot cross a threshold. Alerting on it would mean
-      // thresholding a number Hive invented.
-      if (
-        value.remainingPct === null ||
-        value.remaining === null ||
-        value.allowance === null ||
-        value.reserved === null
-      )
-        continue;
-      const current = this.level(value.remainingPct);
-      const prior = this.ledger.getAlertState(limit, window);
-      const boundaryChanged =
-        prior?.boundaryAt !== null &&
-        prior?.boundaryAt !== value.resetsAt &&
-        (prior?.boundaryAt === undefined || new Date(prior.boundaryAt) <= now);
-      let previousLevel = boundaryChanged
-        ? "normal"
-        : (prior?.level ?? "normal");
-      if (this.severity(current) < this.severity(previousLevel)) {
-        const threshold =
-          previousLevel === "critical"
-            ? this.config.criticalRemainingPct
-            : this.config.warningRemainingPct;
-        if (value.remainingPct <= threshold + this.config.hysteresisPct) {
-          continue;
-        }
-        previousLevel = current;
-      }
-      const notify = this.severity(current) > this.severity(previousLevel);
-      this.ledger.setAlertState({
-        provider: status.provider,
-        account: status.account,
-        pool: status.pool,
-        window,
-        level: current,
-        notifiedAt: notify ? iso(now) : (prior?.notifiedAt ?? null),
-        boundaryAt: value.resetsAt,
-      });
-      if (notify) {
-        await this.sendAlert(
-          `Hive quota ${current}: ${status.provider}/${status.account}/${status.pool} ` +
-            `${window} capacity has ${value.remaining.toFixed(1)}${unit} of ` +
-            `${value.allowance.toFixed(1)}${unit} remaining ` +
-            `(${(value.remainingPct * 100).toFixed(0)}%), ` +
-            `${value.reserved.toFixed(1)}${unit} reserved (estimated)` +
-            `${value.resetsAt ? `, expected reset ${value.resetsAt}` : ", reset unknown"}. ` +
-            `Telemetry is ${confidenceLabel(status)}.`,
-        );
-      }
-    }
-  }
 }

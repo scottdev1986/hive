@@ -49,6 +49,7 @@ import {
   HookEventSchema,
   isOrchestratorName,
   isTerminalAgentStatus,
+  type CapabilityProvider,
   type MemoryScope,
   MemoryScopeSchema,
   type MemoryWriteInput,
@@ -1543,13 +1544,15 @@ export class HiveDaemon {
     // Every daemon start reads the providers' real limits before the first spawn
     // can reserve against a number nobody measured. A provider that will not
     // answer leaves its pool honestly unknown rather than blocking startup.
-    void this.refreshQuota({ force: true }).catch((error) => {
-      console.error(
-        `Hive quota discovery failed: ${
-          error instanceof Error ? error.message : "unknown error"
-        }`,
-      );
-    });
+    this.quotaBootRefresh = this.refreshQuota({ force: true }).catch(
+      (error) => {
+        console.error(
+          `Hive quota discovery failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      },
+    );
     // The Markdown files are authoritative and the FTS index is disposable,
     // so every daemon start rebuilds it rather than trusting whatever the
     // SQLite file happened to have from a previous run.
@@ -1708,10 +1711,22 @@ export class HiveDaemon {
    * combine by max() — a fresh provider reading tightens the picture, and a
    * missing one never loosens it.
    */
-  async refreshQuota(options: { force?: boolean } = {}): Promise<void> {
+  async refreshQuota(
+    options: { force?: boolean; providers?: readonly CapabilityProvider[] } = {},
+  ): Promise<void> {
     if (this.quota === undefined) return;
     await this.quota.refreshFromProviders(undefined, options);
   }
+
+  /**
+   * §R1: the boot refresh is a gate, not a background task. The first spawn
+   * awaits this before it routes — one settled promise, no retry framework.
+   */
+  async quotaReady(): Promise<void> {
+    await this.quotaBootRefresh;
+  }
+
+  private quotaBootRefresh: Promise<void> = Promise.resolve();
 
   /**
    * The daemon's one recurring sweep: every 30s, and once at startup.
@@ -2677,6 +2692,17 @@ export class HiveDaemon {
     this.recovery.clearDeliberateKill(agent.id);
     const closedAssignment = this.status.closeAssignment(agent.id, timestamp);
     await this.settleAgentQuota(killed, timestamp);
+    // §R2: an agent's last spend lands on the provider's counter only when it
+    // closes, so a close is a refresh trigger for that provider.
+    void this.refreshQuota({ force: true, providers: [agent.tool] }).catch(
+      (error) => {
+        console.error(
+          `Hive quota refresh after ${agent.name} closed failed: ${
+            error instanceof Error ? error.message : "unknown error"
+          }`,
+        );
+      },
+    );
     let updated = killed;
     const cleaned: {
       sessionId: string;

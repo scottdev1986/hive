@@ -344,6 +344,8 @@ export async function runDaemon(): Promise<void> {
       daemon.issueCredential(name, role, epoch),
     // #57: a spawn whose hive MCP never answers is refused, not recorded.
     mcpClientSeen: (subject, since) => daemon.mcpClientSeen(subject, since),
+    // §R1: the first quota-aware spawn waits for the boot refresh to settle.
+    quotaReady: () => daemon.quotaReady(),
     assignments: {
       open: (agentId, openedAt) =>
         statusStore.openAssignment(agentId, openedAt),

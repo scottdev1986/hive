@@ -1112,35 +1112,6 @@ export class QuotaLedger {
   }
 
   /**
-   * Does this pool have room for the run, once everything already committed
-   * against it is counted? A pool that would be pushed past its allowance (less
-   * whatever floor the caller is protecting) has no room, and the run must not
-   * be admitted onto it.
-   */
-  private fits(input: ReserveQuotaInput): boolean {
-    const totals = this.usageTotals(
-      input,
-      input.fiveHourStart,
-      input.weeklyStart,
-    );
-    const weeklyEstimate = input.estimatedWeeklyUnits ?? input.estimatedUnits;
-    const fiveHourCommitted =
-      totals.fiveHour +
-      totals.reserved +
-      input.supplementalFiveHourUsed +
-      input.estimatedUnits;
-    const weeklyCommitted =
-      totals.weekly +
-      totals.reservedWeekly +
-      input.supplementalWeeklyUsed +
-      weeklyEstimate;
-    return (
-      fiveHourCommitted <= input.fiveHourAllowance - input.fiveHourFloor &&
-      weeklyCommitted <= input.weeklyAllowance - input.weeklyFloor
-    );
-  }
-
-  /**
    * A spend belongs to the vendor whose model produced it. Anything else is not
    * a small error to be tolerated, it is an impossible fact.
    *
@@ -1260,56 +1231,6 @@ export class QuotaLedger {
       );
   }
 
-  tryReserve(input: ReserveQuotaInput): QuotaReservation | null {
-    const result = this.tryReserveGroup([input]);
-    if (!result.ok) return null;
-    return result.reservations[0] ?? null;
-  }
-
-  /**
-   * Reserve one run against every pool that meters it, all or nothing.
-   *
-   * A model with its own cap spends from two meters at once — the account-wide
-   * pool and its own — and a run is only safe when *both* have room. Taking the
-   * pools one at a time would admit a run that fits the general pool and blows
-   * the model's cap, which is exactly how two deep-category agents landed on a model
-   * whose weekly pool was already at 99%. The tightest pool governs, and the
-   * caller is told which one refused so it can say so out loud.
-   */
-  tryReserveGroup(
-    inputs: ReserveQuotaInput[],
-  ):
-    | { ok: true; reservations: QuotaReservation[] }
-    | { ok: false; blockedBy: ReserveQuotaInput } {
-    if (inputs.length === 0) {
-      throw new Error("a reservation must name at least one pool");
-    }
-    return this.immediate(() => {
-      const primary = inputs[0];
-      if (primary === undefined) {
-        throw new Error("a reservation must name at least one pool");
-      }
-      if (primary.controlMessageId !== undefined) {
-        const existing = this.getActiveControlReservation(
-          primary.controlMessageId,
-        );
-        if (existing !== null) {
-          return { ok: true as const, reservations: [existing] };
-        }
-      }
-      // Every pool is checked before any row is written, so a refusal leaves the
-      // ledger exactly as it found it.
-      for (const input of inputs) {
-        if (!this.fits(input)) return { ok: false as const, blockedBy: input };
-      }
-      for (const input of inputs) this.insert(input, primary.id);
-      return {
-        ok: true as const,
-        reservations: inputs.map((input) => this.requireReservation(input.id)),
-      };
-    });
-  }
-
   /**
    * Atomically choose and reserve by weighted-fair deficit over Hive-observed
    * assignments. Every historical dispatch credits each provider that was
@@ -1317,21 +1238,17 @@ export class QuotaLedger {
    * sole-capable dispatch therefore creates no debt. Quota percentages never
    * enter this comparison, so unlike windows are never compared and a
    * not-metered provider needs no fabricated headroom score.
+   *
+   * The 2026-07-24 ruling removed the headroom veto this used to apply to the
+   * chosen candidate: dispatch picks, booking never refuses (§R3 — usage
+   * never blocks a spawn).
    */
-  tryReserveFairGroups(
+  reserveFairGroups(
     candidates: Array<{
       provider: CapabilityProvider;
       inputs: ReserveQuotaInput[];
     }>,
-  ):
-    | { ok: true; candidateIndex: number; reservations: QuotaReservation[] }
-    | {
-        ok: false;
-        blocked: Array<{
-          candidateIndex: number;
-          blockedBy: ReserveQuotaInput;
-        }>;
-      } {
+  ): { candidateIndex: number; reservations: QuotaReservation[] } {
     if (candidates.length === 0)
       throw new Error("fair dispatch requires a candidate");
     return this.immediate(() => {
@@ -1342,10 +1259,6 @@ export class QuotaLedger {
         ...candidate,
         candidateIndex,
       }));
-      const blocked: Array<{
-        candidateIndex: number;
-        blockedBy: ReserveQuotaInput;
-      }> = [];
       while (active.length > 0) {
         const providers = [
           ...new Set(active.map((candidate) => candidate.provider)),
@@ -1413,15 +1326,6 @@ export class QuotaLedger {
         if (chosen === undefined) {
           throw new Error("Fair quota selection produced no candidate");
         }
-        const blockedInput = chosen.inputs.find((input) => !this.fits(input));
-        if (blockedInput !== undefined) {
-          blocked.push({
-            candidateIndex: chosen.candidateIndex,
-            blockedBy: blockedInput,
-          });
-          active.splice(active.indexOf(chosen), 1);
-          continue;
-        }
         const primary = chosen.inputs[0];
         if (primary === undefined) {
           throw new Error("a fair reservation must name at least one pool");
@@ -1440,14 +1344,13 @@ export class QuotaLedger {
             primary.id,
           );
         return {
-          ok: true as const,
           candidateIndex: chosen.candidateIndex,
           reservations: chosen.inputs.map((input) =>
             this.requireReservation(input.id),
           ),
         };
       }
-      return { ok: false as const, blocked };
+      throw new Error("unreachable: fair dispatch without a candidate");
     });
   }
 

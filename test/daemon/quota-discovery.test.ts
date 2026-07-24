@@ -580,7 +580,7 @@ describe("startup quota discovery", () => {
     }
   });
 
-  test("refuses a spawn the provider's own numbers say will not fit", async () => {
+  test("a spawn the provider's own numbers say will not fit books anyway (§R3)", async () => {
     const exhausted: CodexRateLimitsResponse = {
       rateLimits: {
         limitId: "codex",
@@ -596,16 +596,22 @@ describe("startup quota discovery", () => {
     const { quota, db } = await service([codex]);
     try {
       await quota.refreshFromProviders(now);
-      await expect(
-        quota.routeAndReserve({
-          agentName: "sam",
-          category: "complex_coding",
-          selection: "strict",
-          candidates: await authorizeForQuotaTest([
-            { tool: "codex", model: "gpt-5.3-codex" },
-          ]),
-        }),
-      ).rejects.toThrow(/Quota pressure/);
+      // Usage never refuses a spawn anymore: the booking lands, and the
+      // decision still reports the measured, nearly-spent pool it came from.
+      const decision = await quota.routeAndReserve({
+        agentName: "sam",
+        category: "complex_coding",
+        selection: "strict",
+        candidates: await authorizeForQuotaTest([
+          { tool: "codex", model: "gpt-5.3-codex" },
+        ]),
+      });
+      expect(decision.tool).toBe("codex");
+      if ("configured" in decision.status) {
+        throw new Error("expected a measured pool");
+      }
+      expect(decision.status.pool).toBe("codex");
+      expect(quota.ledger.getActiveReservationForAgent("sam")).not.toBeNull();
     } finally {
       db.close();
     }
@@ -997,7 +1003,7 @@ describe("provider unavailable", () => {
     }
   });
 
-  test("an unmeasured pool routes in compatibility mode instead of guessing", async () => {
+  test("an unmeasured pool is the normal case: routed and booked, no special mode", async () => {
     const { quota, db } = await service();
     try {
       const alerts: string[] = [];
@@ -1014,8 +1020,10 @@ describe("provider unavailable", () => {
         configured: false,
         confidence: "missing",
       });
-      expect(alerts[0]).toContain("headroom is unknown");
-      expect(alerts[0]).not.toContain("quota.toml");
+      expect(quota.ledger.getActiveReservationForAgent("sam")).not.toBeNull();
+      // Compatibility mode is gone, and with it the "running unconstrained"
+      // warning — nothing alerts for an ordinary unmetered route.
+      expect(alerts).toHaveLength(0);
     } finally {
       db.close();
     }
@@ -1277,86 +1285,6 @@ describe("pools gate the models they actually meter", () => {
     expect(fable?.routable).toBe(true);
   });
 
-  test("an unbound model pool quarantines only its own provider", async () => {
-    const { quota } = await service([
-      new StubProbe("claude", {
-        status: "ok",
-        pools: [
-          {
-            provider: "claude",
-            account: "default",
-            pool: "subscription",
-            label: null,
-            models: ["*"],
-            fiveHour: { usedPct: 1, windowMinutes: 300, resetsAt: null },
-            weekly: { usedPct: 1, windowMinutes: 10_080, resetsAt: null },
-            observedAt: now.toISOString(),
-            source: "provider",
-            confidence: "authoritative",
-          },
-          {
-            provider: "claude",
-            account: "default",
-            pool: "weekly:Renamed",
-            label: "Renamed",
-            models: [],
-            fiveHour: null,
-            weekly: { usedPct: 2, windowMinutes: 10_080, resetsAt: null },
-            observedAt: now.toISOString(),
-            source: "provider",
-            confidence: "authoritative",
-          },
-        ],
-        catalog: [],
-      }),
-      new StubProbe("codex", {
-        status: "ok",
-        pools: [
-          {
-            provider: "codex",
-            account: "default",
-            pool: "codex",
-            label: null,
-            models: ["*"],
-            fiveHour: { usedPct: 50, windowMinutes: 300, resetsAt: null },
-            weekly: { usedPct: 50, windowMinutes: 10_080, resetsAt: null },
-            observedAt: now.toISOString(),
-            source: "provider",
-            confidence: "authoritative",
-          },
-        ],
-        catalog: [],
-      }),
-    ]);
-    const warnings: string[] = [];
-    quota.setAlertSink(async (body) => void warnings.push(body));
-    await quota.refreshFromProviders(now, { force: true });
-    const candidates = await authorizeForQuotaTest([
-      { tool: "claude" as const, model: "claude-opus-4-8", effort: "high" },
-      { tool: "codex" as const, model: "gpt-5.6-sol", effort: "high" },
-    ]);
-    const automatic = await quota.routeAndReserve({
-      agentName: "auto",
-      category: "complex_coding",
-      selection: "spread",
-      candidates,
-    });
-    expect(automatic.tool).toBe("codex");
-
-    const explicit = await quota.routeAndReserve({
-      agentName: "pinned",
-      category: "complex_coding",
-      selection: "spread",
-      explicitTool: "claude",
-      explicitCandidate: true,
-      candidates: await authorizeForQuotaTest([required(candidates[0])]),
-    });
-    expect(explicit.tool).toBe("claude");
-    expect(explicit.warnings.join(" ")).toContain("weekly:Renamed");
-    expect(explicit.warnings.join(" ")).toContain("explicit-pin only");
-    expect(warnings.join(" ")).toContain("Quota routing for pinned");
-    expect(warnings.join(" ")).toContain("weekly:Renamed");
-  });
 
   test("every id form of a model is bound to the same meter", () => {
     const catalog = catalogFromClaudeModels(claudeModels);
@@ -1374,10 +1302,10 @@ describe("pools gate the models they actually meter", () => {
     expect(namesOf("default")).toContain("Opus");
   });
 
-  test("an exhausted model pool refuses the spawn and says which pool blocked it", async () => {
+  test("an exhausted model pool still launches and reports its real numbers (§R3)", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
-    const spawn = quota.routeAndReserve({
+    const decision = await quota.routeAndReserve({
       agentName: "deep-worker",
       category: "complex_coding",
       selection: "strict",
@@ -1386,13 +1314,16 @@ describe("pools gate the models they actually meter", () => {
         { tool: "claude", model: "claude-fable-5" },
       ]),
     });
-    // This is the whole point: the general pool has 39% of its week left, so the
-    // old code admitted the spawn happily. The model's own pool has 1%.
-    await expect(spawn).rejects.toThrow(/weekly:Fable/);
-    await expect(spawn).rejects.toThrow(/resets/);
+    expect(decision.model).toBe("claude-fable-5");
+    // The decision still names the pool that will drain mid-work — that is
+    // the drain handler's input, not a refusal's.
+    if ("configured" in decision.status) {
+      throw new Error("expected a measured pool");
+    }
+    expect(decision.status.pool).toBe("weekly:Fable");
   });
 
-  test("falls back to a model whose meters have room, and reports real numbers", async () => {
+  test("strict rank order holds even when the first link's pool is drained (§R3)", async () => {
     const { quota } = await service([claudeProbe(exhaustedFable)]);
     await quota.refreshFromProviders(now, { force: true });
     const decision = await quota.routeAndReserve({
@@ -1405,11 +1336,12 @@ describe("pools gate the models they actually meter", () => {
         { tool: "claude", model: "claude-opus-4-8" },
       ]),
     });
-    expect(decision.model).toBe("claude-opus-4-8");
-    const status = decision.status;
-    if ("configured" in status) throw new Error("expected a measured pool");
-    expect(status.pool).toBe("subscription");
-    expect(status.weekly.used).toBe(61);
+    // The old fallback is gone with the refusal: rank order is rank order.
+    expect(decision.model).toBe("claude-fable-5");
+    if ("configured" in decision.status) {
+      throw new Error("expected a measured pool");
+    }
+    expect(decision.status.pool).toBe("weekly:Fable");
   });
 
   test("a model with no meter of its own is metered by the general pool, never 'unknown'", async () => {
@@ -1600,7 +1532,10 @@ describe("a route that cannot start is not a route", () => {
       candidates: both,
     });
     expect(pool(quota, "subscription", clock).freshness).toBe("stale");
-    expect(decision.tool).toBe("codex");
+    // Unknown (stale) headroom is a dispatch wildcard, not an exclusion: the
+    // deficit tie goes to the first candidate, and the stale status above is
+    // still reported honestly wherever it is printed.
+    expect(decision.tool).toBe("claude");
   });
 
   test("a launch that never proved life takes its route out of the running", async () => {
@@ -1750,49 +1685,6 @@ describe("a route that cannot start is not a route", () => {
 });
 
 describe("a refusal names the way out, and never takes it", () => {
-  test("an exhausted pool's refusal reports unspent reset credits without spending one", async () => {
-    const { quota } = await service([
-      new StubProbe("codex", {
-        status: "ok",
-        pools: [
-          {
-            provider: "codex",
-            account: "default",
-            pool: "codex",
-            label: "prolite",
-            models: ["*"],
-            fiveHour: { usedPct: 100, windowMinutes: 300, resetsAt: null },
-            weekly: { usedPct: 100, windowMinutes: 10_080, resetsAt: null },
-            observedAt: now.toISOString(),
-            source: "provider",
-            confidence: "authoritative",
-          },
-        ],
-        catalog: [],
-        // The account is holding four unspent "Full reset" grants, readable in
-        // the same free call as the limits.
-        resetCredits: 4,
-      }),
-    ]);
-    await quota.refreshFromProviders(now, { force: true });
-
-    const spawn = quota.routeAndReserve({
-      agentName: "worker",
-      category: "complex_coding",
-      selection: "strict",
-      explicitTool: "codex",
-      candidates: await authorizeForQuotaTest([
-        { tool: "codex", model: "gpt-5.6-sol" },
-      ]),
-    });
-    // The human is told the door exists. Hive does not open it: burning a finite
-    // credit to admit a spawn is the human's call, and an agent that can quietly
-    // spend the user's scarce resources to get its own way is a bad agent —
-    // looking helpful while doing it is exactly what makes it dangerous. There is
-    // no call to account/rateLimitResetCredit/consume anywhere in Hive.
-    await expect(spawn).rejects.toThrow(/4 unspent usage-limit reset credits/);
-    await expect(spawn).rejects.toThrow(/will not spend one on its own/);
-  });
 });
 
 describe("a spend belongs to the vendor whose model produced it", () => {
@@ -1808,7 +1700,7 @@ describe("a spend belongs to the vendor whose model produced it", () => {
       },
     ]);
     const reserve = () =>
-      ledger.tryReserveGroup([
+      ledger.reserveGroupUnchecked([
         {
           id: "r1",
           agentName: "oscar",
@@ -1843,7 +1735,7 @@ describe("a spend belongs to the vendor whose model produced it", () => {
     const ledger = new QuotaLedger(db);
     let attempt = 0;
     const reserve = (model: string) =>
-      ledger.tryReserveGroup([
+      ledger.reserveGroupUnchecked([
         {
           id: `catalog-evidence-${attempt++}`,
           agentName: "worker",
@@ -1881,7 +1773,7 @@ describe("a spend belongs to the vendor whose model produced it", () => {
         discoveredAt: now.toISOString(),
       },
     ]);
-    expect(reserve("gpt-5-codex").ok).toBe(true);
+    expect(reserve("gpt-5-codex").length).toBeGreaterThan(0);
   });
 });
 
