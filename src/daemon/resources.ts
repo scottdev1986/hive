@@ -237,7 +237,10 @@ export function paneProcessState(
  */
 export function processCommandName(command: string): string {
   const argv0 = command.trim().split(/\s+/)[0] ?? "";
-  return argv0.split("/").pop() ?? "";
+  const name = argv0.split("/").pop() ?? "";
+  // Kimi's launcher is named `kimi`, but CLI 0.28.1 immediately sets its
+  // process title to `kimi-code`.
+  return name === "kimi-code" ? "kimi" : name;
 }
 
 /** Is `command` running anywhere in the process tree under these pane pids? */

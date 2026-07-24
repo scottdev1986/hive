@@ -201,6 +201,16 @@ describe("is the launched process alive in this pane", () => {
     expect(processCommandName("claude hi")).toEqual("claude");
   });
 
+  test("recognizes Kimi after the CLI changes its process title", () => {
+    expect(
+      treeRunsCommand(
+        [sample(1917, 1915, 425_488, "kimi-code")],
+        [1915],
+        "kimi",
+      ),
+    ).toBe(true);
+  });
+
   test("the app-server host is a `hive` process, and is found as one", () => {
     // A check hardcoded to "codex" would report every app-server agent dead.
     const host = parseProcessTable(
