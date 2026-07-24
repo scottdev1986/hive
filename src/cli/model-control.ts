@@ -1,15 +1,5 @@
-import {
-  ClaudeCapabilityProbe,
-  ClaudeStdioCapabilityTransport,
-  CodexCapabilityProbe,
-  CodexStdioCapabilityTransport,
-  GrokCapabilityProbe,
-  GrokCliCapabilityTransport,
-  type CapabilityDiscoveryResult,
-} from "../daemon/capability-discovery";
-import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
-import { resolveWorkingCodexExecutable } from "../adapters/tools/codex";
-import { resolveWorkingGrokExecutable } from "../adapters/tools/grok";
+import { getVendorAdapter } from "../adapters/tools/adapter";
+import type { CapabilityDiscoveryResult } from "../daemon/capability-discovery";
 import {
   readBillingWithMemory,
   type AccountBilling,
@@ -57,42 +47,7 @@ export interface ModelControlSnapshotDependencies {
 function defaultDiscover(
   provider: CapabilityProvider,
 ): Promise<CapabilityDiscoveryResult> {
-  switch (provider) {
-    case "claude": {
-      const executable = resolveWorkingClaudeExecutable().path;
-      return new ClaudeCapabilityProbe(
-        new ClaudeStdioCapabilityTransport(
-          [
-            executable,
-            "-p",
-            "--input-format",
-            "stream-json",
-            "--output-format",
-            "stream-json",
-            "--verbose",
-          ],
-          [executable],
-        ),
-      ).read();
-    }
-    case "codex": {
-      const executable = resolveWorkingCodexExecutable()?.path ?? "codex";
-      return new CodexCapabilityProbe(
-        new CodexStdioCapabilityTransport(
-          [executable, "app-server", "--stdio"],
-          [executable],
-        ),
-      ).read();
-    }
-    case "grok": {
-      const executable = resolveWorkingGrokExecutable()?.path ?? "grok";
-      return new GrokCapabilityProbe(
-        new GrokCliCapabilityTransport(executable),
-      ).read();
-    }
-    default:
-      return unknownVendor(provider, "model-control-snapshot discover");
-  }
+  return getVendorAdapter(provider).discover();
 }
 
 /**

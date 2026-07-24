@@ -2,24 +2,9 @@ import { join } from "node:path";
 import { buildScopedBrief } from "../adapters/brief";
 import { buildMemoryIndex } from "../adapters/memory";
 import { discoverBriefableDocs } from "../adapters/briefing-docs";
-import {
-  buildClaudeSpawnCommand,
-  resolveWorkingClaudeExecutable,
-  seedClaudeWorktreeTrust,
-  writeClaudeAgentConfig,
-} from "../adapters/tools/claude";
-import {
-  buildCodexSpawnCommand,
-  wrapCodexSpawnWithCapabilityEnv,
-  writeCodexAgentConfig,
-} from "../adapters/tools/codex";
-import {
-  buildGrokSpawnCommand,
-  buildGrokResumeCommand,
-  probeGrokCliVersion,
-  wrapGrokSpawnWithCompatibilityEnv,
-  writeGrokAgentConfig,
-} from "../adapters/tools/grok";
+import { resolveWorkingClaudeExecutable } from "../adapters/tools/claude";
+import { probeGrokCliVersion } from "../adapters/tools/grok";
+import { getVendorAdapter } from "../adapters/tools/adapter";
 import { listInheritedCodexMcpServers } from "../adapters/tools/mcp-scope";
 import type { CodexAppServerManager } from "../adapters/tools/codex-app-server";
 import { provisionSkills } from "../adapters/skills";
@@ -37,7 +22,6 @@ import {
 import { SessiondWireError } from "./session-host/sessiond-host";
 import type { SessionLocator, SessionSpec } from "./session-host/contract";
 import {
-  shellJoin,
   shellSessionLaunch,
   type ShellSessionLaunch,
 } from "./session-host/shell-session";
@@ -82,13 +66,7 @@ import type { HiveDatabase } from "./db";
 import { getHiveHome } from "./db";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
-import {
-  codexInstructionProfileName,
-  wrapCodexWithInstructionProfile,
-  wrapGrokWithRulesFile,
-  writeCodexInstructionProfile,
-  writeLaunchPrompt,
-} from "./launch-prompt";
+import { writeLaunchPrompt } from "./launch-prompt";
 import { watchForProofOfLife } from "./readiness";
 import {
   parseProcessTable,
@@ -761,12 +739,6 @@ export function buildAgentPrompt(
   ].join("\n\n");
 }
 
-/** The worktree's own `.mcp.json`, written by `writeClaudeAgentConfig`. Naming
- * it explicitly is what lets `--strict-mcp-config` drop everything else. */
-export function claudeMcpConfigPath(worktreePath: string): string {
-  return join(worktreePath, ".mcp.json");
-}
-
 export class HiveSpawner implements Spawner {
   private readonly makeWorktree: WorktreeCreator;
   private readonly cleanupWorktree: WorktreeRemover;
@@ -808,6 +780,16 @@ export class HiveSpawner implements Spawner {
       throw new Error(`Hive daemon has no listening port (resolved ${port})`);
     }
     return port;
+  }
+
+  /** Total record, not a switch: a new vendor without an executable field is
+   * a compile error here. */
+  private executableFor(tool: CapabilityProvider): string {
+    return {
+      claude: this.claudeExecutable,
+      codex: this.codexExecutable,
+      grok: this.grokExecutable,
+    }[tool];
   }
 
   private async createSession(
@@ -1130,9 +1112,6 @@ export class HiveSpawner implements Spawner {
       throw error;
     }
     const readOnly = true;
-    // The read-only control process carries its instruction in argv; ordinary
-    // traffic to a control-paused agent remains queued until it is ready.
-    let argv: string[];
     // The restarted process is read-only, so it re-mints as a reader at the
     // freshly advanced epoch: the critical control that paused it has already
     // revoked its write and landing rights, and its old token is now stale.
@@ -1151,73 +1130,7 @@ export class HiveSpawner implements Spawner {
       : [];
     try {
       await provisionSkills(agent.worktreePath, identity.tool);
-      // Aliased so the default clause still has the vendor to name: switching
-      // on `identity.tool` narrows `identity` itself to `never` there.
-      const vendor = identity.tool;
-      switch (vendor) {
-        case "claude": {
-          // A revoked agent's replacement is read-only, and its deny list is a
-          // project-scoped permission rule: untrusted, the CLI drops it.
-          await seedClaudeWorktreeTrust(agent.worktreePath);
-          await writeClaudeAgentConfig(agent.worktreePath, {
-            daemonPort: this.daemonPort(),
-            name: agent.name,
-            readOnly,
-            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-          });
-          argv = buildClaudeSpawnCommand({
-            daemonPort: this.daemonPort(),
-            model: identity.model,
-            effort: identity.effort,
-            name: agent.name,
-            readOnly,
-            worktreePath: agent.worktreePath,
-            executable: this.claudeExecutable,
-            scopedMcpConfigPath: claudeMcpConfigPath(agent.worktreePath),
-          });
-          break;
-        }
-        case "codex": {
-          await writeCodexAgentConfig(agent.worktreePath, {
-            daemonPort: this.daemonPort(),
-            name: agent.name,
-            readOnly,
-            hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-            ...(capabilityToken === undefined ? {} : { capabilityToken }),
-          });
-          argv = buildCodexSpawnCommand({
-            executable: this.codexExecutable,
-            daemonPort: this.daemonPort(),
-            effort: identity.effort,
-            model: identity.model,
-            name: agent.name,
-            readOnly,
-            worktreePath: agent.worktreePath,
-            excludeMcpServers,
-            withCapabilityToken: capabilityToken !== undefined,
-          });
-          break;
-        }
-        case "grok": {
-          await writeGrokAgentConfig(agent.worktreePath, {
-            daemonPort: this.daemonPort(),
-            ...(capabilityToken === undefined ? {} : { capabilityToken }),
-          });
-          const options = {
-            executable: this.grokExecutable,
-            model: identity.model,
-            ...(identity.effort === undefined ? {} : { effort: identity.effort }),
-            worktreePath: agent.worktreePath,
-            readOnly,
-          };
-          argv = agent.toolSessionId === undefined
-            ? buildGrokSpawnCommand(options)
-            : buildGrokResumeCommand(options, agent.toolSessionId);
-          break;
-        }
-        default:
-          unknownVendor(vendor, "critical-control restart");
-      }
+      const adapter = getVendorAdapter(identity.tool);
       const assignmentAt = new Date().toISOString();
       this.dependencies.assignments?.close(prepared.record.id, assignmentAt);
       const assignment = this.dependencies.assignments?.open(
@@ -1239,60 +1152,45 @@ export class HiveSpawner implements Spawner {
         this.requireAgentLocator(agent).sessionId,
         controlPrompt,
       );
-      if (identity.tool === "codex") {
-        await writeCodexInstructionProfile(
-          this.requireAgentLocator(agent).sessionId,
-          controlPrompt,
-        );
-      }
-      const instructionVendor = identity.tool;
-      argv = (() => {
-        switch (instructionVendor) {
-          case "claude":
-            return [...argv, "--append-system-prompt-file", instructionPath];
-          case "codex":
-            return [
-              argv[0]!,
-              "--profile",
-              codexInstructionProfileName(this.requireAgentLocator(agent).sessionId),
-              ...argv.slice(1),
-            ];
-          case "grok":
-            return argv;
-          default:
-            return unknownVendor(
-              instructionVendor,
-              "critical-control instructions",
-            );
-        }
-      })();
-      const kickoff = "Read and acknowledge the assigned Hive control message.";
-      // The token value enters through the launch shell, never an argv.
-      const restartWorktreePath = agent.worktreePath;
-      const withCapabilityEnv = (command: string): string => {
-        if (identity.tool === "grok") {
-          return wrapGrokSpawnWithCompatibilityEnv(
-            wrapGrokWithRulesFile(command, instructionPath, kickoff),
-          );
-        }
-        if (identity.tool !== "codex") return command;
-        const authorized = capabilityToken === undefined
-          ? command
-          : wrapCodexSpawnWithCapabilityEnv(command, restartWorktreePath);
-        return wrapCodexWithInstructionProfile(
-          authorized,
-          this.requireAgentLocator(agent).sessionId,
-        );
-      };
-      const launchedCommand = launchedCommandName(argv);
+      await adapter.writeInstructionCopy?.(
+        this.requireAgentLocator(agent).sessionId,
+        controlPrompt,
+      );
+      // A revoked agent's replacement is read-only, and its deny list is a
+      // project-scoped permission rule: untrusted, the CLI drops it (claude's
+      // folder-trust seed; the other vendors have none).
+      await adapter.prepareWorktree?.(agent.worktreePath);
+      // The restart is attended by definition: the control process must raise
+      // a prompt rather than bypass anything, so dangerous stays off whatever
+      // the daemon's autonomy dial says. Grok alone resumes its prior vendor
+      // session — Hive minted that id, so it is reusable; the other vendors
+      // start a fresh control process.
+      const preparedLaunch = await adapter.prepareSpawn({
+        daemonPort: this.daemonPort(),
+        model: identity.model,
+        ...(identity.effort === undefined ? {} : { effort: identity.effort }),
+        name: agent.name,
+        readOnly,
+        dangerous: false,
+        worktreePath: agent.worktreePath,
+        executable: this.executableFor(identity.tool),
+        hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+        ...(capabilityToken === undefined ? {} : { capabilityToken }),
+        instructionPath,
+        sessionId: this.requireAgentLocator(agent).sessionId,
+        ...(identity.tool === "grok" && agent.toolSessionId !== undefined
+          ? { resumeSessionId: agent.toolSessionId }
+          : {}),
+        excludeMcpServers,
+        kickoff: "Read and acknowledge the assigned Hive control message.",
+      });
+      const launchedCommand = launchedCommandName(preparedLaunch.argv);
       authorized = await this.authorizeLaunch(identity);
       requireAuthorizedLaunch(authorized);
       this.dependencies.quota.requireActiveReservation(reservationId);
       await this.createSession(
         prepared.record,
-        withCapabilityEnv(
-          shellJoin(identity.tool === "grok" ? argv : [...argv, kickoff]),
-        ),
+        preparedLaunch.command,
         launchedCommand,
         message.id,
       );
@@ -2186,12 +2084,11 @@ export class HiveSpawner implements Spawner {
         this.requireAgentLocator(record).sessionId,
         prompt,
       );
-      if (tool === "codex") {
-        await writeCodexInstructionProfile(
-          this.requireAgentLocator(record).sessionId,
-          prompt,
-        );
-      }
+      const adapter = getVendorAdapter(tool);
+      await adapter.writeInstructionCopy?.(
+        this.requireAgentLocator(record).sessionId,
+        prompt,
+      );
       const dangerous = this.dependencies.config.autonomy === "dangerous";
       // Servers the human attached to their own Codex sessions. This agent did
       // not ask for them and pays for them on every message it sends, so the
@@ -2200,7 +2097,6 @@ export class HiveSpawner implements Spawner {
         ? await this.inheritedCodexMcpServers()
         // Grok's inherited MCPs are disabled by GROK_*_MCPS_ENABLED=false.
         : [];
-      let argv: string[];
       // A reader carries no landing or memory-write right. A writer gets exactly
       // one landing right for its own branch.
       const capabilityToken = this.dependencies.issueCredential?.(
@@ -2209,96 +2105,30 @@ export class HiveSpawner implements Spawner {
         record.capabilityEpoch,
       );
       await provisionSkills(worktree.path, tool);
-      switch (tool) {
-        case "claude": {
-        // Before the config, because an untrusted workspace makes the CLI
-        // discard the hooks and permissions we are about to write.
-        await seedClaudeWorktreeTrust(worktree.path);
-        await writeClaudeAgentConfig(worktree.path, {
-          daemonPort: this.daemonPort(),
-          name,
-          readOnly,
-          dangerous,
-          hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-          ...(graphifyUrl === null ? {} : { graphifyUrl }),
-        });
-        argv = buildClaudeSpawnCommand({
-          daemonPort: this.daemonPort(),
-          model,
-          ...(effort === undefined ? {} : { effort }),
-          name,
-          readOnly,
-          dangerous,
-          worktreePath: worktree.path,
-          executable: this.claudeExecutable,
-          scopedMcpConfigPath: claudeMcpConfigPath(worktree.path),
-          appendSystemPromptFile: instructionPath,
-        });
-        break;
-        }
-        case "codex": {
-        await writeCodexAgentConfig(worktree.path, {
-          daemonPort: this.daemonPort(),
-          name,
-          readOnly,
-          hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
-          ...(capabilityToken === undefined ? {} : { capabilityToken }),
-          ...(graphifyUrl === null ? {} : { graphifyUrl }),
-        });
-        argv = buildCodexSpawnCommand({
-          executable: this.codexExecutable,
-          daemonPort: this.daemonPort(),
-          effort: effort ?? "medium",
-          model,
-          name,
-          readOnly,
-          dangerous,
-          worktreePath: worktree.path,
-          excludeMcpServers,
-          withCapabilityToken: capabilityToken !== undefined,
-          profile: codexInstructionProfileName(
-            this.requireAgentLocator(record).sessionId,
-          ),
-          ...(graphifyUrl === null ? {} : { graphifyUrl }),
-        });
-        break;
-        }
-        case "grok": {
-        await writeGrokAgentConfig(worktree.path, {
-          daemonPort: this.daemonPort(),
-          ...(capabilityToken === undefined ? {} : { capabilityToken }),
-          ...(graphifyUrl === null ? {} : { graphifyUrl }),
-        });
-        argv = buildGrokSpawnCommand({
-          executable: this.grokExecutable,
-          model,
-          ...(effort === undefined ? {} : { effort }),
-          worktreePath: worktree.path,
-          readOnly,
-          ...(grokSessionId === undefined ? {} : { sessionId: grokSessionId }),
-        });
-        break;
-        }
-        default:
-          unknownVendor(tool, "spawn");
-      }
-      const kickoff = "Begin the assigned task.";
-      // The token value enters through the launch shell, never an argv.
-      const withCapabilityEnv = (command: string): string => {
-        if (tool === "grok") {
-          return wrapGrokSpawnWithCompatibilityEnv(
-            wrapGrokWithRulesFile(command, instructionPath, kickoff),
-          );
-        }
-        if (tool !== "codex") return command;
-        const authorized = capabilityToken === undefined
-          ? command
-          : wrapCodexSpawnWithCapabilityEnv(command, worktree.path);
-        return wrapCodexWithInstructionProfile(
-          authorized,
-          this.requireAgentLocator(record).sessionId,
-        );
-      };
+      // Before the config, because an untrusted workspace makes the CLI
+      // discard the hooks and permissions the config write is about to lay
+      // down (claude's folder-trust seed; the other vendors have none).
+      await adapter.prepareWorktree?.(worktree.path);
+      const preparedLaunch = await adapter.prepareSpawn({
+        daemonPort: this.daemonPort(),
+        model,
+        ...(effort === undefined ? {} : { effort }),
+        name,
+        readOnly,
+        dangerous,
+        worktreePath: worktree.path,
+        executable: this.executableFor(tool),
+        hiveCommand: hiveCliSpawnArgv(IS_RELEASE_BUILD, process.execPath),
+        ...(capabilityToken === undefined ? {} : { capabilityToken }),
+        ...(graphifyUrl === null ? {} : { graphifyUrl }),
+        instructionPath,
+        sessionId: this.requireAgentLocator(record).sessionId,
+        ...(grokSessionId === undefined
+          ? {}
+          : { newVendorSessionId: grokSessionId }),
+        excludeMcpServers,
+        kickoff: "Begin the assigned task.",
+      });
       const revalidateAtAdapter = async (): Promise<AuthorizedLaunch> => {
         if (quotaReservationId !== undefined) {
           this.dependencies.quota?.requireActiveReservation?.(quotaReservationId);
@@ -2334,12 +2164,10 @@ export class HiveSpawner implements Spawner {
         );
       };
 
-      const launchedCommand = launchedCommandName(argv);
+      const launchedCommand = launchedCommandName(preparedLaunch.argv);
       await launchSession(
         await revalidateAtAdapter(),
-        withCapabilityEnv(
-          shellJoin(tool === "grok" ? argv : [...argv, kickoff]),
-        ),
+        preparedLaunch.command,
         launchedCommand,
       );
       const failureReason = await this.monitorReadiness(record, launchedCommand);

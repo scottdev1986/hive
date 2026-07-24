@@ -11,14 +11,9 @@ import {
   forEachProvider,
   providersOf,
   ROUTING_CATEGORIES,
-  unknownVendor,
 } from "../schemas";
-import {
-  ClaudeCapabilityProbe,
-  CodexCapabilityProbe,
-  GrokCapabilityProbe,
-  type CapabilityDiscoveryResult,
-} from "./capability-discovery";
+import { getVendorAdapter } from "../adapters/tools/adapter";
+import type { CapabilityDiscoveryResult } from "./capability-discovery";
 import {
   knownBillings,
   poolAvailability,
@@ -105,21 +100,8 @@ export async function readModelInventory(
   options: ModelInventoryReaderOptions = {},
 ): Promise<ModelInventory> {
   const now = options.now?.() ?? new Date();
-  // Each vendor is probed by its own probe. A vendor with no probe throws here
-  // rather than being read through Codex's, which would answer with Codex's
-  // models under the new vendor's name.
-  const discover = options.discover ?? (async (provider) => {
-    switch (provider) {
-      case "claude":
-        return await new ClaudeCapabilityProbe().read();
-      case "codex":
-        return await new CodexCapabilityProbe().read();
-      case "grok":
-        return await new GrokCapabilityProbe().read();
-      default:
-        return unknownVendor(provider, "model inventory probe");
-    }
-  });
+  const discover = options.discover ??
+    ((provider: CapabilityProvider) => getVendorAdapter(provider).discover());
   const readBilling = options.readBilling ?? readBillingWithMemory;
   // Every vendor Hive knows is probed and billed, not a hardcoded pair.
   const [discovery, billings] = await Promise.all([

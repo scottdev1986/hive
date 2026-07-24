@@ -47,18 +47,10 @@ import {
 import {
   CAPABILITY_PROVIDERS,
   forEachProvider,
-  unknownVendor,
   type AgentRecord,
   type CapabilityProvider,
 } from "../schemas";
-import {
-  ClaudeCapabilityProbe,
-  ClaudeStdioCapabilityTransport,
-  CodexCapabilityProbe,
-  CodexStdioCapabilityTransport,
-  GrokCapabilityProbe,
-  GrokCliCapabilityTransport,
-} from "../daemon/capability-discovery";
+import { getVendorAdapter } from "../adapters/tools/adapter";
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
@@ -202,40 +194,13 @@ export async function runDaemon(): Promise<void> {
   const claudeExecutable = resolveWorkingClaudeExecutable().path;
   const codexExecutable = resolveWorkingCodexExecutable()?.path ?? "codex";
   const grokExecutable = resolveWorkingGrokExecutable()?.path ?? "grok";
-  const discoverCapabilities = async (
-    provider: CapabilityProvider,
-  ) => {
-    switch (provider) {
-      case "claude":
-        return await new ClaudeCapabilityProbe(
-          new ClaudeStdioCapabilityTransport(
-            [
-              claudeExecutable,
-              "-p",
-              "--input-format",
-              "stream-json",
-              "--output-format",
-              "stream-json",
-              "--verbose",
-            ],
-            [claudeExecutable],
-          ),
-        ).read();
-      case "codex":
-        return await new CodexCapabilityProbe(
-          new CodexStdioCapabilityTransport(
-            [codexExecutable, "app-server", "--stdio"],
-            [codexExecutable],
-          ),
-        ).read();
-      case "grok":
-        return await new GrokCapabilityProbe(
-          new GrokCliCapabilityTransport(grokExecutable),
-        ).read();
-      default:
-        return unknownVendor(provider, "capability discovery");
-    }
+  const discoveryExecutables: Record<CapabilityProvider, string> = {
+    claude: claudeExecutable,
+    codex: codexExecutable,
+    grok: grokExecutable,
   };
+  const discoverCapabilities = (provider: CapabilityProvider) =>
+    getVendorAdapter(provider).discover(discoveryExecutables[provider]);
   const db = new HiveDatabase();
   const statusStore = new StatusStore(db, hiveInstanceSuffix());
   // routing.toml is dead as a policy source (user directive 2026-07-12); the
