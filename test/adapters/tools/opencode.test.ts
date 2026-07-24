@@ -171,6 +171,27 @@ describe("opencode adapter", () => {
     expect(config).toContain("{file:/tmp/prompt.txt}");
   });
 
+  test("the orchestrator role replaces the read-only barrier with scoped grants", async () => {
+    const root = await worktree();
+    await writeOpencodeAgentConfig(root, {
+      daemonPort: 4317,
+      instructionPath: "/tmp/prompt.txt",
+      orchestrator: true,
+    });
+    const written = JSON.parse(
+      await readFile(join(root, "opencode.json"), "utf8"),
+    ) as { agent: Record<string, Record<string, unknown>> };
+    expect(written.agent.hive).toEqual({
+      description: "Hive-managed agent carrying the launch brief",
+      mode: "primary",
+      prompt: "{file:/tmp/prompt.txt}",
+      permission: {
+        edit: { "*": "deny", ".hive/**": "allow", "planning/**": "allow" },
+        bash: { "*": "ask", "gh *": "allow" },
+      },
+    });
+  });
+
   test("recovery discovery matches the session's own directory and refuses ambiguity", async () => {
     const home = await worktree();
     const target = resolve(join(home, "worktree"));

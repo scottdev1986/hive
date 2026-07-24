@@ -29,6 +29,7 @@ import {
   selectRecoverySessionId,
   type RecoverySessionArtifact,
 } from "./recovery-session";
+import { ORCHESTRATOR_CLAUDE_WRITE_RULES } from "./orchestrator-role";
 import {
   probeProviderExecutable,
   providerExecutableCandidates,
@@ -42,10 +43,10 @@ export interface ClaudeSpawnOptions {
   worktreePath: string;
   daemonPort: number;
   readOnly: boolean;
-  /** Let a read-only session run `gh` so the orchestrator can manage the GitHub
-   * Project itself instead of spawning an agent per board mutation. Edit, Write
-   * and NotebookEdit stay denied, and the grant is scoped to `Bash(gh:*)`: every
-   * other shell command still raises a prompt. Must stay off for the read-only
+  /** Grant a read-only session the queen's orchestrator role (#12): `gh` in
+   * Bash plus Edit/Write scoped to her memory and planning docs
+   * (orchestrator-role.ts). Every other command and path still raises a
+   * prompt, and NotebookEdit stays denied. Must stay off for the read-only
    * restart of a revoked writer, which shares the same deny list. */
   boardTools?: boolean;
   /** Suppress interactive permission prompts. Read-only authority remains
@@ -540,16 +541,16 @@ export async function writeClaudeAgentConfig(
   // Denied tools are removed from the session and its subagents, including in
   // bypass mode; the permission mode alone does not make a session read-only.
   const readOnlyDeny = ["Edit", "Write", "NotebookEdit", "Bash"];
-  // A board-tools session drops only the bare Bash denial, and only here: the
-  // constant above is shared with the read-only restart of a revoked writer,
-  // which must keep its shell taken away. Attended mode only — under bypass
-  // there is no prompt left to scope the grant, so that branch keeps the
-  // unmodified list.
+  // A board-tools session is the queen's orchestrator role (#12): she keeps
+  // the shell for gh and gains Edit/Write scoped to her own memory and
+  // planning docs (orchestrator-role.ts) — every other command and path
+  // still raises a prompt. The constant above is shared with the read-only
+  // restart of a revoked writer, which must keep its shell and edit tools
+  // taken away. Attended mode only — under bypass there is no prompt left to
+  // scope the grant, so that branch keeps the unmodified list.
   const boardTools = (options.boardTools ?? false) &&
     !(options.dangerous ?? false);
-  const attendedDeny = boardTools
-    ? readOnlyDeny.filter((tool) => tool !== "Bash")
-    : readOnlyDeny;
+  const attendedDeny = boardTools ? ["NotebookEdit"] : readOnlyDeny;
 
   const permissions = options.readOnly
     ? (options.dangerous ?? false)
@@ -571,7 +572,9 @@ export async function writeClaudeAgentConfig(
             // rule lets the agent report, acknowledge, and escalate unattended.
             "mcp__hive__*",
             // Prefix match: covers `gh issue`, `gh project item-edit`, `gh api`.
-            ...(boardTools ? ["Bash(gh:*)"] : []),
+            ...(boardTools
+              ? ["Bash(gh:*)", ...ORCHESTRATOR_CLAUDE_WRITE_RULES]
+              : []),
           ],
         }
     : (options.dangerous ?? false)
@@ -712,13 +715,16 @@ export async function writeClaudeAgentConfig(
     );
   }
 
-  // deepMerge unions arrays under `permissions`, so a config written before the
-  // grant existed keeps its bare "Bash" denial through every respawn and the
-  // allow rule never gets a chance to apply. Take it back out.
+  // deepMerge unions arrays under `permissions`, so a config written before
+  // the grant existed keeps its bare denials through every respawn and the
+  // allow rules never get a chance to apply — and deny outranks allow. Take
+  // the bare denials the role replaces back out.
   if (boardTools && isRecord(mergedSettings.permissions)) {
     const merged = mergedSettings.permissions;
     if (Array.isArray(merged.deny)) {
-      merged.deny = merged.deny.filter((tool) => tool !== "Bash");
+      merged.deny = merged.deny.filter(
+        (tool) => tool !== "Bash" && tool !== "Edit" && tool !== "Write",
+      );
     }
   }
 

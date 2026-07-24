@@ -155,11 +155,12 @@ export async function prepareOrchestratorConfig(
     case "opencode": {
       // opencode's project config is read from the process cwd, so the
       // config lands where the root runs; the brief rides the hive agent's
-      // {file:} prompt in it.
+      // {file:} prompt in it, and the queen's role (#12) rides the agent's
+      // permission set.
       const authorization = operatorHeaders().Authorization;
       await writeOpencodeAgentConfig(cwd, {
         daemonPort: port,
-        readOnly: true,
+        orchestrator: true,
         instructionPath: launchPromptPath(orchestratorSessionKey()),
         capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
       });
@@ -241,8 +242,8 @@ export function buildOrchestratorCommand(
         ...codexMcpExclusionArgs,
         "-c",
         `mcp_servers.hive.url="http://127.0.0.1:${port}/mcp"`,
-        // The read-only root exists to call Hive's capability-scoped
-        // orchestration tools. A prompt here deadlocks unattended delegation;
+        // The root exists to call Hive's capability-scoped orchestration
+        // tools. A prompt here deadlocks unattended delegation;
         // pre-approve only this Hive-owned server, never inherited MCPs.
         "-c",
         'mcp_servers.hive.default_tools_approval_mode="approve"',
@@ -255,8 +256,15 @@ export function buildOrchestratorCommand(
           "-c",
           `mcp_servers.hive.bearer_token_env_var=${JSON.stringify(CODEX_CAPABILITY_TOKEN_ENV)}`,
         ]),
+        // The queen's role (#12) needs writes for her memory and planning
+        // docs. workspace-write is the finest sandbox codex offers — it
+        // cannot scope subpaths of the workspace — so the
+        // no-implementation-code boundary rides her brief. Network stays on
+        // for gh's board calls.
         "--sandbox",
-        "read-only",
+        "workspace-write",
+        "-c",
+        "sandbox_workspace_write.network_access=true",
       ];
     case "grok": {
       const grokExecutable = executable ?? "grok";
@@ -267,10 +275,14 @@ export function buildOrchestratorCommand(
       return [
         "sh",
         "-lc",
+        // The queen's role (#12) as grok can express it: --allow/--deny are
+        // per-tool only — no per-command gh scope, no per-path write scope —
+        // so the role's grant is a full tool approval and the
+        // no-implementation-code boundary rides her brief.
         wrapGrokWithRulesFile(shellJoin(buildGrokSpawnCommand({
           model,
           worktreePath: process.cwd(),
-          readOnly: true,
+          readOnly: false,
           executable: grokExecutable,
         })), launchPromptPath(orchestratorSessionKey())),
       ];
@@ -284,9 +296,13 @@ export function buildOrchestratorCommand(
       return [
         "sh",
         "-lc",
+        // The queen's role (#12) as kimi can express it: kimi has no
+        // per-launch permission scoping at all (the kimi-adapter gap), so
+        // --yolo auto-approves her tool calls and the
+        // no-implementation-code boundary rides her brief.
         wrapKimiWithInstructionFile(shellJoin(buildKimiSpawnCommand({
           model,
-          readOnly: true,
+          readOnly: false,
           dangerous: false,
           executable: kimiExecutable,
         })), launchPromptPath(orchestratorSessionKey())),
@@ -298,9 +314,12 @@ export function buildOrchestratorCommand(
       if (model === null) {
         throw new Error("opencode config did not report an effective default");
       }
+      // The queen's role permission rides agent.hive in the worktree
+      // opencode.json (prepareOrchestratorConfig); no argv change, and the
+      // read-only barrier stays off because the role replaces it.
       return buildOpencodeSpawnCommand({
         model,
-        readOnly: true,
+        readOnly: false,
         dangerous: false,
         executable: opencodeExecutable,
         agent: OPENCODE_HIVE_AGENT,

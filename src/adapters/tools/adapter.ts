@@ -117,7 +117,8 @@ export interface SpawnContext {
   kickoff?: string;
   /** Resume this vendor session instead of starting a fresh one. */
   resumeSessionId?: string;
-  /** claude: grant a read-only session `Bash(gh:*)` for board management. */
+  /** claude: grant a read-only session the queen's orchestrator role (#12) —
+   * `Bash(gh:*)` plus Edit/Write scoped to her memory and planning docs. */
   boardTools?: boolean;
   /** codex: user-config MCP servers to detach for this process only. */
   excludeMcpServers?: readonly string[];

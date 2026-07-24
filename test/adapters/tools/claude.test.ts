@@ -524,7 +524,7 @@ describe("Claude adapter", () => {
     });
   });
 
-  test("board tools scope Bash to gh, and only for the session that asked", async () => {
+  test("board tools are the queen's role: gh, and writes scoped to memory and planning", async () => {
     await writeClaudeAgentConfig(worktreePath, {
       name: "orchestrator",
       daemonPort: 4317,
@@ -535,15 +535,20 @@ describe("Claude adapter", () => {
     const permissions = await readPermissions(worktreePath);
     expect(permissions).toEqual({
       defaultMode: "default",
-      // Editing tools stay denied: the grant is shell-for-the-board, not write
-      // access. Every non-gh command still raises a prompt.
-      deny: ["Edit", "Write", "NotebookEdit"],
+      // Only NotebookEdit stays denied: the grant is gh-for-the-board plus
+      // Edit/Write scoped to her own memory and planning docs. Every other
+      // command and path still raises a prompt.
+      deny: ["NotebookEdit"],
       allow: [
         "Read",
         "Glob",
         "Grep",
         "mcp__hive__*",
         "Bash(gh:*)",
+        "Edit(.hive/**)",
+        "Write(.hive/**)",
+        "Edit(planning/**)",
+        "Write(planning/**)",
       ],
     });
 
@@ -560,10 +565,10 @@ describe("Claude adapter", () => {
     expect((await readPermissions(revoked)).allow).not.toContain("Bash(gh:*)");
   });
 
-  test("a stale bare Bash denial does not survive a board-tools rewrite", async () => {
+  test("a stale bare denial does not survive a board-tools rewrite", async () => {
     // deepMerge unions arrays under `permissions`, so a config written before
-    // the grant existed would otherwise re-deny Bash on every respawn and the
-    // allow rule would never apply.
+    // the grant existed would otherwise re-deny Bash/Edit/Write on every
+    // respawn — and deny outranks the role's scoped allows.
     await mkdir(join(worktreePath, ".claude"), { recursive: true });
     await writeFile(
       join(worktreePath, ".claude", "settings.local.json"),
@@ -584,9 +589,9 @@ describe("Claude adapter", () => {
     });
 
     const permissions = await readPermissions(worktreePath);
-    expect(permissions.deny).not.toContain("Bash");
+    expect(permissions.deny).toEqual(["NotebookEdit"]);
     expect(permissions.allow).toContain("Bash(gh:*)");
-    expect(permissions.deny).toEqual(["Edit", "Write", "NotebookEdit"]);
+    expect(permissions.allow).toContain("Edit(planning/**)");
   });
 
   test("a graphify URL becomes an http entry; its absence removes a stale one", async () => {

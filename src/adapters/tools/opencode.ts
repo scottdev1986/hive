@@ -4,6 +4,7 @@ import { homedir } from "node:os";
 import { join, resolve } from "node:path";
 import { selectRecoverySessionId } from "./recovery-session";
 import { resolveProviderExecutable } from "./provider-executable";
+import { ORCHESTRATOR_OPENCODE_PERMISSION } from "./orchestrator-role";
 
 /** The agent Hive writes into the worktree's opencode.json: it carries the
  * launch brief as its {file:} system prompt and the read-only barrier as its
@@ -29,6 +30,10 @@ export interface OpencodeAgentConfigOptions {
    * leaves the agent already on disk untouched. */
   instructionPath?: string;
   readOnly?: boolean;
+  /** The queen's role (#12): Edit scoped to her memory and planning docs and
+   * Bash scoped to gh (orchestrator-role.ts), instead of the read-only
+   * barrier. */
+  orchestrator?: boolean;
 }
 
 export function resolveWorkingOpencodeExecutable() {
@@ -174,7 +179,9 @@ export async function writeOpencodeAgentConfig(
       // (verified against opencode 1.18.3), so the brief never leaves the
       // 0600 launch-prompt file.
       prompt: `{file:${options.instructionPath}}`,
-      ...(options.readOnly === true
+      ...(options.orchestrator === true
+        ? { permission: ORCHESTRATOR_OPENCODE_PERMISSION }
+        : options.readOnly === true
         ? { permission: { edit: "deny", bash: "deny" } }
         : {}),
     };
