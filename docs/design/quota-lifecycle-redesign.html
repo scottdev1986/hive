@@ -262,6 +262,39 @@
         <p class="hero-copy" style="margin-top:18px"><strong>The one-line summary for review:</strong> keep the eyes (probes, pools, catalogs), cut the bookings (reservations, floors, refusal paths, threshold alerting), and add exactly one muscle — the drain handler (hold/poke, handoff, preserve+memory) at the read points that already exist.</p>
       </div>
     </section>
+
+    <section id="unmetered">
+      <div class="shell">
+        <div class="section-head">
+          <div><p class="section-label">06 · Unmetered providers</p><h2>opencode in the chain: usable without a usage surface.</h2></div>
+          <p>opencode has no quota API hive can read — confirmed during the adapter work (no billing endpoint, no usage surface; its models are billed on the user's upstream accounts, e.g. an OpenAI key, which hive cannot see either). Under the old admission-control design that was a problem. Under this policy it mostly dissolves, because quota never says no.</p>
+        </div>
+        <div class="table-wrap">
+          <table>
+            <thead>
+              <tr><th>Question</th><th>Answer under the new policy</th><th>Why it's simple</th></tr>
+            </thead>
+            <tbody>
+              <tr><td>Can the user put opencode in a chain?</td><td><strong>Yes, anywhere, and it always spawns.</strong></td><td>"Never deny for usage" already covers "usage unknown" — unknown is not a refusal. Today's compatibility-mode admit (<code>quota.ts:1860-1878</code>) is exactly this; the new policy makes it the normal case rather than a warned-about exception. The MCC row badges it honestly: <em>unmetered</em>, not a fake 100%.</td></tr>
+              <tr><td>How does spread-selection rank it?</td><td><strong>It doesn't — spread skips what it can't measure.</strong></td><td>Spread-by-headroom ranks only metered pools; an unmetered link holds its chain position and is taken in order. No invented headroom number, no pseudo-quota.</td></tr>
+              <tr><td>How is its drain detected?</td><td><strong>By the vendor's own error, nowhere else.</strong></td><td>The only exhaustion signal an unmetered provider can produce is failing — a rate-limit or billing error at spawn or mid-turn. That failure is classified as a <em>vendor-error drain</em> and fed to the same drain handler as a metered 0% — deliberately NOT to launch-failure quarantine, which is for crashes. Classification is one check on the vendor's error text/code at the failure site that already exists.</td></tr>
+              <tr><td>Hold-and-poke (≤1h to reset)?</td><td><strong>Never. opencode is always handoff.</strong></td><td>Hold needs <code>resetsAt</code>; an unmetered provider has none. The drain handler's rule degrades honestly: no reset visibility → the "more than 1 hour" arm → hand the branch to a provider with known capacity and close the drained agent.</td></tr>
+              <tr><td>All-drained wait / preserve?</td><td><strong>Only when EVERYTHING is known-drained.</strong></td><td>While any unmetered provider remains in the chain, "no provider has usage" cannot be asserted — opencode might still work. So the total-exhaustion arm (wait for reset / preserve+memory) fires only when every metered pool is drained AND every unmetered route has errored. Until then, keep spawning.</td></tr>
+            </tbody>
+          </table>
+        </div>
+        <div class="panel-grid" style="margin-top:18px">
+          <article class="panel">
+            <h3>The one-sentence rule</h3>
+            <p>An unmetered provider is an <strong>always-spawnable wildcard</strong>: never refused, never ranked by headroom, never held — its drain is detected when the vendor errors, and the response is always handoff. If it later grows a usage surface (the way kimi did), it joins the metered pool path with no policy change — the drain handler already speaks windows.</p>
+          </article>
+          <article class="panel">
+            <h3>What this costs in code</h3>
+            <p>Three small things: the <em>unmetered</em> badge in the MCC (a display state, not a mode), vendor-error classification at the existing failure site (rate-limit/billing text → drain handler, not quarantine), and the drain handler's "no <code>resetsAt</code> → handoff" fallback (an <code>else</code> that already exists as the &gt;1h arm). No estimation, no synthetic quotas, no special chain semantics.</p>
+          </article>
+        </div>
+      </div>
+    </section>
   </main>
 </body>
 </html>
