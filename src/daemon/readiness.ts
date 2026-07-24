@@ -353,3 +353,47 @@ export async function watchForProofOfLife<Target = string>(
     }
   }
 }
+
+/**
+ * Can this launch *report*, or is it alive and permanently mute? (#57)
+ *
+ * Proof of life is not proof of reporting: a pane redraws and a process holds
+ * the tree whether or not the agent's hive MCP client ever connected — and an
+ * agent without that channel cannot hive_send, hive_inbox, or hive_land no
+ * matter how healthy it looks. The one truthful signal is the vendor MCP
+ * client's own handshake: every supported vendor initializes its MCP servers
+ * at session start, and the daemon's /mcp endpoint authenticates each request
+ * with the agent's own credential. An authenticated request from the agent's
+ * subject therefore proves the whole chain at once — the right port, the
+ * right config, a credential that works — measured on the receiving side,
+ * never inferred from the agent looking alive. Inherited (human) MCP servers
+ * are the opposite tolerance: their failure changes nothing here.
+ */
+export const MCP_REPORTING_TIMEOUT_MS = 15_000;
+
+/**
+ * Wait, bounded, for the agent's credential to be seen on the daemon's MCP
+ * surface at or after `since` (the launch baseline, so a dead predecessor's
+ * handshake never counts). Returns null when reporting is proven, or the
+ * named failure — "hive MCP unreachable" — that the launch path must refuse
+ * with. The timeout is a parameter so tests can collapse it; an unreachable
+ * MCP must fail fast and legibly, never spin.
+ */
+export async function waitForMcpReporting(
+  subject: string,
+  since: string,
+  seen: (subject: string, since: string) => boolean,
+  wait: (ms: number) => Promise<void>,
+  timeoutMs = MCP_REPORTING_TIMEOUT_MS,
+): Promise<string | null> {
+  const deadline = Date.now() + timeoutMs;
+  while (!seen(subject, since)) {
+    if (Date.now() >= deadline) {
+      return `hive MCP unreachable: no authenticated request from ${
+        JSON.stringify(subject)
+      }'s credential within ${Math.round(timeoutMs / 1000)}s of launch`;
+    }
+    await wait(200);
+  }
+  return null;
+}

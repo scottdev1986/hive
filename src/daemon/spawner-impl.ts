@@ -67,7 +67,7 @@ import { getHiveHome } from "./db";
 import { readinessFailureLayer } from "./launch-failure";
 import type { LaunchFailureLayer } from "./launch-failure";
 import { writeLaunchPrompt } from "./launch-prompt";
-import { watchForProofOfLife } from "./readiness";
+import { waitForMcpReporting, watchForProofOfLife } from "./readiness";
 import {
   parseProcessTable,
   processCommandName,
@@ -333,6 +333,12 @@ export interface HiveSpawnerDependencies {
   ) => Promise<{ dirtyFiles: string[]; unmergedCommits: number }>;
   keepWorktreeOnFailure?: boolean;
   sleep?: Sleep;
+  /** #57: whether a subject's credential has authenticated against the
+   * daemon's /mcp at or after a launch baseline. Wired in production; when
+   * the seam is absent the reachability check does not run. */
+  mcpClientSeen?: (subject: string, since: string) => boolean;
+  /** Test seam to collapse the reachability wait's deadline. */
+  mcpReportingTimeoutMs?: number;
   /** Live account capability records used only after the final model is chosen. */
   discoverCapabilities?: CapabilityDiscoverer;
   /** Free `grok --version` identity probe; injectable so tests bind the
@@ -2181,6 +2187,9 @@ export class HiveSpawner implements Spawner {
       };
 
       const launchedCommand = launchedCommandName(preparedLaunch.argv);
+      // #57: anything a dead predecessor with this name reported predates
+      // this line and must never count as this incarnation's proof.
+      const launchBaseline = new Date().toISOString();
       await launchSession(
         await revalidateAtAdapter(),
         preparedLaunch.command,
@@ -2196,6 +2205,30 @@ export class HiveSpawner implements Spawner {
           failureReason,
           readinessFailureLayer(failureReason),
         );
+      }
+      // #57: alive is not reporting. The readiness watch measures acting — a
+      // redrawing pane, a held process — and a hive-MCP-less agent produces
+      // both while being permanently unable to hive_send or hive_land. Refuse
+      // the spawn unless the agent's own credential has authenticated against
+      // the daemon's MCP surface since the launch. A spawn without a minted
+      // credential can never produce that request, so it refuses here too —
+      // hive's own MCP is required; every inherited server stays optional.
+      if (this.dependencies.mcpClientSeen !== undefined) {
+        const reportingFailure = await waitForMcpReporting(
+          name,
+          launchBaseline,
+          this.dependencies.mcpClientSeen,
+          (ms) => this.wait(ms),
+          this.dependencies.mcpReportingTimeoutMs,
+        );
+        if (reportingFailure !== null) {
+          return await this.failSpawnIfStillSpawning(
+            record,
+            worktree,
+            reportingFailure,
+            "transport",
+          );
+        }
       }
       // Hook traffic normally performs this transition first. A live provider
       // can still prove itself through its process-backed screen heartbeat,

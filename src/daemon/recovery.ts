@@ -50,7 +50,11 @@ import {
   runPs,
   treeRunsCommand,
 } from "./resources";
-import { LAUNCH_FAILURE_PATTERNS, watchForProofOfLife } from "./readiness";
+import {
+  LAUNCH_FAILURE_PATTERNS,
+  waitForMcpReporting,
+  watchForProofOfLife,
+} from "./readiness";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import {
@@ -147,6 +151,12 @@ export interface CrashRecoveryDependencies {
   resolveOpencodeSessionId?: SessionResolver;
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
+  /** #57: whether a subject's credential has authenticated against the
+   * daemon's /mcp at or after a launch baseline. Wired in production; when
+   * the seam is absent the reachability check does not run. */
+  mcpClientSeen?: (subject: string, since: string) => boolean;
+  /** Test seam to collapse the reachability wait's deadline. */
+  mcpReportingTimeoutMs?: number;
   claudeExecutable?: string;
   codexExecutable?: string;
   grokExecutable?: string;
@@ -788,6 +798,9 @@ export class CrashRecovery {
       if (this.deps.createRecoverySession === undefined) {
         throw new Error("recovery session creation is not configured");
       }
+      // #57: anything the dead predecessor reported predates this line and
+      // must never count as this incarnation's reporting proof.
+      const launchBaseline = new Date().toISOString();
       await this.deps.createRecoverySession(
         record,
         command,
@@ -827,6 +840,26 @@ export class CrashRecovery {
           this.deps.db.getAgentById(record.id) ?? record,
           failure,
         );
+      }
+      // #57: alive is not reporting. The proof-of-life watch above measures
+      // acting — a redrawing pane, a held process — and a hive-MCP-less agent
+      // produces both while being permanently unable to hive_send or
+      // hive_land. Refuse the resume unless the agent's own credential has
+      // authenticated against the daemon's MCP surface since the launch.
+      if (this.deps.mcpClientSeen !== undefined) {
+        const reportingFailure = await waitForMcpReporting(
+          record.name,
+          launchBaseline,
+          this.deps.mcpClientSeen,
+          (ms) => this.wait(ms),
+          this.deps.mcpReportingTimeoutMs,
+        );
+        if (reportingFailure !== null) {
+          return await this.failResume(
+            this.deps.db.getAgentById(record.id) ?? record,
+            reportingFailure,
+          );
+        }
       }
     } catch (error) {
       return await this.failResume(

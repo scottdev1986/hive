@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { QUIET_LIMIT, watchForProofOfLife, type ProofOfLifeDeps } from "../../src/daemon/readiness";
+import { QUIET_LIMIT, waitForMcpReporting, watchForProofOfLife, type ProofOfLifeDeps } from "../../src/daemon/readiness";
 
 /**
  * A pane that redraws like a real TUI: the Codex composer increments
@@ -245,5 +245,46 @@ describe("proof of life", () => {
       lastEventAt: () => (polls += 1) >= 2 ? "2026-07-11T00:00:05.000Z" : BASELINE,
     }));
     expect(proof.alive).toBe(true);
+  });
+});
+
+describe("hive MCP reachability (#57)", () => {
+  // The signal is the vendor MCP client's own authenticated handshake, not a
+  // pane redraw: an agent whose hive MCP failed looks alive by every
+  // readiness signal above and is permanently mute.
+  test("an already-reporting agent passes immediately", async () => {
+    const failure = await waitForMcpReporting(
+      "maya",
+      BASELINE,
+      () => true,
+      async () => {},
+      0,
+    );
+    expect(failure).toBeNull();
+  });
+
+  test("an agent that reports mid-window passes", async () => {
+    let polls = 0;
+    const failure = await waitForMcpReporting(
+      "maya",
+      BASELINE,
+      () => (polls += 1) >= 3,
+      async () => {},
+      60_000,
+    );
+    expect(failure).toBeNull();
+    expect(polls).toBe(3);
+  });
+
+  test("the negative control: no handshake in the window refuses loudly and names the channel", async () => {
+    const failure = await waitForMcpReporting(
+      "maya",
+      BASELINE,
+      () => false,
+      async () => {},
+      0,
+    );
+    expect(failure).toContain("hive MCP unreachable");
+    expect(failure).toContain("maya");
   });
 });

@@ -801,6 +801,10 @@ export class HiveDaemon {
    * AgentUUID, in memory on purpose: the transcripts are durable, so a
    * restart recounts from offset zero instead of trusting a stale number. */
   private readonly graphifyCalls = new Map<string, GraphifyCallCursor>();
+  /** Subjects whose credential has authenticated against /mcp, last-seen
+   * timestamp per subject (#57). In memory on purpose: it answers "has this
+   * incarnation reported since its launch", which a restart re-asks anyway. */
+  private readonly mcpClientsSeen = new Map<string, string>();
   private readonly land: LandBranch;
   private readonly landReadiness: ReadLandReadiness;
   private bunServer: Server<undefined> | null = null;
@@ -1159,6 +1163,8 @@ export class HiveDaemon {
       db: this.db,
       terminalHost: this.terminalHost,
       port: () => this.listeningPort ?? this.port,
+      // #57: a resume whose hive MCP never answers is refused, not recorded.
+      mcpClientSeen: (subject, since) => this.mcpClientSeen(subject, since),
       revokeCapabilities: (agentName) => {
         this.capabilities.revokeSubject(agentName);
         removeCredential(agentName);
@@ -1330,6 +1336,14 @@ export class HiveDaemon {
     "create" | "inspect" | "terminate"
   > {
     return this.terminalHost;
+  }
+
+  /** #57: has this subject's credential authenticated against /mcp at or
+   * after `since`? The spawn/resume reachability check reads exactly this —
+   * the agent's own reporting channel, proven on the receiving side. */
+  mcpClientSeen(subject: string, since: string): boolean {
+    const seen = this.mcpClientsSeen.get(subject);
+    return seen !== undefined && seen >= since;
   }
 
   prepareSessiondSpawn(): Promise<Readonly<{ engineBuildId: string }> | null> {
@@ -6141,6 +6155,14 @@ export class HiveDaemon {
         id: null,
       }, { status: authenticated.status });
     }
+    // #57: an authenticated request is the one truthful proof that this
+    // subject's vendor MCP client reached the right port with a working
+    // credential. The launch path waits on this marker rather than trusting
+    // a redrawing pane; a stale token or dead port simply never lands here.
+    this.mcpClientsSeen.set(
+      authenticated.capability.subject,
+      new Date().toISOString(),
+    );
     const transport = new StreamableHTTPServerTransport({
       sessionIdGenerator: undefined,
       enableJsonResponse: true,

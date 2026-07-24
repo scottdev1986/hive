@@ -335,6 +335,8 @@ export async function runDaemon(): Promise<void> {
     // to the agent process through its environment.
     issueCredential: (name, role, epoch) =>
       daemon.issueCredential(name, role, epoch),
+    // #57: a spawn whose hive MCP never answers is refused, not recorded.
+    mcpClientSeen: (subject, since) => daemon.mcpClientSeen(subject, since),
     assignments: {
       open: (agentId, openedAt) => statusStore.openAssignment(agentId, openedAt),
       close: (agentId, closedAt) => statusStore.closeAssignment(agentId, closedAt),
