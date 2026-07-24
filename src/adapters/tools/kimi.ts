@@ -29,13 +29,20 @@ export function resolveWorkingKimiExecutable() {
   return resolveProviderExecutable("kimi", [".kimi-code/bin/kimi"]);
 }
 
+/** The kimi CLI's data root: `$KIMI_CODE_HOME`, defaulting to ~/.kimi-code. */
+export function kimiHome(
+  env: Record<string, string | undefined> = process.env,
+): string {
+  return env.KIMI_CODE_HOME ?? join(env.HOME ?? homedir(), ".kimi-code");
+}
+
 /**
  * The effective default an unflagged launch runs: `default_model` from the
  * config file. Kimi has no CLI surface that reports it (`kimi provider list`
  * prints the catalog, not the default), so the file is the surface.
  */
 export function probeKimiDefaultModel(
-  home: string = Bun.env.KIMI_CODE_HOME ?? join(homedir(), ".kimi-code"),
+  home: string = kimiHome(),
 ): string | null {
   try {
     const parsed = Bun.TOML.parse(
@@ -203,7 +210,7 @@ export async function writeKimiAgentConfig(
 }
 
 export function kimiSessionsDirectory(
-  home = Bun.env.KIMI_CODE_HOME ?? join(homedir(), ".kimi-code"),
+  home = kimiHome(),
 ): string {
   return join(home, "sessions");
 }

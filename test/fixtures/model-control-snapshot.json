@@ -167,7 +167,7 @@
     "claude": "metered",
     "codex": "metered",
     "grok": "metered",
-    "kimi": "none",
+    "kimi": "metered",
     "opencode": "none"
   },
   "quota": [

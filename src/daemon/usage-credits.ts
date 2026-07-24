@@ -18,6 +18,10 @@ import {
   type GrokProbeTransport,
   GrokStdioProbeTransport,
 } from "./quota-sources";
+import {
+  KimiHttpUsageTransport,
+  type KimiUsageTransport,
+} from "./kimi-usage";
 
 /**
  * What it costs this account to run a model, measured — never inferred from a
@@ -418,6 +422,109 @@ export function accountBillingFromGrokBilling(
   };
 }
 
+// ---------------------------------------------------------------------------
+// Kimi: GET /usages — the CLI's own /usage panel endpoint.
+// ---------------------------------------------------------------------------
+
+const KIMI_USAGES = "kimi.usages" as const;
+
+const KimiUsageWindowSchema = z.object({
+  limit: z.string(),
+  used: z.string(),
+  resetTime: z.string().optional(),
+}).passthrough();
+
+const KimiUsagesResponseSchema = z.object({
+  /** The weekly quota window. */
+  usage: KimiUsageWindowSchema.nullish(),
+  /** Rate-limit windows; the 300-minute one is the rolling five-hour window. */
+  limits: z.array(
+    z.object({
+      window: z.object({
+        duration: z.number(),
+        timeUnit: z.string(),
+      }).passthrough(),
+      detail: KimiUsageWindowSchema,
+    }).passthrough(),
+  ).nullish(),
+}).passthrough();
+
+const kimiWindowMinutes = (duration: number, timeUnit: string): number | null => {
+  switch (timeUnit) {
+    case "TIME_UNIT_MINUTE":
+      return duration;
+    case "TIME_UNIT_HOUR":
+      return duration * 60;
+    case "TIME_UNIT_DAY":
+      return duration * 24 * 60;
+    default:
+      return null;
+  }
+};
+
+/**
+ * One /usages response → an AccountBilling. The numbers arrive as strings.
+ * The AccountBilling shape has room for exactly one window, so the SHORTEST
+ * rate window is the one surfaced: it is the window that bites mid-session
+ * (verified 2026-07-24: a 300-minute entry at 1/100). The weekly quota is
+ * part of the same payload but has no field here — it stays unread rather
+ * than being blended into a number that would misname it. The payload
+ * carries no paid-overflow rail, so creditsEnabled is surface-silent
+ * unknown, never a guessed false.
+ */
+export function accountBillingFromKimiUsage(
+  response: unknown,
+  observedAt: string,
+): AccountBilling {
+  const quiet = (reason: string): AccountBilling => ({
+    creditsEnabled: unknown("surface-silent", KIMI_USAGES, observedAt),
+    disabledReason: null,
+    generalUtilization: unknown(
+      reason as "malformed" | "field-absent",
+      KIMI_USAGES,
+      observedAt,
+    ),
+    modelUtilization: {},
+    overflowUncertainty: null,
+  });
+  const parsed = KimiUsagesResponseSchema.safeParse(response);
+  // usage and limits are both optional, so a shape-changed payload parses
+  // clean with neither — that is the surface going quiet, and it is
+  // malformed, not a confident "no windows".
+  if (!parsed.success) return quiet("malformed");
+  if (parsed.data.usage == null && parsed.data.limits == null) {
+    return quiet("malformed");
+  }
+
+  const windows = (parsed.data.limits ?? [])
+    .map((entry) => ({
+      minutes: kimiWindowMinutes(entry.window.duration, entry.window.timeUnit),
+      detail: entry.detail,
+    }))
+    .filter((entry) => entry.minutes !== null)
+    .sort((left, right) => left.minutes! - right.minutes!);
+  const shortest = windows[0];
+  if (shortest === undefined) return quiet("field-absent");
+  const limit = Number(shortest.detail.limit);
+  const used = Number(shortest.detail.used);
+  if (
+    !Number.isFinite(limit) || limit <= 0 ||
+    !Number.isFinite(used) || used < 0
+  ) return quiet("malformed");
+
+  return {
+    creditsEnabled: unknown("surface-silent", KIMI_USAGES, observedAt),
+    disabledReason: null,
+    generalUtilization: known(
+      Math.round((used / limit) * 1000) / 10,
+      KIMI_USAGES,
+      observedAt,
+    ),
+    modelUtilization: {},
+    overflowUncertainty: null,
+  };
+}
+
 export type SpendRisk =
   /** Cannot cost money: either credits are off, or the plan still covers it. */
   | { state: "no-spend"; detail: string }
@@ -704,6 +811,7 @@ export async function readAccountBilling(
     claude?: ClaudeProbeTransport;
     codex?: CodexProbeTransport;
     grok?: GrokProbeTransport;
+    kimi?: KimiUsageTransport;
   },
 ): Promise<AccountBilling | null> {
   // The switch sits OUTSIDE the catch, and that placement is the whole point.
@@ -726,6 +834,7 @@ function billingReader(
     claude?: ClaudeProbeTransport;
     codex?: CodexProbeTransport;
     grok?: GrokProbeTransport;
+    kimi?: KimiUsageTransport;
   },
 ): (observedAt: string) => Promise<AccountBilling | null> {
   switch (provider) {
@@ -751,9 +860,27 @@ function billingReader(
         return accountBillingFromGrokBilling(payload.billing, observedAt);
       };
     case "kimi":
-      // Kimi exposes no session-free billing or quota surface, so there is
-      // nothing to read: the account's billing is unknown, never zero.
-      return async () => null;
+      return async (observedAt) => {
+        const payload = await (
+          transports?.kimi ?? new KimiHttpUsageTransport()
+        ).readUsage(timeoutMs);
+        if (payload.status !== "ok") {
+          // A quiet surface is an all-unknown billing, never a zero: the
+          // billing memory then serves the last real reading at its true age.
+          return {
+            creditsEnabled: unknown("surface-silent", "kimi.usages", observedAt),
+            disabledReason: null,
+            generalUtilization: unknown(
+              "surface-silent",
+              "kimi.usages",
+              observedAt,
+            ),
+            modelUtilization: {},
+            overflowUncertainty: `Kimi usage unreadable: ${payload.reason}`,
+          };
+        }
+        return accountBillingFromKimiUsage(payload.response, observedAt);
+      };
     case "opencode":
       // opencode exposes no session-free billing or quota surface either.
       return async () => null;

@@ -69,8 +69,8 @@ function usageSurface(provider: CapabilityProvider): "metered" | "none" {
     case "grok":
       return "metered";
     case "kimi":
-      // Kimi exposes no session-free quota or billing surface.
-      return "none";
+      // Kimi's /usages endpoint (the CLI's own /usage panel surface).
+      return "metered";
     case "opencode":
       // opencode exposes no session-free quota or billing surface.
       return "none";

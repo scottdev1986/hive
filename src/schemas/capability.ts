@@ -192,6 +192,12 @@ export const CapabilitySurfaceSchema = z.enum([
    * and the credits snapshot that may pay after those windows are exhausted.
    */
   "codex.account/rateLimits/read",
+  /**
+   * `GET https://api.kimi.com/coding/v1/usages` — the endpoint the kimi
+   * CLI's own /usage panel calls: the account's weekly quota and rolling
+   * 300-minute rate window, read with the CLI's OAuth credential.
+   */
+  "kimi.usages",
 ]);
 export type CapabilitySurface = z.infer<typeof CapabilitySurfaceSchema>;
 
