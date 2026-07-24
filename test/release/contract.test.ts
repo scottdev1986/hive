@@ -103,6 +103,13 @@ describe("the release workflow", () => {
     expect(workflow.indexOf("Plan the release")).toBeGreaterThan(tests);
   });
 
+  test("provisions Xcode's separately shipped Metal compiler before native preflight", () => {
+    const download = workflow.indexOf("xcodebuild -downloadComponent MetalToolchain");
+    const preflight = workflow.indexOf("scripts/provision-native-toolchain.sh");
+    expect(download).toBeGreaterThan(0);
+    expect(preflight).toBeGreaterThan(download);
+  });
+
   test("pins the same Bun the project pins", () => {
     // The release binary embeds this Bun's runtime; a floating version would
     // silently change what every user runs.

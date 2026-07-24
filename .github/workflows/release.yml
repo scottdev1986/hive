@@ -106,6 +106,7 @@ jobs:
           set -euo pipefail
           brew install zig@0.15
           brew link --force zig@0.15
+          xcodebuild -downloadComponent MetalToolchain
           scripts/provision-native-toolchain.sh
           scripts/build-ghosttykit.sh --production
 
