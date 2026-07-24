@@ -61,9 +61,9 @@ Signing is defense in depth here, not a launch gate: the `hive` binary downloads
 
 ## Distribution shape
 
-Hive publishes per-platform artifacts on a dedicated, Hive-owned release tag, versioned independently of Hive (`graphify-v0.9.12-hive.1`; the suffix counts Hive rebuilds of the same upstream pin). The Hive binary embeds the tag, asset name, and SHA-256 for each platform. Keeping the ~25 MB bundle separate lets Hive and Graphify move on their own release cadences without making every `hive update` download unchanged Graphify bytes.
+Hive publishes per-platform artifacts on a dedicated, Hive-owned release tag, versioned independently of Hive (`graphify-v0.9.25-hive.1`; the suffix counts Hive rebuilds of the same upstream pin). The Hive binary embeds the tag, asset name, and SHA-256 for each platform. Keeping the ~25 MB bundle separate lets Hive and Graphify move on their own release cadences without making every `hive update` download unchanged Graphify bytes.
 
-`hive init` downloads the matching artifact and builds the repository graph. If setup is offline or interrupted, Hive reports the degraded graph state and `hive graphify enable` completes the same provisioning path. The Hive release workflow verifies every registry asset before publishing.
+`hive init` downloads the matching artifact and builds the repository graph. `hive update` asks the newly activated Hive binary to install the Graphify artifact whose pin and hashes it embeds. If either path is offline or interrupted, Hive reports the degraded graph state; running `hive init` again retries provisioning. The Hive release workflow verifies every registry asset before publishing.
 
 ## Linux facts (for when the matrix grows)
 

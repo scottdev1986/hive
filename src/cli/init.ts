@@ -49,7 +49,7 @@ import { projectStateDir } from "../daemon/project-state";
 import type { EmbeddingsInstallOutcome } from "../release/embeddings-install";
 import { CAPABILITY_PROVIDERS } from "../schemas";
 import { ensureEmbeddingsRuntime } from "./embeddings";
-import { runGraphifyEnable } from "./graphify";
+import { provisionGraphify } from "./graphify";
 import { reindexMemory } from "./mcp";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { projectRootOrCwd } from "./project-root";
@@ -155,7 +155,7 @@ export const defaultInitDeps: InitDeps = {
   },
   hasCli: (command) => Bun.which(command) !== null,
   installShippedSkills,
-  provisionGraphify: (root) => runGraphifyEnable(root),
+  provisionGraphify,
   writeInitStamp: async (root) => {
     const path = initStampPath(root);
     await mkdir(dirname(path), { recursive: true });
@@ -443,7 +443,7 @@ export async function runInit(
   messages.push(
     graphifyExit === 0
       ? "Graphify: ready — agents get a local, code-only knowledge graph."
-      : "⚠ GRAPHIFY UNAVAILABLE — Hive initialized in a degraded state. Run `hive graphify enable` to repair it.",
+      : "⚠ GRAPHIFY UNAVAILABLE — Hive initialized in a degraded state. Run `hive init` again to repair it.",
   );
 
   await deps.writeInitStamp(cwd);

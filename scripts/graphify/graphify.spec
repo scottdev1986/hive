@@ -1,7 +1,7 @@
 # PyInstaller spec for the frozen graphify bundle (bundling spike).
 #
 # Grammars are loaded via importlib.import_module(config.ts_module) at
-# graphify/extractors/engine.py (L2122 in 0.9.12), invisible to PyInstaller's
+# graphify's extractor registry, invisible to PyInstaller's
 # static analysis — every tree_sitter_* package is collected explicitly.
 # The set is discovered from the build venv rather than hardcoded, so a pin
 # bump that adds a grammar cannot silently drop it from the bundle.

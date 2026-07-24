@@ -64,13 +64,12 @@ describe("repository setup command surfaces", () => {
     ]);
   });
 
-  test("hive graphify exposes build and status commands", () => {
+  test("hive graphify is status-only because Graphify is always enabled", () => {
     const graphify = createProgram().commands.find(
       (command) => command.name() === "graphify",
     );
 
     expect(graphify?.commands.map((command) => command.name())).toEqual([
-      "enable",
       "status",
     ]);
   });

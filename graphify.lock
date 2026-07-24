@@ -183,9 +183,9 @@ cryptography==48.0.1 \
     # via
     #   -r scripts/graphify/graphify.in
     #   pyjwt
-graphifyy==0.9.12 \
-    --hash=sha256:94f9d0d7ef68455a2055c7623fb9574c7a781afb1473d26c7936d1abfc14d62c \
-    --hash=sha256:ed25f955a29e4a792395b087eceb55ffbcb53e75e68c1d2b045208e5a1a31c6a
+graphifyy==0.9.25 \
+    --hash=sha256:e902205873d129e9c76c11fea4268480042603590290ed600707354e74314c0c \
+    --hash=sha256:fec8a7f06da42945dc20ea5f4c0e4bc03dbc6b31e7fda88789c657e4ae26952d
     # via -r scripts/graphify/graphify.in
 h11==0.16.0 \
     --hash=sha256:4e35b956cf45792e4caa5885e69fba00bdbc6ffafbfa020300e549b208ee5ff1 \

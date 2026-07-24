@@ -46,7 +46,7 @@ hive init
 hive
 ```
 
-`hive init` prepares the repository for Hive: it installs agent skills, builds the local Graphify code graph, seeds supplied narrative memory, and installs the local embedding runtime. It does not start a daemon or open a Workspace, and it is safe to run again. If Graphify setup is interrupted or offline, init reports the degraded state and `hive graphify enable` completes it.
+`hive init` prepares the repository for Hive: it installs agent skills, builds the required local Graphify code graph, seeds supplied narrative memory, and installs the local embedding runtime. It does not start a daemon or open a Workspace, and it is safe to run again. If Graphify setup is interrupted or offline, run `hive init` again.
 
 Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose another installed vendor for the orchestrator explicitly, run `hive codex` or `hive grok`; `hive claude` is the explicit Claude spelling.
 
@@ -70,8 +70,8 @@ worker's assignment remains its visible initial user message.
 | `hive quota` | Show provider capacity, reservations, provenance, and reset times |
 | `hive memory ...` | Search, read, write, delete, reindex, self-test, or consolidate durable memory |
 | `hive embeddings install` | Install the local semantic-memory embedding runtime |
-| `hive graphify enable\|status` | Build, refresh, or inspect Hive's local code graph |
-| `hive update [version]` | Install the latest or an exact release |
+| `hive graphify status` | Inspect Hive's required local code graph |
+| `hive update [version]` | Install the latest or an exact release, including its Graphify runtime |
 | `hive update check\|status\|rollback\|skip` | Check, inspect, roll back, or skip an offered release |
 | `hive uninstall [--repo]` | Remove the machine installation, or only this repository's Hive state |
 | `hive instances` | List the default and named Hive instances |

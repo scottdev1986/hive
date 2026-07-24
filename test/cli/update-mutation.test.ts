@@ -2,7 +2,11 @@ import { describe, expect, test } from "bun:test";
 import { mkdtemp, rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { activateStagedUpdate, rollbackWhenIdle } from "../../src/cli/update";
+import {
+  activateStagedUpdate,
+  ensureGraphifyRuntimeForRelease,
+  rollbackWhenIdle,
+} from "../../src/cli/update";
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 
 const blocker = {
@@ -16,6 +20,29 @@ const blocker = {
   },
   liveAgents: ["new-agent"],
 };
+
+test("Graphify provisioning is owned by the newly activated binary", async () => {
+  const calls: Array<{ command: string; args: string[] }> = [];
+  const outcome = await ensureGraphifyRuntimeForRelease(
+    "0.0.8",
+    "/tmp/hive-install",
+    async (command, args) => {
+      calls.push({ command, args });
+      return "graphifyy==0.9.25 installed\n";
+    },
+  );
+
+  expect(calls).toEqual([
+    {
+      command: "/tmp/hive-install/current/hive",
+      args: ["graphify-runtime-install"],
+    },
+  ]);
+  expect(outcome).toEqual({
+    ok: true,
+    detail: "graphifyy==0.9.25 installed",
+  });
+});
 
 describe("machine mutation leases in update commands", () => {
   test("update holds its lease from the final checks through activation", async () => {
@@ -66,6 +93,15 @@ describe("machine mutation leases in update commands", () => {
           detail: "embedding runtime from hive 0.0.8 installed",
         };
       },
+      provisionGraphify: async (version) => {
+        expect(held).toBe(true);
+        order.push("graphify");
+        expect(version).toBe("0.0.8");
+        return {
+          ok: true,
+          detail: "graphifyy==0.9.25 installed",
+        };
+      },
       log: (line) => lines.push(line),
     });
 
@@ -77,11 +113,15 @@ describe("machine mutation leases in update commands", () => {
       "bin-link",
       "stop-daemon",
       "embeddings",
+      "graphify",
       "release",
     ]);
     expect(lines.join("\n")).toContain("hive 0.0.8 active");
     expect(lines.join("\n")).toContain(
       "Embeddings: embedding runtime from hive 0.0.8 installed.",
+    );
+    expect(lines.join("\n")).toContain(
+      "Graphify: graphifyy==0.9.25 installed.",
     );
   });
 
@@ -118,6 +158,9 @@ describe("machine mutation leases in update commands", () => {
           provisionEmbeddings: async () => {
             throw new Error("embeddings must not run");
           },
+          provisionGraphify: async () => {
+            throw new Error("graphify must not run");
+          },
           log: () => {},
         }),
       ).rejects.toThrow(/landing .* in progress/);
@@ -152,6 +195,9 @@ describe("machine mutation leases in update commands", () => {
       provisionEmbeddings: async () => {
         throw new Error("embeddings must not run");
       },
+      provisionGraphify: async () => {
+        throw new Error("graphify must not run");
+      },
       log: (line) => lines.push(line),
     });
 
@@ -176,6 +222,9 @@ describe("machine mutation leases in update commands", () => {
         provisionEmbeddings: async () => {
           throw new Error("embeddings must not run");
         },
+        provisionGraphify: async () => {
+          throw new Error("graphify must not run");
+        },
         log: () => {},
       }),
     ).rejects.toThrow("rename failed");
@@ -198,6 +247,10 @@ describe("machine mutation leases in update commands", () => {
       provisionEmbeddings: async () => ({
         ok: false,
         reason: "could not read the hive 0.0.8 release: network unreachable",
+      }),
+      provisionGraphify: async () => ({
+        ok: true,
+        detail: "graphifyy==0.9.25 installed",
       }),
       log: (line) => lines.push(line),
     });
@@ -227,6 +280,10 @@ describe("machine mutation leases in update commands", () => {
       provisionEmbeddings: async () => {
         throw new Error("disk full");
       },
+      provisionGraphify: async () => ({
+        ok: true,
+        detail: "graphifyy==0.9.25 installed",
+      }),
       log: (line) => lines.push(line),
     });
 
@@ -234,6 +291,37 @@ describe("machine mutation leases in update commands", () => {
     expect(report).toContain("EMBEDDINGS NOT INSTALLED");
     expect(report).toContain("disk full");
     expect(report).toContain("hive embeddings install");
+  });
+
+  test("a failed Graphify install is loud; the update still stands", async () => {
+    const lines: string[] = [];
+    await activateStagedUpdate("0.0.8", {
+      acquireLease: async () => ({ release: () => {} }),
+      blockers: async () => [],
+      inspectDaemon: async () => ({ state: "absent" }),
+      activate: async () => ({
+        activated: true,
+        version: "0.0.8",
+        previous: "0.0.7",
+      }),
+      ensureBinLink: async () => {},
+      stopStaleDaemon: async () => {},
+      provisionEmbeddings: async () => ({
+        ok: true,
+        detail: "embedding runtime installed",
+      }),
+      provisionGraphify: async () => ({
+        ok: false,
+        reason: "network unreachable",
+      }),
+      log: (line) => lines.push(line),
+    });
+
+    const report = lines.join("\n");
+    expect(report).toContain("hive 0.0.8 active");
+    expect(report).toContain("GRAPHIFY NOT INSTALLED");
+    expect(report).toContain("network unreachable");
+    expect(report).toContain("hive init");
   });
 
   test("rollback performs its final team check and activation under the lease", async () => {

@@ -26,7 +26,7 @@ import {
   readHookStdin,
   runHiveEvent,
 } from "./cli/event";
-import { runGraphifyEnable, runGraphifyStatus } from "./cli/graphify";
+import { provisionGraphifyRuntime, runGraphifyStatus } from "./cli/graphify";
 import { runInitCli } from "./cli/init";
 import { memoryConsolidateCli } from "./cli/memory-consolidate";
 import { memorySelfTestCli } from "./cli/memory-self-test";
@@ -664,21 +664,22 @@ export function createProgram(): Command {
   const graphify = program
     .command("graphify")
     .description(
-      "Build and inspect Hive's local code knowledge graph (docs/graphify/integration.md)",
+      "Inspect Hive's required local code knowledge graph (docs/graphify/integration.md)",
     );
-
-  graphify
-    .command("enable")
-    .description("Install or refresh Graphify, then build the local code graph")
-    .action(async () => {
-      process.exitCode = await runGraphifyEnable(projectRootOrCwd());
-    });
 
   graphify
     .command("status")
     .description("Show pin, install state, and graph freshness for this repo")
     .action(async () => {
       process.exitCode = await runGraphifyStatus(projectRootOrCwd());
+    });
+
+  // The updater calls this private boundary through the newly activated
+  // binary, whose embedded Graphify pin and artifact hashes are authoritative.
+  program
+    .command("graphify-runtime-install", { hidden: true })
+    .action(async () => {
+      process.exitCode = await provisionGraphifyRuntime();
     });
 
   const embeddings = program

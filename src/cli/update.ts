@@ -9,13 +9,12 @@
  * hive update`. Making destruction a deliberate two-command act rather than a
  * flag is the point.
  *
- * A successful activation also re-provisions the embedding runtime pinned to
- * the new version: embeddings are a required memory component (user ruling
- * 2026-07-22), so the runtime updates with the binary. That step failing is a
- * loud degraded-state warning naming `hive embeddings install` — never a
- * reason to roll back a healthy binary.
+ * A successful activation also re-provisions the embedding and Graphify
+ * runtimes pinned to the new version. Each failure is reported as a loud
+ * degraded state, never hidden or turned into a rollback of a healthy binary.
  */
 import { spawn } from "node:child_process";
+import type { GraphifyOutcome } from "../adapters/graphify";
 import { expectedDaemonHandshake } from "../daemon/handshake";
 import {
   type InstanceMutationBlocker,
@@ -325,6 +324,8 @@ export interface StagedUpdateActivationDeps {
    * Embeddings are a required memory component (user ruling 2026-07-22), so a
    * binary update re-provisions the runtime pinned to the new version. */
   provisionEmbeddings: (version: string) => Promise<EmbeddingsInstallOutcome>;
+  /** Ask the newly activated binary to install its own Graphify runtime. */
+  provisionGraphify: (version: string) => Promise<GraphifyOutcome>;
   log: (line: string) => void;
 }
 
@@ -358,6 +359,7 @@ export async function activateStagedUpdate(
     deps.log(`hive ${outcome.version} active`);
     await deps.stopStaleDaemon();
     deps.log(await embeddingsUpdateLine(outcome.version, deps));
+    deps.log(await graphifyUpdateLine(outcome.version, deps));
   } finally {
     lease.release();
   }
@@ -387,6 +389,51 @@ async function embeddingsUpdateLine(
     `DEGRADED: semantic recall is unavailable (FTS-only) (${outcome.reason}).`,
     "Fix: run `hive embeddings install`.",
   ].join("\n");
+}
+
+async function graphifyUpdateLine(
+  version: string,
+  deps: StagedUpdateActivationDeps,
+): Promise<string> {
+  let outcome: GraphifyOutcome;
+  try {
+    outcome = await deps.provisionGraphify(version);
+  } catch (error) {
+    outcome = {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
+  if (outcome.ok) return `Graphify: ${outcome.detail}.`;
+  return [
+    `⚠ GRAPHIFY NOT INSTALLED — hive ${version} is active but structural`,
+    `code context is unavailable (${outcome.reason}).`,
+    "Fix: run `hive init` again in the repository.",
+  ].join("\n");
+}
+
+/** The old updater must not install Graphify with its old pin. It asks the
+ * activated binary to install the bundle whose identity that binary embeds. */
+export async function ensureGraphifyRuntimeForRelease(
+  version: string,
+  root = installRoot(),
+  execute: (command: string, args: string[]) => Promise<string> = run,
+): Promise<GraphifyOutcome> {
+  try {
+    const output = await execute(cliPath(currentLink(root)), [
+      "graphify-runtime-install",
+    ]);
+    return {
+      ok: true,
+      detail:
+        output.trim() || `Graphify runtime from hive ${version} installed`,
+    };
+  } catch (error) {
+    return {
+      ok: false,
+      reason: error instanceof Error ? error.message : String(error),
+    };
+  }
 }
 
 export async function runUpdate(requested?: string): Promise<void> {
@@ -430,6 +477,8 @@ export async function runUpdate(requested?: string): Promise<void> {
     ensureBinLink: () => ensureBinLink(root),
     stopStaleDaemon: stopStaleDaemonAfterActivation,
     provisionEmbeddings: ensureEmbeddingsRuntimeForRelease,
+    provisionGraphify: (activatedVersion) =>
+      ensureGraphifyRuntimeForRelease(activatedVersion, root),
     log: console.log,
   });
 }

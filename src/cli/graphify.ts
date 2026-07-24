@@ -1,7 +1,5 @@
-/** `hive graphify enable|status` — build and inspect Hive's local
- * code graph. Normal provisioning happens automatically inside `hive init`;
- * `enable` remains as the direct recovery command after an offline or failed
- * initialization. */
+/** Provision and inspect Hive's required local code graph. Provisioning is
+ * automatic during `hive init`; there is no enable/disable lifecycle. */
 import { existsSync } from "node:fs";
 import { stat } from "node:fs/promises";
 import {
@@ -29,9 +27,8 @@ export const defaultGraphifyCliDeps: GraphifyCliDeps = {
   log: console.log,
 };
 
-/** Install the hash-verified runtime and build this repo's graph. Used by both
- * `hive init` and the explicit repair command. */
-export async function runGraphifyEnable(
+/** Install the hash-verified runtime and build this repo's graph. */
+export async function provisionGraphify(
   root: string,
   deps: GraphifyCliDeps = defaultGraphifyCliDeps,
 ): Promise<number> {
@@ -63,6 +60,17 @@ export async function runGraphifyEnable(
   deps.log(`Graph built: ${built.detail}.`);
   deps.log("The next Hive start will attach the Graphify server.");
   return 0;
+}
+
+/** Install only the runtime owned by this Hive binary. The updater invokes
+ * this through the newly activated binary so the pin and hashes cannot come
+ * from the old release. */
+export async function provisionGraphifyRuntime(
+  deps: GraphifyCliDeps = defaultGraphifyCliDeps,
+): Promise<number> {
+  const installed = await installGraphify(deps.install);
+  deps.log(installed.ok ? installed.detail : installed.reason);
+  return installed.ok ? 0 : 1;
 }
 
 export async function runGraphifyStatus(

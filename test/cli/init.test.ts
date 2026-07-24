@@ -655,7 +655,7 @@ describe("Graphify in init", () => {
       const result = await runInit(root, {}, deps);
       const line = result.messages[result.messages.length - 1] as string;
       expect(line).toContain("GRAPHIFY UNAVAILABLE");
-      expect(line).toContain("hive graphify enable");
+      expect(line).toContain("hive init");
       expect(isRepoInitialized(root)).toBe(true);
     } finally {
       await rm(root, { recursive: true, force: true });
