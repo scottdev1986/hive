@@ -2,17 +2,18 @@ import { describe, expect, test } from "bun:test";
 import {
   ClaudeCapabilityProbe,
   CodexCapabilityProbe,
+  claudeEffectiveDefault,
+  codexEffectiveDefault,
   GrokCapabilityProbe,
   grokModelsProvedLive,
   recordsFromClaudeInitialize,
   recordsFromCodexModelList,
   recordsFromGrokModels,
-  claudeEffectiveDefault,
-  codexEffectiveDefault,
+  recordsFromKimiProviderList,
 } from "../../src/daemon/capability-discovery";
 import {
-  CapabilityRecordSchema,
   type CapabilityRecord,
+  CapabilityRecordSchema,
   capabilityFreshness,
   capabilityKey,
   fingerprintAccount,
@@ -85,7 +86,8 @@ const CLAUDE_INITIALIZE = {
       value: "default",
       resolvedModel: "claude-opus-4-8[1m]",
       displayName: "Default (recommended)",
-      description: "Opus 4.8 with 1M context · Best for everyday, complex tasks",
+      description:
+        "Opus 4.8 with 1M context · Best for everyday, complex tasks",
       supportsEffort: true,
       supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
       supportsAdaptiveThinking: true,
@@ -96,7 +98,8 @@ const CLAUDE_INITIALIZE = {
       value: "opus[1m]",
       resolvedModel: "claude-opus-4-8[1m]",
       displayName: "Opus",
-      description: "Opus 4.8 with 1M context · Best for everyday, complex tasks",
+      description:
+        "Opus 4.8 with 1M context · Best for everyday, complex tasks",
       supportsEffort: true,
       supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
       supportsAdaptiveThinking: true,
@@ -107,7 +110,8 @@ const CLAUDE_INITIALIZE = {
       value: "claude-fable-5[1m]",
       resolvedModel: "claude-fable-5",
       displayName: "Fable",
-      description: "Fable 5 · Most capable for your hardest and longest-running tasks",
+      description:
+        "Fable 5 · Most capable for your hardest and longest-running tasks",
       supportsEffort: true,
       supportedEffortLevels: ["low", "medium", "high", "xhigh", "max"],
       supportsAdaptiveThinking: true,
@@ -149,7 +153,12 @@ const CODEX_MODEL_LIST = {
       hidden: false,
       isDefault: true,
       defaultReasoningEffort: "medium",
-      supportedReasoningEfforts: effortObjects("low", "medium", "high", "xhigh"),
+      supportedReasoningEfforts: effortObjects(
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ),
       inputModalities: ["text", "image"],
     },
     {
@@ -178,7 +187,12 @@ const CODEX_MODEL_LIST = {
       hidden: false,
       isDefault: false,
       defaultReasoningEffort: "high",
-      supportedReasoningEfforts: effortObjects("low", "medium", "high", "xhigh"),
+      supportedReasoningEfforts: effortObjects(
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ),
       inputModalities: ["text"],
     },
     {
@@ -188,14 +202,23 @@ const CODEX_MODEL_LIST = {
       hidden: true,
       isDefault: false,
       defaultReasoningEffort: "medium",
-      supportedReasoningEfforts: effortObjects("low", "medium", "high", "xhigh"),
+      supportedReasoningEfforts: effortObjects(
+        "low",
+        "medium",
+        "high",
+        "xhigh",
+      ),
       inputModalities: ["text", "image"],
     },
   ],
 };
 
 const CODEX_ACCOUNT = {
-  account: { type: "chatgpt", email: "someone@example.com", planType: "prolite" },
+  account: {
+    type: "chatgpt",
+    email: "someone@example.com",
+    planType: "prolite",
+  },
   requiresOpenaiAuth: false,
 };
 
@@ -270,7 +293,10 @@ describe("claude initialize → capability records", () => {
 
   test("records the effort fields the vendor did send, unmerged", () => {
     const sonnet = byId(claudeRecords(), "claude-sonnet-5");
-    expect(sonnet.supportsEffort).toMatchObject({ state: "known", value: true });
+    expect(sonnet.supportsEffort).toMatchObject({
+      state: "known",
+      value: true,
+    });
     expect(sonnet.supportedEffortLevels).toMatchObject({
       state: "known",
       value: ["low", "medium", "high", "xhigh", "max"],
@@ -337,21 +363,24 @@ describe("Grok models catalog", () => {
     const records = recordsFromGrokModels(stale, OBSERVED_AT);
     expect(records).toHaveLength(2);
     expect(records[0]?.observedAt).toBe("2026-07-12T11:00:00.000Z");
-    const result = await new GrokCapabilityProbe({ readCatalog: async () => stale })
-      .read();
+    const result = await new GrokCapabilityProbe({
+      readCatalog: async () => stale,
+    }).read();
     expect(result).toMatchObject({ status: "ok" });
   });
 
   test("requires positive live-fetch evidence instead of trusting exit zero", () => {
-    expect(grokModelsProvedLive(
-      "Fetched remote settings from cli-chat-proxy\n",
-    )).toBe(true);
-    expect(grokModelsProvedLive(
-      "Fetched 2 models from https://cli-chat-proxy.grok.com/v1/models\n",
-    )).toBe(true);
-    expect(grokModelsProvedLive(
-      "Settings fetch failed after 3 attempts\n",
-    )).toBe(false);
+    expect(
+      grokModelsProvedLive("Fetched remote settings from cli-chat-proxy\n"),
+    ).toBe(true);
+    expect(
+      grokModelsProvedLive(
+        "Fetched 2 models from https://cli-chat-proxy.grok.com/v1/models\n",
+      ),
+    ).toBe(true);
+    expect(
+      grokModelsProvedLive("Settings fetch failed after 3 attempts\n"),
+    ).toBe(false);
     expect(grokModelsProvedLive("")).toBe(false);
   });
 
@@ -363,8 +392,9 @@ describe("Grok models catalog", () => {
     };
 
     expect(recordsFromGrokModels(future, OBSERVED_AT)).toHaveLength(2);
-    expect(await new GrokCapabilityProbe({ readCatalog: async () => future }).read())
-      .toMatchObject({ status: "ok" });
+    expect(
+      await new GrokCapabilityProbe({ readCatalog: async () => future }).read(),
+    ).toMatchObject({ status: "ok" });
   });
 
   test("admits an unrecognized CLI version when the live catalog is coherent", async () => {
@@ -373,9 +403,11 @@ describe("Grok models catalog", () => {
 
     expect(records).toHaveLength(2);
     expect(records[0]?.cliVersion).toBe("unknown");
-    expect(await new GrokCapabilityProbe({
-      readCatalog: async () => unknownVersion,
-    }).read()).toMatchObject({ status: "ok" });
+    expect(
+      await new GrokCapabilityProbe({
+        readCatalog: async () => unknownVersion,
+      }).read(),
+    ).toMatchObject({ status: "ok" });
   });
 
   test("fails closed on a changed or incoherent runtime catalog", async () => {
@@ -416,8 +448,11 @@ describe("Grok models catalog", () => {
 
     for (const payload of [wrongVersion, wrongId, wrongEffort]) {
       expect(recordsFromGrokModels(payload, OBSERVED_AT)).toEqual([]);
-      expect(await new GrokCapabilityProbe({ readCatalog: async () => payload }).read())
-        .toMatchObject({ status: "unavailable" });
+      expect(
+        await new GrokCapabilityProbe({
+          readCatalog: async () => payload,
+        }).read(),
+      ).toMatchObject({ status: "unavailable" });
     }
   });
 });
@@ -481,11 +516,13 @@ describe("codex model/list → capability records", () => {
   test("an unreadable effort list is malformed, not an empty capability", () => {
     const records = recordsFromCodexModelList(
       {
-        data: [{
-          id: "gpt-weird",
-          displayName: "Weird",
-          supportedReasoningEfforts: [{ notTheField: "low" }],
-        }],
+        data: [
+          {
+            id: "gpt-weird",
+            displayName: "Weird",
+            supportedReasoningEfforts: [{ notTheField: "low" }],
+          },
+        ],
       },
       CODEX_ACCOUNT,
       CODEX_CLI,
@@ -507,18 +544,15 @@ describe("provenance and identity", () => {
   test("every record validates, and every fact names its own surface", () => {
     for (const record of [...claudeRecords(), ...codexRecords()]) {
       expect(() => CapabilityRecordSchema.parse(record)).not.toThrow();
-      const expected = record.provider === "claude"
-        ? "claude.initialize"
-        : "codex.model/list";
-      for (
-        const fact of [
-          record.entitled,
-          record.hidden,
-          record.supportsEffort,
-          record.supportedEffortLevels,
-          record.defaultEffort,
-        ]
-      ) {
+      const expected =
+        record.provider === "claude" ? "claude.initialize" : "codex.model/list";
+      for (const fact of [
+        record.entitled,
+        record.hidden,
+        record.supportsEffort,
+        record.supportedEffortLevels,
+        record.defaultEffort,
+      ]) {
         expect(fact.surface).toBe(expected);
         expect(fact.observedAt).toBe(OBSERVED_AT);
       }
@@ -533,10 +567,12 @@ describe("provenance and identity", () => {
   });
 
   test("the fingerprint is stable, and distinct across providers", () => {
-    expect(fingerprintAccount("claude", ["a@b.com", "Org"]))
-      .toBe(fingerprintAccount("claude", ["a@b.com", "Org"]));
-    expect(fingerprintAccount("claude", ["a@b.com"]))
-      .not.toBe(fingerprintAccount("codex", ["a@b.com"]));
+    expect(fingerprintAccount("claude", ["a@b.com", "Org"])).toBe(
+      fingerprintAccount("claude", ["a@b.com", "Org"]),
+    );
+    expect(fingerprintAccount("claude", ["a@b.com"])).not.toBe(
+      fingerprintAccount("codex", ["a@b.com"]),
+    );
     // An unreadable account still keys, rather than throwing or colliding.
     expect(fingerprintAccount("codex", [null, undefined])).toBe(
       "codex:unidentified",
@@ -551,7 +587,9 @@ describe("provenance and identity", () => {
     expect(capabilityKey({ ...opus, variant: null })).not.toBe(base);
     // A catalog read from 2.1.207 is not a claim about 2.2's.
     expect(capabilityKey({ ...opus, cliVersion: "2.2.0" })).not.toBe(base);
-    expect(capabilityKey({ ...opus, accountFingerprint: "other" })).not.toBe(base);
+    expect(capabilityKey({ ...opus, accountFingerprint: "other" })).not.toBe(
+      base,
+    );
   });
 
   test("splitVariant leaves an unbracketed name alone", () => {
@@ -568,15 +606,18 @@ describe("freshness", () => {
 
   test("a record inside the TTL is fresh; past it, stale", () => {
     const record = { observedAt: OBSERVED_AT };
-    expect(capabilityFreshness(record, 30, at("2026-07-11T12:29:00.000Z")))
-      .toBe("fresh");
-    expect(capabilityFreshness(record, 30, at("2026-07-11T12:31:00.000Z")))
-      .toBe("stale");
+    expect(
+      capabilityFreshness(record, 30, at("2026-07-11T12:29:00.000Z")),
+    ).toBe("fresh");
+    expect(
+      capabilityFreshness(record, 30, at("2026-07-11T12:31:00.000Z")),
+    ).toBe("stale");
   });
 
   test("an unparseable timestamp is stale, never fresh", () => {
-    expect(capabilityFreshness({ observedAt: "not-a-date" }, 30, at(OBSERVED_AT)))
-      .toBe("stale");
+    expect(
+      capabilityFreshness({ observedAt: "not-a-date" }, 30, at(OBSERVED_AT)),
+    ).toBe("stale");
   });
 });
 
@@ -631,10 +672,15 @@ describe("the effective default: what an unflagged launch actually runs", () => 
 
   test("codex reads config/read, whose keys came off the live wire", () => {
     // codex-cli 0.144.1's real payload shape, snake_case and all.
-    const effective = codexEffectiveDefault({
-      config: { model: "gpt-5.6-sol", model_reasoning_effort: "xhigh" },
-    }, AT);
-    expect(effective.model).toEqual(known("gpt-5.6-sol", "codex.config/read", AT));
+    const effective = codexEffectiveDefault(
+      {
+        config: { model: "gpt-5.6-sol", model_reasoning_effort: "xhigh" },
+      },
+      AT,
+    );
+    expect(effective.model).toEqual(
+      known("gpt-5.6-sol", "codex.config/read", AT),
+    );
     expect(effective.effort).toEqual(known("xhigh", "codex.config/read", AT));
   });
 
@@ -648,36 +694,51 @@ describe("the effective default: what an unflagged launch actually runs", () => 
       "0.144.1",
       AT,
     );
-    const effective = codexEffectiveDefault({
-      config: { model: "gpt-5.6-sol", model_reasoning_effort: "xhigh" },
-    }, AT);
+    const effective = codexEffectiveDefault(
+      {
+        config: { model: "gpt-5.6-sol", model_reasoning_effort: "xhigh" },
+      },
+      AT,
+    );
     expect(records[0]!.canonicalId).toBe("gpt-5.5");
-    expect(effective.model.state === "known" && effective.model.value)
-      .toBe("gpt-5.6-sol");
+    expect(effective.model.state === "known" && effective.model.value).toBe(
+      "gpt-5.6-sol",
+    );
   });
 
   test("a config that pins no model is unknown, never a guessed one", () => {
-    const effective = codexEffectiveDefault({
-      config: { model: null, model_reasoning_effort: null },
-    }, AT);
+    const effective = codexEffectiveDefault(
+      {
+        config: { model: null, model_reasoning_effort: null },
+      },
+      AT,
+    );
     expect(effective.model.state).toBe("unknown");
     expect(effective.effort.state).toBe("unknown");
   });
 
   test("an unreadable config is malformed, which is not 'the vendor said none'", () => {
     const effective = codexEffectiveDefault("not a config at all", AT);
-    expect(effective.model).toEqual(unknown("malformed", "codex.config/read", AT));
+    expect(effective.model).toEqual(
+      unknown("malformed", "codex.config/read", AT),
+    );
   });
 
   test("claude's default is the menu entry, and its effort stays unknown", () => {
-    const records = recordsFromClaudeInitialize({
-      models: [
-        { value: "default", resolvedModel: "claude-opus-4-8[1m]" },
-        { value: "sonnet", resolvedModel: "claude-sonnet-5" },
-      ],
-    }, "2.1.207", AT);
+    const records = recordsFromClaudeInitialize(
+      {
+        models: [
+          { value: "default", resolvedModel: "claude-opus-4-8[1m]" },
+          { value: "sonnet", resolvedModel: "claude-sonnet-5" },
+        ],
+      },
+      "2.1.207",
+      AT,
+    );
     const effective = claudeEffectiveDefault(records, AT);
-    expect(effective.model).toEqual(known("claude-opus-4-8", "claude.initialize", AT));
+    expect(effective.model).toEqual(
+      known("claude-opus-4-8", "claude.initialize", AT),
+    );
     // Claude publishes no per-model effort anywhere. Discovery cannot name an
     // unflagged launch's effort before the live statusLine observes it, and a
     // shipped `medium` here would be a Hive guess wearing vendor authority.
@@ -687,9 +748,109 @@ describe("the effective default: what an unflagged launch actually runs", () => 
   });
 
   test("a menu with no default entry is unknown, not the first model listed", () => {
-    const records = recordsFromClaudeInitialize({
-      models: [{ value: "sonnet", resolvedModel: "claude-sonnet-5" }],
-    }, "2.1.207", AT);
+    const records = recordsFromClaudeInitialize(
+      {
+        models: [{ value: "sonnet", resolvedModel: "claude-sonnet-5" }],
+      },
+      "2.1.207",
+      AT,
+    );
     expect(claudeEffectiveDefault(records, AT).model.state).toBe("unknown");
+  });
+});
+
+describe("kimi provider list → capability records", () => {
+  // The real `kimi provider list --json` shape, measured 2026-07-24: the
+  // alias is the key, the raw model id is the entry's `model` field.
+  const KIMI_PAYLOAD = {
+    list: {
+      providers: {
+        "managed:kimi-code": {
+          type: "kimi",
+          baseUrl: "https://api.kimi.com/coding/v1",
+        },
+      },
+      models: {
+        "kimi-code/k3": {
+          provider: "managed:kimi-code",
+          model: "k3",
+          displayName: "K3",
+          supportEfforts: ["low", "high", "max"],
+          defaultEffort: "high",
+        },
+        "kimi-code/kimi-for-coding": {
+          provider: "managed:kimi-code",
+          model: "kimi-for-coding",
+          displayName: "K2.7 Coding",
+        },
+      },
+    },
+    defaultModel: "kimi-code/k3",
+    defaultEffort: "high",
+    cliVersion: "0.28.1",
+  };
+
+  test("the canonical id IS the launchable alias, never the raw model id", () => {
+    const records = recordsFromKimiProviderList(KIMI_PAYLOAD, OBSERVED_AT);
+    expect(records.map((record) => record.canonicalId)).toEqual([
+      "kimi-code/k3",
+      "kimi-code/kimi-for-coding",
+    ]);
+    // Chain seeds, chain entries, and `kimi -m` all carry canonicalId
+    // verbatim, so launchToken and canonicalId must be one id — the bug
+    // behind "model no longer offered" on every seeded kimi link.
+    for (const record of records) {
+      expect(record.launchToken).toBe(record.canonicalId);
+    }
+    expect(records[0]?.supportedEffortLevels).toMatchObject({
+      state: "known",
+      value: ["low", "high", "max"],
+    });
+    expect(records[0]?.defaultEffort).toMatchObject({
+      state: "known",
+      value: "high",
+    });
+    expect(records[1]?.supportedEffortLevels).toMatchObject({
+      state: "unknown",
+      reason: "field-absent",
+    });
+    for (const record of records) {
+      expect(CapabilityRecordSchema.parse(record)).toBeDefined();
+    }
+  });
+
+  test("the seed-path invariant: the effective default resolves against the catalog", () => {
+    // The first-boot seed writes vendorDefaults from effectiveDefault and the
+    // workspace derives a link's status by canonicalId match; if the two
+    // spellings diverge, every seeded kimi row reads "model no longer
+    // offered". This is the regression the badge reported.
+    const records = recordsFromKimiProviderList(KIMI_PAYLOAD, OBSERVED_AT);
+    expect(
+      records.some(
+        (record) => record.canonicalId === KIMI_PAYLOAD.defaultModel,
+      ),
+    ).toBe(true);
+  });
+
+  test("aliases for one raw model collapse with every alias launchable", () => {
+    const records = recordsFromKimiProviderList(
+      {
+        ...KIMI_PAYLOAD,
+        list: {
+          providers: KIMI_PAYLOAD.list.providers,
+          models: {
+            "kimi-code/k3": KIMI_PAYLOAD.list.models["kimi-code/k3"],
+            "kimi-code/k3-again": {
+              provider: "managed:kimi-code",
+              model: "k3",
+            },
+          },
+        },
+      },
+      OBSERVED_AT,
+    );
+    expect(records).toHaveLength(1);
+    expect(records[0]?.canonicalId).toBe("kimi-code/k3");
+    expect(records[0]?.aliases).toEqual(["kimi-code/k3-again"]);
   });
 });

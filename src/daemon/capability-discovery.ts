@@ -1,23 +1,22 @@
-import { tmpdir } from "node:os";
-import { homedir } from "node:os";
 import { mkdtemp, readFile, rm } from "node:fs/promises";
+import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { z } from "zod";
+import { probeGrokCliVersion } from "../adapters/tools/grok";
+import { probeOpencodeDefaultModel } from "../adapters/tools/opencode";
 import {
   type CapabilityProvider,
   type CapabilityRecord,
+  capabilityKey,
   type Discovered,
   type EffectiveDefault,
-  capabilityKey,
   fingerprintAccount,
   known,
   splitVariant,
   unknown,
 } from "../schemas/capability";
-import { pendingControlResponses, pendingResponses } from "./quota-sources";
 import { HIVE_VERSION } from "../version";
-import { probeGrokCliVersion } from "../adapters/tools/grok";
-import { probeOpencodeDefaultModel } from "../adapters/tools/opencode";
+import { pendingControlResponses, pendingResponses } from "./quota-sources";
 
 /**
  * Runtime capability discovery.
@@ -48,11 +47,11 @@ const DISCOVERY_TIMEOUT_MS = 10_000;
 
 export type CapabilityDiscoveryResult =
   | {
-    status: "ok";
-    records: CapabilityRecord[];
-    /** What an unflagged launch on this account runs: the ladder's second rung. */
-    effectiveDefault: EffectiveDefault;
-  }
+      status: "ok";
+      records: CapabilityRecord[];
+      /** What an unflagged launch on this account runs: the ladder's second rung. */
+      effectiveDefault: EffectiveDefault;
+    }
   | { status: "unavailable"; reason: string };
 
 // --------------------------------------------------------------------------
@@ -65,27 +64,33 @@ export type CapabilityDiscoveryResult =
  * `supportsEffort` nor `supportedEffortLevels`. `passthrough` keeps fields a
  * future CLI adds rather than dropping them at the boundary.
  */
-const ClaudeModelEntrySchema = z.object({
-  value: z.string().nullable().optional(),
-  resolvedModel: z.string().nullable().optional(),
-  displayName: z.string().nullable().optional(),
-  supportsEffort: z.boolean().nullable().optional(),
-  supportedEffortLevels: z.array(z.string()).nullable().optional(),
-}).passthrough();
+const ClaudeModelEntrySchema = z
+  .object({
+    value: z.string().nullable().optional(),
+    resolvedModel: z.string().nullable().optional(),
+    displayName: z.string().nullable().optional(),
+    supportsEffort: z.boolean().nullable().optional(),
+    supportedEffortLevels: z.array(z.string()).nullable().optional(),
+  })
+  .passthrough();
 
 /**
  * The account block. Email and organization are read to fingerprint the account
  * and are never stored, logged, or returned.
  */
-const ClaudeAccountSchema = z.object({
-  email: z.string().nullable().optional(),
-  organization: z.string().nullable().optional(),
-}).passthrough();
+const ClaudeAccountSchema = z
+  .object({
+    email: z.string().nullable().optional(),
+    organization: z.string().nullable().optional(),
+  })
+  .passthrough();
 
-const ClaudeInitializeSchema = z.object({
-  models: z.array(ClaudeModelEntrySchema).nullable().optional(),
-  account: ClaudeAccountSchema.nullable().optional(),
-}).passthrough();
+const ClaudeInitializeSchema = z
+  .object({
+    models: z.array(ClaudeModelEntrySchema).nullable().optional(),
+    account: ClaudeAccountSchema.nullable().optional(),
+  })
+  .passthrough();
 
 const CLAUDE = "claude.initialize" as const;
 
@@ -141,9 +146,8 @@ export function recordsFromClaudeInitialize(
       // Never the variant: `--model` rejects the bracketed form.
       launchToken: canonicalId,
       displayName: entry.displayName ?? null,
-      aliases: entry.value === null || entry.value === undefined
-        ? []
-        : [entry.value],
+      aliases:
+        entry.value === null || entry.value === undefined ? [] : [entry.value],
       // Presence in an account-scoped menu is the only entitlement evidence
       // Claude offers. It is positive evidence, so it is recorded as such.
       entitled: known(true, CLAUDE, observedAt),
@@ -152,14 +156,15 @@ export function recordsFromClaudeInitialize(
       hidden: unknown("surface-silent", CLAUDE, observedAt),
       // Absent on Haiku. Absent is not `false`: it may mean unsupported,
       // rollout-gated, or missing from this protocol version.
-      supportsEffort: entry.supportsEffort === null ||
-          entry.supportsEffort === undefined
-        ? unknown("field-absent", CLAUDE, observedAt)
-        : known(entry.supportsEffort, CLAUDE, observedAt),
-      supportedEffortLevels: entry.supportedEffortLevels === null ||
-          entry.supportedEffortLevels === undefined
-        ? unknown("field-absent", CLAUDE, observedAt)
-        : known([...entry.supportedEffortLevels], CLAUDE, observedAt),
+      supportsEffort:
+        entry.supportsEffort === null || entry.supportsEffort === undefined
+          ? unknown("field-absent", CLAUDE, observedAt)
+          : known(entry.supportsEffort, CLAUDE, observedAt),
+      supportedEffortLevels:
+        entry.supportedEffortLevels === null ||
+        entry.supportedEffortLevels === undefined
+          ? unknown("field-absent", CLAUDE, observedAt)
+          : known([...entry.supportedEffortLevels], CLAUDE, observedAt),
       // Claude's menu carries no per-model recommended effort at all.
       defaultEffort: unknown("surface-silent", CLAUDE, observedAt),
       observedAt,
@@ -178,7 +183,10 @@ export function recordsFromClaudeInitialize(
  * knows it, because presence is positive evidence and absence is not evidence of
  * anything.
  */
-function merge(base: CapabilityRecord, next: CapabilityRecord): CapabilityRecord {
+function merge(
+  base: CapabilityRecord,
+  next: CapabilityRecord,
+): CapabilityRecord {
   const prefer = <T>(a: Discovered<T>, b: Discovered<T>): Discovered<T> =>
     a.state === "known" ? a : b;
   return {
@@ -213,11 +221,12 @@ export function claudeEffectiveDefault(
   const entry = records.find((record) => record.aliases.includes("default"));
   return {
     provider: "claude",
-    model: entry === undefined
-      // The menu answered and carried no `default` entry. That is this menu
-      // lacking the field, not Claude lacking a default.
-      ? unknown("field-absent", CLAUDE, observedAt)
-      : known(entry.canonicalId, CLAUDE, observedAt),
+    model:
+      entry === undefined
+        ? // The menu answered and carried no `default` entry. That is this menu
+          // lacking the field, not Claude lacking a default.
+          unknown("field-absent", CLAUDE, observedAt)
+        : known(entry.canonicalId, CLAUDE, observedAt),
     effort: unknown("surface-silent", CLAUDE, observedAt),
   };
 }
@@ -234,12 +243,18 @@ const CODEX_CONFIG = "codex.config/read" as const;
  * it reads back as `null`, and a column of nulls is indistinguishable from a
  * vendor that genuinely said nothing.
  */
-const CodexConfigSchema = z.object({
-  config: z.object({
-    model: z.string().nullable().optional(),
-    model_reasoning_effort: z.string().nullable().optional(),
-  }).passthrough().nullable().optional(),
-}).passthrough();
+const CodexConfigSchema = z
+  .object({
+    config: z
+      .object({
+        model: z.string().nullable().optional(),
+        model_reasoning_effort: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 /**
  * What a no-flag Codex launch runs on this machine.
@@ -281,27 +296,42 @@ export function codexEffectiveDefault(
  * is a list of *objects*, not of strings: each carries the level and the vendor's
  * own description of it. Only the level is a routing fact.
  */
-const CodexModelEntrySchema = z.object({
-  id: z.string().nullable().optional(),
-  model: z.string().nullable().optional(),
-  displayName: z.string().nullable().optional(),
-  hidden: z.boolean().nullable().optional(),
-  defaultReasoningEffort: z.string().nullable().optional(),
-  supportedReasoningEfforts: z.array(
-    z.object({ reasoningEffort: z.string().nullable().optional() }).passthrough(),
-  ).nullable().optional(),
-}).passthrough();
+const CodexModelEntrySchema = z
+  .object({
+    id: z.string().nullable().optional(),
+    model: z.string().nullable().optional(),
+    displayName: z.string().nullable().optional(),
+    hidden: z.boolean().nullable().optional(),
+    defaultReasoningEffort: z.string().nullable().optional(),
+    supportedReasoningEfforts: z
+      .array(
+        z
+          .object({ reasoningEffort: z.string().nullable().optional() })
+          .passthrough(),
+      )
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
-const CodexModelListSchema = z.object({
-  data: z.array(CodexModelEntrySchema),
-}).passthrough();
+const CodexModelListSchema = z
+  .object({
+    data: z.array(CodexModelEntrySchema),
+  })
+  .passthrough();
 
-const CodexAccountSchema = z.object({
-  account: z.object({
-    email: z.string().nullable().optional(),
-    planType: z.string().nullable().optional(),
-  }).passthrough().nullable().optional(),
-}).passthrough();
+const CodexAccountSchema = z
+  .object({
+    account: z
+      .object({
+        email: z.string().nullable().optional(),
+        planType: z.string().nullable().optional(),
+      })
+      .passthrough()
+      .nullable()
+      .optional(),
+  })
+  .passthrough();
 
 const CODEX = "codex.model/list" as const;
 
@@ -331,7 +361,8 @@ export function recordsFromCodexModelList(
   for (const entry of parsed.data.data) {
     const canonicalId = entry.id ?? entry.model;
     if (
-      canonicalId === null || canonicalId === undefined ||
+      canonicalId === null ||
+      canonicalId === undefined ||
       canonicalId.length === 0
     ) {
       continue;
@@ -346,18 +377,23 @@ export function recordsFromCodexModelList(
       displayName: entry.displayName ?? null,
       aliases: [],
       entitled: known(true, CODEX, observedAt),
-      hidden: entry.hidden === null || entry.hidden === undefined
-        ? unknown("field-absent", CODEX, observedAt)
-        : known(entry.hidden, CODEX, observedAt),
+      hidden:
+        entry.hidden === null || entry.hidden === undefined
+          ? unknown("field-absent", CODEX, observedAt)
+          : known(entry.hidden, CODEX, observedAt),
       // Codex sends no `supportsEffort` boolean for any model. Inferring one
       // from a non-empty effort list is exactly the merge the design forbids: it
       // would fabricate a vendor claim that was never made.
       supportsEffort: unknown("surface-silent", CODEX, observedAt),
-      supportedEffortLevels: effortLevels(entry.supportedReasoningEfforts, observedAt),
-      defaultEffort: entry.defaultReasoningEffort === null ||
-          entry.defaultReasoningEffort === undefined
-        ? unknown("field-absent", CODEX, observedAt)
-        : known(entry.defaultReasoningEffort, CODEX, observedAt),
+      supportedEffortLevels: effortLevels(
+        entry.supportedReasoningEfforts,
+        observedAt,
+      ),
+      defaultEffort:
+        entry.defaultReasoningEffort === null ||
+        entry.defaultReasoningEffort === undefined
+          ? unknown("field-absent", CODEX, observedAt)
+          : known(entry.defaultReasoningEffort, CODEX, observedAt),
       observedAt,
     });
   }
@@ -379,8 +415,8 @@ function effortLevels(
   }
   const levels = efforts
     .map((effort) => effort.reasoningEffort)
-    .filter((level): level is string =>
-      typeof level === "string" && level.length > 0
+    .filter(
+      (level): level is string => typeof level === "string" && level.length > 0,
     );
   if (levels.length === 0 && efforts.length > 0) {
     return unknown("malformed", CODEX, observedAt);
@@ -447,7 +483,9 @@ export async function readCliVersion(
  * records that the build is unknown rather than inventing one. */
 const UNKNOWN_VERSION = "unknown";
 
-export class ClaudeStdioCapabilityTransport implements ClaudeCapabilityTransport {
+export class ClaudeStdioCapabilityTransport
+  implements ClaudeCapabilityTransport
+{
   constructor(
     private readonly argv: readonly string[] = [
       "claude",
@@ -475,11 +513,13 @@ export class ClaudeStdioCapabilityTransport implements ClaudeCapabilityTransport
     const timer = setTimeout(() => child.kill(), timeoutMs);
     try {
       const responses = pendingControlResponses(child.stdout);
-      child.stdin.write(`${JSON.stringify({
-        type: "control_request",
-        request_id: "hive-capabilities",
-        request: { subtype: "initialize" },
-      })}\n`);
+      child.stdin.write(
+        `${JSON.stringify({
+          type: "control_request",
+          request_id: "hive-capabilities",
+          request: { subtype: "initialize" },
+        })}\n`,
+      );
       child.stdin.flush();
       // Only this one frame is ever sent. No user message reaches stdin, so no
       // turn starts and no model is sampled.
@@ -495,7 +535,11 @@ export class ClaudeStdioCapabilityTransport implements ClaudeCapabilityTransport
 
 export class CodexStdioCapabilityTransport implements CodexCapabilityTransport {
   constructor(
-    private readonly argv: readonly string[] = ["codex", "app-server", "--stdio"],
+    private readonly argv: readonly string[] = [
+      "codex",
+      "app-server",
+      "--stdio",
+    ],
     private readonly versionArgv: readonly string[] = ["codex"],
   ) {}
 
@@ -568,8 +612,7 @@ export class ClaudeCapabilityProbe implements CapabilityProbe {
   readonly provider = "claude";
 
   constructor(
-    private readonly transport: ClaudeCapabilityTransport =
-      new ClaudeStdioCapabilityTransport(),
+    private readonly transport: ClaudeCapabilityTransport = new ClaudeStdioCapabilityTransport(),
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -598,9 +641,10 @@ export class ClaudeCapabilityProbe implements CapabilityProbe {
     } catch (error) {
       return {
         status: "unavailable",
-        reason: error instanceof Error
-          ? error.message
-          : "claude capability probe failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "claude capability probe failed",
       };
     }
   }
@@ -610,8 +654,7 @@ export class CodexCapabilityProbe implements CapabilityProbe {
   readonly provider = "codex";
 
   constructor(
-    private readonly transport: CodexCapabilityTransport =
-      new CodexStdioCapabilityTransport(),
+    private readonly transport: CodexCapabilityTransport = new CodexStdioCapabilityTransport(),
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -639,9 +682,10 @@ export class CodexCapabilityProbe implements CapabilityProbe {
     } catch (error) {
       return {
         status: "unavailable",
-        reason: error instanceof Error
-          ? error.message
-          : "codex capability probe failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "codex capability probe failed",
       };
     }
   }
@@ -654,30 +698,36 @@ export class CodexCapabilityProbe implements CapabilityProbe {
 const GROK_MODELS = "grok.models" as const;
 const GROK_MODELS_CACHE = "grok.models_cache" as const;
 
-const GrokReasoningEffortSchema = z.object({
-  value: z.string().min(1),
-  default: z.boolean().optional(),
-}).passthrough();
+const GrokReasoningEffortSchema = z
+  .object({
+    value: z.string().min(1),
+    default: z.boolean().optional(),
+  })
+  .passthrough();
 
-const GrokModelInfoSchema = z.object({
-  id: z.string().min(1),
-  name: z.string().nullable().optional(),
-  hidden: z.boolean(),
-  supports_reasoning_effort: z.boolean(),
-  reasoning_efforts: z.array(GrokReasoningEffortSchema).nullish(),
-}).passthrough();
+const GrokModelInfoSchema = z
+  .object({
+    id: z.string().min(1),
+    name: z.string().nullable().optional(),
+    hidden: z.boolean(),
+    supports_reasoning_effort: z.boolean(),
+    reasoning_efforts: z.array(GrokReasoningEffortSchema).nullish(),
+  })
+  .passthrough();
 
-const GrokModelsCacheSchema = z.object({
-  fetched_at: z.string().min(1),
-  etag: z.string().min(1),
-  grok_version: z.string().min(1),
-  auth_method: z.string().nullable().optional(),
-  origin: z.string().nullable().optional(),
-  models: z.record(
-    z.string().min(1),
-    z.object({ info: GrokModelInfoSchema }).passthrough(),
-  ),
-}).passthrough();
+const GrokModelsCacheSchema = z
+  .object({
+    fetched_at: z.string().min(1),
+    etag: z.string().min(1),
+    grok_version: z.string().min(1),
+    auth_method: z.string().nullable().optional(),
+    origin: z.string().nullable().optional(),
+    models: z.record(
+      z.string().min(1),
+      z.object({ info: GrokModelInfoSchema }).passthrough(),
+    ),
+  })
+  .passthrough();
 
 export interface GrokCapabilityPayload {
   stdout: string;
@@ -698,26 +748,25 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
     const debugRoot = await mkdtemp(join(tmpdir(), "hive-grok-models-"));
     const debugFile = join(debugRoot, "debug.log");
     try {
-      const models = Bun.spawn([
-        this.executable,
-        "models",
-        "--debug",
-        "--debug-file",
-        debugFile,
-      ], {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: timeoutMs,
-        killSignal: "SIGKILL",
-      });
+      const models = Bun.spawn(
+        [this.executable, "models", "--debug", "--debug-file", debugFile],
+        {
+          stdin: "ignore",
+          stdout: "pipe",
+          stderr: "pipe",
+          timeout: timeoutMs,
+          killSignal: "SIGKILL",
+        },
+      );
       const [stdout, stderr, exitCode] = await Promise.all([
         new Response(models.stdout).text(),
         new Response(models.stderr).text(),
         models.exited,
       ]);
       if (exitCode !== 0) {
-        throw new Error(`grok models failed: ${stderr.trim() || `exit ${exitCode}`}`);
+        throw new Error(
+          `grok models failed: ${stderr.trim() || `exit ${exitCode}`}`,
+        );
       }
       const debug = await readFile(debugFile, "utf8");
       if (!grokModelsProvedLive(debug)) {
@@ -739,10 +788,12 @@ export class GrokCliCapabilityTransport implements GrokCapabilityTransport {
 /** Positive liveness evidence measured on Grok builds. The same command
  * offline returns cached stdout and exit 0 but never emits either event. */
 export function grokModelsProvedLive(stderr: string): boolean {
-  return /Fetched remote settings from cli-chat-proxy/.test(stderr) ||
+  return (
+    /Fetched remote settings from cli-chat-proxy/.test(stderr) ||
     /Fetched [1-9]\d* models from https:\/\/cli-chat-proxy\.grok\.com\/v1\/models/.test(
       stderr,
-    );
+    )
+  );
 }
 
 function grokDefaultFromStdout(stdout: string): string | null {
@@ -764,15 +815,21 @@ export function recordsFromGrokModels(
     !Number.isFinite(fetchedAt) ||
     (payload.cliVersion !== UNKNOWN_VERSION &&
       parsed.data.grok_version !== payload.cliVersion)
-  ) return [];
+  )
+    return [];
   const models = Object.entries(parsed.data.models);
-  if (models.some(([key, entry]) => {
-    const info = entry.info;
-    const efforts = info.reasoning_efforts ?? [];
-    return info.id !== key ||
-      (info.supports_reasoning_effort && efforts.length === 0) ||
-      (!info.supports_reasoning_effort && efforts.length > 0);
-  })) return [];
+  if (
+    models.some(([key, entry]) => {
+      const info = entry.info;
+      const efforts = info.reasoning_efforts ?? [];
+      return (
+        info.id !== key ||
+        (info.supports_reasoning_effort && efforts.length === 0) ||
+        (!info.supports_reasoning_effort && efforts.length > 0)
+      );
+    })
+  )
+    return [];
   const cacheObservedAt = new Date(fetchedAt).toISOString();
   const accountFingerprint = fingerprintAccount("grok", [
     parsed.data.auth_method,
@@ -782,8 +839,8 @@ export function recordsFromGrokModels(
     const info = entry.info;
     const reasoningEfforts = info.reasoning_efforts ?? [];
     const efforts = reasoningEfforts.map((effort) => effort.value);
-    const advertisedDefault = reasoningEfforts.find((effort) =>
-      effort.default === true
+    const advertisedDefault = reasoningEfforts.find(
+      (effort) => effort.default === true,
     )?.value;
     return {
       provider: "grok" as const,
@@ -802,9 +859,10 @@ export function recordsFromGrokModels(
         cacheObservedAt,
       ),
       supportedEffortLevels: known(efforts, GROK_MODELS_CACHE, cacheObservedAt),
-      defaultEffort: advertisedDefault === undefined
-        ? unknown("field-absent", GROK_MODELS_CACHE, cacheObservedAt)
-        : known(advertisedDefault, GROK_MODELS_CACHE, cacheObservedAt),
+      defaultEffort:
+        advertisedDefault === undefined
+          ? unknown("field-absent", GROK_MODELS_CACHE, cacheObservedAt)
+          : known(advertisedDefault, GROK_MODELS_CACHE, cacheObservedAt),
       observedAt: cacheObservedAt,
     };
   });
@@ -814,8 +872,7 @@ export class GrokCapabilityProbe implements CapabilityProbe {
   readonly provider = "grok";
 
   constructor(
-    private readonly transport: GrokCapabilityTransport =
-      new GrokCliCapabilityTransport(),
+    private readonly transport: GrokCapabilityTransport = new GrokCliCapabilityTransport(),
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -849,9 +906,10 @@ export class GrokCapabilityProbe implements CapabilityProbe {
     } catch (error) {
       return {
         status: "unavailable",
-        reason: error instanceof Error
-          ? error.message
-          : "grok capability probe failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "grok capability probe failed",
       };
     }
   }
@@ -864,23 +922,29 @@ export class GrokCapabilityProbe implements CapabilityProbe {
 const KIMI_PROVIDER_LIST = "kimi.provider/list" as const;
 const KIMI_CONFIG = "kimi.config" as const;
 
-const KimiProviderEntrySchema = z.object({
-  type: z.string(),
-  baseUrl: z.string().nullable().optional(),
-}).passthrough();
+const KimiProviderEntrySchema = z
+  .object({
+    type: z.string(),
+    baseUrl: z.string().nullable().optional(),
+  })
+  .passthrough();
 
-const KimiModelEntrySchema = z.object({
-  provider: z.string(),
-  model: z.string().min(1),
-  displayName: z.string().nullable().optional(),
-  supportEfforts: z.array(z.string()).nullable().optional(),
-  defaultEffort: z.string().nullable().optional(),
-}).passthrough();
+const KimiModelEntrySchema = z
+  .object({
+    provider: z.string(),
+    model: z.string().min(1),
+    displayName: z.string().nullable().optional(),
+    supportEfforts: z.array(z.string()).nullable().optional(),
+    defaultEffort: z.string().nullable().optional(),
+  })
+  .passthrough();
 
-const KimiProviderListSchema = z.object({
-  providers: z.record(z.string(), KimiProviderEntrySchema),
-  models: z.record(z.string(), KimiModelEntrySchema),
-}).passthrough();
+const KimiProviderListSchema = z
+  .object({
+    providers: z.record(z.string(), KimiProviderEntrySchema),
+    models: z.record(z.string(), KimiModelEntrySchema),
+  })
+  .passthrough();
 
 export interface KimiCapabilityPayload {
   /** The parsed `kimi provider list --json` output. */
@@ -904,16 +968,13 @@ export class KimiCliCapabilityTransport implements KimiCapabilityTransport {
       [this.executable, "--version"],
       UNKNOWN_VERSION,
     );
-    const list = Bun.spawn(
-      [this.executable, "provider", "list", "--json"],
-      {
-        stdin: "ignore",
-        stdout: "pipe",
-        stderr: "pipe",
-        timeout: timeoutMs,
-        killSignal: "SIGKILL",
-      },
-    );
+    const list = Bun.spawn([this.executable, "provider", "list", "--json"], {
+      stdin: "ignore",
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: timeoutMs,
+      killSignal: "SIGKILL",
+    });
     const [stdout, stderr, exitCode] = await Promise.all([
       new Response(list.stdout).text(),
       new Response(list.stderr).text(),
@@ -934,15 +995,22 @@ export class KimiCliCapabilityTransport implements KimiCapabilityTransport {
       if (
         typeof config.default_model === "string" &&
         config.default_model.length > 0
-      ) defaultModel = config.default_model;
+      )
+        defaultModel = config.default_model;
       if (
         typeof config.thinking?.effort === "string" &&
         config.thinking.effort.length > 0
-      ) defaultEffort = config.thinking.effort;
+      )
+        defaultEffort = config.thinking.effort;
     } catch {
       // No config file is a valid install state; the defaults stay unknown.
     }
-    return { list: JSON.parse(stdout), defaultModel, defaultEffort, cliVersion };
+    return {
+      list: JSON.parse(stdout),
+      defaultModel,
+      defaultEffort,
+      cliVersion,
+    };
   }
 }
 
@@ -951,8 +1019,15 @@ export class KimiCliCapabilityTransport implements KimiCapabilityTransport {
  * the operator's configured aliases, not an account menu: presence is the
  * only entitlement evidence the CLI offers, there is no hidden flag on the
  * surface at all, and several aliases can point at one model id — they
- * collapse into one record whose aliases list the rest, as claude's do. The
- * launch token is the alias: `-m` takes an alias, never the raw model id.
+ * collapse into one record whose aliases list the rest, as claude's do.
+ *
+ * The canonical id IS the alias. Every consumer downstream of this record —
+ * first-boot chain seeds, the picker's chain entries, the flagship lookup,
+ * and the spawn itself — carries canonicalId verbatim into `kimi -m`, which
+ * accepts an alias and never the raw model id (`entry.model`). An earlier
+ * shape used the raw id as canonicalId, and every seeded kimi chain entry
+ * derived "model no longer offered" while every fresh entry spawned an
+ * alias kimi could not resolve.
  */
 export function recordsFromKimiProviderList(
   payload: KimiCapabilityPayload,
@@ -962,43 +1037,49 @@ export function recordsFromKimiProviderList(
   if (!parsed.success) return [];
   const accountFingerprint = fingerprintAccount(
     "kimi",
-    Object.entries(parsed.data.providers).map(([id, provider]) =>
-      `${id}@${provider.baseUrl ?? ""}`
+    Object.entries(parsed.data.providers).map(
+      ([id, provider]) => `${id}@${provider.baseUrl ?? ""}`,
     ),
   );
   const grouped = new Map<
     string,
     { aliases: string[]; entry: z.infer<typeof KimiModelEntrySchema> }
   >();
-  for (
-    const [alias, entry] of Object.entries(parsed.data.models).sort(([a], [b]) =>
-      a.localeCompare(b)
-    )
-  ) {
+  for (const [alias, entry] of Object.entries(parsed.data.models).sort(
+    ([a], [b]) => a.localeCompare(b),
+  )) {
     const group = grouped.get(entry.model);
-    if (group === undefined) grouped.set(entry.model, { aliases: [alias], entry });
+    if (group === undefined)
+      grouped.set(entry.model, { aliases: [alias], entry });
     else group.aliases.push(alias);
   }
-  return [...grouped.entries()].map(([model, { aliases, entry }]) => ({
+  return [...grouped.entries()].map(([_model, { aliases, entry }]) => ({
     provider: "kimi" as const,
     accountFingerprint,
     cliVersion: payload.cliVersion,
-    canonicalId: model,
+    canonicalId: aliases[0]!,
     variant: null,
     launchToken: aliases[0]!,
     displayName: entry.displayName ?? null,
     aliases: aliases.slice(1),
     entitled: known(true, KIMI_PROVIDER_LIST, observedAt),
     hidden: unknown("surface-silent", KIMI_PROVIDER_LIST, observedAt),
-    supportsEffort: entry.supportEfforts == null
-      ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
-      : known(entry.supportEfforts.length > 0, KIMI_PROVIDER_LIST, observedAt),
-    supportedEffortLevels: entry.supportEfforts == null
-      ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
-      : known(entry.supportEfforts, KIMI_PROVIDER_LIST, observedAt),
-    defaultEffort: entry.defaultEffort == null
-      ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
-      : known(entry.defaultEffort, KIMI_PROVIDER_LIST, observedAt),
+    supportsEffort:
+      entry.supportEfforts == null
+        ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+        : known(
+            entry.supportEfforts.length > 0,
+            KIMI_PROVIDER_LIST,
+            observedAt,
+          ),
+    supportedEffortLevels:
+      entry.supportEfforts == null
+        ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+        : known(entry.supportEfforts, KIMI_PROVIDER_LIST, observedAt),
+    defaultEffort:
+      entry.defaultEffort == null
+        ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+        : known(entry.defaultEffort, KIMI_PROVIDER_LIST, observedAt),
     observedAt,
   }));
 }
@@ -1007,8 +1088,7 @@ export class KimiCapabilityProbe implements CapabilityProbe {
   readonly provider = "kimi";
 
   constructor(
-    private readonly transport: KimiCapabilityTransport =
-      new KimiCliCapabilityTransport(),
+    private readonly transport: KimiCapabilityTransport = new KimiCliCapabilityTransport(),
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -1028,20 +1108,23 @@ export class KimiCapabilityProbe implements CapabilityProbe {
         records,
         effectiveDefault: {
           provider: "kimi",
-          model: payload.defaultModel === null
-            ? unknown("field-absent", KIMI_CONFIG, observedAt)
-            : known(payload.defaultModel, KIMI_CONFIG, observedAt),
-          effort: payload.defaultEffort === null
-            ? unknown("field-absent", KIMI_CONFIG, observedAt)
-            : known(payload.defaultEffort, KIMI_CONFIG, observedAt),
+          model:
+            payload.defaultModel === null
+              ? unknown("field-absent", KIMI_CONFIG, observedAt)
+              : known(payload.defaultModel, KIMI_CONFIG, observedAt),
+          effort:
+            payload.defaultEffort === null
+              ? unknown("field-absent", KIMI_CONFIG, observedAt)
+              : known(payload.defaultEffort, KIMI_CONFIG, observedAt),
         },
       };
     } catch (error) {
       return {
         status: "unavailable",
-        reason: error instanceof Error
-          ? error.message
-          : "kimi capability probe failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "kimi capability probe failed",
       };
     }
   }
@@ -1067,7 +1150,8 @@ export interface OpencodeCapabilityTransport {
 }
 
 export class OpencodeCliCapabilityTransport
-  implements OpencodeCapabilityTransport {
+  implements OpencodeCapabilityTransport
+{
   constructor(private readonly executable = "opencode") {}
 
   async readCatalog(timeoutMs: number): Promise<OpencodeCapabilityPayload> {
@@ -1115,8 +1199,9 @@ export function recordsFromOpencodeModels(
     .split("\n")
     .map((line) => line.trim())
     .filter((line) => /^[^\s/]+\/[^\s]+$/.test(line));
-  const providers = [...new Set(lines.map((line) => line.split("/")[0]!))]
-    .sort();
+  const providers = [
+    ...new Set(lines.map((line) => line.split("/")[0]!)),
+  ].sort();
   const accountFingerprint = fingerprintAccount("opencode", providers);
   return lines.map((line) => ({
     provider: "opencode" as const,
@@ -1144,8 +1229,7 @@ export class OpencodeCapabilityProbe implements CapabilityProbe {
   readonly provider = "opencode";
 
   constructor(
-    private readonly transport: OpencodeCapabilityTransport =
-      new OpencodeCliCapabilityTransport(),
+    private readonly transport: OpencodeCapabilityTransport = new OpencodeCliCapabilityTransport(),
     private readonly clock: () => Date = () => new Date(),
   ) {}
 
@@ -1165,18 +1249,20 @@ export class OpencodeCapabilityProbe implements CapabilityProbe {
         records,
         effectiveDefault: {
           provider: "opencode",
-          model: payload.defaultModel === null
-            ? unknown("field-absent", OPENCODE_CONFIG, observedAt)
-            : known(payload.defaultModel, OPENCODE_CONFIG, observedAt),
+          model:
+            payload.defaultModel === null
+              ? unknown("field-absent", OPENCODE_CONFIG, observedAt)
+              : known(payload.defaultModel, OPENCODE_CONFIG, observedAt),
           effort: unknown("surface-silent", OPENCODE_CONFIG, observedAt),
         },
       };
     } catch (error) {
       return {
         status: "unavailable",
-        reason: error instanceof Error
-          ? error.message
-          : "opencode capability probe failed",
+        reason:
+          error instanceof Error
+            ? error.message
+            : "opencode capability probe failed",
       };
     }
   }
