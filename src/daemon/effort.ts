@@ -33,12 +33,14 @@ const PROVED_EFFORT_ORDER: Record<CapabilityProvider, readonly string[]> = {
   claude: ["low", "medium", "high", "xhigh", "max"],
   codex: ["none", "minimal", "low", "medium", "high", "xhigh", "max", "ultra"],
   grok: ["low", "medium", "high"],
+  kimi: ["low", "medium", "high", "xhigh", "max"],
 };
 
 const EFFORT_ORDER_BASIS: Record<CapabilityProvider, string> = {
   claude: "Claude effort documentation and the model's advertised levels",
   codex: "Codex model/list descriptions and OpenAI reasoning-effort documentation",
   grok: "xAI reasoning-effort documentation and the model's advertised levels",
+  kimi: "Kimi Code thinking-effort documentation and the model's advertised levels",
 };
 
 export function codingTierForCategory(category: RoutingCategory): CodingTier {

@@ -230,6 +230,10 @@ const STUCK_DELIVERY_MS = 5 * 60_000;
  * events table therefore answers "no turn events at all" for a healthy agent
  * and for a dead one alike, and waiting for one is waiting forever.
  *
+ * Kimi posts nothing either, for a different reason: its CLI has hooks, but
+ * they are declared only in the operator's global `~/.kimi-code/config.toml`,
+ * which Hive never writes — so no Hive-wired hook stream exists for kimi.
+ *
  * Grok's turns are still observable — just on another surface: its own session
  * transcript, which refreshToolTelemetry folds into the agent row's
  * lastEventAt and status. That is the surface to read for grok.
@@ -240,6 +244,7 @@ export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
     case "codex":
       return true;
     case "grok":
+    case "kimi":
       return false;
     default:
       return unknownVendor(tool, "reportsTurnEvents");

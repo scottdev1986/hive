@@ -15,7 +15,7 @@ export type SessionLocator = Readonly<{
 export type SessionSpec = Readonly<{
   schemaVersion: 1;
   locator: SessionLocator;
-  provider: "claude" | "codex" | "grok";
+  provider: "claude" | "codex" | "grok" | "kimi";
   toolSessionId: string | null;
   cwd: string;                    // canonical absolute worktree/repository path
   argv: readonly [string, ...string[]];

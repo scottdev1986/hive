@@ -53,6 +53,11 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
     cliVersion: z.string().min(1),
     cliBuildHash: z.string().min(1),
   }),
+  z.strictObject({
+    tool: z.literal("kimi"),
+    model: z.string().min(1),
+    effort: EffortLevelSchema.optional(),
+  }),
 ]);
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;

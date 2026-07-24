@@ -44,10 +44,11 @@ describe("identifyModelVendor", () => {
     const unreadable = { claude: { status: "unavailable", reason: "offline" } } as const;
     expect(identifyModelVendor("mystery", unreadable).state).toBe("unreadable");
 
-    const collision: Partial<Record<"claude" | "codex" | "grok", ProviderDiscovery>> = {
+    const collision: Partial<Record<"claude" | "codex" | "grok" | "kimi", ProviderDiscovery>> = {
       claude: { status: "ok", records: [record("claude", "shared")], effectiveDefault: effectiveDefault("claude") },
       codex: { status: "ok", records: [record("codex", "shared")], effectiveDefault: effectiveDefault("codex") },
       grok: { status: "ok", records: [], effectiveDefault: { provider: "grok", model: unknown<string>("field-absent", "grok.models", AT), effort: unknown<string>("field-absent", "grok.models", AT) } },
+      kimi: { status: "ok", records: [], effectiveDefault: { provider: "kimi", model: unknown<string>("field-absent", "kimi.provider/list", AT), effort: unknown<string>("field-absent", "kimi.provider/list", AT) } },
     };
     expect(identifyModelVendor("shared", collision).state).toBe("unreadable");
     expect(identifyModelVendor("absent", collision)).toEqual({ state: "unclaimed" });

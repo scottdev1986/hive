@@ -22,6 +22,13 @@ import {
   writeGrokAgentConfig,
 } from "../adapters/tools/grok";
 import {
+  buildKimiResumeCommand,
+  discoverKimiRecoverySessionId,
+  wrapKimiSpawnWithEffort,
+  wrapKimiWithInstructionFile,
+  writeKimiAgentConfig,
+} from "../adapters/tools/kimi";
+import {
   ORCHESTRATOR_NAME,
   CapabilityProviderSchema,
   unknownVendor,
@@ -130,11 +137,13 @@ export interface CrashRecoveryDependencies {
   resolveClaudeSessionId?: SessionResolver;
   resolveCodexSessionId?: SessionResolver;
   resolveGrokSessionId?: SessionResolver;
+  resolveKimiSessionId?: SessionResolver;
   worktreeExists?: (path: string) => boolean;
   sleep?: Sleep;
   claudeExecutable?: string;
   codexExecutable?: string;
   grokExecutable?: string;
+  kimiExecutable?: string;
   /** Config-writer seams so tests can resume into synthetic worktrees; the
    * defaults write the real per-worktree agent configs. A failed write fails
    * the resume — the spawn-time config may name a daemon port this restarted
@@ -143,6 +152,7 @@ export interface CrashRecoveryDependencies {
   writeClaudeConfig?: typeof writeClaudeAgentConfig;
   writeCodexConfig?: typeof writeCodexAgentConfig;
   writeGrokConfig?: typeof writeGrokAgentConfig;
+  writeKimiConfig?: typeof writeKimiAgentConfig;
   /** The current writer autonomy, read at resume time so a recovered agent
    * matches the setting the user can see in the Workspace menu — a thunk
    * because the user may flip the dial mid-session. Absent fails safe to the
@@ -180,15 +190,18 @@ export class CrashRecovery {
   private readonly resolveClaude: SessionResolver;
   private readonly resolveCodex: SessionResolver;
   private readonly resolveGrok: SessionResolver;
+  private readonly resolveKimi: SessionResolver;
   private readonly worktreeExists: (path: string) => boolean;
   private readonly wait: Sleep;
   private readonly claudeExecutable: string;
   private readonly codexExecutable: string;
   private readonly grokExecutable: string;
+  private readonly kimiExecutable: string;
   private readonly seedClaudeTrust: (worktreePath: string) => Promise<void>;
   private readonly writeClaudeConfig: typeof writeClaudeAgentConfig;
   private readonly writeCodexConfig: typeof writeCodexAgentConfig;
   private readonly writeGrokConfig: typeof writeGrokAgentConfig;
+  private readonly writeKimiConfig: typeof writeKimiAgentConfig;
   private readonly readCodexActivity: (
     worktreePath: string,
     toolSessionId: string | undefined,
@@ -219,15 +232,20 @@ export class CrashRecovery {
     this.resolveGrok = deps.resolveGrokSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverGrokRecoverySessionId(worktreePath, agentCreatedAt));
+    this.resolveKimi = deps.resolveKimiSessionId ??
+      ((worktreePath, agentCreatedAt) =>
+        discoverKimiRecoverySessionId(worktreePath, agentCreatedAt));
     this.worktreeExists = deps.worktreeExists ?? existsSync;
     this.wait = deps.sleep ?? defaultSleep;
     this.claudeExecutable = deps.claudeExecutable ?? resolveWorkingClaudeExecutable().path;
     this.codexExecutable = deps.codexExecutable ?? "codex";
     this.grokExecutable = deps.grokExecutable ?? "grok";
+    this.kimiExecutable = deps.kimiExecutable ?? "kimi";
     this.seedClaudeTrust = deps.seedClaudeTrust ?? seedClaudeWorktreeTrust;
     this.writeClaudeConfig = deps.writeClaudeConfig ?? writeClaudeAgentConfig;
     this.writeCodexConfig = deps.writeCodexConfig ?? writeCodexAgentConfig;
     this.writeGrokConfig = deps.writeGrokConfig ?? writeGrokAgentConfig;
+    this.writeKimiConfig = deps.writeKimiConfig ?? writeKimiAgentConfig;
     this.readCodexActivity = deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
@@ -532,6 +550,8 @@ export class CrashRecovery {
         return this.resolveCodex(worktreePath, agentCreatedAt);
       case "grok":
         return this.resolveGrok(worktreePath, agentCreatedAt);
+      case "kimi":
+        return this.resolveKimi(worktreePath, agentCreatedAt);
       default:
         return unknownVendor(tool, "crash recovery session resolver");
     }
@@ -670,6 +690,18 @@ export class CrashRecovery {
           }, sessionId);
           break;
         }
+        case "kimi": {
+          await this.writeKimiConfig(worktreePath, {
+            daemonPort: this.daemonPort(),
+          });
+          argv = buildKimiResumeCommand({
+            model,
+            readOnly: record.readOnly,
+            dangerous,
+            executable: this.kimiExecutable,
+          }, sessionId);
+          break;
+        }
         default:
           unknownVendor(record.tool, "crash recovery resume");
       }
@@ -681,6 +713,17 @@ export class CrashRecovery {
               ? wrapGrokWithRulesFile(joined, instructionPath)
               : joined,
           );
+        }
+        if (record.tool === "kimi") {
+          // Effort rides the environment (kimi has no flag for it) and the
+          // recovered brief is reinstalled as .kimi-code/AGENTS.md.
+          const withEffort =
+            identity?.tool === "kimi" && identity.effort !== undefined
+              ? wrapKimiSpawnWithEffort(joined, identity.effort)
+              : joined;
+          return hasInstructions
+            ? wrapKimiWithInstructionFile(withEffort, instructionPath)
+            : withEffort;
         }
         if (record.tool === "codex" && hasInstructions) {
           return wrapCodexWithInstructionProfile(

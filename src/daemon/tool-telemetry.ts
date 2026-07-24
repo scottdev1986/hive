@@ -363,6 +363,11 @@ export function countGraphifyCallLines(
       return countCodexGraphifyCalls(slice);
     case "grok":
       return countGrokGraphifyCalls(slice);
+    case "kimi":
+      // No kimi transcript artifact is wired: readGraphifyCalls returns the
+      // cursor untouched for kimi, so this counter is unreachable in
+      // practice. Kimi's session-transcript shape has not been measured.
+      return 0;
     default:
       return unknownVendor(tool, "countGraphifyCallLines");
   }
@@ -477,6 +482,10 @@ export async function readGraphifyCalls(
       path = join(directory, "updates.jsonl");
       break;
     }
+    case "kimi":
+      // No kimi session-transcript reader is wired yet, so there is no
+      // artifact to advance a cursor against — unknown, not zero.
+      return cursor ?? null;
     default:
       return unknownVendor(tool, "readGraphifyCalls");
   }

@@ -668,6 +668,10 @@ function billingReader(
           new GrokStdioProbeTransport()).readBilling(timeoutMs);
         return accountBillingFromGrokBilling(payload.billing, observedAt);
       };
+    case "kimi":
+      // Kimi exposes no session-free billing or quota surface, so there is
+      // nothing to read: the account's billing is unknown, never zero.
+      return async () => null;
     default:
       return unknownVendor(provider, "readAccountBilling");
   }

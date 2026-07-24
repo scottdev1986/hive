@@ -459,6 +459,7 @@ describe("first-boot seeding — consent is never seeded, entries are exact ids"
     claude: "claude-fable-5",
     codex: "gpt-5.6-sol",
     grok: "grok-4.5",
+    kimi: "kimi-code/kimi-for-coding",
   } as const;
 
   test("seeds every category with exact frozen model ids and no enablement", () => {
@@ -474,7 +475,7 @@ describe("first-boot seeding — consent is never seeded, entries are exact ids"
     for (const category of ROUTING_CATEGORIES) {
       const chain = policy.chains[category];
       expect(chain).toBeDefined();
-      expect(chain!.length).toBe(3);
+      expect(chain!.length).toBe(4);
       for (const entry of chain!) {
         // Every entry names the specific model that will run — no mode field,
         // no indirection of any kind.

@@ -64,6 +64,9 @@ function usageSurface(provider: CapabilityProvider): "metered" | "none" {
       return "metered";
     case "grok":
       return "metered";
+    case "kimi":
+      // Kimi exposes no session-free quota or billing surface.
+      return "none";
     default:
       return unknownVendor(provider, "model-control-snapshot usageSurface");
   }

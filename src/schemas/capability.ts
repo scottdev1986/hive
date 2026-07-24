@@ -70,7 +70,12 @@ export const HV1_CAPABILITY_WIRE_SCHEMAS = {
  * CLI appends and the launch flag must never receive).
  */
 
-export const CapabilityProviderSchema = z.enum(["claude", "codex", "grok"]);
+export const CapabilityProviderSchema = z.enum([
+  "claude",
+  "codex",
+  "grok",
+  "kimi",
+]);
 export type CapabilityProvider = z.infer<typeof CapabilityProviderSchema>;
 
 /** Every vendor Hive knows, as a value: a record that must cover all of them is
@@ -147,6 +152,14 @@ export const CapabilitySurfaceSchema = z.enum([
   "codex.config/read",
   /** `grok models` stdout: the live catalog and effective default marker. */
   "grok.models",
+  /** `kimi provider list --json`: the configured provider/model catalog. */
+  "kimi.provider/list",
+  /**
+   * `$KIMI_CODE_HOME/config.toml`: `default_model` and `thinking.effort` —
+   * the only surface that answers what an unflagged kimi launch runs, since
+   * `kimi provider list` prints the catalog but never the default.
+   */
+  "kimi.config",
   /** `~/.grok/models_cache.json`: structured per-model capability facts. */
   "grok.models_cache",
   /** Grok ACP's subscription tier and rolling reset boundary. */

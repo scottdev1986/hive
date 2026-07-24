@@ -62,6 +62,7 @@ const VENDORS: Record<SkillTool, { command: string; label: string }> = {
   claude: { command: "claude", label: "Claude Code" },
   codex: { command: "codex", label: "Codex" },
   grok: { command: "grok", label: "Grok" },
+  kimi: { command: "kimi", label: "Kimi Code" },
 };
 
 /** A narrative fact for init to seed. A stable id keeps a re-run upserting the

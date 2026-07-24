@@ -36,6 +36,13 @@ import {
   CODEX_CAPABILITY_TOKEN_ENV,
   resolveWorkingCodexExecutable,
 } from "../adapters/tools/codex";
+import {
+  buildKimiSpawnCommand,
+  probeKimiDefaultModel,
+  resolveWorkingKimiExecutable,
+  wrapKimiWithInstructionFile,
+  writeKimiAgentConfig,
+} from "../adapters/tools/kimi";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
@@ -123,6 +130,16 @@ export async function prepareOrchestratorConfig(
     case "grok": {
       const authorization = operatorHeaders().Authorization;
       await writeGrokAgentConfig(orchestratorConfigRoot(), {
+        daemonPort: port,
+        capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
+      });
+      return;
+    }
+    case "kimi": {
+      // Kimi has no home-override for project config: its `.kimi-code/` is
+      // read from the process cwd, so the config lands where the root runs.
+      const authorization = operatorHeaders().Authorization;
+      await writeKimiAgentConfig(cwd, {
         daemonPort: port,
         capabilityToken: authorization?.replace(/^Bearer\s+/, ""),
       });
@@ -238,6 +255,23 @@ export function buildOrchestratorCommand(
         })), launchPromptPath(orchestratorSessionKey())),
       ];
     }
+    case "kimi": {
+      const kimiExecutable = executable ?? "kimi";
+      const model = probeKimiDefaultModel();
+      if (model === null) {
+        throw new Error("kimi config did not report an effective default");
+      }
+      return [
+        "sh",
+        "-lc",
+        wrapKimiWithInstructionFile(shellJoin(buildKimiSpawnCommand({
+          model,
+          readOnly: true,
+          dangerous: false,
+          executable: kimiExecutable,
+        })), launchPromptPath(orchestratorSessionKey())),
+      ];
+    }
     default:
       unknownVendor(tool, "orchestrator command");
   }
@@ -249,6 +283,7 @@ export interface LaunchOrchestratorOptions {
   resolveClaudeExecutable?: () => ResolvedClaudeExecutable;
   resolveCodexExecutable?: typeof resolveWorkingCodexExecutable;
   resolveGrokExecutable?: typeof resolveWorkingGrokExecutable;
+  resolveKimiExecutable?: typeof resolveWorkingKimiExecutable;
   listCodexMcpServers?: () => Promise<string[]>;
   provisionCodexToken?: (port: number) => Promise<string | null>;
 }
@@ -294,6 +329,15 @@ export async function launchOrchestrator(
       providerExecutable = grok.path;
       break;
     }
+    case "kimi": {
+      const kimi = (options.resolveKimiExecutable ??
+        resolveWorkingKimiExecutable)();
+      if (kimi === null) {
+        throw new Error("the Kimi orchestrator needs a working kimi CLI");
+      }
+      providerExecutable = kimi.path;
+      break;
+    }
     default:
       unknownVendor(tool, "orchestrator launch");
   }
@@ -329,6 +373,10 @@ export async function launchOrchestrator(
     case "grok":
       // Grok authenticates through the operator credential written into its
       // worktree-local project MCP config above.
+      break;
+    case "kimi":
+      // Kimi authenticates through the same operator credential, written
+      // into the project `.kimi-code/mcp.json` above.
       break;
     default:
       unknownVendor(tool, "orchestrator root token");

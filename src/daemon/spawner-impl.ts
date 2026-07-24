@@ -370,6 +370,7 @@ export interface HiveSpawnerDependencies {
   claudeExecutable?: string;
   codexExecutable?: string;
   grokExecutable?: string;
+  kimiExecutable?: string;
   /** Reads the process table for the readiness probe's process-tree check.
    * Defaults to the real `ps`. */
   ps?: CommandOutput;
@@ -749,6 +750,7 @@ export class HiveSpawner implements Spawner {
   private readonly claudeExecutable: string;
   private readonly codexExecutable: string;
   private readonly grokExecutable: string;
+  private readonly kimiExecutable: string;
   private readonly readCodexActivity: (
     worktreePath: string,
     toolSessionId: string,
@@ -764,6 +766,7 @@ export class HiveSpawner implements Spawner {
       resolveWorkingClaudeExecutable().path;
     this.codexExecutable = dependencies.codexExecutable ?? "codex";
     this.grokExecutable = dependencies.grokExecutable ?? "grok";
+    this.kimiExecutable = dependencies.kimiExecutable ?? "kimi";
     this.readCodexActivity = dependencies.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
@@ -789,6 +792,7 @@ export class HiveSpawner implements Spawner {
       claude: this.claudeExecutable,
       codex: this.codexExecutable,
       grok: this.grokExecutable,
+      kimi: this.kimiExecutable,
     }[tool];
   }
 
@@ -1347,6 +1351,7 @@ export class HiveSpawner implements Spawner {
     switch (tool) {
       case "claude":
       case "grok":
+      case "kimi":
         // These vendors have their own durable artifacts; a Codex rollout can
         // only belong to a stale predecessor and must never signal liveness.
         return null;
@@ -1697,7 +1702,8 @@ export class HiveSpawner implements Spawner {
             switch (candidate.tool) {
               case "claude":
                 return { refusal: null };
-              case "grok": {
+              case "grok":
+              case "kimi": {
                 if (discoveredDefault === undefined) return { refusal: null };
                 const validated = validateEffort(record, candidate.model, discoveredDefault);
                 return { refusal: null, ...(validated.effort === undefined ? {} : { effort: validated.effort }) };
@@ -1901,6 +1907,7 @@ export class HiveSpawner implements Spawner {
     if (model !== "default") {
       switch (tool) {
         case "claude":
+        case "kimi":
           executionIdentity = {
             tool,
             model,

@@ -82,6 +82,7 @@ const discovery: Record<CapabilityProvider, CapabilityDiscoveryResult> = {
       effort: unknown("surface-silent", "grok.models", OBSERVED_AT),
     },
   },
+  kimi: { status: "unavailable", reason: "kimi CLI not signed in" },
 };
 
 const billing: Record<CapabilityProvider, AccountBilling | null> = {
@@ -94,6 +95,7 @@ const billing: Record<CapabilityProvider, AccountBilling | null> = {
   },
   codex: null,
   grok: null,
+  kimi: null,
 };
 
 const quota: QuotaStatus[] = [{

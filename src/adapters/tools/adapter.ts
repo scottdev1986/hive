@@ -25,12 +25,23 @@ import {
   type GrokSpawnOptions,
 } from "./grok";
 import {
+  buildKimiResumeCommand,
+  buildKimiSpawnCommand,
+  resolveWorkingKimiExecutable,
+  wrapKimiSpawnWithEffort,
+  wrapKimiWithInstructionFile,
+  writeKimiAgentConfig,
+  type KimiSpawnOptions,
+} from "./kimi";
+import {
   ClaudeCapabilityProbe,
   ClaudeStdioCapabilityTransport,
   CodexCapabilityProbe,
   CodexStdioCapabilityTransport,
   GrokCapabilityProbe,
   GrokCliCapabilityTransport,
+  KimiCapabilityProbe,
+  KimiCliCapabilityTransport,
   type CapabilityDiscoveryResult,
 } from "../../daemon/capability-discovery";
 import {
@@ -48,8 +59,9 @@ import { shellJoin } from "../../daemon/session-host/shell-session";
  * lives behind this interface: worktree preparation, the agent config write,
  * argv construction, the launch-shell wrapping (capability token, instruction
  * profile, rules file), and runtime model discovery. The per-vendor builder
- * functions in claude.ts / codex.ts / grok.ts are unchanged — the adapters
- * here delegate to them; nothing about how a vendor is launched was rewritten.
+ * functions in claude.ts / codex.ts / grok.ts / kimi.ts are unchanged — the
+ * adapters here delegate to them; nothing about how a vendor is launched was
+ * rewritten.
  *
  * What is deliberately NOT here: crash-recovery resume wiring (recovery.ts
  * keeps its own test-seamed switch), the orchestrator's structurally
@@ -83,13 +95,15 @@ export interface SpawnContext {
   graphifyUrl?: string;
   /** 0600 launch-prompt file. Each vendor consumes it natively: claude reads
    * it as a system-prompt file, codex through its instruction profile, grok
-   * as `--rules`. Absent (crash recovery with no prompt on disk) means no
-   * instruction is wired at all. */
+   * as `--rules`, kimi installed as the worktree's `.kimi-code/AGENTS.md`.
+   * Absent (crash recovery with no prompt on disk) means no instruction is
+   * wired at all. */
   instructionPath?: string;
   /** Hive's session-locator id; codex names its instruction profile from it. */
   sessionId?: string;
   /** The opening instruction. Claude and codex take it as the positional
-   * launch argument; grok takes it as the trailing prompt of its rules wrap. */
+   * launch argument, grok as the trailing prompt of its rules wrap, kimi as
+   * the closing section of its AGENTS.md copy (its TUI rejects a positional). */
   kickoff?: string;
   /** Resume this vendor session instead of starting a fresh one. */
   resumeSessionId?: string;
@@ -305,10 +319,55 @@ const grokAdapter: VendorAdapter = {
     new GrokCapabilityProbe(new GrokCliCapabilityTransport(executable)).read(),
 };
 
+const kimiAdapter: VendorAdapter = {
+  id: "kimi",
+  async prepareSpawn(context) {
+    await writeKimiAgentConfig(context.worktreePath, {
+      daemonPort: context.daemonPort,
+      ...(context.capabilityToken === undefined
+        ? {}
+        : { capabilityToken: context.capabilityToken }),
+      ...(context.graphifyUrl === undefined
+        ? {}
+        : { graphifyUrl: context.graphifyUrl }),
+    });
+    const options: KimiSpawnOptions = {
+      model: context.model,
+      readOnly: context.readOnly,
+      dangerous: context.dangerous,
+      ...(context.executable === undefined
+        ? {}
+        : { executable: context.executable }),
+    };
+    const argv = context.resumeSessionId === undefined
+      ? buildKimiSpawnCommand(options)
+      : buildKimiResumeCommand(options, context.resumeSessionId);
+    // Kimi takes no positional kickoff: the interactive TUI rejects one, so
+    // the brief and the opening instruction ride the .kimi-code/AGENTS.md
+    // copy the wrap installs. Effort enters through the process environment
+    // because Kimi has no effort flag.
+    let command = shellJoin(argv);
+    if (context.effort !== undefined) {
+      command = wrapKimiSpawnWithEffort(command, context.effort);
+    }
+    if (context.instructionPath !== undefined) {
+      command = wrapKimiWithInstructionFile(
+        command,
+        context.instructionPath,
+        context.kickoff,
+      );
+    }
+    return { argv, command };
+  },
+  discover: (executable = resolveWorkingKimiExecutable()?.path ?? "kimi") =>
+    new KimiCapabilityProbe(new KimiCliCapabilityTransport(executable)).read(),
+};
+
 const ADAPTERS: Record<CapabilityProvider, VendorAdapter> = {
   claude: claudeAdapter,
   codex: codexAdapter,
   grok: grokAdapter,
+  kimi: kimiAdapter,
 };
 
 /** The one registry lookup. The record makes a missing vendor a compile

@@ -855,3 +855,193 @@ export class GrokCapabilityProbe implements CapabilityProbe {
     }
   }
 }
+
+// --------------------------------------------------------------------------
+// Kimi: `kimi provider list --json` plus the config file's default model.
+// --------------------------------------------------------------------------
+
+const KIMI_PROVIDER_LIST = "kimi.provider/list" as const;
+const KIMI_CONFIG = "kimi.config" as const;
+
+const KimiProviderEntrySchema = z.object({
+  type: z.string(),
+  baseUrl: z.string().nullable().optional(),
+}).passthrough();
+
+const KimiModelEntrySchema = z.object({
+  provider: z.string(),
+  model: z.string().min(1),
+  displayName: z.string().nullable().optional(),
+  supportEfforts: z.array(z.string()).nullable().optional(),
+  defaultEffort: z.string().nullable().optional(),
+}).passthrough();
+
+const KimiProviderListSchema = z.object({
+  providers: z.record(z.string(), KimiProviderEntrySchema),
+  models: z.record(z.string(), KimiModelEntrySchema),
+}).passthrough();
+
+export interface KimiCapabilityPayload {
+  /** The parsed `kimi provider list --json` output. */
+  list: unknown;
+  /** `default_model` and `thinking.effort` from config.toml; null when the
+   * file or the field is absent. */
+  defaultModel: string | null;
+  defaultEffort: string | null;
+  cliVersion: string;
+}
+
+export interface KimiCapabilityTransport {
+  readCatalog(timeoutMs: number): Promise<KimiCapabilityPayload>;
+}
+
+export class KimiCliCapabilityTransport implements KimiCapabilityTransport {
+  constructor(private readonly executable = "kimi") {}
+
+  async readCatalog(timeoutMs: number): Promise<KimiCapabilityPayload> {
+    const cliVersion = await readCliVersion(
+      [this.executable, "--version"],
+      UNKNOWN_VERSION,
+    );
+    const list = Bun.spawn(
+      [this.executable, "provider", "list", "--json"],
+      {
+        stdin: "ignore",
+        stdout: "pipe",
+        stderr: "pipe",
+        timeout: timeoutMs,
+        killSignal: "SIGKILL",
+      },
+    );
+    const [stdout, stderr, exitCode] = await Promise.all([
+      new Response(list.stdout).text(),
+      new Response(list.stderr).text(),
+      list.exited,
+    ]);
+    if (exitCode !== 0) {
+      throw new Error(
+        `kimi provider list failed: ${stderr.trim() || `exit ${exitCode}`}`,
+      );
+    }
+    let defaultModel: string | null = null;
+    let defaultEffort: string | null = null;
+    try {
+      const home = Bun.env.KIMI_CODE_HOME ?? join(homedir(), ".kimi-code");
+      const config = Bun.TOML.parse(
+        await readFile(join(home, "config.toml"), "utf8"),
+      ) as { default_model?: unknown; thinking?: { effort?: unknown } };
+      if (
+        typeof config.default_model === "string" &&
+        config.default_model.length > 0
+      ) defaultModel = config.default_model;
+      if (
+        typeof config.thinking?.effort === "string" &&
+        config.thinking.effort.length > 0
+      ) defaultEffort = config.thinking.effort;
+    } catch {
+      // No config file is a valid install state; the defaults stay unknown.
+    }
+    return { list: JSON.parse(stdout), defaultModel, defaultEffort, cliVersion };
+  }
+}
+
+/**
+ * One `provider list --json` payload → capability records. Kimi's catalog is
+ * the operator's configured aliases, not an account menu: presence is the
+ * only entitlement evidence the CLI offers, there is no hidden flag on the
+ * surface at all, and several aliases can point at one model id — they
+ * collapse into one record whose aliases list the rest, as claude's do. The
+ * launch token is the alias: `-m` takes an alias, never the raw model id.
+ */
+export function recordsFromKimiProviderList(
+  payload: KimiCapabilityPayload,
+  observedAt: string,
+): CapabilityRecord[] {
+  const parsed = KimiProviderListSchema.safeParse(payload.list);
+  if (!parsed.success) return [];
+  const accountFingerprint = fingerprintAccount(
+    "kimi",
+    Object.entries(parsed.data.providers).map(([id, provider]) =>
+      `${id}@${provider.baseUrl ?? ""}`
+    ),
+  );
+  const grouped = new Map<
+    string,
+    { aliases: string[]; entry: z.infer<typeof KimiModelEntrySchema> }
+  >();
+  for (
+    const [alias, entry] of Object.entries(parsed.data.models).sort(([a], [b]) =>
+      a.localeCompare(b)
+    )
+  ) {
+    const group = grouped.get(entry.model);
+    if (group === undefined) grouped.set(entry.model, { aliases: [alias], entry });
+    else group.aliases.push(alias);
+  }
+  return [...grouped.entries()].map(([model, { aliases, entry }]) => ({
+    provider: "kimi" as const,
+    accountFingerprint,
+    cliVersion: payload.cliVersion,
+    canonicalId: model,
+    variant: null,
+    launchToken: aliases[0]!,
+    displayName: entry.displayName ?? null,
+    aliases: aliases.slice(1),
+    entitled: known(true, KIMI_PROVIDER_LIST, observedAt),
+    hidden: unknown("surface-silent", KIMI_PROVIDER_LIST, observedAt),
+    supportsEffort: entry.supportEfforts == null
+      ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+      : known(entry.supportEfforts.length > 0, KIMI_PROVIDER_LIST, observedAt),
+    supportedEffortLevels: entry.supportEfforts == null
+      ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+      : known(entry.supportEfforts, KIMI_PROVIDER_LIST, observedAt),
+    defaultEffort: entry.defaultEffort == null
+      ? unknown("field-absent", KIMI_PROVIDER_LIST, observedAt)
+      : known(entry.defaultEffort, KIMI_PROVIDER_LIST, observedAt),
+    observedAt,
+  }));
+}
+
+export class KimiCapabilityProbe implements CapabilityProbe {
+  readonly provider = "kimi";
+
+  constructor(
+    private readonly transport: KimiCapabilityTransport =
+      new KimiCliCapabilityTransport(),
+    private readonly clock: () => Date = () => new Date(),
+  ) {}
+
+  async read(): Promise<CapabilityDiscoveryResult> {
+    try {
+      const payload = await this.transport.readCatalog(DISCOVERY_TIMEOUT_MS);
+      const observedAt = this.clock().toISOString();
+      const records = recordsFromKimiProviderList(payload, observedAt);
+      if (records.length === 0) {
+        return {
+          status: "unavailable",
+          reason: "kimi provider list returned no usable model catalog",
+        };
+      }
+      return {
+        status: "ok",
+        records,
+        effectiveDefault: {
+          provider: "kimi",
+          model: payload.defaultModel === null
+            ? unknown("field-absent", KIMI_CONFIG, observedAt)
+            : known(payload.defaultModel, KIMI_CONFIG, observedAt),
+          effort: payload.defaultEffort === null
+            ? unknown("field-absent", KIMI_CONFIG, observedAt)
+            : known(payload.defaultEffort, KIMI_CONFIG, observedAt),
+        },
+      };
+    } catch (error) {
+      return {
+        status: "unavailable",
+        reason: error instanceof Error
+          ? error.message
+          : "kimi capability probe failed",
+      };
+    }
+  }
+}

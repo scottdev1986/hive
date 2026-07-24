@@ -154,7 +154,7 @@ describe("buildModelControlSnapshot", () => {
     expect(snapshot).toEqual(contract);
     expect(contract.generatedAt).toBe(AT);
     expect(Object.keys(contract.providers).sort()).toEqual(
-      ["claude", "codex", "grok"],
+      ["claude", "codex", "grok", "kimi"],
     );
     expect(
       contract.providers.grok.records[0].supportsEffort.state,

@@ -130,6 +130,10 @@
           "observedAt": "2026-07-12T22:00:00.000Z"
         }
       }
+    },
+    "kimi": {
+      "status": "unavailable",
+      "reason": "kimi CLI not signed in"
     }
   },
   "billing": {
@@ -151,12 +155,14 @@
       "overflowUncertainty": null
     },
     "codex": null,
-    "grok": null
+    "grok": null,
+    "kimi": null
   },
   "usageSurfaces": {
     "claude": "metered",
     "codex": "metered",
-    "grok": "metered"
+    "grok": "metered",
+    "kimi": "none"
   },
   "quota": [
     {

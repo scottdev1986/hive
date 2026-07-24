@@ -2035,6 +2035,12 @@ export class HiveDaemon {
             continue;
           }
           break;
+        case "kimi":
+          // No kimi telemetry artifact is wired: the CLI's hooks live only in
+          // the operator's global config (which Hive never writes) and no
+          // session-transcript reader exists yet, so there is nothing
+          // measured to read.
+          break;
         default:
           unknownVendor(agent.tool, "refreshToolTelemetry");
       }
@@ -2162,6 +2168,10 @@ export class HiveDaemon {
           }
           break;
         }
+        case "kimi":
+          // Nothing measured to fold into the row: no kimi telemetry
+          // artifact is wired (see the reader switch above).
+          break;
         default:
           unknownVendor(current.tool, "refreshToolTelemetry");
       }
@@ -3753,6 +3763,10 @@ export class HiveDaemon {
           .catch(() => null);
         break;
       case "codex":
+        return known;
+      case "kimi":
+        // Kimi's session state.json records no model name, so there is no
+        // live observation to reconcile against — the launch model stands.
         return known;
       default:
         return unknownVendor(agent.tool, "live model reconciliation");
