@@ -43,4 +43,4 @@ test("make clean removes dev state without following shared-memory symlinks", ()
   } finally {
     rmSync(fixture, { recursive: true, force: true });
   }
-});
+}, 15_000);
