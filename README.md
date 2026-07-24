@@ -34,11 +34,7 @@ The release includes the CLI and Workspace app. Bun, Swift, Python, and `uv` are
 curl -fsSL https://raw.githubusercontent.com/scottdev1986/hive/main/install.sh | sh
 ```
 
-The installer supports macOS only. It requires non-empty Hive manifest signature material, downloads the CLI and Workspace app, checks both SHA-256 digests against the release manifest, runs the candidate CLI and verifies its reported version, then atomically updates `~/.local/bin/hive`. If `~/.local/bin` is not on `PATH`, it prints the required change.
-
-Portable shell does not verify the manifest's Ed25519 signature; presence is required, but first-install authenticity still rests on TLS and GitHub Release hosting. The installer stores the exact manifest bytes and normalized signature so Hive can verify them before a future rollback. Native `hive update` is stricter: it requires a valid signature from an embedded release key, checks artifact hashes, and probes the candidate before activation. See [distribution](docs/release/distribution.md) for the complete trust boundary.
-
-Development-build acceptance never runs this installer over an existing Hive. It uses a marked temporary install while the installed app and daemon remain continuously live; see the [acceptance runbook](docs/release/acceptance-testing.md).
+The installer supports macOS and puts `hive` in `~/.local/bin`. If that directory is not on your `PATH`, it prints the command needed to add it.
 
 ## Quick start
 
