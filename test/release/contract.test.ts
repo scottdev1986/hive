@@ -110,6 +110,26 @@ describe("the release workflow", () => {
     const declared = JSON.parse(read("package.json")).packageManager;
     expect(declared).toEqual(`bun@${pinned}`);
   });
+
+  test("publishes every executable a fresh install requires", () => {
+    const publishList = /assets=\(\n([\s\S]*?)\n\s*\)/.exec(workflow)?.[1] ?? "";
+    for (const asset of [
+      "dist/hive-darwin-arm64",
+      "dist/hive-darwin-x64",
+      "dist/hive-sessiond-darwin-arm64",
+      "dist/hive-sessiond-darwin-x64",
+      "dist/HiveWorkspace.tar.gz",
+    ]) {
+      expect(publishList).toContain(asset);
+    }
+  });
+
+  test("verifies both session broker slices before publishing", () => {
+    const verifier = read("scripts/signing/verify.sh");
+    expect(verifier).toContain('sessiond="$DIST/hive-sessiond-darwin-$arch"');
+    expect(verifier).toContain('verify_signature "$sessiond"');
+    expect(verifier).toContain('check_notarized_binary "$sessiond"');
+  });
 });
 
 describe("the installer", () => {

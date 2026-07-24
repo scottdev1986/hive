@@ -71,6 +71,11 @@ for arch in arm64 x64; do
   [ -f "$bin" ] || fail "missing $bin"
   verify_signature "$bin"
   [ "$REQUIRE_NOTARIZATION" = 1 ] && check_notarized_binary "$bin"
+
+  sessiond="$DIST/hive-sessiond-darwin-$arch"
+  [ -f "$sessiond" ] || fail "missing $sessiond"
+  verify_signature "$sessiond"
+  [ "$REQUIRE_NOTARIZATION" = 1 ] && check_notarized_binary "$sessiond"
 done
 
 # Prove the arm64 slice still runs after signing — a hardened-runtime crash from

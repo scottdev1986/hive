@@ -301,6 +301,8 @@ jobs:
           assets=(
             dist/hive-darwin-arm64
             dist/hive-darwin-x64
+            dist/hive-sessiond-darwin-arm64
+            dist/hive-sessiond-darwin-x64
             dist/HiveWorkspace.tar.gz
             dist/embeddings-runtime.tar.gz
             dist/hive-release.json

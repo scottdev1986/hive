@@ -124,6 +124,86 @@ async function digest(path: string): Promise<{ sha256: string; size: number }> {
   };
 }
 
+async function output(command: string[], cwd: string): Promise<string> {
+  const proc = Bun.spawn(command, { cwd, stdout: "pipe", stderr: "inherit" });
+  const text = await new Response(proc.stdout).text();
+  const code = await proc.exited;
+  if (code !== 0) throw new Error(`${command.join(" ")} exited ${code}`);
+  return text;
+}
+
+export function machoRpaths(otoolOutput: string): string[] {
+  const paths: string[] = [];
+  let awaitingPath = false;
+  for (const line of otoolOutput.split("\n")) {
+    const trimmed = line.trim();
+    if (trimmed === "cmd LC_RPATH") {
+      awaitingPath = true;
+      continue;
+    }
+    if (!awaitingPath || !trimmed.startsWith("path ")) continue;
+    paths.push(trimmed.slice("path ".length).replace(/ \(offset \d+\)$/, ""));
+    awaitingPath = false;
+  }
+  return [...new Set(paths)];
+}
+
+export function nonSystemMachODependencies(otoolOutput: string): string[] {
+  return [...new Set(
+    otoolOutput.split("\n")
+      .filter((line) => /^\s+(?:\/|@)/.test(line))
+      .map((line) => line.trim())
+      .map((line) => line.split(" (compatibility version", 1)[0]!)
+      .filter((path) =>
+        !path.startsWith("/System/Library/") &&
+        !path.startsWith("/usr/lib/")
+      ),
+  )];
+}
+
+/**
+ * SwiftPM carries its build toolchain's absolute Swift-library RPATH into the
+ * linked executable. The app uses only macOS system libraries, so remove every
+ * absolute non-system RPATH and prove the final executable has no external
+ * dynamic-library dependency before it can be signed or archived.
+ */
+async function makeWorkspaceSelfContained(executable: string, cwd: string): Promise<void> {
+  const initial = machoRpaths(
+    await output(["/usr/bin/otool", "-l", executable], cwd),
+  );
+  for (const path of initial) {
+    if (
+      path.startsWith("/") &&
+      !path.startsWith("/System/Library/") &&
+      !path.startsWith("/usr/lib/")
+    ) {
+      await sh(["/usr/bin/install_name_tool", "-delete_rpath", path, executable], cwd);
+    }
+  }
+
+  const remaining = machoRpaths(
+    await output(["/usr/bin/otool", "-l", executable], cwd),
+  ).filter((path) =>
+    path.startsWith("/") &&
+    !path.startsWith("/System/Library/") &&
+    !path.startsWith("/usr/lib/")
+  );
+  if (remaining.length > 0) {
+    throw new Error(
+      `Workspace executable retains build-machine RPATHs: ${remaining.join(", ")}`,
+    );
+  }
+
+  const dependencies = nonSystemMachODependencies(
+    await output(["/usr/bin/otool", "-L", executable], cwd),
+  );
+  if (dependencies.length > 0) {
+    throw new Error(
+      `Workspace executable links non-system libraries: ${dependencies.join(", ")}`,
+    );
+  }
+}
+
 /** Content address of the inputs; see the header. */
 function buildHashFor(sourceHash: string, options: Options, target: string): string {
   return createHash("sha256")
@@ -257,6 +337,7 @@ async function compileWorkspace(options: Options): Promise<string> {
     ],
     options.repoRoot,
   );
+  await makeWorkspaceSelfContained(join(macos, "HiveWorkspace"), options.repoRoot);
   return bundle;
 }
 
