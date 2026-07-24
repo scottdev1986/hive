@@ -42,6 +42,7 @@ import {
   CodexStdioProbeTransport,
   GrokQuotaProbe,
   GrokStdioProbeTransport,
+  KimiQuotaProbe,
 } from "../daemon/quota-sources";
 import {
   policyModelEnablement,
@@ -280,6 +281,7 @@ export async function runDaemon(): Promise<void> {
     new GrokQuotaProbe(
       new GrokStdioProbeTransport([grokExecutable, "agent", "stdio"]),
     ),
+    new KimiQuotaProbe(),
   ]);
   const terminalComposition = createProductionTerminalComposition({
     repoRoot,

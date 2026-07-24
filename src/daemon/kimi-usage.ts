@@ -48,6 +48,65 @@ export function kimiCredentialsPath(home: string = kimiHome()): string {
   return join(home, "credentials", "kimi-code.json");
 }
 
+const KimiUsageWindowSchema = z.object({
+  limit: z.string(),
+  used: z.string(),
+  resetTime: z.string().optional(),
+}).passthrough();
+
+/** The verified 2026-07-24 /usages shape, shared by the billing display
+ * parser (usage-credits.ts) and the quota pool parser (quota-sources.ts). */
+export const KimiUsagesResponseSchema = z.object({
+  user: z.object({
+    membership: z.object({ level: z.string() }).passthrough().nullish(),
+  }).passthrough().nullish(),
+  /** The weekly quota window. */
+  usage: KimiUsageWindowSchema.nullish(),
+  /** Rate-limit windows; the 300-minute one is the rolling five-hour window. */
+  limits: z.array(
+    z.object({
+      window: z.object({
+        duration: z.number(),
+        timeUnit: z.string(),
+      }).passthrough(),
+      detail: KimiUsageWindowSchema,
+    }).passthrough(),
+  ).nullish(),
+}).passthrough();
+
+/** A window's duration in minutes, or null when the unit is not one we can
+ * place — an unplaceable window is dropped, never sorted into a guessed
+ * bucket (the same rule quota-sources applies to codex windows). */
+export function kimiUsageWindowMinutes(
+  duration: number,
+  timeUnit: string,
+): number | null {
+  switch (timeUnit) {
+    case "TIME_UNIT_MINUTE":
+      return duration;
+    case "TIME_UNIT_HOUR":
+      return duration * 60;
+    case "TIME_UNIT_DAY":
+      return duration * 24 * 60;
+    default:
+      return null;
+  }
+}
+
+/** Percent consumed of one window, or null when the string numbers do not
+ * describe one — a malformed window is unknown, never a confident zero. */
+export function kimiUsageWindowPercent(
+  detail: { limit: string; used: string },
+): number | null {
+  const limit = Number(detail.limit);
+  const used = Number(detail.used);
+  if (
+    !Number.isFinite(limit) || limit <= 0 ||
+    !Number.isFinite(used) || used < 0
+  ) return null;
+  return (used / limit) * 100;
+}
+
 const KimiRefreshResponseSchema = z.object({
   access_token: z.string().min(1),
   refresh_token: z.string().min(1),

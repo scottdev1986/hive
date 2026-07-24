@@ -20,9 +20,11 @@ import {
   orderRateLimitWindows,
   type QuotaProbe,
   type QuotaProbeResult,
+  KimiQuotaProbe,
   readingsFromClaudeUsage,
   readingsFromCodexResponse,
   readingsFromGrokBilling,
+  readingsFromKimiUsages,
 } from "../../src/daemon/quota-sources";
 import {
   QuotaConfigSchema,
@@ -1879,5 +1881,133 @@ describe("a spend belongs to the vendor whose model produced it", () => {
       },
     ]);
     expect(reserve("gpt-5-codex").ok).toBe(true);
+  });
+});
+
+describe("kimi usage probe", () => {
+  // The verified 2026-07-24 live response shape.
+  const KIMI_USAGES = {
+    user: { userId: "u", membership: { level: "LEVEL_ADVANCED" } },
+    usage: {
+      limit: "100",
+      used: "40",
+      remaining: "60",
+      resetTime: "2026-07-29T21:38:00.343103Z",
+    },
+    limits: [{
+      window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+      detail: {
+        limit: "100",
+        used: "1",
+        remaining: "99",
+        resetTime: "2026-07-24T18:38:00Z",
+      },
+    }],
+    parallel: { limit: "30" },
+    authentication: { method: "METHOD_ACCESS_TOKEN", scope: "FEATURE_CODING" },
+  };
+
+  test("maps /usages onto a reported subscription pool with both windows", async () => {
+    const probe = new KimiQuotaProbe({
+      readUsage: () => Promise.resolve({ status: "ok", response: KIMI_USAGES }),
+    }, () => now);
+    const result = await probe.read();
+    if (result.status !== "ok") throw new Error("expected a reading");
+    expect(result.catalog).toEqual([]);
+    expect(result.pools).toHaveLength(1);
+    const [pool] = result.pools;
+    expect(pool?.provider).toBe("kimi");
+    expect(pool?.pool).toBe("subscription");
+    // The vendor's own plan name, like Claude's subscription_type.
+    expect(pool?.label).toBe("LEVEL_ADVANCED");
+    expect(pool?.models).toEqual(["*"]);
+    expect(pool?.fiveHour).toEqual({
+      usedPct: 1,
+      windowMinutes: 300,
+      resetsAt: "2026-07-24T18:38:00.000Z",
+    });
+    expect(pool?.weekly).toEqual({
+      usedPct: 40,
+      windowMinutes: 7 * 24 * 60,
+      resetsAt: "2026-07-29T21:38:00.343Z",
+    });
+    expect(pool?.fiveHourMeterState).toBe("metered");
+    expect(pool?.weeklyMeterState).toBe("metered");
+    expect(pool?.source).toBe("provider");
+    // An undocumented endpoint: reported, never gospel.
+    expect(pool?.confidence).toBe("reported");
+  });
+
+  test("the shortest rate window is the five-hour one, wherever it sits in the array", () => {
+    const pools = readingsFromKimiUsages({
+      usage: KIMI_USAGES.usage,
+      limits: [
+        {
+          window: { duration: 3, timeUnit: "TIME_UNIT_DAY" },
+          detail: { limit: "100", used: "90" },
+        },
+        {
+          window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+          detail: { limit: "100", used: "1" },
+        },
+      ],
+    }, "default", now.toISOString());
+    expect(pools[0]?.fiveHour?.usedPct).toBe(1);
+    expect(pools[0]?.fiveHour?.windowMinutes).toBe(300);
+    // A window whose unit cannot be placed is dropped, never guessed.
+    const unplaceable = readingsFromKimiUsages({
+      limits: [{
+        window: { duration: 7, timeUnit: "TIME_UNIT_FORTNIGHT" },
+        detail: { limit: "100", used: "50" },
+      }],
+    }, "default", now.toISOString());
+    expect(unplaceable).toEqual([]);
+  });
+
+  test("a weekly-only payload keeps the weekly meter and says five-hour unknown", () => {
+    const pools = readingsFromKimiUsages(
+      { usage: KIMI_USAGES.usage },
+      "default",
+      now.toISOString(),
+    );
+    expect(pools[0]?.fiveHour).toBeNull();
+    expect(pools[0]?.fiveHourMeterState).toBe("unknown");
+    expect(pools[0]?.weekly?.usedPct).toBe(40);
+    expect(pools[0]?.weeklyMeterState).toBe("metered");
+  });
+
+  test("a shape-changed payload is unavailable, never a confident zero", async () => {
+    const probe = new KimiQuotaProbe({
+      readUsage: () =>
+        Promise.resolve({ status: "ok", response: { error: "changed" } }),
+    });
+    const result = await probe.read();
+    expect(result).toEqual({
+      status: "unavailable",
+      reason: "kimi /usages returned no usable usage reading",
+    });
+    // Unparseable window numbers are not a reading either.
+    const pools = readingsFromKimiUsages({
+      limits: [{
+        window: { duration: 300, timeUnit: "TIME_UNIT_MINUTE" },
+        detail: { limit: "zero", used: "1" },
+      }],
+    }, "default", now.toISOString());
+    expect(pools).toEqual([]);
+  });
+
+  test("a quiet transport passes its reason through untouched", async () => {
+    const probe = new KimiQuotaProbe({
+      readUsage: () =>
+        Promise.resolve({
+          status: "unavailable",
+          reason: "no readable kimi credential file",
+        }),
+    });
+    const result = await probe.read();
+    expect(result).toEqual({
+      status: "unavailable",
+      reason: "no readable kimi credential file",
+    });
   });
 });

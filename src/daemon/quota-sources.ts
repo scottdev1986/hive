@@ -1,6 +1,13 @@
 import { tmpdir } from "node:os";
 import { z } from "zod";
 import type { QuotaMeterState } from "../schemas";
+import {
+  KimiHttpUsageTransport,
+  KimiUsagesResponseSchema,
+  kimiUsageWindowMinutes,
+  kimiUsageWindowPercent,
+  type KimiUsageTransport,
+} from "./kimi-usage";
 import { HIVE_VERSION } from "../version";
 import type { CodexRateLimitSnapshot, CodexRateLimitsResponse } from "./quota";
 
@@ -55,7 +62,7 @@ export interface DiscoveredWindow {
 }
 
 export interface DiscoveredPoolReading {
-  provider: "claude" | "codex" | "grok";
+  provider: "claude" | "codex" | "grok" | "kimi";
   account: string;
   pool: string;
   label: string | null;
@@ -97,7 +104,7 @@ export interface DiscoveredPoolReading {
  * than being attached to a model on a guess.
  */
 export interface ModelCatalogEntry {
-  provider: "claude" | "codex" | "grok";
+  provider: "claude" | "codex" | "grok" | "kimi";
   /** The id a spawn actually launches, e.g. `claude-fable-5`. */
   modelId: string;
   /** The provider's display name, e.g. `Fable`. The join key. */
@@ -120,7 +127,7 @@ export type QuotaProbeResult =
   | { status: "unavailable"; reason: string };
 
 export interface QuotaProbe {
-  readonly provider: "claude" | "codex" | "grok";
+  readonly provider: "claude" | "codex" | "grok" | "kimi";
   read(): Promise<QuotaProbeResult>;
 }
 
@@ -1211,5 +1218,127 @@ export class GrokStdioProbeTransport implements GrokProbeTransport {
       child.kill();
       await child.exited.catch(() => undefined);
     }
+  }
+}
+
+// ---------------------------------------------------------------------------
+// Kimi: GET /usages — the CLI's own /usage panel endpoint (kimi-usage.ts).
+// ---------------------------------------------------------------------------
+
+const KIMI_WEEKLY_MINUTES = 7 * 24 * 60;
+
+const kimiIsoOrNull = (value: string | undefined): string | null => {
+  if (value === undefined) return null;
+  const parsed = Date.parse(value);
+  return Number.isFinite(parsed) ? new Date(parsed).toISOString() : null;
+};
+
+/**
+ * Turn one /usages response into a discovered pool. The payload is
+ * account-wide — one weekly quota and a set of rate windows with no model
+ * names anywhere — so there is exactly one pool and it carries `["*"]`. The
+ * shortest rate window is the five-hour one, matching this file's rule of
+ * ordering by duration rather than by name; the weekly's 7-day length is the
+ * documented refresh, not a payload field. Both windows are things this
+ * surface meters, so a missing or unparseable number is `unknown`, never
+ * `not-metered`. The membership level is the vendor's own plan name, used as
+ * the label the way Claude's `subscription_type` and Grok's tier are.
+ */
+export function readingsFromKimiUsages(
+  response: unknown,
+  account: string,
+  observedAt: string,
+): DiscoveredPoolReading[] {
+  const parsed = KimiUsagesResponseSchema.safeParse(response);
+  if (!parsed.success) return [];
+  // Both fields optional means a shape-changed payload parses clean with
+  // neither — the surface going quiet, which reads as no reading at all.
+  if (parsed.data.usage == null && parsed.data.limits == null) return [];
+
+  const weeklyDetail = parsed.data.usage;
+  const weeklyPercent = weeklyDetail == null
+    ? null
+    : kimiUsageWindowPercent(weeklyDetail);
+  const weekly: DiscoveredWindow | null = weeklyPercent === null ||
+      weeklyDetail == null
+    ? null
+    : {
+      usedPct: weeklyPercent,
+      windowMinutes: KIMI_WEEKLY_MINUTES,
+      resetsAt: kimiIsoOrNull(weeklyDetail.resetTime),
+    };
+
+  const fiveHourEntry = (parsed.data.limits ?? [])
+    .map((entry) => ({
+      minutes: kimiUsageWindowMinutes(
+        entry.window.duration,
+        entry.window.timeUnit,
+      ),
+      detail: entry.detail,
+    }))
+    .filter((entry) => entry.minutes !== null)
+    .sort((left, right) => left.minutes! - right.minutes!)[0];
+  const fiveHourPercent = fiveHourEntry === undefined
+    ? null
+    : kimiUsageWindowPercent(fiveHourEntry.detail);
+  const fiveHour: DiscoveredWindow | null = fiveHourEntry === undefined ||
+      fiveHourPercent === null
+    ? null
+    : {
+      usedPct: fiveHourPercent,
+      windowMinutes: fiveHourEntry.minutes,
+      resetsAt: kimiIsoOrNull(fiveHourEntry.detail.resetTime),
+    };
+
+  if (fiveHour === null && weekly === null) return [];
+  return [
+    {
+      provider: "kimi",
+      account,
+      pool: "subscription",
+      label: parsed.data.user?.membership?.level ?? null,
+      models: ["*"],
+      fiveHour,
+      weekly,
+      fiveHourMeterState: fiveHour === null ? "unknown" : "metered",
+      weeklyMeterState: weekly === null ? "unknown" : "metered",
+      observedAt,
+      source: "provider",
+      // An undocumented endpoint whose shape may change under us — the same
+      // standing as Claude's self-described-experimental `get_usage`.
+      confidence: "reported",
+    },
+  ];
+}
+
+export class KimiQuotaProbe implements QuotaProbe {
+  readonly provider = "kimi";
+
+  constructor(
+    private readonly transport: KimiUsageTransport =
+      new KimiHttpUsageTransport(),
+    private readonly clock: () => Date = () => new Date(),
+    private readonly account = "default",
+  ) {}
+
+  async read(): Promise<QuotaProbeResult> {
+    const payload = await this.transport.readUsage(HANDSHAKE_TIMEOUT_MS);
+    if (payload.status !== "ok") {
+      return { status: "unavailable", reason: payload.reason };
+    }
+    const pools = readingsFromKimiUsages(
+      payload.response,
+      this.account,
+      this.clock().toISOString(),
+    );
+    if (pools.length === 0) {
+      return {
+        status: "unavailable",
+        reason: "kimi /usages returned no usable usage reading",
+      };
+    }
+    // The model catalog is a separate surface (`kimi provider list`); this
+    // payload names no models, so there is nothing free to join here.
+    return { status: "ok", pools, catalog: [] };
   }
 }

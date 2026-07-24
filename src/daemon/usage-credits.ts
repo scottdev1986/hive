@@ -20,6 +20,9 @@ import {
 } from "./quota-sources";
 import {
   KimiHttpUsageTransport,
+  KimiUsagesResponseSchema,
+  kimiUsageWindowMinutes,
+  kimiUsageWindowPercent,
   type KimiUsageTransport,
 } from "./kimi-usage";
 
@@ -428,40 +431,6 @@ export function accountBillingFromGrokBilling(
 
 const KIMI_USAGES = "kimi.usages" as const;
 
-const KimiUsageWindowSchema = z.object({
-  limit: z.string(),
-  used: z.string(),
-  resetTime: z.string().optional(),
-}).passthrough();
-
-const KimiUsagesResponseSchema = z.object({
-  /** The weekly quota window. */
-  usage: KimiUsageWindowSchema.nullish(),
-  /** Rate-limit windows; the 300-minute one is the rolling five-hour window. */
-  limits: z.array(
-    z.object({
-      window: z.object({
-        duration: z.number(),
-        timeUnit: z.string(),
-      }).passthrough(),
-      detail: KimiUsageWindowSchema,
-    }).passthrough(),
-  ).nullish(),
-}).passthrough();
-
-const kimiWindowMinutes = (duration: number, timeUnit: string): number | null => {
-  switch (timeUnit) {
-    case "TIME_UNIT_MINUTE":
-      return duration;
-    case "TIME_UNIT_HOUR":
-      return duration * 60;
-    case "TIME_UNIT_DAY":
-      return duration * 24 * 60;
-    default:
-      return null;
-  }
-};
-
 /**
  * One /usages response → an AccountBilling. The numbers arrive as strings.
  * The AccountBilling shape has room for exactly one window, so the SHORTEST
@@ -498,25 +467,24 @@ export function accountBillingFromKimiUsage(
 
   const windows = (parsed.data.limits ?? [])
     .map((entry) => ({
-      minutes: kimiWindowMinutes(entry.window.duration, entry.window.timeUnit),
+      minutes: kimiUsageWindowMinutes(
+        entry.window.duration,
+        entry.window.timeUnit,
+      ),
       detail: entry.detail,
     }))
     .filter((entry) => entry.minutes !== null)
     .sort((left, right) => left.minutes! - right.minutes!);
   const shortest = windows[0];
   if (shortest === undefined) return quiet("field-absent");
-  const limit = Number(shortest.detail.limit);
-  const used = Number(shortest.detail.used);
-  if (
-    !Number.isFinite(limit) || limit <= 0 ||
-    !Number.isFinite(used) || used < 0
-  ) return quiet("malformed");
+  const percent = kimiUsageWindowPercent(shortest.detail);
+  if (percent === null) return quiet("malformed");
 
   return {
     creditsEnabled: unknown("surface-silent", KIMI_USAGES, observedAt),
     disabledReason: null,
     generalUtilization: known(
-      Math.round((used / limit) * 1000) / 10,
+      Math.round(percent * 10) / 10,
       KIMI_USAGES,
       observedAt,
     ),
