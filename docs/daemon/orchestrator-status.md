@@ -23,7 +23,7 @@ It reads event **kinds only, never timestamps**. That is not stylistic — it is
 
 This word describes activity only. Assignment outcome lives in the separate durable `assignments` state machine (`active` / `in_progress` / `blocked` / `reported_complete` / `accepted`). A worker becoming idle, landing, or having a clean worktree never changes that outcome. Instead, an exact `turn-end` on an active or in-progress assignment transactionally queues one generation-keyed unfinished-idle message and immediately wakes queen; a same-agent follow-up advances the generation. Reported completion likewise wakes queen and stays open until explicit acceptance.
 
-Every provider feeds the same boundary stream under the root's preferred address queen. Delivery accepts the synonym `orchestrator` (case-insensitive) and stores the preferred form; pre-rename undelivered rows keyed as `orchestrator` still drain. The architectural role word and the instance tmux session (`hive-orchestrator-<instance>`) are separate surfaces and keep that spelling:
+Every provider feeds the same boundary stream under the root's preferred address queen. Delivery accepts the synonym `orchestrator` (case-insensitive) and stores the preferred form; pre-rename undelivered rows keyed as `orchestrator` still drain:
 
 - Claude posts `turn-start` on `UserPromptSubmit` and `turn-end` on `Stop` through its native hooks.
 - Codex's rollout records exact `task_started` and `task_complete` events.
@@ -31,9 +31,9 @@ Every provider feeds the same boundary stream under the root's preferred address
 
 The Workspace queen (orchestrator) supervisor resolves the new Codex/Grok session artifact once, then reads only that bounded file tail. It ignores a predecessor session, reports transitions through the authenticated daemon event endpoint, and pairs a first-observed completed turn when a short turn finished before the first poll. Missing or malformed artifacts remain unknown. It never scrapes terminal text and never infers from elapsed time.
 
-Agent reports follow the same provider boundary. Codex receives a native
-app-server item; Claude and Grok receive an instance-scoped tmux submission at
-their idle prompt. The root provider is selected only from the live supervisor
+Agent reports follow the same provider boundary. Delivery to every interactive
+provider uses the exact `sessiond` locator and its serialized input lane. The
+root provider is selected only from the live supervisor
 marker under that instance's `HIVE_HOME`; PID liveness rejects stale markers,
 and a named instance cannot wake another instance. Workspace creates a
 recipient-scoped composer lease before a user's first keystroke, so every one

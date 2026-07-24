@@ -586,21 +586,11 @@
                     },
                     "hostKind": {
                       "type": "string",
-                      "enum": [
-                        "tmux",
-                        "sessiond"
-                      ]
+                      "const": "sessiond"
                     },
                     "engineBuildId": {
-                      "anyOf": [
-                        {
-                          "type": "string",
-                          "minLength": 1
-                        },
-                        {
-                          "type": "null"
-                        }
-                      ]
+                      "type": "string",
+                      "minLength": 1
                     }
                   },
                   "required": [
@@ -897,21 +887,11 @@
                 },
                 "hostKind": {
                   "type": "string",
-                  "enum": [
-                    "tmux",
-                    "sessiond"
-                  ]
+                  "const": "sessiond"
                 },
                 "engineBuildId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -1030,21 +1010,11 @@
                 },
                 "hostKind": {
                   "type": "string",
-                  "enum": [
-                    "tmux",
-                    "sessiond"
-                  ]
+                  "const": "sessiond"
                 },
                 "engineBuildId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -1367,21 +1337,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -1657,21 +1617,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -1941,21 +1891,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -2036,21 +1976,11 @@
                 },
                 "hostKind": {
                   "type": "string",
-                  "enum": [
-                    "tmux",
-                    "sessiond"
-                  ]
+                  "const": "sessiond"
                 },
                 "engineBuildId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -4013,21 +3943,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -4138,21 +4058,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -4258,21 +4168,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -4514,21 +4414,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -4680,21 +4570,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -4829,21 +4709,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -9444,21 +9314,11 @@
         },
         "hostKind": {
           "type": "string",
-          "enum": [
-            "tmux",
-            "sessiond"
-          ]
+          "const": "sessiond"
         },
         "engineBuildId": {
-          "anyOf": [
-            {
-              "type": "string",
-              "minLength": 1
-            },
-            {
-              "type": "null"
-            }
-          ]
+          "type": "string",
+          "minLength": 1
         }
       },
       "required": [
@@ -9585,21 +9445,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -9810,21 +9660,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -10251,21 +10091,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -10346,21 +10176,11 @@
                 },
                 "hostKind": {
                   "type": "string",
-                  "enum": [
-                    "tmux",
-                    "sessiond"
-                  ]
+                  "const": "sessiond"
                 },
                 "engineBuildId": {
-                  "anyOf": [
-                    {
-                      "type": "string",
-                      "minLength": 1
-                    },
-                    {
-                      "type": "null"
-                    }
-                  ]
+                  "type": "string",
+                  "minLength": 1
                 }
               },
               "required": [
@@ -10828,21 +10648,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -11070,21 +10880,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -11246,21 +11046,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -11361,21 +11151,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -11680,21 +11460,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -11905,21 +11675,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -12920,21 +12680,11 @@
             },
             "hostKind": {
               "type": "string",
-              "enum": [
-                "tmux",
-                "sessiond"
-              ]
+              "const": "sessiond"
             },
             "engineBuildId": {
-              "anyOf": [
-                {
-                  "type": "string",
-                  "minLength": 1
-                },
-                {
-                  "type": "null"
-                }
-              ]
+              "type": "string",
+              "minLength": 1
             }
           },
           "required": [
@@ -13093,7 +12843,6 @@
         "sessiondProcessInspector": "native/sessiond/src/process_inspector.zig",
         "daemonSessionHost": "src/daemon/session-host/",
         "daemonSessionHostContract": "src/daemon/session-host/contract.ts",
-        "daemonTmuxHost": "src/daemon/session-host/tmux-host.ts",
         "daemonSessiondHost": "src/daemon/session-host/sessiond-host.ts",
         "daemonHierarchyRouter": "src/daemon/session-host/hierarchy-router.ts",
         "schemas": "src/schemas/",

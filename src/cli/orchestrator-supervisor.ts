@@ -203,10 +203,6 @@ export async function runWorkspaceOrchestrator(
               tool,
               port,
               cwd,
-              undefined,
-              undefined,
-              undefined,
-              undefined,
               recoveryBrief,
             ),
           );

@@ -4,7 +4,7 @@ import { tmpdir } from "node:os";
 import { basename, join } from "node:path";
 import type { AgentRecord, HookEvent } from "../../schemas";
 import { HIVE_VERSION } from "../../version";
-import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import {
   buildCodexMcpExclusionArgs,
   HIVE_MCP_SERVERS,

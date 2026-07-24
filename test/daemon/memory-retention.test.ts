@@ -14,7 +14,7 @@ import {
   type MemoryRetentionConfig,
 } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import type { TmuxSender } from "../../src/daemon/delivery";
+import type { SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { runRetentionSweep } from "../../src/daemon/memory-retention";
 import { HiveDaemon } from "../../src/daemon/server";
@@ -404,7 +404,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Build server",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-server",
-    tmuxSession: "hive-maya",
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -422,11 +421,11 @@ class StubSpawner implements Spawner {
   }
 }
 
-class SilentTmuxSender implements TmuxSender {
+class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
 
-  async sendMessage(session: string): Promise<void> {
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord): Promise<void> {
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -436,24 +435,6 @@ const offlineRootProtocol = {
     return false;
   },
 };
-
-class FakeDaemonTmux {
-  readonly killed: string[] = [];
-
-  async hasSession(): Promise<boolean> {
-    return false;
-  }
-
-  async capturePane(): Promise<string> {
-    return "";
-  }
-
-  async killSession(session: string): Promise<void> {
-    this.killed.push(session);
-  }
-
-  async newSession(): Promise<void> {}
-}
 
 async function waitFor(
   condition: () => boolean,
@@ -546,9 +527,8 @@ describe("daemon retention wiring", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(db),
+      sessionSender: new SilentSessionSender(db),
       rootProtocol: offlineRootProtocol,
-      tmux: new FakeDaemonTmux(),
       repoRoot: repo,
       episodicStore: episodic,
       lifecycle: { idleReap: true, idleReapMinutes: 10 },

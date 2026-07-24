@@ -87,13 +87,13 @@ const log = (line: string) => {
 // Imports that read HIVE_HOME resolve it lazily per call; the env above is set
 // before any daemon-path helper runs.
 const { HiveDatabase } = await import("../src/daemon/db");
-const { hiveInstanceSuffix } = await import("../src/daemon/tmux-sessions");
+const { hiveInstanceSuffix } = await import("../src/daemon/instance-identity");
 const { HiveTerminalHostAdapter } = await import(
   "../src/daemon/session-host/hive-terminal-host"
 );
 const { SessiondHost } = await import("../src/daemon/session-host/sessiond-host");
 const { macProcessIdentity } = await import("../src/daemon/lifecycle");
-const { mintTmuxSessionLocator } = await import("../src/daemon/session-host/locators");
+const { mintSessionLocator } = await import("../src/daemon/session-host/locators");
 
 // The Workspace's `--hive` binary: passes every verb through to the real CLI
 // except the orchestrator boot, which is a placeholder so a recorded demo
@@ -213,9 +213,7 @@ for (let i = 0; i < 60; i += 1) {
   }
 }
 const locator = {
-  ...mintTmuxSessionLocator(instanceId, { kind: "agent", agentId }, 1),
-  hostKind: "sessiond" as const,
-  engineBuildId,
+  ...mintSessionLocator(instanceId, { kind: "agent", agentId }, 1, engineBuildId),
 };
 const publisher = macProcessIdentity(process.pid);
 const visibility = {
@@ -237,7 +235,6 @@ db.insertAgent({
     : "B2.2 live watchable terminal proof (manual session)",
   worktreePath: null,
   branch: null,
-  tmuxSession: `hive-${agentName}`,
   contextPct: null,
   createdAt: now,
   lastEventAt: now,
@@ -347,7 +344,6 @@ const workspaceArgs = [
   "--instance-id", instanceId,
   "--instance-home", home,
   "--hive", hiveWrapper,
-  "--orchestrator-session", `hive-b22-orch`,
 ];
 log(`launch the Workspace now:\n  ${workspaceBinary} ${workspaceArgs.join(" ")}`);
 const workspace = !launchApp ? null : Bun.spawn(

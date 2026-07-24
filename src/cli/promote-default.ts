@@ -8,7 +8,7 @@ import {
   RoutingPolicyStore,
 } from "../daemon/routing-policy-store";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
-import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import type { RoutingPolicy } from "../schemas";
 
 const PROMOTE_ACTOR = "hive-cli-promote-default";

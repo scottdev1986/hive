@@ -42,7 +42,7 @@ import {
 } from "../update/paths";
 import { renderStartNotice } from "../update/notice";
 import { IS_RELEASE_BUILD } from "../version";
-import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import { getHiveHome } from "../daemon/db";
 import { isRepoInitialized, runInitCli } from "./init";
 import { startSession, type StartDeps, type StartedSession } from "./start";
@@ -95,7 +95,7 @@ export function workspaceOpenArguments(
     // which can omit package-manager tools and user-installed provider CLIs. Pass the
     // caller's resolved command path across that process boundary explicitly.
     ...(path === undefined ? [] : ["--env", `PATH=${path}`]),
-    // SwiftTerm starts the root from an explicit environment rather than the
+    // Workspace starts the root from an explicit environment rather than the
     // app's full inherited environment. Preserve macOS's private per-user temp
     // directory across both LaunchServices and that terminal boundary; without
     // it Node falls back to the /tmp symlink and Codex app-server refuses the

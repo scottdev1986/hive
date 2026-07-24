@@ -3,8 +3,7 @@ import CoreGraphics
 
 /// Everything one workspace window shows for one pane. The pane content is a
 /// real terminal (the AppKit layer owns that); this is the metadata around it:
-/// identity, the daemon-reported status, and the tmux session the terminal
-/// attaches to.
+/// identity, daemon-reported status, and exact terminal locator.
 public struct PaneState: Equatable {
     public let id: PaneID
     public let kind: PaneKind
@@ -16,7 +15,6 @@ public struct PaneState: Equatable {
     public var feedStatus: String
     public var status: PaneStatus
     public var taskDescription: String?
-    public var tmuxSession: String?
     public var contextPct: Double?
     public var agentID: String?
     public var sessionLocator: AgentSessionLocator?
@@ -27,7 +25,7 @@ public struct PaneState: Equatable {
 
     public init(id: PaneID, kind: PaneKind, title: String, tool: String? = nil,
                 model: String? = nil, feedStatus: String, status: PaneStatus,
-                taskDescription: String? = nil, tmuxSession: String? = nil,
+                taskDescription: String? = nil,
                 contextPct: Double? = nil, agentID: String? = nil,
                 sessionLocator: AgentSessionLocator? = nil,
                 terminalHostState: String? = nil,
@@ -40,7 +38,6 @@ public struct PaneState: Equatable {
         self.feedStatus = feedStatus
         self.status = status
         self.taskDescription = taskDescription
-        self.tmuxSession = tmuxSession
         self.contextPct = contextPct
         self.agentID = agentID
         self.sessionLocator = sessionLocator
@@ -232,7 +229,7 @@ public final class ProjectState {
                 changes.append(contentsOf: update(pane: &pane, from: agent, now: now))
                 panes[paneID] = pane
             } else if agent.status != "dead" {
-                // A dead agent's tmux session is gone; attaching would fail,
+                // A dead agent's session is gone; attaching would fail,
                 // so a pane is only ever created for attachable agents.
                 changes.append(contentsOf: insertPane(for: agent, now: now))
             }
@@ -392,7 +389,6 @@ public final class ProjectState {
             feedStatus: agent.status,
             status: FeedStatusMap.paneStatus(for: agent.status),
             taskDescription: agent.taskDescription,
-            tmuxSession: agent.tmuxSession,
             contextPct: agent.contextPct,
             agentID: agent.id,
             sessionLocator: agent.sessionLocator)
@@ -419,14 +415,12 @@ public final class ProjectState {
             || pane.tool != agent.tool
             || pane.model != agent.model
             || pane.taskDescription != agent.taskDescription
-            || pane.tmuxSession != agent.tmuxSession
             || pane.contextPct != agent.contextPct
             || pane.closePending
 
         pane.tool = agent.tool
         pane.model = agent.model
         pane.taskDescription = agent.taskDescription
-        pane.tmuxSession = agent.tmuxSession
         pane.contextPct = agent.contextPct
         pane.agentID = agent.id
         pane.sessionLocator = agent.sessionLocator

@@ -1,5 +1,6 @@
 import { createHash, randomBytes } from "node:crypto";
 import { resolve } from "node:path";
+import type { AgentRecord } from "../../schemas";
 import type { SessionLocator, SessionSubject } from "./contract";
 
 const INSTANCE_HASH_LENGTH = 10;
@@ -29,10 +30,11 @@ export function sessionInstanceId(hiveHome: string): string {
     .slice(0, INSTANCE_HASH_LENGTH);
 }
 
-export function mintTmuxSessionLocator(
+export function mintSessionLocator(
   instanceId: string,
   subject: SessionSubject,
   generation: number,
+  engineBuildId: string,
   now = Date.now(),
 ): SessionLocator {
   if (!Number.isSafeInteger(generation) || generation < 1) {
@@ -44,9 +46,35 @@ export function mintTmuxSessionLocator(
     subject,
     generation,
     sessionId: `ses_${uuidV7(now)}`,
-    hostKind: "tmux",
-    engineBuildId: null,
+    hostKind: "sessiond",
+    engineBuildId,
   };
+}
+
+export function requireAgentSessionLocator(
+  agent: Pick<AgentRecord, "id" | "sessionLocator">,
+): SessionLocator {
+  const locator = agent.sessionLocator;
+  if (
+    locator === undefined ||
+    locator.subject.kind !== "agent" ||
+    locator.subject.agentId !== agent.id
+  ) {
+    throw new Error(`Agent ${agent.id} has a mismatched SessionLocator`);
+  }
+  return locator;
+}
+
+export function nextAgentSessionLocator(
+  agent: Pick<AgentRecord, "id" | "sessionLocator">,
+): SessionLocator {
+  const current = requireAgentSessionLocator(agent);
+  return mintSessionLocator(
+    current.instanceId,
+    current.subject,
+    current.generation + 1,
+    current.engineBuildId,
+  );
 }
 
 export function mintSessionRequestId(now = Date.now()): string {

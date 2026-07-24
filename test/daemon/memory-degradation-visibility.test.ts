@@ -201,21 +201,6 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-class NoopTmux {
-  async hasSession(_session: string): Promise<boolean> {
-    return false;
-  }
-  async capturePane(_session: string): Promise<string> {
-    return "";
-  }
-  async killSession(_session: string): Promise<void> {}
-  async newSession(
-    _name: string,
-    _cwd: string,
-    _command: string,
-  ): Promise<void> {}
-}
-
 function mockEmbedder(): MemoryEmbedder {
   return {
     model: "bge-small-en-v1.5",
@@ -236,7 +221,6 @@ async function makeDaemon(options: {
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
     db: new HiveDatabase(":memory:"),
-    tmux: new NoopTmux(),
     repoRoot,
     ...(options.episodic === undefined
       ? {}

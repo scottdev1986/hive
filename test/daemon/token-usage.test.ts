@@ -275,7 +275,6 @@ describe("TokenUsageStore", () => {
       taskDescription: "Build token accounting",
       worktreePath: join(repo, ".hive", "worktrees", "maya"),
       branch: "hive/maya-token-accounting",
-      tmuxSession: "hive-maya",
       contextPct: 1,
       createdAt: "2026-07-13T12:00:30.000Z",
       lastEventAt: "2026-07-13T12:00:30.000Z",

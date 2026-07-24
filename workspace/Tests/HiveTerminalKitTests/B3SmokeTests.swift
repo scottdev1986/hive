@@ -6,8 +6,8 @@ import XCTest
 /// B3 replacement smoke — the assertion half.
 ///
 /// Proves the sessiond + HiveTerminalKit substrate end to end on the NEW
-/// spine, replacing the coverage of the tmux/SwiftTerm-era
-/// `SmokeRunner`/`smoke.sh`. The driver half (`scripts/b3-smoke.sh`) stands
+/// spine, replacing the coverage of the retired terminal harness. The driver
+/// half (`scripts/b3-smoke.sh`) stands
 /// the stack up, runs this, and tears it down.
 ///
 /// WHAT THIS PROVES, stated so the claim cannot drift upward later:

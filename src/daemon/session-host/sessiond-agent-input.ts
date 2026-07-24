@@ -14,8 +14,7 @@ import {
 } from "./sessiond-viewer-attach";
 
 /** Bracketed paste so embedded newlines are captured as one paste, then a
- * carriage return outside the paste submits it — the exact shape the tmux path
- * produces with `paste-buffer -p` followed by `send-keys Enter`. */
+ * carriage return outside the paste submits it. */
 const BRACKETED_PASTE_START = "\x1b[200~";
 const BRACKETED_PASTE_END = "\x1b[201~";
 const SUBMIT = "\r";

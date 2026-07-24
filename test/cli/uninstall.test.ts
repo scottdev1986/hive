@@ -9,7 +9,7 @@ import {
 } from "../../src/adapters/graphify";
 import { getHiveHome } from "../../src/daemon/db";
 import { projectStateDir } from "../../src/daemon/project-state";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { MachineMutationCoordinator } from "../../src/daemon/mutation-lease";
 import { shippedSkillsFor } from "../../src/skills/shipped";
 import { runUninstallMachine, runUninstallRepo, type UninstallDeps } from "../../src/cli/uninstall";
@@ -114,12 +114,12 @@ describe("hive uninstall --repo", () => {
       await mkdir(join(root, "graphify-out"), { recursive: true });
       const { deps, lines } = probe(true, {
         stopCurrentInstance: async () => {
-          throw new Error("tmux refused the stop");
+          throw new Error("terminal host refused the stop");
         },
       });
       expect(await runUninstallRepo(root, {}, deps)).toBe(1);
       expect(existsSync(join(root, "graphify-out"))).toBe(true);
-      expect(lines.join("\n")).toContain("tmux refused the stop");
+      expect(lines.join("\n")).toContain("terminal host refused the stop");
       expect(lines.join("\n")).toContain("rerun `hive uninstall --repo`");
     } finally {
       await rm(root, { recursive: true, force: true });
@@ -537,12 +537,12 @@ describe("hive uninstall", () => {
       await writeFile(join(home, "hive.db"), "");
       const { deps, lines } = probe(true, {
         stopCurrentInstance: async () => {
-          throw new Error("tmux is unavailable");
+          throw new Error("terminal host is unavailable");
         },
       });
       expect(await runUninstallMachine({}, deps)).toBe(1);
       expect(existsSync(home)).toBe(true);
-      expect(lines.join("\n")).toContain("tmux is unavailable");
+      expect(lines.join("\n")).toContain("terminal host is unavailable");
       expect(lines.join("\n")).toContain("rerun `hive uninstall`");
     } finally {
       if (previous === undefined) delete process.env.HIVE_HOME;

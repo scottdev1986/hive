@@ -112,7 +112,7 @@ throws rather than launching.
 > **THE SOLE NET IS THE SPAWNER, AND IT IS UNCONDITIONAL — replace before you remove.**
 
 Mutation-proven at PR3 (governing doc :598-616): forcing the enablement refusal off
-let a **disabled Grok model reach `tmux.newSession`** with a concrete `grok -m …`
+let a **disabled Grok model reach session creation** with a concrete `grok -m …`
 command. Restoring the refusal stopped the process before any session existed.
 Derivation never blocked a launch, *by design*; the spawner is what refuses. Anyone
 restructuring this path who deletes the spawner guards expecting some upstream layer

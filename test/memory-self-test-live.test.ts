@@ -57,21 +57,6 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-class NoopTmux {
-  async hasSession(_session: string): Promise<boolean> {
-    return false;
-  }
-  async capturePane(_session: string): Promise<string> {
-    return "";
-  }
-  async killSession(_session: string): Promise<void> {}
-  async newSession(
-    _name: string,
-    _cwd: string,
-    _command: string,
-  ): Promise<void> {}
-}
-
 // One shared direction: every text embeds to the same unit vector, so cosine
 // top-k ranks whatever is stored — the probe's assertion is presence + the
 // hybrid label, not ranking geometry (the fixture tier owns geometry).
@@ -97,7 +82,6 @@ async function makeLiveDaemon(options: { failingLoad?: boolean } = {}): Promise<
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
     db: new HiveDatabase(":memory:"),
-    tmux: new NoopTmux(),
     repoRoot,
     port: 0,
     episodicStore: new EpisodicStore(":memory:"),

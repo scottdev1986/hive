@@ -3,7 +3,7 @@ import { mkdir, mkdtemp, realpath, rm, writeFile } from "node:fs/promises";
 import { homedir, tmpdir } from "node:os";
 import { join } from "node:path";
 import { OUTSIDE_REPO_TMPDIR } from "../outside-repo-tmpdir";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { writeGrokAgentConfig } from "../../src/adapters/tools/grok";
 import {
   assessStrandedWork,

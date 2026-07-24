@@ -6,7 +6,7 @@
 [![latest](https://img.shields.io/github/v/release/scottdev1986/hive)](https://github.com/scottdev1986/hive/releases/latest)
 [![license](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
 
-Hive coordinates Claude Code, Codex, and Grok agents in a native macOS Workspace. A read-only orchestrator named queen delegates work; each worker gets an isolated git worktree, branch, capability, and tmux session. Talk to queen for decomposition and routing; workers report back to queen. The architectural role remains orchestrator, and addressing the root as `orchestrator` is still understood. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
+Hive coordinates Claude Code, Codex, and Grok agents in a native macOS Workspace. A read-only orchestrator named queen delegates work; each worker gets an isolated git worktree, branch, capability, and daemon-owned `sessiond` session. Talk to queen for decomposition and routing; workers report back to queen. The architectural role remains orchestrator, and addressing the root as `orchestrator` is still understood. The daemon owns process lifecycle and merges completed branches into `main` through a serialized fast-forward gate.
 
 Hive combines Graphify's local code graph with local semantic embeddings to give agents useful context before they act. Graphify maps repository structure, symbols, and relationships; embeddings retrieve relevant project memory by meaning. Hive builds and maintains both as part of repository setup, and both operate locally.
 
@@ -14,18 +14,17 @@ Hive is currently a 0.0.x project. Its command and storage contracts may change 
 
 ## Workspace
 
-Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. queen is the master pane — the orchestrator that coordinates the team — and worker agents appear as SwiftTerm panes attached to their daemon-owned tmux sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
+Run `hive` in an initialized repository to create a fresh Hive instance and open its Workspace window. Running it again creates another isolated instance and another window, even from the same repository. queen is the master pane — the orchestrator that coordinates the team — and worker agents use the same HiveTerminalKit panes attached to daemon-owned `sessiond` sessions. The vendor TUI remains interactive: clicking a pane focuses it, and typing goes directly to that Claude Code, Codex, or Grok session.
 
 Agent state comes from structured daemon events, not terminal scraping. Unknown or disconnected state is displayed as unknown rather than inferred from pane contents.
 
-Closing an agent pane requests `hive kill` for that agent. The daemon preserves unlanded work and verifies that the tmux session and owned process tree are gone; a failed kill is reported and the pane returns. Closing the Workspace normally runs `hive stop`, which stops the instance's agents and daemon. An unexpected UI crash does not own the agent processes, so their tmux sessions remain recoverable.
+Closing an agent pane detaches that view without killing the agent. Explicit Hive lifecycle commands preserve unlanded work and verify that the daemon-owned `sessiond` process tree is gone. Closing the Workspace normally runs `hive stop`, which stops the instance's agents and daemon. An unexpected UI crash does not own the agent processes, so their sessions remain recoverable.
 
 ## Requirements
 
 - macOS on Apple Silicon or Intel
-- git and tmux, installed through their supported distribution for your system
+- git, installed through its supported distribution for your system
 - At least one signed-in agent CLI: [Claude Code](https://code.claude.com/docs), [Codex](https://developers.openai.com/codex), or [Grok](https://docs.x.ai/build/overview)
-- Codex sessions require `codex-cli >= 0.144.4`; Hive refuses an older, prerelease, or unreadable Codex CLI before allocating or replacing a session
 
 The release includes the CLI and Workspace app. Bun, Swift, Python, and `uv` are not required to use an installed release.
 
@@ -57,8 +56,7 @@ Bare `hive` opens the Workspace with Claude as queen's default vendor. To choose
 
 Codex receives Hive's role and protocol bootstrap as developer instructions, so
 a fresh root opens at an empty composer instead of showing the setup wall. A
-worker's assignment remains its visible initial user message. If Hive refuses an
-older or unreadable Codex CLI, update Codex to `>= 0.144.4`, then reopen Hive.
+worker's assignment remains its visible initial user message.
 
 ## Commands
 
@@ -94,7 +92,7 @@ hive --instance client-a
 hive instances
 ```
 
-Instances have separate identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, tmux namespace, worktrees, and owned branches. Repository landing is serialized across instances. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance. Hive never reads, stores, or manages provider passwords, API keys, session secrets, or keychain entries; provider sign-in remains entirely owned by each vendor CLI.
+Instances have separate identity, daemon lock, ephemeral port, handshake, database, local control-plane capabilities, `sessiond` runtime, worktrees, and owned branches. Repository landing is serialized across instances. Provider quota is deliberately machine-wide because it belongs to the signed-in vendor account, not to one Hive instance. Hive never reads, stores, or manages provider passwords, API keys, session secrets, or keychain entries; provider sign-in remains entirely owned by each vendor CLI.
 
 Machine-wide update, rollback, and uninstall operations refuse while any instance has a live or unobservable team. Repository uninstall removes only the current repository's Hive footprint. It stops the selected daemon only after its handshake proves it serves that repository; a daemon serving another repository is never signaled.
 
@@ -200,14 +198,14 @@ inside an agent worktree, that worktree. Pass `PROJECT=/path/to/repo` to open a
 different git repo instead.
 
 `make clean` stops the dev instance and then deletes `.dev/` — in that order,
-and never the second without the first. It signals the dev Workspace app, its
-tmux server, and the provider CLIs started under it, re-reads the process table
+and never the second without the first. It signals the dev Workspace app,
+`sessiond`, and the provider CLIs started under it, re-reads the process table
 to confirm they are gone, and only then removes the directory. If anything is
 still running it refuses to delete `.dev/` and exits non-zero rather than
 stranding a live process against a directory that no longer exists.
 
 Dev processes are selected by executable path and arguments — never by process
-name — so a running installed hive, which has its own Workspace, tmux server
+name — so a running installed hive, which has its own Workspace, `sessiond`,
 and provider CLIs, is never a candidate.
 
 `make run` is the product entrypoint: the daemon owns the sessiond broker and

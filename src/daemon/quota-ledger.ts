@@ -21,7 +21,7 @@ import {
   daemonInstanceLiveness,
   type DaemonInstanceLiveness,
 } from "./lifecycle";
-import { hiveInstanceSuffix, resolveHiveHome } from "./tmux-sessions";
+import { hiveInstanceSuffix, resolveHiveHome } from "./instance-identity";
 
 type LedgerDatabase = Pick<HiveDatabase, "database">;
 

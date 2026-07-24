@@ -11,15 +11,8 @@ import {
   type MessagePriority,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
-import { createHash } from "node:crypto";
 import type { InputReceipt } from "./session-host/contract";
-import {
-  bindAgentSession,
-  requireAgentSessionLocator,
-  TmuxSessionHost,
-} from "./session-host/tmux-host";
 import { requireSessiondAgentLocator } from "./session-host/hive-terminal-host";
-import { SessiondWireNotReadyError } from "./session-host/sessiond-host";
 import type { SessiondAgentInput } from "./session-host/sessiond-agent-input";
 
 /** Senders to probe for idempotency: root aliases during the rename window. */
@@ -28,9 +21,8 @@ function idempotencySenders(from: string): readonly string[] {
 }
 
 function agentSessionLockKey(agent: AgentRecord): string {
-  const locator = agent.sessionLocator?.hostKind === "sessiond"
-    ? requireSessiondAgentLocator(agent)
-    : requireAgentSessionLocator(agent);
+  const locator = agent.sessionLocator;
+  if (locator === undefined) return `agent:${agent.id}`;
   return [
     locator.instanceId,
     locator.subject.kind === "root" ? "root" : locator.subject.agentId,
@@ -48,18 +40,9 @@ import type { MemoryTriggerExecutor } from "./memory-triggers";
 import {
   createOrchestratorEnvelope,
   formatOrchestratorWake,
-  orchestratorTmuxSession,
+  orchestratorSessionKey,
 } from "./orchestrator-lifecycle";
 import { isComposerLeased } from "./composer-lease";
-
-export interface TmuxSender {
-  /** T2 compatibility path for legacy-unbound tmux records and root. */
-  sendMessage(
-    tmuxSession: string,
-    text: string,
-    options?: { interrupt?: boolean },
-  ): Promise<void>;
-}
 
 export interface SessionSender {
   sendSessionMessage(
@@ -264,71 +247,12 @@ export function reportsTurnEvents(tool: AgentRecord["tool"]): boolean {
 }
 
 
-export class BunSessionSender implements SessionSender, TmuxSender {
-  constructor(private readonly sessions: TmuxSessionHost) {}
-
-  async sendSessionMessage(
-    recipient: AgentRecord,
-    text: string,
-    options: { messageId: string; interrupt?: boolean },
-  ): Promise<InputReceipt> {
-    const locator = bindAgentSession(this.sessions, recipient);
-    const bytes = new TextEncoder().encode(text);
-    const receipt = await this.sessions.writeAutomated(locator, {
-      transactionId: options.messageId,
-      idempotencyKey: options.messageId,
-      messageId: options.messageId,
-      recipientGeneration: locator.generation,
-      capabilityEpoch: recipient.capabilityEpoch,
-      bytes,
-      sha256: createHash("sha256").update(bytes).digest("hex"),
-      providerStrategy: options.interrupt ? "tmux-interrupt" : "tmux-normal",
-      submit: "return",
-    });
-    if (receipt.state !== "written") {
-      throw new Error(`SessionHost input is ${receipt.state}`);
-    }
-    return receipt;
-  }
-
-  async sendMessage(
-    tmuxSession: string,
-    text: string,
-    options: { interrupt?: boolean } = {},
-  ): Promise<void> {
-    await this.sessions.writeLegacyTmuxSession(
-      tmuxSession,
-      new TextEncoder().encode(text),
-      { interrupt: options.interrupt, submit: "return" },
-    );
-  }
-}
-
-export { BunSessionSender as BunTmuxSender };
-
-/** Coexistence router while sessiond's neutral attach projection is not landed. */
-export class CoexistingSessionSender implements SessionSender {
-  constructor(private readonly tmux: SessionSender) {}
-
-  async sendSessionMessage(
-    recipient: AgentRecord,
-    text: string,
-    options: { messageId: string; interrupt?: boolean },
-  ): Promise<InputReceipt | void> {
-    if (recipient.sessionLocator?.hostKind === "sessiond") {
-      requireSessiondAgentLocator(recipient);
-      throw new SessiondWireNotReadyError("message delivery");
-    }
-    return this.tmux.sendSessionMessage(recipient, text, options);
-  }
-}
-
 export class MessageDelivery {
   private readonly sessionLocks = new Map<string, Promise<void>>();
 
   constructor(
     private readonly db: HiveDatabase,
-    private readonly sessions: SessionSender | TmuxSender,
+    private readonly sessions: SessionSender,
     private readonly controls?: CriticalControlRuntime,
     private readonly nativeControl?: NativeAgentControl,
     private readonly rootProtocol?: RootProtocolDeliverer,
@@ -591,7 +515,7 @@ export class MessageDelivery {
           }
         } catch (error) {
           // A failed pane must not prevent later queued messages from
-          // delivery, but a systemic failure (vanished native connection or tmux)
+          // delivery, but a systemic terminal connection failure
           // dropping the whole queue must not be invisible either.
           console.error(
             `Hive failed to flush queued message ${queued.id} to ${agentName}: ${
@@ -740,7 +664,7 @@ export class MessageDelivery {
     // The root has no agents row, so this sweep used to skip it entirely: a
     // root wake that failed at send time was retried by NOTHING until the
     // next send or queen turn boundary happened to come along (2026-07-21 —
-    // zoe's report sat queued behind a transient tmux failure with no
+    // zoe's report sat queued behind a transient terminal failure with no
     // ticker). A failed wake now self-heals on the next maintenance tick.
     if (
       orchestratorRecipientNames().some((name) =>
@@ -771,7 +695,7 @@ export class MessageDelivery {
   }
 
   async orchestratorInbox(): Promise<OrchestratorMessageEnvelope[]> {
-    return this.withSessionLock(orchestratorTmuxSession(), async () => {
+    return this.withSessionLock(orchestratorSessionKey(), async () => {
       const deliveredAt = new Date().toISOString();
       // Drain preferred and synonym keys so pre-rename messages still surface.
       const claimed = orchestratorRecipientNames().flatMap((name) =>
@@ -795,7 +719,7 @@ export class MessageDelivery {
 
   async wakeOrchestrator(): Promise<AgentMessage[]> {
     if (this.rootComposerActive()) return [];
-    return this.withSessionLock(orchestratorTmuxSession(), async () => {
+    return this.withSessionLock(orchestratorSessionKey(), async () => {
       if (this.rootComposerActive()) return [];
       const delivered: AgentMessage[] = [];
       for (const name of orchestratorRecipientNames()) {
@@ -1006,19 +930,10 @@ export class MessageDelivery {
     // attempt; the high-water mark advances only after the delivery lands.
     const delta = await this.composeWakeDelta(recipient);
     const text = delta === null ? base : `${base}\n\n${delta.block}`;
-    // A sessiond-hosted pane has no tmux paste target: the tmux path below
-    // cannot address it (reaching it once bounced hive_send with a false
-    // "mismatched SessionLocator", and thrown from the flush loops it silently
-    // ate every queued delivery on every tick). #16's interim wire (#68) is the
-    // daemon→idle-sessiond input channel — one automation claim + INPUT_SUBMIT
-    // over the neutral viewer wire, marked `injected` only. When it is absent,
-    // or it declines (a human owns the arbiter, or the paste was not accepted),
-    // the honest outcome is unchanged: validate the locator and leave the
-    // message durably QUEUED for the stalled-message triage — never a fake
-    // locator error, never a fabricated `injected`/`applied`.
-    if (recipient.sessionLocator?.hostKind === "sessiond") {
+    // Production input uses the terminal host's viewer wire. A declined claim
+    // leaves the durable message queued and records the exact reason.
+    if (this.sessiondInput !== undefined) {
       requireSessiondAgentLocator(recipient);
-      if (this.sessiondInput === undefined) return this.getStoredMessage(message.id);
       if (this.processState !== undefined) {
         const state = await this.processState(recipient)
           .catch(() => "unknown" as const);
@@ -1045,7 +960,7 @@ export class MessageDelivery {
       } catch (error) {
         const detail = error instanceof Error ? error.message : "unknown error";
         console.error(
-          `Hive could not inject message ${message.id} into ${message.to}'s sessiond pane ` +
+          `Hive could not inject message ${message.id} into ${message.to}'s terminal ` +
             `(${detail}); leaving it queued.`,
         );
         this.db.recordMessageDeliveryDiagnostic(
@@ -1079,14 +994,6 @@ export class MessageDelivery {
       return injected;
     }
     const boundaryBefore = this.turnBoundaryAt(message.to);
-    // A previous attempt that pasted without submitting left this message's
-    // text sitting in the recipient's composer (2026-07-21 acceptance
-    // failure). Pasting again on top would submit a garbled double copy the
-    // moment anything presses Enter, so a redelivery after a recorded paste
-    // failure clears the composer first. Safe here: this branch only runs
-    // against an idle recipient, so there is no in-flight turn to cancel.
-    const clearStalePaste = message.deliveryDiagnostic
-      ?.startsWith("tmux paste not submitted") === true;
     // This is what makes priority mean anything. Until now every level did the
     // same thing here — paste and press Enter — so "urgent interrupts at the
     // next safe boundary" was a label on a database row, not a behaviour, and a
@@ -1095,25 +1002,15 @@ export class MessageDelivery {
     // boundary: routine coordination is not worth discarding a model's
     // reasoning, and the cost of an interrupt is that the in-flight turn is
     // cancelled and never resumed.
-    if ("sendSessionMessage" in this.sessions) {
-      await this.sessions.sendSessionMessage(recipient, text, {
-        messageId: message.id,
-        interrupt: message.priority === "urgent" || clearStalePaste,
-      });
-    } else {
-      // Compatibility for injected legacy senders. The built-in production
-      // sender always takes the exact-locator branch above.
-      await this.sessions.sendMessage(recipient.tmuxSession, text, {
-        interrupt: message.priority === "urgent" || clearStalePaste,
-      });
-    }
+    await this.sessions.sendSessionMessage(recipient, text, {
+      messageId: message.id,
+      interrupt: message.priority === "urgent",
+    });
 
     // An idle TUI that accepts a paste submits it, and the model starts a turn
     // — 71ms, measured in the field. Nothing else makes an idle agent start
     // one. So if no turn begins, the paste did not take: the pane swallowed it
-    // (a modal, a permission prompt, a composer that never pressed Enter) and
-    // `tmux send-keys` returned 0 anyway, because exit 0 only ever meant tmux
-    // accepted the keystrokes.
+    // (a modal, a permission prompt, a composer that never pressed Enter).
     //
     // Claiming "injected" on that exit code is the lie this whole bug is made
     // of: an orchestrator was told a stop order had landed, believed it, and
@@ -1136,17 +1033,7 @@ export class MessageDelivery {
     // message queued that is sitting correctly in the composer.
     const live = this.db.getAgentByName(message.to) ?? recipient;
     if (live.status === "idle" && reportsTurnEvents(live.tool)) {
-      let submitted = await this.turnStarted(message.to, boundaryBefore);
-      if (!submitted && "sendMessage" in this.sessions) {
-        // 2026-07-21 acceptance failure: the paste reached the pane but only
-        // a HUMAN Enter submitted it — the trailing Enter can be consumed as
-        // an editor newline, or land before the vendor composer is ready. A
-        // bare Enter re-press is free to try: a composer holding our paste
-        // submits it; an empty composer ignores it.
-        await this.sessions.sendMessage(recipient.tmuxSession, "", {})
-          .catch(() => undefined);
-        submitted = await this.turnStarted(message.to, boundaryBefore);
-      }
+      const submitted = await this.turnStarted(message.to, boundaryBefore);
       if (!submitted) {
         console.error(
           `Hive pasted message ${message.id} into ${message.to}'s pane, but ${message.to} never started a turn. ` +
@@ -1154,8 +1041,8 @@ export class MessageDelivery {
         );
         this.db.recordMessageDeliveryDiagnostic(
           message.id,
-          "tmux paste not submitted: no turn started after paste, Enter, and one Enter retry; " +
-            "the message stays queued and the composer is cleared before the next attempt",
+          "terminal input not submitted: no turn started after message injection; " +
+            "the message stays queued",
           new Date().toISOString(),
         );
         return this.getStoredMessage(message.id);
@@ -1501,7 +1388,7 @@ export class MessageDelivery {
     if (boundary.kind === "turn-end") {
       // "Swallowed paste" is a diagnosis about a paste that happened; a queued
       // message was never pasted, and the alert that conflated the two sent
-      // the orchestrator hunting a tmux loss that never occurred.
+      // the orchestrator hunting a terminal loss that never occurred.
       return phase === "queued"
         ? `${recipient} went idle without receiving it — delivery at its turn boundaries has not landed`
         : `${recipient} is idle yet never submitted it — the paste may have been swallowed`;
@@ -1675,7 +1562,7 @@ export class MessageDelivery {
    *
    * This used to mark a normal message "applied", the strongest claim in the
    * system, meaning the recipient acted on it. The entire evidence for that
-   * claim was that `tmux send-keys` did not throw. Measured against a real busy
+   * claim was that the input write did not throw. Measured against a real busy
    * pane: the paste succeeds, exit 0, and the TUI then prints "Messages to be
    * submitted after next tool call" and holds the text — unsubmitted for over
    * two minutes while the model reasoned. Hive recorded "applied" at the exact

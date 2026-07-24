@@ -1,5 +1,5 @@
 import { realpathSync } from "node:fs";
-import { tmpdir } from "node:os";
+import { readFile } from "node:fs/promises";
 import { join } from "node:path";
 import { buildMemoryIndex } from "../adapters/memory";
 import {
@@ -11,14 +11,8 @@ import {
 import { writeCredential } from "../daemon/credentials";
 import { getHiveHome } from "../daemon/db";
 import { operatorHeaders } from "./credential";
-import { orchestratorTmuxSession } from "../daemon/orchestrator-lifecycle";
-import {
-  hiveInstanceSuffix,
-} from "../daemon/tmux-sessions";
-import {
-  shellJoin,
-  TmuxSessionHost,
-} from "../daemon/session-host/tmux-host";
+import { orchestratorSessionKey } from "../daemon/orchestrator-lifecycle";
+import { shellJoin } from "../daemon/session-host/shell-session";
 import {
   normalizeNulText,
   ORCHESTRATOR_NAME,
@@ -44,7 +38,6 @@ import {
 } from "../adapters/tools/codex";
 import { hiveCliSpawnArgv } from "../daemon/lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
-import { type OrchestratorHostKind } from "../daemon/orchestrator-host";
 import { mintSessionRequestId } from "../daemon/session-host/locators";
 import { OrchestratorSessiondLaunchSchema } from "../daemon/orchestrator-sessiond";
 import {
@@ -55,154 +48,12 @@ import {
 import {
   codexInstructionProfileName,
   launchPromptPath,
-  wrapCodexWithInstructionProfile,
   wrapGrokWithRulesFile,
   writeCodexInstructionProfile,
   writeLaunchPrompt,
 } from "../daemon/launch-prompt";
 
 export type OrchestratorTool = CapabilityProvider;
-
-/** The Codex root app-server socket. It lives in the per-user temp dir (0700
- * on macOS), never world-writable /tmp where any local user could pre-bind the
- * name, and is keyed by the same resolved-home hash the tmux session names use
- * — so two spellings of the same HIVE_HOME can no longer name two sockets. */
-export function codexRootSocketPath(hiveHome?: string): string {
-  const socket = join(
-    tmpdir(),
-    `hive-codex-root-${hiveInstanceSuffix(hiveHome)}.sock`,
-  );
-  // macOS caps sun_path at 104 bytes; an over-long TMPDIR must fail here with
-  // its cause, not as an inscrutable bind error inside the tmux shell command.
-  if (Buffer.byteLength(socket) > 103) {
-    throw new Error(
-      `the Codex socket path is too long for this system: ${socket}\n` +
-        "Fix: point TMPDIR at a shorter directory",
-    );
-  }
-  return socket;
-}
-
-/** Authority-first command for the Codex root driver. */
-export function buildCodexRootAuthorityCommand(
-  socketPath = codexRootSocketPath(),
-  codexArguments: readonly string[] = [],
-  capabilityTokenFile = "",
-  executable = "codex",
-): string[] {
-  const shellQuote = (value: string): string =>
-    `'${value.replaceAll("'", `'"'"'`)}'`;
-  const remoteCommand = [
-    executable,
-    "--remote",
-    `unix://${socketPath}`,
-    // Keep startup and disconnect diagnostics visible in the native terminal.
-    // The alternate screen erases the only provider evidence when a remote
-    // TUI exits before it creates a thread.
-    "--no-alt-screen",
-    ...codexArguments,
-  ].map(shellQuote).join(" ");
-  // The app-server authority owns MCP/App startup. Passing these only to the
-  // remote TUI is too late: an inherited server can already be blocking the
-  // root before the client connects. Replay only authority-safe Codex config
-  // overrides here, including Hive: MCP servers are created by the authority,
-  // so passing Hive only to the remote TUI leaves the root with no Hive tools.
-  const authorityConfigArguments: string[] = [];
-  for (let index = 0; index < codexArguments.length; index += 1) {
-    if (codexArguments[index] !== "-c") continue;
-    const value = codexArguments[index + 1];
-    if (value === undefined) continue;
-    authorityConfigArguments.push("-c", value);
-    index += 1;
-  }
-  const authorityConfig = authorityConfigArguments.length === 0
-    ? ""
-    : ` ${authorityConfigArguments.map(shellQuote).join(" ")}`;
-  const quotedSocket = shellQuote(socketPath);
-  const capabilityEnvironment = capabilityTokenFile === ""
-    ? ""
-    : `export ${CODEX_CAPABILITY_TOKEN_ENV}="$(cat ${
-      shellQuote(capabilityTokenFile)
-    })"; `;
-  const authorityCommand =
-    `${capabilityEnvironment}${shellQuote(executable)} app-server --listen ${shellQuote(`unix://${socketPath}`)}${authorityConfig} & authority=$!; ` +
-    `trap 'kill "$authority" 2>/dev/null || true' EXIT INT TERM; ` +
-    `for attempt in $(seq 1 50); do ` +
-    `test -S ${quotedSocket} && break; sleep 0.1; done; ` +
-    `test -S ${quotedSocket} || { echo 'Codex app-server failed to become ready' >&2; exit 1; }; ` +
-    `exec ${remoteCommand}`;
-  return [
-    "sh",
-    "-lc",
-    wrapCodexWithInstructionProfile(
-      authorityCommand,
-      orchestratorTmuxSession(),
-    ),
-  ];
-}
-
-type OrchestratorSpawn = (
-  command: string[],
-  options: {
-    cwd: string;
-    stdin: "inherit";
-    stdout: "inherit";
-    stderr: "inherit";
-  },
-) => { exited: Promise<number> };
-
-const spawnOrchestrator: OrchestratorSpawn = (command, options) =>
-  Bun.spawn(command, options);
-
-interface OrchestratorTmux {
-  hasSession(session: string): Promise<boolean>;
-  listClientTtys(session: string): Promise<string[]>;
-  killSession(
-    session: string,
-    options?: Readonly<{ ignoreMissing?: boolean }>,
-  ): Promise<void>;
-}
-
-function orchestratorSessionHost(
-  sessions: TmuxSessionHost | OrchestratorTmux,
-): TmuxSessionHost {
-  if (sessions instanceof TmuxSessionHost) return sessions;
-  return new TmuxSessionHost({
-    adapter: {
-      hasSession: (session) => sessions.hasSession(session),
-      listClientTtys: (session) => sessions.listClientTtys(session),
-      killSession: (session, options) => sessions.killSession(session, options),
-      newSession: async () => {
-        throw new Error("orchestrator compatibility adapter cannot create sessions");
-      },
-      capturePane: async () => {
-        throw new Error("orchestrator compatibility adapter cannot capture sessions");
-      },
-    },
-  });
-}
-
-export async function prepareFreshOrchestratorSession(
-  input: TmuxSessionHost | OrchestratorTmux,
-): Promise<void> {
-  const sessions = orchestratorSessionHost(input);
-  const session = orchestratorTmuxSession();
-  const inspection = await sessions.inspectLegacyTmuxSession(session);
-  if (inspection.presence === "lost") return;
-  if (inspection.presence === "unknown") {
-    throw new Error("the orchestrator tmux session presence is unknown");
-  }
-
-  if (inspection.clientTtys.length > 0) {
-    // A command the user has earned: Hive will not close a live orchestrator
-    // out from under them in order to start another one.
-    throw new Error(
-      `an orchestrator is already running in tmux session ${session}\n` +
-        "Fix: close it, or run `hive stop`, before starting another",
-    );
-  }
-  await sessions.terminateLegacyTmuxSession(session);
-}
 
 export function orchestratorConfigRoot(): string {
   return join(getHiveHome(), "runtime", "orchestrator");
@@ -334,7 +185,7 @@ export function buildOrchestratorCommand(
           executable: executable ?? "claude",
           scopedSettingsPath: join(configRoot, ".claude", "settings.local.json"),
           scopedMcpConfigPath: join(configRoot, ".mcp.json"),
-          appendSystemPromptFile: launchPromptPath(orchestratorTmuxSession()),
+          appendSystemPromptFile: launchPromptPath(orchestratorSessionKey()),
         }),
       ];
     }
@@ -359,7 +210,7 @@ export function buildOrchestratorCommand(
         "-c",
         'mcp_servers.hive.default_tools_approval_mode="approve"',
         "--profile",
-        codexInstructionProfileName(orchestratorTmuxSession()),
+        codexInstructionProfileName(orchestratorSessionKey()),
         // Codex's supported bearer indirection. The launch shell populates
         // this process-local variable from the 0600 capability file; neither
         // the token nor a made-up config key appears in argv.
@@ -384,7 +235,7 @@ export function buildOrchestratorCommand(
           worktreePath: process.cwd(),
           readOnly: true,
           executable: grokExecutable,
-        })), launchPromptPath(orchestratorTmuxSession())),
+        })), launchPromptPath(orchestratorSessionKey())),
       ];
     }
     default:
@@ -392,113 +243,30 @@ export function buildOrchestratorCommand(
   }
 }
 
-export function buildOrchestratorLaunchCommand(
-  tool: OrchestratorTool,
-  port: number,
-  cwd: string,
-  memoryIndex = "",
-  docGuidance = "",
-  executable?: string,
-  codexTokenFile = "",
-  recoveryBrief = "",
-  codexMcpExclusionArgs: readonly string[] = [],
-  sessions = new TmuxSessionHost(),
-): string[] {
-  switch (tool) {
-    case "codex": {
-      // `codex --help` defines the initial brief as positional [PROMPT]. The
-      // app-server has no prompt option, so it belongs on the remote TUI command
-      // that creates the thread, after the ordinary config/sandbox flags.
-      const codexCommand = buildOrchestratorCommand(
-        tool,
-        port,
-        memoryIndex,
-        docGuidance,
-        executable,
-        codexTokenFile,
-        recoveryBrief,
-        codexMcpExclusionArgs,
-      );
-      return sessions.compatibilityLaunchCommand(
-        orchestratorTmuxSession(),
-        cwd,
-        buildCodexRootAuthorityCommand(
-          undefined,
-          codexCommand.slice(1),
-          codexTokenFile,
-          executable,
-        ),
-      );
-    }
-    case "claude":
-      return sessions.compatibilityLaunchCommand(
-        orchestratorTmuxSession(),
-        cwd,
-        buildOrchestratorCommand(
-          tool,
-          port,
-          memoryIndex,
-          docGuidance,
-          executable,
-          "",
-          recoveryBrief,
-        ),
-      );
-    case "grok":
-      return sessions.compatibilityLaunchCommand(
-        orchestratorTmuxSession(),
-        cwd,
-        [
-          "env",
-          `GROK_HOME=${join(orchestratorConfigRoot(), ".grok")}`,
-          ...Object.entries(GROK_COMPATIBILITY_ENV).map(([key, value]) =>
-            `${key}=${value}`
-          ),
-          ...buildOrchestratorCommand(
-            tool,
-            port,
-            memoryIndex,
-            docGuidance,
-            executable,
-            "",
-            recoveryBrief,
-          ),
-        ],
-      );
-    default:
-      unknownVendor(tool, "orchestrator launch command");
-  }
-}
-
 export interface LaunchOrchestratorOptions {
   sessiondControl?: OrchestratorSessiondControl;
   sessiondSleep?: (milliseconds: number) => Promise<void>;
+  resolveClaudeExecutable?: () => ResolvedClaudeExecutable;
+  resolveCodexExecutable?: typeof resolveWorkingCodexExecutable;
+  resolveGrokExecutable?: typeof resolveWorkingGrokExecutable;
+  listCodexMcpServers?: () => Promise<string[]>;
+  provisionCodexToken?: (port: number) => Promise<string | null>;
 }
 
-async function launchOrchestratorOnHost(
+export async function launchOrchestrator(
   tool: OrchestratorTool,
   port: number,
   cwd = process.cwd(),
-  spawn: OrchestratorSpawn = spawnOrchestrator,
-  detectVersion?: () => Promise<string | null>,
-  resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
-  input?: TmuxSessionHost | OrchestratorTmux,
   recoveryBrief = "",
-  listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
-  provisionCodexToken: (port: number) => Promise<string | null> =
-    provisionCodexRootToken,
   options: LaunchOrchestratorOptions = {},
-  host: OrchestratorHostKind = "sessiond",
 ): Promise<number> {
-  const sessions = host === "tmux"
-    ? orchestratorSessionHost(input ?? new TmuxSessionHost())
-    : null;
   // Resolve and gate Claude only for the Claude path. A Codex orchestrator
   // must not require an unrelated Claude installation.
   let providerExecutable: string;
   switch (tool) {
     case "claude": {
-      const claude = resolveExecutable();
+      const claude = (options.resolveClaudeExecutable ??
+        resolveWorkingClaudeExecutable)();
       if (claude.path === "claude" && claude.version === null) {
         throw new Error(
           "the Claude orchestrator needs a working Claude Code CLI\n" +
@@ -509,7 +277,8 @@ async function launchOrchestratorOnHost(
       break;
     }
     case "codex": {
-      const codex = resolveWorkingCodexExecutable();
+      const codex = (options.resolveCodexExecutable ??
+        resolveWorkingCodexExecutable)();
       if (codex === null) {
         throw new Error("the Codex orchestrator needs a working codex CLI");
       }
@@ -517,7 +286,8 @@ async function launchOrchestratorOnHost(
       break;
     }
     case "grok": {
-      const grok = resolveWorkingGrokExecutable();
+      const grok = (options.resolveGrokExecutable ??
+        resolveWorkingGrokExecutable)();
       if (grok === null) {
         throw new Error("the Grok orchestrator needs a working grok CLI");
       }
@@ -527,16 +297,18 @@ async function launchOrchestratorOnHost(
     default:
       unknownVendor(tool, "orchestrator launch");
   }
-  if (sessions !== null) await prepareFreshOrchestratorSession(sessions);
   await prepareOrchestratorConfig(tool, port, cwd);
   let codexTokenFile = "";
+  let codexToken = "";
   let codexMcpExclusionArgs: string[] = [];
   switch (tool) {
     case "codex": {
       codexMcpExclusionArgs = buildCodexMcpExclusionArgs(
-        await listCodexMcpServers(),
+        await (options.listCodexMcpServers ??
+          listInheritedCodexMcpServers)(),
       ).args;
-      const provisioned = await provisionCodexToken(port).catch(() => null);
+      const provisioned = await (options.provisionCodexToken ??
+        provisionCodexRootToken)(port).catch(() => null);
       if (provisioned === null) {
         throw new Error(
           "the Hive daemon could not authorize the Codex orchestrator\n" +
@@ -544,6 +316,10 @@ async function launchOrchestratorOnHost(
         );
       }
       codexTokenFile = provisioned;
+      codexToken = (await readFile(provisioned, "utf8")).trim();
+      if (codexToken === "") {
+        throw new Error("the Codex orchestrator capability file is empty");
+      }
       break;
     }
     case "claude":
@@ -566,164 +342,42 @@ async function launchOrchestratorOnHost(
     docGuidance,
     recoveryBrief,
   );
-  await writeLaunchPrompt(orchestratorTmuxSession(), orchestratorBrief);
+  await writeLaunchPrompt(orchestratorSessionKey(), orchestratorBrief);
   if (tool === "codex") {
     await writeCodexInstructionProfile(
-      orchestratorTmuxSession(),
+      orchestratorSessionKey(),
       orchestratorBrief,
     );
   }
-  if (host === "sessiond") {
-    let argv: string[];
-    let environment: Record<string, string> = {};
-    let expectedExecutable: string;
-    switch (tool) {
-      case "claude":
-        argv = buildOrchestratorCommand(
-          tool,
-          port,
-          memoryIndex,
-          docGuidance,
-          providerExecutable,
-          "",
-          recoveryBrief,
-        );
-        expectedExecutable = providerExecutable;
-        break;
-      case "codex": {
-        const codexCommand = buildOrchestratorCommand(
-          tool,
-          port,
-          memoryIndex,
-          docGuidance,
-          providerExecutable,
-          codexTokenFile,
-          recoveryBrief,
-          codexMcpExclusionArgs,
-        );
-        argv = buildCodexRootAuthorityCommand(
-          undefined,
-          codexCommand.slice(1),
-          codexTokenFile,
-          providerExecutable,
-        );
-        expectedExecutable = providerExecutable;
-        break;
+  const argv = buildOrchestratorCommand(
+    tool,
+    port,
+    memoryIndex,
+    docGuidance,
+    providerExecutable,
+    codexTokenFile,
+    recoveryBrief,
+    codexMcpExclusionArgs,
+  );
+  const environment = tool === "grok"
+    ? {
+        GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
+        ...GROK_COMPATIBILITY_ENV,
       }
-      case "grok":
-        argv = buildOrchestratorCommand(
-          tool,
-          port,
-          memoryIndex,
-          docGuidance,
-          providerExecutable,
-          "",
-          recoveryBrief,
-        );
-        environment = {
-          GROK_HOME: join(orchestratorConfigRoot(), ".grok"),
-          ...GROK_COMPATIBILITY_ENV,
-        };
-        expectedExecutable = providerExecutable;
-        break;
-      default:
-        return unknownVendor(tool, "sessiond orchestrator launch");
-    }
-    const launch = OrchestratorSessiondLaunchSchema.parse({
-      requestId: mintSessionRequestId(),
-      provider: tool,
-      cwd,
-      argv,
-      environment,
-      expectedExecutable,
-    });
-    return await runOrchestratorSessiondLaunch(
-      launch,
-      options.sessiondControl ?? daemonOrchestratorSessiondControl(port),
-      options.sessiondSleep,
-    );
-  }
-  const child = spawn(
-    buildOrchestratorLaunchCommand(
-      tool,
-      port,
-      cwd,
-      memoryIndex,
-      docGuidance,
-      providerExecutable,
-      codexTokenFile,
-      recoveryBrief,
-      codexMcpExclusionArgs,
-      sessions!,
-    ),
-    {
-      cwd,
-      stdin: "inherit",
-      stdout: "inherit",
-      stderr: "inherit",
-    },
-  );
-  return await child.exited;
-}
-
-/** Production queen launch. There is no runtime host selector or fallback. */
-export function launchOrchestrator(
-  tool: OrchestratorTool,
-  port: number,
-  cwd = process.cwd(),
-  spawn: OrchestratorSpawn = spawnOrchestrator,
-  detectVersion?: () => Promise<string | null>,
-  resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
-  input?: TmuxSessionHost | OrchestratorTmux,
-  recoveryBrief = "",
-  listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
-  provisionCodexToken: (port: number) => Promise<string | null> =
-    provisionCodexRootToken,
-  options: LaunchOrchestratorOptions = {},
-): Promise<number> {
-  return launchOrchestratorOnHost(
-    tool,
-    port,
+    : tool === "codex"
+    ? { [CODEX_CAPABILITY_TOKEN_ENV]: codexToken }
+    : {};
+  const launch = OrchestratorSessiondLaunchSchema.parse({
+    requestId: mintSessionRequestId(),
+    provider: tool,
     cwd,
-    spawn,
-    detectVersion,
-    resolveExecutable,
-    input,
-    recoveryBrief,
-    listCodexMcpServers,
-    provisionCodexToken,
-    options,
-    "sessiond",
-  );
-}
-
-/** Explicit legacy fixture seam. Production never calls this; #1/#2 own its
- * deletion with the rest of the dead tmux implementation. */
-export function launchLegacyTmuxOrchestrator(
-  tool: OrchestratorTool,
-  port: number,
-  cwd = process.cwd(),
-  spawn: OrchestratorSpawn = spawnOrchestrator,
-  detectVersion?: () => Promise<string | null>,
-  resolveExecutable: () => ResolvedClaudeExecutable = resolveWorkingClaudeExecutable,
-  input: TmuxSessionHost | OrchestratorTmux = new TmuxSessionHost(),
-  recoveryBrief = "",
-  listCodexMcpServers: () => Promise<string[]> = listInheritedCodexMcpServers,
-  provisionCodexToken: (port: number) => Promise<string | null> =
-    provisionCodexRootToken,
-): Promise<number> {
-  return launchOrchestratorOnHost(
-    tool,
-    port,
-    cwd,
-    spawn,
-    detectVersion,
-    resolveExecutable,
-    input,
-    recoveryBrief,
-    listCodexMcpServers,
-    provisionCodexToken,
-    {},
-    "tmux",
+    argv,
+    environment,
+    expectedExecutable: providerExecutable,
+  });
+  return await runOrchestratorSessiondLaunch(
+    launch,
+    options.sessiondControl ?? daemonOrchestratorSessiondControl(port),
+    options.sessiondSleep,
   );
 }

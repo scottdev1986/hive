@@ -4,77 +4,12 @@ import CoreGraphics
 
 final class ProjectStateTests: XCTestCase {
 
-    func testTerminalScrollRequestMapsWheelDirectionAndVelocity() {
-        XCTAssertNil(TerminalScrollRequest(deltaY: 0, visibleRows: 40))
-        XCTAssertEqual(
-            TerminalScrollRequest(deltaY: 0.5, visibleRows: 40),
-            TerminalScrollRequest(direction: .up, lineCount: 1))
-        XCTAssertEqual(
-            TerminalScrollRequest(deltaY: -2, visibleRows: 40),
-            TerminalScrollRequest(direction: .down, lineCount: 3))
-        XCTAssertEqual(
-            TerminalScrollRequest(deltaY: 6, visibleRows: 40),
-            TerminalScrollRequest(direction: .up, lineCount: 10))
-        XCTAssertEqual(
-            TerminalScrollRequest(deltaY: -10, visibleRows: 40),
-            TerminalScrollRequest(direction: .down, lineCount: 40))
-    }
-
-    func testTerminalScrollSessionUsesLaunchMetadataForOrchestrator() throws {
-        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
-        state.addOrchestrator()
-        let pane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
-
-        XCTAssertEqual(
-            terminalScrollSession(for: pane, orchestratorSession: "hive-orchestrator-instance"),
-            "hive-orchestrator-instance")
-        XCTAssertNil(terminalScrollSession(for: pane, orchestratorSession: nil))
-    }
-
-    func testTerminalScrollSessionUsesFeedMetadataForAgent() throws {
-        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
-        state.addOrchestrator()
-        state.apply(feed: [agent("worker", session: "hive-worker-instance")])
-        let pane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
-
-        XCTAssertEqual(
-            terminalScrollSession(for: pane, orchestratorSession: "hive-orchestrator-instance"),
-            "hive-worker-instance")
-    }
-
-    func testTerminalAllowsMouseReportingForBothPaneKinds() throws {
-        let state = ProjectState(projectID: ProjectID("project"), displayName: "Project")
-        state.addOrchestrator()
-        state.apply(feed: [agent("worker", session: "hive-worker-instance")])
-        let orchestratorPane = try XCTUnwrap(state.panes[ProjectState.orchestratorPaneID])
-        let agentPane = try XCTUnwrap(state.panes[ProjectState.paneID(forAgent: "worker")])
-
-        XCTAssertTrue(terminalAllowsMouseReporting(for: orchestratorPane))
-        XCTAssertTrue(terminalAllowsMouseReporting(for: agentPane))
-    }
-
-    func testTerminalMouseFilterSuppressesOnlyMalformedNoButtonMotion() {
-        func bytes(_ value: String) -> [UInt8] { Array(value.utf8) }
-
-        XCTAssertTrue(isMalformedNoButtonMotion(bytes("\u{1b}[<32;14;21m")))
-        XCTAssertTrue(isMalformedNoButtonMotion(bytes("\u{1b}[<36;14;21m")),
-                      "modifier bits do not disguise malformed hover")
-        for intentional in [
-            "\u{1b}[<0;14;21M",  // click press
-            "\u{1b}[<0;14;21m",  // click release
-            "\u{1b}[<64;14;21M", // wheel up
-            "\u{1b}[<65;14;21M", // wheel down
-        ] {
-            XCTAssertFalse(isMalformedNoButtonMotion(bytes(intentional)))
-        }
-    }
-
     private func agent(_ name: String, status: String = "working",
                        tool: String = "claude", model: String = "opus",
-                       task: String = "do things", session: String? = nil,
+                       task: String = "do things",
                        contextPct: Double = 12, closedAt: String? = nil) -> AgentSnapshot {
         AgentSnapshot(name: name, tool: tool, model: model, status: status,
-                      taskDescription: task, tmuxSession: session ?? "hive-\(name)",
+                      taskDescription: task,
                       contextPct: contextPct, closedAt: closedAt)
     }
 
@@ -127,7 +62,6 @@ final class ProjectStateTests: XCTestCase {
         ]))
         XCTAssertEqual(state.layout.master, ProjectState.orchestratorPaneID)
         XCTAssertEqual(state.orchestratorPane, ProjectState.orchestratorPaneID)
-        XCTAssertEqual(state.panes[ProjectState.paneID(forAgent: "indexer")]?.tmuxSession, "hive-indexer")
     }
 
     func testAgentHeaderHasEachFieldOnceAndUsesLiveActivity() throws {
@@ -532,19 +466,4 @@ final class ProjectStateTests: XCTestCase {
         XCTAssertTrue(try XCTUnwrap(decoded.error).contains("sessionLocator"))
     }
 
-    func testTmuxLocatorEncodesRequiredNullEngineBuildID() throws {
-        let locator = AgentSessionLocator(
-            instanceId: "instance",
-            subject: AgentSessionSubject(kind: "agent", agentId: "agent-worker"),
-            generation: 1,
-            sessionId: "ses_0198a8f0-0000-7000-8000-000000000001",
-            hostKind: "tmux", engineBuildId: nil)
-
-        let object = try XCTUnwrap(
-            JSONSerialization.jsonObject(with: JSONEncoder().encode(locator))
-                as? [String: Any])
-
-        XCTAssertTrue(object.keys.contains("engineBuildId"))
-        XCTAssertTrue(object["engineBuildId"] is NSNull)
-    }
 }

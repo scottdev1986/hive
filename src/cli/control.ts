@@ -8,12 +8,6 @@ import {
   type DaemonInstanceLiveness,
 } from "../daemon/lifecycle";
 import { getHiveHome } from "../daemon/db";
-import {
-  captureProcessTree,
-  defaultReapDependencies,
-  reapCapturedTree,
-  type ReapDependencies,
-} from "../daemon/teardown";
 import type {
   MemoryScope,
   MemoryWriteInput,
@@ -27,7 +21,7 @@ import {
   type InvokerIdentity,
 } from "./invoker";
 import { confirmOnTty, type ConfirmFn } from "./prompt";
-import { hiveInstanceSuffix, isTmuxSessionForInstance } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   deleteMemory,
   fetchAgentStatus,
@@ -41,135 +35,6 @@ import {
 import { operatorFetch, operatorHeaders } from "./credential";
 import { isAutonomy, type Autonomy } from "../config/autonomy";
 import { formatQuotaStatus, formatStatusTable } from "./status";
-import { TmuxSessionHost } from "../daemon/session-host/tmux-host";
-
-interface StopTmux {
-  listSessions(): Promise<string[]>;
-  listPanePids(session: string): Promise<number[]>;
-  killSession(
-    session: string,
-    options?: Readonly<{ ignoreMissing?: boolean }>,
-  ): Promise<void>;
-}
-
-function compatibilityStopAdapter(
-  sessions: TmuxSessionHost,
-  hiveHome?: string,
-): StopTmux {
-  const instanceId = hiveHome === undefined
-    ? hiveInstanceSuffix()
-    : hiveInstanceSuffix(hiveHome);
-  return {
-    async listSessions(): Promise<string[]> {
-      const result = await sessions.listDetailed(instanceId);
-      if (!result.complete && result.legacyUnbound.length === 0) {
-        throw new Error(
-          `tmux session enumeration is incomplete: ${result.diagnosticIds.join(", ")}`,
-        );
-      }
-      const unknown = result.inspections.find((entry) => entry.presence === "unknown");
-      if (unknown !== undefined) {
-        throw new Error("tmux session enumeration is unknown");
-      }
-      return [
-        ...result.inspections
-          .filter((entry) => entry.presence === "present")
-          .map((entry) => sessions.compatibilitySessionName(entry.locator)),
-        ...result.legacyUnbound.map((entry) => entry.tmuxSession),
-      ];
-    },
-    async listPanePids(tmuxSession: string): Promise<number[]> {
-      const locator = sessions.locatorForCompatibilitySession(tmuxSession);
-      if (locator !== null) {
-        return [...await sessions.sessionProcessRoots(locator)];
-      }
-      const inspection = await sessions.inspectLegacyTmuxSession(tmuxSession);
-      if (inspection.presence === "unknown") {
-        throw new Error(`tmux session ${tmuxSession} presence is unknown`);
-      }
-      return [...inspection.panePids];
-    },
-    async killSession(tmuxSession: string): Promise<void> {
-      const locator = sessions.locatorForCompatibilitySession(tmuxSession);
-      if (locator === null) {
-        await sessions.terminateLegacyTmuxSession(tmuxSession);
-        return;
-      }
-      const result = await sessions.terminate(locator, {
-        mode: "immediate",
-        reason: "hive stop",
-        requestId: crypto.randomUUID(),
-      });
-      if (result.state !== "terminated") {
-        throw new Error(`tmux session ${tmuxSession} termination is ${result.state}`);
-      }
-    },
-  };
-}
-
-export interface StopAgentSessionDependencies {
-  tmux?: StopTmux;
-  sessions?: TmuxSessionHost;
-  hiveHome?: string;
-  reap?: ReapDependencies;
-}
-
-export async function stopAgentSessions(
-  dependencies: StopAgentSessionDependencies,
-): Promise<number> {
-  const tmux = dependencies.tmux ?? await compatibilityStopAdapter(
-    dependencies.sessions ?? new TmuxSessionHost(),
-    dependencies.hiveHome,
-  );
-  const sessions = (await tmux.listSessions()).filter(
-    (session) => isTmuxSessionForInstance(session, dependencies.hiveHome),
-  );
-  if (sessions.length === 0) return 0;
-
-  const reap = dependencies.reap ?? defaultReapDependencies();
-  const captured = await Promise.all(sessions.map(async (session) => {
-    try {
-      const roots = await tmux.listPanePids(session);
-      return await captureProcessTree(roots, reap);
-    } catch (error) {
-      throw new Error(
-        `Refusing to close ${session} because its process tree could not be captured: ${
-          error instanceof Error ? error.message : String(error)
-        }\nFix: inspect the session, then rerun \`hive stop\`.`,
-      );
-    }
-  }));
-
-  const sessionResults = await Promise.allSettled(sessions.map((session) =>
-    tmux.killSession(session, { ignoreMissing: true })
-  ));
-  const outcomes = await Promise.all(
-    captured.map((tree) => reapCapturedTree(tree, reap)),
-  );
-  const survivors = outcomes.flatMap((outcome) => outcome.survivors);
-  const remaining = new Set(await tmux.listSessions());
-  const remainingOwned = sessions.filter((session) => remaining.has(session));
-  const sessionErrors = sessionResults.flatMap((result) =>
-    result.status === "rejected"
-      ? [result.reason instanceof Error ? result.reason.message : String(result.reason)]
-      : []
-  );
-  if (
-    sessionErrors.length > 0 || survivors.length > 0 || remainingOwned.length > 0
-  ) {
-    const details = [
-      ...sessionErrors,
-      ...survivors.map((process) => `pid ${process.pid} (${process.command}) survived`),
-      ...remainingOwned.map((session) => `${session} is still present`),
-    ];
-    throw new Error(
-      `Hive could not completely stop its remaining sessions: ${details.join("; ")}\n` +
-        "Fix: inspect the named sessions and processes, stop them, then rerun `hive stop`.",
-    );
-  }
-  return sessions.length;
-}
-
 export function requireDaemonPort(explicitPort?: number): number {
   const port = explicitPort ?? readDaemonPort();
   if (port === null || port <= 0 || port > 65_535) {
@@ -195,7 +60,7 @@ function readDaemonPid(): number | null {
  * This is what the Workspace's pane X shells out to, and it is deliberately the
  * same daemon path `hive_kill` takes: the daemon owns the kill, because only
  * the daemon knows the agent's process tree, its quota reservation and its
- * unlanded work. A UI that killed the tmux session itself would leave the
+ * unlanded work. A UI that killed only the terminal itself would leave the
  * vendor CLI, the Codex host and the MCP children running — that is the exact
  * leak this command exists to close.
  *
@@ -577,8 +442,6 @@ async function defaultRequestStop(
 }
 
 export interface StopHiveDependencies {
-  readonly tmux?: StopTmux;
-  readonly sessions?: TmuxSessionHost;
   readonly readPid?: () => number | null;
   readonly liveness?: () => Promise<DaemonInstanceLiveness>;
   readonly cleanup?: (pid?: number) => void;
@@ -721,20 +584,9 @@ export async function stopHive(deps: StopHiveDependencies = {}): Promise<void> {
     }
   }
 
-  const stoppedSessions = deps.tmux === undefined && deps.sessions === undefined
-    ? 0
-    : await stopAgentSessions({
-      ...(deps.tmux === undefined ? {} : { tmux: deps.tmux }),
-      ...(deps.sessions === undefined ? {} : { sessions: deps.sessions }),
-    });
   cleanup(pid ?? undefined);
-  const sessionLabel = stoppedSessions === 1 ? "session" : "sessions";
   const report = daemonWasLive
-    ? stoppedSessions === 0
-      ? "Stopped the Hive daemon and its sessions."
-      : `Stopped the Hive daemon; reaped ${stoppedSessions} remaining Hive ${sessionLabel}.`
-    : stoppedSessions === 0
-    ? "No live Hive daemon or sessions were found."
-    : `Stopped ${stoppedSessions} stale Hive ${sessionLabel}; no live daemon was found.`;
+    ? "Stopped the Hive daemon and its sessions."
+    : "No live Hive daemon or sessions were found.";
   (deps.log ?? console.log)(report);
 }

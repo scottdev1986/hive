@@ -1,4 +1,4 @@
-import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import {
   rootSessionIdForLaunchRequest,
   type RootSessiondLocator,

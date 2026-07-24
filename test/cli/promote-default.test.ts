@@ -7,7 +7,7 @@ import { HiveDatabase } from "../../src/daemon/db";
 import { inheritDefaultModelControlSettings } from "../../src/daemon/instance-settings";
 import { RoutingPolicyConflictError, RoutingPolicyStore } from "../../src/daemon/routing-policy-store";
 import { SelectionPreferenceStore } from "../../src/daemon/selection-preferences";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import type { RoutingPolicy } from "../../src/schemas";
 import { promoteDefaultModelControl } from "../../src/cli/promote-default";
 

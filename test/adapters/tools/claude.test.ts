@@ -32,7 +32,7 @@ import {
 } from "../../../src/adapters/tools/claude";
 import { RecoverySessionDiscoveryError } from "../../../src/adapters/tools/recovery-session";
 import { GRAPHIFY_HOOK_SCRIPT } from "../../../src/adapters/tools/graphify-hook";
-import { hiveInstanceSuffix } from "../../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 
 let tempRoot = "";
 let worktreePath = "";
@@ -204,7 +204,7 @@ describe("Claude adapter", () => {
     });
   });
 
-  test("uses the daemon-resolved executable instead of tmux PATH", () => {
+  test("uses the daemon-resolved executable instead of a launcher PATH", () => {
     expect(buildClaudeSpawnCommand({
       name: "agent-3",
       model: "sonnet",

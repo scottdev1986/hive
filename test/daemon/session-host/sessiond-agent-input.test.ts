@@ -30,7 +30,6 @@ function agent(): AgentRecord {
     taskDescription: "Build delivery",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-delivery",
-    tmuxSession: "hive-maya",
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,

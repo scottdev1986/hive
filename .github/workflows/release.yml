@@ -47,11 +47,6 @@ jobs:
 
       - run: bun install --frozen-lockfile
 
-      # The tmux adapter tests drive a real private tmux server; the runner
-      # image does not ship tmux.
-      - name: Install tmux
-        run: brew install tmux
-
       - name: Typecheck
         run: bun run typecheck
 
@@ -83,16 +78,6 @@ jobs:
           set -euo pipefail
           mkdir -p "$HIVE_HOME"
           bun run src/cli.ts memory self-test --strict
-
-      # The regression suite for the Workspace field-test failures: the real
-      # CLI as a subprocess against a real daemon, real sqlite, and a real
-      # private tmux server. It self-skips without HIVE_E2E=1, so this step is
-      # the only place it runs unattended. PATH shims inside the suite keep the
-      # billable `claude`/`codex` CLIs from ever being invoked.
-      - name: End-to-end (real daemon + tmux)
-        env:
-          HIVE_E2E: "1"
-        run: bun test test/cli/e2e-real.test.ts
 
       # The bump rule is a tested pure function; this step is its adapter.
       - name: Plan the release

@@ -11,7 +11,6 @@
       "taskDescription": "Index the repository",
       "worktreePath": "/tmp/hive/indexer",
       "branch": "hive/indexer",
-      "tmuxSession": "hive-indexer",
       "contextPct": 41.5,
       "createdAt": "2026-07-13T12:00:00.000Z",
       "lastEventAt": "2026-07-13T12:00:00.000Z",
@@ -24,7 +23,7 @@
   "autonomy": "dangerous",
   "orchestrator": {
     "status": "working",
-    "host": "tmux",
+    "host": "sessiond",
     "hostState": null,
     "hostDiagnostic": null,
     "sessionLocator": null

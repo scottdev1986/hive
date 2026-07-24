@@ -1,7 +1,7 @@
 // Resource watchdog: the 2026-07-10 incident proved one runaway process
 // inside an agent session (a hung `bun test` allocating ~1.5 GB/s) can drive
 // the whole machine into jetsam and kill every agent. The daemon therefore
-// samples the process tree under every hive-owned tmux session on each
+// samples the process tree under every Hive-owned terminal session on each
 // maintenance tick, hard-kills anything past a per-process memory ceiling,
 // and pauses new spawns while system memory is scarce. Detection is pure
 // functions over `ps`/`vm_stat` text so the policy is testable without
@@ -23,7 +23,7 @@ export interface ResourceLimits {
 }
 
 export interface SessionProcessRoots {
-  /** Agent (or "orchestrator") whose tmux session owns these pane processes. */
+  /** Agent (or "orchestrator") whose terminal owns these processes. */
   owner: string;
   rootPids: number[];
 }

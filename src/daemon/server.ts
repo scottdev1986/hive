@@ -14,11 +14,6 @@ import {
   type SessionResolver,
 } from "./recovery";
 import {
-  bindAgentSession,
-  TmuxSessionHost,
-  type TmuxEngine,
-} from "./session-host/tmux-host";
-import {
   HiveTerminalHostAdapter,
   requireSessiondAgentLocator,
   requireSessiondRootLocator,
@@ -164,19 +159,14 @@ import {
   type RetentionSweepReport,
 } from "./memory-retention";
 import {
-  BunTmuxSender,
-  CoexistingSessionSender,
   MessageDelivery,
   queuedDeliveryNote,
   type RootProtocolDeliverer,
   type SessionSender,
-  type TmuxSender,
 } from "./delivery";
 import {
-  OrchestratorRootDelivery,
   SessiondOrchestratorRootDelivery,
 } from "./orchestrator-root-delivery";
-import { type OrchestratorHostKind } from "./orchestrator-host";
 import {
   OrchestratorSessiondController,
   OrchestratorSessiondLaunchSchema,
@@ -204,13 +194,12 @@ import {
 import type { SessiondBrokerSupervisor } from "./sessiond-broker";
 import { expectedDaemonHandshake } from "./handshake";
 import { listInstances } from "./instances";
-import { hiveInstanceSuffix } from "./tmux-sessions";
+import { hiveInstanceSuffix } from "./instance-identity";
 import {
   compactActiveTeam,
   compactApprovalDescription,
   compactSendResult,
   compactSpawnResult,
-  orchestratorTmuxSession,
 } from "./orchestrator-lifecycle";
 import {
   SpawnRequestSchema,
@@ -226,29 +215,21 @@ import {
 import {
   defaultReapDependencies,
   reapCapturedTree,
-  stopAgentSession,
   stopSessiondAgentSession,
-  stopTmuxSession,
   type ReapDependencies,
   type ReapOutcome,
 } from "./teardown";
 import {
   assessResources,
-  descendantsOf,
   foregroundJobState,
-  paneProcessState,
   parseAvailableMemoryMb,
   parseForegroundProcessTable,
   parseProcessTable,
-  parseStateTable,
-  processCommandName,
   runPs,
   runPsForeground,
-  runPsState,
   runVmStat,
   type CommandOutput,
   type PaneProcessState,
-  type SessionProcessRoots,
 } from "./resources";
 import type { LifecycleConfig, MemoryRetentionConfig, ResourceLimits } from "../schemas";
 import { HIVE_VERSION } from "../version";
@@ -578,15 +559,12 @@ export interface HiveDaemonOptions {
   terminalHost?: LandedTerminalHost;
   /** Live Workspace-owned full inventory. Absent keeps sessiond admission closed. */
   workspaceVisibility?: WorkspaceVisibilityAuthority;
-  /** Explicit legacy fixture seam. Production always omits this and uses sessiond. */
-  orchestratorHost?: OrchestratorHostKind;
   resolveSessionLocator?: (
     sessionId: string,
     generation: number,
   ) => Promise<SessionLocator | null>;
   statusIncarnationGenerationSource: StatusIncarnationGenerationSource;
-  tmuxSender?: TmuxSender;
-  tmux?: TmuxSessionHost | TmuxEngine;
+  sessionSender?: SessionSender;
   recovery?: {
     resolveClaudeSessionId?: SessionResolver;
     resolveCodexSessionId?: SessionResolver;
@@ -720,7 +698,6 @@ export interface HiveDaemonOptions {
   resourceRunners?: {
     ps?: CommandOutput;
     vmStat?: CommandOutput;
-    panePids?: (session: string) => Promise<number[]>;
     kill?: (pid: number) => void;
     orphans?: ReapOrphanDependencies | null;
     /** Test seam for the kill path's process-tree reap. */
@@ -775,10 +752,8 @@ export class HiveDaemon {
     | Pick<MachineMutationCoordinator, "beginOperation">
     | null;
   private readonly ownedMachineMutations: MachineMutationCoordinator | null;
-  private readonly tmux: TmuxSessionHost | null;
   private readonly terminalHost: HiveTerminalHostAdapter;
   private readonly workspaceVisibility: WorkspaceVisibilityAuthority | null;
-  private readonly orchestratorHost: OrchestratorHostKind;
   private readonly orchestratorSessiond: OrchestratorSessiondController | null;
   private readonly recovery: CrashRecovery;
   private readonly repoRoot: string;
@@ -851,16 +826,12 @@ export class HiveDaemon {
   private readonly writeDaemonLog: (line: string) => void;
   private readonly psSample: CommandOutput;
   private readonly vmStatSample: CommandOutput;
-  private readonly panePids: (session: string) => Promise<number[]>;
   private readonly killProcess: (pid: number) => void;
   private readonly orphanDependencies: ReapOrphanDependencies | null;
   private readonly reapDependencies: ReapDependencies;
   private readonly stopAgentProcesses: (
     agent: AgentRecord,
     beforeKill?: () => void | Promise<void>,
-  ) => Promise<ReapOutcome>;
-  private readonly stopTmuxProcesses: (
-    session: string,
   ) => Promise<ReapOutcome>;
   private readonly sessionHost: Pick<SessionHost, "capture"> | null;
   private readonly resolveSessionLocator: NonNullable<
@@ -953,11 +924,6 @@ export class HiveDaemon {
       this.machineMutations = null;
       this.ownedMachineMutations = null;
     }
-    this.tmux = options.tmux === undefined
-      ? null
-      : options.tmux instanceof TmuxSessionHost
-      ? options.tmux
-      : new TmuxSessionHost({ adapter: options.tmux });
     const landedTerminalHost = options.terminalHost ?? new SessiondHost({
       repoRoot: options.repoRoot,
       pendingBindings: this.db,
@@ -968,7 +934,6 @@ export class HiveDaemon {
       hiveInstanceSuffix(),
     );
     this.workspaceVisibility = options.workspaceVisibility ?? null;
-    this.orchestratorHost = options.orchestratorHost ?? "sessiond";
     this.quota = options.quota;
     this.tokenUsage = options.tokenUsage ?? new TokenUsageStore(this.db);
     this.modelInventory = options.modelInventory;
@@ -984,32 +949,24 @@ export class HiveDaemon {
           ? (locator, mode) => landedTerminalHost.discardInputOrphan(locator, mode)
           : undefined,
       );
-    this.orchestratorSessiond =
-      this.orchestratorHost === "sessiond" && this.workspaceVisibility !== null
-        ? new OrchestratorSessiondController({
-          terminalHost: this.terminalHost,
-          bindings: this.db,
-          visibility: this.workspaceVisibility,
-          instanceId: hiveInstanceSuffix(),
-        })
-        : null;
+    this.orchestratorSessiond = this.workspaceVisibility === null
+      ? null
+      : new OrchestratorSessiondController({
+        terminalHost: this.terminalHost,
+        bindings: this.db,
+        visibility: this.workspaceVisibility,
+        instanceId: hiveInstanceSuffix(),
+      });
     this.autonomy = options.autonomy;
     this.selectionPreferences = options.selectionPreferences;
     this.graphify = options.graphify;
-    const defaultTmuxSender = this.tmux === null
-      ? null
-      : new BunTmuxSender(this.tmux);
-    const tmuxSender = options.tmuxSender ?? defaultTmuxSender;
-    const sessionSender: SessionSender | TmuxSender = options.tmuxSender ??
-      (defaultTmuxSender === null
-        ? {
-          sendSessionMessage: async (recipient) => {
-            throw new Error(
-              `Agent ${recipient.id} has a legacy tmux locator, but production delivery is sessiond-only`,
-            );
-          },
-        }
-        : new CoexistingSessionSender(defaultTmuxSender));
+    const sessionSender: SessionSender = options.sessionSender ?? {
+      sendSessionMessage: async () => {
+        throw new Error("terminal input is unavailable");
+      },
+    };
+    const deliverySessiondInput = options.sessiondInput ??
+      (options.sessionSender === undefined ? this.sessiondInput : undefined);
     this.delivery = new MessageDelivery(
       this.db,
       sessionSender,
@@ -1084,35 +1041,27 @@ export class HiveDaemon {
       // All visible roots use their instance-scoped terminal. Delivery holds
       // the composer lease so a report cannot overwrite human input.
       options.rootProtocol ??
-        (this.orchestratorHost === "sessiond"
-          ? new SessiondOrchestratorRootDelivery({
-            current: () => this.orchestratorSessiond?.snapshot() ?? null,
-            ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
-            canInject: () => this.rootProviderAcceptsInput(),
-            input: {
-              injectRoot: async (locator, text, message) =>
-                this.sessiondInput.injectRoot === undefined
-                  ? {
-                    outcome: "declined" as const,
-                    reason: "sessiond root input is not wired on this host",
-                  }
-                  : await this.sessiondInput.injectRoot(locator, text, message),
-            },
-          })
-          : new OrchestratorRootDelivery({
-            tmux: tmuxSender ?? (() => {
-              throw new Error(
-                "legacy queen delivery requested tmux, but no legacy sender is configured",
-              );
-            })(),
-          })),
+        new SessiondOrchestratorRootDelivery({
+          current: () => this.orchestratorSessiond?.snapshot() ?? null,
+          ready: () => this.orchestratorSessiond?.isInputReady() ?? false,
+          canInject: () => this.rootProviderAcceptsInput(),
+          input: {
+            injectRoot: async (locator, text, message) =>
+              this.sessiondInput.injectRoot === undefined
+                ? {
+                  outcome: "declined" as const,
+                  reason: "root input is not wired on this host",
+                }
+                : await this.sessiondInput.injectRoot(locator, text, message),
+          },
+        }),
       {},
       (agent) => this.agentProcessState(agent),
       undefined,
       // #68/#16 interim: daemon→idle-sessiond-agent input over the neutral
       // viewer wire. The broker RPCs (issueAttach/list) are the landed host;
       // the viewer wire is the interim addition.
-      this.sessiondInput,
+      deliverySessiondInput,
       // Wake-delta memory injection (HiveMemory HM-3 WP6): every delivery to
       // an agent — an ordinary message, a queued flush, or the resume wake —
       // carries the bounded delta since the agent's high-water mark, over the
@@ -1157,16 +1106,6 @@ export class HiveDaemon {
     this.wakeBudgetTokens = options.wakeBudgetTokens ?? null;
     this.psSample = options.resourceRunners?.ps ?? runPs;
     this.vmStatSample = options.resourceRunners?.vmStat ?? runVmStat;
-    this.panePids = options.resourceRunners?.panePids ??
-      (async (session) => {
-        const inspection = await this.requireLegacyTmux(
-          `legacy pane inspection for ${session}`,
-        ).inspectLegacyTmuxSession(session);
-        if (inspection.presence === "unknown") {
-          throw new Error(`tmux session ${session} presence is unknown`);
-        }
-        return [...inspection.panePids];
-      });
     this.killProcess = options.resourceRunners?.kill ??
       ((pid) => process.kill(pid, "SIGKILL"));
     this.orphanDependencies = options.resourceRunners?.orphans === undefined
@@ -1175,34 +1114,18 @@ export class HiveDaemon {
     this.reapDependencies = options.resourceRunners?.reap ??
       defaultReapDependencies();
     this.stopAgentProcesses = (agent, beforeKill) =>
-      agent.sessionLocator?.hostKind === "sessiond"
-        ? stopSessiondAgentSession(
-          agent,
-          {
-            terminalHost: this.terminalHost,
-            reap: this.reapDependencies,
-            readHostPid: async (record) =>
-              (await this.terminalHost.inspect(
-                requireSessiondAgentLocator(record),
-              )).hostPid,
-          },
-          beforeKill,
-        )
-        : stopAgentSession(
-          agent,
-          {
-            sessions: this.requireLegacyTmux(`agent teardown for ${agent.name}`),
-            reap: this.reapDependencies,
-            sessionRoots: (record) => this.panePids(record.tmuxSession),
-          },
-          beforeKill,
-        );
-    this.stopTmuxProcesses = (session) =>
-      stopTmuxSession(session, {
-        sessions: this.requireLegacyTmux(`legacy queen teardown for ${session}`),
-        reap: this.reapDependencies,
-        legacySessionRoots: (tmuxSession) => this.panePids(tmuxSession),
-      });
+      stopSessiondAgentSession(
+        agent,
+        {
+          terminalHost: this.terminalHost,
+          reap: this.reapDependencies,
+          readHostPid: async (record) =>
+            (await this.terminalHost.inspect(
+              requireSessiondAgentLocator(record),
+            )).hostPid,
+        },
+        beforeKill,
+      );
     this.repoRoot = options.repoRoot ?? process.cwd();
     this.readClaudeTelemetry = options.telemetryReaders?.claude ??
       readClaudeTelemetry;
@@ -1234,7 +1157,6 @@ export class HiveDaemon {
       ));
     this.recovery = new CrashRecovery({
       db: this.db,
-      ...(this.tmux === null ? {} : { tmux: this.tmux }),
       terminalHost: this.terminalHost,
       port: () => this.listeningPort ?? this.port,
       revokeCapabilities: (agentName) => {
@@ -1263,11 +1185,6 @@ export class HiveDaemon {
       authorizeLaunch: async (identity) =>
         await this.spawner.authorizeLaunch?.(identity) ?? null,
       flushQueued: (agentName) => this.delivery.flushQueued(agentName),
-      processAlive: async (agent) => {
-        if (agent.sessionLocator?.hostKind === "sessiond") return true;
-        const state = await this.agentProcessState(agent);
-        return state === "unknown" ? null : state !== "gone";
-      },
       // A thunk, not a value: a resume launched after the user flips the
       // Agents-menu dial must match the setting the user can see, not the one
       // the daemon booted with.
@@ -1324,23 +1241,12 @@ export class HiveDaemon {
     }
   }
 
-  private requireLegacyTmux(context: string): TmuxSessionHost {
-    if (this.tmux === null) {
-      throw new Error(`${context} requested tmux, but production is sessiond-only`);
-    }
-    return this.tmux;
-  }
-
   private async agentSessionPresent(agent: AgentRecord): Promise<boolean> {
-    if (agent.sessionLocator?.hostKind === "sessiond") {
-      const inspection = await this.terminalHost.inspect(
-        requireSessiondAgentLocator(agent),
-      );
-      return inspection.presence === "present" &&
-        !sessiondVendorProcessIsDead(inspection);
-    }
-    const tmux = this.requireLegacyTmux(`agent inspection for ${agent.name}`);
-    return (await tmux.inspect(bindAgentSession(tmux, agent))).presence === "present";
+    const inspection = await this.terminalHost.inspect(
+      requireSessiondAgentLocator(agent),
+    );
+    return inspection.presence === "present" &&
+      !sessiondVendorProcessIsDead(inspection);
   }
 
   /** Mints a credential for one subject and writes it to its 0600 file,
@@ -1744,9 +1650,9 @@ export class HiveDaemon {
   /**
    * Self-check of the two wake paths, on daemon start and on every tick.
    *
-   * Both have failed silently in the field: #68 split the daemon from the
-   * launcher's tmux server so every root wake dialled a socket nobody was
-   * listening on, and the 2026-07-21 messaging regression left agent sessions
+   * Both have failed silently in the field: a launcher/daemon split once sent
+   * every root wake to an endpoint nobody was listening on, and the
+   * 2026-07-21 messaging regression left agent sessions
    * unreachable with the only diagnostic on a /dev/null stderr. A wake path
    * that is broken says so BEFORE somebody sends a message into it.
    *
@@ -1761,44 +1667,31 @@ export class HiveDaemon {
     );
     // No team, no wake to protect — and nobody to tell.
     if (live.length > 0) {
-      if (this.orchestratorHost === "sessiond") {
-        const root = this.orchestratorSessiond?.snapshot() ?? null;
-        if (root === null) {
-          faults.push("the sessiond root wake path has no queen generation");
-        } else if (root.state !== "running") {
-          faults.push(
-            `the sessiond root wake path is ${root.state}` +
-              (root.diagnostic === null ? "" : `: ${root.diagnostic}`),
+      const root = this.orchestratorSessiond?.snapshot() ?? null;
+      if (root === null) {
+        faults.push("the root wake path has no queen generation");
+      } else if (root.state !== "running") {
+        faults.push(
+          `the root wake path is ${root.state}` +
+            (root.diagnostic === null ? "" : `: ${root.diagnostic}`),
+        );
+      } else {
+        try {
+          const inspection = await this.terminalHost.inspect(
+            requireSessiondRootLocator(root.locator),
           );
-        } else {
-          try {
-            const inspection = await this.terminalHost.inspect(
-              requireSessiondRootLocator(root.locator),
-            );
-            if (sessiondVendorProcessIsDead(inspection)) {
-              faults.push("the sessiond queen vendor process is confirmed dead");
-            } else if (inspection.presence !== "present") {
-              faults.push(
-                `the sessiond queen presence is ${inspection.presence}, not present`,
-              );
-            }
-          } catch (error) {
+          if (sessiondVendorProcessIsDead(inspection)) {
+            faults.push("the queen vendor process is confirmed dead");
+          } else if (inspection.presence !== "present") {
             faults.push(
-              `the sessiond queen cannot be inspected (${
-                error instanceof Error ? error.message : "unknown error"
-              })`,
+              `the queen presence is ${inspection.presence}, not present`,
             );
           }
-        }
-      } else {
-        const rootSession = orchestratorTmuxSession();
-        const root = await this.requireLegacyTmux("legacy queen wake check")
-          .inspectLegacyTmuxSession(rootSession)
-          .catch(() => ({ presence: "unknown" as const }));
-        if (root.presence !== "present") {
+        } catch (error) {
           faults.push(
-            `the root wake path is ${root.presence}: this daemon cannot see tmux session ` +
-              `${rootSession}, so no agent report can reach queen (#68)`,
+            `the queen cannot be inspected (${
+              error instanceof Error ? error.message : "unknown error"
+            })`,
           );
         }
       }
@@ -1851,44 +1744,14 @@ export class HiveDaemon {
   }
 
   private hasCompletedSessiondBinding(agent: AgentRecord): boolean {
-    return agent.sessionLocator?.hostKind === "sessiond" &&
-      this.db.getTerminalHostBindingByLocator(
-        requireSessiondAgentLocator(agent),
-      )?.createEvidence !== undefined;
-  }
-
-  /** For legacy tmux, distinguish the provider CLI from its surviving shell
-   * or terminal wrapper. An unreadable process table is unknown, never death. */
-  private async legacyVendorProcessState(
-    agent: AgentRecord,
-  ): Promise<PaneProcessState | "unknown"> {
-    try {
-      const roots = await this.panePids(agent.tmuxSession);
-      if (roots.length === 0) {
-        const session = await this.requireLegacyTmux(
-          `legacy process inspection for ${agent.name}`,
-        ).inspectLegacyTmuxSession(agent.tmuxSession);
-        return session.presence === "lost" ? "gone" : "unknown";
-      }
-      const commands = parseProcessTable(await this.psSample());
-      if (commands.length === 0) return "unknown";
-      const providerPids = descendantsOf(commands, roots)
-        .filter((sample) => processCommandName(sample.command) === agent.tool)
-        .map((sample) => sample.pid);
-      if (providerPids.length === 0) return "gone";
-      const states = parseStateTable(await runPsState());
-      return states.length === 0 ? "running" : paneProcessState(states, providerPids);
-    } catch {
-      return "unknown";
-    }
+    return this.db.getTerminalHostBindingByLocator(
+      requireSessiondAgentLocator(agent),
+    )?.createEvidence !== undefined;
   }
 
   private async agentProcessState(
     agent: AgentRecord,
   ): Promise<PaneProcessState | "unknown"> {
-    if (agent.sessionLocator?.hostKind !== "sessiond") {
-      return this.legacyVendorProcessState(agent);
-    }
     try {
       const inspection = await this.terminalHost.inspect(
         requireSessiondAgentLocator(agent),
@@ -1948,22 +1811,6 @@ export class HiveDaemon {
     };
   }
 
-  private async legacyStatusLiveness(agent: AgentRecord): Promise<AgentRecord> {
-    // Before the provider reports its durable session id, a just-spawned tmux
-    // container is not enough evidence to call its vendor process dead.
-    if (agent.status !== "working" || agent.sessionLocator?.hostKind === "sessiond" ||
-      agent.toolSessionId === undefined) {
-      return agent;
-    }
-    if (await this.legacyVendorProcessState(agent) !== "gone") return agent;
-    return {
-      ...agent,
-      status: "stuck",
-      failureReason:
-        "tmux measured the vendor process absent; run hive_recover to resume it",
-    };
-  }
-
   async runMaintenance(): Promise<void> {
     if (this.maintenanceRunning) return;
     this.maintenanceRunning = true;
@@ -1980,7 +1827,7 @@ export class HiveDaemon {
       await this.recoverQuotaReservations();
       await this.delivery.recoverCriticalControls();
       // Root wakes deferred behind a human draft are retried only at this
-      // bounded daemon boundary. The row remains queued until tmux confirms
+      // bounded daemon boundary. The row remains queued until the terminal confirms
       // the composer is empty, so no report silently rots.
       await this.delivery.wakeOrchestrator();
       // Close the loop on every message we handed over. Runs after the wake, so a
@@ -2326,7 +2173,7 @@ export class HiveDaemon {
 
   /**
    * The memory watchdog (SPEC.md "Resource safety"): hard-kill any process
-   * under a hive-owned tmux session that exceeds the per-process ceiling,
+   * under a Hive-owned terminal session that exceeds the per-process ceiling,
    * pause spawning while the system is low on reclaimable memory, and reap
    * codex app-server children orphaned by a dead host. Every action lands as
    * a durable orchestrator message, so degradation is visible, not silent.
@@ -2339,21 +2186,37 @@ export class HiveDaemon {
         this.psSample(),
         this.vmStatSample(),
       ]);
-      const sessions: SessionProcessRoots[] = [];
-      const watched = [
-        { owner: ORCHESTRATOR_NAME, session: orchestratorTmuxSession() },
-        ...this.db.listAgents()
-          .filter((agent) =>
-            agent.status !== "dead" && agent.status !== "done" &&
-            agent.status !== "failed"
-          )
-          .map((agent) => ({ owner: agent.name, session: agent.tmuxSession })),
-      ];
-      for (const target of watched) {
+      const sessions: Array<{ owner: string; rootPids: number[] }> = [];
+      const root = this.orchestratorSessiond?.snapshot() ?? null;
+      if (root !== null) {
         try {
+          const inspection = await this.terminalHost.inspect(
+            requireSessiondRootLocator(root.locator),
+          );
           sessions.push({
-            owner: target.owner,
-            rootPids: await this.panePids(target.session),
+            owner: ORCHESTRATOR_NAME,
+            rootPids: inspection.providerRoot === null
+              ? []
+              : [inspection.providerRoot.pid],
+          });
+        } catch {
+          // A vanished session has no processes left to watch.
+        }
+      }
+      for (
+        const agent of this.db.listAgents().filter((candidate) =>
+          !["dead", "done", "failed"].includes(candidate.status)
+        )
+      ) {
+        try {
+          const inspection = await this.terminalHost.inspect(
+            requireSessiondAgentLocator(agent),
+          );
+          sessions.push({
+            owner: agent.name,
+            rootPids: inspection.providerRoot === null
+              ? []
+              : [inspection.providerRoot.pid],
           });
         } catch {
           // A vanished session has no processes left to watch.
@@ -2551,15 +2414,13 @@ export class HiveDaemon {
    *
    * The sequence is fixed by what each step destroys:
    *
-   *   1. capture the process tree      (the pane pids die with the session)
-   *   2. kill the tmux session         (tears down the pane)
-   *   3. SIGKILL the captured tree     (what tmux does not reach: vendor CLI,
-   *                                     Codex host, MCP children) and VERIFY
-   *   4. mark dead, settle quota
-   *   5. assess unlanded work, and preserve it as a ref if there is any —
+   *   1. terminate the terminal session and capture survivors
+   *   2. SIGKILL and verify any surviving vendor or MCP processes
+   *   3. mark dead, settle quota
+   *   4. assess unlanded work, and preserve it as a ref if there is any —
    *      before step 7 can remove the worktree it lives in
-   *   6. tell the orchestrator what was preserved, and what would not die
-   *   7. remove the worktree only when asked, and never over stranded work
+   *   5. tell the orchestrator what was preserved, and what would not die
+   *   6. remove the worktree only when asked, and never over stranded work
    *
    * Killing is immediate and unconditional — no confirmation, no delay. That
    * is a UX decision, and it is explicitly NOT permission to destroy: work
@@ -2571,19 +2432,10 @@ export class HiveDaemon {
    * an unreachable host or broker proves nothing (#70). */
   private async agentTreeAbsent(agent: AgentRecord): Promise<boolean> {
     try {
-      if (agent.sessionLocator?.hostKind === "sessiond") {
-        const inspection = await this.terminalHost.inspect(
-          requireSessiondAgentLocator({
-            id: agent.id,
-            sessionLocator: agent.sessionLocator,
-          }),
-        );
-        return inspection.presence === "exited";
-      }
-      const inspection = await this.requireLegacyTmux(
-        `legacy absence proof for ${agent.name}`,
-      ).inspectLegacyTmuxSession(agent.tmuxSession);
-      return inspection.presence === "lost";
+      const inspection = await this.terminalHost.inspect(
+        requireSessiondAgentLocator(agent),
+      );
+      return inspection.presence === "exited";
     } catch {
       return false;
     }
@@ -2593,12 +2445,8 @@ export class HiveDaemon {
    * therefore proves this generation never acquired a process tree; unlike an
    * unreachable bound host, it is safe to clean the failed spawn row. */
   private hasNeverBoundSessiondGeneration(agent: AgentRecord): boolean {
-    const locator = agent.sessionLocator;
-    if (locator === undefined || locator.hostKind !== "sessiond") return false;
-    return this.db.getTerminalHostBindingByLocator({
-      ...locator,
-      hostKind: "sessiond",
-    }) === null;
+    const locator = requireSessiondAgentLocator(agent);
+    return this.db.getTerminalHostBindingByLocator(locator) === null;
   }
 
   private async killAgentTeardown(
@@ -2612,7 +2460,7 @@ export class HiveDaemon {
   ): Promise<{
     agent: AgentRecord;
     cleaned: {
-      tmuxSession: string;
+      sessionId: string;
       worktreePath: string | null;
       branch: string | null;
     };
@@ -2671,11 +2519,11 @@ export class HiveDaemon {
     await this.settleAgentQuota(killed, timestamp);
     let updated = killed;
     const cleaned: {
-      tmuxSession: string;
+      sessionId: string;
       worktreePath: string | null;
       branch: string | null;
     } = {
-      tmuxSession: agent.tmuxSession,
+      sessionId: requireSessiondAgentLocator(agent).sessionId,
       worktreePath: null,
       branch: null,
     };
@@ -2949,8 +2797,8 @@ export class HiveDaemon {
   /**
    * Stopping the daemon stops the MACHINE, not just the process.
    *
-   * This used to kill the orchestrator's tmux session and exit, which left
-   * every agent — its vendor CLI, its Codex host, its MCP children — running
+   * This used to stop only the queen and exit, which left every agent — its
+   * vendor CLI, its Codex host, its MCP children — running
    * with nothing left alive to supervise, message, meter or reap them. Quitting
    * the app is the ordinary way a user ends a session, so that was the ordinary
    * way Hive orphaned processes that go on spending money against the account.
@@ -2971,33 +2819,23 @@ export class HiveDaemon {
     if (this.manageLifecycle) {
       try {
         await this.killAllAgents();
-        if (this.orchestratorHost === "sessiond") {
-          const root = this.orchestratorSessiond?.snapshot() ?? null;
-          if (
-            root !== null &&
-            this.db.getTerminalHostBindingByLocator(root.locator)?.createEvidence !==
-              undefined
-          ) {
-            const terminated = await this.terminalHost.terminate(
-              requireSessiondRootLocator(root.locator),
-              {
-                mode: "immediate",
-                reason: "Hive daemon shutdown",
-                requestId: mintSessionRequestId(),
-              },
-            );
-            if (terminated.state !== "terminated" || terminated.survivors.length > 0) {
-              throw new Error(
-                `Hive refused shutdown because the sessiond queen termination is ${terminated.state} with ${terminated.survivors.length} survivor(s)`,
-              );
-            }
-          }
-        } else {
-          const session = orchestratorTmuxSession();
-          const reaped = await this.stopTmuxProcesses(session);
-          if (reaped.survivors.length > 0) {
+        const root = this.orchestratorSessiond?.snapshot() ?? null;
+        if (
+          root !== null &&
+          this.db.getTerminalHostBindingByLocator(root.locator)?.createEvidence !==
+            undefined
+        ) {
+          const terminated = await this.terminalHost.terminate(
+            requireSessiondRootLocator(root.locator),
+            {
+              mode: "immediate",
+              reason: "Hive daemon shutdown",
+              requestId: mintSessionRequestId(),
+            },
+          );
+          if (terminated.state !== "terminated" || terminated.survivors.length > 0) {
             throw new Error(
-              `Hive refused shutdown because ${reaped.survivors.length} orchestrator process(es) survived SIGKILL`,
+              `Hive refused shutdown because the queen termination is ${terminated.state} with ${terminated.survivors.length} survivor(s)`,
             );
           }
         }
@@ -3039,7 +2877,7 @@ export class HiveDaemon {
   }
 
   // Crash detection and recovery: any agent whose status claims a process
-  // but whose tmux session is gone gets classified — resumable active work
+  // but whose terminal session is gone gets classified — resumable active work
   // is relaunched with the tool's native resume; everything else is marked
   // dead with its worktree preserved and the stranded state surfaced.
   async reconcileAgents(): Promise<RecoveryOutcome[]> {
@@ -3949,7 +3787,7 @@ export class HiveDaemon {
       request.method === "POST",
     );
     if (!decision.ok) return this.denied(decision);
-    if (this.orchestratorHost !== "sessiond" || this.orchestratorSessiond === null) {
+    if (this.orchestratorSessiond === null) {
       return json(
         { error: "the sessiond queen host is unavailable" },
         { status: 503 },
@@ -4008,7 +3846,7 @@ export class HiveDaemon {
       status: deriveOrchestratorStatus(
         this.db.recentOrchestratorSignals(ORCHESTRATOR_NAME),
       ),
-      host: this.orchestratorHost,
+      host: "sessiond",
       hostState: host?.state ?? null,
       hostDiagnostic: host?.diagnostic ?? null,
       sessionLocator: host?.locator ?? null,
@@ -5020,11 +4858,10 @@ export class HiveDaemon {
       await this.delivery.send(
         "hive-resources",
         ORCHESTRATOR_NAME,
-        `${value.agentName} is BLOCKED on a Claude Code permission dialog in its own tmux pane ` +
-          `(session ${agent.tmuxSession ?? "unknown"}) and cannot proceed until a human answers it. ` +
+        `${value.agentName} is BLOCKED on a Claude Code permission dialog in its terminal ` +
+          `(session ${requireSessiondAgentLocator(agent).sessionId}) and cannot proceed until a human answers it. ` +
           `Hive can see this dialog but cannot answer it: the notification hook carries no request id, ` +
-          `so there is no reply path back to the TUI. Someone must clear it at the pane ` +
-          `(\`tmux attach -t ${agent.tmuxSession ?? "<session>"}\`).\n` +
+          `so there is no reply path back to the TUI. Someone must clear it in the Hive pane.\n` +
           `An agent under full autonomy should never reach this: it means the session launched ` +
           `without bypassPermissions, so check its spawn.`,
         { idempotencyKey: `permission-dialog:${agent.id}:${value.timestamp}` },
@@ -5116,7 +4953,6 @@ export class HiveDaemon {
       // completes. Publishing it earlier gives Workspace a locator that cannot
       // attach yet and turns ordinary launch ordering into a renderer race.
       const storedAgents = this.db.listAgents().filter((agent) =>
-        agent.sessionLocator?.hostKind !== "sessiond" ||
         this.hasCompletedSessiondBinding(agent)
       );
       let sessions: Awaited<ReturnType<HiveTerminalHostAdapter["list"]>> | null = null;
@@ -5125,10 +4961,8 @@ export class HiveDaemon {
       )) {
         sessions = await this.terminalHost.list(hiveInstanceSuffix()).catch(() => null);
       }
-      let agents = (await Promise.all(storedAgents.map(async (agent) =>
-        await this.legacyStatusLiveness(this.statusLiveness(agent, sessions))
-      ))).map((agent): AgentRecord => ({
-        ...agent,
+      let agents = storedAgents.map((agent): AgentRecord => ({
+        ...this.statusLiveness(agent, sessions),
         ...(this.graphify === undefined ? {} : {
           graphifyCalls: this.graphifyCalls.get(agent.id)?.count ?? null,
         }),
@@ -5407,12 +5241,9 @@ export class HiveDaemon {
       if (this.hasNeverBoundSessiondGeneration(agent)) {
         return toolResult((await this.killAgentTeardown(agent)).agent, "agent");
       }
-      const inspection = agent.sessionLocator?.hostKind === "sessiond"
-        ? await this.terminalHost.inspect(requireSessiondAgentLocator(agent))
-        : await (() => {
-          const tmux = this.requireLegacyTmux(`mark-dead inspection for ${agent.name}`);
-          return tmux.inspect(bindAgentSession(tmux, agent));
-        })();
+      const inspection = await this.terminalHost.inspect(
+        requireSessiondAgentLocator(agent),
+      );
       const presence = inspection.presence;
       if (presence === "unknown") {
         throw new Error(

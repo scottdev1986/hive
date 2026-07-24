@@ -4,7 +4,7 @@ import {
   OrchestratorMessageEnvelopeSchema,
   type OrchestratorMessageEnvelope,
 } from "../schemas";
-export { orchestratorTmuxSession } from "./tmux-sessions";
+export { orchestratorSessionKey } from "./instance-identity";
 
 /**
  * How much of an agent's message rides into the orchestrator's context.

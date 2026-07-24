@@ -1,7 +1,7 @@
 #!/bin/bash
 # B3 replacement smoke — the driver half.
 #
-# Replaces the coverage of the tmux/SwiftTerm-era workspace/scripts/smoke.sh on
+# Replaces the coverage of the retired workspace/scripts/smoke.sh on
 # the sessiond + HiveTerminalKit spine. Stands the stack up headless, runs the
 # in-process assertions (B3SmokeTests), then makes the POST-MORTEM assertions
 # from OUTSIDE the app — which is where the legacy harness put its two most

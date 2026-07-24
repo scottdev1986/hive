@@ -10,7 +10,7 @@ describe("invoker identity (#70)", () => {
   test("walks the parent chain with process names and stops at an unresolvable pid", () => {
     const parents = new Map<number, { ppid: number; command: string }>([
       [process.ppid, { ppid: 900, command: "zsh" }],
-      [900, { ppid: 800, command: "tmux" }],
+      [900, { ppid: 800, command: "zsh" }],
       // 800 is gone: the chain ends honestly.
     ]);
     const identity = captureInvokerIdentity((pid) => parents.get(pid) ?? null);
@@ -19,7 +19,7 @@ describe("invoker identity (#70)", () => {
     expect(identity.ppid).toBe(process.ppid);
     expect(identity.chain).toEqual([
       `${process.ppid}:zsh`,
-      "900:tmux",
+      "900:zsh",
     ]);
     expect(identity.argv).toEqual(process.argv.slice(2));
     expect(identity.cwd).toBe(process.cwd());

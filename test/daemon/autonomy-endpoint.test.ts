@@ -42,12 +42,6 @@ function harness(options: { withControl?: boolean } = {}): {
       },
     },
     repoRoot: "/tmp/hive-autonomy-noop",
-    tmux: {
-      hasSession: async () => false,
-      killSession: async () => {},
-      capturePane: async () => "",
-      newSession: async () => {},
-    },
     ...(options.withControl === false ? {} : { autonomy: control }),
     resourceRunners: { orphans: null },
   });

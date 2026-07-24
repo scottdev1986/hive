@@ -1,26 +1,19 @@
 import { chmod, mkdir, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import { dirname, join } from "node:path";
-import { shellQuote } from "./session-host/tmux-host";
+import { shellQuote } from "./session-host/shell-session";
 import { getHiveHome } from "./db";
 
 /**
- * Hand the agent its brief through a file, not the tmux command line.
+ * Hand the agent its brief through a file, not the provider command line.
  *
- * tmux carries a command to its server in a single imsg and refuses anything
- * much past 16KB with "command too long" — measured against tmux 3.7b, which
- * accepts 16000 bytes and rejects 20000. That ceiling sits 64x below the 1MB
- * ARG_MAX the design assumed, and Hive's briefs cross it by construction rather
- * than by accident: doc sections are extracted and embedded with file:line
- * pointers, so a brief grows with the repo it describes.
- *
- * Reading the prompt in the launch shell keeps the tmux command a few hundred
- * bytes whatever the brief weighs, and leaves ARG_MAX as the only ceiling. It is
+ * Reading the prompt from a private file keeps the launch command small whatever
+ * the brief weighs and leaves ARG_MAX as the only ceiling. It is
  * the idiom the launch shell already uses to keep a Codex capability token off
  * the command line (wrapCodexSpawnWithCapabilityEnv).
  *
  * The file lives under HIVE_HOME, never in the worktree: a launch must not write
- * into the repository it is about to hand to an agent. One file per tmux session,
+ * into the repository it is about to hand to an agent. One file per session,
  * overwritten on respawn, so prompts cannot accumulate without bound.
  */
 export function launchPromptPath(session: string): string {

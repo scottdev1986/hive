@@ -7,7 +7,7 @@ import {
   type HiveTerminalBinding,
 } from "./session-host/terminal-host-binding";
 
-export type OrchestratorHostKind = "sessiond" | "tmux";
+export type OrchestratorHostKind = "sessiond";
 
 export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
   .shape.locator.unwrap().extend({
@@ -17,8 +17,6 @@ export const RootSessiondLocatorSchema = HiveTerminalBindingSchema.unwrap()
   }).readonly();
 export type RootSessiondLocator = z.infer<typeof RootSessiondLocatorSchema>;
 
-/** Production has one terminal host. The union remains only for explicit
- * legacy fixtures until #1/#2 delete the dead tmux implementation. */
 export function configuredOrchestratorHost(): OrchestratorHostKind {
   return "sessiond";
 }

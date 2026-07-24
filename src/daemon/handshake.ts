@@ -3,7 +3,7 @@ import { resolveHandshakeProject } from "./project-identity";
 import { readdir, readFile } from "node:fs/promises";
 import { join, relative } from "node:path";
 import { HIVE_BUILD_HASH, HIVE_VERSION } from "../version";
-import { hiveInstanceSuffix } from "./tmux-sessions";
+import { hiveInstanceSuffix } from "./instance-identity";
 
 /**
  * This is intentionally separate from product version. A wire change must not

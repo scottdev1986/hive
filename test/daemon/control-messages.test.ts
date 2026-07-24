@@ -4,13 +4,12 @@ import { mkdtempSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentMessage, AgentRecord } from "../../src/schemas";
-import { orchestratorTmuxSession } from "../../src/daemon/tmux-sessions";
 import { HiveDatabase } from "../../src/daemon/db";
 import { submitPaste } from "../../src/daemon/testing";
 import {
   type CriticalControlRuntime,
   MessageDelivery,
-  type TmuxSender,
+  type SessionSender,
 } from "../../src/daemon/delivery";
 
 const root = mkdtempSync(join(tmpdir(), "hive-controls-"));
@@ -27,7 +26,6 @@ function agent(status: AgentRecord["status"] = "working"): AgentRecord {
     taskDescription: "Build safely",
     worktreePath: "/tmp/hive-control-maya",
     branch: "hive/maya-control",
-    tmuxSession: "hive-maya",
     contextPct: 1,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -38,12 +36,12 @@ function agent(status: AgentRecord["status"] = "working"): AgentRecord {
   };
 }
 
-class RecordingSender implements TmuxSender {
+class RecordingSender implements SessionSender {
   readonly calls: Array<[string, string]> = [];
   constructor(private readonly db: HiveDatabase) {}
-  async sendMessage(session: string, text: string): Promise<void> {
-    this.calls.push([session, text]);
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
+    this.calls.push([agent.name, text]);
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -71,7 +69,7 @@ describe("priority control messages", () => {
     // and submits it at its next turn boundary. "injected" is what we can prove.
     expect(normal).toMatchObject({ priority: "normal", state: "injected" });
       expect(sender.calls[0]).toEqual([
-        "hive-maya",
+        "maya",
         "📨 message from sam: ordinary",
       ]);
 

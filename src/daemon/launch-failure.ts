@@ -1,7 +1,8 @@
 /**
  * Which layer produced a failed launch — and therefore what it is evidence of.
  *
- * A launch crosses two layers. The transport is this machine: tmux, the shell,
+ * A launch crosses two layers. The transport is this machine: the terminal host,
+ * the shell,
  * the filesystem, the binary on disk. The model is the far side. Only the far
  * side can say anything about a route, and Hive acts on what it says by
  * quarantining that route for up to an hour (see QuotaService.quarantinedUntil).
@@ -24,7 +25,8 @@ const EXEC_FAILURE =
 /**
  * Classify a launch that started but never proved life.
  *
- * Reaching readiness means tmux carried the command and the shell ran it, so a
+ * Reaching readiness means the terminal host carried the command and the shell
+ * ran it, so a
  * failure here is normally the model's own: the CLI came up and refused, or it
  * never answered. That is the true positive this quarantine exists for, and it
  * must survive. The exception is a binary that could not be executed — a missing

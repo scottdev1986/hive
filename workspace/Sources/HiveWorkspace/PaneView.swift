@@ -17,7 +17,7 @@ final class PaneView: NSView {
     private let titleLabel = NSTextField(labelWithString: "")
     private let detailLabel = NSTextField(labelWithString: "")
     private let failureBadge = NSImageView()
-    let contentView: TerminalPaneView
+    let contentView = NSView()
 
     private let statusBorder = PaneStatusBorderView()
     private let focusRing = PaneFocusRingView()
@@ -25,9 +25,7 @@ final class PaneView: NSView {
     private var pulsing = false
     private var focusIndicator: PaneFocusIndicator = .none
 
-    /// B2.2: a sessiond-backed pane renders through HiveTerminalView driven by
-    /// the pane's exact locator; the SwiftTerm content stays unspawned beneath
-    /// it. nil for tmux panes.
+    /// The pane's one terminal surface, driven by its exact sessiond locator.
     private(set) var sessiondTerminal: SessiondPaneTerminal?
 
     /// The terminal's own failure, held apart from the feed's header text.
@@ -48,10 +46,13 @@ final class PaneView: NSView {
     /// Installs the sessiond renderer over the content area. Worker panes leave
     /// the underlying pty unscheduled; the root keeps its local supervisor
     /// there while this exact-generation renderer is disposable (§26).
-    func installSessiondTerminal(_ terminal: SessiondPaneTerminal) {
+    func installSessiondTerminal(
+        _ terminal: SessiondPaneTerminal,
+        start: Bool
+    ) {
         if let current = sessiondTerminal {
             guard current.paneLocator != terminal.paneLocator else {
-                current.start()
+                if start { current.start() }
                 return
             }
             current.detach()
@@ -79,23 +80,17 @@ final class PaneView: NSView {
                     badge: "Terminal renderer disconnected",
                     evidence: evidence)
             }
-            terminal.start()
+            if start { terminal.start() }
         } catch {
             NSLog("sessiond terminal surface for pane %@ failed: %@",
                   titleLabel.stringValue, "\(error)")
         }
     }
 
-    init(paneID: PaneID, title: String, tmuxSession: String? = nil,
-         tmuxSocket: String? = nil,
-         allowsMouseReporting: Bool = true,
+    init(paneID: PaneID, title: String,
          dispatch: @escaping (WorkspaceCommand) -> Void) {
         self.paneID = paneID
         self.dispatch = dispatch
-        self.contentView = TerminalPaneView(
-            tmuxSession: tmuxSession,
-            tmuxSocket: tmuxSocket,
-            allowsMouseReporting: allowsMouseReporting)
         super.init(frame: .zero)
         wantsLayer = true
         setup(title: title)
@@ -208,7 +203,7 @@ final class PaneView: NSView {
             headerSeparator.trailingAnchor.constraint(equalTo: backgroundView.trailingAnchor),
 
             contentView.topAnchor.constraint(equalTo: headerSeparator.bottomAnchor),
-            // The status stroke occupies x/y 2...6 inside the pane. SwiftTerm
+            // The status stroke occupies x/y 2...6 inside the pane. The terminal
             // must receive only the pixels it can actually draw in; otherwise
             // its negotiated grid includes edge glyphs hidden by the overlay.
             contentView.leadingAnchor.constraint(equalTo: backgroundView.leadingAnchor, constant: 6),
@@ -386,25 +381,13 @@ final class PaneView: NSView {
         }
     }
 
-    /// Called exactly once per settled layout change (end of the ~180 ms
-    /// transition, or immediately under Reduce Motion). The terminal pane
-    /// uses it to spawn its child with settled pty geometry.
+    /// Commits the complete hierarchy after a settled layout change.
     func commitCellGeometry() {
-        // A snapped outer frame does not synchronously propagate through this
-        // pane's Auto Layout constraints. Without this layout pass the terminal
-        // can still report 0x0 here, leave its launch pending, and never get
-        // another commit when a second Workspace process opens for the same
-        // bundle. Commit the complete pane hierarchy before testing the cell.
         layoutSubtreeIfNeeded()
-        contentView.commitCellGeometry()
     }
 
     func focusTerminal() {
-        if let terminalView = sessiondTerminal?.view {
-            terminalView.focusExplicitly()
-        } else {
-            contentView.focusTerminal()
-        }
+        sessiondTerminal?.view?.focusExplicitly()
     }
 
     // MARK: Actions (all routed through the shared command model)

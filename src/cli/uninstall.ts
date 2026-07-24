@@ -71,7 +71,7 @@ import {
   clearBranchOwnership,
   listWorktrees,
 } from "../adapters/worktrees";
-import { hiveInstanceSuffix, isDefaultHiveHome } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix, isDefaultHiveHome } from "../daemon/instance-identity";
 import {
   acquireMachineMutationLease,
   type MachineMutationLease,

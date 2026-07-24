@@ -19,7 +19,7 @@ import {
   type MemoryWriteInput,
 } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { MessageDelivery, type TmuxSender } from "../../src/daemon/delivery";
+import { MessageDelivery, type SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import {
   composeMemoryDelta,
@@ -86,7 +86,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Build the wake delta",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-wake",
-    tmuxSession: "hive-maya",
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -99,14 +98,14 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 /** A working TUI: takes the paste, submits it, and the turn-start proves it. */
-class SubmittingTmuxSender implements TmuxSender {
+class SubmittingSessionSender implements SessionSender {
   readonly calls: Array<[string, string]> = [];
 
   constructor(private readonly db: HiveDatabase) {}
 
-  async sendMessage(session: string, text: string): Promise<void> {
-    this.calls.push([session, text]);
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
+    this.calls.push([agent.name, text]);
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -118,12 +117,12 @@ const unusedSpawner: Spawner = {
 
 function deliveryWith(
   db: HiveDatabase,
-  tmux: TmuxSender,
+  sender: SessionSender,
   wakeDelta?: WakeDeltaProvider,
 ): MessageDelivery {
   return new MessageDelivery(
     db,
-    tmux,
+    sender,
     undefined,
     undefined,
     undefined,
@@ -345,10 +344,10 @@ describe("wake-delta delivery integration", () => {
       store.advanceMemoryHighWater("maya", (await readWikiLog(repo)).totals);
       await writeMemoryFact(repo, input({ id: "beta", title: "Beta article" }));
 
-      const tmux = new SubmittingTmuxSender(db);
+      const sender = new SubmittingSessionSender(db);
       const delivery = deliveryWith(
         db,
-        tmux,
+        sender,
         createWakeDeltaProvider({
           repoRoot: () => repo,
           store,
@@ -360,8 +359,8 @@ describe("wake-delta delivery integration", () => {
 
       const message = await delivery.send("sam", "maya", "Please review this.");
       expect(message.deliveredAt === null).toBe(false);
-      expect(tmux.calls).toHaveLength(1);
-      const deliveredText = tmux.calls[0]![1];
+      expect(sender.calls).toHaveLength(1);
+      const deliveredText = sender.calls[0]![1];
       expect(deliveredText).toContain("📨 message from sam: Please review this.");
       expect(deliveredText).toContain(
         "🧠 Hive memory update since your last turn — 1 change",
@@ -375,8 +374,8 @@ describe("wake-delta delivery integration", () => {
       // Nothing new since: the outbound message is byte-identical to one
       // sent without any memory machinery — an empty delta injects nothing.
       await delivery.send("sam", "maya", "Second pass.");
-      expect(tmux.calls).toHaveLength(2);
-      expect(tmux.calls[1]![1]).toBe("📨 message from sam: Second pass.");
+      expect(sender.calls).toHaveLength(2);
+      expect(sender.calls[1]![1]).toBe("📨 message from sam: Second pass.");
     } finally {
       db.close();
       store.close();
@@ -389,10 +388,10 @@ describe("wake-delta delivery integration", () => {
     const store = new EpisodicStore(join(repo, "episodic.db"));
     const db = new HiveDatabase(":memory:");
     try {
-      const tmux = new SubmittingTmuxSender(db);
+      const sender = new SubmittingSessionSender(db);
       const delivery = deliveryWith(
         db,
-        tmux,
+        sender,
         createWakeDeltaProvider({
           repoRoot: () => repo,
           store,
@@ -403,15 +402,15 @@ describe("wake-delta delivery integration", () => {
       db.insertAgent(agent());
 
       await delivery.send("sam", "maya", "First contact.");
-      expect(tmux.calls[0]![1]).toBe("📨 message from sam: First contact.");
+      expect(sender.calls[0]![1]).toBe("📨 message from sam: First contact.");
       expect(store.memoryHighWater("maya")).toEqual({ repo: 1, global: 0 });
 
       // The next change after baselining is a normal delta.
       await writeMemoryFact(repo, input({ id: "beta", title: "Beta article" }));
       await delivery.send("sam", "maya", "Second contact.");
-      expect(tmux.calls[1]![1]).toContain("— 1 change ");
-      expect(tmux.calls[1]![1]).toContain("Beta article");
-      expect(tmux.calls[1]![1]).not.toContain("Alpha article");
+      expect(sender.calls[1]![1]).toContain("— 1 change ");
+      expect(sender.calls[1]![1]).toContain("Beta article");
+      expect(sender.calls[1]![1]).not.toContain("Alpha article");
     } finally {
       db.close();
       store.close();
@@ -430,14 +429,14 @@ describe("wake-delta delivery integration", () => {
           throw new Error("must not be reached");
         },
       };
-      const tmux = new SubmittingTmuxSender(db);
-      const delivery = deliveryWith(db, tmux, failing);
+      const sender = new SubmittingSessionSender(db);
+      const delivery = deliveryWith(db, sender, failing);
       db.insertAgent(agent());
 
       const message = await delivery.send("sam", "maya", "Still delivered.");
       expect(message.deliveredAt === null).toBe(false);
-      expect(tmux.calls).toEqual([
-        ["hive-maya", "📨 message from sam: Still delivered."],
+      expect(sender.calls).toEqual([
+        ["maya", "📨 message from sam: Still delivered."],
       ]);
     } finally {
       db.close();
@@ -451,12 +450,12 @@ describe("wake-delta delivery integration", () => {
     // Baseline at zero so the seeded article is itself the delta.
     store.advanceMemoryHighWater("maya", { repo: 0, global: 0 });
     const db = new HiveDatabase(":memory:");
-    const tmux = new SubmittingTmuxSender(db);
+    const sender = new SubmittingSessionSender(db);
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
-      tmuxSender: tmux,
+      sessionSender: sender,
       repoRoot: repo,
       episodicStore: store,
       wakeBudgetTokens: 300,
@@ -464,9 +463,9 @@ describe("wake-delta delivery integration", () => {
     try {
       db.insertAgent(agent());
       await daemon.delivery.send("sam", "maya", "Wired through the daemon.");
-      expect(tmux.calls).toHaveLength(1);
-      expect(tmux.calls[0]![1]).toContain("🧠 Hive memory update");
-      expect(tmux.calls[0]![1]).toContain("Alpha article");
+      expect(sender.calls).toHaveLength(1);
+      expect(sender.calls[0]![1]).toContain("🧠 Hive memory update");
+      expect(sender.calls[0]![1]).toContain("Alpha article");
       expect(store.memoryHighWater("maya")).toEqual({ repo: 1, global: 0 });
     } finally {
       await daemon.stop();
@@ -478,20 +477,20 @@ describe("wake-delta delivery integration", () => {
     await writeMemoryFact(repo2, input({ id: "alpha", title: "Alpha article" }));
     const store2 = new EpisodicStore(join(repo2, "episodic.db"));
     const db2 = new HiveDatabase(":memory:");
-    const tmux2 = new SubmittingTmuxSender(db2);
+    const sender2 = new SubmittingSessionSender(db2);
     const daemon2 = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db: db2,
       spawner: unusedSpawner,
-      tmuxSender: tmux2,
+      sessionSender: sender2,
       repoRoot: repo2,
       episodicStore: store2,
     });
     try {
       db2.insertAgent(agent());
       await daemon2.delivery.send("sam", "maya", "No budget, no delta.");
-      expect(tmux2.calls).toEqual([
-        ["hive-maya", "📨 message from sam: No budget, no delta."],
+      expect(sender2.calls).toEqual([
+        ["maya", "📨 message from sam: No budget, no delta."],
       ]);
     } finally {
       await daemon2.stop();

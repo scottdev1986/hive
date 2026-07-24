@@ -10,7 +10,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import type { AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import type { TmuxSender } from "../../src/daemon/delivery";
+import type { SessionSender } from "../../src/daemon/delivery";
 import { compileDigest, MEMORY_DIGEST_DEFAULT_BUDGET } from "../../src/daemon/episodic-digest";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { HiveDaemon } from "../../src/daemon/server";
@@ -53,21 +53,6 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-class NoopTmux {
-  async hasSession(_session: string): Promise<boolean> {
-    return false;
-  }
-  async capturePane(_session: string): Promise<string> {
-    return "";
-  }
-  async killSession(_session: string): Promise<void> {}
-  async newSession(
-    _name: string,
-    _cwd: string,
-    _command: string,
-  ): Promise<void> {}
-}
-
 const agent = (name: string): AgentRecord => ({
   id: `agent-${name}`,
   name,
@@ -78,7 +63,6 @@ const agent = (name: string): AgentRecord => ({
   taskDescription: "memory_digest fixture",
   worktreePath: `/tmp/hive-${name}`,
   branch: `hive/${name}`,
-  tmuxSession: `hive-${name}`,
   contextPct: null,
   createdAt: T0,
   lastEventAt: T0,
@@ -145,7 +129,6 @@ function daemonFixture(options: {
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
     db,
-    tmux: new NoopTmux(),
     repoRoot: options.repoRoot,
     ...(options.episodic === null
       ? {}
@@ -315,10 +298,10 @@ describe("memory_digest MCP tool", () => {
 
 // --- Daemon compile triggers -------------------------------------------------
 
-class SilentTmuxSender implements TmuxSender {
+class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
-  async sendMessage(session: string): Promise<void> {
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord): Promise<void> {
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -338,9 +321,8 @@ function lifecycleDaemon(options: {
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new UnusedSpawner(),
-    tmuxSender: new SilentTmuxSender(db),
+    sessionSender: new SilentSessionSender(db),
     rootProtocol: offlineRootProtocol,
-    tmux: new NoopTmux(),
     repoRoot: options.repoRoot,
     episodicStore: options.episodic,
     lifecycle: { idleReap: true, idleReapMinutes: 10 },

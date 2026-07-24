@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test";
-import { mintAgentTmuxSessionLocator, mintRootTmuxSessionLocator } from "../../../src/daemon/session-host/tmux-host";
+import { mintSessionLocator } from "../../../src/daemon/session-host/locators";
 import {
   ROOT_VISIBILITY_ID,
   WorkspaceVisibilityAuthority,
   type WorkspaceVisibilitySnapshot,
 } from "../../../src/daemon/session-host/workspace-visibility";
 
-const instanceId = mintAgentTmuxSessionLocator("instance-probe").instanceId;
+const instanceId = "instance-probe";
 const engineBuildId = "engine-build";
 const process = { processId: 7101, startToken: "7101:100" };
 const geometry = {
@@ -19,19 +19,21 @@ const geometry = {
 };
 
 function locator(agentId: string) {
-  return {
-    ...mintAgentTmuxSessionLocator(agentId),
-    hostKind: "sessiond" as const,
+  return mintSessionLocator(
+    instanceId,
+    { kind: "agent", agentId },
+    1,
     engineBuildId,
-  };
+  );
 }
 
 function rootLocator() {
-  return {
-    ...mintRootTmuxSessionLocator(),
-    hostKind: "sessiond" as const,
+  return mintSessionLocator(
+    instanceId,
+    { kind: "root" },
+    1,
     engineBuildId,
-  };
+  );
 }
 
 function snapshot(

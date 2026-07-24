@@ -57,7 +57,7 @@ export const ExecutionIdentitySchema = z.discriminatedUnion("tool", [
 
 export type ExecutionIdentity = z.infer<typeof ExecutionIdentitySchema>;
 
-// A closed agent is done with the world: it holds no tmux session, accepts no
+// A closed agent is done with the world: it holds no live terminal, accepts no
 // messages, and its name is free to be issued again. Every other status —
 // including `spawning`, `control-paused`, and `stuck` — is a live holder that
 // still owns its name.
@@ -123,9 +123,8 @@ const AgentRecordShape = {
   taskDescription: z.string(),
   worktreePath: z.string().nullable(),
   branch: z.string().nullable(),
-  tmuxSession: z.string().min(1),
-  // T2 compatibility: legacy rows may omit this on read, but every database
-  // write mints/persists an exact locator before committing the row.
+  /** Present for every agent created by the current runtime. Optional only so
+   * old closed history can still be decoded during database migration. */
   sessionLocator: SessionLocatorSchema.optional(),
   // The tool-level conversation identity (Claude session id, Codex thread id)
   // captured from hook traffic, so a crashed process can be relaunched with

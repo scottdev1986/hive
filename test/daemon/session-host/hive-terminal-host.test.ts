@@ -637,7 +637,9 @@ describe("requireSessiondRootLocator", () => {
     const root = { ...locator, subject: { kind: "root" as const } };
     expect(requireSessiondRootLocator(root)).toEqual(root);
     expect(() => requireSessiondRootLocator(locator)).toThrow("Queen has a mismatched");
-    expect(() => requireSessiondRootLocator({ ...root, hostKind: "tmux" }))
+    expect(() =>
+      requireSessiondRootLocator({ ...root, hostKind: "invalid" } as never)
+    )
       .toThrow("Queen has a mismatched");
   });
 });

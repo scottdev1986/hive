@@ -137,14 +137,6 @@ async function waitForExactProcessAbsence(
   throw new Error(`owned sessiond process ${pid} outlived visibility expiry`);
 }
 
-test.skip(
-  "legacy tmux spawner backend is dead after #112; deletion belongs to #1/#2",
-  () => {
-    // #112 deliberately unwires this runtime lane. #1/#2 own replacement or
-    // deletion under the zero-living-references acceptance.
-  },
-);
-
 test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry", async () => {
   const repoRoot = resolve(import.meta.dir, "../../..");
   // Keep runtime/sessiond/broker.sock below macOS's AF_UNIX path limit.
@@ -265,14 +257,11 @@ test("TypeScript gates a real DirectHost, clean stop, and publisher-death expiry
           publishEmptyWorkspace();
 
           const stopSpawnedSession = async (agent: AgentRecord) => {
-            if (agent.sessionLocator?.hostKind === "sessiond") {
-              return await stopSessiondAgentSession(agent, {
-                terminalHost: adapter,
-                readHostPid: async (record) =>
-                  (await adapter.inspect(requireSessiondAgentLocator(record))).hostPid,
-              });
-            }
-            throw new Error("legacy tmux teardown is not part of the sessiond harness");
+            return await stopSessiondAgentSession(agent, {
+              terminalHost: adapter,
+              readHostPid: async (record) =>
+                (await adapter.inspect(requireSessiondAgentLocator(record))).hostPid,
+            });
           };
           const spawner = new HiveSpawner({
             db,

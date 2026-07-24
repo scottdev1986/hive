@@ -13,14 +13,13 @@ import { HiveDatabase } from "../../src/daemon/db";
 import {
   MessageDelivery,
   type RootProtocolDeliverer,
-  type TmuxSender,
+  type SessionSender,
 } from "../../src/daemon/delivery";
 import {
   createOrchestratorEnvelope,
   compactActiveTeam,
   formatOrchestratorWake,
   ORCHESTRATOR_ENVELOPE_MAX_BYTES,
-  orchestratorTmuxSession,
 } from "../../src/daemon/orchestrator-lifecycle";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
@@ -55,7 +54,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Build the event bridge",
     worktreePath: "/tmp/maya",
     branch: "hive/maya-bridge",
-    tmuxSession: "hive-maya",
     contextPct: 12,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -67,11 +65,11 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
   };
 }
 
-class RecordingSender implements TmuxSender {
+class RecordingSender implements SessionSender {
   readonly calls: Array<[string, string]> = [];
 
-  async sendMessage(session: string, text: string): Promise<void> {
-    this.calls.push([session, text]);
+  async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
+    this.calls.push([agent.name, text]);
   }
 }
 
@@ -89,10 +87,10 @@ class RecordingRootProtocol implements RootProtocolDeliverer {
   }
 }
 
-class FailingSender implements TmuxSender {
+class FailingSender implements SessionSender {
   calls = 0;
 
-  async sendMessage(): Promise<void> {
+  async sendSessionMessage(): Promise<void> {
     this.calls += 1;
     throw new Error("orchestrator session unavailable");
   }
@@ -122,7 +120,7 @@ describe("event-driven orchestrator lifecycle", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: unusedSpawner,
-      tmuxSender: sender,
+      sessionSender: sender,
     });
     db.insertAgent(agent());
     try {
@@ -145,7 +143,7 @@ describe("event-driven orchestrator lifecycle", () => {
     }
   });
 
-  test("an agent message reaches the root protocol without touching tmux", async () => {
+  test("an agent message reaches the root protocol directly", async () => {
     const db = new HiveDatabase(join(home, "wake.db"));
     const sender = new RecordingSender();
     const root = new RecordingRootProtocol();
@@ -423,6 +421,9 @@ describe("event-driven orchestrator lifecycle", () => {
 
   test("fetches compact active status only when explicitly requested", async () => {
     const db = new HiveDatabase(join(home, "status-on-demand.db"));
+    spyOn(db, "getTerminalHostBindingByLocator").mockReturnValue({
+      createEvidence: {},
+    } as never);
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
@@ -435,7 +436,6 @@ describe("event-driven orchestrator lifecycle", () => {
       id: "agent-sam",
       name: "sam",
       status: "dead",
-      tmuxSession: "hive-sam",
     }));
     const listSpy = spyOn(db, "listAgents");
     const capability = daemon.issueCredential("test-orchestrator", "operator", 0);

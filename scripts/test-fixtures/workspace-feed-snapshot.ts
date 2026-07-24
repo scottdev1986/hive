@@ -25,7 +25,6 @@ export const workspaceFeedAgentFixture: AgentRecord = {
   taskDescription: "Index the repository",
   worktreePath: "/tmp/hive/indexer",
   branch: "hive/indexer",
-  tmuxSession: "hive-indexer",
   contextPct: 41.5,
   createdAt: OBSERVED_AT,
   lastEventAt: OBSERVED_AT,
@@ -51,7 +50,7 @@ export async function buildWorkspaceFeedSnapshotFixture(): Promise<
     fetchAutonomy: async () => "dangerous",
     fetchOrchestrator: async (): Promise<WorkspaceOrchestratorSnapshot> => ({
       status: "working",
-      host: "tmux",
+      host: "sessiond",
       hostState: null,
       hostDiagnostic: null,
       sessionLocator: null,

@@ -1,36 +1,9 @@
 import { describe, expect, test } from "bun:test";
 import {
-  OrchestratorRootDelivery,
   SessiondOrchestratorRootDelivery,
 } from "../../src/daemon/orchestrator-root-delivery";
-import { orchestratorTmuxSession } from "../../src/daemon/orchestrator-lifecycle";
 import type { OrchestratorSessiondSnapshot } from "../../src/daemon/orchestrator-sessiond";
 import type { InputReceipt } from "../../src/daemon/session-host/terminal-host-contract";
-
-function tmux() {
-  return {
-    calls: [] as Array<{ session: string; text: string }>,
-    async sendMessage(session: string, text: string) {
-      this.calls.push({ session, text });
-    },
-  };
-}
-
-describe("OrchestratorRootDelivery", () => {
-  for (const tool of ["claude", "codex", "grok"] as const) {
-    test(`submits agent reports into the live ${tool} root`, async () => {
-      const sender = tmux();
-      const delivery = new OrchestratorRootDelivery({ tmux: sender });
-
-      expect(await delivery.deliverMessage("agent report", {})).toEqual(true);
-      expect(sender.calls).toEqual([{
-        session: orchestratorTmuxSession(),
-        text: "agent report",
-      }]);
-      expect(delivery.isLive()).toEqual(true);
-    });
-  }
-});
 
 const sessiondRoot: OrchestratorSessiondSnapshot = {
   requestId: "req_018f1e90-7b5a-7cc0-8000-000000000411",

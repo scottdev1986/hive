@@ -43,7 +43,7 @@ final class ProjectSwitcherTests: XCTestCase {
         let controller = ProjectWindowController(
             state: state, attentionCenter: AttentionCenter(),
             projectDirectory: "/tmp", hivePath: "/usr/bin/true", daemonPort: 1,
-            orchestrator: "codex", orchestratorSession: nil,
+            orchestrator: "codex",
             instanceID: "test", instanceHome: "/tmp")
         defer { controller.window?.close() }
         var notifications = 0

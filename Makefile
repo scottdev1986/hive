@@ -22,16 +22,13 @@ ROOT := $(CURDIR)
 # Bare `make run` opens Hive on this checkout; PROJECT=/path wins.
 PROJECT ?= $(ROOT)
 DEV := $(ROOT)/.dev
-# `#` starts a makefile comment, so tmux formats like #{pid} need the escape.
-HASH := \#
 DIST := $(DEV)/dist
 INSTALL_ROOT := $(DEV)/root
 DEV_VERSION := 0.0.0
 HIVE_BIN := $(INSTALL_ROOT)/current/hive
 DAEMON_STARTUP_LOG := $(DEV)/daemon-startup.log
 # Short per-checkout home: sessiond's canonical host socket path must fit macOS's
-# 103-char sun_path (this spelling costs 100). Do not lengthen it. clean hashes
-# the same literal string for its tmux socket token.
+# 103-char sun_path (this spelling costs 100). Do not lengthen it.
 ROOT_RESOLVED := $(shell cd "$(ROOT)" && pwd -P)
 DEV_HOME_TAG := $(shell printf '%s' "$(ROOT_RESOLVED)" | /usr/bin/shasum -a 256 | cut -c1-10)
 DEV_HOME := /tmp/hv-$(DEV_HOME_TAG)
@@ -138,9 +135,6 @@ SESSIOND_INPUTS := $(shell find $(ROOT)/native/sessiond/src -type f) \
 	$(LOCK) \
 	$(GHOSTTY_ENGINE_INPUTS)
 
-# TMUX_TMPDIR is deliberately NOT set: the daemon and the user's launcher must
-# reach the same tmux server, and the per-instance socket name already isolates
-# it. Setting it here broke every root wake (#68).
 DEV_ENV := \
 	HIVE_HOME=$(DEV_HOME) \
 	HIVE_INSTALL_ROOT=$(INSTALL_ROOT) \
@@ -272,7 +266,7 @@ run:
 	    echo "refusing: PROJECT is inside the hive checkout but is not its root; point at the root or a separate repo" >&2; exit 2;; esac; \
 	fi; \
 	[ -e "$$proj/.git" ] || { echo "PROJECT must be a git repository (run 'git init' there first): $$proj" >&2; exit 2; }; \
-	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp" "$(DEV)/tmux"; \
+	mkdir -p "$(DEV_HOME)" "$(DEV)/bin" "$(DEV)/tmp"; \
 	bun run "$(ROOT)/scripts/dev-memory-setup.ts" "$(DEV_HOME)" "$(HOME)/.hive"; \
 	if ! env $(DEV_ENV) "$(HIVE_BIN)" embeddings install --from "$(ROOT)"; then \
 	  echo "make run: embedding runtime provisioning failed — refusing to start a dev daemon without the semantic leg (defect D1)" >&2; \
@@ -302,11 +296,10 @@ test: toolchain vendor-verify $(GHOSTTYKIT_INFO)
 #   - No kill is trusted: the sweep re-reads the process table and rm -rf runs
 #     only on an empty readback; a survivor refuses and exits non-zero.
 #   - Select by executable path and argv, never by process name — the user's
-#     installed hive runs its own Workspace, tmux server and vendor CLIs.
-#   - Three binding axes: executable under .dev/, .dev/ or HIVE_HOME in argv,
-#     the dev tmux socket (digest of the literal DEV_HOME string).
-#   - Naming is not being: argv only nominates a candidate; exec path, lsof or
-#     tmux membership binds it. Mentioners are reported, never signalled.
+#     installed hive runs its own Workspace and vendor CLIs.
+#   - Bind by executable under .dev/, or by open files under .dev/HIVE_HOME.
+#     Argv only nominates a candidate; exec path or lsof binds it. Mentioners
+#     are reported, never signalled.
 #   - Three spellings each for .dev and the home (literal, physical, deepest
 #     surviving ancestor) so a clean still works once a directory is gone.
 #   - Empty derivations refuse instead of defaulting: an empty dev path would
@@ -327,10 +320,6 @@ clean:
 	[ -n "$$home" ] || { echo "refusing: could not determine the dev HIVE_HOME path" >&2; exit 1; }; \
 	case "$$home" in /*) ;; *) echo "refusing: dev HIVE_HOME is not absolute ($$home)" >&2; exit 1;; esac; \
 	self=$$$$; \
-	suffix=$$(printf '%s' "$$home" | /usr/bin/shasum -a 256 | cut -c1-10) || true; \
-	[ -n "$$suffix" ] || { echo "refusing: could not derive the dev tmux socket name" >&2; exit 1; }; \
-	TMUX_TMPDIR="$$dev/tmux" tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
-	tmux -L "hive-$$suffix" kill-server 2>/dev/null || true; \
 	pidfile=""; \
 	if [ -f "$$home/daemon.pid" ]; then pidfile="$$home/daemon.pid"; \
 	elif [ -f "$$dev/home/daemon.pid" ]; then pidfile="$$dev/home/daemon.pid"; fi; \
@@ -359,9 +348,6 @@ clean:
 	[ "$$complete" = yes ] || { \
 	  echo "refusing: could not walk the full ancestor chain; some ancestor would be kill-eligible" >&2; exit 1; }; \
 	excluded() { case "$$ancestors" in *" $$1 "*) return 0;; esac; is_mine "$$1"; }; \
-	tmuxpids=" $$( { tmux -L "hive-$$suffix" display -p '$(HASH){pid}' 2>/dev/null; \
-	    tmux -L "hive-$$suffix" list-clients -F '$(HASH){client_pid}' 2>/dev/null; \
-	  } | tr '\n' ' ')"; \
 	devl="$(DEV)"; \
 	devp="$$dev"; d="$$dev"; rest=""; \
 	while [ ! -d "$$d" ] && [ "$$d" != "/" ] && [ -n "$$d" ]; do \
@@ -406,7 +392,6 @@ clean:
 	               if (p == hp || index(p, hp "/") == 1) { found = 1; exit } \
 	               if (p == hl || index(p, hl "/") == 1) { found = 1; exit } } \
 	        END { exit(found ? 0 : 1) }'; then return 0; fi; \
-	  case "$$tmuxpids " in *" $$1 "*) return 0;; esac; \
 	  return 1; }; \
 	candidates() { \
 	  { ps -axo pid=,comm= | while read -r p c; do \
@@ -417,9 +402,6 @@ clean:
 	      case "$$rest" in \
 	        *"$$dev"/*|*"$$devp"/*|*"$$devl"/*|*"$$home"/*|*"$$homep"/*|*"$$homel"/*) echo "$$p";; \
 	      esac; done; \
-	    ps -axo pid=,command= | while read -r p rest; do \
-	      case "$$rest" in *"hive-$$suffix"*) echo "$$p";; esac; done; \
-	    printf '%s\n' $$tmuxpids; \
 	  } | sort -u | while read -r p; do \
 	    [ -n "$$p" ] || continue; excluded "$$p" || echo "$$p"; done; }; \
 	dev_pids() { candidates | while read -r p; do is_bound "$$p" && echo "$$p"; done; :; }; \

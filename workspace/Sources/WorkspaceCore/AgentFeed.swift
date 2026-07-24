@@ -65,7 +65,6 @@ public struct AgentSnapshot: Equatable, Decodable {
     public let model: String?
     public let status: String
     public let taskDescription: String?
-    public let tmuxSession: String?
     public let contextPct: Double?
     /// ISO datetime; present means the agent is closed and must not get a pane.
     public let closedAt: String?
@@ -73,7 +72,7 @@ public struct AgentSnapshot: Equatable, Decodable {
 
     public init(id: String? = nil, name: String, tool: String? = nil, model: String? = nil,
                 status: String = "working", taskDescription: String? = nil,
-                tmuxSession: String? = nil, contextPct: Double? = nil,
+                contextPct: Double? = nil,
                 closedAt: String? = nil, sessionLocator: AgentSessionLocator? = nil) {
         self.id = id
         self.name = name
@@ -81,14 +80,13 @@ public struct AgentSnapshot: Equatable, Decodable {
         self.model = model
         self.status = status
         self.taskDescription = taskDescription
-        self.tmuxSession = tmuxSession
         self.contextPct = contextPct
         self.closedAt = closedAt
         self.sessionLocator = sessionLocator
     }
 
     private enum CodingKeys: String, CodingKey {
-        case id, name, tool, model, status, taskDescription, tmuxSession, contextPct
+        case id, name, tool, model, status, taskDescription, contextPct
         case closedAt, sessionLocator
     }
 
@@ -100,7 +98,6 @@ public struct AgentSnapshot: Equatable, Decodable {
         model = try? container.decodeIfPresent(String.self, forKey: .model)
         status = (try? container.decodeIfPresent(String.self, forKey: .status)) ?? "unknown"
         taskDescription = try? container.decodeIfPresent(String.self, forKey: .taskDescription)
-        tmuxSession = try? container.decodeIfPresent(String.self, forKey: .tmuxSession)
         contextPct = try? container.decodeIfPresent(Double.self, forKey: .contextPct)
         closedAt = try? container.decodeIfPresent(String.self, forKey: .closedAt)
         sessionLocator = try container.decodeIfPresent(

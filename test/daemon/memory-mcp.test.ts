@@ -34,21 +34,6 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-class NoopTmux {
-  async hasSession(_session: string): Promise<boolean> {
-    return false;
-  }
-  async capturePane(_session: string): Promise<string> {
-    return "";
-  }
-  async killSession(_session: string): Promise<void> {}
-  async newSession(
-    _name: string,
-    _cwd: string,
-    _command: string,
-  ): Promise<void> {}
-}
-
 function textValue(result: Awaited<ReturnType<Client["callTool"]>>): unknown {
   const content = (result as {
     content: Array<{ type: string; text?: string }>;
@@ -100,7 +85,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -136,7 +120,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -253,7 +236,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -308,7 +290,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -355,7 +336,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -399,7 +379,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -455,7 +434,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -517,7 +495,6 @@ describe("memory MCP tools", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
       db: new HiveDatabase(":memory:"),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const client = await connectedClient(daemon);
@@ -595,7 +572,6 @@ describe("memory MCP tools", () => {
     const daemonA = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     const clientA = await connectedClient(daemonA);
@@ -632,7 +608,6 @@ describe("memory MCP tools", () => {
     const daemonB = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       spawner: new UnusedSpawner(),
-      tmux: new NoopTmux(),
       repoRoot,
     });
     expect(daemonB.db.path).toEqual(dbPath);

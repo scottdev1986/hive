@@ -64,21 +64,6 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-class NoopTmux {
-  async hasSession(_session: string): Promise<boolean> {
-    return false;
-  }
-  async capturePane(_session: string): Promise<string> {
-    return "";
-  }
-  async killSession(_session: string): Promise<void> {}
-  async newSession(
-    _name: string,
-    _cwd: string,
-    _command: string,
-  ): Promise<void> {}
-}
-
 const agent = (name: string): AgentRecord => ({
   id: `agent-${name}`,
   name,
@@ -89,7 +74,6 @@ const agent = (name: string): AgentRecord => ({
   taskDescription: "pitfall harvest fixture",
   worktreePath: `/tmp/hive-${name}`,
   branch: `hive/${name}`,
-  tmuxSession: `hive-${name}`,
   contextPct: null,
   createdAt: T0,
   lastEventAt: T0,
@@ -374,7 +358,6 @@ function daemonFixture(options: {
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
     db,
-    tmux: new NoopTmux(),
     repoRoot: options.repoRoot,
     episodicStore: options.episodic,
   });

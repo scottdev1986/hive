@@ -2,9 +2,8 @@ import AppKit
 import HiveTerminalKit
 import WorkspaceCore
 
-/// Headless end-to-end checks against the REAL substrate: real SwiftTerm
-/// terminals, a real feed subprocess (or the harness's process-boundary
-/// stub), and real detached tmux sessions created by scripts/smoke.sh.
+/// Headless end-to-end checks against real sessiond terminals and a real feed
+/// subprocess (or the harness's process-boundary stub).
 /// Windows stay offscreen (activation policy .accessory, never shown).
 ///
 /// The harness communicates expectations through environment variables:
@@ -16,11 +15,8 @@ import WorkspaceCore
 ///                           keystroke round trip
 ///   HIVE_SMOKE_RT_MARKER    the round-trip marker; typed split ("S''MK…") so
 ///                           the shell's *output* is the only place the full
-///                           marker can appear; the harness re-asserts it via
-///                           `tmux capture-pane` after this process exits
-///   HIVE_SMOKE_CLOSE        agent name whose pane is closed mid-test; the
-///                           harness asserts its tmux session is still alive
-///                           afterwards (detaching a client never kills agents)
+///                           marker can appear
+///   HIVE_SMOKE_CLOSE        agent name whose pane is closed mid-test
 final class SmokeRunner {
 
     private static let productionPaneMinimumHighWater: UInt64 = 1_024
@@ -89,24 +85,6 @@ final class SmokeRunner {
             RunLoop.main.run(until: Date().addingTimeInterval(0.01))
         }
         return condition()
-    }
-
-    private func tmuxPaneIsInCopyMode(_ session: String) -> Bool {
-        let process = Process()
-        let output = Pipe()
-        process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
-        process.arguments = ["tmux", "display-message", "-p", "-t", "=\(session):", "#{pane_in_mode}"]
-        process.standardOutput = output
-        process.standardError = FileHandle.nullDevice
-        do {
-            try process.run()
-            process.waitUntilExit()
-            let data = output.fileHandleForReading.readDataToEndOfFile()
-            return process.terminationStatus == 0
-                && String(data: data, encoding: .utf8)?.trimmingCharacters(in: .whitespacesAndNewlines) == "1"
-        } catch {
-            return false
-        }
     }
 
     private func sendInProcessKeys(_ text: String, to window: NSWindow) -> Bool {
@@ -399,7 +377,7 @@ final class SmokeRunner {
         check(window.isVisible,
               "the real Workspace window is visible for evidence capture")
         check(!controller.terminalChildRunning(pane: paneID),
-              "the renderer owns no hidden SwiftTerm child PTY")
+              "the renderer owns no hidden child PTY")
         let screenFrame = (window.screen ?? NSScreen.main)?.frame ?? .zero
         let captureFrame = window.frame.intersection(screenFrame)
         check(!captureFrame.isNull && captureFrame.width > 0 && captureFrame.height > 0,
@@ -580,14 +558,13 @@ final class SmokeRunner {
                   "closed agent \(name) has no pane")
         }
 
-        // 3. Panes are real terminals whose buffers show the tmux sessions'
-        //    real output (spawn happens on committed geometry, so give it time).
+        // 3. Panes are real sessiond terminals showing the sessions' output.
         for (name, marker) in expectedAgents {
             let paneID = ProjectState.paneID(forAgent: name)
             check(waitUntil(20) { self.controller.terminalText(pane: paneID).contains(marker) },
-                  "agent \(name) terminal shows real tmux output '\(marker)'")
-            check(controller.terminalChildRunning(pane: paneID),
-                  "agent \(name) attach client is running")
+                  "agent \(name) terminal shows real output '\(marker)'")
+            check(controller.sessiondTerminalHasStarted(pane: paneID),
+                  "agent \(name) sessiond renderer is running")
         }
         if let orchMarker {
             check(waitUntil(20) { self.controller.terminalText(pane: ProjectState.orchestratorPaneID).contains(orchMarker) },
@@ -595,24 +572,20 @@ final class SmokeRunner {
         }
 
 
-        // 4. Agent panes encode wheel gestures for tmux, which can forward them
-        // to a mouse-aware TUI. The orchestrator suppresses mouse reporting, so
-        // Workspace keeps its explicit copy-mode path.
+        // 4. Every pane routes its wheel directly to the same terminal view.
         if let agent = expectedAgents.first {
             check(controller.postScrollWheel(
                 deltaY: 10,
                 pane: ProjectState.paneID(forAgent: agent.name)),
-                "agent wheel is sent through tmux mouse routing")
+                "agent wheel reaches the terminal")
         }
-        if let session = config.orchestratorSession {
+        if controller.sessiondTerminalView(pane: ProjectState.orchestratorPaneID) != nil {
             check(controller.postScrollWheel(
                 deltaY: 10,
                 pane: ProjectState.orchestratorPaneID),
-                "orchestrator wheel uses Workspace copy-mode routing")
-            check(waitUntil(5) { self.tmuxPaneIsInCopyMode(session) },
-                  "orchestrator wheel enters tmux copy-mode")
+                "orchestrator wheel reaches the terminal")
         } else {
-            failures.append("smoke launch provides orchestrator tmux session")
+            failures.append("smoke launch provides an orchestrator terminal")
         }
 
         // 5. Layout solves master + satellites: master in the 55–60% band,
@@ -671,7 +644,7 @@ final class SmokeRunner {
                       > (framesBefore[paneID]?.width ?? 0),
                       "promoted agent pane becomes wider")
                 waitUntil(LayoutTransition.duration + 0.1) { false }
-                check(controller.terminalChildRunning(pane: paneID),
+                check(controller.sessiondTerminalHasStarted(pane: paneID),
                       "promoted agent terminal remains live after PTY resize")
 
                 paneMenu.update()
@@ -683,8 +656,9 @@ final class SmokeRunner {
                         && self.controller.currentPaneFrames() == framesBefore
                 }, "Pane > Return Queen to Master restores the grid")
                 waitUntil(LayoutTransition.duration + 0.1) { false }
-                check(controller.terminalChildRunning(pane: ProjectState.orchestratorPaneID),
-                      "orchestrator terminal remains live after PTY resize")
+                check(controller.sessiondTerminalHasStarted(
+                    pane: ProjectState.orchestratorPaneID),
+                    "orchestrator terminal remains live after PTY resize")
                 paneMenu.update()
                 check(promoteItem.isEnabled, "Promote re-enables after returning orchestrator")
                 check(!returnItem.isEnabled, "Return disables after restoring orchestrator")
@@ -693,19 +667,19 @@ final class SmokeRunner {
             }
         }
 
-        // 7. Keystrokes reach the real tmux pane: type an echo whose *output*
+        // 7. Keystrokes reach the real pane: type an echo whose *output*
         //    is the only place the full marker can appear.
         if let typeInto, let rtMarker, rtMarker.count > 2 {
             let paneID = ProjectState.paneID(forAgent: typeInto)
             let split = "\(rtMarker.prefix(1))''\(rtMarker.dropFirst())"
             controller.sendText("echo \(split)\r", pane: paneID)
             check(waitUntil(20) { self.controller.terminalText(pane: paneID).contains(rtMarker) },
-                  "keystroke round trip through tmux ('\(rtMarker)')")
+                  "keystroke round trip through sessiond ('\(rtMarker)')")
         }
 
         // 8. The active-pane indicator tracks the REAL keyboard, not the last
         //    click: a click is delivered through the window's own event dispatch
-        //    (hit-test → SwiftTerm takes first responder), and the indicator is
+        //    (hit-test → terminal takes first responder), and the indicator is
         //    read back off the pane VIEW — never off the reducer, which would
         //    prove only that the app agrees with itself.
         if let agent = expectedAgents.first {
@@ -783,8 +757,8 @@ final class SmokeRunner {
             controller.dispatch(.closePane(paneID))
             check(controller.paneViewCount == countBefore - 1, "closed pane view removed")
             check(controller.state.panes[paneID] == nil, "closed pane left the reducer")
-            check(waitUntil(10) { !self.controller.terminalChildRunning(pane: paneID) },
-                  "attach client terminated on close")
+            check(controller.sessiondTerminalView(pane: paneID) == nil,
+                  "renderer detached on close")
             check(controller.currentPaneFrames().count == controller.state.panes.count,
                   "layout re-solved after close")
 
@@ -796,15 +770,12 @@ final class SmokeRunner {
                   "the indicator sits on the pane that really took the keyboard")
         }
 
-        // Give SIGTERM'd children a beat to die before the harness inspects tmux.
-        waitUntil(1.0) { false }
-
         if failures.isEmpty {
-            print("SMOKE OK — \(controller.state.panes.count) panes over real tmux")
-            exitSmoke(0, proof: "tmux-smoke")
+            print("SMOKE OK — \(controller.state.panes.count) panes over sessiond")
+            exitSmoke(0, proof: "sessiond-smoke")
         } else {
             print("SMOKE FAIL:\n  " + failures.joined(separator: "\n  "))
-            exitSmoke(1, proof: "tmux-smoke")
+            exitSmoke(1, proof: "sessiond-smoke")
         }
     }
 }

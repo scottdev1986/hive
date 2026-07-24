@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
 import {
   rootSessionIdForLaunchRequest,

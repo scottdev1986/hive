@@ -6,7 +6,7 @@ import { createWorktree, listWorktrees } from "../../src/adapters/worktrees";
 import { loadHiveConfig } from "../../src/config/load";
 import type { AgentRecord } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import type { TmuxSender } from "../../src/daemon/delivery";
+import type { SessionSender } from "../../src/daemon/delivery";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
 import { submitPaste } from "../../src/daemon/testing";
@@ -24,7 +24,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Build server",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-server",
-    tmuxSession: "hive-maya",
     contextPct: 14,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -42,11 +41,11 @@ class StubSpawner implements Spawner {
   }
 }
 
-class SilentTmuxSender implements TmuxSender {
+class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
 
-  async sendMessage(session: string): Promise<void> {
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord): Promise<void> {
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -56,24 +55,6 @@ const offlineRootProtocol = {
     return false;
   },
 };
-
-class FakeDaemonTmux {
-  readonly killed: string[] = [];
-
-  async hasSession(): Promise<boolean> {
-    return false;
-  }
-
-  async capturePane(): Promise<string> {
-    return "";
-  }
-
-  async killSession(session: string): Promise<void> {
-    this.killed.push(session);
-  }
-
-  async newSession(): Promise<void> {}
-}
 
 const OLD_ENOUGH = new Date(
   Date.now() - 15 * 60_000,
@@ -116,14 +97,12 @@ function reapDaemon(overrides: {
 } = {}) {
   const db = new HiveDatabase(":memory:");
   const removedWorktrees: Array<[string, string]> = [];
-  const tmux = new FakeDaemonTmux();
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
-    tmuxSender: new SilentTmuxSender(db),
+    sessionSender: new SilentSessionSender(db),
     rootProtocol: offlineRootProtocol,
-    tmux,
     repoRoot: "/tmp/repo",
     lifecycle: {
       idleReap: overrides.idleReap ?? true,
@@ -135,12 +114,12 @@ function reapDaemon(overrides: {
     assessStrandedWork: overrides.assessStrandedWork ??
       (async () => ({ dirtyFiles: [], unmergedCommits: 0 })),
   });
-  return { db, daemon, tmux, removedWorktrees };
+  return { db, daemon, removedWorktrees };
 }
 
 describe("idle-agent reap sweep", () => {
   test("reaps an agent that is idle, clean, and past the timeout", async () => {
-    const { db, daemon, tmux, removedWorktrees } = reapDaemon();
+    const { db, daemon, removedWorktrees } = reapDaemon();
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     try {
       await daemon.reapIdleAgents();
@@ -153,7 +132,6 @@ describe("idle-agent reap sweep", () => {
 
       expect(db.getAgentByName("maya")?.status).toEqual("dead");
       expect(db.getAgentByName("maya")?.worktreePath).toEqual(null);
-      expect(tmux.killed).toEqual(["hive-maya"]);
       expect(removedWorktrees).toEqual([["/tmp/repo", "/tmp/hive-maya"]]);
     } finally {
       await daemon.stop();
@@ -174,17 +152,15 @@ describe("idle-agent reap sweep", () => {
     const target = await createWorktree(repoRoot, "agent-maya", "idle-reap");
     const unrelated = await createWorktree(repoRoot, "agent-zara", "keep");
     const db = new HiveDatabase(":memory:");
-    const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(db),
+      sessionSender: new SilentSessionSender(db),
       rootProtocol: offlineRootProtocol,
-      tmux,
       repoRoot,
       lifecycle: { idleReap: true, idleReapMinutes: 10 },
-      resourceRunners: { panePids: async () => [], orphans: null },
+      resourceRunners: { orphans: null },
     });
     db.insertAgent(agent({
       lastEventAt: OLD_ENOUGH,
@@ -240,7 +216,7 @@ describe("idle-agent reap sweep", () => {
     // The refusal is the safety property and it stays. What changed is that it
     // is no longer silent: this test used to assert an empty inbox, which meant
     // an agent could sit here holding unlanded commits forever with nobody told.
-    const { db, daemon, tmux, removedWorktrees } = reapDaemon({
+    const { db, daemon, removedWorktrees } = reapDaemon({
       assessStrandedWork: async () => ({
         dirtyFiles: ["src/wip.ts"],
         unmergedCommits: 1,
@@ -251,7 +227,6 @@ describe("idle-agent reap sweep", () => {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      expect(tmux.killed).toEqual([]);
       expect(removedWorktrees).toEqual([]);
 
       const notice = (await daemon.delivery.orchestratorInbox())[0];
@@ -300,7 +275,7 @@ describe("idle-agent reap sweep", () => {
   test("alerts when it cannot even tell whether the work is clean", async () => {
     // "I could not tell" is not permission to say nothing. The agent is still
     // not reaped, so without this alert it idles here unreported forever.
-    const { db, daemon, tmux, removedWorktrees } = reapDaemon({
+    const { db, daemon, removedWorktrees } = reapDaemon({
       assessStrandedWork: async () => {
         throw new Error("git index.lock exists");
       },
@@ -310,7 +285,6 @@ describe("idle-agent reap sweep", () => {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      expect(tmux.killed).toEqual([]);
       expect(removedWorktrees).toEqual([]);
 
       const notice = (await daemon.delivery.orchestratorInbox())[0];
@@ -324,13 +298,12 @@ describe("idle-agent reap sweep", () => {
   });
 
   test("never reaps a busy agent", async () => {
-    const { db, daemon, tmux } = reapDaemon();
+    const { db, daemon } = reapDaemon();
     db.insertAgent(agent({ status: "working", lastEventAt: OLD_ENOUGH }));
     try {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("working");
-      expect(tmux.killed).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();
@@ -338,13 +311,12 @@ describe("idle-agent reap sweep", () => {
   });
 
   test("does nothing while lifecycle.idleReap is off", async () => {
-    const { db, daemon, tmux } = reapDaemon({ idleReap: false });
+    const { db, daemon } = reapDaemon({ idleReap: false });
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     try {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      expect(tmux.killed).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();
@@ -352,13 +324,12 @@ describe("idle-agent reap sweep", () => {
   });
 
   test("leaves an idle agent alone until the timeout has actually elapsed", async () => {
-    const { db, daemon, tmux } = reapDaemon();
+    const { db, daemon } = reapDaemon();
     db.insertAgent(agent({ lastEventAt: TOO_RECENT }));
     try {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      expect(tmux.killed).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();
@@ -366,14 +337,13 @@ describe("idle-agent reap sweep", () => {
   });
 
   test("leaves an idle agent alone while a message is still queued for it", async () => {
-    const { db, daemon, tmux } = reapDaemon();
+    const { db, daemon } = reapDaemon();
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
     await daemon.delivery.send("orchestrator", "maya", "One more thing.");
     try {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      expect(tmux.killed).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();
@@ -404,14 +374,12 @@ describe("idle-agent reap sweep", () => {
     expect(config.lifecycle).toEqual({ idleReap: true, idleReapMinutes: 10 });
 
     const db = new HiveDatabase(":memory:");
-    const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(db),
+      sessionSender: new SilentSessionSender(db),
       rootProtocol: offlineRootProtocol,
-      tmux,
       repoRoot: "/tmp/repo",
       lifecycle: config.lifecycle,
       removeWorktree: async () => {},
@@ -433,14 +401,12 @@ describe("idle-agent reap sweep", () => {
 
   test("without a lifecycle option at all, the sweep is a no-op", async () => {
     const db = new HiveDatabase(":memory:");
-    const tmux = new FakeDaemonTmux();
     const daemon = new HiveDaemon({
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: new StubSpawner(),
-      tmuxSender: new SilentTmuxSender(db),
+      sessionSender: new SilentSessionSender(db),
       rootProtocol: offlineRootProtocol,
-      tmux,
       repoRoot: "/tmp/repo",
     });
     db.insertAgent(agent({ lastEventAt: OLD_ENOUGH }));
@@ -448,7 +414,6 @@ describe("idle-agent reap sweep", () => {
       await daemon.reapIdleAgents();
 
       expect(db.getAgentByName("maya")?.status).toEqual("idle");
-      expect(tmux.killed).toEqual([]);
     } finally {
       await daemon.stop();
       db.close();

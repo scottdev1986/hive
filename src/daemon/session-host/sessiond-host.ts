@@ -6,7 +6,7 @@ import {
   expectedDaemonHandshake,
   type DaemonHandshake,
 } from "../handshake";
-import { resolveHiveHome } from "../tmux-sessions";
+import { resolveHiveHome } from "../instance-identity";
 import type {
   ClaimResult,
   InputReceipt,

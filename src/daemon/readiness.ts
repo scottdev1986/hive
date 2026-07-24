@@ -128,9 +128,10 @@ export interface ProofOfLifeDeps<Target = string> {
    *
    * This exists because "the pane changed" answers the wrong question. It asks
    * whether *something* on that screen is moving, and hive's own launch puts a
-   * wrapper shell between tmux and the agent: `holdPaneOnFailure` runs the
+   * wrapper shell between the terminal host and the agent:
+   * `holdPaneOnFailure` runs the
    * provider inside a subshell so a provider that calls `exit` cannot bypass
-   * the diagnostic hold. So the thing tmux calls the pane's process is a shell,
+   * the diagnostic hold. So the pane's root process is a shell,
    * and anything that shell prints — a spinner, a clock, a progress line — is a
    * redraw the old predicate took as proof that the *agent* was alive.
    * Constructed and measured: a wrapper animating once a second over a child
@@ -256,7 +257,7 @@ export async function watchForProofOfLife<Target = string>(
     await deps.wait(pollMs);
 
     // Positive signals first, cheapest first. A launch that has already proved
-    // itself is not interrogated further — we do not ask tmux about an agent we
+    // itself is not interrogated further — we do not ask the host about an agent we
     // can already see working.
     if (deps.settled?.() === true) {
       return { alive: true, signal: "agent reported ready" };
@@ -277,7 +278,7 @@ export async function watchForProofOfLife<Target = string>(
     }
 
     if (!(await deps.hasSession(session))) {
-      return { alive: false, reason: "tmux session exited" };
+      return { alive: false, reason: "terminal session exited" };
     }
 
     // Whose event loop is drawing this screen? Asked once per poll, because a
@@ -301,7 +302,7 @@ export async function watchForProofOfLife<Target = string>(
       // An unreadable pane is not evidence of death — the session check above is
       // what decides that. It is simply no signal this tick.
       if (!(await deps.hasSession(session))) {
-        return { alive: false, reason: "tmux session exited" };
+        return { alive: false, reason: "terminal session exited" };
       }
     }
 

@@ -47,7 +47,7 @@ The control plane: who may do what, and what happens when state is missing.
 | [Orchestrator status](daemon/orchestrator-status.md) | queen (the root orchestrator) has no agents row, so structured turn events and process evidence derive its status without terminal scraping. | 2026-07-15 |
 | [sessiond queen restart proof](daemon/sessiond-queen-restart-proof.md) | Opt-in restart gate for the sessiond-hosted root: exact host identity, six communication lanes, visibility expiry/recovery, and root scrolling without converting queued or redrawn state into receipt. | 2026-07-22 |
 | [Multiple concurrent instances](daemon/multi-instance.md) | Per-instance identity, lifecycle, and control state; owner-scoped repository work; serialized landing; one machine-wide quota ledger; and a global mutation lease. | 2026-07-14 |
-| [Agent teardown](daemon/agent-teardown.md) | Capture the owned process tree before killing tmux, reap it, verify post-state, and preserve work whenever cleanup cannot be proved. | 2026-07-14 |
+| [Agent teardown](daemon/agent-teardown.md) | Terminate the exact daemon-owned sessiond generation, verify process-tree absence, and preserve work whenever cleanup cannot be proved. | 2026-07-23 |
 
 ## terminal
 
@@ -63,7 +63,7 @@ The native macOS app, its visual language, and the platform underneath it.
 
 | Article | Summary | Updated |
 | --- | --- | --- |
-| [Workspace blueprint](workspace/blueprint.md) | A shipping AppKit app whose SwiftTerm panes attach to daemon-owned tmux sessions while structured feeds carry status and control state. | 2026-07-14 |
+| [Workspace blueprint](workspace/blueprint.md) | A shipping AppKit app whose HiveTerminalKit panes attach to daemon-owned sessiond sessions while structured feeds carry status and control state. | 2026-07-23 |
 | [UI design system](workspace/ui-design-system.md) | Semantic colors, native controls, honest unknown states, and the AppKit layout invariants the Workspace enforces. | 2026-07-14 |
 | [Platform constraints](workspace/platform-constraints.md) | macOS traps a native Workspace keeps rediscovering: bookmark identity, XPC authority, pasteboard limits, and terminal-renderer boundaries. | 2026-07-14 |
 

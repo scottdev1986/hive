@@ -22,6 +22,6 @@ public struct ProjectID: Hashable, Comparable, Codable, CustomStringConvertible,
 public enum PaneKind: String, Codable {
     /// The master terminal running the selected orchestrator TUI.
     case orchestrator
-    /// A worker agent terminal attached to its daemon-owned tmux session.
+    /// A worker agent terminal attached to its daemon-owned session.
     case agent
 }

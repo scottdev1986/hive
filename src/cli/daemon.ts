@@ -11,7 +11,6 @@ import {
   retireLegacyRoutingToml,
   RoutingPolicyStore,
 } from "../daemon/routing-policy-store";
-import type { TmuxSessionHost } from "../daemon/session-host/tmux-host";
 import { buildGraphBrief } from "../adapters/graphify";
 import { GraphifyService } from "../daemon/graphify-service";
 import {
@@ -63,16 +62,13 @@ import {
 import { readBillingWithMemory } from "../daemon/usage-credits";
 import { persistAutonomy } from "../config/autonomy";
 import { readModelInventory } from "../daemon/model-inventory";
-import {
-  stopAgentSession,
-  stopSessiondAgentSession,
-} from "../daemon/teardown";
+import { stopSessiondAgentSession } from "../daemon/teardown";
 import {
   inheritDefaultModelControlSettings,
   inheritOrdinaryWorkspaceSelection,
 } from "../daemon/instance-settings";
 import { ORDINARY_WORKSPACE_RUNTIME } from "../daemon/instances";
-import { hiveInstanceSuffix } from "../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../daemon/instance-identity";
 import { SelectionPreferenceStore } from "../daemon/selection-preferences";
 import { SessiondHost } from "../daemon/session-host/sessiond-host";
 import {
@@ -143,18 +139,9 @@ export async function exitAfterDaemonStartupFailure(
 export function stopSpawnSession(
   agent: AgentRecord,
   dependencies: Readonly<{
-    sessions?: TmuxSessionHost;
     terminalHost: Pick<HiveTerminalHostAdapter, "inspect" | "terminate">;
   }>,
 ) {
-  if (agent.sessionLocator?.hostKind !== "sessiond") {
-    if (dependencies.sessions === undefined) {
-      throw new Error(
-        `Agent ${agent.id} has a legacy tmux locator, but production is sessiond-only`,
-      );
-    }
-    return stopAgentSession(agent, { sessions: dependencies.sessions });
-  }
   return stopSessiondAgentSession(agent, {
     terminalHost: dependencies.terminalHost,
     readHostPid: async (record) =>
@@ -170,9 +157,7 @@ export interface ProductionTerminalComposition {
   daemonDependencies: Readonly<{ terminalHost: SessiondHost }>;
 }
 
-/** The production terminal composition has one constructor call and one host.
- * Legacy tmux implementations remain importable by explicit tests until #1/#2,
- * but are not members of this graph. */
+/** The production terminal composition has one constructor call and one host. */
 export function createProductionTerminalComposition(
   options: ConstructorParameters<typeof SessiondHost>[0],
   construct: (

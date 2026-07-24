@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test";
 import type { AgentRecord } from "../../src/schemas";
 import type { UnmergedBranch } from "../../src/adapters/worktrees";
 import { HiveDatabase } from "../../src/daemon/db";
-import type { TmuxSender } from "../../src/daemon/delivery";
+import type { SessionSender } from "../../src/daemon/delivery";
 import { HiveDaemon } from "../../src/daemon/server";
 import type { Spawner } from "../../src/daemon/spawner";
 import { submitPaste } from "../../src/daemon/testing";
@@ -20,7 +20,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Implement the widget router",
     worktreePath: null,
     branch: "hive/david-widgets",
-    tmuxSession: "hive-david",
     contextPct: null,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -38,11 +37,11 @@ class StubSpawner implements Spawner {
   }
 }
 
-class SilentTmuxSender implements TmuxSender {
+class SilentSessionSender implements SessionSender {
   constructor(private readonly db: HiveDatabase) {}
 
-  async sendMessage(session: string): Promise<void> {
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord): Promise<void> {
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -53,24 +52,6 @@ const offlineRootProtocol = {
   },
 };
 
-class FakeDaemonTmux {
-  readonly killed: string[] = [];
-
-  async hasSession(): Promise<boolean> {
-    return true;
-  }
-
-  async capturePane(): Promise<string> {
-    return "";
-  }
-
-  async killSession(session: string): Promise<void> {
-    this.killed.push(session);
-  }
-
-  async newSession(): Promise<void> {}
-}
-
 const DAVID_BRANCH: UnmergedBranch = {
   branch: "hive/david-widgets",
   tip: "3f77e58",
@@ -80,27 +61,25 @@ const DAVID_BRANCH: UnmergedBranch = {
 function strandedDaemon(branches: UnmergedBranch[] = [DAVID_BRANCH]) {
   const db = new HiveDatabase(":memory:");
   const removedWorktrees: string[] = [];
-  const tmux = new FakeDaemonTmux();
   const daemon = new HiveDaemon({
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     db,
     spawner: new StubSpawner(),
-    tmuxSender: new SilentTmuxSender(db),
+    sessionSender: new SilentSessionSender(db),
     rootProtocol: offlineRootProtocol,
-    tmux,
     repoRoot: "/tmp/repo",
     removeWorktree: async (_repoRoot, worktreePath) => {
       removedWorktrees.push(worktreePath);
     },
     listUnmergedHiveBranches: async () => branches,
   });
-  return { db, daemon, tmux, removedWorktrees };
+  return { db, daemon, removedWorktrees };
 }
 
 describe("stranded-branch reconciliation", () => {
   test("reports a branch with unlanded commits that no agent row owns at all", async () => {
-    // This is david, exactly: the branch ref survived, its worktree and tmux
-    // session are gone, and the agents table has no row for it — the database
+    // This is david, exactly: the branch ref survived, its terminal session is
+    // gone, and the agents table has no row for it — the database
     // was reset out from under it. Every other sweep in the daemon iterates
     // agent rows, so this branch is invisible to all of them. The agents table
     // is deliberately left EMPTY here; that is the whole point of the test.

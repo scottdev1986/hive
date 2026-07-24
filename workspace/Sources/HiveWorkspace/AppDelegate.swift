@@ -2,11 +2,11 @@ import AppKit
 import WorkspaceCore
 
 /// The workspace app for one project: a master terminal running the
-/// selected Claude or Codex orchestrator, satellite terminals attached to each agent's
-/// daemon-owned tmux session, and the feed subprocess that drives the pane
+/// selected orchestrator, satellite terminals attached to each agent's
+/// daemon-owned session, and the feed subprocess that drives the pane
 /// set. Launched by the CLI as
 /// `open -a HiveWorkspace --args --project <dir> --port <n> --hive <bin>
-/// --orchestrator-session <tmux session> --orchestrator <claude|codex|grok>`.
+/// --orchestrator <claude|codex|grok>`.
 final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, NSWindowDelegate {
 
     static let terminationStopArguments = ["stop", "--force"]
@@ -110,8 +110,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate, NSMenuItemValidation, 
             state: state, attentionCenter: attentionCenter,
             projectDirectory: projectDirectory, hivePath: hivePath,
             daemonPort: daemonPort, orchestrator: config.orchestrator,
-            orchestratorSession: config.orchestratorSession,
-            tmuxSocket: config.tmuxSocket,
             instanceID: instanceID, instanceHome: instanceHome)
         self.controller = controller
         let composerLeases = ComposerLeaseStore(instanceHome: instanceHome)

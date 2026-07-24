@@ -49,7 +49,6 @@ function liveSessiondAgent(): AgentRecord {
     taskDescription: "repro",
     worktreePath: null,
     branch: null,
-    tmuxSession: "hive-maya",
     contextPct: null,
     createdAt: "2026-07-20T00:00:00.000Z",
     lastEventAt: "2026-07-20T00:00:00.000Z",
@@ -121,11 +120,6 @@ test("stopHive with partial deps cannot reach through ambient HIVE_HOME and kill
   // on 2026-07-20: liveness/kill/cleanup mocked, everything lethal defaulted.
   const states: Array<"live" | "dead"> = ["live", "dead"];
   const error = await stopHive({
-    tmux: {
-      listSessions: async () => [],
-      listPanePids: async () => [],
-      killSession: async () => {},
-    },
     readPid: () => 4242,
     liveness: async () => states.shift() ?? "dead",
     cleanup: () => {},

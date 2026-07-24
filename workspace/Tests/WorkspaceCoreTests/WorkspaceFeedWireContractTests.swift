@@ -26,7 +26,6 @@ final class WorkspaceFeedWireContractTests: XCTestCase {
         XCTAssertEqual(agent.model, "gpt-5.4")
         XCTAssertEqual(agent.status, "working")
         XCTAssertEqual(agent.taskDescription, "Index the repository")
-        XCTAssertEqual(agent.tmuxSession, "hive-indexer")
         XCTAssertEqual(agent.contextPct, 41.5)
         XCTAssertNil(agent.closedAt)
         XCTAssertEqual(FeedStatusMap.paneStatus(for: agent.status), .running)

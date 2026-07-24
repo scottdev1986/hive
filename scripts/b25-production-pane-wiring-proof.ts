@@ -29,9 +29,8 @@ import {
   readLocalPeerPid,
   socketFileDescriptor,
 } from "../src/daemon/sessiond-broker";
-import { hiveInstanceSuffix } from "../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../src/daemon/instance-identity";
 import { macProcessIdentity } from "../src/daemon/lifecycle";
-import { mintAgentTmuxSessionLocator } from "../src/daemon/session-host/tmux-host";
 import { operatorFetch } from "../src/cli/credential";
 
 const repoRoot = resolve(import.meta.dir, "..");

@@ -52,7 +52,7 @@ pub const Locator = struct {
         root,
         agent: []const u8,
     } = .root,
-    host_kind: enum { tmux, sessiond } = .sessiond,
+    host_kind: enum { sessiond } = .sessiond,
     engine_build_id: ?[]const u8 = null,
 
     pub fn eql(self: Locator, other: Locator) bool {

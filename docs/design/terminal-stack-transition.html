@@ -931,8 +931,8 @@ export type SessionLocator = Readonly&lt;{
   subject: SessionSubject;
   generation: number;     // positive, monotonically increasing per subject
   sessionId: string;      // random ses_ UUIDv7
-  hostKind: "tmux" | "sessiond";
-  engineBuildId: string | null;
+  hostKind: "sessiond";
+  engineBuildId: string;
 }&gt;;
 
 export type SessionSpec = Readonly&lt;{

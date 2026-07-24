@@ -41,7 +41,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Build the daemon",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-daemon",
-    tmuxSession: "hive-maya",
     contextPct: 12,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -292,8 +291,8 @@ describe("HiveDatabase", () => {
         schemaVersion: 1,
         subject: { kind: "agent", agentId: "agent-maya" },
         generation: 1,
-        hostKind: "tmux",
-        engineBuildId: null,
+        hostKind: "sessiond",
+        engineBuildId: "unbound",
       }));
       expect(db.getAgentByName("maya")).toEqual(inserted);
 
@@ -519,10 +518,10 @@ describe("HiveDatabase", () => {
       const reconciled = db.markAgentDead(
         "agent-maya",
         "2026-07-09T13:00:00.000Z",
-        "tmux session missing (reconciled)",
+        "terminal session missing (reconciled)",
       );
       expect(reconciled?.failureReason).toEqual(
-        "tmux session missing (reconciled)",
+        "terminal session missing (reconciled)",
       );
 
       db.upsertAgent(agent({
@@ -576,7 +575,7 @@ describe("HiveDatabase", () => {
       value.taskDescription,
       value.worktreePath,
       value.branch,
-      value.tmuxSession,
+      "hive-maya",
       value.contextPct,
       value.createdAt,
       value.lastEventAt,
@@ -590,13 +589,16 @@ describe("HiveDatabase", () => {
       const migrated = db.getAgentByName("maya")!;
       expect(migrated).toMatchObject({
         ...value,
+        status: "dead",
         contextPct: null,
+        failureReason: "terminal session retired during host migration",
       });
       expect(migrated.sessionLocator).toMatchObject({
         schemaVersion: 1,
         subject: { kind: "agent", agentId: value.id },
         generation: 1,
-        hostKind: "tmux",
+        hostKind: "sessiond",
+        engineBuildId: "retired",
       });
       expect(migrated.sessionLocator?.sessionId).toMatch(
         /^ses_[0-9a-f]{8}-[0-9a-f]{4}-7[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/,
@@ -1080,7 +1082,7 @@ describe("contextPct can say 'unknown'", () => {
       // hand-maintained copy list had already started forgetting.
       expect(zoe?.liveModel).toBe("claude-opus-4-8");
       expect(zoe?.model).toBe("claude-fable-5");
-      expect(zoe?.status).toBe("working");
+      expect(zoe?.status).toBe("dead");
     } finally {
       db.close();
     }

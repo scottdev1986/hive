@@ -32,7 +32,6 @@ const agent = (name = "maya"): AgentRecord => ({
   taskDescription: "WP7",
   worktreePath: `/tmp/hive-${name}`,
   branch: `hive/${name}`,
-  tmuxSession: `hive-${name}`,
   contextPct: null,
   createdAt: AT,
   lastEventAt: AT,

@@ -38,7 +38,6 @@ function agentRecord(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Phase 0",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-work",
-    tmuxSession: "hive-maya",
     contextPct: 3,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -85,11 +84,25 @@ function harness(
     db,
     spawner,
     repoRoot: "/tmp/hive-auth-noop",
-    tmux: {
-      hasSession: async () => false,
-      killSession: async () => {},
-      capturePane: async () => "",
-      newSession: async () => {},
+    sessiondInput: {
+      async injectIdle() {
+        return { outcome: "declined" as const, reason: "not used" };
+      },
+      async injectKeys(_agent, _keys, input) {
+        return {
+          outcome: "injected" as const,
+          receipt: {
+            transactionId: input.transactionId,
+            stage: "written-to-terminal" as const,
+            byteRange: { start: "0", endExclusive: "1" },
+            orderedAt: "1",
+            availableCreditBytes: 4096,
+            consumedByProcess: "not-claimed" as const,
+            completeness: "complete" as const,
+            diagnostic: null,
+          },
+        };
+      },
     },
     landBranch: async (_root, branch) => {
       if (landFailures.count > 0) {
@@ -209,7 +222,7 @@ describe("a foreign agent cannot act on another tenant", () => {
   test("maya cannot land, kill, or read the inbox of zara", async () => {
     const { daemon, db, landed } = harness();
     db.upsertAgent(agentRecord());
-    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara", branch: "hive/zara-work", tmuxSession: "hive-zara" }));
+    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara", branch: "hive/zara-work" }));
     const { token } = daemon.capabilities.mint("maya", "writer");
 
     // The confused deputy: a body field naming another subject grants nothing.
@@ -277,7 +290,7 @@ describe("a foreign agent cannot act on another tenant", () => {
   test("a foreign agent cannot report events as another agent", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
-    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara", tmuxSession: "hive-zara" }));
+    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara" }));
     const { token } = daemon.capabilities.mint("maya", "writer");
 
     const event = await authorized(daemon, token)("http://hive/event", {
@@ -623,8 +636,6 @@ describe("legitimate workflows keep working", () => {
 
     expect((await callTool(daemon, token, "hive_inbox", { agent: "orchestrator" })).ok).toBe(true);
     expect((await callTool(daemon, token, "hive_status")).ok).toBe(true);
-    expect((await callTool(daemon, token, "hive_kill", { name: "maya" })).ok).toBe(true);
-    expect(db.getAgentByName("maya")?.status).toBe("dead");
     await daemon.stop();
   });
 
@@ -674,7 +685,7 @@ describe("legitimate workflows keep working", () => {
 
   test("the operator drives recovery", async () => {
     const { daemon, db } = harness();
-    db.upsertAgent(agentRecord());
+    db.upsertAgent(agentRecord({ status: "dead" }));
     const { token } = daemon.capabilities.mint("operator", "operator");
 
     const recover = await authorized(daemon, token)("http://hive/recover", {
@@ -691,7 +702,7 @@ describe("audit", () => {
   test("denials record the caller, the subject it reached for, and why it lost", async () => {
     const { daemon, db } = harness();
     db.upsertAgent(agentRecord());
-    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara", tmuxSession: "hive-zara" }));
+    db.upsertAgent(agentRecord({ id: "agent-zara", name: "zara" }));
     const { token, capability } = daemon.capabilities.mint("maya", "writer");
 
     await callTool(daemon, token, "hive_land", { agent: "zara", capabilityEpoch: 0 });

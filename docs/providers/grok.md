@@ -6,7 +6,7 @@ Raw: [Grok spend-sensitivity experiment](../../raw/grok/grok-spend-sensitivity-e
 
 ## Summary
 
-Grok is a **peer vendor** in Hive, launched into a tmux pane like Claude and Codex, and metered like them. Almost everything Hive knows about it was bought with measured prompts against a live account: the permission semantics, the sandbox's non-enforcement, the session-artifact layout, and the fact that its MCP calls arrive under a wrapper name. This article is that knowledge.
+Grok is a **peer vendor** in Hive, launched into the same shell-backed `sessiond` terminal as Claude and Codex, and metered like them. Almost everything Hive knows about it was bought with measured prompts against a live account: the permission semantics, the sandbox's non-enforcement, the session-artifact layout, and the fact that its MCP calls arrive under a wrapper name. This article is that knowledge.
 
 Measured against **grok 0.2.93 (`f00f96316d4b`)** on 2026-07-12, **grok 0.2.99 (`b1b49ccb71a7`)** on 2026-07-13, and **grok 0.2.101 (`5bc4b5dfadcf`)** on 2026-07-14. Model ids named here are **examples observed on those dates**; Hive ships no Grok catalog or Grok name heuristic (`src/adapters/tools/models.ts:1-15`), and Grok's default flipped server-side once already.
 

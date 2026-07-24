@@ -6,7 +6,7 @@ import { listInstances } from "../daemon/instances";
 import {
   hiveInstanceSuffix,
   isDefaultHiveHome,
-} from "../daemon/tmux-sessions";
+} from "../daemon/instance-identity";
 
 interface RepairScope {
   readonly instanceId: string;

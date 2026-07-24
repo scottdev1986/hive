@@ -14,7 +14,7 @@ describe("the shared Workspace feed wire fixture", () => {
     expect(fixture.autonomy).toBe("dangerous");
     expect(fixture.orchestrator).toEqual({
       status: "working",
-      host: "tmux",
+      host: "sessiond",
       hostState: null,
       hostDiagnostic: null,
       sessionLocator: null,
@@ -25,7 +25,6 @@ describe("the shared Workspace feed wire fixture", () => {
       model: "gpt-5.4",
       status: "working",
       taskDescription: "Index the repository",
-      tmuxSession: "hive-indexer",
       contextPct: 41.5,
       readOnly: false,
     });

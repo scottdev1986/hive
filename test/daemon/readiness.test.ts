@@ -62,7 +62,7 @@ describe("proof of life", () => {
   test("a spinning wrapper over a dead child is DEAD, however lively the screen", async () => {
     // The whole defect, reproduced. A wrapper prints a clock once a second while
     // the provider it launched has already exited; the pane changes on every
-    // poll. Measured against a real tmux pane, this animates 5 of 5 polls — and
+    // poll. Measured against a real terminal, this animates 5 of 5 polls — and
     // the old predicate ("three pane changes") called that a healthy launch and
     // recorded a dead provider as a successful spawn.
     let tick = 0;
@@ -93,7 +93,7 @@ describe("proof of life", () => {
   });
 
   test("an unreadable process tree is unknown, and unknown is not life", async () => {
-    // `ps` failed, or tmux reported no pane. That is not evidence the agent is
+    // `ps` failed, or the terminal host reported no process. That is not evidence the agent is
     // running, so a redraw we cannot attribute buys nothing — and hive says so
     // rather than flattering itself with a default.
     const proof = await watchForProofOfLife("s", BASELINE, deps({
@@ -212,7 +212,7 @@ describe("proof of life", () => {
       capturePane: tickingPane(),
       hasSession: async () => false,
     }));
-    expect(proof).toEqual({ alive: false, reason: "tmux session exited" });
+    expect(proof).toEqual({ alive: false, reason: "terminal session exited" });
   });
 
   test("a launch error fails immediately, redrawing or not", async () => {

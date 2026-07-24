@@ -147,7 +147,6 @@ final class PaneOrderedOutputStressTests: XCTestCase {
             hivePath: "/usr/bin/false",
             daemonPort: 43_145,
             orchestrator: "claude",
-            orchestratorSession: nil,
             instanceID: "b25-stress-instance",
             instanceHome: "/tmp/hb25-stress"
         )

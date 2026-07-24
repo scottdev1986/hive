@@ -13,8 +13,8 @@ import {
   mintRootSessiondLocator,
 } from "./orchestrator-host";
 import { providerTerminalEnvironment } from "./provider-terminal-environment";
-import { shellJoin } from "./session-host/tmux-host";
 import {
+  shellJoin,
   shellSessionLaunch,
   type ShellSessionLaunch,
 } from "./session-host/shell-session";

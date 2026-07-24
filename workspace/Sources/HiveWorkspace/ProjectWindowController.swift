@@ -14,14 +14,14 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     private let hivePath: String
     private let daemonPort: Int
     private let orchestrator: String
-    private let orchestratorSession: String?
-    private let tmuxSocket: String?
     private let instanceID: String
     private let instanceHome: String
+    private var orchestratorSupervisor: Process?
     private let container = LayoutContainerView()
     private let animator = LayoutAnimator()
     private var paneViews: [PaneID: PaneView] = [:]
     private var pendingCloses: Set<PaneID> = []
+    private var composerKeyMonitor: Any?
     private var feedFailureWindow: NSWindow?
     private var isClosing = false
 
@@ -36,8 +36,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     init(state: ProjectState, attentionCenter: AttentionCenter,
          projectDirectory: String, hivePath: String, daemonPort: Int,
-         orchestrator: String, orchestratorSession: String?,
-         tmuxSocket: String? = nil,
+         orchestrator: String,
          instanceID: String, instanceHome: String) {
         self.state = state
         self.attentionCenter = attentionCenter
@@ -45,8 +44,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         self.hivePath = hivePath
         self.daemonPort = daemonPort
         self.orchestrator = orchestrator
-        self.orchestratorSession = orchestratorSession
-        self.tmuxSocket = tmuxSocket
         self.instanceID = instanceID
         self.instanceHome = instanceHome
 
@@ -63,10 +60,31 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         // AppKit posts no notification when the first responder moves, so the
         // window tells us itself. This is the signal the indicator rides on:
         // clicks, ⌃⌘-arrow focus moves, a closed pane handing focus back, and
-        // SwiftTerm grabbing the keyboard on its own mouseDown all pass through
+        // the terminal grabbing the keyboard on mouseDown all pass through
         // makeFirstResponder — and only through makeFirstResponder.
         window.onFirstResponderChange = { [weak self] in
             self?.refreshFocusIndicators()
+        }
+        composerKeyMonitor = NSEvent.addLocalMonitorForEvents(matching: .keyDown) {
+            [weak self] event in
+            guard let self, event.window === self.window,
+                  let paneID = self.paneOwningFirstResponder(),
+                  let pane = self.state.panes[paneID]
+            else { return event }
+            let action = classifyComposerInput(
+                characters: event.charactersIgnoringModifiers ?? event.characters ?? "",
+                command: event.modifierFlags.contains(.command),
+                control: event.modifierFlags.contains(.control))
+            let recipient = pane.kind == .orchestrator
+                ? ProjectState.orchestratorRecipient : pane.title
+            if action == .editing {
+                self.onComposerInput?(recipient, action)
+            } else if action == .submitted || action == .cancelled {
+                DispatchQueue.main.async { [weak self] in
+                    self?.onComposerInput?(recipient, action)
+                }
+            }
+            return event
         }
         attentionCenter.register(state: state)
 
@@ -95,18 +113,58 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     required init?(coder: NSCoder) { fatalError("not used") }
 
+    deinit {
+        if let composerKeyMonitor {
+            NSEvent.removeMonitor(composerKeyMonitor)
+        }
+    }
+
     // MARK: Entry points
 
     /// Creates the master pane and starts the orchestrator terminal.
     func bootstrapOrchestrator() {
         react(to: state.addOrchestrator(title: state.displayName))
+        startOrchestratorSupervisor()
+    }
+
+    private func startOrchestratorSupervisor() {
+        guard orchestratorSupervisor == nil else { return }
+        let process = Process()
+        process.executableURL = URL(fileURLWithPath: hivePath)
+        process.arguments = [
+            "workspace-orchestrator",
+            "--tool", orchestrator,
+            "--port", String(daemonPort),
+            "--instance-id", instanceID,
+        ]
+        process.currentDirectoryURL = URL(fileURLWithPath: projectDirectory)
+        var environment = ProcessInfo.processInfo.environment
+        environment["HIVE_HOME"] = instanceHome
+        process.environment = environment
+        process.terminationHandler = { [weak self, weak process] _ in
+            DispatchQueue.main.async {
+                guard let self, self.orchestratorSupervisor === process else { return }
+                self.orchestratorSupervisor = nil
+                guard !self.isClosing else { return }
+                self.react(to: self.state.markOrchestratorExited(
+                    exitCode: process?.terminationStatus))
+            }
+        }
+        orchestratorSupervisor = process
+        do {
+            try process.run()
+        } catch {
+            if orchestratorSupervisor === process {
+                orchestratorSupervisor = nil
+            }
+            react(to: state.markOrchestratorExited(exitCode: nil))
+        }
     }
 
     /// Commits the first real window geometry after presentation. Bootstrap
     /// happens before `showWindow`, when the container may still be 0×0; do
     /// not rely on AppKit subsequently reporting a bounds change to launch the
-    /// deferred terminal child. A snapped layout here gives SwiftTerm the
-    /// visible pane's settled dimensions and deterministically starts it.
+    /// terminal surface. A snapped layout here gives it settled dimensions.
     func commitInitialGeometry() {
         window?.contentView?.layoutSubtreeIfNeeded()
         window?.layoutIfNeeded()
@@ -172,7 +230,6 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
                 pendingCloses.remove(paneID)
                 if let view = paneViews.removeValue(forKey: paneID) {
                     view.sessiondTerminal?.detach() // renderer detach, never close
-                    view.contentView.terminateChild() // detaches the tmux client, never the session
                     view.removeFromSuperview()
                 }
             case .paneClosePending(let paneID):
@@ -197,39 +254,12 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     private func addPaneView(for paneID: PaneID) {
         guard let pane = state.panes[paneID] else { return }
-        let scrollSession = terminalScrollSession(
-            for: pane,
-            orchestratorSession: orchestratorSession)
-        let allowsMouseReporting = terminalAllowsMouseReporting(for: pane)
         let view = PaneView(
             paneID: paneID,
-            title: pane.title,
-            tmuxSession: scrollSession,
-            tmuxSocket: tmuxSocket,
-            allowsMouseReporting: allowsMouseReporting) { [weak self] command in
+            title: pane.title) { [weak self] command in
             self?.dispatch(command)
         }
         view.update(state: pane)
-        // Preferred root address is queen; daemon also accepts the synonym
-        // "orchestrator" for lease checks during the rename window.
-        let recipient = pane.kind == .orchestrator
-            ? ProjectState.orchestratorRecipient : pane.title
-        view.contentView.onComposerInput = { [weak self] action in
-            self?.onComposerInput?(recipient, action)
-        }
-        let isSessiondAgent = pane.kind == .agent &&
-            pane.sessionLocator?.hostKind == "sessiond"
-        if !isSessiondAgent {
-            view.contentView.schedule(
-                command: terminalCommand(for: pane),
-                workingDirectory: projectDirectory)
-        }
-        if pane.kind == .orchestrator {
-            view.contentView.onChildExit = { [weak self] exitCode in
-                guard let self, !self.isClosing else { return }
-                self.react(to: self.state.markOrchestratorExited(exitCode: exitCode))
-            }
-        }
         paneViews[paneID] = view
         installSessiondTerminalIfNeeded(for: paneID)
         container.addSubview(view)
@@ -246,31 +276,15 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
               let locator = pane.sessionLocator,
               locator.hostKind == "sessiond" else { return }
         // Feed locators are ready-to-attach for both root and agent panes.
-        view.installSessiondTerminal(SessiondPaneTerminal(
-            agentName: pane.kind == .orchestrator
-                ? ProjectState.orchestratorRecipient : pane.title,
-            locator: locator,
-            hivePath: hivePath,
-            daemonPort: daemonPort,
-            instanceHome: instanceHome))
-    }
-
-    /// What runs inside a pane's pty:
-    /// - master: the private Workspace boundary starts the selected
-    ///   orchestrator and attaches its tmux session.
-    /// - agent: a plain tmux attach client for the daemon-owned session;
-    ///   killing it later merely detaches.
-    private func terminalCommand(for pane: PaneState) -> String {
-        switch pane.kind {
-        case .orchestrator:
-            return "exec env HIVE_HOME=\(shellQuoted(instanceHome)) \(shellQuoted(hivePath)) workspace-orchestrator --tool \(shellQuoted(orchestrator)) --port \(daemonPort) --instance-id \(shellQuoted(instanceID))"
-        case .agent:
-            let session = pane.tmuxSession ?? pane.title
-            let target = shellQuoted("=\(session):")
-            let socket = tmuxSocket.map { " -L \(shellQuoted($0))" } ?? ""
-            return "until tmux\(socket) has-session -t \(target) 2>/dev/null; do sleep 0.5; done; "
-                + "exec tmux\(socket) attach-session -t \(shellQuoted(session))"
-        }
+        view.installSessiondTerminal(
+            SessiondPaneTerminal(
+                agentName: pane.kind == .orchestrator
+                    ? ProjectState.orchestratorRecipient : pane.title,
+                locator: locator,
+                hivePath: hivePath,
+                daemonPort: daemonPort,
+                instanceHome: instanceHome),
+            start: pane.terminalHostState == "running")
     }
 
     /// A closed agent keeps its pane (final status border) for the grace
@@ -323,7 +337,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             view.setFocusIndicator(paneFocusIndicator(
                 pane: id, firstResponderPane: responderPane, windowIsKey: windowIsKey))
         }
-        // Keep the model honest too: SwiftTerm takes first responder on its own
+        // Keep the model honest too: the terminal takes first responder on its own
         // mouseDown, so the keyboard can land in a pane the reducer has not been
         // told about. Menu commands ("Close Focused Pane") must act on the pane
         // the user is actually typing into.
@@ -347,14 +361,13 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
         refreshFocusIndicators()
     }
 
-    /// Detaches every terminal (SIGTERM to attach clients / the orchestrator
-    /// CLI). Agents keep running: their processes live in daemon-owned tmux
-    /// sessions, and detaching a client must never kill them.
+    /// Detaches every renderer without closing its session.
     func terminateAllTerminals() {
         for view in paneViews.values {
             view.sessiondTerminal?.detach()
-            view.contentView.terminateChild()
         }
+        orchestratorSupervisor?.terminate()
+        orchestratorSupervisor = nil
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -370,18 +383,20 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
     }
 
     func terminalText(pane: PaneID) -> String {
-        paneViews[pane]?.contentView.visibleText ?? ""
+        paneViews[pane]?.sessiondTerminal?.view?.accessibilityValue() as? String ?? ""
     }
 
     func sendText(_ text: String, pane: PaneID) {
-        paneViews[pane]?.contentView.send(text: text)
+        paneViews[pane]?.sessiondTerminal?.view?.insertText(
+            text,
+            replacementRange: NSRange(location: NSNotFound, length: 0))
     }
 
     /// Delivers a wheel event to the running terminal pane through the same
     /// routing method as the AppKit event monitor.
     @discardableResult
     func postScrollWheel(deltaY: CGFloat, pane: PaneID) -> Bool {
-        guard let contentView = paneViews[pane]?.contentView else { return false }
+        guard let terminalView = paneViews[pane]?.sessiondTerminal?.view else { return false }
         guard let cgEvent = CGEvent(
             scrollWheelEvent2Source: nil,
             units: .pixel,
@@ -391,15 +406,12 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
             wheel3: 0),
               let event = NSEvent(cgEvent: cgEvent)
         else { return false }
-        return contentView.submitScroll(
-            event,
-            locationInTerminal: CGPoint(
-                x: contentView.terminal.bounds.midX,
-                y: contentView.terminal.bounds.midY))
+        terminalView.scrollWheel(with: event)
+        return true
     }
 
     func terminalChildRunning(pane: PaneID) -> Bool {
-        paneViews[pane]?.contentView.childRunning ?? false
+        false
     }
 
     func sessiondTerminalView(pane: PaneID) -> HiveTerminalView? {
@@ -427,7 +439,7 @@ final class ProjectWindowController: NSWindowController, NSWindowDelegate {
 
     /// Delivers a real left-click at the pane's center through the window's own
     /// event dispatch — the same path a user's click takes: hit-testing, the
-    /// pane's click recognizer, and SwiftTerm taking first responder itself.
+    /// pane's click recognizer, and the terminal taking first responder itself.
     @discardableResult
     func postClick(pane: PaneID) -> Bool {
         guard let view = paneViews[pane], let window else { return false }

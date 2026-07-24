@@ -14,7 +14,7 @@ import {
 } from "../../src/adapters/memory";
 import type { AgentRecord, MemoryWriteInput } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import { MessageDelivery, type TmuxSender } from "../../src/daemon/delivery";
+import { MessageDelivery, type SessionSender } from "../../src/daemon/delivery";
 import { EpisodicStore } from "../../src/daemon/episodic-store";
 import { MemoryIndex } from "../../src/daemon/memory-index";
 import {
@@ -59,7 +59,6 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Build the trigger protocol",
     worktreePath: "/tmp/hive-maya",
     branch: "hive/maya-triggers",
-    tmuxSession: "hive-maya",
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -72,14 +71,14 @@ function agent(overrides: Partial<AgentRecord> = {}): AgentRecord {
 }
 
 /** A working TUI: takes the paste, submits it, and the turn-start proves it. */
-class SubmittingTmuxSender implements TmuxSender {
+class SubmittingSessionSender implements SessionSender {
   readonly calls: Array<[string, string]> = [];
 
   constructor(private readonly db: HiveDatabase) {}
 
-  async sendMessage(session: string, text: string): Promise<void> {
-    this.calls.push([session, text]);
-    submitPaste(this.db, session);
+  async sendSessionMessage(agent: AgentRecord, text: string): Promise<void> {
+    this.calls.push([agent.name, text]);
+    submitPaste(this.db, agent.sessionLocator!.sessionId);
   }
 }
 
@@ -88,7 +87,7 @@ interface TriggerHarness {
   db: HiveDatabase;
   index: MemoryIndex;
   episodic: EpisodicStore;
-  tmux: SubmittingTmuxSender;
+  sender: SubmittingSessionSender;
   delivery: MessageDelivery;
   deps: MemoryTriggerDeps;
 }
@@ -111,10 +110,10 @@ async function makeHarness(): Promise<TriggerHarness> {
     write,
     episodic,
   };
-  const tmux = new SubmittingTmuxSender(db);
+  const sender = new SubmittingSessionSender(db);
   const delivery = new MessageDelivery(
     db,
-    tmux,
+    sender,
     undefined,
     undefined,
     undefined,
@@ -126,7 +125,7 @@ async function makeHarness(): Promise<TriggerHarness> {
     createMemoryTriggerExecutor(deps),
   );
   db.insertAgent(agent());
-  return { repo, db, index, episodic, tmux, delivery, deps };
+  return { repo, db, index, episodic, sender, delivery, deps };
 }
 
 async function seedArticle(
@@ -208,8 +207,8 @@ describe("recall trigger", () => {
         "recall: urgent turn",
       );
       expect(message.deliveredAt === null).toBe(false);
-      expect(harness.tmux.calls).toHaveLength(1);
-      const text = harness.tmux.calls[0]![1];
+      expect(harness.sender.calls).toHaveLength(1);
+      const text = harness.sender.calls[0]![1];
       // The trigger is a command, not content: the raw text is gone.
       expect(text).not.toContain("recall: urgent turn");
       expect(text).toContain("🧠 Hive memory recall for 'urgent turn' — ");
@@ -247,7 +246,7 @@ describe("recall trigger", () => {
         "recall: nonexistent zzzqxwv topic",
       );
       expect(message.deliveredAt === null).toBe(false);
-      const text = harness.tmux.calls[0]![1];
+      const text = harness.sender.calls[0]![1];
       expect(text).toContain(
         "🧠 Hive memory recall for 'nonexistent zzzqxwv topic' — no matching memory",
       );
@@ -272,15 +271,15 @@ describe("note this trigger", () => {
       await harness.delivery.send(
         "queen",
         "maya",
-        "note this: tmux exit 0 only means tmux accepted the keystrokes",
+        "note this: terminal write success only means the terminal accepted the input",
       );
-      const text = harness.tmux.calls[0]![1];
+      const text = harness.sender.calls[0]![1];
       expect(text).toContain(
-        '🧠 Hive noted: "tmux exit 0 only means tmux accepted the keystrokes" [unverified]',
+        '🧠 Hive noted: "terminal write success only means the terminal accepted the input" [unverified]',
       );
       // The raw trigger text is replaced, not relayed as the sender's words.
       expect(text).not.toContain("📨 message from queen");
-      const written = harness.index.search("tmux keystrokes");
+      const written = harness.index.search("terminal input");
       expect(written).toHaveLength(1);
       const fact = await readMemoryFact(harness.repo, "repo", written[0]!.id);
       expect(fact).toMatchObject({
@@ -321,7 +320,7 @@ describe("note this trigger", () => {
       const first = harness.index.search("quota reads")[0]!;
       // Same normalized title, different punctuation/case and a refined body.
       await harness.delivery.send("queen", "maya", "Note this: Quota reads, tighten!");
-      expect(harness.tmux.calls[1]![1]).toContain("updated existing article");
+      expect(harness.sender.calls[1]![1]).toContain("updated existing article");
       const facts = harness.index.search("quota reads");
       expect(facts).toHaveLength(1);
       expect(facts[0]!.id).toBe(first.id);
@@ -349,7 +348,7 @@ describe("document this trigger", () => {
         "maya",
         "document this: Delivery Boundary Semantics",
       );
-      const text = harness.tmux.calls[0]![1];
+      const text = harness.sender.calls[0]![1];
       expect(text).toContain(
         '🧠 Hive documented: "Delivery Boundary Semantics" [unverified]',
       );
@@ -383,7 +382,7 @@ describe("authority and failure isolation", () => {
         "note this: agents should not write this",
       );
       expect(message.deliveredAt === null).toBe(false);
-      expect(harness.tmux.calls[0]![1]).toBe(
+      expect(harness.sender.calls[0]![1]).toBe(
         "📨 message from sam: note this: agents should not write this",
       );
       // No wiki write, no audit row.
@@ -408,7 +407,7 @@ describe("authority and failure isolation", () => {
         "note this: this write will fail",
       );
       expect(message.deliveredAt === null).toBe(false);
-      const text = harness.tmux.calls[0]![1];
+      const text = harness.sender.calls[0]![1];
       expect(text).toContain(
         "📨 message from queen: note this: this write will fail",
       );
@@ -423,11 +422,11 @@ describe("authority and failure isolation", () => {
   test("no executor wired: trigger text is plain message content (byte-identical)", async () => {
     const db = new HiveDatabase(":memory:");
     try {
-      const tmux = new SubmittingTmuxSender(db);
-      const delivery = new MessageDelivery(db, tmux);
+      const sender = new SubmittingSessionSender(db);
+      const delivery = new MessageDelivery(db, sender);
       db.insertAgent(agent());
       await delivery.send("queen", "maya", "recall: anything");
-      expect(tmux.calls[0]![1]).toBe("📨 message from queen: recall: anything");
+      expect(sender.calls[0]![1]).toBe("📨 message from queen: recall: anything");
     } finally {
       db.close();
     }
@@ -443,10 +442,10 @@ describe("authority and failure isolation", () => {
         }),
         advance: () => undefined,
       };
-      const tmux = new SubmittingTmuxSender(harness.db);
+      const sender = new SubmittingSessionSender(harness.db);
       const delivery = new MessageDelivery(
         harness.db,
-        tmux,
+        sender,
         undefined,
         undefined,
         undefined,
@@ -458,7 +457,7 @@ describe("authority and failure isolation", () => {
         createMemoryTriggerExecutor(harness.deps),
       );
       await delivery.send("queen", "maya", "note this: delta rides along");
-      const text = tmux.calls[0]![1];
+      const text = sender.calls[0]![1];
       expect(text).toContain("🧠 Hive noted:");
       expect(text).toContain("🧠 Hive memory update since your last turn");
     } finally {

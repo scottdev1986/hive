@@ -1,6 +1,8 @@
 import { describe, expect, test } from "bun:test";
-import { mintSessionRequestId } from "../../src/daemon/session-host/locators";
-import { mintAgentTmuxSessionLocator } from "../../src/daemon/session-host/tmux-host";
+import {
+  mintSessionLocator,
+  mintSessionRequestId,
+} from "../../src/daemon/session-host/locators";
 import {
   configuredOrchestratorHost,
   mintRootSessiondLocator,
@@ -66,11 +68,12 @@ describe("root sessiond locator", () => {
   });
 
   test("ignores agent generations when allocating the root generation", () => {
-    const agent = {
-      ...mintAgentTmuxSessionLocator("agent-1", 17),
-      hostKind: "sessiond" as const,
-      engineBuildId: "engine-a",
-    };
+    const agent = mintSessionLocator(
+      "instance-a",
+      { kind: "agent", agentId: "agent-1" },
+      17,
+      "engine-a",
+    );
     const binding: HiveTerminalBinding = {
       locator: agent,
       visibility: {

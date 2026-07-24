@@ -28,7 +28,7 @@ import { liveAgentNames } from "./update";
 import type { UpdateCheck } from "../update/check";
 import { repairLeakedProjectConfig } from "./project-config-cleanup";
 import { selectFreshInstance } from "../daemon/instances";
-import { isDefaultHiveHome } from "../daemon/tmux-sessions";
+import { isDefaultHiveHome } from "../daemon/instance-identity";
 import { getHiveHome } from "../daemon/db";
 import { projectStateDir } from "../daemon/project-state";
 

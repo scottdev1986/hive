@@ -10,7 +10,7 @@ import {
   workspaceOpenArguments,
   type LaunchDeps,
 } from "../../src/cli/workspace";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import { getHiveHome } from "../../src/daemon/db";
 
 let root: string;

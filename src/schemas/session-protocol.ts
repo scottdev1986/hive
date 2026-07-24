@@ -20,7 +20,6 @@ export const SESSION_PROTOCOL_PATHS = {
   sessiondProcessInspector: "native/sessiond/src/process_inspector.zig",
   daemonSessionHost: "src/daemon/session-host/",
   daemonSessionHostContract: "src/daemon/session-host/contract.ts",
-  daemonTmuxHost: "src/daemon/session-host/tmux-host.ts",
   daemonSessiondHost: "src/daemon/session-host/sessiond-host.ts",
   daemonHierarchyRouter: "src/daemon/session-host/hierarchy-router.ts",
   schemas: "src/schemas/",
@@ -365,8 +364,8 @@ export const SessionLocatorSchema = z.strictObject({
   subject: SessionSubjectSchema,
   generation: PositiveGenerationSchema,
   sessionId: domainUuidV7Schema("ses"),
-  hostKind: z.enum(["tmux", "sessiond"]),
-  engineBuildId: z.string().min(1).nullable(),
+  hostKind: z.literal("sessiond"),
+  engineBuildId: z.string().min(1),
 }).readonly();
 export type SessionLocator = z.infer<typeof SessionLocatorSchema>;
 

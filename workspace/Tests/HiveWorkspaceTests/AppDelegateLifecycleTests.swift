@@ -112,7 +112,7 @@ final class AppDelegateLifecycleTests: XCTestCase {
         let controller = ProjectWindowController(
             state: state, attentionCenter: AttentionCenter(),
             projectDirectory: "/tmp", hivePath: "/usr/bin/false", daemonPort: 1,
-            orchestrator: "claude", orchestratorSession: nil,
+            orchestrator: "claude",
             instanceID: "instance", instanceHome: "/tmp")
         controller.window?.isReleasedWhenClosed = false
         defer { controller.close() }
@@ -160,21 +160,6 @@ final class AppDelegateLifecycleTests: XCTestCase {
         await fulfillment(of: [surfaced], timeout: 1)
 
         XCTAssertTrue(message.contains("sessionLocator"))
-    }
-
-    func testTerminalEnvironmentPreservesPrivateTempDirectoryForCodexSocket() {
-        XCTAssertEqual(
-            terminalProcessEnvironment(
-                base: ["TERM=xterm-256color"],
-                inherited: [
-                    "PATH": "/usr/local/tools/bin:/usr/bin",
-                    "TMPDIR": "/var/folders/user/T/",
-                ]),
-            [
-                "TERM=xterm-256color",
-                "PATH=/usr/local/tools/bin:/usr/bin",
-                "TMPDIR=/var/folders/user/T/",
-            ])
     }
 
     func testTrackedMenuIsCancelledWhenTheInstanceCloses() {

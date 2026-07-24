@@ -1,148 +1,94 @@
 # Hive Workspace
 
-The Swift/AppKit workspace window for one Hive project: the master pane is a
-real terminal running the selected Claude or Codex orchestrator, every satellite pane
-is a real terminal attached to one agent's daemon-owned tmux session, and the
-pane set is driven by the `hive workspace-feed` NDJSON stream. Hive does not
-roll its own renderer — SwiftTerm hosts the native claude/codex TUIs on real
-ptys, and typing in a pane goes straight to them.
+The Swift/AppKit workspace window for one Hive project. The Queen and every
+agent use the same terminal path: Hive creates an ordinary interactive login
+shell, starts the selected provider TUI as its first command, and the Workspace
+attaches a `HiveTerminalView` to that session through `sessiond`.
 
-The earlier mock-driven UI prototype (fixture scripts, transcript renderer,
-ANSI parser) is gone; its evidence write-up survives in
-[docs/prototype-hypothesis-2-evidence.md](docs/prototype-hypothesis-2-evidence.md).
+The pane layout and headers come from the `hive workspace-feed` NDJSON stream.
+Terminal rendering, input, resizing, and scrollback stay in the shared
+HiveTerminalKit/sessiond stack.
 
 ## Launch contract
 
-The CLI launches the app; users never open it directly. `hive init` is the
-headless onboarding command (repo-only setup, no daemon), while bare `hive` opens
-this Workspace after the same session boundary:
+The CLI launches the app; users do not need to open it directly:
 
 ```sh
-open -a HiveWorkspace --args --project <abs project dir> --port <daemon port> --hive <abs hive binary> --orchestrator-session <tmux session> [--orchestrator claude|codex]
+open -a HiveWorkspace --args \
+  --project <abs project dir> \
+  --port <daemon port> \
+  --instance-id <instance id> \
+  --instance-home <abs instance home> \
+  --hive <abs hive binary> \
+  [--orchestrator claude|codex|grok]
 ```
 
-- `--project` one window per launch invocation, titled after the directory;
-  it is also the cwd of every pane's shell.
-- `--port` the local daemon's HTTP port, handed to the feed subprocess.
-- `--hive` the hive binary; the master pane runs the private
-  `<hive> workspace-orchestrator` boundary, while the feed
-  runs `<hive> workspace-feed --port <port>`.
-- `--orchestrator` selects Claude or Codex for the master pane; absent means
-  Claude, preserving bare `hive` as the default Workspace entry.
-- `--orchestrator-session` carries Hive's instance-scoped tmux identity into
-  the app, so terminal features never have to duplicate its naming algorithm.
-- `--feed <binary>` (hidden) overrides the feed executable — the
-  process-boundary seam the smoke harness uses.
-- `--smoke` headless end-to-end checks (see below).
+- `--project` is the project window and the working directory for its shells.
+- `--port`, `--instance-id`, and `--instance-home` identify the daemon instance.
+- `--hive` is the exact Hive binary used for the feed and Queen supervisor.
+- `--orchestrator` selects the Queen provider; the default is Claude.
+- `--feed <binary>` is the process-boundary override used by tests.
+- `--smoke` runs the headless Workspace checks.
 
-Launched with no arguments (Dock click), the app shows a plain window
-explaining to run `hive` from a project directory. No fixtures, ever.
+A Dock launch without the complete contract shows the project-neutral home
+window.
 
-## How panes work
+## Terminal lifecycle
 
-- **Master** — `/bin/zsh -lc "exec '<hive>' workspace-orchestrator --tool
-  <claude|codex> --port <n>"`. The private boundary starts the selected
-  read-only orchestrator in its fixed tmux session. Public `hive claude` and
-  `hive codex` first open Workspace through the shared session boundary;
-  keeping those public commands out of the pane prevents recursive launches.
-- **Satellites** — `/bin/zsh -lc "exec tmux attach-session -t '<session>'"`,
-  one per live agent in the feed. Closing a pane SIGTERMs only the attach
-  client; the agent and its session are never touched (`tmux kill-session`
-  does not exist in this codebase on purpose). Login shells so the user's
-  PATH (`claude`, `tmux`) resolves.
-- The child is spawned on the first settled layout commit
-  (`commitCellGeometry()`), so the pty is born with real dimensions.
+Queen and agent panes differ only in the command and instructions supplied to
+their shell:
 
-### Feed → pane set
+1. The daemon asks `sessiond` to create the session.
+2. The session starts `/bin/zsh -l -i`.
+3. That shell runs the provider's normal CLI command.
+4. The Workspace attaches the pane to the exact session locator from the feed.
+5. Exiting the provider returns the same pane to an interactive zsh prompt.
 
-`hive workspace-feed --port <n>` prints one JSON object per line:
-`{"v":1,"agents":[...]}` snapshots or `{"v":1,"error":"..."}`. The app decodes
-only the fields it needs (`name`, `tool`, `model`, `status`,
-`taskDescription`, `tmuxSession`, `contextPct`, `closedAt`) and ignores
-everything unknown. Reconciliation rules:
+Provider instructions are passed through the provider's own supported layer:
+Claude uses `--append-system-prompt-file`, Codex uses an ephemeral profile with
+`developer_instructions`, and Grok uses `--rules`.
 
-- new live agent → pane inserted via the least-disruptive split
-- `closedAt` present, or agent missing from a snapshot → the pane keeps its
-  final status border for a 2 s grace, then closes through the normal command
-  path ("done"/"failed" get a visible beat instead of vanishing mid-glance)
-- agents already closed (or `dead`) that never had a pane are ignored
-- feed process dies → agent panes turn gray dashed (statuses untrusted); no
-  auto-restart, relaunch via `hive`
+Closing a pane detaches its view. It does not terminate the daemon-owned
+session. Explicit Hive lifecycle operations own session termination and process
+cleanup.
 
-The header symbol, pane border, and attention icon share one status legend:
-working green; idle yellow; spawning blue; awaiting-approval/control-paused/
-stuck orange; done purple; failed red; unknown or disconnected gray and
-dashed. Symbols distinguish every state without hue. Unrecognized feed words
-remain explicitly unknown rather than being upgraded to healthy. The raw word
-still shows in the pane header, next to tool, model, and context %.
+## Feed and pane reconciliation
 
-### Lifecycle
+`hive workspace-feed --port <n> ...` emits one JSON object per line. The app
+uses each live agent's identity, status, display metadata, and exact `sessiond`
+locator.
 
-Closing the window terminates the feed and the pane children (detaching tmux
-clients). The app quits after the last window closes
-(`applicationShouldTerminateAfterLastWindowClosed == true`): one launch
-invocation is one project window, and quitting is what returns external
-viewer windows to the daemon. Agents keep running either way — they live in
-daemon-owned tmux sessions, never in this process.
+- A new live record creates and attaches one pane.
+- A changed locator replaces the old attachment with the new generation.
+- A closed or missing agent keeps its final status briefly, then its pane closes.
+- A failed feed marks pane state untrusted; it never invents healthy state.
 
-## Run it
+The Queen uses the same feed/locator contract as every agent, so renderer,
+input, resize, scrollback, reconnect, and teardown behavior cannot diverge by
+role.
+
+## Run and verify
 
 ```sh
 cd workspace
-swift build              # debug build
-swift test               # WorkspaceCore unit tests
-scripts/smoke.sh         # headless e2e against real tmux (requires tmux)
+swift build
+swift test
+../scripts/b3-smoke.sh
 ```
 
-`scripts/smoke.sh` creates real detached tmux sessions, generates a feed
-binary (a shell script speaking the exact NDJSON contract — a process-boundary
-stub, invisible to the app) plus a fake `hive` whose `claude` subcommand does
-`tmux new-session -A`, then runs `HiveWorkspace --smoke` offscreen. The app
-asserts: a pane per live agent, buffers showing the sessions' real output,
-keystroke round trip through tmux, close-detaches, and the solved
-master/satellite layout. The harness then asserts every session survived and
-the typed marker really landed in the tmux pane. Exit 0/1 with a failure list.
+The B3 smoke stands up the real `sessiond` substrate headlessly and verifies
+create, attach, input, resize readiness, detach-without-kill, and clean
+teardown.
 
-## Layout of the code
+## Code layout
 
-- `Sources/WorkspaceCore` — platform-independent logic, fully unit-tested:
-  - `LayoutTree` — deterministic master/satellite split tree (master fixed to
-    the 55–60 % band, default 0.58; least-disruptive insertion; close
-    collapses only the parent split; promote is an atomic swap).
-  - `SpatialNavigation` — arrow-key focus movement over solved frames.
-  - `Status` / `Attention` — the five status states and the severity+time
-    attention queue.
-  - `AgentFeed` — the workspace-feed NDJSON contract: tolerant decoding and
-    the status-word → semantic-status mapping.
-  - `ProjectState` — the one reducer: feed reconciliation in,
-    `WorkspaceCommand`s in, `StateChange`s out.
-  - `Command` — the one shared `WorkspaceCommand` model every input surface
-    dispatches through.
-  - `LayoutTransition` — the ~180 ms ease curve and interruptible-retarget math.
-- `Sources/HiveWorkspace` — the AppKit shell (HIG-native: system semantic
-  colors, system fonts, SF Symbols, native chrome/menus/materials):
-  - `main` / `LaunchConfig` — the CLI launch contract above.
-  - `AppDelegate` — window + feed wiring, placeholder window, lifecycle.
-  - `FeedClient` — the `workspace-feed` subprocess and its NDJSON stream.
-  - `ProjectWindowController` — one window + reducer per project; the single
-    command dispatch point; schedules grace closes; key window owns routing.
-  - `PaneView` — header (tool · model · status · ctx %), status border,
-    separate inset focus ring, failure badge, bounded amber pulse,
-    accessibility custom actions.
-  - `TerminalPaneView` — the SwiftTerm `LocalProcessTerminalView` host:
-    deferred spawn on settled geometry, SIGTERM-detach on close.
-  - `LayoutAnimator` — 180 ms interruptible transitions; terminal-cell
-    geometry commits exactly once at the end; Reduce Motion snaps.
-  - `AttentionCenter` / `ProjectSwitcherController` — attention panel and
-    sanitized project cards.
-  - `SmokeRunner` — the in-process half of `scripts/smoke.sh`.
+- `Sources/WorkspaceCore` contains the feed contract, pane state reducer,
+  layout tree, navigation, status, and commands.
+- `Sources/HiveWorkspace` contains AppKit windows, feed wiring, pane chrome,
+  and `HiveTerminalView` attachment.
+- `HiveTerminalKit` provides the shared terminal renderer and session client.
 
-SwiftTerm is pinned to v1.11.2 — the newest release before the Metal GPU
-backend, whose shader resource makes the universal (`--arch arm64 --arch
-x86_64`) release build depend on the optional Metal toolchain component that
-Xcode 26 machines and CI runners frequently lack.
-
-## Keyboard map (all also in the Pane/Workspace menus)
+## Keyboard map
 
 | Command | Keys |
 | --- | --- |
@@ -155,5 +101,5 @@ Xcode 26 machines and CI runners frequently lack.
 | Attention queue | ⌥⌘A |
 | Projects | ⇧⌘P |
 
-Approve/deny and message sending have no app-level surface anymore: panes are
-the native TUIs, so those happen by typing in the terminal.
+Approve, deny, and message actions occur in the native provider TUI by typing
+in its terminal pane.

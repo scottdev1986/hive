@@ -16,6 +16,14 @@ export type ShellSessionLaunch = Readonly<{
   initialInput: Uint8Array;
 }>;
 
+export function shellQuote(value: string): string {
+  return `'${value.replaceAll("'", `'\\''`)}'`;
+}
+
+export function shellJoin(argv: readonly string[]): string {
+  return argv.map(shellQuote).join(" ");
+}
+
 /** Run the provider from login zsh, then leave an ordinary login zsh behind. */
 export function shellSessionLaunch(command: string): ShellSessionLaunch {
   if (command.includes("\0")) {

@@ -19,7 +19,7 @@ import {
   writeGraphifyHook,
   type GraphifyHookKind,
 } from "./graphify-hook";
-import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import { withFileLock } from "../file-lock";
 import {
   invalidRecoveryArtifactEvidence,
@@ -55,7 +55,7 @@ export interface ClaudeSpawnOptions {
    * (docs/graphify/integration.md). Absent means no entry at all:
    * a dead URL in the config would cost every agent a connect-timeout. */
   graphifyUrl?: string;
-  /** Absolute path selected by the daemon. tmux servers can outlive the
+  /** Absolute path selected by the daemon. Terminal hosts can outlive the
    * daemon and retain a different PATH, so production launches must not ask
    * the pane to resolve `claude` again. */
   executable?: string;
@@ -151,8 +151,8 @@ export interface ResolvedClaudeExecutable {
   version: string | null;
 }
 
-/** Bind launches to an executable that provably works. A long-lived tmux
- * server has its own environment, and PATH order happily serves a stale or
+/** Bind launches to an executable that provably works. A long-lived terminal
+ * host has its own environment, and PATH order happily serves a stale or
  * broken installation first — so a candidate must answer `--version` before
  * it may launch anything. No candidate answering resolves to the bare command
  * with a null version, which downstream version gates fail closed on. */

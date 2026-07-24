@@ -9,14 +9,14 @@ import {
   type QuotaLimit,
 } from "../../src/schemas";
 import { HiveDatabase } from "../../src/daemon/db";
-import type { TmuxSender } from "../../src/daemon/delivery";
+import type { RootProtocolDeliverer } from "../../src/daemon/delivery";
 import { HiveDaemon } from "../../src/daemon/server";
 import {
   migrateDefaultQuotaLedger,
   QuotaDatabase,
   QuotaLedgerUnknownError,
 } from "../../src/daemon/quota-ledger";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import {
   calendarWeekBounds,
   QuotaExhaustedError,
@@ -728,7 +728,6 @@ describe("quota persistence and reservations", () => {
       taskDescription: "test",
       worktreePath: "/tmp/maya",
       branch: "hive/maya-test",
-      tmuxSession: "hive-maya",
       contextPct: 0,
       quotaReservationId: decision.reservation.id,
       createdAt: "2026-07-09T12:00:00.000Z",
@@ -742,7 +741,7 @@ describe("quota persistence and reservations", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: { async spawn() { throw new Error("unused"); } },
-      tmuxSender: { async sendMessage() {} },
+      sessionSender: { async sendSessionMessage() {} },
       quota: service,
     });
     await daemon.processEvent({
@@ -1073,11 +1072,13 @@ describe("quota telemetry and alerts", () => {
 
   test("delivers threshold alerts through the durable orchestrator message path", async () => {
     const { db } = await fileDatabase("alert-delivery");
-    const sender: TmuxSender & { calls: string[] } = {
+    const sender: RootProtocolDeliverer & { calls: string[] } = {
       calls: [],
-      async sendMessage(_session, text) {
+      async deliverMessage(text: string) {
         this.calls.push(text);
+        return true;
       },
+      isLive: () => true,
     };
     const service = new QuotaService(
       new QuotaLedger(db),
@@ -1090,8 +1091,7 @@ describe("quota telemetry and alerts", () => {
       statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
       db,
       spawner: { async spawn() { throw new Error("unused"); } },
-      tmuxSender: sender,
-      orchestratorHost: "tmux",
+      rootProtocol: sender,
       quota: service,
     });
     await service.routeAndReserve({

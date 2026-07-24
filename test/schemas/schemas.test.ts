@@ -82,7 +82,6 @@ describe("AgentRecordSchema", () => {
     taskDescription: "Implement schemas",
     worktreePath: "/tmp/hive-agent-3",
     branch: "hive/agent-3-schemas",
-    tmuxSession: "hive-agent-3",
     contextPct: 25,
     createdAt: timestamp,
     lastEventAt: timestamp,

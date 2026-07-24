@@ -24,7 +24,7 @@ import {
 } from "../schemas";
 import { VisibilityLeaseSchema } from "../schemas/session-protocol";
 import {
-  mintTmuxSessionLocator,
+  mintSessionLocator,
   sessionInstanceId,
 } from "./session-host/locators";
 import {
@@ -148,7 +148,7 @@ export const EscalationSchema = z.object({
 export type Escalation = z.infer<typeof EscalationSchema>;
 
 const AgentDatabaseRowSchema = AgentRecordObjectSchema.extend({
-  sessionLocator: z.string().nullable().default(null),
+  sessionLocator: z.string().min(1),
   failureReason: z.string().nullable(),
   failedAt: z.string().nullable(),
   closedAt: z.string().nullable(),
@@ -200,9 +200,7 @@ function parseAgentRow(row: unknown): AgentRecord {
     controlQuotaReservationId: value.controlQuotaReservationId ?? undefined,
     controlMessageId: value.controlMessageId ?? undefined,
     toolSessionId: value.toolSessionId ?? undefined,
-    sessionLocator: value.sessionLocator === null
-      ? undefined
-      : JSON.parse(value.sessionLocator),
+    sessionLocator: JSON.parse(value.sessionLocator),
     contextWindow: value.contextWindow ?? undefined,
     executionIdentity: value.executionIdentity === null
       ? undefined
@@ -317,8 +315,7 @@ function agentsTableDdl(table: string, ifNotExists = false): string {
       taskDescription TEXT NOT NULL,
       worktreePath TEXT,
       branch TEXT,
-      tmuxSession TEXT NOT NULL,
-      sessionLocator TEXT,
+      sessionLocator TEXT NOT NULL,
       -- Nullable on purpose: null is "not observed", which is a different fact
       -- from 0%, and 0% is the one that gets an agent overloaded.
       contextPct REAL,
@@ -630,13 +627,23 @@ export class HiveDatabase {
         );
         for (const row of legacySessionRows) {
           update.run(
-            JSON.stringify(mintTmuxSessionLocator(
+            JSON.stringify(mintSessionLocator(
               instanceId,
               { kind: "agent", agentId: row.id },
               1,
+              "retired",
             )),
             row.id,
           );
+          this.database.query(`
+            UPDATE agents
+            SET status = 'dead',
+                failureReason = COALESCE(
+                  failureReason,
+                  'terminal session retired during host migration'
+                )
+            WHERE id = ?
+          `).run(row.id);
         }
       })();
     }
@@ -1205,26 +1212,27 @@ export class HiveDatabase {
     ).get(parsed.id) as { sessionLocator: string | null } | null;
     const value = parsed.sessionLocator === undefined
       ? AgentRecordSchema.parse({
-          ...parsed,
-          sessionLocator: stored?.sessionLocator === null || stored === null
-            ? mintTmuxSessionLocator(
-                sessionInstanceId(getHiveHome()),
-                { kind: "agent", agentId: parsed.id },
-                1,
-              )
-            : JSON.parse(stored.sessionLocator),
-        })
+        ...parsed,
+        sessionLocator: stored?.sessionLocator
+          ? JSON.parse(stored.sessionLocator)
+          : mintSessionLocator(
+            sessionInstanceId(getHiveHome()),
+            { kind: "agent", agentId: parsed.id },
+            1,
+            "unbound",
+          ),
+      })
       : parsed;
     const closedAt = this.resolveClosedAt(value);
     this.database.query(`
       INSERT INTO agents (
         id, name, tool, model, liveModel, category, status, taskDescription,
-        worktreePath, branch, tmuxSession, sessionLocator, contextPct,
+        worktreePath, branch, sessionLocator, contextPct,
         createdAt, lastEventAt, failureReason, failedAt,
         quotaReservationId, controlQuotaReservationId, controlMessageId,
         executionIdentity, toolSessionId, contextWindow, recoveryAttempts,
         capabilityEpoch, readOnly, writeRevoked, closedAt
-      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+      ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
       ON CONFLICT(id) DO UPDATE SET
         name = excluded.name,
         tool = excluded.tool,
@@ -1235,7 +1243,6 @@ export class HiveDatabase {
         taskDescription = excluded.taskDescription,
         worktreePath = excluded.worktreePath,
         branch = excluded.branch,
-        tmuxSession = excluded.tmuxSession,
         sessionLocator = excluded.sessionLocator,
         contextPct = excluded.contextPct,
         createdAt = excluded.createdAt,
@@ -1264,7 +1271,6 @@ export class HiveDatabase {
       value.taskDescription,
       value.worktreePath,
       value.branch,
-      value.tmuxSession,
       JSON.stringify(value.sessionLocator),
       value.contextPct,
       value.createdAt,

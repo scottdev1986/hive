@@ -84,12 +84,12 @@ test("reading graphify calls for an unknown vendor throws instead of hunting a c
 
 test("crash recovery refuses to resolve an unknown vendor's session with the codex resolver", async () => {
   const db = new HiveDatabase(join(home, "resolve.db"));
-  const tmux = new FakeTmux();
+  const sessions = new RecordingRecoverySessions();
   let codexResolves = 0;
   const recovery = new CrashRecovery({
     authorizeLaunch: async (identity) =>
       (await authorizeForQuotaTest([identity]))[0]!,
-    ...deps(db, tmux),
+    ...deps(db, sessions),
     resolveClaudeSessionId: async () => "claude-session",
     resolveCodexSessionId: async () => {
       codexResolves += 1;
@@ -106,18 +106,18 @@ test("crash recovery refuses to resolve an unknown vendor's session with the cod
   // The discriminating assertion: a silent fallthrough would have resolved a
   // Codex session id here and gone on to resume the agent.
   expect(codexResolves).toBe(0);
-  expect(tmux.created).toEqual([]);
+  expect(sessions.created).toEqual([]);
   db.close();
 });
 
 test("crash recovery refuses to resume an unknown vendor with codex's config and flags", async () => {
   const db = new HiveDatabase(join(home, "resume.db"));
-  const tmux = new FakeTmux();
+  const sessions = new RecordingRecoverySessions();
   let codexConfigs = 0;
   const recovery = new CrashRecovery({
     authorizeLaunch: async (identity) =>
       (await authorizeForQuotaTest([identity]))[0]!,
-    ...deps(db, tmux),
+    ...deps(db, sessions),
     writeCodexConfig: async () => {
       codexConfigs += 1;
     },
@@ -134,7 +134,7 @@ test("crash recovery refuses to resume an unknown vendor with codex's config and
   // A silent fallthrough would have written a Codex agent config and launched
   // `codex resume` in the worktree.
   expect(codexConfigs).toBe(0);
-  expect(tmux.created).toEqual([]);
+  expect(sessions.created).toEqual([]);
   db.close();
 });
 
@@ -347,7 +347,6 @@ function unknownVendorSweep(
     taskDescription: "Build the server",
     worktreePath: join(home, "worktree"),
     branch: "hive/maya-server",
-    tmuxSession: "hive-maya",
     contextPct: 40,
     createdAt: new Date().toISOString(),
     lastEventAt: new Date().toISOString(),
@@ -357,8 +356,8 @@ function unknownVendorSweep(
     writeRevoked: false,
     ...overrides,
   };
-  db.insertAgent(record);
-  const unknown = { ...record, tool: UNKNOWN };
+  const inserted = db.insertAgent(record);
+  const unknown = { ...inserted, tool: UNKNOWN };
   db.listAgents = () => [unknown];
   db.getAgentById = () => unknown;
   // `upsertAgent` schema-parses, so it is the outer wall: it would reject this
@@ -373,10 +372,20 @@ function unknownVendorSweep(
   return recovery.sweep();
 }
 
-function deps(db: HiveDatabase, tmux: FakeTmux) {
+function deps(db: HiveDatabase, sessions: RecordingRecoverySessions) {
   return {
     db,
-    tmux: tmux as unknown as ConstructorParameters<typeof CrashRecovery>[0]["tmux"],
+    terminalHost: {
+      async inspect() {
+        return { presence: "exited", diagnosticIds: [] };
+      },
+    },
+    createRecoverySession: async (
+      agent: AgentRecord,
+      command: string,
+    ) => {
+      sessions.created.push({ name: agent.name, command });
+    },
     port: 4483,
     send: async () => {},
     settleQuota: async () => {},
@@ -389,20 +398,6 @@ function deps(db: HiveDatabase, tmux: FakeTmux) {
   } as unknown as ConstructorParameters<typeof CrashRecovery>[0];
 }
 
-class FakeTmux {
-  readonly created: { name: string; cwd: string; command: string }[] = [];
-
-  async hasSession(): Promise<boolean> {
-    return false;
-  }
-
-  async newSession(name: string, cwd: string, command: string): Promise<void> {
-    this.created.push({ name, cwd, command });
-  }
-
-  async killSession(): Promise<void> {}
-
-  async capturePane(): Promise<string> {
-    return "";
-  }
+class RecordingRecoverySessions {
+  readonly created: { name: string; command: string }[] = [];
 }

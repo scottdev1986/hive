@@ -106,15 +106,14 @@ export const CLAUDE_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.pars
   },
   cancelSubmit: {
     submit: {
-      encoding: "tmux load-buffer + paste-buffer -p + send-keys Enter",
+      encoding: "sessiond viewer INPUT_SUBMIT with bracketed paste and Return",
       available: true,
-      sourceCitations: ["src/adapters/tmux.ts:207-242"],
+      sourceCitations: ["src/daemon/session-host/sessiond-agent-input.ts"],
     },
     cancel: {
-      encoding:
-        "tmux send-keys Escape then C-u (interruptComposer) before re-paste; urgent path",
-      available: true,
-      sourceCitations: ["src/adapters/tmux.ts:190-215"],
+      encoding: "not exposed by the Claude TUI input wire",
+      available: false,
+      sourceCitations: ["src/daemon/session-host/sessiond-agent-input.ts"],
     },
   },
   nativeEndpoint: {
@@ -265,15 +264,14 @@ export const CODEX_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse
   },
   cancelSubmit: {
     submit: {
-      encoding: "tmux load-buffer + paste-buffer -p + send-keys Enter",
+      encoding: "sessiond viewer INPUT_SUBMIT with bracketed paste and Return",
       available: true,
-      sourceCitations: ["src/adapters/tmux.ts:207-242"],
+      sourceCitations: ["src/daemon/session-host/sessiond-agent-input.ts"],
     },
     cancel: {
-      encoding:
-        "tmux send-keys Escape then C-u (interruptComposer) before re-paste; urgent path",
-      available: true,
-      sourceCitations: ["src/adapters/tmux.ts:190-215"],
+      encoding: "not exposed by the Codex TUI input wire",
+      available: false,
+      sourceCitations: ["src/daemon/session-host/sessiond-agent-input.ts"],
     },
   },
   nativeEndpoint: {
@@ -573,16 +571,15 @@ export const GROK_TUI_MANIFEST: ProviderManifest = ProviderManifestSchema.parse(
   },
   cancelSubmit: {
     submit: {
-      encoding: "tmux load-buffer + paste-buffer -p + send-keys Enter",
+      encoding: "sessiond viewer INPUT_SUBMIT with bracketed paste and Return",
       available: true,
-      sourceCitations: ["src/adapters/tmux.ts:207-242"],
+      sourceCitations: ["src/daemon/session-host/sessiond-agent-input.ts"],
     },
     cancel: {
-      encoding:
-        "tmux Escape+C-u interruptComposer available as PTY keystrokes; no provider hook receipt of cancel",
-      available: true,
+      encoding: "not exposed by the Grok TUI input wire",
+      available: false,
       sourceCitations: [
-        "src/adapters/tmux.ts:190-215",
+        "src/daemon/session-host/sessiond-agent-input.ts",
         "src/adapters/tools/grok.ts (no cancel-ack hook)",
       ],
     },

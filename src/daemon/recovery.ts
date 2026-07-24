@@ -41,14 +41,9 @@ import { LAUNCH_FAILURE_PATTERNS, watchForProofOfLife } from "./readiness";
 import { hiveCliSpawnArgv } from "./lifecycle";
 import { IS_RELEASE_BUILD } from "../version";
 import {
-  bindAgentSession,
-  mintAgentTmuxSessionLocator,
   nextAgentSessionLocator,
-  shellJoin,
-  tmuxSessionSpec,
-  TmuxSessionHost,
-  type TmuxEngine,
-} from "./session-host/tmux-host";
+} from "./session-host/locators";
+import { shellJoin } from "./session-host/shell-session";
 import {
   requireSessiondAgentLocator,
   sessiondVendorProcessIsDead,
@@ -104,8 +99,6 @@ type Sleep = (milliseconds: number) => Promise<void>;
 
 export interface CrashRecoveryDependencies {
   db: RecoveryStore;
-  /** Legacy-only host. Production recovery is sessiond-only. */
-  tmux?: TmuxSessionHost | TmuxEngine;
   terminalHost?: Pick<HiveTerminalHostAdapter, "inspect">;
   /** Resolved lazily because a daemon configured with port 0 learns its
    * ephemeral listening port only after Bun.serve() binds. */
@@ -167,9 +160,6 @@ export interface CrashRecoveryDependencies {
    * pane redraw belongs to the relaunched agent or to its wrapper. Defaults to
    * the real `ps`. */
   ps?: () => Promise<string>;
-  /** Provider-process truth for legacy tmux sessions. Null is unmeasurable,
-   * never a guess that a surviving wrapper is an agent. */
-  processAlive?: (agent: AgentRecord) => Promise<boolean | null>;
 }
 
 const defaultSleep: Sleep = (milliseconds) =>
@@ -206,26 +196,20 @@ export class CrashRecovery {
   // Agents with a recovery already in flight. The sweep (maintenance tick,
   // startup) and manual recovery (hive_recover) share no other interlock, and
   // resume awaits across its hasSession check — without this, both paths see
-  // "no session", both bump recoveryAttempts, and both launch a tmux session
+  // "no session", both bump recoveryAttempts, and both launch a session
   // for the same conversation.
   private readonly recovering = new Set<string>();
   // Agents a deliberate kill is tearing down RIGHT NOW (#66). killAgentTeardown
   // destroys the process before it writes the dead status, so for 2.5-34s
   // (measured) the row reads live-status + session-absent — bit-for-bit the
   // crash predicate below. A sweep tick inside that window used to resume the
-  // corpse (david, 2026-07-20, downgraded sessiond → tmux). The marker is set
+  // corpse (david, 2026-07-20). The marker is set
   // before the first destructive step and cleared only after the dead status
   // lands; if the teardown fails in between it stays set, because a
   // deliberately killed agent must never be resurrected by the sweep.
   private readonly deliberateKills = new Set<string>();
-  private readonly sessions: TmuxSessionHost | null;
 
   constructor(private readonly deps: CrashRecoveryDependencies) {
-    this.sessions = deps.tmux === undefined
-      ? null
-      : deps.tmux instanceof TmuxSessionHost
-      ? deps.tmux
-      : new TmuxSessionHost({ adapter: deps.tmux });
     this.resolveClaude = deps.resolveClaudeSessionId ??
       ((worktreePath, agentCreatedAt) =>
         discoverClaudeRecoverySessionId(worktreePath, agentCreatedAt));
@@ -247,15 +231,6 @@ export class CrashRecovery {
     this.readCodexActivity = deps.readCodexActivity ??
       (async (worktreePath, toolSessionId) =>
         (await readCodexTelemetry(worktreePath, toolSessionId)).lastActivityAt);
-  }
-
-  private requireLegacySessions(agent: AgentRecord): TmuxSessionHost {
-    if (this.sessions === null) {
-      throw new Error(
-        `Agent ${agent.id} has a legacy tmux locator, but production recovery is sessiond-only`,
-      );
-    }
-    return this.sessions;
   }
 
   /** A kill teardown is starting for this agent: the sweep must not read the
@@ -284,7 +259,6 @@ export class CrashRecovery {
   private deliberateTerminationAudit(
     agent: AgentRecord,
   ): HiveTerminalTerminationAudit | null {
-    if (agent.sessionLocator?.hostKind !== "sessiond") return null;
     const binding = this.deps.db.getTerminalHostBindingByLocator(
       requireSessiondAgentLocator(agent),
     );
@@ -302,85 +276,45 @@ export class CrashRecovery {
     return port;
   }
 
-  private migrateSessionLocator(agent: AgentRecord): AgentRecord {
-    if (agent.sessionLocator !== undefined) return agent;
-    return this.deps.db.upsertAgent({
-      ...agent,
-      sessionLocator: mintAgentTmuxSessionLocator(agent.id),
-    });
-  }
-
   private async sessionContainerPresent(agent: AgentRecord): Promise<boolean> {
-    if (agent.sessionLocator?.hostKind === "sessiond") {
-      if (this.deps.terminalHost === undefined) {
-        throw new Error("sessiond recovery inspection is not configured");
-      }
-      const inspection = await this.deps.terminalHost.inspect(
-        requireSessiondAgentLocator(agent),
-      );
-      if (sessiondVendorProcessIsDead(inspection)) return false;
-      switch (inspection.presence) {
-        case "present":
-          return true;
-        case "exited":
-        case "lost":
-          return false;
-        case "unknown":
-          throw new Error(`Session presence is unknown for ${agent.name}`);
-      }
+    if (this.deps.terminalHost === undefined) {
+      throw new Error("session recovery inspection is not configured");
     }
-    const sessions = this.requireLegacySessions(agent);
-    const inspection = await sessions.inspect(
-      bindAgentSession(sessions, agent),
+    const inspection = await this.deps.terminalHost.inspect(
+      requireSessiondAgentLocator(agent),
     );
-    if (inspection.presence === "unknown") {
-      throw new Error(`Session presence is unknown for ${agent.name}`);
+    if (sessiondVendorProcessIsDead(inspection)) return false;
+    switch (inspection.presence) {
+      case "present":
+        return true;
+      case "exited":
+      case "lost":
+        return false;
+      case "unknown":
+        throw new Error(`Session presence is unknown for ${agent.name}`);
     }
-    return inspection.presence === "present";
   }
 
   private async sessionPresent(agent: AgentRecord): Promise<boolean> {
-    if (!await this.sessionContainerPresent(agent)) return false;
-    // James's sessiond predicate above is the authoritative process reading.
-    // Legacy tmux needs the separate provider-command measurement below.
-    if (agent.sessionLocator?.hostKind === "sessiond" ||
-      this.deps.processAlive === undefined) {
-      return true;
-    }
-    const alive = await this.deps.processAlive(agent);
-    if (alive === null) {
-      throw new Error(`Agent process presence is unknown for ${agent.name}`);
-    }
-    return alive;
+    return this.sessionContainerPresent(agent);
   }
 
-  private runningSessionReason(agent: AgentRecord): string {
-    return agent.sessionLocator?.hostKind === "sessiond"
-      ? "sessiond host reports the session is running"
-      : this.deps.processAlive === undefined
-      ? "tmux session is running"
-      : "agent process is running";
+  private runningSessionReason(_agent: AgentRecord): string {
+    return "terminal host reports the session is running";
   }
 
-  private async captureVisible(agent: AgentRecord): Promise<string> {
-    if (agent.sessionLocator?.hostKind === "sessiond") {
-      throw new Error("sessiond visible capture requires the frozen attach stream");
-    }
-    const sessions = this.requireLegacySessions(agent);
-    return (await sessions.capture(
-      bindAgentSession(sessions, agent),
-      { include: "visible-text", maxRows: 50_000 },
-    )).text ?? "";
+  private async captureVisible(_agent: AgentRecord): Promise<string> {
+    throw new Error("visible terminal capture requires an attached viewer");
   }
 
-  // The maintenance sweep: classify every agent whose tmux session is gone
+  // The maintenance sweep: classify every agent whose terminal session is gone
   // and either resume its actual tool conversation or mark it dead with the
   // stranded state surfaced. Runs at daemon startup — the recovery moment
   // after a machine-wide crash — and on the periodic reconciliation tick.
   async sweep(): Promise<RecoveryOutcome[]> {
     const outcomes: RecoveryOutcome[] = [];
     for (const candidate of this.deps.db.listAgents()) {
-      const agent = this.migrateSessionLocator(candidate);
+      const agent = candidate;
       const isSpawning = agent.status === "spawning";
       if (!isSpawning && !LIVE_STATUSES.includes(agent.status) &&
         agent.status !== "control-paused") {
@@ -447,7 +381,7 @@ export class CrashRecovery {
         // Control machinery owns revoked agents; a vanished acknowledgement
         // process is ordinary death, not resumable work.
         outcomes.push(
-          await this.markDead(agent, "tmux session missing (reconciled)"),
+          await this.markDead(agent, "terminal session missing (reconciled)"),
         );
         continue;
       }
@@ -482,7 +416,7 @@ export class CrashRecovery {
     if (found === null) {
       throw new Error(`Hive agent not found: ${name}`);
     }
-    const agent = this.migrateSessionLocator(found);
+    const agent = found;
     if (agent.status === "done") {
       return { agent: name, action: "skipped", reason: "agent is done" };
     }
@@ -538,33 +472,13 @@ export class CrashRecovery {
   ): Promise<RecoveryOutcome> {
     // Callers checked hasSession before entering, but that check is stale by
     // now if another recovery finished in between; resuming over a live
-    // session would fail the tmux launch and mark a healthy agent dead.
+    // session would fail the launch and mark a healthy agent dead.
     if (await this.sessionPresent(agent)) {
       return {
         agent: agent.name,
         action: "skipped",
         reason: this.runningSessionReason(agent),
       };
-    }
-    // A tmux wrapper can outlive its vendor CLI. Remove the dead container
-    // before launching the recovered agent into the same session name.
-    if (agent.sessionLocator?.hostKind !== "sessiond" &&
-      await this.sessionContainerPresent(agent)) {
-      if (this.deps.stopSession === undefined) {
-        return {
-          agent: agent.name,
-          action: "skipped",
-          reason: "dead agent process remains inside a session that cannot be cleaned",
-        };
-      }
-      const stopped = await this.deps.stopSession(agent);
-      if (stopped.survivors.length > 0) {
-        return {
-          agent: agent.name,
-          action: "skipped",
-          reason: `${stopped.survivors.length} process(es) survived dead-session cleanup`,
-        };
-      }
     }
     if (!options.manual && agent.recoveryAttempts >= MAX_AUTO_RESUME_ATTEMPTS) {
       return this.markDead(
@@ -629,18 +543,10 @@ export class CrashRecovery {
   ): Promise<RecoveryOutcome> {
     // Persist the attempt before launching so a crash mid-launch still
     // counts against the cap.
-    const migrated = this.migrateSessionLocator(agent);
-    const currentLocator = migrated.sessionLocator!;
-    const nextLocator = nextAgentSessionLocator(migrated);
+    const nextLocator = nextAgentSessionLocator(agent);
     let record = this.deps.db.upsertAgent({
-      ...migrated,
-      sessionLocator: currentLocator.hostKind === "sessiond"
-        ? {
-          ...nextLocator,
-          hostKind: "sessiond",
-          engineBuildId: currentLocator.engineBuildId,
-        }
-        : nextLocator,
+      ...agent,
+      sessionLocator: nextLocator,
       toolSessionId: sessionId,
       recoveryAttempts: agent.recoveryAttempts + 1,
       lastEventAt: new Date().toISOString(),
@@ -677,7 +583,8 @@ export class CrashRecovery {
       // the launch-failure catch below naming it. Splitting the two would let
       // a future vendor write one harness's config and launch the other's CLI.
       let argv: string[];
-      const instructionPath = launchPromptPath(record.tmuxSession);
+      const sessionKey = requireSessiondAgentLocator(record).sessionId;
+      const instructionPath = launchPromptPath(sessionKey);
       const hasInstructions = existsSync(instructionPath);
       switch (record.tool) {
         case "claude": {
@@ -739,7 +646,11 @@ export class CrashRecovery {
             worktreePath,
             executable: this.codexExecutable,
             ...(hasInstructions
-              ? { profile: codexInstructionProfileName(record.tmuxSession) }
+              ? {
+                profile: codexInstructionProfileName(
+                  sessionKey,
+                ),
+              }
               : {}),
           }, sessionId);
           break;
@@ -774,7 +685,7 @@ export class CrashRecovery {
         if (record.tool === "codex" && hasInstructions) {
           return wrapCodexWithInstructionProfile(
             joined,
-            record.tmuxSession,
+            sessionKey,
           );
         }
         return joined;
@@ -792,26 +703,15 @@ export class CrashRecovery {
       }
       requireAuthorizedLaunch(revalidated);
       const launchGrantId = `recovery:${record.id}:${record.recoveryAttempts}`;
-      if (this.deps.createRecoverySession !== undefined) {
-        await this.deps.createRecoverySession(
-          record,
-          command,
-          argv[0] ?? record.tool,
-          launchGrantId,
-        );
-      } else {
-        const sessions = this.requireLegacySessions(record);
-        bindAgentSession(sessions, record);
-        await sessions.create(
-          tmuxSessionSpec(
-            record,
-            command,
-            argv[0] ?? record.tool,
-            launchGrantId,
-          ),
-          new Uint8Array(),
-        );
+      if (this.deps.createRecoverySession === undefined) {
+        throw new Error("recovery session creation is not configured");
       }
+      await this.deps.createRecoverySession(
+        record,
+        command,
+        argv[0] ?? record.tool,
+        launchGrantId,
+      );
       // A freshly resumed TUI sits at its prompt with the conversation
       // restored: idle is the honest status until an event says otherwise.
       record = this.deps.db.upsertAgent({
@@ -976,15 +876,11 @@ export class CrashRecovery {
     command: string,
   ): Promise<boolean | null> {
     try {
-      const rootPids = record.sessionLocator?.hostKind === "sessiond"
-        ? [
-          (await this.deps.terminalHost?.inspect(
-            requireSessiondAgentLocator(record),
-          ))?.providerRoot?.pid,
-        ].filter((pid): pid is number => pid !== undefined && pid !== null)
-        : await this.requireLegacySessions(record).sessionProcessRoots(
-          bindAgentSession(this.requireLegacySessions(record), record),
-        );
+      const rootPids = [
+        (await this.deps.terminalHost?.inspect(
+          requireSessiondAgentLocator(record),
+        ))?.providerRoot?.pid,
+      ].filter((pid): pid is number => pid !== undefined && pid !== null);
       if (rootPids.length === 0) return null;
       const samples = parseProcessTable(await (this.deps.ps ?? runPs)());
       if (samples.length === 0) return null;

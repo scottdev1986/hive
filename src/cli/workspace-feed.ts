@@ -316,9 +316,7 @@ export function parseWorkspaceOrchestratorSnapshot(
   if (typeof value !== "object" || value === null) return null;
   const body = value as Record<string, unknown>;
   const status = parseOrchestratorStatus(body.status);
-  const host = body.host === "sessiond" ? "sessiond"
-    : body.host === "tmux" ? "tmux"
-    : null;
+  const host = body.host === "sessiond" ? "sessiond" : null;
   const hostState = body.hostState === "awaiting-visibility" ||
       body.hostState === "running" || body.hostState === "exited" ||
       body.hostState === "failed"

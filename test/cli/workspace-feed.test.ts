@@ -32,7 +32,6 @@ function agent(name: string, overrides: Partial<AgentRecord> = {}): AgentRecord 
     taskDescription: "Feed test",
     worktreePath: `/tmp/${name}`,
     branch: `hive/${name}-test`,
-    tmuxSession: `hive-${name}`,
     contextPct: 10,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -113,7 +112,7 @@ const orchestrator = (
   overrides: Partial<WorkspaceOrchestratorSnapshot> = {},
 ): WorkspaceOrchestratorSnapshot => ({
   status,
-  host: "tmux",
+  host: "sessiond",
   hostState: null,
   hostDiagnostic: null,
   sessionLocator: null,
@@ -343,7 +342,7 @@ describe("runWorkspaceFeed", () => {
     }));
     expect(parseWorkspaceOrchestratorSnapshot({
       status: null,
-      host: "tmux",
+      host: "sessiond",
       hostState: null,
       sessionLocator: null,
     })).toBeNull();

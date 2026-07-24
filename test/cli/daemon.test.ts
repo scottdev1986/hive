@@ -31,7 +31,7 @@ test("production terminal composition constructs sessiond only", () => {
   });
   expect("tmux" in composition.spawnerDependencies).toBe(false);
   expect("tmux" in composition.daemonDependencies).toBe(false);
-  expect("tmuxSender" in composition.daemonDependencies).toBe(false);
+  expect("sessionSender" in composition.daemonDependencies).toBe(false);
 });
 
 test("engine discovery failure tears down a live daemon and exits 1", async () => {
@@ -131,7 +131,6 @@ test("spawn cleanup dispatches a sessiond row by its exact locator", async () =>
     taskDescription: "production pane qualification",
     worktreePath: "/tmp/aria",
     branch: "hive/aria-production-pane-qualification",
-    tmuxSession: "hive-aria",
     sessionLocator: locator,
     contextPct: null,
     createdAt: "2026-07-20T00:00:00.000Z",

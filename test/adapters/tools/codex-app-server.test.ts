@@ -3,7 +3,7 @@ import { mkdtemp, readFile, rm, symlink, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import type { AgentRecord, HookEvent } from "../../../src/schemas";
 import { basename, join } from "node:path";
-import { hiveInstanceSuffix } from "../../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../../src/daemon/instance-identity";
 import {
   CodexAppServerManager,
   buildCodexAppServerCommand,
@@ -84,7 +84,6 @@ function agent(): AgentRecord {
     taskDescription: "test app server",
     worktreePath: "/tmp/maya",
     branch: "hive/maya-test",
-    tmuxSession: "hive-maya",
     contextPct: 0,
     createdAt: "2026-07-10T12:00:00.000Z",
     lastEventAt: "2026-07-10T12:00:00.000Z",
@@ -278,7 +277,6 @@ describe("codexAgentSocketPath", () => {
       taskDescription: "test",
       worktreePath: "/tmp/test",
       branch: "main",
-      tmuxSession: "hive-test",
       contextPct: 0,
       createdAt: "2026-07-10T12:00:00.000Z",
       lastEventAt: "2026-07-10T12:00:00.000Z",
@@ -305,7 +303,6 @@ describe("codexAgentSocketPath", () => {
       taskDescription: "test",
       worktreePath: "/tmp/test",
       branch: "main",
-      tmuxSession: "hive-test",
       contextPct: 0,
       createdAt: "2026-07-10T12:00:00.000Z",
       lastEventAt: "2026-07-10T12:00:00.000Z",
@@ -333,7 +330,6 @@ describe("codexAgentSocketPath", () => {
       taskDescription: "test",
       worktreePath: "/tmp/test",
       branch: "main",
-      tmuxSession: "hive-test",
       contextPct: 0,
       createdAt: "2026-07-10T12:00:00.000Z",
       lastEventAt: "2026-07-10T12:00:00.000Z",
@@ -359,7 +355,6 @@ describe("codexAgentSocketPath", () => {
       taskDescription: "test",
       worktreePath: "/tmp/test",
       branch: "main",
-      tmuxSession: "hive-test",
       contextPct: 0,
       createdAt: "2026-07-10T12:00:00.000Z",
       lastEventAt: "2026-07-10T12:00:00.000Z",
@@ -384,7 +379,6 @@ describe("codexAgentSocketPath", () => {
       taskDescription: "test",
       worktreePath: "/tmp/maya",
       branch: "main",
-      tmuxSession: "hive-maya",
       contextPct: 0,
       createdAt: "2026-07-10T12:00:00.000Z",
       lastEventAt: "2026-07-10T12:00:00.000Z",

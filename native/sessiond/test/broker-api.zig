@@ -38,10 +38,6 @@ test "locator equality covers every identity field" {
     try std.testing.expect(!same_agent.eql(changed));
 
     changed = base;
-    changed.host_kind = .tmux;
-    try std.testing.expect(!base.eql(changed));
-
-    changed = base;
     changed.engine_build_id = null;
     try std.testing.expect(!base.eql(changed));
 }

@@ -9,7 +9,7 @@ Every mechanism that makes a Hive spawn cheap — the scoped brief, the memory i
 
 ## Agent hierarchy and addressing
 
-Workers report to queen. The root process is the orchestrator; its preferred address is queen. Prefer queen in `hive_send`, completion reports, blockers, escalations, and any prose that tells a human or agent who to address. Explanatory wording such as "the orchestrator (queen) is in charge" is fine. The architectural role name orchestrator stays in capability matrices (role string `orchestrator`), routing prose ("the orchestrator classifies"), CLI flags (`--orchestrator`), module paths, and the instance tmux session `hive-orchestrator-<instance>`. The synonym `orchestrator` remains an accepted recipient (case-insensitive); delivery canonicalizes it to queen. Naming is not a new authority boundary and does not change the read-only root role.
+Workers report to queen. The root process is the orchestrator; its preferred address is queen. Prefer queen in `hive_send`, completion reports, blockers, escalations, and any prose that tells a human or agent who to address. Explanatory wording such as "the orchestrator (queen) is in charge" is fine. The architectural role name orchestrator stays in capability matrices (role string `orchestrator`), routing prose ("the orchestrator classifies"), CLI flags (`--orchestrator`), and module paths. The synonym `orchestrator` remains an accepted recipient (case-insensitive); delivery canonicalizes it to queen. Naming is not a new authority boundary and does not change the read-only root role.
 
 ## How doc discovery actually works
 

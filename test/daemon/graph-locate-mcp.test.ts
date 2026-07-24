@@ -36,21 +36,6 @@ class UnusedSpawner implements Spawner {
   }
 }
 
-class NoopTmux {
-  async hasSession(_session: string): Promise<boolean> {
-    return false;
-  }
-  async capturePane(_session: string): Promise<string> {
-    return "";
-  }
-  async killSession(_session: string): Promise<void> {}
-  async newSession(
-    _name: string,
-    _cwd: string,
-    _command: string,
-  ): Promise<void> {}
-}
-
 async function bootDaemon(): Promise<{ daemon: HiveDaemon; repoRoot: string }> {
   const repoRoot = await mkdtemp(join(tmpdir(), "hive-graph-locate-repo-"));
   tempRoots.push(repoRoot);
@@ -58,7 +43,6 @@ async function bootDaemon(): Promise<{ daemon: HiveDaemon; repoRoot: string }> {
     statusIncarnationGenerationSource: HiveDaemon.statusGenerationUnavailable,
     spawner: new UnusedSpawner(),
     db: new HiveDatabase(":memory:"),
-    tmux: new NoopTmux(),
     repoRoot,
   });
   return { daemon, repoRoot };

@@ -49,7 +49,6 @@ function blockedCodexAgent(overrides: Partial<AgentRecord> = {}): AgentRecord {
     taskDescription: "Land the fix",
     worktreePath: "/tmp/hive-sam",
     branch: "hive/sam-fix",
-    tmuxSession: "hive-sam",
     contextPct: 20,
     createdAt: timestamp,
     lastEventAt: timestamp,
@@ -420,14 +419,6 @@ describe("a vendor TUI parked on an approval prompt", () => {
       // Each of the three gates gets its own blocked-looking agent, so exactly
       // one condition differs from the case that DID press a key above.
 
-      // No viewer wire to speak to.
-      db.insertAgent(blockedCodexAgent({
-        id: "agent-tess",
-        name: "tess",
-        status: "awaiting-approval",
-        tmuxSession: "hive-tess",
-        sessionLocator: undefined,
-      }));
       // A Hive-authored approval (cost consent, land re-arm) has no popup
       // behind it at all.
       db.insertAgent(blockedCodexAgent({
@@ -453,7 +444,6 @@ describe("a vendor TUI parked on an approval prompt", () => {
         },
       }));
       const gated: Array<[string, string, "tool-permission" | "land-rearm"]> = [
-        ["approval-tess", "tess", "tool-permission"],
         ["approval-remy", "remy", "land-rearm"],
         ["approval-nina", "nina", "tool-permission"],
       ];

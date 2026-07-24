@@ -16,7 +16,7 @@ import {
   writeGraphifyHook,
   type GraphifyHookKind,
 } from "./graphify-hook";
-import { hiveInstanceSuffix } from "../../daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../daemon/instance-identity";
 import {
   invalidRecoveryArtifactEvidence,
   isMissingRecoveryArtifact,
@@ -94,7 +94,7 @@ export const CODEX_TUI_APPROVAL_KEYS = {
 } as const;
 
 /** The env var codex reads the agent's bearer from (bearer_token_env_var).
- * Populated only inside the agent's tmux launch shell, never in any argv. */
+ * Populated only inside the agent's launch shell, never in any argv. */
 export const CODEX_CAPABILITY_TOKEN_ENV = "HIVE_CAPABILITY_TOKEN";
 
 export function codexCapabilityTokenPath(worktreePath: string): string {

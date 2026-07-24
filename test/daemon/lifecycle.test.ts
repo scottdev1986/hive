@@ -17,7 +17,7 @@ import {
   releaseDaemonLock,
   writeLifecycleFiles,
 } from "../../src/daemon/lifecycle";
-import { hiveInstanceSuffix } from "../../src/daemon/tmux-sessions";
+import { hiveInstanceSuffix } from "../../src/daemon/instance-identity";
 import type { DaemonHandshake } from "../../src/daemon/handshake";
 import { handshakeMismatch } from "../../src/daemon/handshake";
 

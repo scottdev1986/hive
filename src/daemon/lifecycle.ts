@@ -9,7 +9,7 @@ import {
   parseDaemonHandshake,
   type DaemonHandshake,
 } from "./handshake";
-import { hiveInstanceSuffix } from "./tmux-sessions";
+import { hiveInstanceSuffix } from "./instance-identity";
 
 export function getPidFilePath(): string {
   return resolve(getHiveHome(), "daemon.pid");

@@ -17,7 +17,6 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             hivePath: "/usr/bin/false",
             daemonPort: 1,
             orchestrator: "claude",
-            orchestratorSession: nil,
             instanceID: "instance",
             instanceHome: "/tmp")
         controller.window?.isReleasedWhenClosed = false
@@ -83,7 +82,6 @@ final class SessiondPaneInputFocusTests: XCTestCase {
             hivePath: "/usr/bin/false",
             daemonPort: 1,
             orchestrator: "claude",
-            orchestratorSession: nil,
             instanceID: "instance",
             instanceHome: "/tmp"
         )
@@ -158,7 +156,7 @@ final class SessiondPaneInputFocusTests: XCTestCase {
         controller.dispatch(.focusPane(paneID))
         XCTAssertTrue(
             window.firstResponder === terminal,
-            "sessiond focus must target the actual HiveTerminalView, not its dormant SwiftTerm sibling"
+            "sessiond focus must target the actual HiveTerminalView"
         )
 
         let geometryBeforeResize = terminal.reportedGeometry

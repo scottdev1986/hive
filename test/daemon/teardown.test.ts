@@ -2,7 +2,6 @@ import { describe, expect, test } from "bun:test";
 import {
   captureProcessTree,
   reapCapturedTree,
-  stopAgentSession,
   stopSessiondAgentSession,
   type ReapDependencies,
 } from "../../src/daemon/teardown";
@@ -10,10 +9,6 @@ import { parseProcessTable, runPs } from "../../src/daemon/resources";
 import type { AgentRecord } from "../../src/schemas";
 import { TerminationRequestSchema } from "../../src/schemas/session-protocol";
 import { SessiondBrokerUnavailableError } from "../../src/daemon/session-host/sessiond-host";
-import {
-  mintAgentTmuxSessionLocator,
-  TmuxSessionHost,
-} from "../../src/daemon/session-host/tmux-host";
 
 /** capture + reap, the way every caller uses them when nothing reparents. */
 const reapProcessTree = async (
@@ -75,9 +70,9 @@ async function waitForProcess(
 }
 
 describe("reapProcessTree", () => {
-  test("kills what tmux cannot reach: the whole tree under the pane", async () => {
+  test("kills the whole process tree under the terminal", async () => {
     // The shape that actually leaks: the pane's shell owns the vendor CLI,
-    // which owns an MCP stdio child. Killing the tmux session tears down the
+    // which owns an MCP stdio child. Stopping the terminal tears down the
     // pane; these keep running.
     const { dependencies, alive } = world([
       { pid: 100, ppid: 1, command: "-zsh" },
@@ -142,10 +137,10 @@ describe("reapProcessTree", () => {
     expect(signalled).not.toContain(7);
   });
 
-  test("kills a detached child that tmux reparented to init", async () => {
+  test("kills a detached child that was reparented to init", async () => {
     // THE BUG OBSERVATION CAUGHT, and the reason capture is a separate step.
     //
-    // The agent nohup'ed a command (101). Killing the tmux session tears the
+    // The agent nohup'ed a command (101). Stopping the terminal tears the
     // pane down: the shell (100) dies, and 101 — which ignored the SIGHUP —
     // is reparented to init, so its ppid becomes 1. A tree walk performed
     // AFTER the session died finds nothing under 100 and reports a clean kill
@@ -158,7 +153,7 @@ describe("reapProcessTree", () => {
 
     const captured = await captureProcessTree([100], dependencies, 1);
 
-    // tmux kills the pane. The shell dies; the nohup'ed child is reparented.
+    // The terminal host stops the session. The shell dies; the nohup'ed child is reparented.
     alive.delete(100);
     const orphan = alive.get(101)!;
     orphan.ppid = 1;
@@ -226,77 +221,6 @@ describe("reapProcessTree", () => {
     }
   });
 
-  test("reaps a real Codex host after its pane session is gone", async () => {
-    const host = Bun.spawn(["sleep", "60"], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    const unrelated = Bun.spawn(["sleep", "60"], {
-      stdout: "ignore",
-      stderr: "ignore",
-    });
-    const killedSessions: string[] = [];
-    const record = {
-      id: "agent-maya",
-      name: "maya",
-      tool: "codex",
-      model: "gpt-5-codex",
-      category: "simple_coding",
-      status: "working",
-      taskDescription: "test",
-      worktreePath: "/tmp/maya",
-      branch: "hive/maya-test",
-      tmuxSession: "hive-maya",
-      sessionLocator: mintAgentTmuxSessionLocator("agent-maya"),
-      contextPct: null,
-      createdAt: "2026-07-13T00:00:00.000Z",
-      lastEventAt: "2026-07-13T00:00:00.000Z",
-      recoveryAttempts: 0,
-      capabilityEpoch: 0,
-      readOnly: false,
-      writeRevoked: false,
-    } satisfies AgentRecord;
-    try {
-      expect(() => process.kill(host.pid, 0)).not.toThrow();
-      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
-
-      const sessions = new TmuxSessionHost({
-        adapter: {
-          hasSession: async () => false,
-          newSession: async () => {
-            throw new Error("session creation must not run during teardown");
-          },
-          capturePane: async () => {
-            throw new Error("pane capture must not run during teardown");
-          },
-          killSession: async (session) => {
-            killedSessions.push(session);
-          },
-        },
-      });
-      const outcome = await stopAgentSession(record, {
-        sessions,
-        sessionRoots: async () => {
-          throw new Error("pane lookup must not run for a missing session");
-        },
-        readHostPid: async () => host.pid,
-      });
-
-      expect(outcome.survivors).toEqual([]);
-      expect(outcome.killed.map((entry) => entry.pid)).toContain(host.pid);
-      expect(killedSessions).toEqual(["hive-maya"]);
-      expect(await Promise.race([
-        host.exited,
-        Bun.sleep(1_000).then(() => null),
-      ])).not.toBeNull();
-      expect(() => process.kill(unrelated.pid, 0)).not.toThrow();
-    } finally {
-      host.kill("SIGKILL");
-      unrelated.kill("SIGKILL");
-      await Promise.all([host.exited, unrelated.exited]);
-    }
-  });
-
   test("sessiond teardown requires frozen termination and reap readback", async () => {
     const sessionLocator = {
       schemaVersion: 1 as const,
@@ -317,7 +241,6 @@ describe("reapProcessTree", () => {
       taskDescription: "test",
       worktreePath: "/tmp/maya",
       branch: "hive/maya-test",
-      tmuxSession: "hive-maya",
       sessionLocator,
       contextPct: null,
       createdAt: "2026-07-13T00:00:00.000Z",
@@ -394,7 +317,6 @@ describe("reapProcessTree", () => {
       taskDescription: "test",
       worktreePath: "/tmp/terminal",
       branch: "hive/terminal-test",
-      tmuxSession: "hive-terminal",
       sessionLocator,
       contextPct: null,
       createdAt: "2026-07-13T00:00:00.000Z",

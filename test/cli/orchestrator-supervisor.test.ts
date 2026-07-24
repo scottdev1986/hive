@@ -20,7 +20,6 @@ function agent(
     taskDescription: `Implement ${name}'s part of the recovery`,
     worktreePath: `/repo/.hive/worktrees/${name}`,
     branch: `hive/${name}-recovery`,
-    tmuxSession: `hive-${name}-instance`,
     recoveryAttempts: 0,
     contextPct: null,
     createdAt: "2026-07-13T12:00:00.000Z",

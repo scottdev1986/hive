@@ -3,7 +3,7 @@ import { basename, dirname, isAbsolute, join, resolve } from "node:path";
 import {
   hiveInstanceSuffix,
   isDefaultHiveHome,
-} from "../daemon/tmux-sessions";
+} from "../daemon/instance-identity";
 
 interface GitResult {
   stdout: string;

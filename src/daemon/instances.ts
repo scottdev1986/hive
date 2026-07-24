@@ -6,7 +6,7 @@ import { join, resolve } from "node:path";
 
 import { parseDaemonHandshake } from "./handshake";
 import { getHiveHome } from "./db";
-import { hiveInstanceSuffix } from "./tmux-sessions";
+import { hiveInstanceSuffix } from "./instance-identity";
 import {
   daemonInstanceLiveness,
   type DaemonInstanceLiveness,
@@ -48,7 +48,7 @@ export function selectInstance(name: string): string {
 
 /** Give an ordinary Workspace launch its own runtime boundary. Named
  * instances remain available for callers that explicitly ask for one, while
- * every unqualified launch gets a distinct daemon, database, tmux namespace,
+ * every unqualified launch gets a distinct daemon, database, terminal namespace,
  * and application process. */
 export function selectFreshInstance(id: string = randomUUID()): string {
   const home = selectInstance(`run-${id}`);

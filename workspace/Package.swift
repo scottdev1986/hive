@@ -19,17 +19,7 @@ let package = Package(
         .executable(name: "GhosttyGate10Probe", targets: ["GhosttyGate10Probe"]),
         .executable(name: "HiveTerminalB20Probe", targets: ["HiveTerminalB20Probe"]),
     ],
-    dependencies: [
-        // Provides LocalProcessTerminalView, the AppKit terminal view that
-        // spawns a child process on a pty. Pinned to v1.11.2, the newest
-        // release WITHOUT the Metal GPU backend (added in v1.12.0): its
-        // Shaders.metal resource makes `swift build --arch arm64 --arch
-        // x86_64` (the release-bundle build) require the optional Metal
-        // toolchain component, which Xcode 26 machines/CI runners often lack
-        // or have version-mismatched. The CPU/CoreGraphics renderer is all a
-        // TUI multiplexer needs.
-        .package(url: "https://github.com/migueldeicaza/SwiftTerm", exact: "1.11.2"),
-    ],
+    dependencies: [],
     targets: [
         .target(name: "WorkspaceCore"),
         // WP5 L0: GhosttyKit binary (offline-built) + authoritative C ABI header target.
@@ -70,7 +60,6 @@ let package = Package(
             dependencies: [
                 "WorkspaceCore",
                 "HiveTerminalKit",
-                .product(name: "SwiftTerm", package: "SwiftTerm"),
             ],
             // Official vendor marks for the Model Control Center. The release
             // build copies the generated resource bundle into the .app
